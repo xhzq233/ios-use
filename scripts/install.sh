@@ -121,6 +121,20 @@ resolve_target_dir() {
 TARGET_DIR="$(resolve_target_dir)"
 install_binary "$TARGET_DIR"
 
+# Download altsign-cli from GitHub Release if not already present
+ALTSIGN_CLI_DIR="$HOME/.ios-use/altsign-cli"
+ALTSIGN_CLI_BIN="$ALTSIGN_CLI_DIR/altsign-cli"
+ALTSIGN_REPO="xhzq233/altsign-cli"
+ALTSIGN_VERSION="v0.1.0"
+
+if [[ ! -x "$ALTSIGN_CLI_BIN" ]]; then
+  echo "Downloading altsign-cli ${ALTSIGN_VERSION}..."
+  mkdir -p "$ALTSIGN_CLI_DIR"
+  curl -fsSL "https://github.com/${ALTSIGN_REPO}/releases/download/${ALTSIGN_VERSION}/altsign-cli" \
+    -o "$ALTSIGN_CLI_BIN"
+  chmod +x "$ALTSIGN_CLI_BIN"
+fi
+
 TARGET_PATH="$TARGET_DIR/ios-use"
 if [[ "$PRINT_PATH_ONLY" -eq 1 ]]; then
   printf '%s\n' "$TARGET_PATH"
