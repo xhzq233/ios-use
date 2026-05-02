@@ -1,0 +1,42 @@
+{
+  "name": "ios-use",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "CLI tool to automate iOS devices via custom TCP XCTest driver",
+  "main": "src/cli.ts",
+  "bin": {
+    "ios-use": "./src/cli.ts"
+  },
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "start": "bun src/cli.ts",
+    "test": "bun test",
+    "build": "bun build ./src/cli.ts --compile --outfile ./dist/ios-use",
+    "test:smoke": "bun run build && ./dist/ios-use --help >/dev/null && ./dist/ios-use session --help >/dev/null && ./dist/ios-use app --help >/dev/null && ./dist/ios-use nslog --help >/dev/null"
+  },
+  "keywords": ["ios", "automation", "xctest", "uitest", "cli"],
+  "author": "xhzq233",
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xhzq233/ios-use.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xhzq233/ios-use/issues"
+  },
+  "homepage": "https://github.com/xhzq233/ios-use#readme",
+  "dependencies": {
+    "bplist-creator": "^0.1.1",
+    "bplist-parser": "^0.3.2",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3",
+    "js-yaml": "^4.1.1",
+    "ora": "^9.3.0",
+    "plist": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
+  }
+}

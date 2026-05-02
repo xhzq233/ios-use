@@ -1,0 +1,459 @@
+import XCTest
+
+// MARK: - Cleaned Snapshot (doc 4.3)
+
+/// The cleaned snapshot: root survives unchanged, but `elements` is a flat
+/// post-rule-1..6 view used by find/swipe/waitFor/etc.
+/// `byLabel` provides O(1) exact-label lookup.
+struct CleanedSnapshot {
+    let root: SafeSnapshot
+    let appFrame: CGRect
+    let rawRoot: SafeSnapshot
+    let elements: [SnapshotElement]
+    let byLabel: [String: [SnapshotElement]]
+}
+
+struct SnapshotElement {
+    let node: SafeSnapshot
+    let traits: [String]           // [type, ...flags]
+    let disabled: Bool
+    let invisible: Bool
+
+    var isVisible: Bool { !invisible }
+}
+
+func displayName(for node: SafeSnapshot) -> String? {
+    if let identifier = node.identifier, !identifier.isEmpty {
+        return identifier
+    }
+    if let label = node.label, !label.isEmpty {
+        return label
+    }
+    return nil
+}
+
+func snapshotTraits(for node: SafeSnapshot, disabled: Bool, invisible: Bool) -> [String] {
+    let typeName = elementTypeName(XCUIElement.ElementType(rawValue: UInt(node.elementType)) ?? .other)
+    var traits: [String] = [typeName]
+    if disabled { traits.append("disabled") }
+    if invisible { traits.append("invisible") }
+    if node.isSelected { traits.append("selected") }
+    if node.hasFocus || node.hasKeyboardFocus { traits.append("focused") }
+    return traits
+}
+
+func displayValue(for node: SafeSnapshot) -> String? {
+    guard let value = node.value, !value.isEmpty else { return nil }
+    if let name = displayName(for: node), name == value {
+        return nil
+    }
+    return value
+}
+
+// MARK: - Cache (doc 4.3)
+
+/// Global cached snapshot. Invalidated by tap/swipe/input/longPress.
+private var _cachedSnapshot: CleanedSnapshot?
+private let _snapshotLock = NSLock()
+
+/// doc 4.3 — all commands share the same entry point.
+/// Returns a cached snapshot if available; otherwise builds a fresh one.
+/// Time complexity: O(1) on cache hit; O(n) on cache miss, where n is the
+/// number of nodes in the snapshot tree.
+func getCleanedSnapshot() -> CleanedSnapshot? {
+    _snapshotLock.lock()
+    if let cached = _cachedSnapshot {
+        _snapshotLock.unlock()
+        return cached
+    }
+    _snapshotLock.unlock()
+
+    guard let fresh = rebuildCleanedSnapshot() else { return nil }
+
+    _snapshotLock.lock()
+    _cachedSnapshot = fresh
+    _snapshotLock.unlock()
+    return fresh
+}
+
+/// Force a fresh snapshot (no cache). Used by waitFor and mutation post-checks.
+/// Time complexity: O(n), where n is the number of nodes traversed by
+/// `cleanTree` while rebuilding the flat index.
+func rebuildCleanedSnapshot() -> CleanedSnapshot? {
+    guard let app = Session.shared.activeApp else { return nil }
+    guard let raw = SafeSnapshot(ofApp: app) else { return nil }
+
+    var elements: [SnapshotElement] = []
+    var byLabel: [String: [SnapshotElement]] = [:]
+
+    cleanTree(raw,
+              parentDisabled: false,
+              into: &elements,
+              byLabel: &byLabel)
+
+    return CleanedSnapshot(
+        root: raw,
+        appFrame: app.frame,
+        rawRoot: raw,
+        elements: elements,
+        byLabel: byLabel
+    )
+}
+
+private func rebuildLabelIndex(from elements: [SnapshotElement]) -> [String: [SnapshotElement]] {
+    var byLabel: [String: [SnapshotElement]] = [:]
+    for element in elements {
+        if let label = element.node.label, !label.isEmpty {
+            byLabel[label, default: []].append(element)
+        }
+        if let name = displayName(for: element.node), !name.isEmpty, name != element.node.label {
+            byLabel[name, default: []].append(element)
+        }
+    }
+    return byLabel
+}
+
+func isSpringBoardApp(_ app: XCUIApplication) -> Bool {
+    (app.value(forKey: "bundleID") as? String) == "com.apple.springboard"
+}
+
+/// doc 4.3 — mutations (tap/swipe/input/longPress) must invalidate the cache.
+func invalidateSnapshot() {
+    _snapshotLock.lock()
+    _cachedSnapshot = nil
+    _snapshotLock.unlock()
+}
+
+// MARK: - cleanTree (doc 2.4: rules 1-6)
+
+/// Apply clean-tree rules during a recursive DFS. Children are processed
+/// first so we can observe (and merge) sibling equivalents.
+///
+/// Rules (doc 2.4):
+///   1. SKIP_TYPES promote (Window, empty Other)
+///   2. disabled propagation via parentDisabled
+///   3. empty-leaf trim (no label, no children)
+///   4. single-child same-type merge (same type + rect + label)
+///   5. content-less container promote (no label, has children) — folded into rule 1
+///   6. sibling same-type merge (same type + label + rect adjacent)
+/// Time complexity: O(n + s) over the whole tree, where n is the number of
+/// visited nodes and s is the total sibling comparisons performed by
+/// `mergeSiblings` across all levels.
+private func cleanTree(
+    _ node: SafeSnapshot,
+    parentDisabled: Bool,
+    into elements: inout [SnapshotElement],
+    byLabel: inout [String: [SnapshotElement]]
+) {
+    let rawType = UInt(node.elementType)
+    let type = XCUIElement.ElementType(rawValue: rawType) ?? .other
+    let typeName = elementTypeName(type)
+    let disabled = parentDisabled || !node.isEnabled
+    let invisible = !node.isVisible
+
+    // Rule 1: SKIP_TYPES — Window OR (Other with no label, regardless of
+    // child count). Rule 5 is a subset of Rule 1 (content-less container).
+    //  M7 fix: don't hide Other with <=1 child — always promote when label nil.
+    if type == .window || (type == .other && displayName(for: node) == nil) {
+        for child in node.children {
+            cleanTree(child, parentDisabled: disabled, into: &elements, byLabel: &byLabel)
+        }
+        return
+    }
+
+    // Collect this node's kept descendants separately so we can apply
+    // sibling-merge (rule 6) and single-child merge (rule 4) locally.
+    var childBucket: [SnapshotElement] = []
+    var childByLabel: [String: [SnapshotElement]] = [:]
+
+    for child in node.children {
+        cleanTree(child, parentDisabled: disabled, into: &childBucket, byLabel: &childByLabel)
+    }
+
+    // Rule 6: sibling same-type merge.
+    // Adjacent siblings with same elementType + same label + ~same rect → dedupe.
+    childBucket = mergeSiblings(childBucket)
+
+    // Rule 3: empty leaf trim.
+    if displayName(for: node) == nil && childBucket.isEmpty {
+        return
+    }
+
+    // SpringBoard / desktop icons already carry the semantic node we want.
+    // Keep them as leaves so we don't walk decorative descendants and we
+    // retain their original snapshot frame instead of rebuilding via fallback.
+    if type == .icon {
+        let frame = node.frame
+        if frame.width > 0, frame.height > 0 {
+            childBucket = []
+            childByLabel.removeAll()
+        }
+    }
+
+    // Build traits: [typeName, disabled?, invisible?, selected?, focused?]
+    let traits = snapshotTraits(for: node, disabled: disabled, invisible: invisible)
+    let selfElem = SnapshotElement(node: node, traits: traits, disabled: disabled, invisible: invisible)
+
+    // Rule 4: single-child same-type merge — if this node has exactly one kept
+    // child and that child is same type + same rect + same label, keep only
+    // the parent and discard the child duplicate.
+    var effective = childBucket
+    if effective.count == 1 {
+        let c = effective[0]
+        if sameElementType(c.node, node)
+            && rectApproxEqual(c.node.frame, node.frame)
+            && displayName(for: c.node) == displayName(for: node) {
+            effective = []  // drop duplicate child
+        }
+    }
+
+    elements.append(selfElem)
+    if let label = node.label, !label.isEmpty {
+        byLabel[label, default: []].append(selfElem)
+    }
+    if let name = displayName(for: node), !name.isEmpty, name != node.label {
+        byLabel[name, default: []].append(selfElem)
+    }
+
+    // Append surviving children after self, then merge into outer by-label map.
+    elements.append(contentsOf: effective)
+    for (k, vs) in childByLabel {
+        // Rule 4 drops child; don't re-index the dropped one.
+        let keep = vs.filter { v in effective.contains(where: { $0.node === v.node }) }
+        if !keep.isEmpty {
+            byLabel[k, default: []].append(contentsOf: keep)
+        }
+    }
+}
+
+// MARK: - sibling merge (rule 6)
+
+/// Deduplicates adjacent siblings after each subtree has already been cleaned.
+/// Time complexity: O(k), where k is the number of siblings in this bucket.
+private func mergeSiblings(_ nodes: [SnapshotElement]) -> [SnapshotElement] {
+    if nodes.count <= 1 { return nodes }
+    var out: [SnapshotElement] = [nodes[0]]
+    for i in 1..<nodes.count {
+        let prev = out.last!
+        let curr = nodes[i]
+        if sameElementType(prev.node, curr.node)
+            && displayName(for: prev.node) == displayName(for: curr.node)
+            && rectApproxEqual(prev.node.frame, curr.node.frame) {
+            continue  // merge: drop curr
+        }
+        out.append(curr)
+    }
+    return out
+}
+
+// MARK: - helpers
+
+private func sameElementType(_ a: SafeSnapshot, _ b: SafeSnapshot) -> Bool {
+    a.elementType == b.elementType
+}
+
+private func rectApproxEqual(_ a: CGRect, _ b: CGRect, epsilon: CGFloat = 0.5) -> Bool {
+    abs(a.origin.x - b.origin.x) <= epsilon
+        && abs(a.origin.y - b.origin.y) <= epsilon
+        && abs(a.size.width - b.size.width) <= epsilon
+        && abs(a.size.height - b.size.height) <= epsilon
+}
+
+// MARK: - ancestor chain helpers (doc 4.2)
+
+func hasAncestor(_ node: SafeSnapshot, ofType typeName: String) -> Bool {
+    var cur = node.parent
+    while let p = cur {
+        if elementTypeName(XCUIElement.ElementType(rawValue: UInt(p.elementType)) ?? .other) == typeName {
+            return true
+        }
+        cur = p.parent
+    }
+    return false
+}
+
+func hasAncestor(_ node: SafeSnapshot, withLabel label: String) -> Bool {
+    var cur = node.parent
+    while let p = cur {
+        if p.label == label || displayName(for: p) == label { return true }
+        cur = p.parent
+    }
+    return false
+}
+
+// MARK: - findLargestScrollable (doc 5.3)
+
+/// Single DFS that picks the largest scrollable container by area.
+/// Time complexity: O(n), where n is the number of nodes in the subtree.
+func findLargestScrollable(_ root: SafeSnapshot) -> SafeSnapshot? {
+    let accepted: Set<UInt> = [
+        XCUIElement.ElementType.scrollView.rawValue,
+        XCUIElement.ElementType.collectionView.rawValue,
+        XCUIElement.ElementType.table.rawValue,
+        XCUIElement.ElementType.webView.rawValue,
+    ]
+    var best: SafeSnapshot?
+    var bestArea: CGFloat = 0
+    var stack: [SafeSnapshot] = [root]
+    while let node = stack.popLast() {
+        if accepted.contains(UInt(node.elementType)) {
+            let a = node.frame.width * node.frame.height
+            if a > bestArea { best = node; bestArea = a }
+        }
+        for c in node.children { stack.append(c) }
+    }
+    return best
+}
+
+// MARK: - findScrollableAncestor (doc 5.1 STEP 4)
+
+/// Walks the parent chain and validates candidate containers by visible cells.
+/// Time complexity: O(h * n_sub) in the worst case, where h is ancestor depth
+/// and n_sub is the size of each checked ancestor subtree.
+func findScrollableAncestor(_ node: SafeSnapshot) -> SafeSnapshot? {
+    let accepted: Set<UInt> = [
+        XCUIElement.ElementType.scrollView.rawValue,
+        XCUIElement.ElementType.collectionView.rawValue,
+        XCUIElement.ElementType.table.rawValue,
+        XCUIElement.ElementType.webView.rawValue,
+    ]
+    var cur: SafeSnapshot? = node.parent
+    while let p = cur {
+        if accepted.contains(UInt(p.elementType))
+            && p.isVisible
+            && p.frame.width > 0 && p.frame.height > 0 {
+            let cells = collectCellSnapshots(p)
+            let visibleCells = cells.filter { $0.isVisible }
+            if visibleCells.count > 1 { return p }
+        }
+        cur = p.parent
+    }
+    return nil
+}
+
+// MARK: - findScrollableAtPoint (doc 5.2)
+
+/// Chooses the smallest scrollable whose frame contains the target point.
+/// Time complexity: O(n), where n is the number of nodes in the subtree.
+func findScrollableAtPoint(_ point: CGPoint, _ root: SafeSnapshot) -> SafeSnapshot? {
+    let accepted: Set<UInt> = [
+        XCUIElement.ElementType.scrollView.rawValue,
+        XCUIElement.ElementType.collectionView.rawValue,
+        XCUIElement.ElementType.table.rawValue,
+        XCUIElement.ElementType.webView.rawValue,
+    ]
+    var best: SafeSnapshot?
+    var bestArea: CGFloat = .greatestFiniteMagnitude
+    var stack: [SafeSnapshot] = [root]
+    while let node = stack.popLast() {
+        if accepted.contains(UInt(node.elementType))
+            && node.frame.contains(point) {
+            let a = node.frame.width * node.frame.height
+            if a < bestArea { best = node; bestArea = a }
+        }
+        for c in node.children { stack.append(c) }
+    }
+    return best
+}
+
+// MARK: - collectCellSnapshots (doc 5.5 — three-tier fallback)
+
+/// Searches a scrollable subtree with a three-tier fallback: Cell -> Icon ->
+/// allDescendants.
+/// Time complexity: O(n), where n is the number of descendants in the
+/// scrollable subtree.
+func collectCellSnapshots(_ scrollView: SafeSnapshot) -> [SafeSnapshot] {
+    // 1) Cell
+    let cells = descendantsOfType(scrollView, elementType: UInt(XCUIElement.ElementType.cell.rawValue))
+    if !cells.isEmpty { return cells }
+    // 2) Icon (SpringBoard springboard home screen)
+    let icons = descendantsOfType(scrollView, elementType: UInt(XCUIElement.ElementType.icon.rawValue))
+    if !icons.isEmpty { return icons }
+    // 3) All descendants (bottom-of-barrel fallback)
+    return scrollView.allDescendants
+}
+
+/// Iterative DFS over the subtree rooted at `root`.
+/// Time complexity: O(n), where n is the number of nodes in the subtree.
+private func descendantsOfType(_ root: SafeSnapshot, elementType: UInt) -> [SafeSnapshot] {
+    var out: [SafeSnapshot] = []
+    var stack: [SafeSnapshot] = [root]
+    while let n = stack.popLast() {
+        if UInt(n.elementType) == elementType { out.append(n) }
+        for c in n.children { stack.append(c) }
+    }
+    return out
+}
+
+// MARK: - findCellAncestor (doc 5.1 STEP 5)
+
+/// Walks upward until the nearest Cell/Icon ancestor is found.
+/// Time complexity: O(h), where h is the parent-chain depth.
+func findCellAncestor(_ node: SafeSnapshot) -> SafeSnapshot {
+    let t = UInt(node.elementType)
+    if t == XCUIElement.ElementType.cell.rawValue || t == XCUIElement.ElementType.icon.rawValue {
+        return node
+    }
+    var cur: SafeSnapshot? = node.parent
+    while let p = cur {
+        let pt = UInt(p.elementType)
+        if pt == XCUIElement.ElementType.cell.rawValue || pt == XCUIElement.ElementType.icon.rawValue {
+            return p
+        }
+        cur = p.parent
+    }
+    return node  // fallback: use node itself if no cell ancestor
+}
+
+// MARK: - Element type name
+
+func elementTypeName(_ type: XCUIElement.ElementType) -> String {
+    switch type {
+    case .any: return "Any"
+    case .other: return "Other"
+    case .application: return "Application"
+    case .group: return "Group"
+    case .window: return "Window"
+    case .sheet: return "Sheet"
+    case .alert: return "Alert"
+    case .button: return "Button"
+    case .cell: return "Cell"
+    case .staticText: return "StaticText"
+    case .textField: return "TextField"
+    case .secureTextField: return "SecureTextField"
+    case .textView: return "TextView"
+    case .searchField: return "SearchField"
+    case .image: return "Image"
+    case .icon: return "Icon"
+    case .link: return "Link"
+    case .switch: return "Switch"
+    case .slider: return "Slider"
+    case .tabBar: return "TabBar"
+    case .tab: return "Tab"
+    case .toolbar: return "Toolbar"
+    case .navigationBar: return "NavigationBar"
+    case .table: return "Table"
+    case .tableRow: return "TableRow"
+    case .tableColumn: return "TableColumn"
+    case .collectionView: return "CollectionView"
+    case .scrollView: return "ScrollView"
+    case .webView: return "WebView"
+    case .picker: return "Picker"
+    case .pickerWheel: return "PickerWheel"
+    case .segmentedControl: return "SegmentedControl"
+    case .datePicker: return "DatePicker"
+    case .pageIndicator: return "PageIndicator"
+    case .progressIndicator: return "ProgressIndicator"
+    case .activityIndicator: return "ActivityIndicator"
+    case .stepper: return "Stepper"
+    case .menu: return "Menu"
+    case .menuItem: return "MenuItem"
+    case .menuBar: return "MenuBar"
+    case .keyboard: return "Keyboard"
+    case .key: return "Key"
+    case .statusBar: return "StatusBar"
+    case .map: return "Map"
+    case .browser: return "Browser"
+    default: return "Other"
+    }
+}
