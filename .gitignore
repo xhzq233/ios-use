@@ -9,8 +9,7 @@ worktrees/
 altsign-cli/altsign-cli
 altsign-cli/*.o
 altsign-cli/*.dSYM
-assets/wda_signed.ipa
-assets/driver-sim.ipa
+assets/
 .idea/
 .claude/
 .trae/

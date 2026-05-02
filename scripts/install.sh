@@ -19,6 +19,9 @@ PRIMARY_TARGET_DIR="$USER_TARGET_DIR"
 SECONDARY_TARGET_DIR="$HOME/bin"
 GITHUB_REPO="${IOS_USE_GITHUB_REPO:-xhzq233/ios-use}"
 GITHUB_REF="${IOS_USE_REF:-main}"
+ALTSIGN_REPO="xhzq233/altsign-cli"
+ALTSIGN_VERSION="v0.1.0"
+DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-v1.0.0}"
 BOOTSTRAP_DIR=""
 PRINT_PATH_ONLY=0
 
@@ -83,12 +86,28 @@ install_binary() {
   local target_dir="$1"
   mkdir -p "$target_dir" "$HOME/.ios-use/runtime"
   install -m 755 "$OUTFILE" "$target_dir/ios-use"
-  if [ -f "$ROOT_DIR/assets/driver.ipa" ]; then
-    install -m 644 "$ROOT_DIR/assets/driver.ipa" "$HOME/.ios-use/driver.ipa"
+
+  # driver.ipa: local assets/ > GitHub Release
+  local driver_ipa="$HOME/.ios-use/driver.ipa"
+  if [[ -f "$ROOT_DIR/assets/driver.ipa" ]]; then
+    install -m 644 "$ROOT_DIR/assets/driver.ipa" "$driver_ipa"
+  elif [[ ! -f "$driver_ipa" ]]; then
+    echo "Downloading driver.ipa ${DRIVER_VERSION}..."
+    curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${DRIVER_VERSION}/driver.ipa" \
+      -o "$driver_ipa"
   fi
-  if [ -x "$ROOT_DIR/altsign-cli/altsign-cli" ]; then
+
+  # altsign-cli: local > GitHub Release
+  local alt_bin="$HOME/.ios-use/altsign-cli/altsign-cli"
+  if [[ -x "$ROOT_DIR/altsign-cli/altsign-cli" ]]; then
     mkdir -p "$HOME/.ios-use/altsign-cli"
-    install -m 755 "$ROOT_DIR/altsign-cli/altsign-cli" "$HOME/.ios-use/altsign-cli/altsign-cli"
+    install -m 755 "$ROOT_DIR/altsign-cli/altsign-cli" "$alt_bin"
+  elif [[ ! -x "$alt_bin" ]]; then
+    echo "Downloading altsign-cli ${ALTSIGN_VERSION}..."
+    mkdir -p "$HOME/.ios-use/altsign-cli"
+    curl -fsSL "https://github.com/${ALTSIGN_REPO}/releases/download/${ALTSIGN_VERSION}/altsign-cli" \
+      -o "$alt_bin"
+    chmod +x "$alt_bin"
   fi
 }
 
@@ -120,20 +139,6 @@ resolve_target_dir() {
 
 TARGET_DIR="$(resolve_target_dir)"
 install_binary "$TARGET_DIR"
-
-# Download altsign-cli from GitHub Release if not already present
-ALTSIGN_CLI_DIR="$HOME/.ios-use/altsign-cli"
-ALTSIGN_CLI_BIN="$ALTSIGN_CLI_DIR/altsign-cli"
-ALTSIGN_REPO="xhzq233/altsign-cli"
-ALTSIGN_VERSION="v0.1.0"
-
-if [[ ! -x "$ALTSIGN_CLI_BIN" ]]; then
-  echo "Downloading altsign-cli ${ALTSIGN_VERSION}..."
-  mkdir -p "$ALTSIGN_CLI_DIR"
-  curl -fsSL "https://github.com/${ALTSIGN_REPO}/releases/download/${ALTSIGN_VERSION}/altsign-cli" \
-    -o "$ALTSIGN_CLI_BIN"
-  chmod +x "$ALTSIGN_CLI_BIN"
-fi
 
 TARGET_PATH="$TARGET_DIR/ios-use"
 if [[ "$PRINT_PATH_ONLY" -eq 1 ]]; then
