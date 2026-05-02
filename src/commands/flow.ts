@@ -52,9 +52,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
         } catch {}
         context.nsloggerServer = await startNSLoggerServer(needLogConfig, 'needLog');
       }
-      await driver.terminateApp(flow.app);
-      await driver.activateApp(flow.app);
-      logger.info(`Auto terminate + activate: ${flow.app}`);
+      logger.info(`Target app: ${flow.app}`);
     }
 
     resetAbort();
