@@ -232,9 +232,12 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   if (signResult && signResult.stdout) process.stdout.write(signResult.stdout);
   if (signResult && signResult.stderr) process.stderr.write(signResult.stderr);
   const combinedOutput = [signResult?.stdout, signResult?.stderr].filter(Boolean).join('\n');
-  const errorLine = combinedOutput.split('\n').find(l => l.toLowerCase().includes('error'));
-  if (errorLine) {
-    throw new Error(`altsign-cli sign failed: ${errorLine.trim()}`);
+  const hasSuccess = combinedOutput.includes('IPA signed successfully');
+  if (!hasSuccess) {
+    const errorLine = combinedOutput.split('\n').find(l => l.toLowerCase().includes('error'));
+    if (errorLine) {
+      throw new Error(`altsign-cli sign failed: ${errorLine.trim()}`);
+    }
   }
   logger.success('Driver signed');
 
