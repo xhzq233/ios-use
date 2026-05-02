@@ -94,7 +94,7 @@ program
       for (const sim of sims) logger.info(formatDeviceLabel(sim));
       return;
     }
-    const reals = detectRealDevices();
+    const reals = await detectRealDevices();
     if (reals.length === 0) { logger.info('No connected real devices found'); return; }
     for (const d of reals) logger.info(formatDeviceLabel(d));
   }));
@@ -125,7 +125,7 @@ program
       return;
     }
     if (!opts.udid) {
-      const devices = detectRealDevices();
+      const devices = await detectRealDevices();
       if (devices.length === 0) throw new Error('No --udid and no devices detected.');
       opts.udid = devices[0].udid;
       logger.info(`Using default device: ${formatDeviceLabel(devices[0])}`);

@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process';
+import { listUsbDeviceUdids } from './driver-client/usbmux.js';
 
 export interface Device {
   name: string;
@@ -56,8 +57,16 @@ export function detectDevices(): Device[] {
   return parseDeviceOutput(output);
 }
 
-export function detectRealDevices(): Device[] {
-  return detectDevices().filter(d => d.type === 'real');
+function normalizeUdid(udid: string): string {
+  return udid.replace(/-/g, '').toLowerCase();
+}
+
+export async function detectRealDevices(): Promise<Device[]> {
+  const all = detectDevices().filter(d => d.type === 'real');
+  const usbUdids = await listUsbDeviceUdids();
+  if (usbUdids.length === 0) return all;
+  const usbSet = new Set(usbUdids.map(normalizeUdid));
+  return all.filter(d => usbSet.has(normalizeUdid(d.udid)));
 }
 
 export function detectBootedSimulators(): Device[] {

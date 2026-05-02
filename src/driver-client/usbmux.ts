@@ -8,7 +8,7 @@ function swap16(val: number): number {
   return ((val & 0xff) << 8) | ((val >> 8) & 0xff);
 }
 
-function encodeMessage(payload: Record<string, unknown>, tag: number): Buffer {
+export function encodeMessage(payload: Record<string, unknown>, tag: number): Buffer {
   const plistBuf = Buffer.from(plist.build(payload));
   const header = Buffer.allocUnsafe(HEADER_SIZE);
   header.writeUInt32LE(HEADER_SIZE + plistBuf.length, 0);
@@ -18,7 +18,7 @@ function encodeMessage(payload: Record<string, unknown>, tag: number): Buffer {
   return Buffer.concat([header, plistBuf]);
 }
 
-function readMessage(buf: Buffer): { tag: number; payload: any; rest: Buffer } | null {
+export function readMessage(buf: Buffer): { tag: number; payload: any; rest: Buffer } | null {
   if (buf.length < HEADER_SIZE) return null;
   const msgLen = buf.readUInt32LE(0);
   if (buf.length < msgLen) return null;
@@ -114,4 +114,32 @@ export async function connectUsbmux(udid: string, port: number): Promise<net.Soc
     socket.destroy();
     throw err;
   }
+}
+
+export function listUsbDeviceUdids(): Promise<string[]> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection(USBMUXD_SOCKET);
+    const onError = () => { socket.destroy(); resolve([]); };
+    socket.once('error', onError);
+    socket.once('connect', () => {
+      let buf = Buffer.alloc(0);
+      const timer = setTimeout(() => { socket.destroy(); resolve([]); }, 3000);
+      socket.on('data', (raw: Buffer) => {
+        buf = buf.length === 0 ? raw : Buffer.concat([buf, raw]);
+        try {
+          const msg = readMessage(buf);
+          if (!msg) return;
+          clearTimeout(timer);
+          socket.destroy();
+          const devices = (msg.payload.DeviceList ?? []) as Array<{ Properties?: { SerialNumber?: string; ConnectionType?: string } }>;
+          resolve(devices.filter(d => d.Properties?.ConnectionType === 'USB' && d.Properties?.SerialNumber).map(d => d.Properties!.SerialNumber!));
+        } catch {
+          clearTimeout(timer);
+          socket.destroy();
+          resolve([]);
+        }
+      });
+      socket.write(encodeMessage({ MessageType: 'ListDevices', ProgName: 'ios-use', ClientVersionString: '1.0', kLibUSBMuxVersion: 3 }, 0));
+    });
+  });
 }
