@@ -1,0 +1,89 @@
+name: "test_flow: 核心回归 smoke"
+app: com.apple.Preferences
+steps:
+  - action: waitFor
+    label: 蓝牙
+    timeout: 5
+    comment: "确认 Settings 首页已稳定，且入口锚点可唯一命中"
+
+  - action: dom
+    save: true
+    name: test-flow-home-clean
+    print: false
+    comment: "保存首页 clean DOM，验证 dom action"
+
+  - action: find
+    label: 通用
+    context:
+      ancestorType: Button
+    print: false
+    comment: "验证 rawFind + context 消歧路径可命中首页列表项"
+
+  - action: screenshot
+    name: test-flow-settings-home
+    comment: "记录初始界面"
+
+  - action: oslog
+    clear: true
+    bundleId: com.apple.Preferences
+    comment: "清空 Settings 过滤视图下的 oslog 缓冲区"
+
+  - action: swipe
+    to: 通用
+    dir: forth
+    context:
+      ancestorType: Button
+    comment: "验证 label swipe + context 消歧路径；若已可见应直接命中"
+
+  - action: swipe
+    distance: 180
+    dir: forth
+    comment: "固定距离向前滚动，验证 distance-only 路径"
+
+  - action: screenshot
+    name: test-flow-after-forth
+    comment: "记录 fixed-distance 向前滚动后的页面"
+
+  - action: swipe
+    distance: 180
+    dir: back
+    comment: "固定距离向后回滚，验证对称路径"
+
+  - action: swipe
+    to: "187,650"
+    comment: "验证 point swipe 路径，把内容点带向中心"
+
+  - action: oslog
+    pattern: Preferences
+    flags: i
+    name: test-flow-settings-oslog
+    bundleId: com.apple.Preferences
+    comment: "导出 Settings 过滤视图下的 oslog"
+
+  - action: tap
+    label: "100,400"
+    comment: "验证 tap action 的坐标路径，不依赖当前视口内文案"
+
+  - action: terminateApp
+    bundleId: com.apple.Preferences
+    comment: "验证 terminateApp"
+
+  - action: activateApp
+    bundleId: com.apple.Preferences
+    comment: "验证 activateApp"
+
+  - action: waitFor
+    label: 蓝牙
+    timeout: 8
+    comment: "确认 app 重启后重新回到首页"
+
+  - action: dom
+    raw: true
+    save: true
+    name: test-flow-home-raw
+    print: false
+    comment: "保存首页 raw DOM，验证 raw=true"
+
+  - action: screenshot
+    name: test-flow-settings-relaunched
+    comment: "记录重启后的最终界面"

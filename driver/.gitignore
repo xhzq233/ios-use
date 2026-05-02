@@ -1,0 +1,16 @@
+# Swift / SPM
+.build/
+.swiftpm/
+
+# Xcode
+build/
+DerivedData/
+**/*.xcodeproj/xcuserdata/
+**/*.xcworkspace/xcuserdata/
+*.xcscmblueprint
+
+# OS
+.DS_Store
+
+# Temp
+/tmp/
