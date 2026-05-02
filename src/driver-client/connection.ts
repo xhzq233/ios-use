@@ -210,10 +210,10 @@ export class Connection {
           this.readNeeded = 0;
           this.readTimer = null;
           this.buffer = Buffer.alloc(0);
-          rejectFn(new Error(`read timeout after 45s (got ${gotBytes}/${n} bytes)`));
+          rejectFn(new Error(`read timeout after 70s (got ${gotBytes}/${n} bytes)`));
         }
         this.disconnect();
-      }, 45_000);
+      }, 70_000);
     });
   }
 
