@@ -34,7 +34,7 @@ jobs:
           xcrun simctl boot "$UDID" 2>/dev/null || true
 
       - name: Build driver IPA
-        run: bash scripts/build_host_app.sh
+        run: mkdir -p assets && bash scripts/build_host_app.sh
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
