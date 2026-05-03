@@ -73,7 +73,8 @@ final class TypesTests: XCTestCase {
             node: snapshot,
             traits: snapshotTraits(for: snapshot, disabled: false, invisible: !snapshot.isVisible),
             disabled: false,
-            invisible: !snapshot.isVisible
+            invisible: !snapshot.isVisible,
+            childCount: 0
         )
     }
 
@@ -368,7 +369,7 @@ final class TypesTests: XCTestCase {
             SearchCandidate(displayText: "Display", normalizedText: normalizeSearchText("Display")),
             SearchCandidate(displayText: "Completely Different", normalizedText: normalizeSearchText("Completely Different")),
         ]
-        let suggestions = fuzzySuggestions(for: "DarkMode", from: candidates)
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("DarkMode"), from: candidates)
         XCTAssertTrue(suggestions.contains("Dark Mode"))
     }
 
@@ -379,13 +380,13 @@ final class TypesTests: XCTestCase {
             SearchCandidate(displayText: "天气", normalizedText: normalizeSearchText("天气")),
             SearchCandidate(displayText: "天气预报", normalizedText: normalizeSearchText("天气预报")),
         ]
-        let suggestions = fuzzySuggestions(for: "天气", from: candidates)
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("天气"), from: candidates)
         XCTAssertEqual(suggestions.first, "天气")
         XCTAssertFalse(suggestions.contains(""))
     }
 
     func testFuzzySuggestions_UsesStrictThreshold() {
-        let suggestions = fuzzySuggestions(for: "搜索", from: [
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("搜索"), from: [
             SearchCandidate(displayText: "设置", normalizedText: normalizeSearchText("设置")),
             SearchCandidate(displayText: "搜索", normalizedText: normalizeSearchText("搜索")),
             SearchCandidate(displayText: "搜", normalizedText: normalizeSearchText("搜")),
@@ -395,7 +396,7 @@ final class TypesTests: XCTestCase {
     }
 
     func testFuzzySuggestions_ChineseTypo() {
-        let suggestions = fuzzySuggestions(for: "天琪", from: [
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("天琪"), from: [
             SearchCandidate(displayText: "天气", normalizedText: normalizeSearchText("天气")),
             SearchCandidate(displayText: "日历", normalizedText: normalizeSearchText("日历")),
             SearchCandidate(displayText: "地图", normalizedText: normalizeSearchText("地图")),
@@ -404,7 +405,7 @@ final class TypesTests: XCTestCase {
     }
 
     func testFuzzySuggestions_WhitespaceDifference() {
-        let suggestions = fuzzySuggestions(for: "编 辑", from: [
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("编 辑"), from: [
             SearchCandidate(displayText: "编辑", normalizedText: normalizeSearchText("编辑")),
             SearchCandidate(displayText: "完成", normalizedText: normalizeSearchText("完成")),
             SearchCandidate(displayText: "取消", normalizedText: normalizeSearchText("取消")),
@@ -413,7 +414,7 @@ final class TypesTests: XCTestCase {
     }
 
     func testFuzzySuggestions_CaseAndWhitespaceDifference() {
-        let suggestions = fuzzySuggestions(for: "FAcetime通话", from: [
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("FAcetime通话"), from: [
             SearchCandidate(displayText: "FaceTime 通话", normalizedText: normalizeSearchText("FaceTime 通话")),
             SearchCandidate(displayText: "电话", normalizedText: normalizeSearchText("电话")),
             SearchCandidate(displayText: "信息", normalizedText: normalizeSearchText("信息")),
@@ -426,6 +427,124 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(normalizeSearchText("FAcetime通话"), "facetime通话")
         XCTAssertEqual(normalizeSearchText("FaceTime 通话"), "facetime通话")
         XCTAssertEqual(normalizeSearchText("Wi-Fi"), "wifi")
+    }
+
+    func testSerializeDomForest_ReconstructsNestedTreeFromChildCount() {
+        let root = makeElement(label: "Root", type: .other)
+        let child1 = makeElement(label: "Child 1", type: .button)
+        let parent = makeElement(label: "Parent", type: .cell)
+        let grandchild = makeElement(label: "Grandchild", type: .staticText)
+        let child2 = makeElement(label: "Child 2", type: .button)
+
+        let elements = [
+            SnapshotElement(node: root.node, traits: root.traits, disabled: root.disabled, invisible: root.invisible, childCount: 3),
+            child1,
+            SnapshotElement(node: parent.node, traits: parent.traits, disabled: parent.disabled, invisible: parent.invisible, childCount: 1),
+            grandchild,
+            child2,
+        ]
+
+        let dom = serializeDomForest(from: elements)
+
+        XCTAssertEqual(dom.count, 1)
+        XCTAssertEqual(dom[0]["l"] as? String, "Root")
+        let children = dom[0]["c"] as? [[String: Any]]
+        XCTAssertEqual(children?.count, 3)
+        XCTAssertEqual(children?[0]["l"] as? String, "Child 1")
+        XCTAssertEqual(children?[1]["l"] as? String, "Parent")
+        let grandChildren = children?[1]["c"] as? [[String: Any]]
+        XCTAssertEqual(grandChildren?.count, 1)
+        XCTAssertEqual(grandChildren?[0]["l"] as? String, "Grandchild")
+        XCTAssertEqual(children?[2]["l"] as? String, "Child 2")
+    }
+
+    func testSerializeDomForest_EmptyElementsReturnsEmptyDom() {
+        XCTAssertTrue(serializeDomForest(from: []).isEmpty)
+    }
+
+    func testSerializeDomForest_ChildCountZeroSerializesLeafRect() {
+        let leaf = makeElement(label: "Leaf", type: .button)
+        let dom = serializeDomForest(from: [leaf])
+
+        XCTAssertEqual(dom.count, 1)
+        XCTAssertEqual(dom[0]["l"] as? String, "Leaf")
+        XCTAssertNotNil(dom[0]["r"] as? [Double])
+        XCTAssertNil(dom[0]["c"])
+    }
+
+    func testSerializeDomForest_StopsWhenChildCountExceedsRemainingElements() {
+        let root = makeElement(label: "Root", type: .other)
+        let child = makeElement(label: "Child", type: .button)
+        let elements = [
+            SnapshotElement(node: root.node, traits: root.traits, disabled: root.disabled, invisible: root.invisible, childCount: 2),
+            child,
+        ]
+
+        let dom = serializeDomForest(from: elements)
+
+        XCTAssertEqual(dom.count, 1)
+        XCTAssertEqual(dom[0]["l"] as? String, "Root")
+        let children = dom[0]["c"] as? [[String: Any]]
+        XCTAssertEqual(children?.count, 1)
+        XCTAssertEqual(children?.first?["l"] as? String, "Child")
+    }
+
+    func testDomCleaning_KeepsPromotedHomeScreenChildrenUnderParent() {
+        let invisiblePage = FakeRawSnapshot(
+            elementType: .icon,
+            frame: .zero,
+            isVisible: false,
+            children: [
+                FakeRawSnapshot(label: "天气", elementType: .icon, frame: .zero, isVisible: false),
+            ]
+        )
+        let visiblePage = FakeRawSnapshot(
+            elementType: .icon,
+            frame: .zero,
+            isVisible: false,
+            children: [
+                FakeRawSnapshot(label: "股市", elementType: .icon, frame: CGRect(x: 112, y: 65, width: 64, height: 87)),
+                FakeRawSnapshot(label: "查找", elementType: .icon, frame: CGRect(x: 199, y: 65, width: 64, height: 87)),
+            ]
+        )
+        let spotlight = FakeRawSnapshot(
+            label: "spotlight-pill",
+            elementType: .other,
+            children: [
+                FakeRawSnapshot(label: "搜索", elementType: .staticText, frame: CGRect(x: 183, y: 673, width: 24, height: 14)),
+            ]
+        )
+        let home = FakeRawSnapshot(
+            label: "Home screen icons",
+            elementType: .other,
+            children: [
+                FakeRawSnapshot(
+                    elementType: .other,
+                    children: [
+                        invisiblePage,
+                        visiblePage,
+                        spotlight,
+                    ]
+                ),
+            ]
+        )
+        let rootRaw = FakeRawSnapshot(elementType: .window, children: [home])
+        let root = SafeSnapshot(raw: rootRaw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let elements = buildCleanElements(from: root)
+        let dom = serializeDomForest(from: elements)
+
+        XCTAssertEqual(dom.count, 1)
+        XCTAssertEqual(dom[0]["l"] as? String, "Home screen icons")
+        let children = dom[0]["c"] as? [[String: Any]]
+        XCTAssertEqual(children?.count, 3)
+        XCTAssertEqual(children?[0]["tr"] as? [String], ["Icon", "invisible"])
+        XCTAssertEqual(children?[1]["tr"] as? [String], ["Icon", "invisible"])
+        XCTAssertEqual(children?[2]["l"] as? String, "spotlight-pill")
+
+        let visibleIcons = children?[1]["c"] as? [[String: Any]]
+        XCTAssertEqual(visibleIcons?.map { $0["l"] as? String }, ["股市", "查找"])
+        XCTAssertFalse(dom.dropFirst().contains { ($0["l"] as? String) == "spotlight-pill" })
     }
 
     func testSearchableTexts_MergesLabelAndValueWithoutDuplicates() {

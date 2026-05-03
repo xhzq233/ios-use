@@ -94,11 +94,23 @@ export function detectBootedSimulators(): Device[] {
   return devices;
 }
 
-export function getDefaultDevice(devices: Device[] = detectDevices()): Device {
-  if (devices.length === 0) {
-    throw new Error('No connected iOS devices or simulators found. Connect a device or boot a simulator and try again.');
+export function getDefaultDevice(
+  devices: Device[] = detectDevices(),
+  options: { usbUdids?: string[] } = {},
+): Device {
+  const usbSet = new Set((options.usbUdids ?? []).map(normalizeUdid));
+  if (usbSet.size > 0) {
+    const usbReal = devices.find((device) => device.type === 'real' && usbSet.has(normalizeUdid(device.udid)));
+    if (usbReal) return usbReal;
   }
-  return devices[0];
+
+  throw new Error('No USB-connected iOS device found. Connect a device over USB, or pass --udid explicitly for a simulator.');
+}
+
+export async function resolveDefaultDevice(): Promise<Device> {
+  const devices = detectDevices();
+  const usbUdids = await listUsbDeviceUdids();
+  return getDefaultDevice(devices, { usbUdids });
 }
 
 export function resolveDevice(udid: string | undefined, devices: Device[] = detectDevices()): Device {
