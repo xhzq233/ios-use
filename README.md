@@ -6,13 +6,17 @@
 
 ## Features
 
-- **Direct TCP driver**: The CLI talks to a custom XCTest driver over TCP or usbmuxd, without an Appium server or WDA HTTP layer.
-- **Fast session reuse**: `session start` prepares the driver once, and later commands reuse the same session state.
-- **Real device and Simulator**: Real devices use usbmuxd; Simulators connect over `localhost:8100`.
-- **Target-aware UI commands**: `dom`, `find`, `tap`, `longpress`, `input`, `swipe`, and `waitFor` share the same label matching semantics.
-- **Flow runner**: Run YAML flows with the same command set exposed by the CLI.
-- **Binary screenshot transport**: Screenshots use `_XCT_requestScreenshot` and return raw JPEG data instead of base64 payloads.
-- **Built-in NSLogger receiver**: Capture device logs from the CLI, with optional TLS and Bonjour publishing.
+- **Zero external dependencies**: No Appium server, no WDA, no iproxy, no ideviceinstaller — only macOS system tools (`xcrun`, `usbmuxd`) and a free Apple ID.
+- **Custom TCP driver**: The CLI talks directly to a lightweight XCTest driver over TCP or usbmuxd, without an HTTP bridge.
+- **Free Apple ID signing**: Signs and installs the driver using a regular (free) Apple ID via altsign-cli. No paid developer account required.
+- **Fast session reuse**: `session start` prepares the driver once; later commands reconnect automatically. DOM queries hit `~74 ms`, find hits `~45 ms`.
+- **Real device and Simulator**: Real devices connect through usbmuxd; Simulators connect over `localhost:8100`.
+- **Smart DOM tree**: 7-rule cleaning pipeline trims the raw XCUI snapshot into a concise, readable tree. SpringBoard gets dedicated rendering (Home icons, Dock, Spotlight, status bar).
+- **Fuzzy find with context disambiguation**: exact match → Levenshtein fuzzy fallback → `ancestorType`/`ancestorLabel` filtering. On failure, returns ambiguous matches and suggestions.
+- **4 scroll modes**: scroll-to-label, point swipe, anchor-based scroll, and fixed-distance swipe. Auto axis detection from visible cell layout.
+- **OSLog integration**: Fetch device-side `OSLogStore` entries with regex filtering, grouped by bundle ID.
+- **Built-in NSLogger receiver**: Capture device logs from the CLI, with optional TLS and Bonjour service discovery.
+- **Flow runner**: Describe multi-step automations in YAML using the same command set as the CLI.
 
 ## Installation
 
