@@ -13,17 +13,23 @@ enum FindResult {
 
 /// Unified label search against an explicit cleaned snapshot.
 /// This is the single source of truth for all label-based command semantics.
-/// Time complexity: O(m * h + c * q * t) in the worst case, where m is the
-/// number of exact-label matches, h is ancestor depth for context filtering,
-/// c is candidate label count, q is query length, and t is candidate length
+/// Time complexity: O(n * s + m * h + c * q * t) in the worst case, where n is
+/// the element count, s is the number of searchable strings per element, m is
+/// the number of contains matches, h is ancestor depth for context filtering,
+/// c is candidate string count, q is query length, and t is candidate length
 /// used by fuzzy fallback.
 func rawFindInSnapshot(_ label: String, context: LabelContext?, cs: CleanedSnapshot) -> FindResult {
-    // 1. Exact match
-    var matches = cs.byLabel[label] ?? []
+    let query = label.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !query.isEmpty else {
+        return .notFound(suggestions: [])
+    }
 
-    // 2. Fuzzy fallback when exact empty
+    // 1. Default contains match across label + value.
+    var matches = cs.elements.filter { matchesQueryContent($0.node, query: query) }
+
+    // 2. Fuzzy fallback when contains-match is empty.
     if matches.isEmpty {
-        let suggestions = fuzzySuggestions(for: label, from: Array(cs.byLabel.keys))
+        let suggestions = fuzzySuggestions(for: query, from: searchableCandidates(in: cs))
         if !suggestions.isEmpty { return .fuzzy(suggestions: suggestions) }
         return .notFound(suggestions: [])
     }
@@ -36,14 +42,14 @@ func rawFindInSnapshot(_ label: String, context: LabelContext?, cs: CleanedSnaps
         matches = matches.filter { hasAncestor($0.node, withLabel: al) }
     }
 
-    matches = finalizeFindMatches(matches, query: label)
+    matches = finalizeFindMatches(matches, query: query)
 
     if matches.isEmpty { return .notFound(suggestions: []) }
     if matches.count > 1 { return .ambiguous(matches: matches) }
     return .found(matches[0])
 }
 
-/// Unified label search: exact → fuzzy → context filter.
+/// Unified label search: contains(label/value) → fuzzy → context filter.
 /// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
 func rawFind(_ label: String, context: LabelContext?) -> FindResult {
     guard let cs = getCleanedSnapshot() else {
@@ -53,7 +59,7 @@ func rawFind(_ label: String, context: LabelContext?) -> FindResult {
 }
 
 func finalizeFindMatches(_ matches: [SnapshotElement], query: String) -> [SnapshotElement] {
-    preferVisibleMatches(dedupeNestedExactMatches(matches, query: query))
+    preferVisibleMatches(dedupeNestedMatches(matches, query: query))
 }
 
 private func preferVisibleMatches(_ matches: [SnapshotElement]) -> [SnapshotElement] {
@@ -61,7 +67,7 @@ private func preferVisibleMatches(_ matches: [SnapshotElement]) -> [SnapshotElem
     return visible.isEmpty ? matches : visible
 }
 
-private func dedupeNestedExactMatches(_ matches: [SnapshotElement], query: String) -> [SnapshotElement] {
+private func dedupeNestedMatches(_ matches: [SnapshotElement], query: String) -> [SnapshotElement] {
     guard matches.count > 1 else { return matches }
     var keep = Array(repeating: true, count: matches.count)
     for i in 0..<matches.count {
@@ -83,14 +89,37 @@ private func dedupeNestedExactMatches(_ matches: [SnapshotElement], query: Strin
 }
 
 private func nestedDuplicatePair(_ lhs: SnapshotElement, _ rhs: SnapshotElement, query: String) -> Bool {
-    guard matchesQueryLabel(lhs.node, query: query), matchesQueryLabel(rhs.node, query: query) else {
+    guard matchesQueryContent(lhs.node, query: query), matchesQueryContent(rhs.node, query: query) else {
         return false
     }
     return isAncestor(lhs.node, of: rhs.node) || isAncestor(rhs.node, of: lhs.node)
 }
 
-private func matchesQueryLabel(_ node: SafeSnapshot, query: String) -> Bool {
-    node.label == query || displayName(for: node) == query
+func searchableTexts(label: String?, value: String?) -> [String] {
+    var out: [String] = []
+    for text in [label, value] {
+        guard let text else { continue }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || out.contains(trimmed) { continue }
+        out.append(trimmed)
+    }
+    return out
+}
+
+func textContainsQuery(_ text: String, query: String) -> Bool {
+    text.contains(query)
+}
+
+func searchableTexts(for node: SafeSnapshot) -> [String] {
+    searchableTexts(label: displayName(for: node), value: displayValue(for: node))
+}
+
+private func searchableCandidates(in cs: CleanedSnapshot) -> [String] {
+    Array(Set(cs.elements.flatMap { searchableTexts(for: $0.node) }))
+}
+
+private func matchesQueryContent(_ node: SafeSnapshot, query: String) -> Bool {
+    searchableTexts(for: node).contains { textContainsQuery($0, query: query) }
 }
 
 private func isAncestor(_ ancestor: SafeSnapshot, of node: SafeSnapshot) -> Bool {

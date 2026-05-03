@@ -139,14 +139,22 @@ enum SwipeCommands {
             }
             anchorScrollView = scrollView
         } else if let from = args.from, let flabel = from.asLabel {
-            let fromMatches = cs.byLabel[flabel] ?? []
-            if fromMatches.isEmpty {
-                return Codec.makeError("from label '\(flabel)' not found")
+            let anchor: SnapshotElement
+            switch rawFindInSnapshot(flabel, context: nil, cs: cs) {
+            case .found(let elem):
+                anchor = elem
+            case .ambiguous(let matches):
+                return ambiguityResponse(flabel, matches: matches)
+            case .fuzzy(let suggestions):
+                return notFoundResponse(flabel,
+                                        suggestions: suggestions,
+                                        hint: "Try a more specific --from label or a coordinate anchor")
+            case .notFound(let suggestions):
+                return notFoundResponse(flabel,
+                                        suggestions: suggestions,
+                                        hint: "Try a more specific --from label or a coordinate anchor")
             }
-            if fromMatches.count > 1 {
-                return ambiguityResponse(flabel, matches: fromMatches)
-            }
-            guard let scrollView = findScrollableAncestor(fromMatches[0].node) else {
+            guard let scrollView = findScrollableAncestor(anchor.node) else {
                 return Codec.makeError("anchor not inside a scrollable")
             }
             anchorScrollView = scrollView

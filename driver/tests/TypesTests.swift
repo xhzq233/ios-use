@@ -1,8 +1,81 @@
 import XCTest
 
+private final class FakeRawSnapshot: NSObject {
+    @objc let label: String?
+    @objc let identifier: String?
+    @objc let value: String?
+    @objc let placeholderValue: String?
+    @objc let elementType: NSNumber
+    @objc let frame: NSValue
+    @objc let visibleFrame: NSValue
+    @objc let isVisible: NSNumber
+    @objc let isEnabled: NSNumber
+    @objc let isSelected: NSNumber
+    @objc let hasFocus: NSNumber
+    @objc let hasKeyboardFocus: NSNumber
+    @objc let children: [Any]
+    @objc var parent: Any?
+
+    init(
+        label: String? = nil,
+        identifier: String? = nil,
+        value: String? = nil,
+        placeholderValue: String? = nil,
+        elementType: XCUIElement.ElementType = .staticText,
+        frame: CGRect = CGRect(x: 0, y: 0, width: 100, height: 40),
+        isVisible: Bool = true,
+        isEnabled: Bool = true,
+        isSelected: Bool = false,
+        hasFocus: Bool = false,
+        hasKeyboardFocus: Bool = false,
+        children: [FakeRawSnapshot] = []
+    ) {
+        self.label = label
+        self.identifier = identifier
+        self.value = value
+        self.placeholderValue = placeholderValue
+        self.elementType = NSNumber(value: elementType.rawValue)
+        self.frame = NSValue(cgRect: frame)
+        self.visibleFrame = NSValue(cgRect: frame)
+        self.isVisible = NSNumber(value: isVisible)
+        self.isEnabled = NSNumber(value: isEnabled)
+        self.isSelected = NSNumber(value: isSelected)
+        self.hasFocus = NSNumber(value: hasFocus)
+        self.hasKeyboardFocus = NSNumber(value: hasKeyboardFocus)
+        self.children = children
+        super.init()
+        for child in children {
+            child.parent = self
+        }
+    }
+}
+
 // MARK: - TypesTests
 
 final class TypesTests: XCTestCase {
+
+    private func makeElement(
+        label: String? = nil,
+        identifier: String? = nil,
+        value: String? = nil,
+        placeholderValue: String? = nil,
+        type: XCUIElement.ElementType = .staticText
+    ) -> SnapshotElement {
+        let raw = FakeRawSnapshot(
+            label: label,
+            identifier: identifier,
+            value: value,
+            placeholderValue: placeholderValue,
+            elementType: type
+        )
+        let snapshot = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        return SnapshotElement(
+            node: snapshot,
+            traits: snapshotTraits(for: snapshot, disabled: false, invisible: !snapshot.isVisible),
+            disabled: false,
+            invisible: !snapshot.isVisible
+        )
+    }
 
     // MARK: - Command enum
 
@@ -277,5 +350,77 @@ final class TypesTests: XCTestCase {
         let suggestions = fuzzySuggestions(for: "搜索", from: ["设置", "搜索", "搜"])
         XCTAssertTrue(suggestions.contains("搜索"))
         XCTAssertFalse(suggestions.contains("设置"))
+    }
+
+    func testFuzzySuggestions_ChineseTypo() {
+        let suggestions = fuzzySuggestions(for: "天琪", from: ["天气", "日历", "地图"])
+        XCTAssertTrue(suggestions.contains("天气"))
+    }
+
+    func testFuzzySuggestions_WhitespaceDifference() {
+        let suggestions = fuzzySuggestions(for: "编 辑", from: ["编辑", "完成", "取消"])
+        XCTAssertTrue(suggestions.contains("编辑"))
+    }
+
+    func testFuzzySuggestions_CaseAndWhitespaceDifference() {
+        let suggestions = fuzzySuggestions(for: "FAcetime通话", from: ["FaceTime 通话", "电话", "信息"])
+        XCTAssertTrue(suggestions.contains("FaceTime 通话"))
+    }
+
+    func testSearchableTexts_MergesLabelAndValueWithoutDuplicates() {
+        XCTAssertEqual(
+            searchableTexts(label: "搜索或输入网站", value: "搜索或输入网站"),
+            ["搜索或输入网站"]
+        )
+        XCTAssertEqual(
+            searchableTexts(label: "搜索", value: "搜索或输入网站"),
+            ["搜索", "搜索或输入网站"]
+        )
+    }
+
+    func testTextContainsQuery_DefaultsToContainsMatch() {
+        XCTAssertTrue(textContainsQuery("搜索或输入网站", query: "搜索"))
+        XCTAssertTrue(textContainsQuery("Voice Search", query: "Search"))
+        XCTAssertFalse(textContainsQuery("设置", query: "搜索"))
+    }
+
+    func testRawFindInSnapshot_FindsByValueContains() {
+        let element = makeElement(
+            label: "TabBarItemTitle",
+            value: "搜索或输入网站名称",
+            type: .textField
+        )
+        let cs = CleanedSnapshot(
+            root: element.node,
+            appFrame: CGRect(x: 0, y: 0, width: 375, height: 812),
+            rawRoot: element.node,
+            elements: [element],
+            byLabel: [:]
+        )
+
+        switch rawFindInSnapshot("搜索", context: nil, cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.value, "搜索或输入网站名称")
+        default:
+            XCTFail("expected rawFindInSnapshot to find value contains match")
+        }
+    }
+
+    func testRawFindInSnapshot_FallsBackToFuzzyWhenContainsMisses() {
+        let element = makeElement(label: "天气", type: .staticText)
+        let cs = CleanedSnapshot(
+            root: element.node,
+            appFrame: CGRect(x: 0, y: 0, width: 375, height: 812),
+            rawRoot: element.node,
+            elements: [element],
+            byLabel: [:]
+        )
+
+        switch rawFindInSnapshot("天琪", context: nil, cs: cs) {
+        case .fuzzy(let suggestions):
+            XCTAssertTrue(suggestions.contains("天气"))
+        default:
+            XCTFail("expected rawFindInSnapshot to fall back to fuzzy suggestions")
+        }
     }
 }
