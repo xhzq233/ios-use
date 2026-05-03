@@ -77,6 +77,34 @@ final class TypesTests: XCTestCase {
         )
     }
 
+    private func makeCleanedSnapshot(_ elements: [SnapshotElement]) -> CleanedSnapshot {
+        let root = elements.first!.node
+        let searchEntries = elements.map { element in
+            let rawTexts = searchableTexts(for: element.node)
+            return SearchEntry(
+                element: element,
+                rawTexts: rawTexts,
+                normalizedTexts: normalizedSearchableTexts(from: rawTexts)
+            )
+        }
+        let searchCandidates = searchEntries.flatMap { entry in
+            entry.rawTexts.compactMap { text -> SearchCandidate? in
+                let normalized = normalizeSearchText(text)
+                guard !normalized.isEmpty else { return nil }
+                return SearchCandidate(displayText: text, normalizedText: normalized)
+            }
+        }
+        return CleanedSnapshot(
+            root: root,
+            appFrame: CGRect(x: 0, y: 0, width: 375, height: 812),
+            rawRoot: root,
+            elements: elements,
+            byLabel: [:],
+            searchEntries: searchEntries,
+            searchCandidates: searchCandidates
+        )
+    }
+
     // MARK: - Command enum
 
     func testCommandRawValues() {
@@ -334,37 +362,70 @@ final class TypesTests: XCTestCase {
     }
 
     func testFuzzySuggestions_ThresholdApplied() {
-        let candidates = ["Dark Mode", "Auto-Lock", "Display", "Completely Different"]
+        let candidates = [
+            SearchCandidate(displayText: "Dark Mode", normalizedText: normalizeSearchText("Dark Mode")),
+            SearchCandidate(displayText: "Auto-Lock", normalizedText: normalizeSearchText("Auto-Lock")),
+            SearchCandidate(displayText: "Display", normalizedText: normalizeSearchText("Display")),
+            SearchCandidate(displayText: "Completely Different", normalizedText: normalizeSearchText("Completely Different")),
+        ]
         let suggestions = fuzzySuggestions(for: "DarkMode", from: candidates)
         XCTAssertTrue(suggestions.contains("Dark Mode"))
     }
 
     func testFuzzySuggestions_SkipsBlankCandidates() {
-        let candidates = ["", "   ", "天气", "天气预报"]
+        let candidates = [
+            SearchCandidate(displayText: "", normalizedText: normalizeSearchText("")),
+            SearchCandidate(displayText: "   ", normalizedText: normalizeSearchText("   ")),
+            SearchCandidate(displayText: "天气", normalizedText: normalizeSearchText("天气")),
+            SearchCandidate(displayText: "天气预报", normalizedText: normalizeSearchText("天气预报")),
+        ]
         let suggestions = fuzzySuggestions(for: "天气", from: candidates)
         XCTAssertEqual(suggestions.first, "天气")
         XCTAssertFalse(suggestions.contains(""))
     }
 
     func testFuzzySuggestions_UsesStrictThreshold() {
-        let suggestions = fuzzySuggestions(for: "搜索", from: ["设置", "搜索", "搜"])
+        let suggestions = fuzzySuggestions(for: "搜索", from: [
+            SearchCandidate(displayText: "设置", normalizedText: normalizeSearchText("设置")),
+            SearchCandidate(displayText: "搜索", normalizedText: normalizeSearchText("搜索")),
+            SearchCandidate(displayText: "搜", normalizedText: normalizeSearchText("搜")),
+        ])
         XCTAssertTrue(suggestions.contains("搜索"))
         XCTAssertFalse(suggestions.contains("设置"))
     }
 
     func testFuzzySuggestions_ChineseTypo() {
-        let suggestions = fuzzySuggestions(for: "天琪", from: ["天气", "日历", "地图"])
+        let suggestions = fuzzySuggestions(for: "天琪", from: [
+            SearchCandidate(displayText: "天气", normalizedText: normalizeSearchText("天气")),
+            SearchCandidate(displayText: "日历", normalizedText: normalizeSearchText("日历")),
+            SearchCandidate(displayText: "地图", normalizedText: normalizeSearchText("地图")),
+        ])
         XCTAssertTrue(suggestions.contains("天气"))
     }
 
     func testFuzzySuggestions_WhitespaceDifference() {
-        let suggestions = fuzzySuggestions(for: "编 辑", from: ["编辑", "完成", "取消"])
+        let suggestions = fuzzySuggestions(for: "编 辑", from: [
+            SearchCandidate(displayText: "编辑", normalizedText: normalizeSearchText("编辑")),
+            SearchCandidate(displayText: "完成", normalizedText: normalizeSearchText("完成")),
+            SearchCandidate(displayText: "取消", normalizedText: normalizeSearchText("取消")),
+        ])
         XCTAssertTrue(suggestions.contains("编辑"))
     }
 
     func testFuzzySuggestions_CaseAndWhitespaceDifference() {
-        let suggestions = fuzzySuggestions(for: "FAcetime通话", from: ["FaceTime 通话", "电话", "信息"])
+        let suggestions = fuzzySuggestions(for: "FAcetime通话", from: [
+            SearchCandidate(displayText: "FaceTime 通话", normalizedText: normalizeSearchText("FaceTime 通话")),
+            SearchCandidate(displayText: "电话", normalizedText: normalizeSearchText("电话")),
+            SearchCandidate(displayText: "信息", normalizedText: normalizeSearchText("信息")),
+        ])
         XCTAssertTrue(suggestions.contains("FaceTime 通话"))
+    }
+
+    func testNormalizeSearchText_IgnoresWhitespaceCaseAndPunctuation() {
+        XCTAssertEqual(normalizeSearchText(" 编 辑 "), "编辑")
+        XCTAssertEqual(normalizeSearchText("FAcetime通话"), "facetime通话")
+        XCTAssertEqual(normalizeSearchText("FaceTime 通话"), "facetime通话")
+        XCTAssertEqual(normalizeSearchText("Wi-Fi"), "wifi")
     }
 
     func testSearchableTexts_MergesLabelAndValueWithoutDuplicates() {
@@ -378,29 +439,18 @@ final class TypesTests: XCTestCase {
         )
     }
 
-    func testTextContainsQuery_DefaultsToContainsMatch() {
-        XCTAssertTrue(textContainsQuery("搜索或输入网站", query: "搜索"))
-        XCTAssertTrue(textContainsQuery("Voice Search", query: "Search"))
-        XCTAssertFalse(textContainsQuery("设置", query: "搜索"))
-    }
-
     func testRawFindInSnapshot_FindsByValueContains() {
         let element = makeElement(
             label: "TabBarItemTitle",
             value: "搜索或输入网站名称",
             type: .textField
         )
-        let cs = CleanedSnapshot(
-            root: element.node,
-            appFrame: CGRect(x: 0, y: 0, width: 375, height: 812),
-            rawRoot: element.node,
-            elements: [element],
-            byLabel: [:]
-        )
+        let cs = makeCleanedSnapshot([element])
 
         switch rawFindInSnapshot("搜索", context: nil, cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.value, "搜索或输入网站名称")
+            XCTAssertEqual(displayValue(for: found.node), "搜索或输入网站名称")
         default:
             XCTFail("expected rawFindInSnapshot to find value contains match")
         }
@@ -408,19 +458,28 @@ final class TypesTests: XCTestCase {
 
     func testRawFindInSnapshot_FallsBackToFuzzyWhenContainsMisses() {
         let element = makeElement(label: "天气", type: .staticText)
-        let cs = CleanedSnapshot(
-            root: element.node,
-            appFrame: CGRect(x: 0, y: 0, width: 375, height: 812),
-            rawRoot: element.node,
-            elements: [element],
-            byLabel: [:]
-        )
+        let cs = makeCleanedSnapshot([element])
 
         switch rawFindInSnapshot("天琪", context: nil, cs: cs) {
         case .fuzzy(let suggestions):
             XCTAssertTrue(suggestions.contains("天气"))
         default:
             XCTFail("expected rawFindInSnapshot to fall back to fuzzy suggestions")
+        }
+    }
+
+    func testRawFindInSnapshot_FindsByNormalizedContains() {
+        let element = makeElement(
+            label: "FaceTime 通话",
+            type: .button
+        )
+        let cs = makeCleanedSnapshot([element])
+
+        switch rawFindInSnapshot("facetime通话", context: nil, cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "FaceTime 通话")
+        default:
+            XCTFail("expected rawFindInSnapshot to find normalized contains match")
         }
     }
 }
