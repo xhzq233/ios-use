@@ -11,6 +11,7 @@
 		09C4B3D97B043CC6860E459C /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C5893D4869CA679B411E2EB /* Input.swift */; };
 		0A81132682EAB612BCB80752 /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5625CC4FA76A1074D85B72 /* Find.swift */; };
 		0B8A0757755BBD3269FEDB16 /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C5893D4869CA679B411E2EB /* Input.swift */; };
+		10FF1A5588796D3A50089636 /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 7DCB47CBD414CAB63E3D8339 /* AppRegistry.m */; };
 		1F25F7A79990FA0CD630EE7F /* Touch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE7F9D5540A7BEEBEE56011 /* Touch.swift */; };
 		1F5861502A812D7D9EB55BBB /* Types.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105B91384FACB6CE89CAE094 /* Types.swift */; };
 		272A9976F103467F4657B6E5 /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = C30DDE4A557BEE1195B07601 /* Screen.swift */; };
@@ -23,6 +24,7 @@
 		6475390020A12A2D64337AB0 /* CodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91518321D2F9FD0A88888F4B /* CodecTests.swift */; };
 		64CEEFE8331490ABB69EB2C4 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB931EEAEA4747530660336D /* Session.swift */; };
 		6FF5B912EC42527B6B46AD3B /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB704C475CF87FB3FA4E5A3 /* Codec.swift */; };
+		7CBB370FD045173598E28812 /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 7DCB47CBD414CAB63E3D8339 /* AppRegistry.m */; };
 		8249B4D7B69165C5FB3ECA44 /* SnapshotWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E925C4CCC5686AFC81A317D /* SnapshotWalker.swift */; };
 		833B7D32BC28C4B793F5B07A /* Oslog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5AEB07C0272B8BD7106320 /* Oslog.swift */; };
 		8C9F0C5F12143E9B7654A28C /* Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6102508D9985A2AFF4F02A17 /* Server.swift */; };
@@ -61,9 +63,11 @@
 		71CB0154BCF1690C02A5A5B2 /* ScrollMechanicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollMechanicsTests.swift; sourceTree = "<group>"; };
 		7CE7F9D5540A7BEEBEE56011 /* Touch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Touch.swift; sourceTree = "<group>"; };
 		7D29E507C25D83446B90052F /* WaitFor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitFor.swift; sourceTree = "<group>"; };
+		7DCB47CBD414CAB63E3D8339 /* AppRegistry.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppRegistry.m; sourceTree = "<group>"; };
 		91518321D2F9FD0A88888F4B /* CodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecTests.swift; sourceTree = "<group>"; };
 		92C3C66F0FB4FA9564DB1B90 /* Dom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dom.swift; sourceTree = "<group>"; };
 		9C5893D4869CA679B411E2EB /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input.swift; sourceTree = "<group>"; };
+		A538CBB88B89EE4704DC28C3 /* AppRegistry.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppRegistry.h; sourceTree = "<group>"; };
 		AAD151E8331B66DD806D08DE /* XCTestPrivate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = XCTestPrivate.h; sourceTree = "<group>"; };
 		B75E15788AEAF266B04DD88E /* ScrollMechanics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollMechanics.swift; sourceTree = "<group>"; };
 		B9A4838E05B841B74B33EFAE /* XCUIDriver-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "XCUIDriver-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -127,6 +131,8 @@
 		BBA6CD85E14BDEA320E162AE /* Helpers */ = {
 			isa = PBXGroup;
 			children = (
+				A538CBB88B89EE4704DC28C3 /* AppRegistry.h */,
+				7DCB47CBD414CAB63E3D8339 /* AppRegistry.m */,
 				AAD151E8331B66DD806D08DE /* XCTestPrivate.h */,
 				C597A0E448878DD4938F9731 /* XCTestPrivate.m */,
 				B9A4838E05B841B74B33EFAE /* XCUIDriver-Bridging-Header.h */,
@@ -237,6 +243,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				989136E45565148A0D1B32A2 /* App.swift in Sources */,
+				10FF1A5588796D3A50089636 /* AppRegistry.m in Sources */,
 				4AC099FE16B29C0D93487DDD /* Codec.swift in Sources */,
 				A7283A7CD50E6C5EF41A1518 /* Dom.swift in Sources */,
 				BAD502C4BA5BE88EB422F15A /* Find.swift in Sources */,
@@ -262,6 +269,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D38AA613C78C35255E9FC637 /* App.swift in Sources */,
+				7CBB370FD045173598E28812 /* AppRegistry.m in Sources */,
 				6FF5B912EC42527B6B46AD3B /* Codec.swift in Sources */,
 				6475390020A12A2D64337AB0 /* CodecTests.swift in Sources */,
 				62D433253BA8AA4CF7D715FD /* Dom.swift in Sources */,
