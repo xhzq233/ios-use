@@ -57,7 +57,7 @@ final class DriverServer {
 
     func stop() {
         let fd = connectionLock.sync {
-            running = false
+            _running = false
             let fd = socketFD
             socketFD = -1
             return fd
@@ -207,10 +207,14 @@ final class DriverServer {
         var dispatchError: Error?
         let cancelLock = NSLock()
         var cancelled = false
+        var started = false
 
         DispatchQueue.main.async {
             cancelLock.lock()
             let shouldSkip = cancelled
+            if !shouldSkip {
+                started = true
+            }
             cancelLock.unlock()
             if shouldSkip {
                 sem.signal()
@@ -228,11 +232,21 @@ final class DriverServer {
         let waitResult = sem.wait(timeout: .now() + .seconds(45))
         if waitResult == .timedOut {
             cancelLock.lock()
-            cancelled = true
+            let commandStarted = started
+            if !commandStarted {
+                cancelled = true
+            }
             cancelLock.unlock()
-            let timeoutResponse = Codec.makeError("Command timed out after 45s (XCTest main thread may be blocked or crashed)")
-            let encoded = try Codec.encodeResponse(timeoutResponse)
-            return PreparedResponse(response: timeoutResponse, encoded: encoded)
+            if !commandStarted {
+                let timeoutResponse = Codec.makeError("Command timed out after 45s (XCTest main thread may be blocked or crashed)")
+                let encoded = try Codec.encodeResponse(timeoutResponse)
+                return PreparedResponse(response: timeoutResponse, encoded: encoded)
+            }
+
+            // The command has already started on the XCTest main thread, so
+            // returning a timeout here would leave the client observing a
+            // failure while the original command later mutates driver state.
+            sem.wait()
         }
 
         if let error = dispatchError {
