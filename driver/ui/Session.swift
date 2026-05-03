@@ -17,11 +17,13 @@ final class Session {
             } else {
                 app = XCUIApplication(bundleIdentifier: bundleId)
             }
-            _app = app
-            _bundleId = bundleId
 
             let state = app.state
             NSLog("[session] app state=\(state.rawValue) (0=unknown,1=notRunning,2=suspended,3=background,4=foreground)")
+            guard state != .unknown else {
+                NSLog("[session] ERROR: app not found, state=unknown bundleId=\(bundleId)")
+                throw DriverError.appNotFound(bundleId)
+            }
             if state != .notRunning && state != .unknown {
                 NSLog("[session] terminating app for cold start...")
                 app.terminate()
@@ -29,12 +31,17 @@ final class Session {
             }
 
             // Explicit bundleId means cold-start the target app: terminate if
-            // needed, then activate so the new session is not constrained by
-            // the previously foregrounded app.
-            NSLog("[session] activating app for cold start...")
-            app.activate()
-            NSLog("[session] activate() returned")
-            try waitForForeground(app)
+            // needed, then relaunch via LaunchServices so the new session is
+            // not constrained by the previously foregrounded app.
+            NSLog("[session] launching app via LaunchServices...")
+            guard OpenApplicationWithBundleId(bundleId) else {
+                NSLog("[session] ERROR: LaunchServices could not open bundleId=\(bundleId)")
+                throw DriverError.appNotFound(bundleId)
+            }
+            NSLog("[session] openApplicationWithBundleID() returned")
+            try waitForForeground(app, bundleId: bundleId)
+            _app = app
+            _bundleId = bundleId
             NSLog("[session] session created, final state=\(app.state.rawValue)")
             invalidateSnapshot()
         } else {
@@ -46,7 +53,7 @@ final class Session {
         }
     }
 
-    private func waitForForeground(_ app: XCUIApplication) throws {
+    private func waitForForeground(_ app: XCUIApplication, bundleId: String? = nil) throws {
         NSLog("[session] waiting for app to enter foreground...")
         let deadline = CFAbsoluteTimeGetCurrent() + 10
         var state = app.state
@@ -61,6 +68,9 @@ final class Session {
         }
         guard state == .runningForeground else {
             NSLog("[session] ERROR: app failed to enter foreground, state=\(state.rawValue)")
+            if state == .unknown, let bundleId, !bundleId.isEmpty {
+                throw DriverError.appNotFound(bundleId)
+            }
             throw DriverError.appNotFound("app failed to enter foreground (state=\(state.rawValue))")
         }
         NSLog("[session] launch completed, state=\(state.rawValue)")
@@ -91,8 +101,12 @@ final class Session {
 
     func activate() throws {
         guard let app = _app else { return }
+        let bundleId = _bundleId
+        if app.state == .unknown {
+            throw DriverError.appNotFound(bundleId ?? "unknown")
+        }
         app.activate()
-        try waitForForeground(app)
+        try waitForForeground(app, bundleId: bundleId)
         syncBundleId(from: app)
         invalidateSnapshot()
     }
