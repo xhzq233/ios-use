@@ -3,6 +3,8 @@ name: Build & Release
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths: ["driver/**"]
 
 permissions:
   contents: write
@@ -12,6 +14,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install xcodegen
         run: brew install xcodegen
@@ -36,7 +40,23 @@ jobs:
       - name: Build driver IPA
         run: mkdir -p assets && bash scripts/build_host_app.sh
 
+      - name: Resolve release tag
+        id: resolve_tag
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+            if [ -z "$LATEST" ]; then
+              echo "No existing tag found, skipping release upload."
+              exit 0
+            fi
+            echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload to Release
+        if: steps.resolve_tag.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.resolve_tag.outputs.tag }}
           files: assets/driver.ipa
