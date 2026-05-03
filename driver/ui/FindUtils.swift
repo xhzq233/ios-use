@@ -28,6 +28,10 @@ func rawFindInSnapshot(_ label: String, context: LabelContext?, cs: CleanedSnaps
         return .notFound(suggestions: [])
     }
 
+    let normalizedTextsByNode = Dictionary(uniqueKeysWithValues: cs.searchEntries.map {
+        (nodeIdentity($0.element.node), $0.normalizedTexts)
+    })
+
     // 1. Unified normalized contains match across label + value.
     var matches = matchingElements(in: cs.searchEntries) { entry in
         entry.normalizedTexts.contains { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }
@@ -35,7 +39,7 @@ func rawFindInSnapshot(_ label: String, context: LabelContext?, cs: CleanedSnaps
 
     // 2. Fuzzy fallback when contains-match is empty.
     if matches.isEmpty {
-        let suggestions = fuzzySuggestions(for: normalizedQuery, from: cs.searchCandidates)
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizedQuery, from: cs.searchCandidates)
         if !suggestions.isEmpty { return .fuzzy(suggestions: suggestions) }
         return .notFound(suggestions: [])
     }
@@ -48,7 +52,7 @@ func rawFindInSnapshot(_ label: String, context: LabelContext?, cs: CleanedSnaps
         matches = matches.filter { hasAncestor($0.node, withLabel: al) }
     }
 
-    matches = finalizeFindMatches(matches, query: query)
+    matches = finalizeFindMatches(matches, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode)
 
     if matches.isEmpty { return .notFound(suggestions: []) }
     if matches.count > 1 { return .ambiguous(matches: matches) }
@@ -64,8 +68,14 @@ func rawFind(_ label: String, context: LabelContext?) -> FindResult {
     return rawFindInSnapshot(label, context: context, cs: cs)
 }
 
-func finalizeFindMatches(_ matches: [SnapshotElement], query: String) -> [SnapshotElement] {
-    preferVisibleMatches(dedupeNestedMatches(matches, query: query))
+func finalizeFindMatches(
+    _ matches: [SnapshotElement],
+    normalizedQuery: String,
+    normalizedTextsByNode: [ObjectIdentifier: [String]]
+) -> [SnapshotElement] {
+    preferVisibleMatches(
+        dedupeNestedMatches(matches, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode)
+    )
 }
 
 private func preferVisibleMatches(_ matches: [SnapshotElement]) -> [SnapshotElement] {
@@ -73,7 +83,11 @@ private func preferVisibleMatches(_ matches: [SnapshotElement]) -> [SnapshotElem
     return visible.isEmpty ? matches : visible
 }
 
-private func dedupeNestedMatches(_ matches: [SnapshotElement], query: String) -> [SnapshotElement] {
+private func dedupeNestedMatches(
+    _ matches: [SnapshotElement],
+    normalizedQuery: String,
+    normalizedTextsByNode: [ObjectIdentifier: [String]]
+) -> [SnapshotElement] {
     guard matches.count > 1 else { return matches }
     var keep = Array(repeating: true, count: matches.count)
     for i in 0..<matches.count {
@@ -81,7 +95,7 @@ private func dedupeNestedMatches(_ matches: [SnapshotElement], query: String) ->
         for j in 0..<matches.count where i != j && keep[j] {
             let lhs = matches[i]
             let rhs = matches[j]
-            guard nestedDuplicatePair(lhs, rhs, query: query) else { continue }
+            guard nestedDuplicatePair(lhs, rhs, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode) else { continue }
             if shouldPreferAncestor(lhs.node, over: rhs.node) {
                 keep[j] = false
             } else if shouldPreferAncestor(rhs.node, over: lhs.node) {
@@ -94,12 +108,19 @@ private func dedupeNestedMatches(_ matches: [SnapshotElement], query: String) ->
     return deduped.isEmpty ? matches : deduped
 }
 
-private func nestedDuplicatePair(_ lhs: SnapshotElement, _ rhs: SnapshotElement, query: String) -> Bool {
-    let normalizedQuery = normalizeSearchText(query)
-    guard matchesQueryContent(lhs.node, normalizedQuery: normalizedQuery),
-          matchesQueryContent(rhs.node, normalizedQuery: normalizedQuery) else {
+private func nestedDuplicatePair(
+    _ lhs: SnapshotElement,
+    _ rhs: SnapshotElement,
+    normalizedQuery: String,
+    normalizedTextsByNode: [ObjectIdentifier: [String]]
+) -> Bool {
+    guard matchesQueryContent(lhs, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode),
+          matchesQueryContent(rhs, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode) else {
         return false
     }
+    // These two directions are mutually exclusive in practice because the
+    // snapshot hierarchy is a tree, but we keep the symmetric check to make
+    // the "nested duplicate" intent explicit at the call site.
     return isAncestor(lhs.node, of: rhs.node) || isAncestor(rhs.node, of: lhs.node)
 }
 
@@ -148,10 +169,14 @@ private func matchingElements(
     entries.compactMap { predicate($0) ? $0.element : nil }
 }
 
-private func matchesQueryContent(_ node: SafeSnapshot, normalizedQuery: String) -> Bool {
+private func matchesQueryContent(
+    _ element: SnapshotElement,
+    normalizedQuery: String,
+    normalizedTextsByNode: [ObjectIdentifier: [String]]
+) -> Bool {
     guard !normalizedQuery.isEmpty else { return false }
-    return normalizedSearchableTexts(from: searchableTexts(for: node))
-        .contains { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }
+    guard let normalizedTexts = normalizedTextsByNode[nodeIdentity(element.node)] else { return false }
+    return normalizedTexts.contains { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }
 }
 
 private func isAncestor(_ ancestor: SafeSnapshot, of node: SafeSnapshot) -> Bool {
@@ -211,8 +236,7 @@ func levenshtein(_ a: String, _ b: String) -> Int {
 /// search text. Returned values preserve original display text.
 /// Time complexity: O(c * q * t + c log c), where c is candidate count,
 /// q is normalized query length, and t is normalized candidate length.
-func fuzzySuggestions(for query: String, from candidates: [SearchCandidate]) -> [String] {
-    let normalizedQuery = normalizeSearchText(query)
+func fuzzySuggestions(forNormalizedQuery normalizedQuery: String, from candidates: [SearchCandidate]) -> [String] {
     let threshold = fuzzyThreshold(for: normalizedQuery.count)
     if threshold <= 0 { return [] }
     return candidates
@@ -227,6 +251,10 @@ func fuzzySuggestions(for query: String, from candidates: [SearchCandidate]) -> 
         }
         .prefix(3)
         .map { $0.0.displayText }
+}
+
+private func nodeIdentity(_ node: SafeSnapshot) -> ObjectIdentifier {
+    ObjectIdentifier(node.raw as AnyObject)
 }
 
 private func fuzzyThreshold(for length: Int) -> Int {

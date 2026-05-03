@@ -3,7 +3,7 @@ import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import { getDeviceSigningConfig } from './config.js';
 import { DriverClient } from './driver-client/index.js';
-import { formatDeviceLabel, resolveDevice } from './device.js';
+import { formatDeviceLabel, resolveDefaultDevice, resolveDevice } from './device.js';
 import { logger } from './utils/logger.js';
 import {
   DRIVER_LOG_FILE,
@@ -276,6 +276,8 @@ export async function withAutoSession<T>(opts: WithAutoSessionOpts, fn: (driver:
   const requestedBundleId = opts.bundleId;
   const requestedUdid = opts.udid;
   const verbose = opts.verbose || false;
+  const fallbackUdid = requestedUdid || info?.udid;
+  const canRecreateDeviceSession = !requestedBundleId && !info?.bundleId && !!info?.sessionId && !!fallbackUdid;
 
   if (info?.sessionId) {
     const udidMatch = !requestedUdid || requestedUdid === info.udid;
@@ -307,13 +309,17 @@ export async function withAutoSession<T>(opts: WithAutoSessionOpts, fn: (driver:
     clearSessionInfo();
   }
 
-  if (!opts.bundleId) {
+  if (!opts.bundleId && !canRecreateDeviceSession) {
     throw new Error('No active session found. Please pass --bundle-id or run `ios-use session start`.');
   }
 
-  const device = resolveDevice(opts.udid);
+  const device = fallbackUdid ? resolveDevice(fallbackUdid) : await resolveDefaultDevice();
   logger.info(`${opts.udid ? 'Using requested device' : 'Using default device'}: ${formatDeviceLabel(device)}`);
-  logger.info(`Creating session for bundleId=${opts.bundleId}`);
+  if (opts.bundleId) {
+    logger.info(`Creating session for bundleId=${opts.bundleId}`);
+  } else {
+    logger.info('Recreating device session');
+  }
 
   const client = await createClient({
     port: DEFAULT_PORT,
@@ -366,7 +372,7 @@ export async function startSession(opts: StartSessionOpts): Promise<void> {
   const bundleId = opts.bundleId;
   const verbose = opts.verbose || false;
 
-  const device = resolveDevice(opts.udid);
+  const device = opts.udid ? resolveDevice(opts.udid) : await resolveDefaultDevice();
   const isSimulator = device.type === 'simulator';
   const existingInfo = readSessionInfo();
   const hasReachableDriver = !!(existingInfo && existingInfo.udid === device.udid && await isDriverAlive(existingInfo, { verbose }));
@@ -509,7 +515,7 @@ export async function stopSession(): Promise<void> {
   let deviceType = info?.deviceType;
   if (!udid) {
     try {
-      const device = resolveDevice(undefined);
+      const device = await resolveDefaultDevice();
       udid = device.udid;
       deviceType = device.type;
     } catch {}
