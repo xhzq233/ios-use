@@ -11,6 +11,8 @@ struct CleanedSnapshot {
     let rawRoot: SafeSnapshot
     let elements: [SnapshotElement]
     let byLabel: [String: [SnapshotElement]]
+    let searchEntries: [SearchEntry]
+    let searchCandidates: [SearchCandidate]
 }
 
 struct SnapshotElement {
@@ -20,6 +22,17 @@ struct SnapshotElement {
     let invisible: Bool
 
     var isVisible: Bool { !invisible }
+}
+
+struct SearchEntry {
+    let element: SnapshotElement
+    let rawTexts: [String]
+    let normalizedTexts: [String]
+}
+
+struct SearchCandidate {
+    let displayText: String
+    let normalizedText: String
 }
 
 func displayName(for node: SafeSnapshot) -> String? {
@@ -91,12 +104,17 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
               into: &elements,
               byLabel: &byLabel)
 
+    let searchEntries = buildSearchEntries(from: elements)
+    let searchCandidates = buildSearchCandidates(from: searchEntries)
+
     return CleanedSnapshot(
         root: raw,
         appFrame: app.frame,
         rawRoot: raw,
         elements: elements,
-        byLabel: byLabel
+        byLabel: byLabel,
+        searchEntries: searchEntries,
+        searchCandidates: searchCandidates
     )
 }
 
@@ -111,6 +129,31 @@ private func rebuildLabelIndex(from elements: [SnapshotElement]) -> [String: [Sn
         }
     }
     return byLabel
+}
+
+private func buildSearchEntries(from elements: [SnapshotElement]) -> [SearchEntry] {
+    elements.map { element in
+        let rawTexts = searchableTexts(for: element.node)
+        return SearchEntry(
+            element: element,
+            rawTexts: rawTexts,
+            normalizedTexts: normalizedSearchableTexts(from: rawTexts)
+        )
+    }
+}
+
+private func buildSearchCandidates(from entries: [SearchEntry]) -> [SearchCandidate] {
+    var seen: Set<String> = []
+    var candidates: [SearchCandidate] = []
+    for entry in entries {
+        for text in entry.rawTexts {
+            let normalized = normalizeSearchText(text)
+            guard !normalized.isEmpty, !seen.contains(normalized) else { continue }
+            seen.insert(normalized)
+            candidates.append(SearchCandidate(displayText: text, normalizedText: normalized))
+        }
+    }
+    return candidates
 }
 
 func isSpringBoardApp(_ app: XCUIApplication) -> Bool {
