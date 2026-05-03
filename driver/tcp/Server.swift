@@ -163,9 +163,9 @@ final class DriverServer {
             }
             sem.signal()
         }
-        let waitResult = sem.wait(timeout: .now() + .seconds(60))
+        let waitResult = sem.wait(timeout: .now() + .seconds(45))
         if waitResult == .timedOut {
-            let err = Codec.makeError("screenshot timed out after 60s")
+            let err = Codec.makeError("screenshot timed out after 45s")
             try Codec.writeResponse(fd, resp: err)
             return
         }
@@ -225,12 +225,12 @@ final class DriverServer {
             }
             sem.signal()
         }
-        let waitResult = sem.wait(timeout: .now() + .seconds(60))
+        let waitResult = sem.wait(timeout: .now() + .seconds(45))
         if waitResult == .timedOut {
             cancelLock.lock()
             cancelled = true
             cancelLock.unlock()
-            let timeoutResponse = Codec.makeError("Command timed out after 60s (XCTest main thread may be blocked or crashed)")
+            let timeoutResponse = Codec.makeError("Command timed out after 45s (XCTest main thread may be blocked or crashed)")
             let encoded = try Codec.encodeResponse(timeoutResponse)
             return PreparedResponse(response: timeoutResponse, encoded: encoded)
         }

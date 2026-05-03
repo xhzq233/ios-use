@@ -139,7 +139,7 @@ export function listUsbDeviceUdids(): Promise<string[]> {
           resolve([]);
         }
       });
-      socket.write(encodeMessage({ MessageType: 'ListDevices', ProgName: 'ios-use', ClientVersionString: '1.0', kLibUSBMuxVersion: 3 }, 0));
+      socket.write(encodeMessage({ MessageType: 'ListDevices', ProgName: 'ios-use', ClientVersionString: '1.0' }, 0));
     });
   });
 }
