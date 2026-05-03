@@ -27,6 +27,7 @@
 		6FF5B912EC42527B6B46AD3B /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB704C475CF87FB3FA4E5A3 /* Codec.swift */; };
 		7CBB370FD045173598E28812 /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 7DCB47CBD414CAB63E3D8339 /* AppRegistry.m */; };
 		8249B4D7B69165C5FB3ECA44 /* SnapshotWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E925C4CCC5686AFC81A317D /* SnapshotWalker.swift */; };
+		825299B72AAF60F96A30FE2D /* SessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0099D5A19261AA3731195B6D /* SessionTests.swift */; };
 		833B7D32BC28C4B793F5B07A /* Oslog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A5AEB07C0272B8BD7106320 /* Oslog.swift */; };
 		8C9F0C5F12143E9B7654A28C /* Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6102508D9985A2AFF4F02A17 /* Server.swift */; };
 		8E3342790DA967983085EF3B /* XCTestPrivate.m in Sources */ = {isa = PBXBuildFile; fileRef = C597A0E448878DD4938F9731 /* XCTestPrivate.m */; };
@@ -51,6 +52,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0099D5A19261AA3731195B6D /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		0A5AEB07C0272B8BD7106320 /* Oslog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Oslog.swift; sourceTree = "<group>"; };
 		0CB6BFAC843D8FC6D6D7D2D7 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		105B91384FACB6CE89CAE094 /* Types.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Types.swift; sourceTree = "<group>"; };
@@ -167,6 +169,7 @@
 				91518321D2F9FD0A88888F4B /* CodecTests.swift */,
 				71CB0154BCF1690C02A5A5B2 /* ScrollMechanicsTests.swift */,
 				54B33F825F8C78D5B83E6CE4 /* ServerTests.swift */,
+				0099D5A19261AA3731195B6D /* SessionTests.swift */,
 				43EAE8E5B020737A9368F0B7 /* TypesTests.swift */,
 			);
 			path = tests;
@@ -286,6 +289,7 @@
 				8C9F0C5F12143E9B7654A28C /* Server.swift in Sources */,
 				48304C363377398C378A65DC /* ServerTests.swift in Sources */,
 				DAC28D76DD2A0B53C1F15F20 /* Session.swift in Sources */,
+				825299B72AAF60F96A30FE2D /* SessionTests.swift in Sources */,
 				8249B4D7B69165C5FB3ECA44 /* SnapshotWalker.swift in Sources */,
 				927807D0B035A2779BE09A54 /* Swipe.swift in Sources */,
 				CD1E6C9D9845E67C99B12522 /* Touch.swift in Sources */,

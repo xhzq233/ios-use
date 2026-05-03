@@ -1,24 +1,38 @@
 import XCTest
 
+enum ActiveAppResolutionStrategy: Equatable {
+    case useCachedForegroundApp
+    case detect(bundleIdHint: String?)
+}
+
+func activeAppResolutionStrategy(isDeviceSession: Bool,
+                                 cachedAppState: XCUIApplication.State?,
+                                 bundleIdHint: String?) -> ActiveAppResolutionStrategy {
+    if isDeviceSession {
+        return .detect(bundleIdHint: nil)
+    }
+    if cachedAppState == .runningForeground {
+        return .useCachedForegroundApp
+    }
+    return .detect(bundleIdHint: bundleIdHint)
+}
+
 final class Session {
     static let shared = Session()
 
     private var _app: XCUIApplication?
     private var _bundleId: String?
+    private var _isDeviceSession = false
 
     var bundleId: String? { _bundleId }
 
     func create(bundleId: String?) throws {
         if let bundleId = bundleId {
+            _isDeviceSession = false
             NSLog("[session] create called with bundleId=\(bundleId)")
-            let app: XCUIApplication
-            if let existing = _app, _bundleId == bundleId {
-                app = existing
-            } else {
-                app = XCUIApplication(bundleIdentifier: bundleId)
-            }
+            let probeApp = (_bundleId == bundleId ? _app : nil) ?? XCUIApplication(bundleIdentifier: bundleId)
 
-            let state = app.state
+            let state = probeApp.state
             NSLog("[session] app state=\(state.rawValue) (0=unknown,1=notRunning,2=suspended,3=background,4=foreground)")
             guard state != .unknown else {
                 NSLog("[session] ERROR: app not found, state=unknown bundleId=\(bundleId)")
@@ -26,13 +40,14 @@ final class Session {
             }
             if state != .notRunning && state != .unknown {
                 NSLog("[session] terminating app for cold start...")
-                app.terminate()
-                try waitForTermination(app)
+                probeApp.terminate()
+                try waitForTermination(probeApp)
             }
 
             // Explicit bundleId means cold-start the target app: terminate if
             // needed, then relaunch via LaunchServices so the new session is
             // not constrained by the previously foregrounded app.
+            let app = probeApp
             NSLog("[session] launching app via LaunchServices...")
             guard OpenApplicationWithBundleId(bundleId) else {
                 NSLog("[session] ERROR: LaunchServices could not open bundleId=\(bundleId)")
@@ -46,6 +61,7 @@ final class Session {
             invalidateSnapshot()
         } else {
             // Device session: do not bind to any specific app
+            _isDeviceSession = true
             NSLog("[session] device session created (no app bound)")
             _app = nil
             _bundleId = nil
@@ -93,6 +109,7 @@ final class Session {
 
     func destroy() {
         NSLog("[session] destroy called")
+        _isDeviceSession = false
         _app = nil
         _bundleId = nil
         // doc 4.3 — drop snapshot cache so next session starts fresh.
@@ -122,11 +139,17 @@ final class Session {
     /// Time complexity: O(1) on cache hit; O(a) on fallback, where a is the
     /// number of active applications reported by XCTest.
     var activeApp: XCUIApplication? {
-        if let app = _app, app.state == .runningForeground {
+        let strategy = activeAppResolutionStrategy(
+            isDeviceSession: _isDeviceSession,
+            cachedAppState: _app?.state,
+            bundleIdHint: _bundleId
+        )
+        if strategy == .useCachedForegroundApp, let app = _app {
             syncBundleId(from: app)
             return app
         }
-        if let detected = GetActiveApplicationWithDefaultBundleId(_bundleId) {
+        guard case .detect(let bundleIdHint) = strategy else { return nil }
+        if let detected = GetActiveApplicationWithDefaultBundleId(bundleIdHint) {
             _app = detected
             syncBundleId(from: detected)
             return detected

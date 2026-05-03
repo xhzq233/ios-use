@@ -20,8 +20,19 @@ struct SnapshotElement {
     let traits: [String]           // [type, ...flags]
     let disabled: Bool
     let invisible: Bool
+    let childCount: Int
 
     var isVisible: Bool { !invisible }
+}
+
+private struct CleanSubtree {
+    let records: [SnapshotElement]
+}
+
+private enum CleanBuildResult {
+    case skip
+    case keep(CleanSubtree)
+    case promote([CleanSubtree])
 }
 
 struct SearchEntry {
@@ -96,13 +107,8 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
     guard let app = Session.shared.activeApp else { return nil }
     guard let raw = SafeSnapshot(ofApp: app) else { return nil }
 
-    var elements: [SnapshotElement] = []
-    var byLabel: [String: [SnapshotElement]] = [:]
-
-    cleanTree(raw,
-              parentDisabled: false,
-              into: &elements,
-              byLabel: &byLabel)
+    let elements = buildCleanElements(from: raw)
+    let byLabel = rebuildLabelIndex(from: elements)
 
     let searchEntries = buildSearchEntries(from: elements)
     let searchCandidates = buildSearchCandidates(from: searchEntries)
@@ -116,6 +122,13 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
         searchEntries: searchEntries,
         searchCandidates: searchCandidates
     )
+}
+
+// Build the single flat preorder stream consumed by find/search/indexing and
+// later re-parsed by `dom`. `cleanTree` keeps promote boundaries in
+// `CleanBuildResult`; this step only linearizes those already-built subtrees.
+func buildCleanElements(from root: SafeSnapshot) -> [SnapshotElement] {
+    flattenCleanBuildResult(cleanTree(root, parentDisabled: false))
 }
 
 private func rebuildLabelIndex(from elements: [SnapshotElement]) -> [String: [SnapshotElement]] {
@@ -172,25 +185,20 @@ func invalidateSnapshot() {
 /// Apply clean-tree rules during a recursive DFS. Children are processed
 /// first so we can observe (and merge) sibling equivalents.
 ///
-/// Rules (doc 2.4):
+/// Rules (doc 2.5):
 ///   1. SKIP_TYPES promote (Window, empty Other)
 ///   2. disabled propagation via parentDisabled
 ///   3. empty-leaf trim (no label, no children)
 ///   4. single-child same-type merge (same type + rect + label)
 ///   5. content-less container promote (no label, has children) — folded into rule 1
-///   6. sibling same-type merge (same type + label + rect adjacent)
-/// Time complexity: O(n + s) over the whole tree, where n is the number of
-/// visited nodes and s is the total sibling comparisons performed by
-/// `mergeSiblings` across all levels.
+/// Time complexity: O(n) over the whole tree, where n is the number of
+/// visited nodes.
 private func cleanTree(
     _ node: SafeSnapshot,
-    parentDisabled: Bool,
-    into elements: inout [SnapshotElement],
-    byLabel: inout [String: [SnapshotElement]]
-) {
+    parentDisabled: Bool
+) -> CleanBuildResult {
     let rawType = UInt(node.elementType)
     let type = XCUIElement.ElementType(rawValue: rawType) ?? .other
-    let typeName = elementTypeName(type)
     let disabled = parentDisabled || !node.isEnabled
     let invisible = !node.isVisible
 
@@ -198,28 +206,38 @@ private func cleanTree(
     // child count). Rule 5 is a subset of Rule 1 (content-less container).
     //  M7 fix: don't hide Other with <=1 child — always promote when label nil.
     if type == .window || (type == .other && displayName(for: node) == nil) {
+        var promoted: [CleanSubtree] = []
         for child in node.children {
-            cleanTree(child, parentDisabled: disabled, into: &elements, byLabel: &byLabel)
+            switch cleanTree(child, parentDisabled: disabled) {
+            case .skip:
+                continue
+            case .keep(let subtree):
+                promoted.append(subtree)
+            case .promote(let subtrees):
+                promoted.append(contentsOf: subtrees)
+            }
         }
-        return
+        return promoted.isEmpty ? .skip : .promote(promoted)
     }
 
     // Collect this node's kept descendants separately so we can apply
-    // sibling-merge (rule 6) and single-child merge (rule 4) locally.
-    var childBucket: [SnapshotElement] = []
-    var childByLabel: [String: [SnapshotElement]] = [:]
+    // single-child merge (rule 4) locally.
+    var childSubtrees: [CleanSubtree] = []
 
     for child in node.children {
-        cleanTree(child, parentDisabled: disabled, into: &childBucket, byLabel: &childByLabel)
+        switch cleanTree(child, parentDisabled: disabled) {
+        case .skip:
+            continue
+        case .keep(let subtree):
+            childSubtrees.append(subtree)
+        case .promote(let subtrees):
+            childSubtrees.append(contentsOf: subtrees)
+        }
     }
 
-    // Rule 6: sibling same-type merge.
-    // Adjacent siblings with same elementType + same label + ~same rect → dedupe.
-    childBucket = mergeSiblings(childBucket)
-
     // Rule 3: empty leaf trim.
-    if displayName(for: node) == nil && childBucket.isEmpty {
-        return
+    if displayName(for: node) == nil && childSubtrees.isEmpty {
+        return .skip
     }
 
     // SpringBoard / desktop icons already carry the semantic node we want.
@@ -228,68 +246,63 @@ private func cleanTree(
     if type == .icon {
         let frame = node.frame
         if frame.width > 0, frame.height > 0 {
-            childBucket = []
-            childByLabel.removeAll()
+            childSubtrees = []
         }
     }
 
     // Build traits: [typeName, disabled?, invisible?, selected?, focused?]
     let traits = snapshotTraits(for: node, disabled: disabled, invisible: invisible)
-    let selfElem = SnapshotElement(node: node, traits: traits, disabled: disabled, invisible: invisible)
+    var subtree: [SnapshotElement] = [
+        SnapshotElement(
+            node: node,
+            traits: traits,
+            disabled: disabled,
+            invisible: invisible,
+            childCount: 0
+        )
+    ]
 
     // Rule 4: single-child same-type merge — if this node has exactly one kept
     // child and that child is same type + same rect + same label, keep only
     // the parent and discard the child duplicate.
-    var effective = childBucket
-    if effective.count == 1 {
-        let c = effective[0]
-        if sameElementType(c.node, node)
-            && rectApproxEqual(c.node.frame, node.frame)
-            && displayName(for: c.node) == displayName(for: node) {
-            effective = []  // drop duplicate child
+    var effectiveSubtrees = childSubtrees
+    if effectiveSubtrees.count == 1, let childRoot = effectiveSubtrees[0].records.first {
+        if sameElementType(childRoot.node, node)
+            && rectApproxEqual(childRoot.node.frame, node.frame)
+            && displayName(for: childRoot.node) == displayName(for: node) {
+            effectiveSubtrees = []
         }
     }
 
-    elements.append(selfElem)
-    if let label = node.label, !label.isEmpty {
-        byLabel[label, default: []].append(selfElem)
-    }
-    if let name = displayName(for: node), !name.isEmpty, name != node.label {
-        byLabel[name, default: []].append(selfElem)
+    subtree[0] = SnapshotElement(
+        node: node,
+        traits: traits,
+        disabled: disabled,
+        invisible: invisible,
+        childCount: effectiveSubtrees.count
+    )
+    for childSubtree in effectiveSubtrees {
+        subtree.append(contentsOf: childSubtree.records)
     }
 
-    // Append surviving children after self, then merge into outer by-label map.
-    elements.append(contentsOf: effective)
-    for (k, vs) in childByLabel {
-        // Rule 4 drops child; don't re-index the dropped one.
-        let keep = vs.filter { v in effective.contains(where: { $0.node === v.node }) }
-        if !keep.isEmpty {
-            byLabel[k, default: []].append(contentsOf: keep)
-        }
-    }
-}
-
-// MARK: - sibling merge (rule 6)
-
-/// Deduplicates adjacent siblings after each subtree has already been cleaned.
-/// Time complexity: O(k), where k is the number of siblings in this bucket.
-private func mergeSiblings(_ nodes: [SnapshotElement]) -> [SnapshotElement] {
-    if nodes.count <= 1 { return nodes }
-    var out: [SnapshotElement] = [nodes[0]]
-    for i in 1..<nodes.count {
-        let prev = out.last!
-        let curr = nodes[i]
-        if sameElementType(prev.node, curr.node)
-            && displayName(for: prev.node) == displayName(for: curr.node)
-            && rectApproxEqual(prev.node.frame, curr.node.frame) {
-            continue  // merge: drop curr
-        }
-        out.append(curr)
-    }
-    return out
+    return .keep(CleanSubtree(records: subtree))
 }
 
 // MARK: - helpers
+
+private func flattenCleanBuildResult(_ result: CleanBuildResult) -> [SnapshotElement] {
+    switch result {
+    case .skip:
+        return []
+    case .keep(let subtree):
+        return subtree.records
+    case .promote(let subtrees):
+        // `records` already contains each subtree's full preorder encoding.
+        // `flatMap(\.records)` only concatenates sibling subtrees into one
+        // flat stream; it does not recurse or rebuild tree structure here.
+        return subtrees.flatMap(\.records)
+    }
+}
 
 private func sameElementType(_ a: SafeSnapshot, _ b: SafeSnapshot) -> Bool {
     a.elementType == b.elementType

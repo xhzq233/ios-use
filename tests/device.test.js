@@ -35,9 +35,32 @@ describe('device helpers', () => {
     });
   });
 
-  test('getDefaultDevice returns first device', () => {
+  test('getDefaultDevice returns the first USB real device', () => {
     const devices = parseDeviceOutput(sampleOutput);
-    expect(getDefaultDevice(devices).udid).toBe('00008101-AAAAAAAAAAAAAA01');
+    expect(getDefaultDevice(devices, {
+      usbUdids: ['00008101-AAAAAAAAAAAAAA01'],
+    }).udid).toBe('00008101-AAAAAAAAAAAAAA01');
+  });
+
+  test('getDefaultDevice prefers the first USB real device over simulators', () => {
+    const devices = [
+      { name: 'iPhone 16', version: '26.0.1', udid: '8D3C62FA-EFD2-4990-A619-12B97BA5BBC5', type: 'simulator' },
+      { name: 'WiFi Phone', version: '18.3.2', udid: '00008101-AAAAAAAAAAAAAA01', type: 'real' },
+      { name: 'USB Phone', version: '18.4', udid: '00008101-BBBBBBBBBBBBBB02', type: 'real' },
+    ];
+    expect(getDefaultDevice(devices, {
+      usbUdids: ['00008101-BBBBBBBBBBBBBB02'],
+    }).udid).toBe('00008101-BBBBBBBBBBBBBB02');
+  });
+
+  test('getDefaultDevice throws when no USB real device matches', () => {
+    const devices = [
+      { name: 'Archived Phone', version: '18.3.2', udid: '00008101-AAAAAAAAAAAAAA01', type: 'real' },
+      { name: 'iPhone 16', version: '26.0.1', udid: '8D3C62FA-EFD2-4990-A619-12B97BA5BBC5', type: 'simulator' },
+    ];
+    expect(() => getDefaultDevice(devices, {
+      usbUdids: ['00008101-NOT-PRESENT'],
+    })).toThrow('No USB-connected iOS device found');
   });
 
   test('resolveDevice finds requested udid', () => {

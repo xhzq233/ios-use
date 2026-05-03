@@ -246,7 +246,14 @@ final class DriverServer {
             // The command has already started on the XCTest main thread, so
             // returning a timeout here would leave the client observing a
             // failure while the original command later mutates driver state.
-            sem.wait()
+            let completionWaitResult = sem.wait(timeout: .now() + .seconds(120))
+            if completionWaitResult == .timedOut {
+                let timeoutResponse = Codec.makeError(
+                    "Command started on the XCTest main thread but did not finish within 120s; driver state may be inconsistent"
+                )
+                let encoded = try Codec.encodeResponse(timeoutResponse)
+                return PreparedResponse(response: timeoutResponse, encoded: encoded)
+            }
         }
 
         if let error = dispatchError {
