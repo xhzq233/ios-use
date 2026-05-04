@@ -50,6 +50,11 @@ enum InputCommands {
     }
 }
 
+enum InputPreparationPhase {
+    case initialLookup
+    case afterTapAttempt
+}
+
 private func hasKeyboardFocus(_ snapshot: SafeSnapshot) -> Bool {
     if snapshot.hasKeyboardFocus { return true }
     return snapshot.allDescendants.contains { $0.hasKeyboardFocus }
@@ -79,12 +84,21 @@ private func preferredInputSnapshot(around node: SafeSnapshot) -> SafeSnapshot {
     return node
 }
 
-private func canProceedWithTyping(_ snapshot: SafeSnapshot, app: XCUIApplication) -> Bool {
-    hasKeyboardFocus(snapshot) || keyboardVisible(in: app)
+func canProceedWithTyping(targetHasKeyboardFocus: Bool, keyboardVisible: Bool, phase: InputPreparationPhase) -> Bool {
+    if targetHasKeyboardFocus { return true }
+    return phase == .afterTapAttempt && keyboardVisible
+}
+
+private func canProceedWithTyping(_ snapshot: SafeSnapshot, app: XCUIApplication, phase: InputPreparationPhase) -> Bool {
+    canProceedWithTyping(
+        targetHasKeyboardFocus: hasKeyboardFocus(snapshot),
+        keyboardVisible: keyboardVisible(in: app),
+        phase: phase
+    )
 }
 
 private func prepareForInput(_ target: SafeSnapshot, fallback: SafeSnapshot, app: XCUIApplication) -> Bool {
-    if canProceedWithTyping(target, app: app) {
+    if canProceedWithTyping(target, app: app, phase: .initialLookup) {
         return true
     }
 
@@ -94,17 +108,22 @@ private func prepareForInput(_ target: SafeSnapshot, fallback: SafeSnapshot, app
         Thread.sleep(forTimeInterval: 0.2)
         invalidateSnapshot()
         if let refreshed = refreshedInputSnapshot(matching: target),
-           canProceedWithTyping(refreshed, app: app) {
+           canProceedWithTyping(refreshed, app: app, phase: .afterTapAttempt) {
             return true
         }
         if !SnapshotMatchesElement(candidate.raw, target.raw),
            let refreshedFallback = refreshedInputSnapshot(matching: candidate),
-           canProceedWithTyping(refreshedFallback, app: app) {
+           canProceedWithTyping(refreshedFallback, app: app, phase: .afterTapAttempt) {
+            return true
+        }
+        if canProceedWithTyping(targetHasKeyboardFocus: false,
+                                keyboardVisible: keyboardVisible(in: app),
+                                phase: .afterTapAttempt) {
             return true
         }
     }
     invalidateSnapshot()
-    return keyboardVisible(in: app)
+    return false
 }
 
 private func tapSnapshotCenter(_ snapshot: SafeSnapshot) -> Bool {

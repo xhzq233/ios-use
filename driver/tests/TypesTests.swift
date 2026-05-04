@@ -229,6 +229,22 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(a.content, "alice")
     }
 
+    func testCanProceedWithTyping_InitialLookupRequiresTargetFocus() {
+        XCTAssertFalse(canProceedWithTyping(
+            targetHasKeyboardFocus: false,
+            keyboardVisible: true,
+            phase: .initialLookup
+        ))
+    }
+
+    func testCanProceedWithTyping_AfterTapAllowsKeyboardVisibleFallback() {
+        XCTAssertTrue(canProceedWithTyping(
+            targetHasKeyboardFocus: false,
+            keyboardVisible: true,
+            phase: .afterTapAttempt
+        ))
+    }
+
     func testSwipeArgs_AllFields() throws {
         let json = """
         {"to":"Developer","from":"Bluetooth","distance":100,"dir":"forth",\
