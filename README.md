@@ -6,6 +6,8 @@
 
 
 
+
+
 ## Features
 
 - **Zero external dependencies**: No Appium server, no WDA, no iproxy, no ideviceinstaller — only macOS system tools (`xcrun`, `usbmuxd`) and a free Apple ID.
