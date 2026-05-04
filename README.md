@@ -4,6 +4,8 @@
 
 `ios-use` connects directly to a lightweight XCTest driver instead of going through an HTTP bridge. The result is a small CLI focused on fast session reuse, direct device control, and a simple flow format.
 
+https://github.com/xhzq233/ios-use/releases/download/v1.0.0/demo.mp4
+
 ## Features
 
 - **Zero external dependencies**: No Appium server, no WDA, no iproxy, no ideviceinstaller — only macOS system tools (`xcrun`, `usbmuxd`) and a free Apple ID.
