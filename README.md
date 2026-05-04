@@ -4,7 +4,9 @@
 
 `ios-use` connects directly to a lightweight XCTest driver instead of going through an HTTP bridge. The result is a small CLI focused on fast session reuse, direct device control, and a simple flow format.
 
-https://github.com/xhzq233/ios-use/releases/download/v1.0.0/demo.mp4
+
+https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
+
 
 ## Features
 
