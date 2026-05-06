@@ -57,6 +57,12 @@ export interface FindArgs {
 export interface TapArgs {
   label: LabelOrPoint;
   context?: LabelContext;
+  offset?: {
+    x?: number;
+    y?: number;
+    xRatio?: number;
+    yRatio?: number;
+  };
 }
 
 export interface TapResult {
@@ -96,7 +102,6 @@ export interface SwipeResult {
 export interface WaitForArgs {
   label: string;
   timeout?: number;
-  interval?: number;
   context?: LabelContext;
 }
 
@@ -113,6 +118,7 @@ export interface OslogArgs {
   name?: string;
   clear?: boolean;
   bundleId?: string;
+  timeout?: number;
 }
 
 export type OslogResult =

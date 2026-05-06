@@ -116,6 +116,15 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(args.label.asPoint, [100, 200])
     }
 
+    func testRequestFrame_Tap_WithOffset() throws {
+        let json = #"{"c":"tap","args":{"label":"Slider","offset":{"xRatio":0.8,"yRatio":0.5}}}"#
+        let req = try JSONDecoder().decode(RequestFrame.self, from: json.data(using: .utf8)!)
+        let args = try decodeArgs(req.args, as: TapArgs.self)
+        XCTAssertEqual(args.label.asLabel, "Slider")
+        XCTAssertEqual(args.offset?.xRatio, 0.8)
+        XCTAssertEqual(args.offset?.yRatio, 0.5)
+    }
+
     func testRequestFrame_Swipe_WithDir() throws {
         let json = #"{"c":"swipe","args":{"dir":"forth","distance":300}}"#
         let req = try JSONDecoder().decode(RequestFrame.self, from: json.data(using: .utf8)!)
@@ -126,7 +135,7 @@ final class CodecTests: XCTestCase {
     }
 
     func testRequestFrame_Oslog_Flags() throws {
-        let json = #"{"c":"oslog","args":{"pattern":"ERROR","flags":"i","name":"err","clear":true,"bundleId":"com.apple.Preferences"}}"#
+        let json = #"{"c":"oslog","args":{"pattern":"ERROR","flags":"i","name":"err","clear":true,"bundleId":"com.apple.Preferences","timeout":2}}"#
         let req = try JSONDecoder().decode(RequestFrame.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(req.c, .oslog)
         let args = try decodeArgs(req.args, as: OslogArgs.self)
@@ -135,6 +144,7 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(args.name, "err")
         XCTAssertEqual(args.clear, true)
         XCTAssertEqual(args.bundleId, "com.apple.Preferences")
+        XCTAssertEqual(args.timeout, 2)
     }
 
     func testRequestFrame_WaitFor_Defaults() throws {
@@ -144,7 +154,7 @@ final class CodecTests: XCTestCase {
         let args = try decodeArgs(req.args, as: WaitForArgs.self)
         XCTAssertEqual(args.label, "Loading")
         XCTAssertNil(args.timeout)
-        XCTAssertNil(args.interval)
+        XCTAssertNil(args.context)
     }
 
     // MARK: - maxFrameSize

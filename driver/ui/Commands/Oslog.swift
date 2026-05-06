@@ -4,6 +4,7 @@ import OSLog
 // MARK: - Oslog command (doc 6.4)
 
 enum OslogCommands {
+    private static let pollIntervalMs = 300
 
     /// Cumulative log buffer. Populated on each oslog call from OSLogStore and
     /// preserved across calls so a subsequent `clear` can report how many
@@ -31,41 +32,32 @@ enum OslogCommands {
             return Codec.makeOK(["cleared": n])
         }
 
-        // Refresh buffer from OSLogStore.
-        if #available(iOS 15.0, *) {
-            refreshBuffer(bundleId: targetBundleId)
-        } else {
+        guard #available(iOS 15.0, *) else {
             return Codec.makeError("oslog requires iOS 15.0+")
         }
 
-        bufferLock.lock()
-        let snapshot = buffer
-        bufferLock.unlock()
-        let total = snapshot.count
-
-        // Determine matches.
-        let matchedLines: [String]
-        if let pattern = args?.pattern, !pattern.isEmpty {
-            var options: NSRegularExpression.Options = []
-            if let flags = args?.flags {
-                if flags.contains("i") { options.insert(.caseInsensitive) }
-                if flags.contains("s") { options.insert(.dotMatchesLineSeparators) }
-                if flags.contains("m") { options.insert(.anchorsMatchLines) }
-            }
-            let regex: NSRegularExpression
-            do {
-                regex = try NSRegularExpression(pattern: pattern, options: options)
-            } catch {
-                return Codec.makeError("invalid regex: \(error.localizedDescription)")
-            }
-            matchedLines = snapshot.filter { line in
-                let range = NSRange(line.startIndex..<line.endIndex, in: line)
-                return regex.firstMatch(in: line, options: [], range: range) != nil
-            }
-        } else {
-            matchedLines = snapshot
+        let matcher: ((String) -> Bool)?
+        do {
+            matcher = try makeMatcher(pattern: args?.pattern, flags: args?.flags)
+        } catch {
+            return Codec.makeError("invalid regex: \(error.localizedDescription)")
         }
 
+        let timeoutSec = max(args?.timeout ?? 0, 0)
+        let deadline = Date().addingTimeInterval(timeoutSec)
+        var snapshot: [String] = []
+        var matchedLines: [String] = []
+        repeat {
+            refreshBuffer(bundleId: targetBundleId)
+            snapshot = bufferLock.withLock { buffer }
+            matchedLines = filterLines(snapshot, matcher: matcher)
+            if timeoutSec <= 0 || matchedLines.count > 0 || Date() >= deadline {
+                break
+            }
+            usleep(UInt32(Self.pollIntervalMs * 1000))
+        } while true
+
+        let total = snapshot.count
         return Codec.makeOK([
             "matched": matchedLines.count,
             "total": total,
@@ -127,6 +119,27 @@ enum OslogCommands {
         return entry.subsystem.isEmpty && entry.category.isEmpty && entry.process.isEmpty
     }
 
+}
+
+func makeMatcher(pattern: String?, flags: String?) throws -> ((String) -> Bool)? {
+    guard let pattern, !pattern.isEmpty else { return nil }
+
+    var options: NSRegularExpression.Options = []
+    if let flags {
+        if flags.contains("i") { options.insert(.caseInsensitive) }
+        if flags.contains("s") { options.insert(.dotMatchesLineSeparators) }
+        if flags.contains("m") { options.insert(.anchorsMatchLines) }
+    }
+    let regex = try NSRegularExpression(pattern: pattern, options: options)
+    return { line in
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        return regex.firstMatch(in: line, options: [], range: range) != nil
+    }
+}
+
+func filterLines(_ lines: [String], matcher: ((String) -> Bool)?) -> [String] {
+    guard let matcher else { return lines }
+    return lines.filter(matcher)
 }
 
 private extension NSLock {

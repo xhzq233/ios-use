@@ -167,6 +167,10 @@ describe('cli', () => {
     expectHelp(['tap', '--help'], [
       '--label',
       '"x,y"',
+      '--offset-x',
+      '--offset-y',
+      '--offset-x-ratio',
+      '--offset-y-ratio',
       '--context.ancestor-type',
       '--context.ancestorType',
       '--context.ancestor-label',
@@ -174,7 +178,7 @@ describe('cli', () => {
       '--udid',
       '--bundle-id',
       '--verbose',
-    ], ['--offset-x', '--x ']);
+    ], ['--x ']);
     expectHelp(['longpress', '--help'], [
       '--label',
       '--duration',
@@ -203,7 +207,6 @@ describe('cli', () => {
       'Wait until an element becomes visible',
       '--label',
       '--timeout',
-      '--interval',
       '--context.ancestor-type',
       '--context.ancestorType',
       '--context.ancestor-label',
@@ -211,7 +214,7 @@ describe('cli', () => {
       '--udid',
       '--bundle-id',
       '--verbose',
-    ]);
+    ], ['--interval']);
     expectHelp(['oslog', '--help'], [
       'Fetch iOS system logs from the device',
       '--pattern',
@@ -248,6 +251,10 @@ describe('cli', () => {
     expectAcceptedWithoutSession(['find', '通用', '--context.ancestorType', 'Table']);
     expectAcceptedWithoutSession(['tap', '--label', '通用', '--context.ancestor-label', '设置']);
     expectAcceptedWithoutSession(['tap', '--label', '通用', '--context.ancestorLabel', '设置']);
+    expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x', '12', '--offset-y', '5']);
+    expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x-ratio', '0.8', '--offset-y-ratio', '0.5']);
+    expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x-ratio', '0.8']);
+    expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-y', '5']);
     expectAcceptedWithoutSession(['input', '--label', '通用', '--content', 'abc', '--context.ancestor-type', 'Table']);
     expectAcceptedWithoutSession(['input', '--label', '通用', '--content', 'abc', '--context.ancestorLabel', '设置']);
     expectAcceptedWithoutSession(['swipe', '--to', '通用', '--context.ancestorType', 'Table']);
@@ -260,7 +267,6 @@ describe('cli', () => {
     expectNumericParseError(['config', '--port', 'abc', '--list'], 'Invalid integer: "abc"');
     expectNumericParseError(['swipe', '--distance', 'abc'], 'Invalid number: "abc"');
     expectNumericParseError(['waitFor', '--label', 'foo', '--timeout', 'abc'], 'Invalid number: "abc"');
-    expectNumericParseError(['waitFor', '--label', 'foo', '--interval', 'abc'], 'Invalid integer: "abc"');
     expectNumericParseError(['longpress', '--label', 'foo', '--duration', 'abc'], 'Invalid integer: "abc"');
     expectNumericParseError(['nslog', '--port', 'abc'], 'Invalid integer: "abc"');
   });
