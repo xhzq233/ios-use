@@ -51,6 +51,7 @@ steps:
 Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
 
 - `runFlow`
+- `returnIf`
 
 **以下 action 不存在**，不要在 flow 中使用：
 
@@ -176,6 +177,38 @@ steps:
     xRatio: 0.8
 ```
 
+### 5.6 `returnIf`
+
+- `returnIf` 是 Flow 编排 action，不走 driver
+- 用途是“当前条件满足时，立即结束当前 flow”
+- 字段固定为：
+  - `value`：模板解析后的任意值
+  - `is`：只允许 `true` / `false` / `null`
+- 当 `value === is` 时，立即结束当前 flow
+- 当 `value !== is` 时，继续执行后续 step
+- `returnIf` 不支持 `outputs`
+
+```yaml
+- action: dom
+  candidates:
+    - 取消
+    - 关闭
+  outputs: popupDom
+
+- action: returnIf
+  value: ${popupDom.firstMatch}
+  is: null
+
+- action: tap
+  label: ${popupDom.firstMatch.label}
+```
+
+适用场景：
+
+- 公共 subflow 里做 no-op 返回
+- 弹窗候选未命中时直接结束当前 flow
+- 某个前置条件已经满足时提前返回，避免重复动作
+
 ## 6. 常用 action 写法
 
 ### 6.1 `waitFor`
@@ -272,6 +305,10 @@ steps:
     - 关闭
     - 知道了
   outputs: popupDom
+
+- action: returnIf
+  value: ${popupDom.firstMatch}
+  is: null
 
 - action: tap
   label: ${popupDom.firstMatch.label}
