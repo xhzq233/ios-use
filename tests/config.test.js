@@ -86,11 +86,6 @@ describe('config helpers', () => {
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
     process.env.HOME = originalHome;
-
-    const altsignBin = path.resolve(process.cwd(), 'altsign-cli', 'altsign-cli');
-    if (fs.existsSync(altsignBin)) {
-      fs.unlinkSync(altsignBin);
-    }
   });
 
   test('saveDeviceSigningConfig persists per-device config', () => {
@@ -126,7 +121,7 @@ describe('config helpers', () => {
   });
 
   test('configureDeviceSigning works without apple-id when altsign-cli has cached session', async () => {
-    const altsignDir = path.resolve(process.cwd(), 'altsign-cli');
+    const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
     const altsignBin = path.join(altsignDir, 'altsign-cli');
     if (!fs.existsSync(altsignBin)) {
       fs.mkdirSync(altsignDir, { recursive: true });
@@ -173,7 +168,7 @@ describe('config helpers', () => {
   });
 
   test('configureDeviceSigning signs with apple-id and installs driver', async () => {
-    const altsignDir = path.resolve(process.cwd(), 'altsign-cli');
+    const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
     const altsignBin = path.join(altsignDir, 'altsign-cli');
     if (!fs.existsSync(altsignBin)) {
       fs.mkdirSync(altsignDir, { recursive: true });
@@ -231,7 +226,7 @@ describe('config helpers', () => {
   });
 
   test('configureDeviceSigning uses dynamic bundle ID from cached apple id', async () => {
-    const altsignDir = path.resolve(process.cwd(), 'altsign-cli');
+    const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
     const altsignBin = path.join(altsignDir, 'altsign-cli');
     if (!fs.existsSync(altsignBin)) {
       fs.mkdirSync(altsignDir, { recursive: true });
