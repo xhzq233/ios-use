@@ -54,6 +54,7 @@ export interface FlowStep {
     | 'longpress'
     | 'dom'
     | 'find'
+    | 'returnIf'
     | 'runFlow'
     | 'screenshot'
     | 'waitFor'
@@ -79,6 +80,10 @@ export interface FlowStep {
   // runFlow / vars
   file?: string;
   vars?: Record<string, unknown>;
+
+  // returnIf
+  value?: unknown;
+  is?: boolean | null;
 
   // longPress
   duration?: number;

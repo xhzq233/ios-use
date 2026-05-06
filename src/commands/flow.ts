@@ -137,6 +137,10 @@ function assertNoRunFlowCycle(flowStack: string[], childPath: string): void {
   throw new Error(`runFlow cycle detected: ${cycleChain.join(' -> ')}`);
 }
 
+function formatReturnIfTarget(target: boolean | null): string {
+  return target === null ? 'null' : String(target);
+}
+
 async function executeFlowSteps(
   driver: Driver,
   flow: FlowFile,
@@ -161,6 +165,21 @@ async function executeFlowSteps(
     logger.info(`Step ${i + 1}/${flow.steps.length}: ${label}`);
 
     try {
+      if (step.action === 'returnIf') {
+        if (!Object.prototype.hasOwnProperty.call(stepRaw, 'value')) {
+          throw new Error('returnIf requires "value"');
+        }
+        if (step.is !== true && step.is !== false && step.is !== null) {
+          throw new Error('returnIf requires "is" to be true, false, or null');
+        }
+        if (step.value === step.is) {
+          logger.info(`returnIf matched is=${formatReturnIfTarget(step.is)}, returning current flow`);
+          ensureNotAborted();
+          return collectFlowOutputs(flow, flowVars);
+        }
+        continue;
+      }
+
       if (step.action === 'runFlow') {
         const file = step.file;
         if (typeof file !== 'string' || !file.trim()) {
