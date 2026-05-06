@@ -53,6 +53,7 @@ function handleAction<TArgs extends unknown[]>(action: (...args: TArgs) => Promi
 
 type ActionOpts = { udid?: string; bundleId?: string; verbose?: boolean };
 type LabelContext = { ancestorType?: string; ancestorLabel?: string };
+type TapOffset = { x?: number; y?: number; xRatio?: number; yRatio?: number };
 
 function extractContext(opts: Record<string, unknown>): LabelContext | undefined {
   const nested = (opts.context && typeof opts.context === 'object') ? opts.context as Record<string, unknown> : undefined;
@@ -66,6 +67,22 @@ function extractContext(opts: Record<string, unknown>): LabelContext | undefined
     ?? (opts['context.ancestor-label'] as string | undefined);
   if (!ancestorType && !ancestorLabel) return undefined;
   return { ancestorType, ancestorLabel };
+}
+
+function extractTapOffset(opts: Record<string, unknown>): TapOffset | undefined {
+  const offsetX = opts['offsetX'] as number | undefined;
+  const offsetY = opts['offsetY'] as number | undefined;
+  const offsetXRatio = opts['offsetXRatio'] as number | undefined;
+  const offsetYRatio = opts['offsetYRatio'] as number | undefined;
+  if (offsetX === undefined && offsetY === undefined && offsetXRatio === undefined && offsetYRatio === undefined) {
+    return undefined;
+  }
+  return {
+    x: offsetX,
+    y: offsetY,
+    xRatio: offsetXRatio,
+    yRatio: offsetYRatio,
+  };
 }
 
 function addSessionOptions(command: Command): Command {
@@ -195,12 +212,27 @@ addSessionOptions(
   program.command('tap')
     .description('Tap on screen by label or coordinate ("x,y")')
     .requiredOption('--label <target>', 'Element label or "x,y" coordinate')
+    .option('--offset-x <px>', 'Tap x offset from the target element top-left', parseIntStrict)
+    .option('--offset-y <px>', 'Tap y offset from the target element top-left', parseIntStrict)
+    .option('--offset-x-ratio <ratio>', 'Tap x ratio from the target element top-left', parseFloatStrict)
+    .option('--offset-y-ratio <ratio>', 'Tap y ratio from the target element top-left', parseFloatStrict)
     .option('--context.ancestor-type <type>', 'Disambiguate by ancestor type (e.g. Table, Cell)')
     .option('--context.ancestorType <type>', 'Disambiguate by ancestor type (doc spelling)')
     .option('--context.ancestor-label <label>', 'Disambiguate by ancestor label')
     .option('--context.ancestorLabel <label>', 'Disambiguate by ancestor label (doc spelling)'),
-).action(handleAction(async (opts: ActionOpts & { label: string; context?: LabelContext }) => {
-  await tapAction({ ...opts, context: extractContext(opts as Record<string, unknown>) });
+).action(handleAction(async (opts: ActionOpts & {
+  label: string;
+  context?: LabelContext;
+  offsetX?: number;
+  offsetY?: number;
+  offsetXRatio?: number;
+  offsetYRatio?: number;
+}) => {
+  await tapAction({
+    ...opts,
+    context: extractContext(opts as Record<string, unknown>),
+    offset: extractTapOffset(opts as Record<string, unknown>),
+  });
 }));
 
 addSessionOptions(
@@ -257,12 +289,11 @@ addSessionOptions(
     .description('Wait until an element becomes visible')
     .requiredOption('--label <text>', 'Element label to wait for')
     .option('--timeout <seconds>', 'Timeout in seconds', parseFloatStrict)
-    .option('--interval <ms>', 'Poll interval in milliseconds', parseIntStrict)
     .option('--context.ancestor-type <type>', 'Disambiguate by ancestor type')
     .option('--context.ancestorType <type>', 'Disambiguate by ancestor type (doc spelling)')
     .option('--context.ancestor-label <label>', 'Disambiguate by ancestor label')
     .option('--context.ancestorLabel <label>', 'Disambiguate by ancestor label (doc spelling)'),
-).action(handleAction(async (opts: ActionOpts & { label: string; timeout?: number; interval?: number; context?: LabelContext }) => {
+).action(handleAction(async (opts: ActionOpts & { label: string; timeout?: number; context?: LabelContext }) => {
   await waitForAction({ ...opts, context: extractContext(opts as Record<string, unknown>) });
 }));
 
@@ -271,9 +302,10 @@ addSessionOptions(
     .description('Fetch iOS system logs from the device')
     .option('--pattern <pattern>', 'Regex pattern to filter logs')
     .option('--flags <flags>', 'Regex flags')
+    .option('--timeout <seconds>', 'Timeout in seconds', parseFloatStrict)
     .option('--name <name>', 'Output filename prefix')
     .option('--clear', 'Clear log buffer and return cleared count'),
-).action(handleAction(async (opts: ActionOpts & { pattern?: string; flags?: string; name?: string; clear?: boolean; bundleId?: string }) => {
+).action(handleAction(async (opts: ActionOpts & { pattern?: string; flags?: string; timeout?: number; name?: string; clear?: boolean; bundleId?: string }) => {
   await oslogAction(opts);
 }));
 

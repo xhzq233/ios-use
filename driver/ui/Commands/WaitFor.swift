@@ -3,18 +3,16 @@ import XCTest
 // MARK: - WaitFor (doc 6.5)
 
 enum WaitForCommands {
+    private static let pollIntervalMs = 300
+
     /// doc 6.5 — poll rawFind until target label is visible or timeout.
     static func waitFor(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
         let args = try decodeArgs(rawArgs, as: WaitForArgs.self)
         _ = try Session.shared.ensureActive()
 
         let timeout = args.timeout ?? 10.0
-        let intervalMs = args.interval ?? 500
         guard timeout > 0 else {
             return Codec.makeError("waitFor: timeout must be > 0")
-        }
-        guard intervalMs > 0 else {
-            return Codec.makeError("waitFor: interval must be > 0")
         }
         let t0 = CFAbsoluteTimeGetCurrent()
 
@@ -49,7 +47,7 @@ enum WaitForCommands {
                 return Codec.makeError("waitFor '\(args.label)' timed out after \(timeout)s")
             }
             shouldUseFreshSnapshot = true
-            usleep(UInt32(intervalMs * 1000))
+            usleep(UInt32(pollIntervalMs * 1000))
         }
     }
 }

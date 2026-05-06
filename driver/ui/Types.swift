@@ -97,6 +97,14 @@ struct OslogArgs: Codable {
     let name: String?
     let clear: Bool?
     let bundleId: String?
+    let timeout: Double?
+}
+
+struct TapOffset: Codable {
+    let x: Double?
+    let y: Double?
+    let xRatio: Double?
+    let yRatio: Double?
 }
 
 struct DomArgs: Codable {
@@ -111,6 +119,7 @@ struct FindArgs: Codable {
 struct TapArgs: Codable {
     let label: StringOrPoint
     let context: LabelContext?
+    let offset: TapOffset?
 }
 
 struct LongPressArgs: Codable {
@@ -138,7 +147,6 @@ struct SwipeArgs: Codable {
 struct WaitForArgs: Codable {
     let label: String
     let timeout: Double?
-    let interval: Int?
     let context: LabelContext?
 }
 
