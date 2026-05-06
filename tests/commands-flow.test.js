@@ -96,6 +96,42 @@ steps:
     expect(taps).toEqual(['AI 光影']);
   });
 
+  test('runFlow caller vars override child default vars', async () => {
+    const dir = makeTempDir('ios-use-flow-runflow-override-');
+    const childPath = path.join(dir, 'child.yaml');
+    const parentPath = path.join(dir, 'parent.yaml');
+    const taps = [];
+
+    fs.writeFileSync(childPath, `
+name: child
+vars:
+  targetLabel: 默认值
+steps:
+  - action: tap
+    label: \${vars.targetLabel}
+`);
+
+    fs.writeFileSync(parentPath, `
+name: parent
+steps:
+  - action: runFlow
+    file: ./child.yaml
+    vars:
+      targetLabel: 调用方覆盖值
+`);
+
+    const driver = createDriver({
+      tap: async (target) => {
+        taps.push(target);
+        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
+      },
+    });
+
+    await runFlowFile(driver, parentPath, {});
+
+    expect(taps).toEqual(['调用方覆盖值']);
+  });
+
   test('derives dom candidates at flow layer and respects candidate priority', async () => {
     const dir = makeTempDir('ios-use-flow-dom-');
     const flowPath = path.join(dir, 'flow.yaml');
