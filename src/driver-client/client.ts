@@ -62,8 +62,8 @@ abstract class BaseRpcClient {
     return resp.data as T;
   }
 
-  async dom(opts?: { raw?: boolean }): Promise<DomResponse> {
-    return await this.send(DRIVER_COMMANDS.DOM, opts?.raw ? { raw: true } : undefined);
+  async dom(opts?: { raw?: boolean; fresh?: boolean }): Promise<DomResponse> {
+    return await this.send(DRIVER_COMMANDS.DOM, omitUndefined({ raw: opts?.raw || undefined, fresh: opts?.fresh || undefined }));
   }
 
   async find(args: FindArgs): Promise<FindResult> {

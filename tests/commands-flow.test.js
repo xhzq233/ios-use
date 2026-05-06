@@ -263,6 +263,117 @@ steps:
     await expect(runFlowFile(createDriver(), flowPath, {})).rejects.toThrow('returnIf requires "is" to be true, false, or null');
   });
 
+  // ── sleep ──
+
+  test('sleep waits for the specified duration in a flow', async () => {
+    const dir = makeTempDir('ios-use-flow-sleep-');
+    const flowPath = path.join(dir, 'flow.yaml');
+    const taps = [];
+
+    fs.writeFileSync(flowPath, `
+name: sleep-test
+steps:
+  - action: sleep
+    ms: 50
+  - action: tap
+    label: after-sleep
+`);
+
+    const driver = createDriver({
+      tap: async (target) => {
+        taps.push(target);
+        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
+      },
+    });
+
+    const t0 = Date.now();
+    await runFlowFile(driver, flowPath, {});
+    const elapsed = Date.now() - t0;
+
+    expect(taps).toEqual(['after-sleep']);
+    expect(elapsed).toBeGreaterThanOrEqual(40);
+  });
+
+  test('sleep errors when ms is missing or invalid', async () => {
+    const dir = makeTempDir('ios-use-flow-sleep-invalid-');
+    const flowPath = path.join(dir, 'flow.yaml');
+
+    fs.writeFileSync(flowPath, `
+name: sleep-invalid
+steps:
+  - action: sleep
+`);
+
+    await expect(runFlowFile(createDriver(), flowPath, {})).rejects.toThrow('sleep requires "ms"');
+  });
+
+  // ── dom fresh ──
+
+  test('dom passes fresh flag to driver', async () => {
+    const domCalls = [];
+    const driver = createDriver({
+      dom: async (opts) => {
+        domCalls.push(opts);
+        return { app: 'Demo', window: [390, 844], elements: [] };
+      },
+    });
+
+    await executeStep(driver, { action: 'dom', fresh: true }, {});
+
+    expect(domCalls).toHaveLength(1);
+    expect(domCalls[0]).toMatchObject({ fresh: true });
+  });
+
+  test('dom defaults fresh to false when not specified', async () => {
+    const domCalls = [];
+    const driver = createDriver({
+      dom: async (opts) => {
+        domCalls.push(opts);
+        return { app: 'Demo', window: [390, 844], elements: [] };
+      },
+    });
+
+    await executeStep(driver, { action: 'dom' }, {});
+
+    expect(domCalls).toHaveLength(1);
+    expect(domCalls[0]).toMatchObject({ fresh: false });
+  });
+
+  test('dom fresh in flow passes fresh=true to driver', async () => {
+    const dir = makeTempDir('ios-use-flow-dom-fresh-');
+    const flowPath = path.join(dir, 'flow.yaml');
+    const domCalls = [];
+
+    const driver = createDriver({
+      dom: async (opts) => {
+        domCalls.push(opts);
+        return { app: 'Demo', window: [390, 844], elements: [
+          { tr: ['Window'], c: [
+            { tr: ['Button'], l: '取消', r: [10, 10, 50, 20] },
+          ] },
+        ] };
+      },
+    });
+
+    fs.writeFileSync(flowPath, `
+name: fresh-test
+steps:
+  - action: dom
+    outputs: dom1
+  - action: sleep
+    ms: 10
+  - action: dom
+    fresh: true
+    outputs: dom2
+`);
+
+    await runFlowFile(driver, flowPath, {});
+
+    expect(domCalls).toHaveLength(2);
+    expect(domCalls[0]).toMatchObject({ fresh: false });
+    expect(domCalls[1]).toMatchObject({ fresh: true });
+  });
+
   test('passes tap offset x/y through to driver', async () => {
     const taps = [];
     const driver = createDriver({
