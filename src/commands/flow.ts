@@ -98,6 +98,9 @@ function resolveVars(rawVars: Record<string, unknown> | undefined, inheritedVars
   if (!rawVars) return resolvedVars;
 
   for (const [key, rawValue] of Object.entries(rawVars)) {
+    if (Object.prototype.hasOwnProperty.call(inheritedVars, key)) {
+      continue;
+    }
     resolvedVars[key] = resolveTemplates(rawValue, resolvedVars);
   }
   return resolvedVars;
@@ -139,6 +142,10 @@ function assertNoRunFlowCycle(flowStack: string[], childPath: string): void {
 
 function formatReturnIfTarget(target: boolean | null): string {
   return target === null ? 'null' : String(target);
+}
+
+function syncSharedFlowState(target: FlowContext, source: FlowContext): void {
+  target.nsloggerServer = source.nsloggerServer ?? null;
 }
 
 async function executeFlowSteps(
@@ -193,8 +200,9 @@ async function executeFlowSteps(
           : {};
         const childOutputs = await executeFlowSteps(driver, childFlow, childPath, flowContext, {
           ...flowVars,
-          ...childVars,
+          ...resolveTemplates(childVars, flowVars),
         }, nextFlowStack);
+        syncSharedFlowState(context, flowContext);
         ensureNotAborted();
         for (const outputName of normalizeOutputNames(step.outputs, 'runFlow outputs', true)) {
           if (!Object.prototype.hasOwnProperty.call(childOutputs, outputName)) {
@@ -206,6 +214,7 @@ async function executeFlowSteps(
       }
 
       const actionOutput = await executeStep(driver, step, flowContext, i + 1);
+      syncSharedFlowState(context, flowContext);
       const outputNames = normalizeOutputNames(step.outputs, `${step.action} outputs`, false);
       if (outputNames.length === 0) {
         continue;
@@ -221,6 +230,7 @@ async function executeFlowSteps(
     }
   }
 
+  syncSharedFlowState(context, flowContext);
   ensureNotAborted();
   return collectFlowOutputs(flow, flowVars);
 }
@@ -302,7 +312,6 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
       process.removeListener('SIGINT', sigintHandler);
       process.removeListener('SIGTERM', sigintHandler);
     }
-    driver?.disconnect();
     if (context.nsloggerServer) {
       try {
         await context.nsloggerServer.stop();
@@ -311,5 +320,6 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
         logger.warn(`NSLogger stop failed: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    driver?.disconnect();
   }
 }
