@@ -109,6 +109,7 @@ struct TapOffset: Codable {
 
 struct DomArgs: Codable {
     let raw: Bool?
+    let fresh: Bool?
 }
 
 struct FindArgs: Codable {

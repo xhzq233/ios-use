@@ -3,7 +3,7 @@ import path from 'path';
 import yaml from 'js-yaml';
 import { logger } from '../utils/logger';
 import { startSession, createDriverFromSession } from '../session';
-import { executeStep, setVerbose, resetAbort, setAbort, isAborted, normalizeNeedLogConfig, startNSLoggerServer } from './actions';
+import { executeStep, sleep, setVerbose, resetAbort, setAbort, isAborted, normalizeNeedLogConfig, startNSLoggerServer } from './actions';
 import { LOCK_FILE, isProcessAlive } from './nslog';
 import type { Driver, FlowContext, FlowStep } from './types';
 
@@ -184,6 +184,16 @@ async function executeFlowSteps(
           ensureNotAborted();
           return collectFlowOutputs(flow, flowVars);
         }
+        continue;
+      }
+
+      if (step.action === 'sleep') {
+        const ms = step.ms;
+        if (typeof ms !== 'number' || ms <= 0) {
+          throw new Error('sleep requires "ms" (positive number)');
+        }
+        logger.info(`  → Sleep ${ms}ms`);
+        await sleep(ms);
         continue;
       }
 

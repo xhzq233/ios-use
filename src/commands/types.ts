@@ -21,7 +21,7 @@ import type {
  */
 export interface Driver {
   // DOM / find
-  dom(opts?: { raw?: boolean }): Promise<DomResponse>;
+  dom(opts?: { raw?: boolean; fresh?: boolean }): Promise<DomResponse>;
   find(args: FindArgs): Promise<FindResult>;
 
   // Interaction
@@ -56,6 +56,7 @@ export interface FlowStep {
     | 'find'
     | 'returnIf'
     | 'runFlow'
+    | 'sleep'
     | 'screenshot'
     | 'waitFor'
     | 'activateApp'
@@ -90,7 +91,11 @@ export interface FlowStep {
 
   // DOM
   raw?: boolean;
+  fresh?: boolean;
   candidates?: string[];
+
+  // sleep
+  ms?: number;
 
   // tap
   offset?: {
