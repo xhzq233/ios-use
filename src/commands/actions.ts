@@ -11,6 +11,9 @@ import type {
   Point,
   SwipeDir,
   DomNode,
+  DomResponse,
+  FindResult,
+  Rect,
 } from '../driver-protocol/index.js';
 
 // ── Utilities ──
@@ -27,6 +30,8 @@ const TIMESTAMP_RE = /[:.]/g;
 function timestamp() {
   return new Date().toISOString().replace(TIMESTAMP_RE, '-');
 }
+
+export const LOG_POLL_INTERVAL_MS = 300;
 
 function requireDriver(driver: Driver | null, action: string) {
   if (!driver) throw new Error(`${action} requires an active session`);
@@ -99,16 +104,21 @@ export async function startNSLoggerServer(step: FlowStep | Record<string, unknow
   return server;
 }
 
-export function waitForNslogMatch(server: NSLoggerServerLike, pattern: string, flags = '', timeoutSeconds = 0, intervalMs = 200) {
+export function waitForNslogMatch(server: NSLoggerServerLike, pattern: string, flags = '', timeoutSeconds = 0) {
   const timeoutMs = Math.max(0, (Number.isFinite(timeoutSeconds) ? timeoutSeconds : 0) * 1000);
   const startedAt = Date.now();
 
-  return new Promise<string[]>((resolve) => {
+  return new Promise<string[]>((resolve, reject) => {
     if (timeoutMs === 0) {
       try { resolve(server.grep(pattern, flags)); } catch { resolve([]); }
       return;
     }
     const interval = setInterval(() => {
+      if (_aborted) {
+        clearInterval(interval);
+        reject(new Error('Flow interrupted'));
+        return;
+      }
       try {
         const matched = server.grep(pattern, flags);
         if (matched.length > 0 || Date.now() - startedAt >= timeoutMs) {
@@ -119,8 +129,85 @@ export function waitForNslogMatch(server: NSLoggerServerLike, pattern: string, f
         clearInterval(interval);
         resolve([]);
       }
-    }, intervalMs);
+    }, LOG_POLL_INTERVAL_MS);
   });
+}
+
+function normalizeSearchText(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  return trimmed
+    .replace(/[\s\-_:\/()\[\]{}.,'"]/g, '')
+    .toLowerCase();
+}
+
+function domNodeLabel(node: DomNode): string {
+  return typeof node.l === 'string' && node.l.trim() ? node.l : typeof node.v === 'string' ? node.v : '';
+}
+
+function domNodeOutput(node: DomNode): { type: string; label: string; rect?: Rect; value?: string } {
+  const out: { type: string; label: string; rect?: Rect; value?: string } = {
+    type: node.tr[0] || 'Unknown',
+    label: domNodeLabel(node),
+  };
+  if (Array.isArray(node.r)) out.rect = node.r;
+  if (typeof node.v === 'string' && node.v.trim()) out.value = node.v;
+  return out;
+}
+
+function flattenDomNodes(nodes: DomNode[], out: DomNode[] = []): DomNode[] {
+  for (const node of nodes) {
+    out.push(node);
+    if (Array.isArray(node.c)) flattenDomNodes(node.c, out);
+  }
+  return out;
+}
+
+function deriveDomOutput(result: DomResponse, candidates?: string[]) {
+  const flattened = flattenDomNodes(result.elements);
+  const matches: Array<{ type: string; label: string; rect?: Rect; value?: string }> = [];
+  const matchedIndices = new Set<number>();
+
+  for (const candidate of candidates ?? []) {
+    const normalizedCandidate = normalizeSearchText(candidate);
+    if (!normalizedCandidate) continue;
+    for (let i = 0; i < flattened.length; i++) {
+      if (matchedIndices.has(i)) continue;
+      const node = flattened[i];
+      const normalizedTexts = [node.l, node.v]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .map((value) => normalizeSearchText(value));
+      if (normalizedTexts.some((value) => value.includes(normalizedCandidate))) {
+        matchedIndices.add(i);
+        matches.push(domNodeOutput(node));
+      }
+    }
+  }
+
+  return {
+    dom: result,
+    matches,
+    firstMatch: matches[0] ?? null,
+  };
+}
+
+function formatFindFailure(label: string, result: Extract<FindResult, { ok: false }>): string {
+  const parts: string[] = [result.error];
+  if (result.matches && result.matches.length > 0) {
+    parts.push('matches:');
+    for (const m of result.matches) {
+      const flags = m.traits?.slice(1).join(',') || '';
+      const title = m.value ? `${m.label}=${m.value}` : m.label;
+      const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
+      const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
+      parts.push(`  [${ancestors}] ${m.type}${flags ? ` [${flags}]` : ''} "${title}" (${rect})`);
+    }
+  }
+  if (result.suggestions && result.suggestions.length > 0) {
+    parts.push(`suggestions: ${result.suggestions.join(', ')}`);
+  }
+  if (result.hint) parts.push(`hint: ${result.hint}`);
+  return `find "${label}" failed: ${parts.join('\n  ')}`;
 }
 
 export function normalizeNeedLogConfig(needLog: boolean | Record<string, unknown> | null | undefined) {
@@ -139,7 +226,7 @@ const VALID_ACTIONS = new Set([
   'nslog_start', 'nslog', 'nslog_clear',
 ]);
 
-export async function executeStep(driver: Driver | null, step: FlowStep, context: FlowContext = {}, stepIndex?: number) {
+export async function executeStep(driver: Driver | null, step: FlowStep, context: FlowContext = {}, stepIndex?: number): Promise<unknown> {
   const flowApp = context.flowApp;
 
   switch (step.action) {
@@ -158,7 +245,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         printDomElements(result.elements, '  ');
         console.log('');
       }
-      break;
+      return deriveDomOutput(result, step.candidates);
     }
 
     case 'find': {
@@ -167,22 +254,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       if (typeof label !== 'string') throw new Error('find requires string "label"');
       const result = await driver!.find({ label, context: step.context });
       if (!result.ok) {
-        const parts: string[] = [result.error];
-        if (result.matches && result.matches.length > 0) {
-          parts.push('matches:');
-          for (const m of result.matches) {
-            const flags = m.traits?.slice(1).join(',') || '';
-            const title = m.value ? `${m.label}=${m.value}` : m.label;
-            const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
-            const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
-            parts.push(`  [${ancestors}] ${m.type}${flags ? ` [${flags}]` : ''} "${title}" (${rect})`);
-          }
-        }
-        if (result.suggestions && result.suggestions.length > 0) {
-          parts.push(`suggestions: ${result.suggestions.join(', ')}`);
-        }
-        if (result.hint) parts.push(`hint: ${result.hint}`);
-        throw new Error(`find "${label}" failed: ${parts.join('\n  ')}`);
+        throw new Error(formatFindFailure(label, result));
       }
       if (step.print ?? true) {
         const m = result.match;
@@ -193,7 +265,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         console.log(`    [${ancestors}] ${m.type} "${title}" (${rect})`);
         console.log('');
       }
-      break;
+      return result.match;
     }
 
     case 'tap': {
@@ -201,9 +273,9 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       const target = parseLabelOrPoint(step.label);
       if (target === undefined) throw new Error('tap requires "label" (string or "x,y" coordinate)');
       logger.info(`  → Tap ${formatLabel(target)}`);
-      const result = await driver!.tap(target, step.context);
+      const result = await driver!.tap(target, step.context, step.offset);
       logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
-      break;
+      return undefined;
     }
 
     case 'longpress': {
@@ -215,7 +287,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       logger.info(`  → Longpress ${formatLabel(target)}${step.duration ? ` (${step.duration}ms)` : ''}`);
       const result = await driver!.longPress(target, durationSec, step.context);
       logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
-      break;
+      return undefined;
     }
 
     case 'input': {
@@ -226,7 +298,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       if (typeof label !== 'string') throw new Error('input requires string "label"');
       logger.info(`  → Input "${text}" into "${label}"`);
       await driver!.input(label, text, step.context);
-      break;
+      return undefined;
     }
 
     case 'swipe': {
@@ -242,7 +314,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         context: step.context,
       });
       logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} scrolls=${result.scrolls}`);
-      break;
+      return undefined;
     }
 
     case 'waitFor': {
@@ -253,11 +325,10 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       const result = await driver!.waitFor({
         label,
         timeout: step.timeout,
-        interval: step.interval,
         context: step.context,
       });
       logger.info(`    ${result.type} "${result.label}" (${result.rect.join(',')}) waited=${result.waited.toFixed(2)}s`);
-      break;
+      return undefined;
     }
 
     case 'screenshot': {
@@ -266,7 +337,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       const filepath = outputPath(`${name}.jpg`);
       await driver!.saveScreenshot(filepath);
       logger.success(`Screenshot saved: ${filepath}`);
-      break;
+      return undefined;
     }
 
     case 'activateApp': {
@@ -275,7 +346,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       if (!bundleId) throw new Error('activateApp requires bundleId');
       await driver!.activateApp(bundleId);
       logger.success(`App ${bundleId} activated`);
-      break;
+      return undefined;
     }
 
     case 'terminateApp': {
@@ -284,7 +355,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       if (!bundleId) throw new Error('terminateApp requires bundleId');
       await driver!.terminateApp(bundleId);
       logger.success(`App ${bundleId} terminated`);
-      break;
+      return undefined;
     }
 
     case 'oslog': {
@@ -296,6 +367,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         name,
         clear: step.clear,
         bundleId: step.bundleId,
+        timeout: step.timeout,
       });
       if ('cleared' in result) {
         logger.info(`  → oslog: cleared=${result.cleared}`);
@@ -304,7 +376,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         fs.writeFileSync(outputFile, result.content);
         logger.info(`  → oslog: matched=${result.matched} total=${result.total} → ${outputFile}`);
       }
-      break;
+      return undefined;
     }
 
     case 'nslog_start': {
@@ -312,7 +384,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         throw new Error(`nslog_start: server already running on port ${context.nsloggerServer.getPort()}. Use nslog_clear to reset.`);
       }
       context.nsloggerServer = await startNSLoggerServer(step, 'nslog_start');
-      break;
+      return undefined;
     }
 
     case 'nslog': {
@@ -320,8 +392,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       const pattern = step.pattern;
       if (!pattern) throw new Error('nslog requires "pattern"');
       const timeoutSec = step.timeout ?? 0;
-      const intervalMs = step.intervalMs ?? 200;
-      const matched = await waitForNslogMatch(context.nsloggerServer, pattern, step.flags || '', timeoutSec, intervalMs);
+      const matched = await waitForNslogMatch(context.nsloggerServer, pattern, step.flags || '', timeoutSec);
       const logName = step.name || `nslog-${timestamp()}`;
       const outputFile = outputPath(`${logName}.log`);
       fs.writeFileSync(outputFile, matched.join('\n'));
@@ -330,14 +401,14 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         context.nsloggerServer.clear();
         logger.info('  → nslog: buffer cleared');
       }
-      break;
+      return undefined;
     }
 
     case 'nslog_clear': {
       if (!context.nsloggerServer) throw new Error('nslog_clear requires nslog_start first');
       context.nsloggerServer.clear();
       logger.info('  → nslog_clear: buffer cleared');
-      break;
+      return undefined;
     }
 
     default: {
@@ -399,9 +470,13 @@ export async function runCommandStep(step: FlowStep, opts: CommandOpts = {}, con
 
 type ActionOpts = { udid?: string; bundleId?: string; verbose?: boolean };
 
-export async function tapAction(opts: ActionOpts & { label?: string; context?: LabelContext }) {
+export async function tapAction(opts: ActionOpts & {
+  label?: string;
+  context?: LabelContext;
+  offset?: FlowStep['offset'];
+}) {
   if (opts.label === undefined) throw new Error('tap requires --label');
-  await runCommandStep({ action: 'tap', label: opts.label, context: opts.context }, opts);
+  await runCommandStep({ action: 'tap', label: opts.label, context: opts.context, offset: opts.offset }, opts);
 }
 
 export async function swipeAction(opts: ActionOpts & { to?: string; from?: string; dir?: SwipeDir; distance?: number; context?: LabelContext }) {
@@ -437,17 +512,16 @@ export async function screenshotAction(opts: ActionOpts & { name?: string }) {
   await runCommandStep({ action: 'screenshot', name: opts.name }, opts);
 }
 
-export async function waitForAction(opts: ActionOpts & { label: string; timeout?: number; interval?: number; context?: LabelContext }) {
+export async function waitForAction(opts: ActionOpts & { label: string; timeout?: number; context?: LabelContext }) {
   await runCommandStep({
     action: 'waitFor',
     label: opts.label,
     timeout: opts.timeout,
-    interval: opts.interval,
     context: opts.context,
   }, opts);
 }
 
-export async function oslogAction(opts: ActionOpts & { pattern?: string; flags?: string; name?: string; clear?: boolean; bundleId?: string }) {
+export async function oslogAction(opts: ActionOpts & { pattern?: string; flags?: string; name?: string; clear?: boolean; bundleId?: string; timeout?: number }) {
   await runCommandStep({
     action: 'oslog',
     pattern: opts.pattern,
@@ -455,5 +529,6 @@ export async function oslogAction(opts: ActionOpts & { pattern?: string; flags?:
     name: opts.name,
     clear: opts.clear,
     bundleId: opts.bundleId,
+    timeout: opts.timeout,
   }, opts);
 }
