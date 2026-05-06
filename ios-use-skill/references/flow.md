@@ -164,8 +164,8 @@ steps:
 
 ### 5.5 `tap offset`
 
-- `offset.x/y`：相对目标元素左上角 `(0,0)` 的像素偏移
-- `offset.xRatio/yRatio`：相对目标元素宽高的比例偏移，范围 `0..1`
+- `offset.x/y`：相对目标元素左上角 `(0,0)` 的绝对像素偏移（整数）
+- `offset.xRatio/yRatio`：相对目标元素宽高的比例偏移（浮点，范围 `0..1`）
 - 缺失单轴时，默认补 `0.5` ratio
 - `offset` 只对元素 label 生效
 - 如果 `label` 是绝对坐标 `x,y`，再传 `offset` 会直接报错
