@@ -15,8 +15,8 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 - **Free Apple ID signing**: Signs and installs the driver using a regular (free) Apple ID via altsign-cli. No paid developer account required.
 - **Fast session reuse**: `session start` prepares the driver once; later commands reconnect automatically. DOM queries hit `~74 ms`, find hits `~45 ms`.
 - **Real device and Simulator**: Real devices connect through usbmuxd; Simulators connect over `localhost:8100`.
-- **Smart DOM tree**: 7-rule cleaning pipeline trims the raw XCUI snapshot into a concise, readable tree. SpringBoard gets dedicated rendering (Home icons, Dock, Spotlight, status bar).
-- **Fuzzy find with context disambiguation**: exact match → Levenshtein fuzzy fallback → `ancestorType`/`ancestorLabel` filtering. On failure, returns ambiguous matches and suggestions.
+- **Smart DOM tree**: a unified cleaning pipeline trims the raw XCUI snapshot into a concise, readable tree while preserving visible hierarchy and useful traits.
+- **Normalized find with context disambiguation**: contains-match over label/value text with whitespace, punctuation, and case normalization, plus fuzzy fallback and `ancestorType`/`ancestorLabel` filtering.
 - **4 scroll modes**: scroll-to-label, point swipe, anchor-based scroll, and fixed-distance swipe. Auto axis detection from visible cell layout.
 - **OSLog integration**: Fetch device-side `OSLogStore` entries with regex filtering, grouped by bundle ID.
 - **Built-in NSLogger receiver**: Capture device logs from the CLI, with optional TLS and Bonjour service discovery.
