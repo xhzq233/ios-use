@@ -277,7 +277,8 @@ describe('NSLoggerServer', () => {
     ]);
 
     await new Promise((resolve, reject) => {
-      const client = net.createConnection({ port, host: '127.0.0.1' }, () => {
+      const client = tls.connect({ port, host: '127.0.0.1', rejectUnauthorized: false });
+      client.once('secureConnect', () => {
         client.write(msg, () => {
           setTimeout(() => {
             client.end();
@@ -366,7 +367,7 @@ describe('NSLoggerServer', () => {
       publishEnabled: false,
       active: false,
       port: 1234,
-      serviceType: '_nslogger._tcp',
+      serviceType: '_nslogger-ssl._tcp',
       domain: 'local',
     });
   });

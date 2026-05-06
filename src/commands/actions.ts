@@ -87,19 +87,23 @@ export async function startNSLoggerServer(step: FlowStep | Record<string, unknow
   const rawPort = s.port || 0;
   const port = Number.isFinite(rawPort) && rawPort >= 0 && rawPort <= 65535 ? Math.floor(rawPort) : 0;
   const useSSL = s.ssl ?? true;
+  logger.debug(`  → ${reason}: nslogger config ssl=${useSSL} publishBonjour=${s.publishBonjour !== false} requestedPort=${port} name=${JSON.stringify(s.name || '')}`, _verbose);
   const server = new NSLoggerServer({
     port,
     useSSL,
     bonjourName: s.name || '',
     publishBonjour: s.publishBonjour !== false,
     maxBufferSize: s.maxBufferSize,
+    verbose: _verbose,
   });
   await server.start();
   const actualPort = server.getPort();
-  logger.info(`  → ${reason}: listening on port ${actualPort} (${useSSL ? 'SSL' : 'plain'})`);
-  const bonjourMessages = formatBonjourStatusMessages(server.getBonjourStatus(), { prefix: '  → ' });
-  for (const entry of bonjourMessages) {
-    logger[entry.level as 'info' | 'warn'](entry.message);
+  if (_verbose) {
+    logger.info(`  → ${reason}: listening on port ${actualPort} (${useSSL ? 'SSL' : 'plain'})`);
+    const bonjourMessages = formatBonjourStatusMessages(server.getBonjourStatus(), { prefix: '  → ' });
+    for (const entry of bonjourMessages) {
+      logger[entry.level as 'info' | 'warn'](entry.message);
+    }
   }
   return server;
 }
