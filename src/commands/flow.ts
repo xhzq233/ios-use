@@ -253,6 +253,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
   const resolvedNeedLog = resolveTemplates(flow.needLog, resolvedVars);
   const resolvedApp = flow.app ? resolveTemplates(flow.app, resolvedVars) : undefined;
   const needLogConfig = normalizeNeedLogConfig(resolvedNeedLog);
+  logger.debug(`flowAction: needLog=${JSON.stringify(resolvedNeedLog ?? null)} app=${JSON.stringify(resolvedApp ?? flow.app ?? null)}`, !!opts.verbose);
 
   if (typeof resolvedApp === 'string') opts.bundleId = resolvedApp;
   await startSession(opts);
@@ -315,7 +316,6 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
     if (context.nsloggerServer) {
       try {
         await context.nsloggerServer.stop();
-        logger.info('NSLogger server stopped');
       } catch (e: unknown) {
         logger.warn(`NSLogger stop failed: ${e instanceof Error ? e.message : String(e)}`);
       }

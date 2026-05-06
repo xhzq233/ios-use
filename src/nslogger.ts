@@ -17,6 +17,7 @@ export interface NSLoggerServerOptions {
   bonjourName?: string;
   publishBonjour?: boolean;
   maxBufferSize?: number;
+  verbose?: boolean;
 }
 
 export interface BonjourStatus {
@@ -127,7 +128,8 @@ function ensureDefaultTLSCredentials(): void {
 }
 
 function resolveTLSCredentials(opts: NSLoggerServerOptions = {}): { keyPath: string | null; certPath: string | null } {
-  if (!opts.useSSL) {
+  const useSSL = opts.useSSL ?? true;
+  if (!useSSL) {
     return {
       keyPath: opts.keyPath || null,
       certPath: opts.certPath || null,
@@ -142,6 +144,51 @@ function resolveTLSCredentials(opts: NSLoggerServerOptions = {}): { keyPath: str
     keyPath: opts.keyPath || DEFAULT_NSLOGGER_KEY_PATH,
     certPath: opts.certPath || DEFAULT_NSLOGGER_CERT_PATH,
   };
+}
+
+function terminateStaleBonjourPublishers(serviceName: string, serviceType: string, domain: string): number {
+  try {
+    const output = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8', stdio: 'pipe' });
+    const needle = `dns-sd -R ${serviceName} ${serviceType} ${domain} `;
+    let killed = 0;
+    for (const line of output.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed.includes(needle)) continue;
+      const firstSpace = trimmed.indexOf(' ');
+      if (firstSpace <= 0) continue;
+      const pid = Number(trimmed.slice(0, firstSpace));
+      if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+      try {
+        process.kill(pid, 'SIGTERM');
+        killed += 1;
+      } catch {}
+    }
+    return killed;
+  } catch {
+    return 0;
+  }
+}
+
+function forwardBonjourLogs(stream: NodeJS.ReadableStream | null | undefined, label: 'stdout' | 'stderr', verbose: boolean): void {
+  if (!stream) return;
+
+  let pending = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk: string) => {
+    pending += chunk;
+    const lines = pending.split(/\r?\n/);
+    pending = lines.pop() ?? '';
+    for (const line of lines) {
+      const text = line.trim();
+      if (!text) continue;
+      logger.debug(`NSLogger Bonjour[${label}]: ${text}`, verbose);
+    }
+  });
+  stream.on('end', () => {
+    const text = pending.trim();
+    if (!text) return;
+    logger.debug(`NSLogger Bonjour[${label}]: ${text}`, verbose);
+  });
 }
 
 // ── Message parsing ──
@@ -324,16 +371,18 @@ export class NSLoggerServer {
   private _grepPattern = '';
   private _grepFlags = '';
   private _clientCounter = 0;
+  private verbose: boolean;
   bonjourStatus: BonjourStatus;
 
   constructor(opts: NSLoggerServerOptions = {}) {
     const { keyPath, certPath } = resolveTLSCredentials(opts);
     this.port = opts.port || 0;
-    this.useSSL = opts.useSSL ?? false;
+    this.useSSL = opts.useSSL ?? true;
     this.keyPath = keyPath;
     this.certPath = certPath;
     this.publishBonjour = opts.publishBonjour !== false;
     this.bonjourName = opts.bonjourName || '';
+    this.verbose = opts.verbose ?? false;
     this.server = null;
     this.bonjourProcess = null;
     this.clients = new Map();
@@ -368,7 +417,7 @@ export class NSLoggerServer {
       const connectionHandler = (socket: net.Socket) => {
         this._clientCounter += 1;
         const clientId = `client-${this._clientCounter}`;
-        logger.info(`NSLogger: client connected from ${clientId} (${socket.remoteAddress}:${socket.remotePort})`);
+        logger.debug(`NSLogger: client connected from ${clientId} (${socket.remoteAddress}:${socket.remotePort})`, this.verbose);
 
         let recvBuf = Buffer.alloc(0);
 
@@ -396,7 +445,7 @@ export class NSLoggerServer {
         });
 
         socket.on('close', () => {
-          logger.info(`NSLogger: client disconnected ${clientId}`);
+          logger.debug(`NSLogger: client disconnected ${clientId}`, this.verbose);
           this.clients.delete(clientId);
         });
 
@@ -428,7 +477,7 @@ export class NSLoggerServer {
         const addr = this.server!.address() as net.AddressInfo;
         this.port = addr.port;
         this.bonjourStatus.port = this.port;
-        logger.info(`NSLogger: server listening on port ${this.port} (${this.useSSL ? 'SSL' : 'plain'})`);
+        logger.debug(`NSLogger: server listening on port ${this.port} (${this.useSSL ? 'SSL' : 'plain'})`, this.verbose);
         if (this.publishBonjour) {
           try {
             this.publishBonjourService();
@@ -452,6 +501,7 @@ export class NSLoggerServer {
     const serviceName = this.bonjourName || os.hostname();
     const domain = 'local';
     const args = ['-R', serviceName, serviceType, domain, String(this.port)];
+    const staleCount = terminateStaleBonjourPublishers(serviceName, serviceType, domain);
 
     this.bonjourStatus.attempted = true;
     this.bonjourStatus.active = false;
@@ -462,14 +512,20 @@ export class NSLoggerServer {
     this.bonjourStatus.error = null;
     this.bonjourStatus.pid = null;
 
+    if (staleCount > 0) {
+      logger.debug(`NSLogger: terminated ${staleCount} stale Bonjour publish process(es) for ${serviceName}.${serviceType}.${domain}`, this.verbose);
+    }
+
     const proc = spawn('dns-sd', args, {
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
 
     this.bonjourProcess = proc;
     this.bonjourStatus.active = true;
     this.bonjourStatus.pid = proc.pid ?? null;
+    forwardBonjourLogs(proc.stdout, 'stdout', this.verbose);
+    forwardBonjourLogs(proc.stderr, 'stderr', this.verbose);
 
     proc.on('error', (error: Error) => {
       this.bonjourStatus.active = false;
@@ -486,7 +542,7 @@ export class NSLoggerServer {
     });
 
     proc.unref();
-    logger.info(`NSLogger: Bonjour publish process started for ${serviceName}.${serviceType}.${domain}:${this.port}`);
+    logger.debug(`NSLogger: Bonjour publish process started for ${serviceName}.${serviceType}.${domain}:${this.port}`, this.verbose);
   }
 
   async stop(): Promise<void> {
