@@ -97,6 +97,17 @@ install_binary() {
       -o "$driver_ipa"
   fi
 
+  # skill: install to ~/.ios-use/skill/, symlink to ~/.agents/skills/ios-use
+  local skill_src="$ROOT_DIR/ios-use-skill"
+  local skill_dst="$HOME/.ios-use/skill"
+  local skill_link="$HOME/.agents/skills/ios-use"
+  if [[ -d "$skill_src" ]]; then
+    mkdir -p "$HOME/.agents/skills"
+    rm -rf "$skill_dst"
+    cp -R "$skill_src" "$skill_dst"
+    ln -sfn "$skill_dst" "$skill_link"
+  fi
+
   # altsign-cli: local > GitHub Release
   local alt_bin="$HOME/.ios-use/altsign-cli/altsign-cli"
   if [[ -x "$ROOT_DIR/altsign-cli/altsign-cli" ]]; then
