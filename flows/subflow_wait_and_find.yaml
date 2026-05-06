@@ -1,0 +1,15 @@
+name: "subflow: wait-and-find"
+vars:
+  targetLabel: 蓝牙
+outputs: matchedNode
+steps:
+  - action: waitFor
+    label: ${vars.targetLabel}
+    timeout: 5
+    comment: "子 flow 内部等待目标元素可见"
+
+  - action: find
+    label: ${vars.targetLabel}
+    print: false
+    outputs: matchedNode
+    comment: "子 flow 输出命中节点供主 flow 复用"
