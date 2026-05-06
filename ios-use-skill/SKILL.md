@@ -17,15 +17,14 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 - 真机首次使用，或升级到新版本后，先执行：
 
 ```bash
-ios-use device
+ios-use device              # 查看设备列表和 udid
+ios-use config --udid <udid>  # 签名并安装 driver
 ```
 
-```bash
-ios-use config --udid <udid>
-```
-
-- `ios-use device` 可以先查看设备列表和 `udid`
+- 首次若 altsign session 不存在，需要补 Apple ID：`--apple-id you@example.com --password 'app-password'`
+- Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
 - `config` 是公开使用链路的一部分，不要跳过
+- 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
 
 ## 2. 硬规则
 
@@ -94,7 +93,7 @@ ios-use terminateApp com.apple.Preferences
 ios-use flow my-flow.yaml
 ```
 
-Flow 的编写规范、字段语义和 subflow 用法见 `references/flow.md`。本文件只负责"怎么手动操作手机"和"怎么用 CLI 探索/排障"。
+Flow 的编写规范、字段语义和 subflow 用法见 `references/flow.md`。
 
 ## 4. 当前命令语义
 
@@ -143,7 +142,16 @@ ios-use swipe --to "开发者" --from "蓝牙"
 
 - `oslog`
   - 支持 `--timeout <seconds>`，会在窗口期内轮询匹配
+  - `--pattern` 正则过滤，`--flags` 正则标志（`i`/`s`/`m`）
+  - `--clear` 清空 buffer
   - 日志文件保存到 `~/.ios-use/artifacts/<name>.log`
+
+- `nslog`
+  - 启动本地 NSLogger server，iOS app 主动推送日志（与 oslog 互补）
+  - `--grep <pattern>` 正则过滤，`--flags` 正则标志
+  - `--port <port>` 监听端口（默认自动分配）
+  - `--ssl` / `--no-ssl` TLS 开关（默认开启）
+  - 适合验证 app 内 NSLog 埋点
 
 ## 5. Flow 入口
 
@@ -153,7 +161,7 @@ ios-use swipe --to "开发者" --from "蓝牙"
 ios-use flow my-flow.yaml
 ```
 
-- 写 flow、拆 subflow、设计 `vars` / `outputs`、使用 `dom.candidates` 时，查看 `references/flow.md`
+- 写 flow、拆 subflow、设计 `vars` / `outputs`、使用 `dom.candidates`、`returnIf` 时，查看 `references/flow.md`
 - 手动排查 flow 某一步失败时，先回到本文件，用 `dom` / `find` / `screenshot` / `oslog` 单独验证该步骤
 - 新写 flow 时，先手动跑通每一个动作，再回到 YAML 里组装
 
@@ -174,4 +182,18 @@ ios-use session start --udid <udid> --bundle-id com.apple.Preferences
   - 再 `find`
   - 必要时补 `screenshot`
 
+- 改了 driver 代码但行为没变：设备上还是旧 IPA，重新 `bash scripts/build_host_app.sh` + `ios-use config`
+
 - 调试时可以加 `--verbose` 看完整输入输出。
+
+- 旧写法迁移：
+
+| 旧写法 | 新写法 |
+|--------|--------|
+| `tap --text` | `tap --label` |
+| `input --text` | `input --content` |
+| `wait-for` | `waitFor` |
+| `app launch` | `activateApp` |
+| `app close` | `terminateApp` |
+| `waitFor --interval` | 不支持，轮询间隔由 driver 内部控制 |
+| `nslog --interval-ms` | 不支持，轮询间隔固定 300ms |

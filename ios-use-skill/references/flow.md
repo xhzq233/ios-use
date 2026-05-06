@@ -331,3 +331,10 @@ steps:
 - 把多候选查找硬塞给 `find`：应该改用 `dom + candidates`
 - 在绝对坐标 `label: "x,y"` 上继续叠加 `offset`：这是非法组合
 - 使用不存在的 action（`dismissPopup`、`assert`、`wait`）：只用第 3 节列出的 action
+
+## 9. 中断与清理
+
+- 第一次 Ctrl+C：优雅中断，等待当前 step 完成后停止
+- 第二次 Ctrl+C：强制退出
+- 中断时自动清理：断开 driver 连接、停止 nslog 服务、移除信号处理器
+- `needLog: true` 的 flow 结束时自动停止 nslog server（无论正常结束还是中断）
