@@ -30,8 +30,6 @@ interface RunCommandResult {
 
 function altsignCliPath(): string {
   const candidates = [
-    path.resolve(process.argv[1], '..', 'altsign-cli', 'altsign-cli'),
-    path.resolve(import.meta.dirname, '..', 'altsign-cli', 'altsign-cli'),
     path.join(IOS_USE_HOME, 'altsign-cli', 'altsign-cli'),
   ];
   for (const p of candidates) {
