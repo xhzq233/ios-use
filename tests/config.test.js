@@ -86,6 +86,11 @@ describe('config helpers', () => {
       fs.rmSync(tempHome, { recursive: true, force: true });
     }
     process.env.HOME = originalHome;
+
+    const altsignBin = path.resolve(process.cwd(), 'altsign-cli', 'altsign-cli');
+    if (fs.existsSync(altsignBin)) {
+      fs.unlinkSync(altsignBin);
+    }
   });
 
   test('saveDeviceSigningConfig persists per-device config', () => {
