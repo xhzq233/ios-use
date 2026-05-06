@@ -135,7 +135,6 @@ ios-use swipe --to "开发者" --from "蓝牙"
 
 - `dom`
   - `--save --name <name>` 时，保存到 `~/.ios-use/artifacts/<name>.json`
-  - Flow 中支持 `candidates`，用于派生 `matches` / `firstMatch`
 
 - `waitFor`
   - 轮询等待元素出现，超时返回 not-found

@@ -135,6 +135,28 @@ steps:
     expect(taps).toEqual(['关闭']);
   });
 
+  test('sets dom firstMatch to null when candidates miss', async () => {
+    const output = await executeStep(createDriver({
+      dom: async () => ({
+        app: 'Demo',
+        window: [390, 844],
+        elements: [
+          { tr: ['Window'], c: [
+            { tr: ['Button'], l: '保存', r: [10, 10, 50, 20] },
+          ] },
+        ],
+      }),
+    }), {
+      action: 'dom',
+      candidates: ['关闭', '取消'],
+    }, {});
+
+    expect(output).toMatchObject({
+      matches: [],
+      firstMatch: null,
+    });
+  });
+
   test('errors when runFlow requests an undeclared output', async () => {
     const dir = makeTempDir('ios-use-flow-missing-output-');
     const childPath = path.join(dir, 'child.yaml');
@@ -156,6 +178,53 @@ steps:
 `);
 
     await expect(runFlowFile(createDriver(), parentPath, {})).rejects.toThrow('runFlow requested undeclared output "missingValue"');
+  });
+
+  test('returnIf can no-op return current flow when value matches null', async () => {
+    const dir = makeTempDir('ios-use-flow-returnif-null-');
+    const flowPath = path.join(dir, 'flow.yaml');
+    const taps = [];
+
+    fs.writeFileSync(flowPath, `
+name: dismiss-popup
+steps:
+  - action: dom
+    candidates:
+      - 关闭
+      - 取消
+    outputs: popupDom
+  - action: returnIf
+    value: \${popupDom.firstMatch}
+    is: null
+  - action: tap
+    label: \${popupDom.firstMatch.label}
+`);
+
+    const driver = createDriver({
+      tap: async (target) => {
+        taps.push(target);
+        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
+      },
+    });
+
+    await runFlowFile(driver, flowPath, {});
+
+    expect(taps).toEqual([]);
+  });
+
+  test('returnIf rejects unsupported matcher values', async () => {
+    const dir = makeTempDir('ios-use-flow-returnif-invalid-');
+    const flowPath = path.join(dir, 'flow.yaml');
+
+    fs.writeFileSync(flowPath, `
+name: invalid-return-if
+steps:
+  - action: returnIf
+    value: false
+    is: maybe
+`);
+
+    await expect(runFlowFile(createDriver(), flowPath, {})).rejects.toThrow('returnIf requires "is" to be true, false, or null');
   });
 
   test('passes tap offset x/y through to driver', async () => {
