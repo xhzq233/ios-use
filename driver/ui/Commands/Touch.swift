@@ -14,6 +14,9 @@ enum TouchCommands {
 
         // Path A: absolute coordinate.
         if let pt = args.label.asPoint {
+            if args.offset != nil {
+                return Codec.makeError("tap: offset requires element label, not absolute point")
+            }
             guard pt.count == 2 else {
                 return Codec.makeError("tap: point must be [x, y]")
             }
@@ -36,7 +39,13 @@ enum TouchCommands {
             guard f.width > 0, f.height > 0 else {
                 return Codec.makeError("tap: element '\(label)' has zero-area frame")
             }
-            try tapAtPoint(CGPoint(x: f.midX, y: f.midY), app: app)
+            let point: CGPoint
+            do {
+                point = try resolveTapPoint(frame: f, offset: args.offset)
+            } catch let error as DriverError {
+                return Codec.makeError("tap: \(error.description)")
+            }
+            try tapAtPoint(point, app: app)
             return Codec.makeOK([
                 "type": elementTypeName(XCUIElement.ElementType(rawValue: UInt(elem.node.elementType)) ?? .other),
                 "label": elem.node.label ?? "",
@@ -121,4 +130,39 @@ enum TouchCommands {
             throw DriverError.serverError("longPress synthesis failed: \(error?.localizedDescription ?? "unknown error")")
         }
     }
+}
+
+func resolveTapPoint(frame: CGRect, offset: TapOffset?) throws -> CGPoint {
+    guard let offset else {
+        return CGPoint(x: frame.midX, y: frame.midY)
+    }
+
+    let hasX = offset.x != nil
+    let hasY = offset.y != nil
+    let hasXRatio = offset.xRatio != nil
+    let hasYRatio = offset.yRatio != nil
+
+    if hasX && hasXRatio {
+        throw DriverError.invalidArgs("offset.x and offset.xRatio are mutually exclusive")
+    }
+    if hasY && hasYRatio {
+        throw DriverError.invalidArgs("offset.y and offset.yRatio are mutually exclusive")
+    }
+
+    if let xRatio = offset.xRatio, !(0...1).contains(xRatio) {
+        throw DriverError.invalidArgs("offset.xRatio must be within [0, 1]")
+    }
+    if let yRatio = offset.yRatio, !(0...1).contains(yRatio) {
+        throw DriverError.invalidArgs("offset.yRatio must be within [0, 1]")
+    }
+
+    let localX = offset.x ?? frame.width * (offset.xRatio ?? 0.5)
+    let localY = offset.y ?? frame.height * (offset.yRatio ?? 0.5)
+    if localX < 0 || localX > frame.width || localY < 0 || localY > frame.height {
+        throw DriverError.invalidArgs(
+            "offset is outside element bounds: (\(Int(localX.rounded())),\(Int(localY.rounded()))) not within \(Int(frame.width.rounded()))x\(Int(frame.height.rounded()))"
+        )
+    }
+
+    return CGPoint(x: frame.minX + localX, y: frame.minY + localY)
 }

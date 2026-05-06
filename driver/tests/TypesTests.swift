@@ -216,6 +216,15 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(a.label.asPoint, [100, 200])
     }
 
+    func testTapArgs_WithOffset() throws {
+        let json = "{\"label\":\"Slider\",\"offset\":{\"x\":12,\"y\":5}}"
+        let a = try JSONDecoder().decode(TapArgs.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(a.label.asLabel, "Slider")
+        XCTAssertEqual(a.offset?.x, 12)
+        XCTAssertEqual(a.offset?.y, 5)
+        XCTAssertNil(a.offset?.xRatio)
+    }
+
     func testLongPressArgs_DurationOptional() throws {
         let json = "{\"label\":\"Hold\",\"duration\":2.5}"
         let a = try JSONDecoder().decode(LongPressArgs.self, from: json.data(using: .utf8)!)
@@ -273,21 +282,82 @@ final class TypesTests: XCTestCase {
     }
 
     func testOslogArgs_AllOptional() throws {
-        let json = "{\"pattern\":\"error\",\"clear\":true,\"bundleId\":\"com.apple.Preferences\"}"
+        let json = "{\"pattern\":\"error\",\"clear\":true,\"bundleId\":\"com.apple.Preferences\",\"timeout\":3}"
         let a = try JSONDecoder().decode(OslogArgs.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(a.pattern, "error")
         XCTAssertEqual(a.clear, true)
         XCTAssertEqual(a.bundleId, "com.apple.Preferences")
+        XCTAssertEqual(a.timeout, 3)
         XCTAssertNil(a.name)
         XCTAssertNil(a.flags)
     }
 
     func testWaitForArgs_Decode() throws {
-        let json = "{\"label\":\"Bluetooth\",\"timeout\":5,\"interval\":500}"
+        let json = "{\"label\":\"Bluetooth\",\"timeout\":5}"
         let a = try JSONDecoder().decode(WaitForArgs.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(a.label, "Bluetooth")
         XCTAssertEqual(a.timeout, 5)
-        XCTAssertEqual(a.interval, 500)
+        XCTAssertNil(a.context)
+    }
+
+    func testResolveTapPoint_DefaultsToCenter() throws {
+        let point = try resolveTapPoint(frame: CGRect(x: 10, y: 20, width: 100, height: 40), offset: nil)
+        XCTAssertEqual(point.x, 60)
+        XCTAssertEqual(point.y, 40)
+    }
+
+    func testResolveTapPoint_UsesAbsoluteOffsetFromTopLeft() throws {
+        let point = try resolveTapPoint(
+            frame: CGRect(x: 10, y: 20, width: 100, height: 40),
+            offset: TapOffset(x: 12, y: 5, xRatio: nil, yRatio: nil)
+        )
+        XCTAssertEqual(point.x, 22)
+        XCTAssertEqual(point.y, 25)
+    }
+
+    func testResolveTapPoint_UsesRatioOffsetFromTopLeft() throws {
+        let point = try resolveTapPoint(
+            frame: CGRect(x: 10, y: 20, width: 100, height: 40),
+            offset: TapOffset(x: nil, y: nil, xRatio: 0.8, yRatio: 0.5)
+        )
+        XCTAssertEqual(point.x, 90)
+        XCTAssertEqual(point.y, 40)
+    }
+
+    func testResolveTapPoint_DefaultsMissingAxisToCenterRatio() throws {
+        let point = try resolveTapPoint(
+            frame: CGRect(x: 10, y: 20, width: 100, height: 40),
+            offset: TapOffset(x: nil, y: nil, xRatio: 0.8, yRatio: nil)
+        )
+        XCTAssertEqual(point.x, 90)
+        XCTAssertEqual(point.y, 40)
+    }
+
+    func testResolveTapPoint_DefaultsMissingAxisToCenterWhenUsingAbsoluteOffset() throws {
+        let point = try resolveTapPoint(
+            frame: CGRect(x: 10, y: 20, width: 100, height: 40),
+            offset: TapOffset(x: 12, y: nil, xRatio: nil, yRatio: nil)
+        )
+        XCTAssertEqual(point.x, 22)
+        XCTAssertEqual(point.y, 40)
+    }
+
+    func testResolveTapPoint_RejectsOutOfBoundsOffset() {
+        XCTAssertThrowsError(try resolveTapPoint(
+            frame: CGRect(x: 10, y: 20, width: 100, height: 40),
+            offset: TapOffset(x: 120, y: 5, xRatio: nil, yRatio: nil)
+        ))
+    }
+
+    func testMakeMatcher_WithFlags() throws {
+        let matcher = try XCTUnwrap(makeMatcher(pattern: "error", flags: "i"))
+        XCTAssertTrue(matcher("ERROR happened"))
+        XCTAssertFalse(matcher("all good"))
+    }
+
+    func testFilterLines_WithoutMatcherReturnsOriginal() {
+        let lines = ["a", "b"]
+        XCTAssertEqual(filterLines(lines, matcher: nil), lines)
     }
 
     func testDomArgs_Raw() throws {

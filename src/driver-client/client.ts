@@ -85,8 +85,12 @@ abstract class BaseRpcClient {
     };
   }
 
-  async tap(target: LabelOrPoint, context?: LabelContext): Promise<TapResult> {
-    return await this.send(DRIVER_COMMANDS.TAP, omitUndefined({ label: target, context }));
+  async tap(
+    target: LabelOrPoint,
+    context?: LabelContext,
+    offset?: { x?: number; y?: number; xRatio?: number; yRatio?: number },
+  ): Promise<TapResult> {
+    return await this.send(DRIVER_COMMANDS.TAP, omitUndefined({ label: target, context, offset }));
   }
 
   async longPress(target: LabelOrPoint, duration?: number, context?: LabelContext): Promise<TapResult> {
@@ -105,7 +109,6 @@ abstract class BaseRpcClient {
     return await this.send(DRIVER_COMMANDS.WAIT_FOR, omitUndefined({
       label: args.label,
       timeout: args.timeout,
-      interval: args.interval,
       context: args.context,
     }));
   }
@@ -137,6 +140,7 @@ abstract class BaseRpcClient {
       name: args.name,
       clear: args.clear,
       bundleId: args.bundleId,
+      timeout: args.timeout,
     }));
   }
 }
