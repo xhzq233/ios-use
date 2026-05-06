@@ -23,6 +23,11 @@ enum DomCommands {
             ])
         }
 
+        // --fresh mode: invalidate cache before taking snapshot.
+        if args?.fresh == true {
+            invalidateSnapshot()
+        }
+
         guard let cs = getCleanedSnapshot() else {
             return Codec.makeError("failed to take snapshot")
         }

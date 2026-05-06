@@ -236,7 +236,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
   switch (step.action) {
     case 'dom': {
       requireDriver(driver, 'dom');
-      const result = await driver!.dom({ raw: !!step.raw });
+      const result = await driver!.dom({ raw: !!step.raw, fresh: !!step.fresh });
       if (step.save) {
         const domName = step.name || `dom-step-${timestamp()}`;
         const filepath = outputPath(`${domName}.json`);
