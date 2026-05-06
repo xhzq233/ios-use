@@ -13,7 +13,7 @@ description: "Use ios-use to drive iOS devices via CLI. Covers session managemen
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash
 ```
 
-- 安装完成后，所有命令都直接使用 `ios-use`：
+- 安装完成后，所有命令都直接使用 `ios-use`
 - 真机首次使用，或升级到新版本后，先执行：
 
 ```bash
@@ -23,7 +23,7 @@ ios-use config --udid <udid>  # 签名并安装 driver
 
 - 首次若 altsign session 不存在，需要补 Apple ID：`--apple-id you@example.com --password 'app-password'`
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
-- `config` 是公开使用链路的一部分，不要跳过
+- 真机首次使用必须先 `config`，不要跳过
 - 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
 
 ## 2. 硬规则
@@ -133,7 +133,12 @@ ios-use swipe --to "开发者" --from "蓝牙"
   - 保存为 JPEG 到 `~/.ios-use/artifacts/<name>.jpg`
 
 - `dom`
+  - `--raw` 返回原始 XCUI snapshot 树（默认返回 clean tree）
   - `--save --name <name>` 时，保存到 `~/.ios-use/artifacts/<name>.json`
+
+- `find`
+  - `find <label>` 查找元素，找不到或命中歧义时失败
+  - 支持 `--context.ancestor-type` / `--context.ancestor-label` 消歧
 
 - `waitFor`
   - 轮询等待元素出现，超时返回 not-found
