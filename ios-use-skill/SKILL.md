@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Use ios-use to drive iOS devices. Best for session commands, UI exploration, and flow authoring."
+description: "Use ios-use to drive iOS devices via CLI. Covers session management, UI element inspection (dom/find), tap/swipe/input actions, screenshot, oslog/nslog, app lifecycle, and YAML flow authoring. Use this skill when the user wants to interact with an iOS device, inspect screen elements, automate UI steps, write or debug automation flows, or check device logs."
 ---
 
 # ios-use Skill
@@ -30,6 +30,7 @@ ios-use config --udid <udid>
 ## 2. 硬规则
 
 - 真机必须 USB 连接，WiFi 连接的设备在 usbmux 中不可见，会报错
+- 不传 `--udid` 时默认只选 USB 真机；如果要用 Simulator，必须显式传 `--udid`
 - 起 session 前先看当前状态：
 
 ```bash
@@ -61,7 +62,7 @@ ios-use session start --udid <udid>
 
 ```bash
 ios-use dom                        # 先看当前页面元素树
-ios-use dom --name settings        # 保存到 ~/.ios-use/dom-settings.json
+ios-use dom --save --name settings # 保存到 ~/.ios-use/artifacts/settings.json
 ios-use find "蓝牙"                # 在 dom 基础上查目标元素
 ios-use waitFor --label "蓝牙" --timeout 8
 ```
@@ -72,11 +73,12 @@ ios-use waitFor --label "蓝牙" --timeout 8
 
 ```bash
 ios-use tap --label "通用"
+ios-use tap --label "亮度" --offset-x-ratio 0.8
 ios-use longpress --label "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use swipe --dir forth --distance 300            # 纯距离滚动
 ios-use input --label "搜索" --content "蓝牙"      # 不需要先 tap，会自动切换焦点
-ios-use screenshot --name current-page              # 保存为 ~/.ios-use/screenshot-current-page.jpg
+ios-use screenshot --name current-page              # 保存为 ~/.ios-use/artifacts/current-page.jpg
 ```
 
 ### 3.4 切 app
@@ -89,13 +91,19 @@ ios-use terminateApp com.apple.Preferences
 ### 3.5 跑 flow
 
 ```bash
-ios-use flow flows/test_flow.yaml
+ios-use flow my-flow.yaml
 ```
+
+Flow 的编写规范、字段语义和 subflow 用法见 `references/flow.md`。本文件只负责"怎么手动操作手机"和"怎么用 CLI 探索/排障"。
 
 ## 4. 当前命令语义
 
 - `tap` / `longpress`
   - `--label <text>` 或 `--label x,y`
+  - `tap` 支持 `--offset-x` / `--offset-y` / `--offset-x-ratio` / `--offset-y-ratio`
+  - offset 原点固定为目标元素左上角 `(0,0)`
+  - 缺失单轴时默认补 `0.5` ratio
+  - 若 `--label` 是绝对坐标 `x,y`，则不能再传 offset
   - `longpress` 默认 `500ms`，可通过 `--duration <ms>` 自定义
   - 底层走 synthesized pointer
 
@@ -123,63 +131,32 @@ ios-use swipe --to "开发者" --from "蓝牙"
   - 不隐式 clear
 
 - `screenshot`
-  - 保存为 JPEG 到 `~/.ios-use/screenshot-<name>.jpg`
+  - 保存为 JPEG 到 `~/.ios-use/artifacts/<name>.jpg`
+
+- `dom`
+  - `--save --name <name>` 时，保存到 `~/.ios-use/artifacts/<name>.json`
+  - Flow 中支持 `candidates`，用于派生 `matches` / `firstMatch`
 
 - `waitFor`
   - 轮询等待元素出现，超时返回 not-found
   - `--label <text> --timeout <seconds>`
+  - 轮询间隔是内部固定值 `300ms`，不对外暴露 `interval`
 
-## 5. Flow 编写规则
-
-### 5.1 只用当前支持的 action
-
-- `tap`
-- `input`
-- `swipe`
-- `longpress`
-- `dom`
-- `find`
-- `screenshot`
-- `waitFor`
-- `activateApp`
-- `terminateApp`
 - `oslog`
-- `nslog_start`
-- `nslog`
-- `nslog_clear`
+  - 支持 `--timeout <seconds>`，会在窗口期内轮询匹配
+  - 日志文件保存到 `~/.ios-use/artifacts/<name>.log`
 
-### 5.2 flow 模板
+## 5. Flow 入口
 
-```yaml
-name: Settings Search
-app: com.apple.Preferences
-needLog: true
-steps:
-  - action: waitFor
-    label: 蓝牙
-    timeout: 8
+- 运行 flow：
 
-  - action: input
-    label: 搜索
-    content: 蓝牙
-    context:
-      ancestorType: SearchField
-
-  - action: tap
-    label: 蓝牙
-
-  - action: screenshot
-    name: settings-bluetooth
+```bash
+ios-use flow my-flow.yaml
 ```
 
-### 5.3 flow 原则
-
-- 编写 flow 前，先用 CLI 手动跑一遍，确认每个动作都执行对
-- 先 `waitFor`，再动作
-- 先看 `dom`，再决定点哪里
-- 能用 label 就不用坐标
-- 需要滚到目标时，优先 `swipe --to`
-- 关键节点保留 `dom` / `screenshot` / `oslog`
+- 写 flow、拆 subflow、设计 `vars` / `outputs`、使用 `dom.candidates` 时，查看 `references/flow.md`
+- 手动排查 flow 某一步失败时，先回到本文件，用 `dom` / `find` / `screenshot` / `oslog` 单独验证该步骤
+- 新写 flow 时，先手动跑通每一个动作，再回到 YAML 里组装
 
 ## 6. 常见排障
 
