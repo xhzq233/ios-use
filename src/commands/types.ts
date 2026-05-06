@@ -25,7 +25,7 @@ export interface Driver {
   find(args: FindArgs): Promise<FindResult>;
 
   // Interaction
-  tap(target: LabelOrPoint, context?: LabelContext): Promise<TapResult>;
+  tap(target: LabelOrPoint, context?: LabelContext, offset?: FlowStep['offset']): Promise<TapResult>;
   longPress(target: LabelOrPoint, duration?: number, context?: LabelContext): Promise<TapResult>;
   input(label: string, content: string, context?: LabelContext): Promise<void>;
   swipe(args: SwipeArgs): Promise<SwipeResult>;
@@ -54,6 +54,7 @@ export interface FlowStep {
     | 'longpress'
     | 'dom'
     | 'find'
+    | 'runFlow'
     | 'screenshot'
     | 'waitFor'
     | 'activateApp'
@@ -67,6 +68,7 @@ export interface FlowStep {
   label?: LabelOrPoint;
   content?: string;
   context?: LabelContext;
+  outputs?: string | string[];
 
   // Swipe
   to?: LabelOrPoint;
@@ -74,11 +76,24 @@ export interface FlowStep {
   dir?: SwipeDir;
   distance?: number;
 
+  // runFlow / vars
+  file?: string;
+  vars?: Record<string, unknown>;
+
   // longPress
   duration?: number;
 
   // DOM
   raw?: boolean;
+  candidates?: string[];
+
+  // tap
+  offset?: {
+    x?: number;
+    y?: number;
+    xRatio?: number;
+    yRatio?: number;
+  };
 
   // Save / print / name (DOM / screenshot / oslog)
   save?: boolean;
@@ -95,7 +110,6 @@ export interface FlowStep {
 
   // waitFor
   timeout?: number;
-  interval?: number;
 
   // nslog (client-side only)
   port?: number;
@@ -103,7 +117,6 @@ export interface FlowStep {
   publishBonjour?: boolean;
   maxBufferSize?: number;
   clearAfterRead?: boolean;
-  intervalMs?: number;
 
   comment?: string;
 }
@@ -111,6 +124,7 @@ export interface FlowStep {
 export interface FlowContext {
   flowApp?: string;
   nsloggerServer?: NSLoggerServer | null;
+  vars?: Record<string, unknown>;
 }
 
 export interface NSLoggerServerLike {

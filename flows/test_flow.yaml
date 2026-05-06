@@ -1,6 +1,18 @@
 name: "test_flow: 核心回归 smoke"
 app: com.apple.Preferences
 steps:
+  - action: runFlow
+    file: ./subflow_wait_and_find.yaml
+    vars:
+      targetLabel: 蓝牙
+    outputs: matchedNode
+    comment: "验证 subflow、vars、outputs，以及主 flow 复用子 flow 输出"
+
+  - action: find
+    label: ${matchedNode.label}
+    print: false
+    comment: "验证主 flow 可以消费子 flow 返回的节点信息"
+
   - action: waitFor
     label: 蓝牙
     timeout: 5
