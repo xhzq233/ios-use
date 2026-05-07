@@ -11,6 +11,7 @@ describe('driver protocol', () => {
     expect(DRIVER_COMMANDS.CREATE_SESSION).toBe('createSession');
     expect(DRIVER_COMMANDS.LONG_PRESS).toBe('longPress');
     expect(DRIVER_COMMANDS.WAIT_FOR).toBe('waitFor');
+    expect(DRIVER_COMMANDS.PROBE_FETCH).toBe('probeFetch');
   });
 
   test('createRequestFrame builds protocol frame shape', () => {

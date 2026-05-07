@@ -19,7 +19,7 @@ const DEVICECTL_LOG = DRIVER_LOG_FILE;
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\''`)}'`;
 const nextSessionId = () => `session-${Date.now()}`;
-const DRIVER_RUNNER_EXECUTABLE = 'XCUIDriverRunner-Runner';
+const DRIVER_RUNNER_EXECUTABLE = 'IOSUseDriver-Runner';
 
 export interface SessionInfo {
   sessionId: string;
@@ -486,8 +486,8 @@ export async function startSession(opts: StartSessionOpts): Promise<void> {
       if (message.includes('ECONNREFUSED') || message.includes('connect')) {
         throw new Error(
           `Simulator connection failed: ${message}\n`
-          + '  → Make sure XCUIDriverRunner is running in the Simulator.\n'
-          + '  → Open driver/XCUIDriver.xcodeproj in Xcode, select the simulator, and run XCUIDriverRunner.',
+          + '  → Make sure IOSUseDriver is running in the Simulator.\n'
+          + '  → Open driver/IOSUseDriver.xcodeproj in Xcode, select the simulator, and run IOSUseDriver.',
         );
       }
     }

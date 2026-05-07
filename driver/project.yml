@@ -1,4 +1,4 @@
-name: XCUIDriver
+name: IOSUseDriver
 options:
   bundleIdPrefix: com.iosuse
   deploymentTarget:
@@ -7,7 +7,7 @@ options:
   generateEmptyDirectories: true
 
 targets:
-  XCUIDriverRunner:
+  IOSUseDriver:
     type: bundle.ui-testing
     platform: iOS
     sources:
@@ -15,7 +15,7 @@ targets:
       - path: ui
       - path: runner
     info:
-      path: XCUIDriverRunner/Info.plist
+      path: runner/Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.iosuse.xcuidriver
@@ -25,7 +25,7 @@ targets:
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
         ENABLE_TESTABILITY: YES
-        SWIFT_OBJC_BRIDGING_HEADER: ui/Helpers/XCUIDriver-Bridging-Header.h
+        SWIFT_OBJC_BRIDGING_HEADER: ui/Helpers/IOSUseDriver-Bridging-Header.h
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/Frameworks"
@@ -35,7 +35,7 @@ targets:
           - "/Developer/Library/PrivateFrameworks"
           - "/Developer/Library/Frameworks"
 
-  XCUIDriverUnitTests:
+  IOSUseDriverUnitTests:
     type: bundle.unit-test
     platform: iOS
     sources:
@@ -46,7 +46,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.iosuse.xcuidriver.unittests
         SWIFT_VERSION: "5.9"
-        SWIFT_OBJC_BRIDGING_HEADER: ui/Helpers/XCUIDriver-Bridging-Header.h
+        SWIFT_OBJC_BRIDGING_HEADER: ui/Helpers/IOSUseDriver-Bridging-Header.h
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
@@ -57,14 +57,14 @@ targets:
           - "@loader_path/Frameworks"
 
 schemes:
-  XCUIDriverRunner:
+  IOSUseDriver:
     build:
       targets:
-        XCUIDriverRunner: all
-  XCUIDriverUnitTests:
+        IOSUseDriver: all
+  IOSUseDriverUnitTests:
     build:
       targets:
-        XCUIDriverUnitTests: [test]
+        IOSUseDriverUnitTests: [test]
     test:
       targets:
-        - XCUIDriverUnitTests
+        - IOSUseDriverUnitTests
