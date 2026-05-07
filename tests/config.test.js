@@ -48,6 +48,32 @@ function restoreConfig(saved) {
   else if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
 }
 
+/** Create a mock driver IPA structure that rewriteIpaBundleIds expects. */
+function createMockIpaStructure(destDir) {
+  const payloadDir = path.join(destDir, 'Payload');
+  const appDir = path.join(payloadDir, 'IOSUseDriver-Runner.app');
+  const xctestDir = path.join(appDir, 'PlugIns', 'IOSUseDriver.xctest');
+  fs.mkdirSync(xctestDir, { recursive: true });
+
+  const runnerPlist = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0"><dict>',
+    '<key>CFBundleIdentifier</key><string>com.iosuse.xcuidriver.xctrunner</string>',
+    '</dict></plist>',
+  ].join('\n');
+  fs.writeFileSync(path.join(appDir, 'Info.plist'), runnerPlist);
+
+  const xctestPlist = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0"><dict>',
+    '<key>CFBundleIdentifier</key><string>com.iosuse.xcuidriver</string>',
+    '</dict></plist>',
+  ].join('\n');
+  fs.writeFileSync(path.join(xctestDir, 'Info.plist'), xctestPlist);
+}
+
 describe('config helpers', () => {
   let configModule;
   let originalHome;
@@ -132,14 +158,10 @@ describe('config helpers', () => {
     execFileSyncMock.mockImplementation((file, args) => {
       if (file === 'unzip') {
         const destIdx = args.indexOf('-d');
-        if (destIdx !== -1) {
-          const payloadDir = path.join(args[destIdx + 1], 'Payload');
-          fs.mkdirSync(payloadDir, { recursive: true });
-          const appDir = path.join(payloadDir, 'XCUIDriverRunner.app');
-          fs.mkdirSync(appDir, { recursive: true });
-        }
+        if (destIdx !== -1) createMockIpaStructure(args[destIdx + 1]);
         return '';
       }
+      if (file === 'zip') return '';
       return '';
     });
 
@@ -179,14 +201,10 @@ describe('config helpers', () => {
     execFileSyncMock.mockImplementation((file, args) => {
       if (file === 'unzip') {
         const destIdx = args.indexOf('-d');
-        if (destIdx !== -1) {
-          const payloadDir = path.join(args[destIdx + 1], 'Payload');
-          fs.mkdirSync(payloadDir, { recursive: true });
-          const appDir = path.join(payloadDir, 'XCUIDriverRunner.app');
-          fs.mkdirSync(appDir, { recursive: true });
-        }
+        if (destIdx !== -1) createMockIpaStructure(args[destIdx + 1]);
         return '';
       }
+      if (file === 'zip') return '';
       return '';
     });
 
@@ -237,14 +255,10 @@ describe('config helpers', () => {
     execFileSyncMock.mockImplementation((file, args) => {
       if (file === 'unzip') {
         const destIdx = args.indexOf('-d');
-        if (destIdx !== -1) {
-          const payloadDir = path.join(args[destIdx + 1], 'Payload');
-          fs.mkdirSync(payloadDir, { recursive: true });
-          const appDir = path.join(payloadDir, 'XCUIDriverRunner.app');
-          fs.mkdirSync(appDir, { recursive: true });
-        }
+        if (destIdx !== -1) createMockIpaStructure(args[destIdx + 1]);
         return '';
       }
+      if (file === 'zip') return '';
       return '';
     });
 
@@ -274,6 +288,10 @@ describe('config helpers', () => {
 
     const signCall = spawnCalls.find(c => c[1]?.[0] === 'sign');
     expect(signCall).toBeDefined();
-    expect(signCall[1]).toContain('com.ios-use.driver.user-test-com.xctrunner');
+    // altsign reads bundle IDs from the rewritten IPA, no --bundle-id flag
+    expect(signCall[1]).not.toContain('--bundle-id');
+    // IPA path should be the rewritten one
+    const ipaIdx = signCall[1].indexOf('--ipa');
+    expect(signCall[1][ipaIdx + 1]).toContain('-rewritten.ipa');
   });
 });

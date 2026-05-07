@@ -10,6 +10,9 @@ export const DRIVER_COMMANDS = {
   WAIT_FOR: 'waitFor',
   ACTIVATE_APP: 'activateApp',
   TERMINATE_APP: 'terminateApp',
+  PROBE_FETCH: 'probeFetch',
+  PROXY_START: 'proxyStart',
+  PROXY_STOP: 'proxyStop',
   SCREENSHOT: 'screenshot',
   OSLOG: 'oslog',
 } as const;

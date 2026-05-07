@@ -111,18 +111,18 @@ final class TypesTests: XCTestCase {
     func testCommandRawValues() {
         let cmds: [Command] = [
             .createSession, .deleteSession,
-            .activateApp, .terminateApp, .screenshot, .oslog,
+            .activateApp, .terminateApp, .probeFetch, .screenshot, .oslog,
             .dom, .find, .tap, .longPress, .input, .swipe, .waitFor,
         ]
         for cmd in cmds {
             XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")
         }
-        XCTAssertEqual(cmds.count, 13)
+        XCTAssertEqual(cmds.count, 14)
     }
 
     func testCommandDecoding_AllCases() throws {
         for raw in ["createSession", "deleteSession", "activateApp",
-                    "terminateApp", "screenshot", "oslog", "dom", "find",
+                    "terminateApp", "probeFetch", "screenshot", "oslog", "dom", "find",
                     "tap", "longPress", "input", "swipe", "waitFor"] {
             let json = "{\"c\":\"\(raw)\"}"
             let req = try JSONDecoder().decode(RequestFrame.self, from: json.data(using: .utf8)!)

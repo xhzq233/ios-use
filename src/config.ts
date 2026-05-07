@@ -14,6 +14,10 @@ const DEFAULT_PORT = '8100';
 const CACHED_APPLE_ID_RE = /Using cached session for ([^\s]+)/;
 const NON_ALPHANUM_RE = /[^a-z0-9]/g;
 
+// Bundle IDs baked into the prebuilt driver.ipa by xcodegen (local dev values).
+const DEV_RUNNER_BUNDLE_ID = 'com.iosuse.xcuidriver.xctrunner';
+const DEV_XCTEST_BUNDLE_ID = 'com.iosuse.xcuidriver';
+
 export interface DeviceConfig {
   bundleId: string;
   port: string;
@@ -47,6 +51,63 @@ function normalizeDeviceConfig(deviceConfig: Partial<DeviceConfig> = {}): Device
 
 function ensureDir(): void {
   ensureIosUseHome();
+}
+
+/**
+ * Rewrite bundle IDs in a prebuilt driver IPA.
+ * The prebuilt IPA uses dev bundle IDs (com.iosuse.xcuidriver.*).
+ * For real-device signing we need per-developer IDs (com.ios-use.driver.{appleId}.*).
+ * Returns the path to the rewritten IPA (a temp file next to the original).
+ */
+export function rewriteIpaBundleIds(
+  ipaPath: string,
+  runnerBundleId: string,
+  xctestBundleId: string,
+): string {
+  const tmpDir = fs.mkdtempSync(path.join(IOS_USE_HOME, 'ipa-rewrite-'));
+  try {
+    execFileSync('unzip', ['-q', '-o', ipaPath, '-d', tmpDir], { stdio: 'pipe' });
+
+    // Rewrite runner app Info.plist
+    const payloadDir = path.join(tmpDir, 'Payload');
+    const appEntries = fs.readdirSync(payloadDir).filter(e => e.endsWith('.app'));
+    if (appEntries.length === 0) throw new Error('No .app found in IPA');
+    const runnerPlist = path.join(payloadDir, appEntries[0], 'Info.plist');
+    rewritePlistBundleId(runnerPlist, DEV_RUNNER_BUNDLE_ID, runnerBundleId);
+
+    // Rewrite xctest bundle Info.plist (inside PlugIns/)
+    const plugInsDir = path.join(payloadDir, appEntries[0], 'PlugIns');
+    if (fs.existsSync(plugInsDir)) {
+      for (const entry of fs.readdirSync(plugInsDir)) {
+        if (entry.endsWith('.xctest')) {
+          const xctestPlist = path.join(plugInsDir, entry, 'Info.plist');
+          if (fs.existsSync(xctestPlist)) {
+            rewritePlistBundleId(xctestPlist, DEV_XCTEST_BUNDLE_ID, xctestBundleId);
+          }
+        }
+      }
+    }
+
+    const outPath = ipaPath.replace(/\.ipa$/, '-rewritten.ipa');
+    execFileSync('zip', ['-r', '-q', outPath, 'Payload'], { cwd: tmpDir, stdio: 'pipe' });
+    return outPath;
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function rewritePlistBundleId(plistPath: string, oldId: string, newId: string): void {
+  // Read current value via plutil (works for both binary and XML plists)
+  const current = execFileSync('plutil', ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', plistPath], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }).toString().trim();
+
+  if (current === newId) return; // already correct
+  if (current !== oldId) return; // unexpected value, don't touch
+
+  execFileSync('plutil', ['-replace', 'CFBundleIdentifier', '-string', newId, plistPath], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
 }
 
 export function readProjectConfig(): ConfigFile {
@@ -195,11 +256,14 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
     }
     bundleId = `${DEFAULT_DRIVER_BUNDLE_PREFIX}.${sanitizeForBundleId(appleId)}.xctrunner`;
   }
+  // xctest bundle ID = runner bundle ID without the .xctrunner suffix
+  const xctestBundleId = bundleId.replace(/\.xctrunner$/, '');
   saveDeviceSigningConfig(device.udid, {
     bundleId,
     port: opts.port !== undefined ? String(opts.port) : undefined,
   });
   logger.info(`Driver Bundle ID: ${bundleId}`);
+  logger.info(`XCTest Bundle ID: ${xctestBundleId}`);
 
   // Locate prebuilt IPA
   const ipaPath = opts.ipa || getPrebuiltIPAPath();
@@ -211,15 +275,19 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   }
   logger.info(`Using prebuilt driver: ${ipaPath}`);
 
-  // Sign with altsign-cli
+  // Rewrite bundle IDs in the IPA before signing
+  logger.info('Rewriting IPA bundle IDs...');
+  const rewrittenIpa = rewriteIpaBundleIds(ipaPath, bundleId, xctestBundleId);
+  logger.info(`Rewritten IPA: ${rewrittenIpa}`);
+
+  // Sign with altsign-cli (reads bundle IDs from the IPA, no --bundle-id needed)
   const signedIpa = path.join(IOS_USE_HOME, `driver-signed-${device.udid}.ipa`);
   logger.info('Signing driver via altsign-cli...');
 
   const signArgs = [
     'sign',
     '--udid', device.udid,
-    '--ipa', ipaPath,
-    '--bundle-id', bundleId,
+    '--ipa', rewrittenIpa,
     '--output', signedIpa,
   ];
   if (opts.appleId) signArgs.push('--apple-id', opts.appleId);
@@ -258,13 +326,14 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
 
   // Cleanup
   fs.rmSync(extractDir, { recursive: true, force: true });
+  if (rewrittenIpa !== ipaPath) fs.rmSync(rewrittenIpa, { force: true });
 
   logger.success('Device config complete! Run `ios-use session start --bundle-id <app>` to start.');
 }
 
 // ── Simulator configuration (no signing required) ──
 
-const SIMULATOR_BUNDLE_ID = 'com.iosuse.xcuidriver.xctrunner';
+const SIMULATOR_BUNDLE_ID = 'com.iosuse.xcuidriver';
 
 interface ConfigureSimulatorOpts {
   verbose?: boolean;

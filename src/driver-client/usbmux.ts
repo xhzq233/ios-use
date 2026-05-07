@@ -75,7 +75,7 @@ export async function connectUsbmux(udid: string, port: number): Promise<net.Soc
     // Step 1: ListDevices to find DeviceID
     const listResp = await sendAndReceive({
       MessageType: 'ListDevices',
-      ProgName: 'ios-use-driver',
+      ProgName: 'IOSUseDriver',
       ClientVersionString: '1.0',
     }, 0);
 
@@ -94,7 +94,7 @@ export async function connectUsbmux(udid: string, port: number): Promise<net.Soc
     // Step 2: Connect to port on device
     const connectResp = await sendAndReceive({
       MessageType: 'Connect',
-      ProgName: 'ios-use-driver',
+      ProgName: 'IOSUseDriver',
       ClientVersionString: '1.0',
       DeviceID: device.Properties.DeviceID,
       PortNumber: swap16(port),

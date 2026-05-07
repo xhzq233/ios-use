@@ -7,6 +7,9 @@ enum Command: String, Codable {
     case deleteSession
     case activateApp
     case terminateApp
+    case probeFetch
+    case proxyStart
+    case proxyStop
     case screenshot
     case oslog
     case dom
@@ -97,6 +100,11 @@ struct OslogArgs: Codable {
     let name: String?
     let clear: Bool?
     let bundleId: String?
+    let timeout: Double?
+}
+
+struct ProbeFetchArgs: Codable {
+    let url: String
     let timeout: Double?
 }
 

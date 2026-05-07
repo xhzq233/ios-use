@@ -197,7 +197,10 @@ final class DriverServer {
     private func dispatchOnMainThread(_ req: RequestFrame) throws -> PreparedResponse {
         // oslog does not touch XCTest UI APIs and is safe on any thread.
         if req.c == .oslog {
+            let startedAt = CFAbsoluteTimeGetCurrent()
+            NSLog("[driver] dispatch start command=\(req.c.rawValue)")
             let response = try self.dispatch(req)
+            NSLog("[driver] dispatch finish command=\(req.c.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))ms")
             let encoded = try Codec.encodeResponse(response)
             return PreparedResponse(response: response, encoded: encoded)
         }
@@ -221,10 +224,14 @@ final class DriverServer {
                 return
             }
             do {
+                let startedAt = CFAbsoluteTimeGetCurrent()
+                NSLog("[driver] dispatch start command=\(req.c.rawValue)")
                 let response = try self.dispatch(req)
+                NSLog("[driver] dispatch finish command=\(req.c.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))ms")
                 let encoded = try Codec.encodeResponse(response)
                 result = PreparedResponse(response: response, encoded: encoded)
             } catch {
+                NSLog("[driver] dispatch error command=\(req.c.rawValue) error=\(error)")
                 dispatchError = error
             }
             sem.signal()
@@ -275,6 +282,9 @@ final class DriverServer {
         case .deleteSession: return try AppCommands.deleteSession(req.args)
         case .activateApp:   return try AppCommands.activateApp(req.args)
         case .terminateApp:  return try AppCommands.terminateApp(req.args)
+        case .probeFetch:    return try ProbeCommands.probeFetch(req.args)
+        case .proxyStart:    return try ProxyCommands.proxyStart(req.args)
+        case .proxyStop:     return try ProxyCommands.proxyStop(req.args)
         case .screenshot:
             // Handled by handleConnection's two-frame path; dispatch should
             // never see it.

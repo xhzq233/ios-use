@@ -24,4 +24,9 @@ export type {
   WaitForResult,
   OslogArgs,
   OslogResult,
+  ProbeFetchArgs,
+  ProbeFetchResult,
+  ProxyStartArgs,
+  ProxyStartResult,
+  ProxyStopResult,
 } from './types';

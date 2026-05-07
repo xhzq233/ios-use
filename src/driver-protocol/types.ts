@@ -124,3 +124,27 @@ export interface OslogArgs {
 export type OslogResult =
   | { cleared: number }
   | { matched: number; total: number; content: string };
+
+export interface ProbeFetchArgs {
+  url: string;
+  timeout?: number;
+}
+
+export interface ProbeFetchResult {
+  statusCode: number;
+  bodyBytes: number;
+  contentType?: string;
+}
+
+export interface ProxyStartArgs {
+  port?: number;
+}
+
+export interface ProxyStartResult {
+  port: number;
+  status: string;
+}
+
+export interface ProxyStopResult {
+  status: string;
+}

@@ -19,6 +19,9 @@ import type {
   WaitForResult,
   OslogArgs,
   OslogResult,
+  ProbeFetchResult,
+  ProxyStartResult,
+  ProxyStopResult,
   DriverCommand,
 } from '../driver-protocol/index.js';
 
@@ -142,6 +145,18 @@ abstract class BaseRpcClient {
       bundleId: args.bundleId,
       timeout: args.timeout,
     }));
+  }
+
+  async probeFetch(url: string, timeout?: number): Promise<ProbeFetchResult> {
+    return await this.send(DRIVER_COMMANDS.PROBE_FETCH, omitUndefined({ url, timeout }));
+  }
+
+  async proxyStart(port?: number): Promise<ProxyStartResult> {
+    return await this.send(DRIVER_COMMANDS.PROXY_START, omitUndefined({ port }));
+  }
+
+  async proxyStop(): Promise<ProxyStopResult> {
+    return await this.send(DRIVER_COMMANDS.PROXY_STOP, {});
   }
 }
 
