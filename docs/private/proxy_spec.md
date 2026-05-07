@@ -672,4 +672,129 @@ CLI 端 proxy command
 | 设备 proxy 直连外网 | ❌ 失败 | 设备通过 USB 连接，无独立网络出口 |
 | Mac 端 usbmux 桥接到 mitmdump | 待实现 | 需要 Mac 端 bridge 模块 |
 
-**结论**：USB 代理方案可行。设备端 proxy + usbmux 隧道已打通，下一步实现 Mac 端 bridge 到 mitmdump。
+**结论**：USB 代理方案方向正确，但实现架构有根本性错误，需要修正。
+
+---
+
+## 十三、架构修正（2026-05-07）
+
+### 13.1 已发现的致命问题
+
+#### 问题 1：usbmux 连接方向搞反
+
+usbmux 通信模型是 **Mac→device**：Mac 连 `/var/run/usbmuxd`，发 `Connect(DeviceID, PortNumber)` 到设备端口。
+**设备无法主动通过 usbmux 连 Mac。**
+
+之前设计的 "Mac usbmux poller 主动连设备 9091" 不可行。
+
+#### 问题 2：配对机制在多连接场景下崩溃
+
+浏览器会同时发起多个 TCP 连接（加载一个网页可能有 10+ 连接）。一对一配对需要 Mac 端同时维护多个 usbmux 连接，状态管理复杂度极高。
+
+#### 问题 3：iOS 系统代理地址未解决
+
+iOS 系统代理不接受 `127.0.0.1`（loopback），需要填设备自身局域网 IP。
+
+### 13.2 修正后的架构
+
+**核心原则**：设备 proxy 做 HTTP 解析 + usbmux 隧道，Mac 端直接用 mitmdump。
+
+```text
+iOS 系统代理设置（设备自身 IP:9090）
+  → 设备 proxy (0.0.0.0:9090, 解析 HTTP)
+  → 每个请求开一个 usbmux 隧道到 Mac
+  → Mac usbmuxd 转发到本地 mitmdump
+  → mitmdump 做 MITM / 抓包 / 连目标服务器
+```
+
+**数据流（单个 HTTP 请求）：**
+
+```text
+1. iOS 发送 "CONNECT example.com:443" 到设备:9090
+2. 设备 proxy 解析 HTTP，得到目标 host:port
+3. 设备 proxy 通过 usbmux 打开隧道到 Mac mitmdump 端口
+4. 设备 proxy 把原始 HTTP 请求通过隧道发给 mitmdump
+5. mitmdump 返回 "200 Connection Established"
+6. 设备 proxy 返回 200 给 iOS
+7. iOS 开始 TLS 握手 → 数据通过隧道到 mitmdump → MITM → 目标服务器
+```
+
+**关键区别：**
+- 设备 proxy **解析 HTTP**（不是透明 relay）
+- 设备 proxy **通过 usbmux 主动连 Mac**（不是 Mac 连设备）
+- Mac 端 **直接用 mitmdump**（不需要自建 bridge）
+
+### 13.3 usbmux 连接方向的实际能力
+
+usbmuxd 协议只支持 **Mac→device** 方向：
+
+```c
+// usbmuxd-proto.h
+MESSAGE_CONNECT = 2   // Mac 连设备端口
+MESSAGE_LISTEN  = 3   // 监听设备事件（非反向连接）
+```
+
+已验证：`Mac: connectUsbmux(udid, 8100) → usbmuxd → 设备:8100` ✅
+
+**device→Mac 方向在标准 usbmuxd 协议中不支持。** 设备无法主动通过 usbmux 连 Mac。
+
+### 13.4 核心矛盾
+
+```
+设备需要把 HTTP 请求发到 Mac（因为设备无网络出口）
+  ↑ 但 usbmux 只支持 Mac→device 方向
+  ↑ 设备无法主动连 Mac
+  ↑ Mac 可以连设备，但 mitmdump 需要接收请求，不是发送请求
+```
+
+**这是一个根本性的架构矛盾。**
+
+### 13.5 可行的方案讨论
+
+#### 方案 A：放弃 USB-only，要求设备有 WiFi
+
+- 设备 proxy 直接连目标服务器（需要设备有网络）
+- 不走 usbmux，设备 proxy 就是普通的 HTTP proxy
+- mitmdump 不参与，设备 proxy 自己做日志
+- **缺点**：依赖设备 WiFi，HTTPS MITM 需要自己实现
+
+#### 方案 B：Mac→device usbmux + 自定义协议
+
+- Mac 打开 usbmux 连到设备 proxy 端口
+- 设备 proxy 解析 HTTP，通过同一个 usbmux 连接发回 "目标地址" 元信息
+- Mac 端解析元信息，连实际服务器，转发数据
+- 需要自定义协议（不是透明 relay）
+- **缺点**：协议设计复杂，多连接管理困难
+
+#### 方案 C：Mac 端 iproxy + mitmdump（最简）
+
+- `iproxy 9093:9090` 把 Mac:9093 映射到设备:9090
+- 设备 proxy 监听 0.0.0.0:9090，做 HTTP 解析 + 透明 relay
+- Mac 端 mitmdump 配置 upstream 为 localhost:9093
+- mitmdump 发出的 HTTP 请求通过 iproxy 到设备 proxy
+- 设备 proxy 需要把请求"转发到哪"——但设备没有网络出口
+- **死结**：设备无法连目标服务器
+
+#### 方案 D：iproxy 双通道 + 设备端 HTTP 解析
+
+- `iproxy 9093:9090`（Mac→设备 proxy）
+- `iproxy 9094:9091`（Mac→设备 upstream）
+- 设备 proxy 监听 9090（HTTP 请求）和 9091（upstream）
+- 设备 proxy 解析 HTTP，配对 9090↔9091
+- Mac 端 9093 连 mitmdump，9094 连实际服务器
+- **问题**：配对机制在多连接下崩溃（和之前一样的问题）
+
+#### 方案 E：自定义 USB 隧道协议
+
+- 不用标准 usbmux，自建 USB 通信通道
+- 设备端通过 USB 发送 HTTP 请求 + 目标地址
+- Mac 端接收、解析、连目标服务器、返回响应
+- 需要深入 USB 协议层
+- **缺点**：工程量大，维护复杂
+
+### 13.6 待讨论
+
+1. 是否有 usbmux 的 device→Mac 能力我没发现的？
+2. 是否可以用其他 USB 通道（如 `pymobiledevice3` 的 lockdown 服务）实现反向连接？
+3. 方案 A（要求设备有 WiFi）是否可以接受作为 MVP？
+4. 方案 B 的自定义协议复杂度是否可控？
