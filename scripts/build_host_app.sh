@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =============================================================================
-# Build XCUIDriverRunner and package as IPA
+# Build IOSUseDriver artifacts
 #
 # Usage:
 #   ./scripts/build_host_app.sh        # Release build (fastest, no dSYM)
@@ -21,7 +21,7 @@ PROJECT_DIR="$ROOT_DIR/driver"
 
 BUILD_DIR="$PROJECT_DIR/build"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
-APP_PATH="$BUILD_DIR/XCUIDriverRunner-Runner.app"
+XCTEST_WRAPPER_PATH="$BUILD_DIR/IOSUseDriver-Runner.app"
 
 # Release artifacts go to assets/ (tracked by git).
 # Debug artifacts go to build/ (not tracked) to avoid accidental commits.
@@ -41,8 +41,8 @@ fi
 
 # Common xcodebuild flags.
 XCODE_COMMON=(
-  -project "$PROJECT_DIR/XCUIDriver.xcodeproj"
-  -scheme XCUIDriverRunner
+  -project "$PROJECT_DIR/IOSUseDriver.xcodeproj"
+  -scheme IOSUseDriver
   -configuration "$CONFIGURATION"
   CONFIGURATION_BUILD_DIR="$BUILD_DIR"
   -derivedDataPath "$DERIVED_DATA"
@@ -58,8 +58,8 @@ if [ -n "$BOOTED_UDID" ] && [ -n "$BOOTED_OS" ]; then
   TEST_LOG=$(mktemp)
   set +e
   xcodebuild test \
-    -project "$PROJECT_DIR/XCUIDriver.xcodeproj" \
-    -scheme XCUIDriverUnitTests \
+    -project "$PROJECT_DIR/IOSUseDriver.xcodeproj" \
+    -scheme IOSUseDriverUnitTests \
     -destination "platform=iOS Simulator,id=$BOOTED_UDID,OS=$BOOTED_OS" \
     CODE_SIGNING_ALLOWED=NO \
     > "$TEST_LOG" 2>&1
@@ -104,53 +104,52 @@ package_ipa() {
 # Device build
 # =============================================================================
 
-echo "[build] Building XCUIDriverRunner for iOS (no signing)..."
-rm -rf "$APP_PATH"
+echo "[build] Building IOSUseDriver for iOS (no signing)..."
+rm -rf "$XCTEST_WRAPPER_PATH"
 
 xcodebuild build-for-testing \
   "${XCODE_COMMON[@]}" \
   -destination 'generic/platform=iOS' \
   | tail -5
 
-if [ ! -d "$APP_PATH" ]; then
-  echo "[build] ERROR: Runner.app not found in $BUILD_DIR"
+if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
+  echo "[build] ERROR: xctest wrapper app not found in $BUILD_DIR"
   exit 1
 fi
-echo "[build] Built: $APP_PATH"
+echo "[build] Built xctest wrapper: $XCTEST_WRAPPER_PATH"
 
 # Strip XC frameworks for iOS 17+ compatibility.
 # On iOS 17+, device already has these frameworks.
 echo "[build] Stripping XC frameworks..."
 STRIPPED=0
-if [ -d "$APP_PATH/Frameworks" ]; then
-  for fw in "$APP_PATH/Frameworks"/XC*.framework; do
+if [ -d "$XCTEST_WRAPPER_PATH/Frameworks" ]; then
+  for fw in "$XCTEST_WRAPPER_PATH/Frameworks"/XC*.framework; do
     [ -d "$fw" ] && rm -rf "$fw" && ((STRIPPED++)) || true
   done
 fi
 echo "[build] Stripped $STRIPPED XC framework(s)"
 
-# Package as IPA
 echo "[build] Packaging device IPA..."
-package_ipa "$APP_PATH" "$IPA_OUTPUT"
+package_ipa "$XCTEST_WRAPPER_PATH" "$IPA_OUTPUT"
 
 # =============================================================================
 # Simulator build
 # =============================================================================
 
-echo "[build] Building XCUIDriverRunner for Simulator..."
-rm -rf "$APP_PATH"
+echo "[build] Building IOSUseDriver for Simulator..."
+rm -rf "$XCTEST_WRAPPER_PATH"
 
 xcodebuild build-for-testing \
   "${XCODE_COMMON[@]}" \
   -destination 'generic/platform=iOS Simulator' \
   | tail -5
 
-if [ ! -d "$APP_PATH" ]; then
-  echo "[build] ERROR: Simulator Runner.app not found in $BUILD_DIR"
+if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
+  echo "[build] ERROR: Simulator xctest wrapper app not found in $BUILD_DIR"
   exit 1
 fi
-echo "[build] Built Simulator app: $APP_PATH"
+echo "[build] Built Simulator xctest wrapper: $XCTEST_WRAPPER_PATH"
 
 # Package Simulator IPA
 echo "[build] Packaging simulator IPA..."
-package_ipa "$APP_PATH" "$SIM_IPA_OUTPUT"
+package_ipa "$XCTEST_WRAPPER_PATH" "$SIM_IPA_OUTPUT"

@@ -9,16 +9,16 @@
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
-            buildForRunning = "NO"
-            buildForProfiling = "NO"
-            buildForArchiving = "NO"
-            buildForAnalyzing = "NO">
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "259AFAC15E824FC73332F253"
-               BuildableName = "XCUIDriverUnitTests.xctest"
-               BlueprintName = "XCUIDriverUnitTests"
-               ReferencedContainer = "container:XCUIDriver.xcodeproj">
+               BlueprintIdentifier = "247EFBA6B17A8288D8BE9182"
+               BuildableName = "IOSUseDriver.xctest"
+               BlueprintName = "IOSUseDriver"
+               ReferencedContainer = "container:IOSUseDriver.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -32,27 +32,14 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "259AFAC15E824FC73332F253"
-            BuildableName = "XCUIDriverUnitTests.xctest"
-            BlueprintName = "XCUIDriverUnitTests"
-            ReferencedContainer = "container:XCUIDriver.xcodeproj">
+            BlueprintIdentifier = "247EFBA6B17A8288D8BE9182"
+            BuildableName = "IOSUseDriver.xctest"
+            BlueprintName = "IOSUseDriver"
+            ReferencedContainer = "container:IOSUseDriver.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "259AFAC15E824FC73332F253"
-               BuildableName = "XCUIDriverUnitTests.xctest"
-               BlueprintName = "XCUIDriverUnitTests"
-               ReferencedContainer = "container:XCUIDriver.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
       </Testables>
-      <CommandLineArguments>
-      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -67,10 +54,10 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "259AFAC15E824FC73332F253"
-            BuildableName = "XCUIDriverUnitTests.xctest"
-            BlueprintName = "XCUIDriverUnitTests"
-            ReferencedContainer = "container:XCUIDriver.xcodeproj">
+            BlueprintIdentifier = "247EFBA6B17A8288D8BE9182"
+            BuildableName = "IOSUseDriver.xctest"
+            BlueprintName = "IOSUseDriver"
+            ReferencedContainer = "container:IOSUseDriver.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
    </LaunchAction>
@@ -83,10 +70,10 @@
       <MacroExpansion>
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "259AFAC15E824FC73332F253"
-            BuildableName = "XCUIDriverUnitTests.xctest"
-            BlueprintName = "XCUIDriverUnitTests"
-            ReferencedContainer = "container:XCUIDriver.xcodeproj">
+            BlueprintIdentifier = "247EFBA6B17A8288D8BE9182"
+            BuildableName = "IOSUseDriver.xctest"
+            BlueprintName = "IOSUseDriver"
+            ReferencedContainer = "container:IOSUseDriver.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
    </ProfileAction>
