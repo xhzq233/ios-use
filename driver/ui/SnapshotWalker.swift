@@ -279,6 +279,33 @@ private func cleanTree(
         }
     }
 
+    // Rule 6: parent-child same-label merge — if this node has exactly one kept
+    // child and both share the same display name, merge traits (including type)
+    // and keep the child's descendants. The parent node survives as the merged
+    // root so its frame/value are retained.
+    if effectiveSubtrees.count == 1,
+       let childRecords = effectiveSubtrees.first?.records,
+       !childRecords.isEmpty,
+       let parentName = displayName(for: node),
+       parentName == displayName(for: childRecords[0].node) {
+        var mergedTraits = traits
+        for t in childRecords[0].traits where !mergedTraits.contains(t) {
+            mergedTraits.append(t)
+        }
+        let mergedRoot = SnapshotElement(
+            node: node,
+            traits: mergedTraits,
+            disabled: disabled,
+            invisible: invisible,
+            childCount: childRecords[0].childCount
+        )
+        var mergedRecords = [mergedRoot]
+        if childRecords.count > 1 {
+            mergedRecords.append(contentsOf: childRecords.dropFirst())
+        }
+        return .keep(CleanSubtree(records: mergedRecords))
+    }
+
     subtree[0] = SnapshotElement(
         node: node,
         traits: traits,
@@ -471,7 +498,7 @@ func findCellAncestor(_ node: SafeSnapshot) -> SafeSnapshot {
 func elementTypeName(_ type: XCUIElement.ElementType) -> String {
     switch type {
     case .any: return "Any"
-    case .other: return "Other"
+    case .other: return "-"
     case .application: return "Application"
     case .group: return "Group"
     case .window: return "Window"

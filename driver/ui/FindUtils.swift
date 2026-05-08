@@ -79,55 +79,14 @@ func finalizeFindMatches(
     normalizedQuery: String,
     normalizedTextsByNode: [ObjectIdentifier: [String]]
 ) -> [SnapshotElement] {
-    preferVisibleMatches(
-        dedupeNestedMatches(matches, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode)
-    )
+    _ = normalizedQuery
+    _ = normalizedTextsByNode
+    return preferVisibleMatches(matches)
 }
 
 private func preferVisibleMatches(_ matches: [SnapshotElement]) -> [SnapshotElement] {
     let visible = matches.filter { $0.isVisible }
     return visible.isEmpty ? matches : visible
-}
-
-private func dedupeNestedMatches(
-    _ matches: [SnapshotElement],
-    normalizedQuery: String,
-    normalizedTextsByNode: [ObjectIdentifier: [String]]
-) -> [SnapshotElement] {
-    guard matches.count > 1 else { return matches }
-    var keep = Array(repeating: true, count: matches.count)
-    for i in 0..<matches.count {
-        guard keep[i] else { continue }
-        for j in 0..<matches.count where i != j && keep[j] {
-            let lhs = matches[i]
-            let rhs = matches[j]
-            guard nestedDuplicatePair(lhs, rhs, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode) else { continue }
-            if shouldPreferAncestor(lhs.node, over: rhs.node) {
-                keep[j] = false
-            } else if shouldPreferAncestor(rhs.node, over: lhs.node) {
-                keep[i] = false
-                break
-            }
-        }
-    }
-    let deduped = zip(matches, keep).compactMap { $1 ? $0 : nil }
-    return deduped.isEmpty ? matches : deduped
-}
-
-private func nestedDuplicatePair(
-    _ lhs: SnapshotElement,
-    _ rhs: SnapshotElement,
-    normalizedQuery: String,
-    normalizedTextsByNode: [ObjectIdentifier: [String]]
-) -> Bool {
-    guard matchesQueryContent(lhs, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode),
-          matchesQueryContent(rhs, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode) else {
-        return false
-    }
-    // These two directions are mutually exclusive in practice because the
-    // snapshot hierarchy is a tree, but we keep the symmetric check to make
-    // the "nested duplicate" intent explicit at the call site.
-    return isAncestor(lhs.node, of: rhs.node) || isAncestor(rhs.node, of: lhs.node)
 }
 
 func searchableTexts(label: String?, value: String?) -> [String] {
@@ -192,28 +151,6 @@ private func isAncestor(_ ancestor: SafeSnapshot, of node: SafeSnapshot) -> Bool
         current = p.parent
     }
     return false
-}
-
-private func shouldPreferAncestor(_ ancestor: SafeSnapshot, over descendant: SafeSnapshot) -> Bool {
-    guard isAncestor(ancestor, of: descendant) else { return false }
-    let ancestorType = XCUIElement.ElementType(rawValue: UInt(ancestor.elementType)) ?? .other
-    let descendantType = XCUIElement.ElementType(rawValue: UInt(descendant.elementType)) ?? .other
-    if isInteractiveFindTarget(ancestorType) && !isInteractiveFindTarget(descendantType) {
-        return true
-    }
-    if ancestorType == .button && descendantType == .staticText {
-        return true
-    }
-    return false
-}
-
-private func isInteractiveFindTarget(_ type: XCUIElement.ElementType) -> Bool {
-    switch type {
-    case .button, .cell, .link, .textField, .secureTextField, .searchField, .textView:
-        return true
-    default:
-        return false
-    }
 }
 
 // MARK: - Levenshtein (doc 8)
