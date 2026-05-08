@@ -94,7 +94,7 @@ install_binary() {
   local driver_ipa="$HOME/.ios-use/driver.ipa"
   if [[ -f "$ROOT_DIR/assets/driver.ipa" ]]; then
     install -m 644 "$ROOT_DIR/assets/driver.ipa" "$driver_ipa"
-  elif [[ ! -f "$driver_ipa" ]]; then
+  else
     echo "Downloading driver.ipa ${DRIVER_VERSION}..."
     curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${DRIVER_VERSION}/driver.ipa" \
       -o "$driver_ipa"
