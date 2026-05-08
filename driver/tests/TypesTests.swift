@@ -342,11 +342,15 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(point.y, 40)
     }
 
-    func testResolveTapPoint_RejectsOutOfBoundsOffset() {
-        XCTAssertThrowsError(try resolveTapPoint(
+    func testResolveTapPoint_AllowsOutOfBoundsOffset() throws {
+        let point = try resolveTapPoint(
             frame: CGRect(x: 10, y: 20, width: 100, height: 40),
             offset: TapOffset(x: 120, y: 5, xRatio: nil, yRatio: nil)
-        ))
+        )
+        // frame.minX(10) + localX(120) = 130
+        XCTAssertEqual(point.x, 130)
+        // frame.minY(20) + localY(5) = 25
+        XCTAssertEqual(point.y, 25)
     }
 
     func testMakeMatcher_WithFlags() throws {
