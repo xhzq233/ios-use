@@ -243,6 +243,43 @@ describe('config helpers', () => {
     expect(loggerSuccessMock).toHaveBeenCalledWith('Device config complete! Run `ios-use session start --bundle-id <app>` to start.');
   });
 
+  test('configureDeviceSigning throws when altsign does not produce signed IPA', async () => {
+    const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
+    const altsignBin = path.join(altsignDir, 'altsign-cli');
+    if (!fs.existsSync(altsignBin)) {
+      fs.mkdirSync(altsignDir, { recursive: true });
+      fs.writeFileSync(altsignBin, '#!/bin/sh\necho mock');
+      fs.chmodSync(altsignBin, 0o755);
+    }
+
+    execFileSyncMock.mockImplementation((file, args) => {
+      if (file === 'unzip') {
+        const destIdx = args.indexOf('-d');
+        if (destIdx !== -1) createMockIpaStructure(args[destIdx + 1]);
+        return '';
+      }
+      if (file === 'zip') return '';
+      return '';
+    });
+
+    spawnMock.mockImplementation((command, args) => {
+      return {
+        stdout: { on: mock() },
+        stderr: { on: mock() },
+        on: (event, handler) => {
+          if (event === 'close') {
+            // altsign exits 0 but does NOT write the output file (e.g. network error)
+            handler(0);
+          }
+        },
+      };
+    });
+
+    await expect(
+      configModule.configureDeviceSigning({ udid: 'udid-1', appleId: 'test@example.com', password: 'pw' }),
+    ).rejects.toThrow('altsign-cli sign did not produce a signed IPA');
+  });
+
   test('configureDeviceSigning uses dynamic bundle ID from cached apple id', async () => {
     const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
     const altsignBin = path.join(altsignDir, 'altsign-cli');
