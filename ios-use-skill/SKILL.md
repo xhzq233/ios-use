@@ -107,21 +107,26 @@ Flow 的编写规范、字段语义和 subflow 用法见 `references/flow.md`。
   - 底层走 synthesized pointer
 
 - `swipe`
-  - 目标导向：`--to <label> --from <label|point>`，从起点元素或坐标开始滑，直到把目标元素带进可见区域
+  - 目标导向（推荐）：`--to <label> --from <label|point>`，自动循环滚动直到目标进入可见区域
+    - **不需要目标一开始就在 AX 树中**；内部会重复滚动 → 重新 snapshot → 查找目标，直到目标出现或 hit boundary
+    - `--from` 是锚点：传一个当前可见的元素，driver 从它所在的 scrollable 开始滚动
+    - 不传 `--from` 时，driver 自动找最大的 scrollable 进行滚动
+    - 方向自动推断：根据目标 cell 相对于当前可见 cell 的位置决定 `forth`（向下/右）或 `back`（向上/左）
+    - 页面内的长列表滚动，**优先用目标导向**，不要自己拆成多次纯距离 swipe
   - 固定距离：`--dir forth|back --distance <px>`，适合已经确认页面方向时做纯距离滚动
   - `forth` 通常表示继续往前浏览当前列表，`back` 表示反方向回拉
   - 自动检测竖直/水平方向，不需要额外传方向轴
   - 页面没变化或没找到目标时，先 `dom` 再决定是否继续滑
 
 ```bash
-# 1. 列表继续下滚
+# 1. 推荐：目标导向滚动（自动循环，直到目标可见）
+ios-use swipe --to "开发者" --from "蓝牙"
+
+# 2. 列表继续下滚
 ios-use swipe --dir forth --distance 300
 
-# 2. 列表往回拉
+# 3. 列表往回拉
 ios-use swipe --dir back --distance 300
-
-# 3. 从当前区域往目标元素滑，直到目标进入可见区域
-ios-use swipe --to "开发者" --from "蓝牙"
 ```
 
 - `input`
