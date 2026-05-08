@@ -276,7 +276,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         if (hint) console.log(`  hint: ${hint}`);
         console.log('');
       }
-      return result.matches;
+      return { matches: result.matches, firstMatch: result.matches[0] ?? null };
     }
 
     case 'tap': {

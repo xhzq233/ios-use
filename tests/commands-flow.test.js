@@ -33,7 +33,7 @@ function makeMatch(label, rect = [10, 20, 100, 40]) {
 function createDriver(overrides = {}) {
   return {
     dom: async () => ({ app: 'Demo', window: [390, 844], elements: [] }),
-    find: async ({ label }) => ({ ok: true, match: makeMatch(label) }),
+    find: async ({ label }) => ({ ok: true, matches: [makeMatch(label)] }),
     tap: async (target) => ({ type: Array.isArray(target) ? 'Coordinate' : 'Button', label: Array.isArray(target) ? '' : target, rect: [0, 0, 0, 0] }),
     longPress: async () => ({ type: 'Button', label: '', rect: [0, 0, 0, 0] }),
     input: async () => undefined,
@@ -81,7 +81,7 @@ steps:
       toolLabel: \${vars.tool}
     outputs: childValue
   - action: tap
-    label: \${childValue.label}
+    label: \${childValue.firstMatch.label}
 `);
 
     const driver = createDriver({

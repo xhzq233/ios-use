@@ -134,10 +134,9 @@ describe('cli', () => {
     ], ['--mode']);
     expectHelp(['find', '--help'], [
       'Find UI element by label',
-      '--context.ancestor-type',
-      '--context.ancestorType',
-      '--context.ancestor-label',
-      '--context.ancestorLabel',
+      '--ancestor-type',
+      '--ancestor-label',
+      '--trait',
       '--udid',
       '--bundle-id',
       '--verbose',
@@ -146,10 +145,8 @@ describe('cli', () => {
       'Type text into an element',
       '--content',
       '--label',
-      '--context.ancestor-type',
-      '--context.ancestorType',
-      '--context.ancestor-label',
-      '--context.ancestorLabel',
+      '--ancestor-type',
+      '--ancestor-label',
       '--udid',
       '--bundle-id',
       '--verbose',
@@ -171,10 +168,8 @@ describe('cli', () => {
       '--offset-y',
       '--offset-x-ratio',
       '--offset-y-ratio',
-      '--context.ancestor-type',
-      '--context.ancestorType',
-      '--context.ancestor-label',
-      '--context.ancestorLabel',
+      '--ancestor-type',
+      '--ancestor-label',
       '--udid',
       '--bundle-id',
       '--verbose',
@@ -182,10 +177,8 @@ describe('cli', () => {
     expectHelp(['longpress', '--help'], [
       '--label',
       '--duration',
-      '--context.ancestor-type',
-      '--context.ancestorType',
-      '--context.ancestor-label',
-      '--context.ancestorLabel',
+      '--ancestor-type',
+      '--ancestor-label',
       '--udid',
       '--bundle-id',
       '--verbose',
@@ -195,10 +188,8 @@ describe('cli', () => {
       '--from',
       '--dir',
       '--distance',
-      '--context.ancestor-type',
-      '--context.ancestorType',
-      '--context.ancestor-label',
-      '--context.ancestorLabel',
+      '--ancestor-type',
+      '--ancestor-label',
       '--udid',
       '--bundle-id',
       '--verbose',
@@ -207,10 +198,8 @@ describe('cli', () => {
       'Wait until an element becomes visible',
       '--label',
       '--timeout',
-      '--context.ancestor-type',
-      '--context.ancestorType',
-      '--context.ancestor-label',
-      '--context.ancestorLabel',
+      '--ancestor-type',
+      '--ancestor-label',
       '--udid',
       '--bundle-id',
       '--verbose',
@@ -246,21 +235,21 @@ describe('cli', () => {
     ]);
   });
 
-  test('accepts both context option spellings on label commands', () => {
-    expectAcceptedWithoutSession(['find', '通用', '--context.ancestor-type', 'Table']);
-    expectAcceptedWithoutSession(['find', '通用', '--context.ancestorType', 'Table']);
-    expectAcceptedWithoutSession(['tap', '--label', '通用', '--context.ancestor-label', '设置']);
-    expectAcceptedWithoutSession(['tap', '--label', '通用', '--context.ancestorLabel', '设置']);
+  test('accepts ancestor context options on label commands', () => {
+    expectAcceptedWithoutSession(['find', '通用', '--ancestor-type', 'Table']);
+    expectAcceptedWithoutSession(['find', '通用', '--ancestor-label', '设置']);
+    expectAcceptedWithoutSession(['tap', '--label', '通用', '--ancestor-type', 'Table']);
+    expectAcceptedWithoutSession(['tap', '--label', '通用', '--ancestor-label', '设置']);
     expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x', '12', '--offset-y', '5']);
     expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x-ratio', '0.8', '--offset-y-ratio', '0.5']);
     expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x-ratio', '0.8']);
     expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-y', '5']);
-    expectAcceptedWithoutSession(['input', '--label', '通用', '--content', 'abc', '--context.ancestor-type', 'Table']);
-    expectAcceptedWithoutSession(['input', '--label', '通用', '--content', 'abc', '--context.ancestorLabel', '设置']);
-    expectAcceptedWithoutSession(['swipe', '--to', '通用', '--context.ancestorType', 'Table']);
-    expectAcceptedWithoutSession(['swipe', '--to', '通用', '--context.ancestor-label', '设置']);
-    expectAcceptedWithoutSession(['longpress', '--label', '通用', '--context.ancestorType', 'Table']);
-    expectAcceptedWithoutSession(['waitFor', '--label', '通用', '--context.ancestorLabel', '设置']);
+    expectAcceptedWithoutSession(['input', '--label', '通用', '--content', 'abc', '--ancestor-type', 'Table']);
+    expectAcceptedWithoutSession(['input', '--label', '通用', '--content', 'abc', '--ancestor-label', '设置']);
+    expectAcceptedWithoutSession(['swipe', '--to', '通用', '--ancestor-type', 'Table']);
+    expectAcceptedWithoutSession(['swipe', '--to', '通用', '--ancestor-label', '设置']);
+    expectAcceptedWithoutSession(['longpress', '--label', '通用', '--ancestor-type', 'Table']);
+    expectAcceptedWithoutSession(['waitFor', '--label', '通用', '--ancestor-label', '设置']);
   });
 
   test('rejects invalid numeric option values', () => {
