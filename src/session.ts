@@ -165,7 +165,7 @@ async function createClient({
   return client;
 }
 
-async function createClientFromSession(
+export async function createClientFromSession(
   info: SessionInfo,
   { verbose = false, ownsSession = false }: { verbose?: boolean; ownsSession?: boolean } = {},
 ): Promise<DriverClient> {
