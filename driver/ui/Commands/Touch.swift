@@ -149,20 +149,8 @@ func resolveTapPoint(frame: CGRect, offset: TapOffset?) throws -> CGPoint {
         throw DriverError.invalidArgs("offset.y and offset.yRatio are mutually exclusive")
     }
 
-    if let xRatio = offset.xRatio, !(0...1).contains(xRatio) {
-        throw DriverError.invalidArgs("offset.xRatio must be within [0, 1]")
-    }
-    if let yRatio = offset.yRatio, !(0...1).contains(yRatio) {
-        throw DriverError.invalidArgs("offset.yRatio must be within [0, 1]")
-    }
-
     let localX = offset.x ?? frame.width * (offset.xRatio ?? 0.5)
     let localY = offset.y ?? frame.height * (offset.yRatio ?? 0.5)
-    if localX < 0 || localX > frame.width || localY < 0 || localY > frame.height {
-        throw DriverError.invalidArgs(
-            "offset is outside element bounds: (\(Int(localX.rounded())),\(Int(localY.rounded()))) not within \(Int(frame.width.rounded()))x\(Int(frame.height.rounded()))"
-        )
-    }
 
     return CGPoint(x: frame.minX + localX, y: frame.minY + localY)
 }

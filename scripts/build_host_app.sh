@@ -132,6 +132,12 @@ if [ -d "$XCTEST_WRAPPER_PATH/Frameworks" ]; then
     rm -f "$XCTEST_WRAPPER_PATH/Frameworks/libXCTestSwiftSupport.dylib"
     ((STRIPPED++)) || true
   fi
+  # Testing.framework from Xcode 16 may mismatch the system libXCTestSwiftSupport
+  # on iOS 18. Strip it so the system uses its own compatible version.
+  if [ -d "$XCTEST_WRAPPER_PATH/Frameworks/Testing.framework" ]; then
+    rm -rf "$XCTEST_WRAPPER_PATH/Frameworks/Testing.framework"
+    ((STRIPPED++)) || true
+  fi
 fi
 echo "[build] Stripped $STRIPPED XC framework(s) / dylib(s)"
 
