@@ -239,8 +239,9 @@ private func cleanTree(
         }
     }
 
-    // Rule 3: empty leaf trim.
-    if displayName(for: node) == nil && childSubtrees.isEmpty {
+    // Rule 3: empty leaf trim. Keep leaves that have a display value even
+    // when label/identifier is nil (e.g. Switch with value "0" or "1").
+    if displayName(for: node) == nil && displayValue(for: node) == nil && childSubtrees.isEmpty {
         return .skip
     }
 
