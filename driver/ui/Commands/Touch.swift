@@ -56,11 +56,11 @@ enum TouchCommands {
         case .fuzzy(let s):
             return notFoundResponse(label,
                                     suggestions: s,
-                                    hint: "Try refining --context.ancestor-type / --context.ancestor-label, or verify the active app")
+                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app")
         case .notFound(let s):
             return notFoundResponse(label,
                                     suggestions: s,
-                                    hint: "Try refining --context.ancestor-type / --context.ancestor-label, or verify the active app")
+                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app")
         }
     }
 
@@ -105,11 +105,11 @@ enum TouchCommands {
         case .fuzzy(let s):
             return notFoundResponse(label,
                                     suggestions: s,
-                                    hint: "Try refining --context.ancestor-type / --context.ancestor-label, or verify the active app")
+                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app")
         case .notFound(let s):
             return notFoundResponse(label,
                                     suggestions: s,
-                                    hint: "Try refining --context.ancestor-type / --context.ancestor-label, or verify the active app")
+                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app")
         }
     }
 

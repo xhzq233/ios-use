@@ -757,6 +757,91 @@ final class TypesTests: XCTestCase {
         }
     }
 
+    // MARK: - elementTypeName
+
+    func testElementTypeName_OtherReturnsDash() {
+        XCTAssertEqual(elementTypeName(.other), "-")
+    }
+
+    // MARK: - finalizeFindMatches (dedupe removed)
+
+    func testFinalizeFindMatches_DoesNotDedupeAncestors() {
+        let childRaw = FakeRawSnapshot(label: "设置", elementType: .staticText)
+        let parentRaw = FakeRawSnapshot(label: "设置", elementType: .button, children: [childRaw])
+        let parentNode = SafeSnapshot(raw: parentRaw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let childNode = parentNode.children[0]
+
+        let parentElem = SnapshotElement(
+            node: parentNode,
+            traits: ["Button"],
+            disabled: false,
+            invisible: false,
+            childCount: 1
+        )
+        let childElem = SnapshotElement(
+            node: childNode,
+            traits: ["StaticText"],
+            disabled: false,
+            invisible: false,
+            childCount: 0
+        )
+
+        let cs = makeCleanedSnapshot([parentElem, childElem])
+
+        switch rawFindInSnapshot("设置", context: nil, cs: cs) {
+        case .ambiguous(let matches):
+            XCTAssertEqual(matches.count, 2, "dedupe removed: both ancestor and descendant should be returned")
+        default:
+            XCTFail("expected ambiguous with 2 matches after dedupe removal")
+        }
+    }
+
+    // MARK: - cleanTree Rule 6: same-label parent-child merge
+
+    func testCleanTree_MergesSameLabelParentChild() {
+        let grandchildRaw = FakeRawSnapshot(label: "文本", elementType: .staticText)
+        let childRaw = FakeRawSnapshot(
+            label: "WiFi",
+            elementType: .button,
+            children: [grandchildRaw]
+        )
+        let parentRaw = FakeRawSnapshot(
+            label: "WiFi",
+            elementType: .cell,
+            children: [childRaw]
+        )
+        let root = SafeSnapshot(raw: parentRaw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let elements = buildCleanElements(from: root)
+
+        // Should merge Cell + Button into one node because they share the same label.
+        // Expected flat stream: [merged(Cell,Button,childCount=1), StaticText]
+        XCTAssertEqual(elements.count, 2)
+        XCTAssertEqual(elements[0].traits, ["Cell", "Button"])
+        XCTAssertEqual(elements[0].childCount, 1)
+        XCTAssertEqual(elements[1].traits, ["StaticText"])
+        XCTAssertEqual(elements[1].childCount, 0)
+    }
+
+    func testCleanTree_KeepsDifferentLabelParentChild() {
+        let childRaw = FakeRawSnapshot(label: "子节点", elementType: .button)
+        let parentRaw = FakeRawSnapshot(
+            label: "父节点",
+            elementType: .cell,
+            children: [childRaw]
+        )
+        let root = SafeSnapshot(raw: parentRaw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let elements = buildCleanElements(from: root)
+
+        // Labels differ, so Rule 6 should not merge.
+        XCTAssertEqual(elements.count, 2)
+        XCTAssertEqual(elements[0].traits, ["Cell"])
+        XCTAssertEqual(elements[0].childCount, 1)
+        XCTAssertEqual(elements[1].traits, ["Button"])
+        XCTAssertEqual(elements[1].childCount, 0)
+    }
+
     // MARK: - FindArgs with trait
 
     func testFindArgs_WithTrait() throws {
