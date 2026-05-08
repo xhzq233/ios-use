@@ -130,6 +130,10 @@ export interface ProbeFetchArgs {
   timeout?: number;
 }
 
+export interface OpenURLArgs {
+  url: string;
+}
+
 export interface ProbeFetchResult {
   statusCode: number;
   bodyBytes: number;
@@ -138,13 +142,43 @@ export interface ProbeFetchResult {
 
 export interface ProxyStartArgs {
   port?: number;
+  upstreamPort?: number;
 }
 
 export interface ProxyStartResult {
-  port: number;
+  proxyPort: number;
+  upstreamPort: number;
   status: string;
 }
 
 export interface ProxyStopResult {
+  status: string;
+}
+
+export interface ProxyIngressStartArgs {
+  proxyPort?: number;
+  controlPort?: number;
+  profilePort?: number;
+}
+
+export interface ProxyIngressStartResult {
+  proxyPort: number;
+  controlPort: number;
+  profilePort: number;
+  status: string;
+}
+
+export interface ProxyIngressStopResult {
+  status: string;
+}
+
+export interface ProxyPushProfileArgs {
+  caBase64: string;
+  mobileconfigBase64: string;
+  caProfileBase64?: string;
+  cleanupMobileconfigBase64?: string;
+}
+
+export interface ProxyPushProfileResult {
   status: string;
 }

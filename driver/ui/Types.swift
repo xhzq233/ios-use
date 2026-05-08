@@ -7,9 +7,13 @@ enum Command: String, Codable {
     case deleteSession
     case activateApp
     case terminateApp
+    case openURL
     case probeFetch
     case proxyStart
     case proxyStop
+    case proxyIngressStart
+    case proxyIngressStop
+    case proxyPushProfile
     case screenshot
     case oslog
     case dom
@@ -91,6 +95,10 @@ struct ActivateAppArgs: Codable {
 
 struct TerminateAppArgs: Codable {
     let bundleId: String
+}
+
+struct OpenURLArgs: Codable {
+    let url: String
 }
 
 /// doc 6.4

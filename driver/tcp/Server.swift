@@ -1,7 +1,17 @@
 import Foundation
 
-final class DriverServer {
+@objc final class DriverServer: NSObject {
     static let shared = DriverServer()
+
+    @objc static func startSharedIfNeeded() {
+        let server = DriverServer.shared
+        guard !server.isRunning else { return }
+        do {
+            try server.start()
+        } catch {
+            NSLog("[driver] constructor start failed: \(error)")
+        }
+    }
 
     private let defaultPort: UInt16 = 8100
     private let maxConnections = 8
@@ -282,9 +292,13 @@ final class DriverServer {
         case .deleteSession: return try AppCommands.deleteSession(req.args)
         case .activateApp:   return try AppCommands.activateApp(req.args)
         case .terminateApp:  return try AppCommands.terminateApp(req.args)
+        case .openURL:       return try AppCommands.openURL(req.args)
         case .probeFetch:    return try ProbeCommands.probeFetch(req.args)
         case .proxyStart:    return try ProxyCommands.proxyStart(req.args)
         case .proxyStop:     return try ProxyCommands.proxyStop(req.args)
+        case .proxyIngressStart:  return try ProxyCommands.proxyIngressStart(req.args)
+        case .proxyIngressStop:   return try ProxyCommands.proxyIngressStop(req.args)
+        case .proxyPushProfile:   return try ProxyCommands.proxyPushProfile(req.args)
         case .screenshot:
             // Handled by handleConnection's two-frame path; dispatch should
             // never see it.

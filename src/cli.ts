@@ -18,8 +18,9 @@ import {
 } from './commands/actions';
 import { flowAction } from './commands/flow';
 import { nslogStreamAction } from './commands/nslog';
+import { proxyStart, proxyStop, proxyRead } from './commands/proxy';
 import type { SwipeDir } from './driver-protocol/index.js';
-import { startSession, stopSession, sessionStatus } from './session';
+import { startSession, stopSession, sessionStatus, readSessionInfo } from './session';
 import { formatDriverError } from './utils/driverError';
 
 const program = new Command();
@@ -336,6 +337,62 @@ program.command('nslog')
     grep?: string; flags?: string; publishBonjour?: boolean;
   }) => {
     await nslogStreamAction(opts);
+  }));
+
+// ── Proxy ──
+
+const proxyCmd = program.command('proxy').description('HTTP/HTTPS proxy via Wi-Fi profile and Mac mitmdump');
+
+proxyCmd.command('start')
+  .description('Start proxy session (requires active session)')
+  .option('--stream', 'Stream mitmdump output to stdout')
+  .option('--udid <udid>', 'Device UDID')
+  .action(handleAction(async (opts: { stream?: boolean; udid?: string }) => {
+    const info = readSessionInfo();
+    if (!info?.sessionId) throw new Error('No active session. Run `session start` first.');
+    const udid = opts.udid || info.udid;
+    if (!udid) throw new Error('No device UDID. Pass --udid or start session first.');
+    const { createClientFromSession } = await import('./session.js');
+    const client = await createClientFromSession(info, { ownsSession: false });
+    try {
+      await proxyStart(client, { udid, stream: opts.stream });
+      if (opts.stream) process.stderr.write('Proxy running. Press Ctrl+C to stop.\n');
+      else logger.info('Proxy running. Press Ctrl+C to stop.');
+      await new Promise<void>((resolve) => {
+        process.on('SIGINT', () => { resolve(); });
+        process.on('TERM', () => { resolve(); });
+      });
+    } finally {
+      await proxyStop(client).catch(() => {});
+      client.disconnect();
+    }
+  }));
+
+proxyCmd.command('stop')
+  .description('Stop proxy session')
+  .option('--force', 'Stop mitmdump even if proxy profile cleanup is not confirmed')
+  .action(handleAction(async (opts: { force?: boolean }) => {
+    const { withAutoSession } = await import('./session.js');
+    await withAutoSession({}, async (client) => {
+      await proxyStop(client, { force: opts.force });
+    });
+  }));
+
+proxyCmd.command('read')
+  .description('Read recent proxy requests')
+  .option('--count <n>', 'Number of requests', parseIntStrict, 10)
+  .option('--duration <duration>', 'Time window (e.g. 5s)')
+  .option('--save [name]', 'Save to jsonl file')
+  .action(handleAction(async (opts: { count?: number; duration?: string; save?: string }) => {
+    proxyRead(opts);
+  }));
+
+proxyCmd.command('doctor')
+  .description('Diagnose proxy setup issues')
+  .option('--udid <udid>', 'Device UDID')
+  .action(handleAction(async (_opts: { udid?: string }) => {
+    const { proxyDoctor } = await import('./commands/proxy.js');
+    proxyDoctor();
   }));
 
 program.parse();

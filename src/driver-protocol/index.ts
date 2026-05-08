@@ -29,4 +29,9 @@ export type {
   ProxyStartArgs,
   ProxyStartResult,
   ProxyStopResult,
+  ProxyIngressStartArgs,
+  ProxyIngressStartResult,
+  ProxyIngressStopResult,
+  ProxyPushProfileArgs,
+  ProxyPushProfileResult,
 } from './types';

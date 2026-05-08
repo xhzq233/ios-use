@@ -22,6 +22,9 @@ import type {
   ProbeFetchResult,
   ProxyStartResult,
   ProxyStopResult,
+  ProxyIngressStartResult,
+  ProxyIngressStopResult,
+  ProxyPushProfileResult,
   DriverCommand,
 } from '../driver-protocol/index.js';
 
@@ -126,6 +129,10 @@ abstract class BaseRpcClient {
     await this.send(DRIVER_COMMANDS.TERMINATE_APP, { bundleId });
   }
 
+  async openURL(url: string): Promise<void> {
+    await this.send(DRIVER_COMMANDS.OPEN_URL, { url });
+  }
+
   async screenshot(): Promise<Buffer> {
     const { binary } = await this.conn.sendExpectingBinary(DRIVER_COMMANDS.SCREENSHOT, {});
     return binary;
@@ -157,6 +164,27 @@ abstract class BaseRpcClient {
 
   async proxyStop(): Promise<ProxyStopResult> {
     return await this.send(DRIVER_COMMANDS.PROXY_STOP, {});
+  }
+
+  async proxyIngressStart(opts?: { proxyPort?: number; controlPort?: number; profilePort?: number }): Promise<ProxyIngressStartResult> {
+    return await this.send(DRIVER_COMMANDS.PROXY_INGRESS_START, omitUndefined(opts ?? {}));
+  }
+
+  async proxyIngressStop(): Promise<ProxyIngressStopResult> {
+    return await this.send(DRIVER_COMMANDS.PROXY_INGRESS_STOP, {});
+  }
+
+  async proxyPushProfile(
+    caBase64: string,
+    mobileconfigBase64: string,
+    opts: { caProfileBase64?: string; cleanupMobileconfigBase64?: string } = {},
+  ): Promise<ProxyPushProfileResult> {
+    return await this.send(DRIVER_COMMANDS.PROXY_PUSH_PROFILE, {
+      caBase64,
+      mobileconfigBase64,
+      caProfileBase64: opts.caProfileBase64,
+      cleanupMobileconfigBase64: opts.cleanupMobileconfigBase64,
+    });
   }
 }
 

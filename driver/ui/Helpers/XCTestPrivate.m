@@ -2,6 +2,15 @@
 #import <objc/message.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+#if __has_include("IOSUseDriver-Swift.h")
+#import "IOSUseDriver-Swift.h"
+__attribute__((constructor))
+static void IOSUseDriverStartServerOnBundleLoad(void) {
+    NSLog(@"[debug][xctest-bundle-load] starting IOSUseDriver TCP server");
+    [DriverServer startSharedIfNeeded];
+}
+#endif
+
 static const NSUInteger XCMaxTextAbbrLen = 12;
 static const NSUInteger XCMaxClearRetries = 3;
 static const double XCTapLiftUpDelay = 0.08;
