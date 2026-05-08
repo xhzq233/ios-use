@@ -258,16 +258,22 @@ steps:
 
 ### 6.4 `swipe`
 
-- 目标导向：通过 `to` / `from` 把目标带入可见区域
+- **目标导向（推荐）**：通过 `to` / `from` 自动循环滚动，直到目标进入可见区域
+  - 不需要目标一开始就在 AX 树中；driver 内部会重复滚动 → 重新 snapshot → 查找目标
+  - `from` 是锚点，传一个当前可见的元素，driver 从它所在的 scrollable 开始滚动
+  - 不传 `from` 时，driver 自动找最大的 scrollable 滚动
+  - 方向自动推断，无需手动指定
 - 固定距离：通过 `dir + distance` 做纯距离滚动
 
 ```yaml
+# 推荐：自动循环滚动到目标可见
 - action: swipe
   to: 开发者
   from: 蓝牙
 ```
 
 ```yaml
+# 固定距离滚动
 - action: swipe
   dir: forth
   distance: 300
