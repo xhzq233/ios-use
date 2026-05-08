@@ -15,7 +15,7 @@ enum FindCommands {
         let args = try decodeArgs(rawArgs, as: FindArgs.self)
         _ = try Session.shared.ensureActive()
 
-        switch rawFind(args.label, context: args.context, trait: args.trait) {
+        switch rawFind(args.label, traits: args.traits) {
         case .found(let elem):
             return Codec.makeOK([
                 "matches": [elementInfo(elem, includeAncestors: true)],
@@ -25,14 +25,14 @@ enum FindCommands {
             let infos = matches.map { elementInfo($0, includeAncestors: true) }
             return Codec.makeOK([
                 "matches": infos,
-                "hint": "Try adding --ancestor-type / --ancestor-label, or --trait to disambiguate",
+                "hint": "Try adding --traits to disambiguate",
             ])
 
         case .fuzzy(let suggestions):
             return Codec.makeOK([
                 "matches": [[String: Any]](),
                 "suggestions": suggestions,
-                "hint": "Try refining --ancestor-type / --ancestor-label, or verify the active app",
+                "hint": "Try adding --traits, or verify the active app",
             ])
 
         case .notFound:

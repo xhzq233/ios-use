@@ -5,11 +5,6 @@ export type Rect = [number, number, number, number];
 export type LabelOrPoint = string | Point;
 export type SwipeDir = 'forth' | 'back';
 
-export interface LabelContext {
-  ancestorType?: string;
-  ancestorLabel?: string;
-}
-
 export interface CreateSessionResponse {
   bundleId?: string;
 }
@@ -45,13 +40,12 @@ export type FindResult =
 
 export interface FindArgs {
   label: string;
-  context?: LabelContext;
-  trait?: string;
+  traits?: string;
 }
 
 export interface TapArgs {
   label: LabelOrPoint;
-  context?: LabelContext;
+  traits?: string;
   offset?: {
     x?: number;
     y?: number;
@@ -69,13 +63,13 @@ export interface TapResult {
 export interface LongPressArgs {
   label: LabelOrPoint;
   duration?: number;
-  context?: LabelContext;
+  traits?: string;
 }
 
 export interface InputArgs {
   label: string;
   content: string;
-  context?: LabelContext;
+  traits?: string;
 }
 
 export interface SwipeArgs {
@@ -83,7 +77,7 @@ export interface SwipeArgs {
   from?: LabelOrPoint;
   distance?: number;
   dir?: SwipeDir;
-  context?: LabelContext;
+  traits?: string;
 }
 
 export interface SwipeResult {
@@ -97,7 +91,7 @@ export interface SwipeResult {
 export interface WaitForArgs {
   label: string;
   timeout?: number;
-  context?: LabelContext;
+  traits?: string;
 }
 
 export interface WaitForResult {
@@ -135,45 +129,10 @@ export interface ProbeFetchResult {
   contentType?: string;
 }
 
-export interface ProxyStartArgs {
-  port?: number;
-  upstreamPort?: number;
-}
-
-export interface ProxyStartResult {
-  proxyPort: number;
-  upstreamPort: number;
-  status: string;
-}
-
-export interface ProxyStopResult {
-  status: string;
-}
-
-export interface ProxyIngressStartArgs {
-  proxyPort?: number;
-  controlPort?: number;
-  profilePort?: number;
-}
-
-export interface ProxyIngressStartResult {
-  proxyPort: number;
-  controlPort: number;
-  profilePort: number;
-  status: string;
-}
-
-export interface ProxyIngressStopResult {
-  status: string;
-}
-
-export interface ProxyPushProfileArgs {
+export interface ProxyCAPushArgs {
   caBase64: string;
-  mobileconfigBase64: string;
-  caProfileBase64?: string;
-  cleanupMobileconfigBase64?: string;
 }
 
-export interface ProxyPushProfileResult {
+export interface ProxyCAPushResult {
   status: string;
 }

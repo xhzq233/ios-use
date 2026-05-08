@@ -9,11 +9,7 @@ enum Command: String, Codable {
     case terminateApp
     case openURL
     case probeFetch
-    case proxyStart
-    case proxyStop
-    case proxyIngressStart
-    case proxyIngressStop
-    case proxyPushProfile
+    case proxyCAPush
     case screenshot
     case oslog
     case dom
@@ -76,13 +72,6 @@ enum StringOrPoint: Codable {
     }
 }
 
-// MARK: - LabelContext (doc 3.2)
-
-struct LabelContext: Codable {
-    let ancestorType: String?
-    let ancestorLabel: String?
-}
-
 // MARK: - Per-command Args (doc 1.2 & 6.x)
 
 struct CreateSessionArgs: Codable {
@@ -130,26 +119,25 @@ struct DomArgs: Codable {
 
 struct FindArgs: Codable {
     let label: String
-    let context: LabelContext?
-    let trait: String?
+    let traits: String?
 }
 
 struct TapArgs: Codable {
     let label: StringOrPoint
-    let context: LabelContext?
+    let traits: String?
     let offset: TapOffset?
 }
 
 struct LongPressArgs: Codable {
     let label: StringOrPoint
     let duration: Double?
-    let context: LabelContext?
+    let traits: String?
 }
 
 struct InputArgs: Codable {
     let label: String
     let content: String
-    let context: LabelContext?
+    let traits: String?
 }
 
 /// doc 3.1
@@ -158,14 +146,14 @@ struct SwipeArgs: Codable {
     let from: StringOrPoint?
     let distance: Double?
     let dir: SwipeDir?
-    let context: LabelContext?
+    let traits: String?
 }
 
 /// doc 6.5
 struct WaitForArgs: Codable {
     let label: String
     let timeout: Double?
-    let context: LabelContext?
+    let traits: String?
 }
 
 // MARK: - Request/Response frames
