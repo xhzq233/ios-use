@@ -9,14 +9,16 @@ final class IOSUseDriver: XCTestCase {
         // #endregion
     }
 
-    func testRun() throws {
+    func testDaemon() throws {
         // #region debug-point xctest-entry-testRun
         NSLog("[debug][xctest-entry-testRun] IOSUseDriver testRun invoked")
         // #endregion
         let server = DriverServer.shared
 
         do {
-            try server.start()
+            if !server.isRunning {
+                try server.start()
+            }
         } catch {
             XCTFail("Failed to start server: \(error)")
         }

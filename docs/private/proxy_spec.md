@@ -1,800 +1,235 @@
 # Proxy Spec
 
-本文档定义 `ios-use proxy` 的目标能力、实现边界与推荐架构。
+## 结论先行
 
-结论先行：
-
-- 正式方案改为 **`Mac proxy + Driver 端 orchestration`**。
-- 真正抓包发生在 **Mac 端代理进程**，不是 Driver 端。
-- Driver 端负责 **设备引导、证书安装辅助、打开安装页面、会话编排**。
-- CLI 端对外暴露统一的 `proxy` 命令面。
+- **mobileconfig per-Wi-Fi proxy 不可行**：Wi-Fi payload 需要 SSID 和密码才能生效，放弃。
+- **回退到最原始方案**：装 CA → 手动配当前 Wi-Fi HTTP proxy → mitmdump 抓包。
+- **"手动配"由 flow 自动化完成**：中文环境提供内置 flow；其他语言环境由 AI agent 执行等效操作。
+- 命令拆分为两步：`proxy configca`（一次性）和 `proxy start`（每次抓包）。
 
 ---
 
-## 一、目标
+## 一、命令设计
 
-### 1.1 用户目标
+### 1.1 `proxy configca`
 
-我们的目标体验是：
+**目的**：将 mitmproxy CA 安装到设备并完全信任。只需执行一次。
 
-1. 用户在真机上首次安装并信任 `ios-use` CA。
-2. 用户执行：
+行为：
+
+1. 确保本地 `~/.mitmproxy/mitmproxy-ca-cert.pem` 存在（不存在则启动一次 mitmdump 生成）。
+2. 将 CA 证书传给 driver（通过 driver TCP 通道 push 文件）。
+3. Driver 在设备上触发 CA 安装（通过 profile install 页面或 Safari 打开本地 profile URL）。
+4. 执行 flow **安装 CA**：在"已下载描述文件"页面点击安装。
+5. 执行 flow **信任 CA**：进入 `设置 → 通用 → 关于本机 → 证书信任设置`，打开 mitmproxy CA 的完全信任开关。
+
+前置条件：
+
+- 活跃 session。
+
+产物：
+
+- 设备已安装并完全信任 mitmproxy CA。
+- `~/.ios-use/state/proxy-ca.json` 记录 CA 指纹、安装时间。
+
+### 1.2 `proxy start [--stream]`
+
+**目的**：启动 Mac 端 mitmdump，并通过 flow 自动配置设备当前 Wi-Fi 的 HTTP 代理指向 Mac。
+
+行为：
+
+1. 检测 Mac Wi-Fi interface、LAN IP。
+2. 启动 mitmdump 监听 `0.0.0.0:<port>`（默认 9080）。
+3. 执行 flow **配置 Wi-Fi 代理**：进入 `设置 → Wi-Fi → 当前网络(i) → 配置代理 → 手动`，填入 Mac LAN IP 和端口。
+4. 验证代理生效（可选 probe）。
+5. 状态写入 `~/.ios-use/state/proxy-session.json`。
+6. 若 `--stream`，stdout 实时输出 jsonl。
+
+前置条件：
+
+- 活跃 session。
+- CA 已安装信任（`proxy configca` 已执行过）。
+- 设备与 Mac 在同一 Wi-Fi/LAN。
+
+### 1.3 `proxy stop`
+
+**目的**：关闭代理配置并停止 mitmdump。
+
+行为：
+
+1. 执行 flow **关闭 Wi-Fi 代理**：进入 `设置 → Wi-Fi → 当前网络(i) → 配置代理 → 关闭`。
+2. 验证设备恢复直连。
+3. 停止 mitmdump（SIGTERM）。
+4. 更新 `proxy-session.json` 为 stopped。
+
+关键约束：**必须先关闭代理再停 mitmdump**，否则设备断网。
+
+### 1.4 `proxy read`
+
+读取最近一次 proxy session 的抓包记录。
 
 ```bash
-bun run src/cli.ts proxy start --stream
+proxy read [--count <n>] [--duration <duration>] [--save [name]]
 ```
 
-3. CLI 端立即开始实时输出 `jsonl` 抓包结果。
-4. `Ctrl+C` 后停止实时流，并同时停止本次 proxy session。
-5. 后续可通过 `proxy read` 读取最近一次 proxy session 的抓包结果。
+### 1.5 `proxy doctor`
 
-### 1.2 产品目标
-
-`proxy` 仍然是 `ios-use` 的正式能力，而不是让用户手工操作 `mitmproxy` 的外部脚本。
-
-因此产品面应满足：
-
-- `ios-use` CLI 端统一暴露命令。
-- Driver 端负责设备引导与辅助操作。
-- 抓包结果统一落到 `~/.ios-use/`。
-- 日志、产物、错误语义遵循现有 `ios-use` 口径。
-
-### 1.3 非目标
-
-以下内容不在当前方案目标内：
-
-- 设备侧 Network Extension / Network Filter。
-- 严格的 `bundle-scoped capture`。
-- 自动绕过 certificate pinning。
-- 保证所有 App 都能抓到 HTTPS 明文。
-- 支持除 `jsonl` 外的其他导出格式。
-- 做完整的重放、改包、断点注入平台。
+诊断 proxy 环境：mitmdump 可执行、CA 已生成、Mac Wi-Fi/LAN IP、端口可监听、设备可达 Mac。
 
 ---
 
-## 二、前提与约束
+## 二、Flow 设计
 
-### 2.1 明确假设
+所有 UI 自动化通过 flow yaml 实现。内置 flow 面向**中文 iOS 系统**；其他语言环境由 AI agent 根据同等语义执行。
 
-本文档基于以下假设：
+### 2.1 `flows/proxy_install_ca.yaml`
 
-- 目标平台先只考虑 **真机**。
-- 目标协议先只考虑 **HTTP/1.1、HTTP/2 over TLS/TCP**。
-- 用户允许在手机上进行少量手工确认操作。
-- 设备通过 **USB** 连接 Mac（已有 usbmux 通道）。
+安装 CA 描述文件（前提：driver 已将 profile 推送到设备，系统弹出"已下载描述文件"提示）。
 
-### 2.2 必须正视的系统约束
+关键步骤：
+- 设置 → 通用 → VPN 与设备管理 → 已下载的描述文件 → 安装 → 输入密码（如有）→ 安装
 
-当前方案绕不过去的约束有 3 个：
+### 2.2 `flows/proxy_trust_ca.yaml`
 
-1. **HTTPS 明文解密必须建立 CA 信任链。**
-   - 只要要看 HTTPS 明文，就必须让设备信任 `ios-use` 的根证书。
-   - 对手动安装的证书，iOS 仍要求用户在“证书信任设置”里手动打开 full trust。
+完全信任 CA 证书。
 
-2. **普通真机上，Mac 端显式代理无法提供严格的 App 级源头过滤。**
-   - 设备把流量转发给 Mac 代理时，代理看到的是连接和 HTTP 请求。
-   - 代理无法天然知道“这条请求属于哪个 iOS App”。
+关键步骤：
+- 设置 → 通用 → 关于本机 → 证书信任设置 → 打开 mitmproxy CA 开关 → 继续
 
-3. **显式代理意味着设备侧仍需安装代理配置。**
-   - 不能再声称”只需要信任 CA 就行”。
-   - 更准确的说法是：用户只需要做一次”安装 CA + 安装代理 profile”，之后日常使用尽量一键。
+### 2.3 `flows/proxy_set_wifi_proxy.yaml`
 
-4. **iOS 不接受 127.0.0.1 作为系统代理地址。**
-   - iOS 系级代理设置不允许 loopback 地址。
-   - 解决方案：设备端代理监听 `0.0.0.0:9090`，代理 profile 填设备自身局域网 IP。
+配置当前 Wi-Fi 的 HTTP 代理为手动模式。
 
-5. **USB 代理方案：设备通过 usbmux 隧道转发到 Mac mitmdump。**
-   - 设备端运行轻量 HTTP proxy，Mac 通过 usbmux 连接到设备代理端口。
-   - Mac 端桥接 usbmux 到 mitmdump，实现流量中转。
-   - 优势：不需要设备和 Mac 同 WiFi，不需要知道 Mac IP，复用已有 USB 连接。
+关键步骤：
+- 设置 → Wi-Fi → 当前连接网络的 (i) 按钮 → 配置代理 → 手动
+- 填入服务器地址（Mac LAN IP）和端口
+- 存储
 
-### 2.3 方案口径
+参数化：`server` 和 `port` 从 CLI 传入 flow context。
 
-因此本 spec 采用如下口径：
+### 2.4 `flows/proxy_clear_wifi_proxy.yaml`
 
-- **抓包在 Mac 端完成**
-- **Driver 端不抓包，只做 orchestration**
-- **设备侧通过安装 profile 把 HTTP/HTTPS 流量显式代理到 Mac**
-- **当前方案不绑定 `bundleId`**
+关闭当前 Wi-Fi 代理。
+
+关键步骤：
+- 设置 → Wi-Fi → 当前连接网络的 (i) 按钮 → 配置代理 → 关闭
+- 存储
 
 ---
 
-## 三、实现口径
-
-### 3.1 正式方案
-
-本文档的正式方案为：
+## 三、架构
 
 ```text
-CLI 端
-  -> proxy command orchestration
-  -> Mac proxy process (mitmproxy / mitmdump)
-  -> local capture store
-  -> Driver 端
-      -> openURL / activateApp / UI guidance
-      -> device-side install assistance
+CLI (Bun)
+  ├─ proxy configca
+  │    ├─ 确保 mitmproxy CA 存在
+  │    ├─ push CA 到 driver
+  │    ├─ driver 触发 profile 安装页
+  │    └─ 执行 flow: install_ca + trust_ca
+  │
+  ├─ proxy start
+  │    ├─ 检测 Mac Wi-Fi SSID / LAN IP
+  │    ├─ 启动 mitmdump (0.0.0.0:9080)
+  │    ├─ 执行 flow: set_wifi_proxy(server, port)
+  │    └─ 实时输出 jsonl (--stream)
+  │
+  └─ proxy stop
+       ├─ 执行 flow: clear_wifi_proxy
+       └─ 停止 mitmdump
+
+数据面:
+  iOS App/Safari → Wi-Fi HTTP Proxy (手动) → Mac LAN IP:9080 → mitmdump → Internet
 ```
 
-这里的“Driver 端 orchestration”定义为：
-
-- `proxy` 命令由 CLI 端发起。
-- Mac 端负责启动和停止代理进程。
-- Driver 端负责辅助设备完成 CA/profile 安装与后续引导。
-- CLI 端统一消费抓包结果并输出 `jsonl`。
-
-### 3.2 关于 App 归属
-
-结论先行：
-
-- 在当前方案里，**不能把任何单个 App 作为严格抓包边界**。
-- 当前方案默认抓“经过设备显式代理的 HTTP/HTTPS 流量”。
-- 如需强调某个目标 App，只能靠：
-  - CLI 端在抓包前激活目标 App
-  - 展示层按时间窗口、host、path 做 best-effort 观察
-  - 用户自己结合当前操作上下文判断
+控制面通过 USB（driver TCP），数据面通过 Wi-Fi（HTTP proxy）。
 
 ---
 
-## 四、推荐架构
+## 四、Mac 端组件
 
-### 4.1 总体架构
+### 4.1 Wi-Fi Detector
 
-```text
-CLI 端 (Bun)
-  -> proxy command layer
-  -> Mac proxy supervisor
-      -> mitmdump (Mac 本地)
-      -> usbmux bridge (Mac ↔ 设备代理端口)
-      -> local HTTP file server
-      -> local capture store
-  -> Driver 端 client
-      -> Driver 端
-          -> HTTP proxy (0.0.0.0:9090, 设备本地)
-          -> openURL / activateApp / UI assist
-```
+- SSID：`networksetup -getairportnetwork <device>`
+- LAN IP：`ipconfig getifaddr <iface>`
+- Interface：`networksetup -listallhardwareports` 找 Wi-Fi
 
-**USB 代理数据流：**
+### 4.2 mitmdump
 
-```text
-iOS 系统流量
-  → 设备代理 (0.0.0.0:9090)
-  → usbmux 隧道
-  → Mac 端 bridge
-  → mitmdump (解密/抓包)
-  → 目标服务器
-```
+- 监听 `0.0.0.0:<port>`，forward proxy mode。
+- 复用 `~/.mitmproxy/` CA。
+- jsonl addon 输出到 stdout + `~/.ios-use/state/proxy-events.jsonl`。
 
-职责边界：
+### 4.3 Capture Store
 
-- `src/cli.ts`
-  - 命令入口、参数解析、结果展示。
-- `src/commands/proxy.ts`
-  - proxy 语义编排。
-- `src/driver-client/`
-  - 调 Driver 端的辅助命令，比如 `openURL`、`activateApp`。
-- `driver`
-  - 不抓包。
-  - 只负责设备引导动作。
-- Mac proxy supervisor
-  - 启动/停止 `mitmdump`
-  - 提供 CA/profile 下载入口
-  - 维护最近一次 proxy session 状态
-  - 把抓包结果转换为 `jsonl`
-
-### 4.2 控制面 / 数据面分离
-
-必须明确区分两类链路：
-
-- **控制面**
-  - `proxy start`
-  - `proxy stop`
-  - `proxy read`
-  - Driver 辅助动作
-
-- **数据面**
-  - `mitmdump` 输出
-  - 本地抓包缓存
-  - 实时 `jsonl` 流
-
-控制面由 CLI 驱动。
-
-数据面由 Mac 端 proxy 进程产生与落盘。
-
-### 4.3 为什么保留 Driver
-
-即使抓包不在 Driver 里，Driver 仍然有价值：
-
-- 可以直接在设备上打开 CA/profile 安装页。
-- 可以在安装完成后自动拉起目标 App。
-- 可以把“配置代理”从手工输入地址，收敛成受控引导流程。
-- 后续可以用 UI 自动化辅助用户完成安装后的系统跳转。
+- `~/.ios-use/state/proxy-session.json` — session 状态
+- `~/.ios-use/state/proxy-events.jsonl` — 事件流
+- `~/.ios-use/state/proxy-ca.json` — CA 安装状态
+- `~/.ios-use/logs/proxy.log` — 日志
 
 ---
 
-## 五、Mac Proxy 设计
+## 五、多语言策略
 
-### 5.1 组件拆分
+| 环境 | 策略 |
+|------|------|
+| 中文 iOS | 使用内置 flow yaml，全自动 |
+| 其他语言 | CLI 输出操作指引，由 AI agent 基于 dom + tap/input 执行等效操作 |
 
-Mac 端至少需要以下 4 个模块：
-
-#### A. Proxy Supervisor
-
-职责：
-
-- 启动和停止 `mitmdump`
-- 管理本次 proxy session 状态
-  - 记录 pid、端口、开始时间、目标设备
-
-#### B. Profile Server
-
-职责：
-
-- 提供 CA 文件下载
-- 提供代理配置 profile 下载
-- 提供一个稳定的本地 HTTP 入口，供设备打开安装页
-
-#### C. Capture Store
-
-职责：
-
-- 保存最近一次 proxy session 状态
-- 保存实时事件缓存
-- 保存 `jsonl` 产物
-- 保存错误日志
-
-建议目录：
-
-- `~/.ios-use/state/proxy-session.json`
-- `~/.ios-use/state/proxy-events.jsonl`
-- `~/.ios-use/artifacts/proxy-*.jsonl`
-- `~/.ios-use/logs/proxy.log`
-
-#### D. JSONL Adapter
-
-职责：
-
-- 将 `mitmdump` 事件转换为统一的 `jsonl`
-- 供 `proxy start --stream` 实时输出
-- 供 `proxy read` 读取最近结果
-
-### 5.2 CA 设计
-
-根证书必须长期稳定，否则用户每次重新安装都要重新信任。
-
-因此推荐：
-
-- 首次 `proxy start` 时，在 Mac 本地生成一套长期 CA。
-- 私钥保存在 `~/.ios-use/` 下。
-- 公钥导出为设备可安装的 `.cer` 或 profile 资源。
-- 后续所有 proxy session 复用同一套 CA。
-
-注意：
-
-- Driver 端无法可靠判断“设备上是否已经真正信任该 CA”。
-- 更现实的做法是：
-  - 本地记录“是否已生成 CA / 是否已完成安装引导”
-  - 若用户反馈抓不到 HTTPS，再提示检查证书信任状态
-
-### 5.3 代理配置设计
-
-显式代理需要把设备流量导向 Mac，因此还需要设备侧代理配置。
-
-推荐方式：
-
-- 由 Mac 端动态生成代理 profile
-- profile 中写入：
-  - Mac IP
-  - proxy port
-  - profile identifier
-- 通过本地 HTTP server 提供下载
-- Driver 端用 `openURL` 在设备上直接打开安装页
-
-这意味着：
-
-- 首次使用不只是“信任 CA”
-- 还包括一次“安装代理 profile”
+内置 flow 中的 UI 文本（如"设置"、"通用"、"Wi-Fi"等）硬编码中文。AI agent 模式下通过 `dom` 查找对应元素再操作，不依赖文本匹配。
 
 ---
 
-## 六、CLI 端 / Driver 端 API 设计
+## 六、`proxy start --stream` 输出格式
 
-### 6.1 CLI 端命令面
-
-推荐命令：
-
-```bash
-bun run src/cli.ts proxy start
-bun run src/cli.ts proxy start --stream
-bun run src/cli.ts proxy read
-bun run src/cli.ts proxy read --count 20
-bun run src/cli.ts proxy read --duration 5s
-bun run src/cli.ts proxy read --save latest
-bun run src/cli.ts proxy stop
-```
-
-说明：
-
-- `start`
-  - 依赖已有 session（需要 driver 才能运行 proxy）
-  - 启动 Mac 端 proxy session
-  - 确保 CA/profile server 就绪
-  - 必要时触发设备安装引导
-  - `--stream` 时建立实时 `jsonl` 输出
-  - **重复调用报错**（不幂等）
-- `read`
-  - 从最近一次 proxy session 读取
-  - 默认读取最近 `10` 个请求
-  - 支持 `--count <n>`
-  - 支持 `--duration 5s`
-  - 支持 `--save [name]`
-- `stop`
-  - 停止 Mac 端 proxy session
-
-### 6.2 Driver 端命令面
-
-Driver 端只保留辅助类 command：
-
-| command | args | 说明 |
-|---------|------|------|
-| `openURL` | `url` | 在设备上打开 CA/profile 安装页 |
-| `activateApp` | `bundleId` | 安装完成后拉起目标 App |
-
-当前方案下，不建议新增 `proxyStart` / `proxyRead` / `proxyStop` 到 Driver 端协议。
-
-### 6.3 `proxy start` 行为细节
-
-`proxy start` 的前置条件：
-
-- **必须已有活跃 session**（proxy 依赖 driver 运行设备端代理）
-- 若无 session，报错提示先执行 `session start`
-
-执行顺序：
-
-1. 检查是否有活跃 session，无则报错
-2. 检查是否已有 running 的 proxy session，有则报错（不幂等）
-3. CLI 端检查本地是否已有可复用 CA
-4. CLI 端检查本地 profile server 是否可启动
-5. 通过 driver 启动设备端 HTTP proxy（`proxyStart` 命令）
-6. CLI 端启动 Mac proxy 进程 + usbmux bridge
-7. CLI 端生成或刷新代理 profile
-8. CLI 端通过 Driver 端触发 `openURL`
-9. 用户在设备上完成 CA / profile 安装
-10. CLI 端确认本地 proxy session 进入 running
-11. 若传 `--stream`，开始实时输出 `jsonl`
-
-**安全要求**：proxy session 必须保证正常清理。若 proxy 异常退出但设备端代理 profile 未移除，设备将无法上网。`proxy stop` 必须：
-- 停止设备端 proxy（`proxyStop` 命令）
-- 停止 Mac 端 mitmdump
-- 清理 session 状态文件
-
-失败时的回滚要求：
-
-- 若 `mitmdump` 启动失败，必须清理本次 session 状态
-- 若 profile 生成失败，必须停止本次 proxy 进程
-- 若 `openURL` 失败，不应删除已生成的 CA，但应中止本次 start
-
-### 6.4 `proxy start --stream` 响应示意
-
-实时模式输出 `jsonl`（每个请求-响应对一行）：
+stdout 每行一个合法 JSON：
 
 ```jsonl
 {"id":"req-1","method":"GET","url":"https://example.com/feed","host":"example.com","status":200,"contentType":"application/json","bodyBytes":1024,"startedAt":1714980000000,"finishedAt":1714980000100}
 ```
 
-约束：
-
-- 每行必须是单独一个合法 JSON 对象
-- 不输出其他非 JSON 行
-- `Ctrl+C` 后 CLI 端必须补发 `proxy stop`
-
-### 6.5 `proxy read` 参数约束
-
-- 从最近一次 proxy session 读取
-- 默认读取最近 `10` 个请求
-- `--count <n>` 与默认值互斥，返回最近 N 个请求
-- `--duration 5s` 按最近时间窗口读取
-- `--save [name]` 将当前读取结果保存到 `~/.ios-use/artifacts/` 下的 `jsonl` 文件
-- 只支持 `jsonl`
-
-若当前不存在最近 proxy session，应直接报错。
-
-### 6.6 `proxy read --save` 行为细节
-
-- `--save` 不改变 stdout 返回内容
-- `--save latest` 仅影响输出文件名
-- 未传文件名时，CLI 端可使用时间戳命名
-- 保存结果必须是标准 `jsonl`
-- 保存路径统一为 `~/.ios-use/artifacts/`
-
-### 6.7 Proxy Session 状态结构
-
-CLI 端需要维护最近一次 proxy session 状态文件：
-
-```json
-{
-  "sessionId": "proxy-20260507T120000Z",
-  "status": "running",
-  "startedAt": 1746580800000,
-  "proxyHost": "192.168.1.10",
-  "proxyPort": 9090,
-  "profileUrl": "http://192.168.1.10:9089/proxy.mobileconfig",
-  "caUrl": "http://192.168.1.10:9089/ca.cer",
-  "eventsFile": "/Users/bytedance/.ios-use/state/proxy-events.jsonl",
-  "logFile": "/Users/bytedance/.ios-use/logs/proxy.log",
-  "mitmdumpPid": 12345
-}
-```
-
-约束：
-
-- 同时只维护一个“最近 proxy session”
-- `proxy start` 会覆盖旧的 session 状态
-- `proxy stop` 不删除历史 `jsonl` 产物
-- `proxy read` 始终基于最近一次 session 状态读取
+- 非 JSON 内容（状态、警告）输出到 stderr。
+- `Ctrl+C` 触发 `proxy stop` 完整流程。
 
 ---
 
-## 七、用户交互设计
+## 七、错误语义
 
-### 7.1 首次使用
-
-理想步骤：
-
-1. 用户执行 `proxy start --stream`
-2. CLI 检查本地 CA 和 proxy profile 是否已生成
-3. 若未生成，则在 Mac 端生成 CA 与 profile
-4. Driver 端在设备上打开安装页
-5. 用户在设备上安装 CA 与代理 profile
-6. 用户在系统里手动完成 CA trust
-7. CLI 端启动本次抓包并开始实时输出
-
-### 7.2 日常使用
-
-```bash
-bun run src/cli.ts proxy start --stream
-```
-
-CLI 端输出：
-
-- 当前设备
-- 当前 proxy 监听地址
-- 持续输出 `jsonl`
-- `Ctrl+C` 时停止 stream 并停止 Mac proxy
-
-### 7.3 失败提示原则
-
-错误必须说清楚是哪一层失败：
-
-- CA 未生成
-- CA 未信任
-- 代理 profile 未安装
-- 设备无法连接到 Mac proxy
-- `mitmdump` 启动失败
-- body 被截断
-- 目标 App 使用 pinning，HTTPS 无法解密
-
-不要统一报成“proxy failed”。
+- `MITMDUMP_NOT_FOUND` — mitmdump 未安装
+- `CA_NOT_GENERATED` — CA 证书未生成
+- `CA_NOT_INSTALLED` — 设备未安装 CA
+- `WIFI_SSID_NOT_FOUND` — Mac 未连接 Wi-Fi
+- `MAC_LAN_IP_NOT_FOUND` — 获取 LAN IP 失败
+- `MAC_PROXY_PORT_BLOCKED` — 端口被占用
+- `DEVICE_CANNOT_REACH_MAC` — 设备无法访问 Mac 代理端口
+- `FLOW_FAILED` — UI 自动化 flow 执行失败
+- `PROXY_NOT_RUNNING` — 无活跃 proxy session
 
 ---
 
-## 八、MVP 与演进阶段
+## 八、非目标
 
-### 8.1 Phase 1：Mac Proxy MVP
-
-目标：
-
-- 启动和停止 `mitmdump`
-- 生成 CA 与代理 profile
-- 通过 Driver 端打开安装页
-- `proxy start --stream` 实时输出 `jsonl`
-- `proxy read` 读取最近请求并支持保存为 `jsonl`
-
-允许的妥协：
-
-- 首版只支持 HTTP/1.1 / HTTP/2
-- body 默认截断
-- 只支持 `jsonl`
-- `bundleId` 只做上下文，不做严格过滤
-
-### 8.2 Phase 2：工程化增强
-
-目标：
-
-- 更稳定的 profile server
-- 更好的 session 状态恢复
-- 更细粒度的 host / path 展示过滤
-- 更好的错误分类
-
-### 8.3 Phase 3：高级能力
-
-候选项：
-
-- body 采样 / 截断策略
-- URL / host / method filter
-- 自动验证设备代理仍指向当前 Mac
-- 更强的历史检索能力
+- mobileconfig / Wi-Fi payload 自动配代理（已验证不可行）
+- NetworkExtension / VPN / Supervised / MDM
+- Certificate pinning bypass
+- HTTP/3 / QUIC
+- 严格 per-app 抓包
+- 非 Wi-Fi 场景
 
 ---
 
-## 九、风险与边界
+## 九、实现顺序
 
-### 9.1 Certificate Pinning
+### Phase 1：核心链路
 
-这是最重要的边界。
+1. Mac Wi-Fi 检测 + mitmdump 启动/停止
+2. CA push 到 driver 的通道
+3. 4 个 flow yaml（install_ca、trust_ca、set_wifi_proxy、clear_wifi_proxy）
+4. `proxy configca` / `proxy start` / `proxy stop` 命令串联
+5. jsonl addon + `--stream` 输出
 
-即使设备已信任 `ios-use` CA，某些 App 仍会因为 pinning 拒绝 MITM。
+### Phase 2：完善
 
-处理原则：
-
-- 明确标记“连接建立失败 / 可能存在 pinning”
-- 不承诺解密一定成功
-
-### 9.2 HTTP/3 / QUIC
-
-首版不承诺完整支持 QUIC/HTTP3。
-
-建议口径：
-
-- 首版只保证 HTTP/1.1 / HTTP/2
-- QUIC/HTTP3 属于后续议题
-
-### 9.3 网络依赖
-
-Mac proxy 方案对网络环境有明确要求：
-
-- 设备必须能访问到 Mac 的 proxy/profile server
-- Mac IP 变化后，旧 profile 可能失效
-- 网络切换可能导致抓包中断
-
-### 9.4 App 归属边界
-
-在当前方案里，不能承诺严格的单 App 归属。
-
-因此需要明确：
-
-- 当前结果代表“经过显式代理的流量”
-- 不代表“代理层只会抓某一个 App 的流量”
-- Safari / 系统 WebView / 第三方跳转带来的流量都可能混入结果
-
-### 9.5 Proxy 后端选型
-
-当前主推荐仍然是 `mitmdump`，原因是：
-
-- HTTPS MITM 能力成熟
-- Python addon 机制稳定
-- HTTP/2 / HTTP/3 / WebSocket 生态更完整
-- 适合先快速交付 CLI 端 MVP
-
-除 `mitmdump` 外，可考虑的路线有：
-
-#### A. `go-mitmproxy`
-
-特点：
-
-- Go 实现
-- 可直接作为源码或库导入
-- 自带插件能力
-- 证书目录与 `mitmproxy` 兼容
-
-优点：
-
-- 更容易做成单二进制
-- 比 Python 进程更容易嵌入自定义控制逻辑
-
-风险：
-
-- 生态和成熟度明显弱于 `mitmproxy`
-- 特性覆盖面没 `mitmproxy` 完整
-
-#### B. 自研 Go / Rust HTTP CONNECT MITM
-
-特点：
-
-- 完全按 `ios-use` 的数据模型来实现
-- 可以天然输出我们需要的 `jsonl`
-
-优点：
-
-- 最可控
-- 最容易做到“CLI 端状态文件 + jsonl 输出”完全贴合产品语义
-
-风险：
-
-- HTTPS MITM、证书缓存、HTTP/2、异常兼容都要自己补
-- 工程成本最高
-
-#### C. 其他桌面代理框架
-
-像 Sniper、RustGate 这类项目更像“现成桌面代理产品”或实验性 MITM proxy。
-
-问题：
-
-- 很多并不是为“作为库导入到 CLI 工程里”设计的
-- API 稳定性、嵌入式能力、长期维护性都不如 `mitmdump`
-- 更适合参考实现，不适合作为当前主方案
-
----
-
-## 十、实现决策
-
-当前建议的正式决策如下：
-
-1. `proxy` 是 CLI 端正式能力。
-2. 抓包在 Mac 端完成，Driver 端不承担抓包职责。
-3. 正式实现采用：
-
-```text
-CLI 端 proxy command
-  -> Mac proxy supervisor
-  -> mitmdump
-  -> local capture store
-  -> Driver 端 orchestration
-```
-
-4. Driver 端只负责：
-   - `openURL`
-   - `activateApp`
-   - 设备引导
-5. 首版只承诺：
-   - HTTP/1.1 / HTTP/2
-   - CA 手动信任
-   - 代理 profile 安装
-   - `proxy start --stream` 实时 `jsonl`
-   - `proxy read` 读取最近请求
-   - `--save [name]` 保存为 `jsonl`
-   - 只支持 `jsonl`
-6. 首版不绑定 `bundleId`，也不承诺严格的单 App 抓包边界。
-7. Proxy 后端首选 `mitmdump`，必要时再评估 `go-mitmproxy` 或自研实现。
-
----
-
-## 十一、下一步
-
-代码层第一步建议先完成：
-
-- `src/commands/proxy.ts` 命令面
-- Mac 端 proxy session 状态文件
-- `mitmdump` 与 `jsonl` adapter
-- profile 生成与本地 HTTP server
-- Driver `openURL` 辅助链路
-
----
-
-## 十二、USB 代理方案验证结论（2026-05-07）
-
-已验证的关键假设：
-
-| 假设 | 结论 | 备注 |
-|------|------|------|
-| 设备端 proxy 绑定 0.0.0.0:9090 | ✅ 成功 | 使用 GCD DispatchSource |
-| Mac 通过 usbmux 连设备 9090 端口 | ✅ 成功 | 和连 8100 端口一样 |
-| 设备 proxy 接收 HTTP 请求 | ✅ 成功 | 正确解析 GET/CONNECT |
-| 设备 proxy 直连外网 | ❌ 失败 | 设备通过 USB 连接，无独立网络出口 |
-| Mac 端 usbmux 桥接到 mitmdump | 待实现 | 需要 Mac 端 bridge 模块 |
-
-**结论**：USB 代理方案方向正确，但实现架构有根本性错误，需要修正。
-
----
-
-## 十三、架构修正（2026-05-07）
-
-### 13.1 已发现的致命问题
-
-#### 问题 1：usbmux 连接方向搞反
-
-usbmux 通信模型是 **Mac→device**：Mac 连 `/var/run/usbmuxd`，发 `Connect(DeviceID, PortNumber)` 到设备端口。
-**设备无法主动通过 usbmux 连 Mac。**
-
-之前设计的 "Mac usbmux poller 主动连设备 9091" 不可行。
-
-#### 问题 2：配对机制在多连接场景下崩溃
-
-浏览器会同时发起多个 TCP 连接（加载一个网页可能有 10+ 连接）。一对一配对需要 Mac 端同时维护多个 usbmux 连接，状态管理复杂度极高。
-
-#### 问题 3：iOS 系统代理地址未解决
-
-iOS 系统代理不接受 `127.0.0.1`（loopback），需要填设备自身局域网 IP。
-
-### 13.2 修正后的架构
-
-**核心原则**：设备 proxy 做 HTTP 解析 + usbmux 隧道，Mac 端直接用 mitmdump。
-
-```text
-iOS 系统代理设置（设备自身 IP:9090）
-  → 设备 proxy (0.0.0.0:9090, 解析 HTTP)
-  → 每个请求开一个 usbmux 隧道到 Mac
-  → Mac usbmuxd 转发到本地 mitmdump
-  → mitmdump 做 MITM / 抓包 / 连目标服务器
-```
-
-**数据流（单个 HTTP 请求）：**
-
-```text
-1. iOS 发送 "CONNECT example.com:443" 到设备:9090
-2. 设备 proxy 解析 HTTP，得到目标 host:port
-3. 设备 proxy 通过 usbmux 打开隧道到 Mac mitmdump 端口
-4. 设备 proxy 把原始 HTTP 请求通过隧道发给 mitmdump
-5. mitmdump 返回 "200 Connection Established"
-6. 设备 proxy 返回 200 给 iOS
-7. iOS 开始 TLS 握手 → 数据通过隧道到 mitmdump → MITM → 目标服务器
-```
-
-**关键区别：**
-- 设备 proxy **解析 HTTP**（不是透明 relay）
-- 设备 proxy **通过 usbmux 主动连 Mac**（不是 Mac 连设备）
-- Mac 端 **直接用 mitmdump**（不需要自建 bridge）
-
-### 13.3 usbmux 连接方向的实际能力
-
-usbmuxd 协议只支持 **Mac→device** 方向：
-
-```c
-// usbmuxd-proto.h
-MESSAGE_CONNECT = 2   // Mac 连设备端口
-MESSAGE_LISTEN  = 3   // 监听设备事件（非反向连接）
-```
-
-已验证：`Mac: connectUsbmux(udid, 8100) → usbmuxd → 设备:8100` ✅
-
-**device→Mac 方向在标准 usbmuxd 协议中不支持。** 设备无法主动通过 usbmux 连 Mac。
-
-### 13.4 核心矛盾
-
-```
-设备需要把 HTTP 请求发到 Mac（因为设备无网络出口）
-  ↑ 但 usbmux 只支持 Mac→device 方向
-  ↑ 设备无法主动连 Mac
-  ↑ Mac 可以连设备，但 mitmdump 需要接收请求，不是发送请求
-```
-
-**这是一个根本性的架构矛盾。**
-
-### 13.5 可行的方案讨论
-
-#### 方案 A：放弃 USB-only，要求设备有 WiFi
-
-- 设备 proxy 直接连目标服务器（需要设备有网络）
-- 不走 usbmux，设备 proxy 就是普通的 HTTP proxy
-- mitmdump 不参与，设备 proxy 自己做日志
-- **缺点**：依赖设备 WiFi，HTTPS MITM 需要自己实现
-
-#### 方案 B：Mac→device usbmux + 自定义协议
-
-- Mac 打开 usbmux 连到设备 proxy 端口
-- 设备 proxy 解析 HTTP，通过同一个 usbmux 连接发回 "目标地址" 元信息
-- Mac 端解析元信息，连实际服务器，转发数据
-- 需要自定义协议（不是透明 relay）
-- **缺点**：协议设计复杂，多连接管理困难
-
-#### 方案 C：Mac 端 iproxy + mitmdump（最简）
-
-- `iproxy 9093:9090` 把 Mac:9093 映射到设备:9090
-- 设备 proxy 监听 0.0.0.0:9090，做 HTTP 解析 + 透明 relay
-- Mac 端 mitmdump 配置 upstream 为 localhost:9093
-- mitmdump 发出的 HTTP 请求通过 iproxy 到设备 proxy
-- 设备 proxy 需要把请求"转发到哪"——但设备没有网络出口
-- **死结**：设备无法连目标服务器
-
-#### 方案 D：iproxy 双通道 + 设备端 HTTP 解析
-
-- `iproxy 9093:9090`（Mac→设备 proxy）
-- `iproxy 9094:9091`（Mac→设备 upstream）
-- 设备 proxy 监听 9090（HTTP 请求）和 9091（upstream）
-- 设备 proxy 解析 HTTP，配对 9090↔9091
-- Mac 端 9093 连 mitmdump，9094 连实际服务器
-- **问题**：配对机制在多连接下崩溃（和之前一样的问题）
-
-#### 方案 E：自定义 USB 隧道协议
-
-- 不用标准 usbmux，自建 USB 通信通道
-- 设备端通过 USB 发送 HTTP 请求 + 目标地址
-- Mac 端接收、解析、连目标服务器、返回响应
-- 需要深入 USB 协议层
-- **缺点**：工程量大，维护复杂
-
-### 13.6 待讨论
-
-1. 是否有 usbmux 的 device→Mac 能力我没发现的？
-2. 是否可以用其他 USB 通道（如 `pymobiledevice3` 的 lockdown 服务）实现反向连接？
-3. 方案 A（要求设备有 WiFi）是否可以接受作为 MVP？
-4. 方案 B 的自定义协议复杂度是否可控？
+- `proxy read` / `proxy doctor`
+- flow 失败重试 / 错误恢复
+- AI agent 模式（非中文环境）
+- probe 验证代理生效

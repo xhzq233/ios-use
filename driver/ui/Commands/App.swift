@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 // MARK: - App commands (doc 1.2 — createSession/deleteSession/activateApp/terminateApp)
 
@@ -45,5 +46,29 @@ enum AppCommands {
             Thread.sleep(forTimeInterval: 0.2)
         }
         return Codec.makeError("terminate failed: app state is \(app.state)")
+    }
+
+    static func openURL(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
+        let args = try decodeArgs(rawArgs, as: OpenURLArgs.self)
+        guard let url = URL(string: args.url) else {
+            throw DriverError.invalidArgs("invalid url: \(args.url)")
+        }
+
+        let sem = DispatchSemaphore(value: 0)
+        var opened = false
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url, options: [:]) { ok in
+                opened = ok
+                sem.signal()
+            }
+        }
+
+        if sem.wait(timeout: .now() + .seconds(5)) == .timedOut {
+            return Codec.makeError("openURL timed out: \(args.url)")
+        }
+        guard opened else {
+            return Codec.makeError("openURL failed: \(args.url)")
+        }
+        return Codec.makeOK(["url": args.url])
     }
 }

@@ -1,25 +1,149 @@
 import Foundation
 
-/// Minimal HTTP proxy for forwarding traffic over usbmux to Mac mitmdump.
-/// Listens on device, accepts HTTP proxy requests, and tunnels them upstream.
+/// Profile helper for `ios-use proxy`.
+///
+/// The data plane is Wi-Fi -> Mac LAN IP -> mitmdump. The driver only serves
+/// profile files to Safari over device loopback during the proxy session.
 enum ProxyCommands {
-    private static var listenSource: DispatchSourceRead?
-    private static var listenFd: Int32 = -1
+    private static let queue = DispatchQueue(label: "com.iosuse.profile-server", qos: .userInitiated)
+    private static var profileFd: Int32 = -1
+    private static var profileSource: DispatchSourceRead?
     private static var isRunning = false
-    private static let proxyQueue = DispatchQueue(label: "com.iosuse.proxy", qos: .userInitiated)
 
-    static func proxyStart(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
+    private static var profileHtml: Data?
+    private static var proxyMobileconfig: Data?
+    private static var cleanupMobileconfig: Data?
+    private static var caMobileconfig: Data?
+    private static var caCertificate: Data?
+    private static let profileLock = NSLock()
+
+    // MARK: - Commands
+
+    static func proxyIngressStart(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
         guard !isRunning else {
-            return Codec.makeError("proxy already running")
+            return Codec.makeOK([
+                "proxyPort": 0,
+                "controlPort": 0,
+                "profilePort": 9088,
+                "status": "running",
+            ] as [String: Any])
         }
 
-        let args = try decodeArgs(rawArgs, as: ProxyStartArgs.self)
-        let port = UInt16(args.port ?? 9090)
+        let args = decodeArgsOptional(rawArgs, as: ProxyIngressStartArgs.self)
+        let profilePort = UInt16(args?.profilePort ?? 9088)
 
-        NSLog("[proxy] starting on 0.0.0.0:%d", port)
+        NSLog("[profile] starting profile server port=%d", profilePort)
+        let rfd = startListener(port: profilePort) { fd in handleProfileConn(fd) }
+        guard rfd >= 0 else { return Codec.makeError("bind profile port \(profilePort) failed") }
 
+        profileFd = rfd
+        isRunning = true
+
+        NSLog("[profile] listening profile=%d", profilePort)
+        return Codec.makeOK([
+            "proxyPort": 0,
+            "controlPort": 0,
+            "profilePort": Int(profilePort),
+            "status": "running",
+        ] as [String: Any])
+    }
+
+    static func proxyIngressStop(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
+        guard isRunning else { return Codec.makeOK(["status": "not_running"]) }
+
+        profileSource?.cancel()
+        profileSource = nil
+        if profileFd >= 0 {
+            close(profileFd)
+            profileFd = -1
+        }
+
+        profileLock.lock()
+        profileHtml = nil
+        proxyMobileconfig = nil
+        cleanupMobileconfig = nil
+        caMobileconfig = nil
+        caCertificate = nil
+        profileLock.unlock()
+
+        isRunning = false
+        NSLog("[profile] stopped")
+        return Codec.makeOK(["status": "stopped"])
+    }
+
+    static func proxyPushProfile(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
+        let args = try decodeArgs(rawArgs, as: ProxyPushProfileArgs.self)
+
+        guard let caData = Data(base64Encoded: args.caBase64),
+              let proxyData = Data(base64Encoded: args.mobileconfigBase64) else {
+            return Codec.makeError("invalid profile payload base64")
+        }
+        let caProfileData = args.caProfileBase64.flatMap { Data(base64Encoded: $0) }
+        let cleanupData = args.cleanupMobileconfigBase64.flatMap { Data(base64Encoded: $0) }
+
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>ios-use Proxy Setup</title>
+        <style>
+        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 420px; margin: auto; }
+        h1 { font-size: 22px; }
+        .step { margin: 16px 0; padding: 12px; background: #f5f5f5; border-radius: 8px; }
+        a.btn { display: block; text-align: center; padding: 14px; background: #007AFF; color: white;
+                text-decoration: none; border-radius: 8px; margin: 12px 0; font-size: 16px; }
+        a.secondary { background: #5856D6; }
+        a.cleanup { background: #FF3B30; }
+        .note { font-size: 13px; color: #666; margin-top: 8px; }
+        </style>
+        </head>
+        <body>
+        <h1>ios-use Proxy Setup</h1>
+        <div class="step">
+        <strong>Step 1:</strong> Install the Wi-Fi proxy profile
+        <span class="note">This points the current Wi-Fi HTTP proxy to mitmdump on your Mac.</span>
+        </div>
+        <a class="btn" href="/profile.mobileconfig">Install Proxy Wi-Fi Profile</a>
+        <div class="step">
+        <strong>Step 2:</strong> First run only: install and trust the CA
+        <span class="note">After installing, enable full trust in Settings -> General -> About -> Certificate Trust Settings.</span>
+        </div>
+        <a class="btn secondary" href="/ca.mobileconfig">Install CA Profile</a>
+        <div class="step">
+        <strong>Cleanup:</strong> Install this before stopping if the proxy profile is still active.
+        </div>
+        <a class="btn cleanup" href="/cleanup.mobileconfig">Install Cleanup Profile</a>
+        </body>
+        </html>
+        """
+
+        profileLock.lock()
+        profileHtml = html.data(using: .utf8)
+        proxyMobileconfig = proxyData
+        cleanupMobileconfig = cleanupData
+        caMobileconfig = caProfileData
+        caCertificate = caData
+        profileLock.unlock()
+
+        NSLog("[profile] pushed proxy=%d cleanup=%d caProfile=%d ca=%d",
+              proxyData.count, cleanupData?.count ?? 0, caProfileData?.count ?? 0, caData.count)
+        return Codec.makeOK(["status": "pushed"])
+    }
+
+    // Keep legacy commands for backwards compatibility.
+    static func proxyStart(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
+        return try proxyIngressStart(rawArgs)
+    }
+
+    static func proxyStop(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
+        return try proxyIngressStop(rawArgs)
+    }
+
+    // MARK: - Socket Listener
+
+    private static func startListener(port: UInt16, handler: @escaping (Int32) -> Void) -> Int32 {
         let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
-        guard fd >= 0 else { return Codec.makeError("socket() failed") }
+        guard fd >= 0 else { return -1 }
 
         var yes: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
@@ -30,189 +154,106 @@ enum ProxyCommands {
         addr.sin_port = port.bigEndian
         addr.sin_addr.s_addr = INADDR_ANY
 
-        let bindResult = withUnsafePointer(to: &addr) { ptr in
-            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-        }
-        guard bindResult == 0 else {
-            close(fd)
-            return Codec.makeError("bind() failed: \(String(cString: strerror(errno)))")
-        }
-
-        guard listen(fd, 128) == 0 else {
-            close(fd)
-            return Codec.makeError("listen() failed")
-        }
-
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: proxyQueue)
-        source.setEventHandler {
-            var clientAddr = sockaddr_in()
-            var clientLen = socklen_t(MemoryLayout<sockaddr_in>.size)
-            let clientFd = withUnsafeMutablePointer(to: &clientAddr) { ptr in
-                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { accept(fd, $0, &clientLen) }
+        let ok = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
-            guard clientFd >= 0 else { return }
-            handleClient(clientFd)
         }
-        source.setCancelHandler {
+        guard ok == 0 else {
+            NSLog("[profile] bind fail: %s", strerror(errno))
             close(fd)
+            return -1
         }
-        source.resume()
-
-        listenFd = fd
-        listenSource = source
-        isRunning = true
-
-        NSLog("[proxy] listening on 0.0.0.0:%d", port)
-        return Codec.makeOK(["port": Int(port), "status": "running"])
-    }
-
-    static func proxyStop(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        guard isRunning else {
-            return Codec.makeOK(["status": "not_running"])
+        guard listen(fd, 32) == 0 else {
+            close(fd)
+            return -1
         }
 
-        listenSource?.cancel()
-        listenSource = nil
-        listenFd = -1
-        isRunning = false
-        NSLog("[proxy] stopped")
-        return Codec.makeOK(["status": "stopped"])
+        let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
+        src.setEventHandler {
+            var ca = sockaddr_in()
+            var cl = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let cfd = withUnsafeMutablePointer(to: &ca) { p in
+                p.withMemoryRebound(to: sockaddr.self, capacity: 1) { accept(fd, $0, &cl) }
+            }
+            guard cfd >= 0 else { return }
+            handler(cfd)
+        }
+        src.setCancelHandler { close(fd) }
+        src.resume()
+        profileSource = src
+        return fd
     }
 
-    private static func handleClient(_ clientFd: Int32) {
-        // Handle each client on a separate queue to avoid blocking
+    // MARK: - Profile Page
+
+    private static func handleProfileConn(_ fd: Int32) {
         DispatchQueue.global(qos: .userInitiated).async {
-            handleClientSync(clientFd)
-        }
-    }
-
-    private static func handleClientSync(_ clientFd: Int32) {
-        defer { close(clientFd) }
-
-        var buffer = [UInt8](repeating: 0, count: 8192)
-        let bytesRead = recv(clientFd, &buffer, buffer.count, 0)
-        guard bytesRead > 0 else { return }
-
-        let request = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
-        let firstLine = request.components(separatedBy: "\r\n").first ?? ""
-
-        if firstLine.hasPrefix("CONNECT ") {
-            // HTTPS CONNECT tunnel
+            var buf = [UInt8](repeating: 0, count: 4096)
+            let n = recv(fd, &buf, buf.count, 0)
+            let request = n > 0 ? String(bytes: buf[0..<n], encoding: .utf8) ?? "" : ""
+            let firstLine = request.components(separatedBy: "\r\n").first ?? ""
             let parts = firstLine.split(separator: " ")
-            guard parts.count >= 2 else { return }
-            let hostPort = String(parts[1])
-            let host: String
-            let port: UInt16
-            if let colonIdx = hostPort.lastIndex(of: ":") {
-                host = String(hostPort[hostPort.startIndex..<colonIdx])
-                port = UInt16(hostPort[hostPort.index(after: colonIdx)...]) ?? 443
+            let path = parts.count >= 2 ? String(parts[1]) : "/"
+
+            profileLock.lock()
+            let html = profileHtml
+            let proxy = proxyMobileconfig
+            let cleanup = cleanupMobileconfig
+            let caProfile = caMobileconfig
+            let ca = caCertificate
+            profileLock.unlock()
+
+            let response: Data
+            if path == "/profile.mobileconfig", let body = proxy {
+                response = makeResponse(body: body, contentType: "application/x-apple-aspen-config", filename: "ios-use-proxy-wifi.mobileconfig")
+            } else if path == "/cleanup.mobileconfig", let body = cleanup {
+                response = makeResponse(body: body, contentType: "application/x-apple-aspen-config", filename: "ios-use-proxy-cleanup.mobileconfig")
+            } else if path == "/ca.mobileconfig", let body = caProfile {
+                response = makeResponse(body: body, contentType: "application/x-apple-aspen-config", filename: "ios-use-ca.mobileconfig")
+            } else if path == "/ca.cer", let body = ca {
+                response = makeResponse(body: body, contentType: "application/x-x509-ca-cert", filename: "ios-use-ca.cer")
+            } else if let body = html {
+                response = makeResponse(body: body, contentType: "text/html; charset=utf-8", filename: nil)
             } else {
-                host = hostPort
-                port = 443
+                let body = "<h1>No profile available</h1><p>Run proxy start first.</p>".data(using: .utf8)!
+                response = makeResponse(status: "404 Not Found", body: body, contentType: "text/html", filename: nil)
             }
 
-            NSLog("[proxy] CONNECT %@:%d", host, port)
-
-            guard let upstreamFd = connectUpstream(host: host, port: port) else {
-                NSLog("[proxy] CONNECT failed to connect upstream %@:%d", host, port)
-                let resp = "HTTP/1.1 502 Bad Gateway\r\n\r\n"
-                _ = resp.withCString { send(clientFd, $0, strlen($0), 0) }
-                return
-            }
-            defer { close(upstreamFd) }
-
-            let okResp = "HTTP/1.1 200 Connection Established\r\n\r\n"
-            _ = okResp.withCString { send(clientFd, $0, strlen($0), 0) }
-
-            relay(clientFd, upstreamFd)
-        } else {
-            // Plain HTTP request — forward as-is
-            let components = firstLine.split(separator: " ")
-            guard components.count >= 2 else { return }
-            let urlStr = String(components[1])
-
-            NSLog("[proxy] HTTP %@ %@", String(components[0]), urlStr)
-
-            guard let url = URL(string: urlStr),
-                  let host = url.host else {
-                let resp = "HTTP/1.1 400 Bad Request\r\n\r\n"
-                _ = resp.withCString { send(clientFd, $0, strlen($0), 0) }
-                return
-            }
-            let port = UInt16(url.port ?? (url.scheme == "https" ? 443 : 80))
-
-            guard let upstreamFd = connectUpstream(host: host, port: port) else {
-                NSLog("[proxy] HTTP failed to connect upstream %@:%d", host, port)
-                let resp = "HTTP/1.1 502 Bad Gateway\r\n\r\n"
-                _ = resp.withCString { send(clientFd, $0, strlen($0), 0) }
-                return
-            }
-            defer { close(upstreamFd) }
-
-            // Forward original request
-            buffer.withUnsafeBufferPointer { ptr in
-                _ = send(upstreamFd, ptr.baseAddress!, bytesRead, 0)
-            }
-
-            relay(upstreamFd, clientFd)
-        }
-    }
-
-    /// Connect to upstream. Direct TCP for now; will be replaced with usbmux bridge.
-    private static func connectUpstream(host: String, port: UInt16) -> Int32? {
-        let sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
-        guard sock >= 0 else { return nil }
-
-        var hints = addrinfo()
-        hints.ai_family = AF_INET
-        hints.ai_socktype = SOCK_STREAM
-        var result: UnsafeMutablePointer<addrinfo>?
-        let portStr = String(port)
-        guard getaddrinfo(host, portStr, &hints, &result) == 0, let info = result else {
-            close(sock)
-            return nil
-        }
-        defer { freeaddrinfo(info) }
-
-        if connect(sock, info.pointee.ai_addr, info.pointee.ai_addrlen) < 0 {
-            close(sock)
-            return nil
-        }
-
-        return sock
-    }
-
-    private static func relay(_ fd1: Int32, _ fd2: Int32) {
-        let sem = DispatchSemaphore(value: 0)
-        var buf = [UInt8](repeating: 0, count: 16384)
-
-        DispatchQueue.global().async {
-            forward(from: fd1, to: fd2, buf: &buf)
-            sem.signal()
-        }
-        DispatchQueue.global().async {
-            forward(from: fd2, to: fd1, buf: &buf)
-            sem.signal()
-        }
-        sem.wait()
-    }
-
-    private static func forward(from src: Int32, to dst: Int32, buf: inout [UInt8]) {
-        while true {
-            let n = recv(src, &buf, buf.count, 0)
-            if n <= 0 { break }
-            var sent = 0
-            while sent < n {
-                let s = buf.withUnsafeBufferPointer { ptr in
-                    send(dst, ptr.baseAddress! + sent, n - sent, 0)
+            response.withUnsafeBytes { ptr in
+                guard let base = ptr.baseAddress else { return }
+                var sent = 0
+                while sent < response.count {
+                    let s = send(fd, base.advanced(by: sent), response.count - sent, 0)
+                    if s <= 0 { break }
+                    sent += s
                 }
-                if s <= 0 { return }
-                sent += s
             }
+            close(fd)
         }
+    }
+
+    private static func makeResponse(status: String = "200 OK", body: Data, contentType: String, filename: String?) -> Data {
+        var header = "HTTP/1.1 \(status)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n"
+        if let filename = filename {
+            header += "Content-Disposition: attachment; filename=\"\(filename)\"\r\n"
+        }
+        header += "\r\n"
+        return header.data(using: .utf8)! + body
     }
 }
 
-struct ProxyStartArgs: Codable {
-    let port: Int?
+// MARK: - Args
+
+struct ProxyIngressStartArgs: Codable {
+    let proxyPort: Int?
+    let controlPort: Int?
+    let profilePort: Int?
+}
+
+struct ProxyPushProfileArgs: Codable {
+    let caBase64: String
+    let mobileconfigBase64: String
+    let caProfileBase64: String?
+    let cleanupMobileconfigBase64: String?
 }
