@@ -195,24 +195,6 @@ function deriveDomOutput(result: DomResponse, candidates?: string[]) {
   };
 }
 
-function formatFindFailure(label: string, result: Extract<FindResult, { ok: false }>): string {
-  const parts: string[] = [result.error];
-  if (result.matches && result.matches.length > 0) {
-    parts.push('matches:');
-    for (const m of result.matches) {
-      const flags = m.traits?.slice(1).join(',') || '';
-      const title = m.value ? `${m.label}=${m.value}` : m.label;
-      const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
-      const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
-      parts.push(`  [${ancestors}] ${m.type}${flags ? ` [${flags}]` : ''} "${title}" (${rect})`);
-    }
-  }
-  if (result.suggestions && result.suggestions.length > 0) {
-    parts.push(`suggestions: ${result.suggestions.join(', ')}`);
-  }
-  if (result.hint) parts.push(`hint: ${result.hint}`);
-  return `find "${label}" failed: ${parts.join('\n  ')}`;
-}
 
 export function normalizeNeedLogConfig(needLog: boolean | Record<string, unknown> | null | undefined) {
   if (!needLog) return null;
@@ -256,20 +238,39 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       requireDriver(driver, 'find');
       const label = step.label;
       if (typeof label !== 'string') throw new Error('find requires string "label"');
-      const result = await driver!.find({ label, context: step.context });
+      const result = await driver!.find({ label, context: step.context, trait: step.trait });
       if (!result.ok) {
-        throw new Error(formatFindFailure(label, result));
+        throw new Error(`label '${label}' not found`);
       }
       if (step.print ?? true) {
-        const m = result.match;
-        const title = m.value ? `${m.label}=${m.value}` : m.label;
-        const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
-        const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
-        console.log(`\n  Find "${label}":`);
-        console.log(`    [${ancestors}] ${m.type} "${title}" (${rect})`);
+        const { matches, suggestions, hint } = result;
+        if (matches.length === 0) {
+          // fuzzy suggestions only
+          console.log(`\n  Find "${label}" (0 matches, did you mean?):`);
+          if (suggestions && suggestions.length > 0) {
+            console.log(`    suggestions: ${suggestions.join(', ')}`);
+          }
+        } else if (matches.length === 1) {
+          const m = matches[0];
+          const title = m.value ? `${m.label}=${m.value}` : m.label;
+          const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
+          const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
+          console.log(`\n  Find "${label}":`);
+          console.log(`    [${ancestors}] ${m.type} "${title}" (${rect})`);
+        } else {
+          console.log(`\n  Find "${label}" (${matches.length} matches):`);
+          for (let i = 0; i < matches.length; i++) {
+            const m = matches[i];
+            const title = m.value ? `${m.label}=${m.value}` : m.label;
+            const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
+            const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
+            console.log(`    ${i + 1}. [${ancestors}] ${m.type} "${title}" (${rect})`);
+          }
+        }
+        if (hint) console.log(`  hint: ${hint}`);
         console.log('');
       }
-      return result.match;
+      return result.matches;
     }
 
     case 'tap': {
@@ -508,8 +509,8 @@ export async function domAction(opts: ActionOpts & { raw?: boolean; save?: boole
   await runCommandStep({ action: 'dom', raw: opts.raw, save: opts.save, name: opts.name, print: true }, opts);
 }
 
-export async function findAction(opts: ActionOpts & { label: string; context?: LabelContext }) {
-  await runCommandStep({ action: 'find', label: opts.label, context: opts.context, print: true }, opts);
+export async function findAction(opts: ActionOpts & { label: string; context?: LabelContext; trait?: string }) {
+  await runCommandStep({ action: 'find', label: opts.label, context: opts.context, trait: opts.trait, print: true }, opts);
 }
 
 export async function screenshotAction(opts: ActionOpts & { name?: string }) {

@@ -73,22 +73,13 @@ abstract class BaseRpcClient {
   }
 
   async find(args: FindArgs): Promise<FindResult> {
-    const resp = await this.conn.send(DRIVER_COMMANDS.FIND, omitUndefined({ label: args.label, context: args.context }));
+    const resp = await this.conn.send(DRIVER_COMMANDS.FIND, omitUndefined({ label: args.label, context: args.context, trait: args.trait }));
     if (resp.ok) {
-      return { ok: true, match: resp.data as FindMatch };
+      const d = (resp.data ?? {}) as { matches?: FindMatch[]; suggestions?: string[]; hint?: string };
+      return { ok: true, matches: d.matches ?? [], suggestions: d.suggestions, hint: d.hint };
     }
-    const d = (resp.data ?? {}) as {
-      matches?: FindMatch[];
-      suggestions?: string[];
-      hint?: string;
-    };
-    return {
-      ok: false,
-      error: resp.error ?? 'find failed',
-      matches: d.matches,
-      suggestions: d.suggestions,
-      hint: d.hint,
-    };
+    const d = (resp.data ?? {}) as { hint?: string };
+    return { ok: false, error: resp.error ?? 'find failed', hint: d.hint };
   }
 
   async tap(

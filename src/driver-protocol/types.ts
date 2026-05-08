@@ -40,18 +40,13 @@ export interface FindMatch {
 }
 
 export type FindResult =
-  | { ok: true; match: FindMatch }
-  | {
-      ok: false;
-      error: string;
-      matches?: FindMatch[];
-      suggestions?: string[];
-      hint?: string;
-    };
+  | { ok: true; matches: FindMatch[]; suggestions?: string[]; hint?: string }
+  | { ok: false; error: string; hint?: string };
 
 export interface FindArgs {
   label: string;
   context?: LabelContext;
+  trait?: string;
 }
 
 export interface TapArgs {

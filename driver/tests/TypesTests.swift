@@ -687,4 +687,93 @@ final class TypesTests: XCTestCase {
             XCTFail("expected rawFindInSnapshot to find normalized contains match")
         }
     }
+
+    // MARK: - Trait filtering
+
+    func testRawFindInSnapshot_TraitFilter_MatchesType() {
+        let button = makeElement(label: "开关", type: .switch)
+        let text = makeElement(label: "开关文字", type: .staticText)
+        let cs = makeCleanedSnapshot([button, text])
+
+        switch rawFindInSnapshot("开关", context: nil, trait: "switch", cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.switch.rawValue)
+        default:
+            XCTFail("expected trait filter to match Switch type")
+        }
+    }
+
+    func testRawFindInSnapshot_TraitFilter_CaseInsensitive() {
+        let button = makeElement(label: "开关", type: .switch)
+        let cs = makeCleanedSnapshot([button])
+
+        switch rawFindInSnapshot("开关", context: nil, trait: "Switch", cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.switch.rawValue)
+        default:
+            XCTFail("expected trait filter to be case insensitive")
+        }
+    }
+
+    func testRawFindInSnapshot_TraitFilter_Flags() {
+        let element = makeElement(label: "蓝牙", type: .staticText)
+        // Make it disabled
+        let raw = FakeRawSnapshot(
+            label: "蓝牙",
+            elementType: .staticText,
+            isEnabled: false
+        )
+        let snapshot = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let disabledElement = SnapshotElement(
+            node: snapshot,
+            traits: snapshotTraits(for: snapshot, disabled: true, invisible: false),
+            disabled: true,
+            invisible: false,
+            childCount: 0
+        )
+        let cs = makeCleanedSnapshot([disabledElement])
+
+        switch rawFindInSnapshot("蓝牙", context: nil, trait: "disabled", cs: cs) {
+        case .found(let found):
+            XCTAssertTrue(found.traits.contains("disabled"))
+        default:
+            XCTFail("expected trait filter to match disabled flag")
+        }
+    }
+
+    func testRawFindInSnapshot_TraitFilter_NoMatch() {
+        let text = makeElement(label: "设置", type: .staticText)
+        let cs = makeCleanedSnapshot([text])
+
+        switch rawFindInSnapshot("设置", context: nil, trait: "button", cs: cs) {
+        case .notFound:
+            break // expected
+        default:
+            XCTFail("expected trait filter to return notFound when no match")
+        }
+    }
+
+    // MARK: - FindArgs with trait
+
+    func testFindArgs_WithTrait() throws {
+        let json = "{\"label\":\"蓝牙\",\"trait\":\"switch\"}"
+        let a = try JSONDecoder().decode(FindArgs.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(a.label, "蓝牙")
+        XCTAssertEqual(a.trait, "switch")
+        XCTAssertNil(a.context)
+    }
+
+    func testFindArgs_WithContextAndTrait() throws {
+        let json = "{\"label\":\"设置\",\"context\":{\"ancestorType\":\"Table\"},\"trait\":\"disabled\"}"
+        let a = try JSONDecoder().decode(FindArgs.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(a.label, "设置")
+        XCTAssertEqual(a.context?.ancestorType, "Table")
+        XCTAssertEqual(a.trait, "disabled")
+    }
+
+    func testFindArgs_TraitOptional() throws {
+        let json = "{\"label\":\"设置\"}"
+        let a = try JSONDecoder().decode(FindArgs.self, from: json.data(using: .utf8)!)
+        XCTAssertNil(a.trait)
+    }
 }

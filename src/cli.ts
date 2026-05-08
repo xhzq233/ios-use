@@ -53,22 +53,7 @@ function handleAction<TArgs extends unknown[]>(action: (...args: TArgs) => Promi
 }
 
 type ActionOpts = { udid?: string; bundleId?: string; verbose?: boolean };
-type LabelContext = { ancestorType?: string; ancestorLabel?: string };
 type TapOffset = { x?: number; y?: number; xRatio?: number; yRatio?: number };
-
-function extractContext(opts: Record<string, unknown>): LabelContext | undefined {
-  const nested = (opts.context && typeof opts.context === 'object') ? opts.context as Record<string, unknown> : undefined;
-  const ancestorType =
-    (nested?.ancestorType as string | undefined)
-    ?? (opts['context.ancestorType'] as string | undefined)
-    ?? (opts['context.ancestor-type'] as string | undefined);
-  const ancestorLabel =
-    (nested?.ancestorLabel as string | undefined)
-    ?? (opts['context.ancestorLabel'] as string | undefined)
-    ?? (opts['context.ancestor-label'] as string | undefined);
-  if (!ancestorType && !ancestorLabel) return undefined;
-  return { ancestorType, ancestorLabel };
-}
 
 function extractTapOffset(opts: Record<string, unknown>): TapOffset | undefined {
   const offsetX = opts['offsetX'] as number | undefined;
@@ -201,12 +186,12 @@ addSessionOptions(
 addSessionOptions(
   program.command('find <label>')
     .description('Find UI element by label')
-    .option('--context.ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--context.ancestorType <type>', 'Disambiguate by ancestor type (doc spelling)')
-    .option('--context.ancestor-label <label>', 'Disambiguate by ancestor label')
-    .option('--context.ancestorLabel <label>', 'Disambiguate by ancestor label (doc spelling)'),
-).action(handleAction(async (label: string, opts: ActionOpts & { context?: LabelContext }) => {
-  await findAction({ label, ...opts, context: extractContext(opts as Record<string, unknown>) });
+    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
+    .option('--ancestor-label <label>', 'Disambiguate by ancestor label')
+    .option('--trait <trait>', 'Filter by trait (e.g. switch, disabled, invisible, selected, focused)'),
+).action(handleAction(async (label: string, opts: ActionOpts & { ancestorType?: string; ancestorLabel?: string; trait?: string }) => {
+  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
+  await findAction({ label, ...opts, context, trait: opts.trait });
 }));
 
 addSessionOptions(
@@ -217,21 +202,21 @@ addSessionOptions(
     .option('--offset-y <px>', 'Tap y offset from the target element top-left', parseIntStrict)
     .option('--offset-x-ratio <ratio>', 'Tap x ratio from the target element top-left', parseFloatStrict)
     .option('--offset-y-ratio <ratio>', 'Tap y ratio from the target element top-left', parseFloatStrict)
-    .option('--context.ancestor-type <type>', 'Disambiguate by ancestor type (e.g. Table, Cell)')
-    .option('--context.ancestorType <type>', 'Disambiguate by ancestor type (doc spelling)')
-    .option('--context.ancestor-label <label>', 'Disambiguate by ancestor label')
-    .option('--context.ancestorLabel <label>', 'Disambiguate by ancestor label (doc spelling)'),
+    .option('--ancestor-type <type>', 'Disambiguate by ancestor type (e.g. Table, Cell)')
+    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
 ).action(handleAction(async (opts: ActionOpts & {
   label: string;
-  context?: LabelContext;
+  ancestorType?: string;
+  ancestorLabel?: string;
   offsetX?: number;
   offsetY?: number;
   offsetXRatio?: number;
   offsetYRatio?: number;
 }) => {
+  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
   await tapAction({
     ...opts,
-    context: extractContext(opts as Record<string, unknown>),
+    context,
     offset: extractTapOffset(opts as Record<string, unknown>),
   });
 }));
@@ -243,12 +228,11 @@ addSessionOptions(
     .option('--from <anchor>', 'Anchor label or "x,y" coordinate to scroll from')
     .option('--dir <direction>', 'Direction: forth (down/right) or back (up/left)')
     .option('--distance <px>', 'Swipe distance in pixels (for pure distance swipe)', parseFloatStrict)
-    .option('--context.ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--context.ancestorType <type>', 'Disambiguate by ancestor type (doc spelling)')
-    .option('--context.ancestor-label <label>', 'Disambiguate by ancestor label')
-    .option('--context.ancestorLabel <label>', 'Disambiguate by ancestor label (doc spelling)'),
-).action(handleAction(async (opts: ActionOpts & { to?: string; from?: string; dir?: string; distance?: number; context?: LabelContext }) => {
-  await swipeAction({ ...opts, dir: opts.dir as SwipeDir | undefined, context: extractContext(opts as Record<string, unknown>) });
+    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
+    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
+).action(handleAction(async (opts: ActionOpts & { to?: string; from?: string; dir?: string; distance?: number; ancestorType?: string; ancestorLabel?: string }) => {
+  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
+  await swipeAction({ ...opts, dir: opts.dir as SwipeDir | undefined, context });
 }));
 
 addSessionOptions(
@@ -256,12 +240,11 @@ addSessionOptions(
     .description('Type text into an element')
     .requiredOption('--content <text>', 'Text to type')
     .requiredOption('--label <text>', 'Focus element by label before typing')
-    .option('--context.ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--context.ancestorType <type>', 'Disambiguate by ancestor type (doc spelling)')
-    .option('--context.ancestor-label <label>', 'Disambiguate by ancestor label')
-    .option('--context.ancestorLabel <label>', 'Disambiguate by ancestor label (doc spelling)'),
-).action(handleAction(async (opts: ActionOpts & { content: string; label: string; context?: LabelContext }) => {
-  await inputAction({ ...opts, context: extractContext(opts as Record<string, unknown>) });
+    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
+    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
+).action(handleAction(async (opts: ActionOpts & { content: string; label: string; ancestorType?: string; ancestorLabel?: string }) => {
+  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
+  await inputAction({ ...opts, context });
 }));
 
 addSessionOptions(
@@ -269,12 +252,11 @@ addSessionOptions(
     .description('Long press on screen by label or coordinate ("x,y")')
     .requiredOption('--label <target>', 'Element label or "x,y" coordinate')
     .option('--duration <ms>', 'Long press duration in ms', parseIntStrict)
-    .option('--context.ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--context.ancestorType <type>', 'Disambiguate by ancestor type (doc spelling)')
-    .option('--context.ancestor-label <label>', 'Disambiguate by ancestor label')
-    .option('--context.ancestorLabel <label>', 'Disambiguate by ancestor label (doc spelling)'),
-).action(handleAction(async (opts: ActionOpts & { label: string; duration?: number; context?: LabelContext }) => {
-  await longpressAction({ ...opts, context: extractContext(opts as Record<string, unknown>) });
+    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
+    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
+).action(handleAction(async (opts: ActionOpts & { label: string; duration?: number; ancestorType?: string; ancestorLabel?: string }) => {
+  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
+  await longpressAction({ ...opts, context });
 }));
 
 addSessionOptions(
@@ -290,12 +272,11 @@ addSessionOptions(
     .description('Wait until an element becomes visible')
     .requiredOption('--label <text>', 'Element label to wait for')
     .option('--timeout <seconds>', 'Timeout in seconds', parseFloatStrict)
-    .option('--context.ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--context.ancestorType <type>', 'Disambiguate by ancestor type (doc spelling)')
-    .option('--context.ancestor-label <label>', 'Disambiguate by ancestor label')
-    .option('--context.ancestorLabel <label>', 'Disambiguate by ancestor label (doc spelling)'),
-).action(handleAction(async (opts: ActionOpts & { label: string; timeout?: number; context?: LabelContext }) => {
-  await waitForAction({ ...opts, context: extractContext(opts as Record<string, unknown>) });
+    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
+    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
+).action(handleAction(async (opts: ActionOpts & { label: string; timeout?: number; ancestorType?: string; ancestorLabel?: string }) => {
+  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
+  await waitForAction({ ...opts, context });
 }));
 
 addSessionOptions(

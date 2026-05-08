@@ -18,7 +18,7 @@ enum FindResult {
 /// per element, m is the number of contains matches, h is ancestor depth for
 /// context filtering, c is candidate string count, q is query length, and t is
 /// candidate length used by fuzzy fallback.
-func rawFindInSnapshot(_ label: String, context: LabelContext?, cs: CleanedSnapshot) -> FindResult {
+func rawFindInSnapshot(_ label: String, context: LabelContext?, trait: String? = nil, cs: CleanedSnapshot) -> FindResult {
     let query = label.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else {
         return .notFound(suggestions: [])
@@ -52,6 +52,12 @@ func rawFindInSnapshot(_ label: String, context: LabelContext?, cs: CleanedSnaps
         matches = matches.filter { hasAncestor($0.node, withLabel: al) }
     }
 
+    // 4. Trait filter
+    if let trait, !trait.isEmpty {
+        let normalizedTrait = trait.lowercased()
+        matches = matches.filter { $0.traits.contains(where: { $0.lowercased() == normalizedTrait }) }
+    }
+
     matches = finalizeFindMatches(matches, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode)
 
     if matches.isEmpty { return .notFound(suggestions: []) }
@@ -61,11 +67,11 @@ func rawFindInSnapshot(_ label: String, context: LabelContext?, cs: CleanedSnaps
 
 /// Unified label search: contains(label/value) → fuzzy → context filter.
 /// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
-func rawFind(_ label: String, context: LabelContext?) -> FindResult {
+func rawFind(_ label: String, context: LabelContext?, trait: String? = nil) -> FindResult {
     guard let cs = getCleanedSnapshot() else {
         return .notFound(suggestions: [])
     }
-    return rawFindInSnapshot(label, context: context, cs: cs)
+    return rawFindInSnapshot(label, context: context, trait: trait, cs: cs)
 }
 
 func finalizeFindMatches(
@@ -332,7 +338,7 @@ private func shouldSkipAncestorInCleanChain(_ node: SafeSnapshot) -> Bool {
 /// Build the ambiguity response payload (doc 3.3).
 func ambiguityResponse(_ label: String, matches: [SnapshotElement]) -> ResponseFrame {
     let infos = matches.map { elementInfo($0, includeAncestors: true) }
-    let hint = "Try adding --context.ancestor-type / --context.ancestor-label, or use a coordinate/anchor to disambiguate"
+    let hint = "Try adding --ancestor-type / --ancestor-label, or --trait to disambiguate"
     return ResponseFrame(
         ok: false,
         error: "label '\(label)' is ambiguous (\(matches.count) matches)",
