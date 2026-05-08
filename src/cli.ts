@@ -18,7 +18,7 @@ import {
 } from './commands/actions';
 import { flowAction } from './commands/flow';
 import { nslogStreamAction } from './commands/nslog';
-import { proxyStart, proxyStop, proxyRead } from './commands/proxy';
+import { proxyConfigCA, proxyStart, proxyStop, proxyRead } from './commands/proxy';
 import type { SwipeDir } from './driver-protocol/index.js';
 import { startSession, stopSession, sessionStatus, readSessionInfo } from './session';
 import { formatDriverError } from './utils/driverError';
@@ -186,12 +186,9 @@ addSessionOptions(
 addSessionOptions(
   program.command('find <label>')
     .description('Find UI element by label')
-    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--ancestor-label <label>', 'Disambiguate by ancestor label')
-    .option('--trait <trait>', 'Filter by trait (e.g. switch, disabled, invisible, selected, focused)'),
-).action(handleAction(async (label: string, opts: ActionOpts & { ancestorType?: string; ancestorLabel?: string; trait?: string }) => {
-  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
-  await findAction({ label, ...opts, context, trait: opts.trait });
+    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
+).action(handleAction(async (label: string, opts: ActionOpts & { traits?: string }) => {
+  await findAction({ label, ...opts, traits: opts.traits });
 }));
 
 addSessionOptions(
@@ -202,21 +199,18 @@ addSessionOptions(
     .option('--offset-y <px>', 'Tap y offset from the target element top-left', parseIntStrict)
     .option('--offset-x-ratio <ratio>', 'Tap x ratio from the target element top-left', parseFloatStrict)
     .option('--offset-y-ratio <ratio>', 'Tap y ratio from the target element top-left', parseFloatStrict)
-    .option('--ancestor-type <type>', 'Disambiguate by ancestor type (e.g. Table, Cell)')
-    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
+    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
 ).action(handleAction(async (opts: ActionOpts & {
   label: string;
-  ancestorType?: string;
-  ancestorLabel?: string;
+  traits?: string;
   offsetX?: number;
   offsetY?: number;
   offsetXRatio?: number;
   offsetYRatio?: number;
 }) => {
-  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
   await tapAction({
     ...opts,
-    context,
+    traits: opts.traits,
     offset: extractTapOffset(opts as Record<string, unknown>),
   });
 }));
@@ -228,11 +222,9 @@ addSessionOptions(
     .option('--from <anchor>', 'Anchor label or "x,y" coordinate to scroll from')
     .option('--dir <direction>', 'Direction: forth (down/right) or back (up/left)')
     .option('--distance <px>', 'Swipe distance in pixels (for pure distance swipe)', parseFloatStrict)
-    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
-).action(handleAction(async (opts: ActionOpts & { to?: string; from?: string; dir?: string; distance?: number; ancestorType?: string; ancestorLabel?: string }) => {
-  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
-  await swipeAction({ ...opts, dir: opts.dir as SwipeDir | undefined, context });
+    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
+).action(handleAction(async (opts: ActionOpts & { to?: string; from?: string; dir?: string; distance?: number; traits?: string }) => {
+  await swipeAction({ ...opts, dir: opts.dir as SwipeDir | undefined, traits: opts.traits });
 }));
 
 addSessionOptions(
@@ -240,11 +232,9 @@ addSessionOptions(
     .description('Type text into an element')
     .requiredOption('--content <text>', 'Text to type')
     .requiredOption('--label <text>', 'Focus element by label before typing')
-    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
-).action(handleAction(async (opts: ActionOpts & { content: string; label: string; ancestorType?: string; ancestorLabel?: string }) => {
-  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
-  await inputAction({ ...opts, context });
+    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
+).action(handleAction(async (opts: ActionOpts & { content: string; label: string; traits?: string }) => {
+  await inputAction({ ...opts, traits: opts.traits });
 }));
 
 addSessionOptions(
@@ -252,11 +242,9 @@ addSessionOptions(
     .description('Long press on screen by label or coordinate ("x,y")')
     .requiredOption('--label <target>', 'Element label or "x,y" coordinate')
     .option('--duration <ms>', 'Long press duration in ms', parseIntStrict)
-    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
-).action(handleAction(async (opts: ActionOpts & { label: string; duration?: number; ancestorType?: string; ancestorLabel?: string }) => {
-  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
-  await longpressAction({ ...opts, context });
+    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
+).action(handleAction(async (opts: ActionOpts & { label: string; duration?: number; traits?: string }) => {
+  await longpressAction({ ...opts, traits: opts.traits });
 }));
 
 addSessionOptions(
@@ -272,11 +260,9 @@ addSessionOptions(
     .description('Wait until an element becomes visible')
     .requiredOption('--label <text>', 'Element label to wait for')
     .option('--timeout <seconds>', 'Timeout in seconds', parseFloatStrict)
-    .option('--ancestor-type <type>', 'Disambiguate by ancestor type')
-    .option('--ancestor-label <label>', 'Disambiguate by ancestor label'),
-).action(handleAction(async (opts: ActionOpts & { label: string; timeout?: number; ancestorType?: string; ancestorLabel?: string }) => {
-  const context = (opts.ancestorType || opts.ancestorLabel) ? { ancestorType: opts.ancestorType, ancestorLabel: opts.ancestorLabel } : undefined;
-  await waitForAction({ ...opts, context });
+    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
+).action(handleAction(async (opts: ActionOpts & { label: string; timeout?: number; traits?: string }) => {
+  await waitForAction({ ...opts, traits: opts.traits });
 }));
 
 addSessionOptions(
@@ -322,13 +308,31 @@ program.command('nslog')
 
 // ── Proxy ──
 
-const proxyCmd = program.command('proxy').description('HTTP/HTTPS proxy via Wi-Fi profile and Mac mitmdump');
+const proxyCmd = program.command('proxy').description('HTTP/HTTPS proxy via mitmdump + Wi-Fi proxy');
+
+proxyCmd.command('configca')
+  .description('Install and trust mitmproxy CA on device (one-time)')
+  .option('--udid <udid>', 'Device UDID')
+  .action(handleAction(async (opts: { udid?: string }) => {
+    const info = readSessionInfo();
+    if (!info?.sessionId) throw new Error('No active session. Run `session start` first.');
+    const udid = opts.udid || info.udid;
+    const { createClientFromSession } = await import('./session.js');
+    const client = await createClientFromSession(info, { ownsSession: false });
+    try {
+      await proxyConfigCA(client, { udid });
+    } finally {
+      client.disconnect();
+    }
+  }));
 
 proxyCmd.command('start')
-  .description('Start proxy session (requires active session)')
-  .option('--stream', 'Stream mitmdump output to stdout')
+  .description('Start proxy: mitmdump + configure device Wi-Fi proxy')
+  .option('--stream', 'Stream captured requests to stdout as jsonl')
   .option('--udid <udid>', 'Device UDID')
-  .action(handleAction(async (opts: { stream?: boolean; udid?: string }) => {
+  .option('--no-body', 'Omit request/response body from output')
+  .option('--body-limit <bytes>', 'Max body size in bytes (default 102400)', parseIntStrict)
+  .action(handleAction(async (opts: { stream?: boolean; udid?: string; noBody?: boolean; bodyLimit?: number }) => {
     const info = readSessionInfo();
     if (!info?.sessionId) throw new Error('No active session. Run `session start` first.');
     const udid = opts.udid || info.udid;
@@ -336,12 +340,12 @@ proxyCmd.command('start')
     const { createClientFromSession } = await import('./session.js');
     const client = await createClientFromSession(info, { ownsSession: false });
     try {
-      await proxyStart(client, { udid, stream: opts.stream });
+      await proxyStart(client, { udid, stream: opts.stream, noBody: opts.noBody, bodyLimit: opts.bodyLimit });
       if (opts.stream) process.stderr.write('Proxy running. Press Ctrl+C to stop.\n');
       else logger.info('Proxy running. Press Ctrl+C to stop.');
       await new Promise<void>((resolve) => {
         process.on('SIGINT', () => { resolve(); });
-        process.on('TERM', () => { resolve(); });
+        process.on('SIGTERM', () => { resolve(); });
       });
     } finally {
       await proxyStop(client).catch(() => {});
@@ -350,28 +354,27 @@ proxyCmd.command('start')
   }));
 
 proxyCmd.command('stop')
-  .description('Stop proxy session')
-  .option('--force', 'Stop mitmdump even if proxy profile cleanup is not confirmed')
-  .action(handleAction(async (opts: { force?: boolean }) => {
+  .description('Clear device Wi-Fi proxy and stop mitmdump')
+  .option('--udid <udid>', 'Device UDID')
+  .action(handleAction(async (opts: { udid?: string }) => {
     const { withAutoSession } = await import('./session.js');
     await withAutoSession({}, async (client) => {
-      await proxyStop(client, { force: opts.force });
+      await proxyStop(client, opts);
     });
   }));
 
 proxyCmd.command('read')
-  .description('Read recent proxy requests')
+  .description('Read recent proxy captured requests')
   .option('--count <n>', 'Number of requests', parseIntStrict, 10)
-  .option('--duration <duration>', 'Time window (e.g. 5s)')
+  .option('--duration <duration>', 'Time window (e.g. 5s, 1m)')
   .option('--save [name]', 'Save to jsonl file')
   .action(handleAction(async (opts: { count?: number; duration?: string; save?: string }) => {
     proxyRead(opts);
   }));
 
 proxyCmd.command('doctor')
-  .description('Diagnose proxy setup issues')
-  .option('--udid <udid>', 'Device UDID')
-  .action(handleAction(async (_opts: { udid?: string }) => {
+  .description('Diagnose proxy environment')
+  .action(handleAction(async () => {
     const { proxyDoctor } = await import('./commands/proxy.js');
     proxyDoctor();
   }));

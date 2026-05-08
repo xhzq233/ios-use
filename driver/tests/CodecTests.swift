@@ -154,7 +154,7 @@ final class CodecTests: XCTestCase {
         let args = try decodeArgs(req.args, as: WaitForArgs.self)
         XCTAssertEqual(args.label, "Loading")
         XCTAssertNil(args.timeout)
-        XCTAssertNil(args.context)
+        XCTAssertNil(args.traits)
     }
 
     // MARK: - maxFrameSize

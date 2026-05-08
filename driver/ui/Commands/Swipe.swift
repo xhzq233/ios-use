@@ -7,7 +7,7 @@ enum SwipeCommands {
     /// doc 5 — unified swipe with to/from/distance/dir/context.
     static func swipe(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
         let args = decodeArgsOptional(rawArgs, as: SwipeArgs.self) ?? SwipeArgs(
-            to: nil, from: nil, distance: nil, dir: nil, context: nil)
+            to: nil, from: nil, distance: nil, dir: nil, traits: nil)
         let app = try Session.shared.ensureActive()
 
         defer { invalidateSnapshot() }  // mutation — drop cache
@@ -47,7 +47,7 @@ enum SwipeCommands {
         // STEP 2: all label commands share rawFind semantics so future changes
         // to exact/fuzzy/context behavior stay aligned automatically.
         let target: SnapshotElement
-        switch rawFind(label, context: args.context) {
+        switch rawFind(label, traits: args.traits) {
         case .found(let elem):
             target = elem
         case .ambiguous(let matches):
@@ -140,7 +140,7 @@ enum SwipeCommands {
             anchorScrollView = scrollView
         } else if let from = args.from, let flabel = from.asLabel {
             let anchor: SnapshotElement
-            switch rawFindInSnapshot(flabel, context: nil, cs: cs) {
+            switch rawFindInSnapshot(flabel, traits: nil, cs: cs) {
             case .found(let elem):
                 anchor = elem
             case .ambiguous(let matches):
@@ -189,7 +189,7 @@ enum SwipeCommands {
             invalidateSnapshot()
 
             guard let freshCS = rebuildCleanedSnapshot() else { break }
-            switch rawFindInSnapshot(label, context: args.context, cs: freshCS) {
+            switch rawFindInSnapshot(label, traits: args.traits, cs: freshCS) {
             case .found(let elem):
                 if elem.isVisible {
                     return okScrollWithAncestors(node: elem.node, scrolls: i + 1)

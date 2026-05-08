@@ -14,17 +14,17 @@ enum InputCommands {
 
         // Locate the target via rawFind.
         let elem: SnapshotElement
-        switch rawFind(args.label, context: args.context) {
+        switch rawFind(args.label, traits: args.traits) {
         case .found(let e): elem = e
         case .ambiguous(let matches): return ambiguityResponse(args.label, matches: matches)
         case .fuzzy(let s):
             return notFoundResponse(args.label,
                                     suggestions: s,
-                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app before typing")
+                                    hint: "Try adding --traits, or verify the active app before typing")
         case .notFound(let s):
             return notFoundResponse(args.label,
                                     suggestions: s,
-                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app before typing")
+                                    hint: "Try adding --traits, or verify the active app before typing")
         }
 
         let editableSnapshot = preferredInputSnapshot(around: elem.node)
