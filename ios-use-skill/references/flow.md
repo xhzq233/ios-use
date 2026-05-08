@@ -226,12 +226,21 @@ steps:
 
 - 用于拿到结构化节点，常和 `outputs` 配合
 - 找不到或命中歧义时会直接失败
+- `traits` 支持逗号分隔多值，AND 语义（元素必须同时包含所有指定 trait）
 
 ```yaml
 - action: find
   label: 蓝牙
+  traits: Cell
   print: false
   outputs: bluetoothNode
+```
+
+```yaml
+- action: find
+  label: 开关
+  traits: "Cell,Switch"
+  print: false
 ```
 
 ### 6.3 `dom`
