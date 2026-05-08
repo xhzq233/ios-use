@@ -6,7 +6,6 @@ import { NSLoggerServer, formatBonjourStatusMessages } from '../nslogger.js';
 import { ARTIFACT_DIR, ensureArtifactDir } from '../utils/paths.js';
 import type { Driver, FlowStep, FlowContext, NSLoggerServerLike } from './types.js';
 import type {
-  LabelContext,
   LabelOrPoint,
   Point,
   SwipeDir,
@@ -244,7 +243,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       requireDriver(driver, 'find');
       const label = step.label;
       if (typeof label !== 'string') throw new Error('find requires string "label"');
-      const result = await driver!.find({ label, context: step.context, trait: step.trait });
+      const result = await driver!.find({ label, traits: step.traits });
       if (!result.ok) {
         throw new Error(`label '${label}' not found`);
       }
@@ -284,7 +283,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       const target = parseLabelOrPoint(step.label);
       if (target === undefined) throw new Error('tap requires "label" (string or "x,y" coordinate)');
       logger.info(`  → Tap ${formatLabel(target)}`);
-      const result = await driver!.tap(target, step.context, step.offset);
+      const result = await driver!.tap(target, step.traits, step.offset);
       logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
       return undefined;
     }
@@ -296,7 +295,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       // step.duration is in milliseconds (user-facing); host expects seconds
       const durationSec = step.duration !== undefined ? step.duration / 1000 : undefined;
       logger.info(`  → Longpress ${formatLabel(target)}${step.duration ? ` (${step.duration}ms)` : ''}`);
-      const result = await driver!.longPress(target, durationSec, step.context);
+      const result = await driver!.longPress(target, durationSec, step.traits);
       logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
       return undefined;
     }
@@ -308,7 +307,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       const label = step.label;
       if (typeof label !== 'string') throw new Error('input requires string "label"');
       logger.info(`  → Input "${text}" into "${label}"`);
-      await driver!.input(label, text, step.context);
+      await driver!.input(label, text, step.traits);
       return undefined;
     }
 
@@ -322,7 +321,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         from,
         dir: step.dir as SwipeDir | undefined,
         distance: step.distance,
-        context: step.context,
+        traits: step.traits,
       });
       logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} scrolls=${result.scrolls}`);
       return undefined;
@@ -336,7 +335,7 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       const result = await driver!.waitFor({
         label,
         timeout: step.timeout,
-        context: step.context,
+        traits: step.traits,
       });
       logger.info(`    ${result.type} "${result.label}" (${result.rect.join(',')}) waited=${result.waited.toFixed(2)}s`);
       return undefined;
@@ -493,52 +492,52 @@ type ActionOpts = { udid?: string; bundleId?: string; verbose?: boolean };
 
 export async function tapAction(opts: ActionOpts & {
   label?: string;
-  context?: LabelContext;
+  traits?: string;
   offset?: FlowStep['offset'];
 }) {
   if (opts.label === undefined) throw new Error('tap requires --label');
-  await runCommandStep({ action: 'tap', label: opts.label, context: opts.context, offset: opts.offset }, opts);
+  await runCommandStep({ action: 'tap', label: opts.label, traits: opts.traits, offset: opts.offset }, opts);
 }
 
-export async function swipeAction(opts: ActionOpts & { to?: string; from?: string; dir?: SwipeDir; distance?: number; context?: LabelContext }) {
+export async function swipeAction(opts: ActionOpts & { to?: string; from?: string; dir?: SwipeDir; distance?: number; traits?: string }) {
   await runCommandStep({
     action: 'swipe',
     to: opts.to,
     from: opts.from,
     dir: opts.dir,
     distance: opts.distance,
-    context: opts.context,
+    traits: opts.traits,
   }, opts);
 }
 
-export async function inputAction(opts: ActionOpts & { content: string; label?: string; context?: LabelContext }) {
+export async function inputAction(opts: ActionOpts & { content: string; label?: string; traits?: string }) {
   if (opts.label === undefined) throw new Error('input requires --label');
-  await runCommandStep({ action: 'input', content: opts.content, label: opts.label, context: opts.context }, opts);
+  await runCommandStep({ action: 'input', content: opts.content, label: opts.label, traits: opts.traits }, opts);
 }
 
-export async function longpressAction(opts: ActionOpts & { label?: string; duration?: number; context?: LabelContext }) {
+export async function longpressAction(opts: ActionOpts & { label?: string; duration?: number; traits?: string }) {
   if (opts.label === undefined) throw new Error('longpress requires --label');
-  await runCommandStep({ action: 'longpress', label: opts.label, duration: opts.duration, context: opts.context }, opts);
+  await runCommandStep({ action: 'longpress', label: opts.label, duration: opts.duration, traits: opts.traits }, opts);
 }
 
 export async function domAction(opts: ActionOpts & { raw?: boolean; save?: boolean; name?: string }) {
   await runCommandStep({ action: 'dom', raw: opts.raw, save: opts.save, name: opts.name, print: true }, opts);
 }
 
-export async function findAction(opts: ActionOpts & { label: string; context?: LabelContext; trait?: string }) {
-  await runCommandStep({ action: 'find', label: opts.label, context: opts.context, trait: opts.trait, print: true }, opts);
+export async function findAction(opts: ActionOpts & { label: string; traits?: string }) {
+  await runCommandStep({ action: 'find', label: opts.label, traits: opts.traits, print: true }, opts);
 }
 
 export async function screenshotAction(opts: ActionOpts & { name?: string }) {
   await runCommandStep({ action: 'screenshot', name: opts.name }, opts);
 }
 
-export async function waitForAction(opts: ActionOpts & { label: string; timeout?: number; context?: LabelContext }) {
+export async function waitForAction(opts: ActionOpts & { label: string; timeout?: number; traits?: string }) {
   await runCommandStep({
     action: 'waitFor',
     label: opts.label,
     timeout: opts.timeout,
-    context: opts.context,
+    traits: opts.traits,
   }, opts);
 }
 

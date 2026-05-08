@@ -21,7 +21,7 @@ enum WaitForCommands {
             if shouldUseFreshSnapshot {
                 invalidateSnapshot()
             }
-            let result = rawFind(args.label, context: args.context)
+            let result = rawFind(args.label, traits: args.traits)
 
             switch result {
             case .found(let elem):

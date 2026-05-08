@@ -33,7 +33,7 @@ enum TouchCommands {
         guard let label = args.label.asLabel else {
             return Codec.makeError("tap: invalid label/point")
         }
-        switch rawFind(label, context: args.context) {
+        switch rawFind(label, traits: args.traits) {
         case .found(let elem):
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
@@ -56,11 +56,11 @@ enum TouchCommands {
         case .fuzzy(let s):
             return notFoundResponse(label,
                                     suggestions: s,
-                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app")
+                                    hint: "Try adding --traits, or verify the active app")
         case .notFound(let s):
             return notFoundResponse(label,
                                     suggestions: s,
-                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app")
+                                    hint: "Try adding --traits, or verify the active app")
         }
     }
 
@@ -88,7 +88,7 @@ enum TouchCommands {
         guard let label = args.label.asLabel else {
             return Codec.makeError("longPress: invalid label/point")
         }
-        switch rawFind(label, context: args.context) {
+        switch rawFind(label, traits: args.traits) {
         case .found(let elem):
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
@@ -105,11 +105,11 @@ enum TouchCommands {
         case .fuzzy(let s):
             return notFoundResponse(label,
                                     suggestions: s,
-                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app")
+                                    hint: "Try adding --traits, or verify the active app")
         case .notFound(let s):
             return notFoundResponse(label,
                                     suggestions: s,
-                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app")
+                                    hint: "Try adding --traits, or verify the active app")
         }
     }
 

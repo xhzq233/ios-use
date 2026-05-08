@@ -7,7 +7,6 @@ import {
 import type {
   CreateSessionResponse,
   DomResponse,
-  LabelContext,
   FindResult,
   FindMatch,
   FindArgs,
@@ -20,11 +19,7 @@ import type {
   OslogArgs,
   OslogResult,
   ProbeFetchResult,
-  ProxyStartResult,
-  ProxyStopResult,
-  ProxyIngressStartResult,
-  ProxyIngressStopResult,
-  ProxyPushProfileResult,
+  ProxyCAPushResult,
   DriverCommand,
 } from '../driver-protocol/index.js';
 
@@ -73,7 +68,7 @@ abstract class BaseRpcClient {
   }
 
   async find(args: FindArgs): Promise<FindResult> {
-    const resp = await this.conn.send(DRIVER_COMMANDS.FIND, omitUndefined({ label: args.label, context: args.context, trait: args.trait }));
+    const resp = await this.conn.send(DRIVER_COMMANDS.FIND, omitUndefined({ label: args.label, traits: args.traits }));
     if (resp.ok) {
       const d = (resp.data ?? {}) as { matches?: FindMatch[]; suggestions?: string[]; hint?: string };
       return { ok: true, matches: d.matches ?? [], suggestions: d.suggestions, hint: d.hint };
@@ -84,18 +79,18 @@ abstract class BaseRpcClient {
 
   async tap(
     target: LabelOrPoint,
-    context?: LabelContext,
+    traits?: string,
     offset?: { x?: number; y?: number; xRatio?: number; yRatio?: number },
   ): Promise<TapResult> {
-    return await this.send(DRIVER_COMMANDS.TAP, omitUndefined({ label: target, context, offset }));
+    return await this.send(DRIVER_COMMANDS.TAP, omitUndefined({ label: target, traits, offset }));
   }
 
-  async longPress(target: LabelOrPoint, duration?: number, context?: LabelContext): Promise<TapResult> {
-    return await this.send(DRIVER_COMMANDS.LONG_PRESS, omitUndefined({ label: target, duration, context }));
+  async longPress(target: LabelOrPoint, duration?: number, traits?: string): Promise<TapResult> {
+    return await this.send(DRIVER_COMMANDS.LONG_PRESS, omitUndefined({ label: target, duration, traits }));
   }
 
-  async input(label: string, content: string, context?: LabelContext): Promise<void> {
-    await this.send(DRIVER_COMMANDS.INPUT, omitUndefined({ label, content, context }));
+  async input(label: string, content: string, traits?: string): Promise<void> {
+    await this.send(DRIVER_COMMANDS.INPUT, omitUndefined({ label, content, traits }));
   }
 
   async swipe(args: SwipeArgs): Promise<SwipeResult> {
@@ -106,7 +101,7 @@ abstract class BaseRpcClient {
     return await this.send(DRIVER_COMMANDS.WAIT_FOR, omitUndefined({
       label: args.label,
       timeout: args.timeout,
-      context: args.context,
+      traits: args.traits,
     }));
   }
 
@@ -149,33 +144,8 @@ abstract class BaseRpcClient {
     return await this.send(DRIVER_COMMANDS.PROBE_FETCH, omitUndefined({ url, timeout }));
   }
 
-  async proxyStart(port?: number): Promise<ProxyStartResult> {
-    return await this.send(DRIVER_COMMANDS.PROXY_START, omitUndefined({ port }));
-  }
-
-  async proxyStop(): Promise<ProxyStopResult> {
-    return await this.send(DRIVER_COMMANDS.PROXY_STOP, {});
-  }
-
-  async proxyIngressStart(opts?: { proxyPort?: number; controlPort?: number; profilePort?: number }): Promise<ProxyIngressStartResult> {
-    return await this.send(DRIVER_COMMANDS.PROXY_INGRESS_START, omitUndefined(opts ?? {}));
-  }
-
-  async proxyIngressStop(): Promise<ProxyIngressStopResult> {
-    return await this.send(DRIVER_COMMANDS.PROXY_INGRESS_STOP, {});
-  }
-
-  async proxyPushProfile(
-    caBase64: string,
-    mobileconfigBase64: string,
-    opts: { caProfileBase64?: string; cleanupMobileconfigBase64?: string } = {},
-  ): Promise<ProxyPushProfileResult> {
-    return await this.send(DRIVER_COMMANDS.PROXY_PUSH_PROFILE, {
-      caBase64,
-      mobileconfigBase64,
-      caProfileBase64: opts.caProfileBase64,
-      cleanupMobileconfigBase64: opts.cleanupMobileconfigBase64,
-    });
+  async proxyCAPush(caBase64: string): Promise<ProxyCAPushResult> {
+    return await this.send(DRIVER_COMMANDS.PROXY_CA_PUSH, { caBase64 });
   }
 }
 

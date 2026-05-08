@@ -1,7 +1,6 @@
 import type { NSLoggerServer } from '../nslogger.js';
 import type {
   DomResponse,
-  LabelContext,
   FindResult,
   FindArgs,
   SwipeArgs,
@@ -25,9 +24,9 @@ export interface Driver {
   find(args: FindArgs): Promise<FindResult>;
 
   // Interaction
-  tap(target: LabelOrPoint, context?: LabelContext, offset?: FlowStep['offset']): Promise<TapResult>;
-  longPress(target: LabelOrPoint, duration?: number, context?: LabelContext): Promise<TapResult>;
-  input(label: string, content: string, context?: LabelContext): Promise<void>;
+  tap(target: LabelOrPoint, traits?: string, offset?: FlowStep['offset']): Promise<TapResult>;
+  longPress(target: LabelOrPoint, duration?: number, traits?: string): Promise<TapResult>;
+  input(label: string, content: string, traits?: string): Promise<void>;
   swipe(args: SwipeArgs): Promise<SwipeResult>;
   waitFor(args: WaitForArgs): Promise<WaitForResult>;
 
@@ -66,10 +65,10 @@ export interface FlowStep {
     | 'nslog'
     | 'nslog_clear';
 
-  // Label / context (tap/longpress/input/find/swipe/waitFor)
+  // Label / traits (tap/longpress/input/find/swipe/waitFor)
   label?: LabelOrPoint;
   content?: string;
-  context?: LabelContext;
+  traits?: string;
   outputs?: string | string[];
 
   // Swipe

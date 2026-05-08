@@ -175,15 +175,6 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(SwipeDir.back.rawValue, "back")
     }
 
-    // MARK: - LabelContext (doc 3.2)
-
-    func testLabelContext_Decode() throws {
-        let json = "{\"ancestorType\":\"Table\",\"ancestorLabel\":null}"
-        let ctx = try JSONDecoder().decode(LabelContext.self, from: json.data(using: .utf8)!)
-        XCTAssertEqual(ctx.ancestorType, "Table")
-        XCTAssertNil(ctx.ancestorLabel)
-    }
-
     // MARK: - Per-command Args (doc 1.2)
 
     func testCreateSessionArgs_Decode() throws {
@@ -204,10 +195,10 @@ final class TypesTests: XCTestCase {
     }
 
     func testTapArgs_WithLabel() throws {
-        let json = "{\"label\":\"Wi-Fi\",\"context\":{\"ancestorType\":\"Table\"}}"
+        let json = "{\"label\":\"Wi-Fi\",\"traits\":\"Cell,Button\"}"
         let a = try JSONDecoder().decode(TapArgs.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(a.label.asLabel, "Wi-Fi")
-        XCTAssertEqual(a.context?.ancestorType, "Table")
+        XCTAssertEqual(a.traits, "Cell,Button")
     }
 
     func testTapArgs_WithPoint() throws {
@@ -257,14 +248,14 @@ final class TypesTests: XCTestCase {
     func testSwipeArgs_AllFields() throws {
         let json = """
         {"to":"Developer","from":"Bluetooth","distance":100,"dir":"forth",\
-        "context":{"ancestorType":"Table","ancestorLabel":null}}
+        "traits":"Cell,Button"}
         """
         let a = try JSONDecoder().decode(SwipeArgs.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(a.to?.asLabel, "Developer")
         XCTAssertEqual(a.from?.asLabel, "Bluetooth")
         XCTAssertEqual(a.distance, 100)
         XCTAssertEqual(a.dir, .forth)
-        XCTAssertEqual(a.context?.ancestorType, "Table")
+        XCTAssertEqual(a.traits, "Cell,Button")
     }
 
     func testSwipeArgs_AllOptional() throws {
@@ -297,7 +288,7 @@ final class TypesTests: XCTestCase {
         let a = try JSONDecoder().decode(WaitForArgs.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(a.label, "Bluetooth")
         XCTAssertEqual(a.timeout, 5)
-        XCTAssertNil(a.context)
+        XCTAssertNil(a.traits)
     }
 
     func testResolveTapPoint_DefaultsToCenter() throws {
@@ -656,7 +647,7 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([element])
 
-        switch rawFindInSnapshot("搜索", context: nil, cs: cs) {
+        switch rawFindInSnapshot("搜索", cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.value, "搜索或输入网站名称")
             XCTAssertEqual(displayValue(for: found.node), "搜索或输入网站名称")
@@ -669,7 +660,7 @@ final class TypesTests: XCTestCase {
         let element = makeElement(label: "天气", type: .staticText)
         let cs = makeCleanedSnapshot([element])
 
-        switch rawFindInSnapshot("天琪", context: nil, cs: cs) {
+        switch rawFindInSnapshot("天琪", cs: cs) {
         case .fuzzy(let suggestions):
             XCTAssertTrue(suggestions.contains("天气"))
         default:
@@ -684,7 +675,7 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([element])
 
-        switch rawFindInSnapshot("facetime通话", context: nil, cs: cs) {
+        switch rawFindInSnapshot("facetime通话", cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.label, "FaceTime 通话")
         default:
@@ -699,7 +690,7 @@ final class TypesTests: XCTestCase {
         let text = makeElement(label: "开关文字", type: .staticText)
         let cs = makeCleanedSnapshot([button, text])
 
-        switch rawFindInSnapshot("开关", context: nil, trait: "switch", cs: cs) {
+        switch rawFindInSnapshot("开关", traits: "switch", cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.switch.rawValue)
         default:
@@ -711,7 +702,7 @@ final class TypesTests: XCTestCase {
         let button = makeElement(label: "开关", type: .switch)
         let cs = makeCleanedSnapshot([button])
 
-        switch rawFindInSnapshot("开关", context: nil, trait: "Switch", cs: cs) {
+        switch rawFindInSnapshot("开关", traits: "Switch", cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.switch.rawValue)
         default:
@@ -737,7 +728,7 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([disabledElement])
 
-        switch rawFindInSnapshot("蓝牙", context: nil, trait: "disabled", cs: cs) {
+        switch rawFindInSnapshot("蓝牙", traits: "disabled", cs: cs) {
         case .found(let found):
             XCTAssertTrue(found.traits.contains("disabled"))
         default:
@@ -749,7 +740,7 @@ final class TypesTests: XCTestCase {
         let text = makeElement(label: "设置", type: .staticText)
         let cs = makeCleanedSnapshot([text])
 
-        switch rawFindInSnapshot("设置", context: nil, trait: "button", cs: cs) {
+        switch rawFindInSnapshot("设置", traits: "button", cs: cs) {
         case .notFound:
             break // expected
         default:
@@ -788,7 +779,7 @@ final class TypesTests: XCTestCase {
 
         let cs = makeCleanedSnapshot([parentElem, childElem])
 
-        switch rawFindInSnapshot("设置", context: nil, cs: cs) {
+        switch rawFindInSnapshot("设置", cs: cs) {
         case .ambiguous(let matches):
             XCTAssertEqual(matches.count, 2, "dedupe removed: both ancestor and descendant should be returned")
         default:
@@ -842,27 +833,56 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(elements[1].childCount, 0)
     }
 
-    // MARK: - FindArgs with trait
+    // MARK: - FindArgs with traits
 
-    func testFindArgs_WithTrait() throws {
-        let json = "{\"label\":\"蓝牙\",\"trait\":\"switch\"}"
+    func testFindArgs_WithTraits() throws {
+        let json = "{\"label\":\"蓝牙\",\"traits\":\"switch\"}"
         let a = try JSONDecoder().decode(FindArgs.self, from: json.data(using: .utf8)!)
         XCTAssertEqual(a.label, "蓝牙")
-        XCTAssertEqual(a.trait, "switch")
-        XCTAssertNil(a.context)
+        XCTAssertEqual(a.traits, "switch")
     }
 
-    func testFindArgs_WithContextAndTrait() throws {
-        let json = "{\"label\":\"设置\",\"context\":{\"ancestorType\":\"Table\"},\"trait\":\"disabled\"}"
-        let a = try JSONDecoder().decode(FindArgs.self, from: json.data(using: .utf8)!)
-        XCTAssertEqual(a.label, "设置")
-        XCTAssertEqual(a.context?.ancestorType, "Table")
-        XCTAssertEqual(a.trait, "disabled")
-    }
-
-    func testFindArgs_TraitOptional() throws {
+    func testFindArgs_TraitsOptional() throws {
         let json = "{\"label\":\"设置\"}"
         let a = try JSONDecoder().decode(FindArgs.self, from: json.data(using: .utf8)!)
-        XCTAssertNil(a.trait)
+        XCTAssertNil(a.traits)
+    }
+
+    // MARK: - Multi-trait AND filtering
+
+    func testRawFindInSnapshot_MultiTraitAnd_MatchesAll() {
+        let elem = makeElement(label: "设置", type: .button)
+        let cs = makeCleanedSnapshot([elem])
+
+        switch rawFindInSnapshot("设置", traits: "button,statictext", cs: cs) {
+        case .notFound:
+            break // expected: Button does not have StaticText trait
+        default:
+            XCTFail("expected notFound when traits don't all match")
+        }
+    }
+
+    func testRawFindInSnapshot_MultiTraitAnd_MatchesTypeAndFlag() {
+        let raw = FakeRawSnapshot(
+            label: "蓝牙",
+            elementType: .staticText,
+            isEnabled: false
+        )
+        let snapshot = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let disabledElement = SnapshotElement(
+            node: snapshot,
+            traits: snapshotTraits(for: snapshot, disabled: true, invisible: false),
+            disabled: true,
+            invisible: false,
+            childCount: 0
+        )
+        let cs = makeCleanedSnapshot([disabledElement])
+
+        switch rawFindInSnapshot("蓝牙", traits: "statictext,disabled", cs: cs) {
+        case .found(let found):
+            XCTAssertTrue(found.traits.contains("disabled"))
+        default:
+            XCTFail("expected multi-trait AND to match")
+        }
     }
 }

@@ -18,7 +18,7 @@ enum FindResult {
 /// per element, m is the number of contains matches, h is ancestor depth for
 /// context filtering, c is candidate string count, q is query length, and t is
 /// candidate length used by fuzzy fallback.
-func rawFindInSnapshot(_ label: String, context: LabelContext?, trait: String? = nil, cs: CleanedSnapshot) -> FindResult {
+func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapshot) -> FindResult {
     let query = label.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else {
         return .notFound(suggestions: [])
@@ -44,18 +44,18 @@ func rawFindInSnapshot(_ label: String, context: LabelContext?, trait: String? =
         return .notFound(suggestions: [])
     }
 
-    // 3. Context filter (ancestorType / ancestorLabel) — sweep parent chain
-    if let at = context?.ancestorType {
-        matches = matches.filter { hasAncestor($0.node, ofType: at) }
-    }
-    if let al = context?.ancestorLabel {
-        matches = matches.filter { hasAncestor($0.node, withLabel: al) }
-    }
-
-    // 4. Trait filter
-    if let trait, !trait.isEmpty {
-        let normalizedTrait = trait.lowercased()
-        matches = matches.filter { $0.traits.contains(where: { $0.lowercased() == normalizedTrait }) }
+    // 3. Trait filter (AND semantics — element must contain all specified traits).
+    if let traitsStr = traits, !traitsStr.isEmpty {
+        let required = traitsStr.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty }
+        if !required.isEmpty {
+            matches = matches.filter { element in
+                required.allSatisfy { req in
+                    element.traits.contains(where: { $0.lowercased() == req })
+                }
+            }
+        }
     }
 
     matches = finalizeFindMatches(matches, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode)
@@ -65,13 +65,13 @@ func rawFindInSnapshot(_ label: String, context: LabelContext?, trait: String? =
     return .found(matches[0])
 }
 
-/// Unified label search: contains(label/value) → fuzzy → context filter.
+/// Unified label search: contains(label/value) → fuzzy → trait filter.
 /// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
-func rawFind(_ label: String, context: LabelContext?, trait: String? = nil) -> FindResult {
+func rawFind(_ label: String, traits: String? = nil) -> FindResult {
     guard let cs = getCleanedSnapshot() else {
         return .notFound(suggestions: [])
     }
-    return rawFindInSnapshot(label, context: context, trait: trait, cs: cs)
+    return rawFindInSnapshot(label, traits: traits, cs: cs)
 }
 
 func finalizeFindMatches(
@@ -275,7 +275,7 @@ private func shouldSkipAncestorInCleanChain(_ node: SafeSnapshot) -> Bool {
 /// Build the ambiguity response payload (doc 3.3).
 func ambiguityResponse(_ label: String, matches: [SnapshotElement]) -> ResponseFrame {
     let infos = matches.map { elementInfo($0, includeAncestors: true) }
-    let hint = "Try adding --ancestor-type / --ancestor-label, or --trait to disambiguate"
+    let hint = "Try adding --traits to disambiguate"
     return ResponseFrame(
         ok: false,
         error: "label '\(label)' is ambiguous (\(matches.count) matches)",
