@@ -468,7 +468,8 @@ private func descendantsOfType(_ root: SafeSnapshot, elementType: UInt) -> [Safe
     var stack: [SafeSnapshot] = [root]
     while let n = stack.popLast() {
         if UInt(n.elementType) == elementType { out.append(n) }
-        for c in n.children { stack.append(c) }
+        // Reverse children so DFS visits them in original order (top-to-bottom).
+        for c in n.children.reversed() { stack.append(c) }
     }
     return out
 }

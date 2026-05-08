@@ -787,6 +787,22 @@ final class TypesTests: XCTestCase {
         }
     }
 
+    // MARK: - descendantsOfType order (doc 5.5)
+
+    func testCollectCellSnapshots_TopToBottomOrder() {
+        let top = FakeRawSnapshot(label: "蓝牙", elementType: .cell, frame: CGRect(x: 0, y: 100, width: 375, height: 44))
+        let mid = FakeRawSnapshot(label: "通用", elementType: .cell, frame: CGRect(x: 0, y: 200, width: 375, height: 44))
+        let bottom = FakeRawSnapshot(label: "开发者", elementType: .cell, frame: CGRect(x: 0, y: 500, width: 375, height: 44))
+        let scrollView = FakeRawSnapshot(
+            elementType: .scrollView,
+            children: [top, mid, bottom]
+        )
+        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let cells = collectCellSnapshots(root)
+        XCTAssertEqual(cells.map { $0.label }, ["蓝牙", "通用", "开发者"])
+    }
+
     // MARK: - cleanTree Rule 6: same-label parent-child merge
 
     func testCleanTree_MergesSameLabelParentChild() {
