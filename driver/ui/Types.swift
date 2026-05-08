@@ -131,6 +131,7 @@ struct DomArgs: Codable {
 struct FindArgs: Codable {
     let label: String
     let context: LabelContext?
+    let trait: String?
 }
 
 struct TapArgs: Codable {
