@@ -20,11 +20,11 @@ enum InputCommands {
         case .fuzzy(let s):
             return notFoundResponse(args.label,
                                     suggestions: s,
-                                    hint: "Try refining --context.ancestor-type / --context.ancestor-label, or verify the active app before typing")
+                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app before typing")
         case .notFound(let s):
             return notFoundResponse(args.label,
                                     suggestions: s,
-                                    hint: "Try refining --context.ancestor-type / --context.ancestor-label, or verify the active app before typing")
+                                    hint: "Try refining --ancestor-type / --ancestor-label, or verify the active app before typing")
         }
 
         let editableSnapshot = preferredInputSnapshot(around: elem.node)
