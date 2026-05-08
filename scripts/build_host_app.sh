@@ -118,16 +118,22 @@ if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
 fi
 echo "[build] Built xctest wrapper: $XCTEST_WRAPPER_PATH"
 
-# Strip XC frameworks for iOS 17+ compatibility.
-# On iOS 17+, device already has these frameworks.
+# Strip XC frameworks and libXCTestSwiftSupport.dylib for iOS 17+ compatibility.
+# On iOS 17+, device already has these frameworks / dylibs.
 echo "[build] Stripping XC frameworks..."
 STRIPPED=0
 if [ -d "$XCTEST_WRAPPER_PATH/Frameworks" ]; then
   for fw in "$XCTEST_WRAPPER_PATH/Frameworks"/XC*.framework; do
     [ -d "$fw" ] && rm -rf "$fw" && ((STRIPPED++)) || true
   done
+  # libXCTestSwiftSupport.dylib from newer Xcode may reference symbols
+  # absent on older iOS versions (e.g. iOS 18.7.1). Strip it — system has it.
+  if [ -f "$XCTEST_WRAPPER_PATH/Frameworks/libXCTestSwiftSupport.dylib" ]; then
+    rm -f "$XCTEST_WRAPPER_PATH/Frameworks/libXCTestSwiftSupport.dylib"
+    ((STRIPPED++)) || true
+  fi
 fi
-echo "[build] Stripped $STRIPPED XC framework(s)"
+echo "[build] Stripped $STRIPPED XC framework(s) / dylib(s)"
 
 echo "[build] Packaging device IPA..."
 package_ipa "$XCTEST_WRAPPER_PATH" "$IPA_OUTPUT"

@@ -226,10 +226,16 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
         logger.success(`DOM saved: ${filepath}`);
       }
       if (step.print ?? true) {
-        console.log(`\n  App: ${result.app}, Window: ${result.window.join('x')}`);
-        console.log('  Elements:\n');
-        printDomElements(result.elements, '  ');
-        console.log('');
+        if (step.raw) {
+          let json = JSON.stringify(result, null, 2);
+          json = json.replace(/\[(\s+[^[\]]+?\s+)\]/g, (_, inner) => '[' + inner.replace(/\s+/g, ' ').trim() + ']');
+          console.log(json);
+        } else {
+          console.log(`\n  App: ${result.app}, Window: ${result.window.join('x')}`);
+          console.log('  Elements:\n');
+          printDomElements(result.elements, '  ');
+          console.log('');
+        }
       }
       return deriveDomOutput(result, step.candidates);
     }
@@ -429,9 +435,19 @@ function printDomElements(elements: DomNode[], indent: string) {
   for (const el of elements) {
     const type = el.tr[0] || '?';
     const flags = el.tr.slice(1).join(',');
-    const flagStr = flags ? ` [${flags}]` : '';
-    const baseTitle = el.l?.trim() || type;
-    const title = el.v?.trim() ? `${baseTitle}=${el.v}` : baseTitle;
+    const allTraits = flags ? `${type},${flags}` : type;
+    const flagStr = ` [${allTraits}]`;
+
+    const label = el.l?.trim();
+    const value = el.v?.trim();
+    let title: string;
+    if (label) {
+      title = value ? `${label}=${value}` : label;
+    } else if (value) {
+      title = `=${value}`;
+    } else {
+      title = type;
+    }
 
     if (Array.isArray(el.c)) {
       console.log(`${indent}${title}${flagStr}:`);
