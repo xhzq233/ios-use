@@ -78,7 +78,9 @@ func displayValue(for node: SafeSnapshot) -> String? {
 
 /// Global cached snapshot. Invalidated by tap/swipe/input/longPress.
 private var _cachedSnapshot: CleanedSnapshot?
+private var _cachedAt: TimeInterval = 0
 private let _snapshotLock = NSLock()
+private let _cacheTTL: TimeInterval = 1.0  // 1000ms
 
 /// doc 4.3 — all commands share the same entry point.
 /// Returns a cached snapshot if available; otherwise builds a fresh one.
@@ -86,7 +88,7 @@ private let _snapshotLock = NSLock()
 /// number of nodes in the snapshot tree.
 func getCleanedSnapshot() -> CleanedSnapshot? {
     _snapshotLock.lock()
-    if let cached = _cachedSnapshot {
+    if let cached = _cachedSnapshot, Date().timeIntervalSince1970 - _cachedAt < _cacheTTL {
         _snapshotLock.unlock()
         return cached
     }
@@ -96,6 +98,7 @@ func getCleanedSnapshot() -> CleanedSnapshot? {
 
     _snapshotLock.lock()
     _cachedSnapshot = fresh
+    _cachedAt = Date().timeIntervalSince1970
     _snapshotLock.unlock()
     return fresh
 }
@@ -177,6 +180,7 @@ func isSpringBoardApp(_ app: XCUIApplication) -> Bool {
 func invalidateSnapshot() {
     _snapshotLock.lock()
     _cachedSnapshot = nil
+    _cachedAt = 0
     _snapshotLock.unlock()
 }
 
