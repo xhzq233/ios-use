@@ -301,7 +301,7 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
     throw new Error(
       'altsign-cli sign did not produce a signed IPA. Common causes:\n'
       + '  - Network error (502/503): Apple server is temporarily unavailable, try again later\n'
-      + '  - Auth error (403): Apple ID is not a registered developer ($99/year required)\n'
+      + '  - Auth error: invalid Apple ID or password, or account not enrolled in Apple Developer\n'
       + '  - 2FA timeout: verification code was not entered in time\n'
       + 'Run with --verbose for full altsign output.',
     );
