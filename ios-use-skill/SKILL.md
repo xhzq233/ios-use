@@ -138,8 +138,7 @@ ios-use swipe --to "开发者" --from "蓝牙"
 
 - `find`
   - `find <label>` 查找元素。歧义和模糊建议不报错，返回所有匹配；只有真正未找到才报错
-  - `--ancestor-type <type>` / `--ancestor-label <label>` 消歧
-  - `--trait <trait>` 按 trait 过滤（如 `switch`、`disabled`、`invisible`、`selected`、`focused`，大小写不敏感）
+  - `--traits <traits>` 按 traits 过滤，逗号分隔多值，AND 语义（如 `Switch`、`disabled`、`Cell,Switch`，大小写不敏感）
 
 - `waitFor`
   - 轮询等待元素出现，超时返回 not-found
