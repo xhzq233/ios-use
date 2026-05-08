@@ -80,7 +80,10 @@ bun install --cwd "$ROOT_DIR"
 mkdir -p "$DIST_DIR"
 
 echo "Compiling ios-use binary..."
-bun build "$ROOT_DIR/src/cli.ts" --compile --outfile "$OUTFILE"
+# Workaround Bun 1.3.12 regression: built-in code signature is truncated on macOS,
+# causing immediate SIGKILL (exit 137). Skip Bun's signing and manually ad-hoc sign.
+BUN_NO_CODESIGN_MACHO_BINARY=1 bun build "$ROOT_DIR/src/cli.ts" --compile --outfile "$OUTFILE"
+codesign --sign - --force "$OUTFILE"
 
 install_binary() {
   local target_dir="$1"
