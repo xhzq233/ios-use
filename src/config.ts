@@ -294,7 +294,18 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   if (opts.password) signArgs.push('--password', opts.password);
   if (verbose) signArgs.push('--verbose');
 
+  const beforeSign = fs.existsSync(signedIpa) ? fs.statSync(signedIpa).mtimeMs : 0;
   await runCommand(cli, signArgs, 'altsign-cli sign', { capture: false });
+
+  if (!fs.existsSync(signedIpa) || fs.statSync(signedIpa).mtimeMs <= beforeSign) {
+    throw new Error(
+      'altsign-cli sign did not produce a signed IPA. Common causes:\n'
+      + '  - Network error (502/503): Apple server is temporarily unavailable, try again later\n'
+      + '  - Auth error (403): Apple ID is not a registered developer ($99/year required)\n'
+      + '  - 2FA timeout: verification code was not entered in time\n'
+      + 'Run with --verbose for full altsign output.',
+    );
+  }
   logger.success('Driver signed');
 
   // Extract signed IPA and install
