@@ -294,17 +294,7 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   if (opts.password) signArgs.push('--password', opts.password);
   if (verbose) signArgs.push('--verbose');
 
-  const signResult = await runCommand(cli, signArgs, 'altsign-cli sign', { capture: true });
-  if (signResult && signResult.stdout) process.stdout.write(signResult.stdout);
-  if (signResult && signResult.stderr) process.stderr.write(signResult.stderr);
-  const combinedOutput = [signResult?.stdout, signResult?.stderr].filter(Boolean).join('\n');
-  const hasSuccess = combinedOutput.includes('IPA signed successfully');
-  if (!hasSuccess) {
-    const errorLine = combinedOutput.split('\n').find(l => l.toLowerCase().includes('error'));
-    if (errorLine) {
-      throw new Error(`altsign-cli sign failed: ${errorLine.trim()}`);
-    }
-  }
+  await runCommand(cli, signArgs, 'altsign-cli sign', { capture: false });
   logger.success('Driver signed');
 
   // Extract signed IPA and install
