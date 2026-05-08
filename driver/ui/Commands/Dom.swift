@@ -12,6 +12,7 @@ enum DomCommands {
 
         // --raw mode: return the pre-clean snapshot as nested nodes for debugging.
         if args?.raw == true {
+            invalidateSnapshot()
             guard let root = SafeSnapshot(ofApp: app) else {
                 return Codec.makeError("failed to take snapshot")
             }
