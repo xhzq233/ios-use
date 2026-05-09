@@ -19,18 +19,11 @@ steps:
     traits: Button
     comment: "允许下载描述文件"
 
-  - action: waitFor
-    label: 关闭
-    timeout: 5
-    traits: Button
-
-  - action: tap
-    label: 关闭
-    traits: Button
-    comment: "关闭下载完成提示"
-
   - action: sleep
-    ms: 1000
+    ms: 300
+
+  - action: dismissAlert
+    comment: "关闭系统弹窗（已下载描述文件提示）"
 
   # ── 第二部分：设置首页「已下载描述文件」→ 安装 CA ──
 
@@ -45,73 +38,77 @@ steps:
     label: 已下载描述文件
     comment: "设置首页顶部入口"
 
-  - action: waitFor
-    label: 安装
-    timeout: 3
+  - action: sleep
+    ms: 1000
 
   - action: tap
     label: 安装
-    comment: "点击右上角安装"
+    traits: Button
+    comment: "右上角安装"
 
   - action: sleep
     ms: 1000
 
   - action: tap
     label: 安装
-    comment: "确认安装（弹窗中的安装按钮）"
+    traits: Button
+    comment: "警告页右上角安装"
+
+  - action: sleep
+    ms: 1000
+
+  - action: tap
+    label: 安装
+    traits: Button
+    comment: "确认安装（Alert弹窗）"
+
+  - action: sleep
+    ms: 1000
+
+  - action: tap
+    label: 完成
+    comment: "安装完成 → 进入 VPN与设备管理"
+
+  # ── 第三部分：从 VPN与设备管理 返回通用 → 关于本机 → 证书信任设置 ──
 
   - action: sleep
     ms: 500
 
   - action: tap
-    label: 完成
-    comment: "安装完成"
-
-  # ── 第三部分：导航到证书信任设置，完全信任 CA ──
-
-  - action: terminateApp
-    bundleId: com.apple.Preferences
-
-  - action: activateApp
-    bundleId: com.apple.Preferences
+    label: BackButton
+    comment: "返回通用页面"
 
   - action: sleep
-    ms: 1500
+    ms: 800
 
-  - action: tap
-    label: 通用
-
-  - action: waitFor
-    label: 关于本机
-    timeout: 5
+  - action: swipe
+    to: 关于本机
 
   - action: tap
     label: 关于本机
 
   - action: sleep
-    ms: 2000
+    ms: 200
 
   - action: swipe
     to: 证书信任设置
-    from: iOS版本
 
   - action: tap
     label: 证书信任设置
 
-  - action: waitFor
-    label: mitmproxy
-    timeout: 5
-    traits: "Cell,Switch"
+  - action: sleep
+    ms: 500
 
   - action: tap
     label: mitmproxy
     traits: "Cell,Switch"
     offset:
       xRatio: 0.9
-    comment: "点击开关"
+    comment: "点击开关启用信任"
 
-  - action: sleep
-    ms: 500
+  - action: waitFor
+    label: 继续
+    timeout: 3
 
   - action: tap
     label: 继续

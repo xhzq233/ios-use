@@ -37,7 +37,9 @@
 		9B2D14D04A8484C749189950 /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C773A75C11E5CE2360A4FB4 /* Input.swift */; };
 		9B9DC8661A47D7EB2FF33C44 /* CodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABACD4A116F231BF1D16712 /* CodecTests.swift */; };
 		A2F46A49779B68AEAD78B0C2 /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 17BCFDE8A7DA91241BC86090 /* AppRegistry.m */; };
+		A69282E7205465E873DC4699 /* Alert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02295CAF657EE98E21F5AAF8 /* Alert.swift */; };
 		A77C65F2623A196E0C66EB99 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E262BB01AF4133E6AF8C75 /* RunnerTests.swift */; };
+		AB27A981461305BDE97F5D25 /* Alert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02295CAF657EE98E21F5AAF8 /* Alert.swift */; };
 		ADB402EBA304FD6F23411372 /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
 		AF07412EEE37705E162B6743 /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DDB97D9F6B1FB7C45A9A1 /* Find.swift */; };
 		B03079F36E017EE33C677A3F /* ServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A018728001BB6A88192EAFD /* ServerTests.swift */; };
@@ -56,6 +58,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		02295CAF657EE98E21F5AAF8 /* Alert.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Alert.swift; sourceTree = "<group>"; };
 		05472B7D1F53F7686793C318 /* Probe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Probe.swift; sourceTree = "<group>"; };
 		0AE99BB4D5AD93891B02F4CB /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
 		0F60F451C114B1CD47F9A702 /* Proxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Proxy.swift; sourceTree = "<group>"; };
@@ -118,6 +121,7 @@
 		97C712A94AEF5A9B87CA4C89 /* Commands */ = {
 			isa = PBXGroup;
 			children = (
+				02295CAF657EE98E21F5AAF8 /* Alert.swift */,
 				71A0AC56CC6B8335709D4A71 /* App.swift */,
 				7C5B4B608C890EFE8841A177 /* Dom.swift */,
 				577DDB97D9F6B1FB7C45A9A1 /* Find.swift */,
@@ -258,6 +262,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB27A981461305BDE97F5D25 /* Alert.swift in Sources */,
 				E1690C6B99691CCDC27F4FD6 /* App.swift in Sources */,
 				947BDE121DDB75E2D244D1BF /* AppRegistry.m in Sources */,
 				40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */,
@@ -290,6 +295,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A69282E7205465E873DC4699 /* Alert.swift in Sources */,
 				1B726C3B9607D5E0FD84652B /* App.swift in Sources */,
 				A2F46A49779B68AEAD78B0C2 /* AppRegistry.m in Sources */,
 				C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */,

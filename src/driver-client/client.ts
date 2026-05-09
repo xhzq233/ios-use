@@ -119,6 +119,11 @@ abstract class BaseRpcClient {
     await this.send(DRIVER_COMMANDS.OPEN_URL, { url });
   }
 
+  async dismissAlert(opts?: { index?: number }): Promise<{ dismissed: boolean; text?: string; button?: string; reason?: string }> {
+    const res = await this.send(DRIVER_COMMANDS.DISMISS_ALERT, opts || {});
+    return res as any;
+  }
+
   async screenshot(): Promise<Buffer> {
     const { binary } = await this.conn.sendExpectingBinary(DRIVER_COMMANDS.SCREENSHOT, {});
     return binary;

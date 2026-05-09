@@ -307,6 +307,7 @@ import Foundation
         case .input:         return try InputCommands.input(req.args)
         case .swipe:         return try SwipeCommands.swipe(req.args)
         case .waitFor:       return try WaitForCommands.waitFor(req.args)
+        case .dismissAlert:  return try AlertCommands.dismissAlert(req.args)
         }
     }
 }

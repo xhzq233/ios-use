@@ -174,6 +174,15 @@ addSessionOptions(
 }));
 
 addSessionOptions(
+  program.command('dismissAlert')
+    .description('Dismiss the current system alert')
+    .option('--index <index>', 'Button index to tap (0-based, default: last)'),
+).action(handleAction(async (opts: ActionOpts & { index?: string }) => {
+  const index = opts.index !== undefined ? parseInt(opts.index, 10) : undefined;
+  await runCommandStep({ action: 'dismissAlert', index } as any, opts);
+}));
+
+addSessionOptions(
   program.command('dom')
     .description('Dump current UI DOM tree')
     .option('--raw', 'Return raw XCUI snapshot tree (default: cleaned)')

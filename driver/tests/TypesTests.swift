@@ -386,6 +386,55 @@ final class TypesTests: XCTestCase {
         XCTAssertNil(v)
     }
 
+    // MARK: - DismissAlertArgs decode
+
+    func testDecodeArgsOptional_DismissAlert_NilArgs() {
+        let v = decodeArgsOptional(nil, as: DismissAlertArgs.self)
+        XCTAssertNil(v)
+    }
+
+    func testDecodeArgs_DismissAlert_WithIndex() throws {
+        let raw = AnyCodable(["index": 0])
+        let decoded = decodeArgsOptional(raw, as: DismissAlertArgs.self)
+        XCTAssertEqual(decoded?.index, 0)
+    }
+
+    func testDecodeArgs_DismissAlert_NoIndex() throws {
+        let raw = AnyCodable([:] as [String: Any])
+        let decoded = decodeArgsOptional(raw, as: DismissAlertArgs.self)
+        XCTAssertNil(decoded?.index)
+    }
+
+    func testCommandType_DismissAlert() throws {
+        let json = #"{"c":"dismissAlert","args":{"index":1}}"#
+        let req = try JSONDecoder().decode(RequestFrame.self, from: json.data(using: .utf8)!)
+        XCTAssertEqual(req.c, .dismissAlert)
+    }
+
+    // MARK: - resolveButtonIndex logic
+
+    func testResolveButtonIndex_EmptyButtons_ReturnsNil() {
+        XCTAssertNil(AlertCommands.resolveButtonIndex(buttonCount: 0, requestedIndex: nil))
+        XCTAssertNil(AlertCommands.resolveButtonIndex(buttonCount: 0, requestedIndex: 0))
+    }
+
+    func testResolveButtonIndex_NoIndex_ReturnsLast() {
+        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 1, requestedIndex: nil), 0)
+        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: nil), 1)
+        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: nil), 2)
+    }
+
+    func testResolveButtonIndex_ValidIndex_ReturnsThat() {
+        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 0), 0)
+        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 1), 1)
+        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 2), 2)
+    }
+
+    func testResolveButtonIndex_OutOfBounds_FallsBackToLast() {
+        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: 5), 1)
+        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: -1), 1)
+    }
+
     // MARK: - ResponseFrame / RequestFrame
 
     func testRequestFrame_WithNestedArgs() throws {

@@ -20,9 +20,6 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
-      - name: Regenerate Xcode project
-        run: cd driver && xcodegen generate
-
       - name: Boot Simulator for unit tests
         run: |
           UDID=$(xcrun simctl list devices available -j | python3 -c "
