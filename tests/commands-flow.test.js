@@ -438,8 +438,8 @@ steps:
       withAutoSession: async (_opts, run) => await run(driver),
     }));
 
-    const { tapAction: mockedTapAction } = await import(`../src/commands/actions.ts?test=${Date.now()}`);
-    await mockedTapAction({ label: 'effect-slider', offset: { x: 12, y: 5 } });
+    const { runCommandStep: mockedRunCommandStep } = await import(`../src/commands/actions.ts?test=${Date.now()}`);
+    await mockedRunCommandStep({ action: 'tap', label: 'effect-slider', offset: { x: 12, y: 5 } });
 
     expect(taps).toEqual([{ target: 'effect-slider', offset: { x: 12, y: 5 } }]);
   });
@@ -486,8 +486,8 @@ steps:
     }));
 
     await withTempHome(async () => {
-      const { oslogAction: mockedOslogAction } = await import(`../src/commands/actions.ts?test=${Date.now()}`);
-      await mockedOslogAction({ pattern: 'ready', timeout: 2, name: 'cli-oslog-timeout' });
+      const { runCommandStep: mockedRunCommandStep } = await import(`../src/commands/actions.ts?test=${Date.now()}`);
+      await mockedRunCommandStep({ action: 'oslog', pattern: 'ready', timeout: 2, name: 'cli-oslog-timeout' });
     });
 
     expect(calls).toEqual([{

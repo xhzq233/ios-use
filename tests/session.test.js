@@ -75,7 +75,7 @@ describe('session command safety', () => {
 
   test('tap without active session fails safely', () => {
     if (fs.existsSync(SESSION_FILE)) fs.unlinkSync(SESSION_FILE);
-    const result = runCli(['tap', '--label', 'Settings']);
+    const result = runCli(['tap', 'Settings']);
     expect(result.status).toBe(1);
     expect(`${result.stdout}${result.stderr}`).toContain('No active session found');
   });

@@ -39,7 +39,6 @@ steps:
     comment: "设置首页顶部入口"
 
   - action: sleep
-    ms: 1000
 
   - action: tap
     label: 安装
@@ -47,7 +46,6 @@ steps:
     comment: "右上角安装"
 
   - action: sleep
-    ms: 1000
 
   - action: tap
     label: 安装
@@ -55,7 +53,7 @@ steps:
     comment: "警告页右上角安装"
 
   - action: sleep
-    ms: 1000
+    ms: 2000
 
   - action: tap
     label: 安装
@@ -63,7 +61,6 @@ steps:
     comment: "确认安装（Alert弹窗）"
 
   - action: sleep
-    ms: 1000
 
   - action: tap
     label: 完成
@@ -79,7 +76,7 @@ steps:
     comment: "返回通用页面"
 
   - action: sleep
-    ms: 800
+    ms: 500
 
   - action: swipe
     to: 关于本机
@@ -88,7 +85,7 @@ steps:
     label: 关于本机
 
   - action: sleep
-    ms: 200
+    ms: 500
 
   - action: swipe
     to: 证书信任设置
