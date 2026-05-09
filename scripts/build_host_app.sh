@@ -19,6 +19,15 @@ done
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_DIR="$ROOT_DIR/driver"
 
+# Regenerate Xcode project from project.yml
+if command -v xcodegen &>/dev/null; then
+  echo "[build] Regenerating Xcode project..."
+  (cd "$PROJECT_DIR" && xcodegen generate --quiet)
+else
+  echo "[build] ERROR: xcodegen not found. Install via: brew install xcodegen"
+  exit 1
+fi
+
 BUILD_DIR="$PROJECT_DIR/build"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 XCTEST_WRAPPER_PATH="$BUILD_DIR/IOSUseDriver-Runner.app"
