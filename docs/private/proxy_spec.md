@@ -159,12 +159,10 @@ CLI (Bun)
 - 复用 `~/.mitmproxy/` CA。
 - jsonl addon 输出到 stdout + `~/.ios-use/state/proxy-events.jsonl`。
 
-### 4.3 Capture Store
+### 4.3 存储
 
-- `~/.ios-use/state/proxy-session.json` — session 状态
-- `~/.ios-use/state/proxy-events.jsonl` — 事件流
-- `~/.ios-use/state/proxy-ca.json` — CA 安装状态
-- `~/.ios-use/logs/proxy.log` — 日志
+- `~/.ios-use/state/proxy-session.json` — session 状态（含 CA 安装状态）
+- `~/.ios-use/state/proxy-events.jsonl` — 抓包事件流
 
 ---
 
@@ -179,13 +177,41 @@ CLI (Bun)
 
 ---
 
-## 六、`proxy start --stream` 输出格式
+## 六、抓包数据格式
+
+### 6.1 `--stream` 实时输出
 
 stdout 每行一个合法 JSON：
 
 ```jsonl
-{"id":"req-1","method":"GET","url":"https://example.com/feed","host":"example.com","status":200,"contentType":"application/json","bodyBytes":1024,"startedAt":1714980000000,"finishedAt":1714980000100}
+{"id":"req-1","method":"GET","url":"https://example.com/feed","host":"example.com","status":200,"contentType":"application/json","requestHeaders":{"Accept":"*/*"},"responseHeaders":{"Content-Type":"application/json"},"requestBody":null,"responseBody":"{\"ok\":true}","bodyBytes":1024,"startedAt":1714980000000,"finishedAt":1714980000100}
 ```
+
+### 6.2 Body 策略
+
+- 默认包含完整 request/response body（文本类型：json、xml、html、text）。
+- 二进制 body（image、octet-stream 等）只输出 `"<binary N bytes>"`。
+- `--body-limit <bytes>`：截断超过指定大小的 body，默认 100KB。
+- `--no-body`：只输出 metadata，不含 body。
+
+### 6.3 jsonl 字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | string | 请求唯一 ID |
+| method | string | HTTP method |
+| url | string | 完整 URL |
+| host | string | 目标 host |
+| status | number | 响应状态码 |
+| contentType | string | 响应 Content-Type |
+| requestHeaders | object | 请求头 |
+| responseHeaders | object | 响应头 |
+| requestBody | string\|null | 请求 body（文本）或 null |
+| responseBody | string\|null | 响应 body（文本）或 null |
+| bodyBytes | number | 原始响应 body 字节数 |
+| truncated | boolean | body 是否被截断 |
+| startedAt | number | 请求开始时间戳 ms |
+| finishedAt | number | 响应完成时间戳 ms |
 
 - 非 JSON 内容（状态、警告）输出到 stderr。
 - `Ctrl+C` 触发 `proxy stop` 完整流程。
