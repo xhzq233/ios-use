@@ -215,7 +215,7 @@ steps:
 ### 6.1 `waitFor`
 
 - 用于等待元素出现或变为可见
-- 轮询间隔是内部固定值 `300ms`，不对外暴露 `interval`
+- 轮询间隔是内部固定值 `100ms`，不对外暴露 `interval`
 
 ```yaml
 - action: waitFor

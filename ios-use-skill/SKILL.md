@@ -148,7 +148,7 @@ ios-use swipe --dir back --distance 300
 - `waitFor`
   - 轮询等待元素出现，超时返回 not-found
   - `--label <text> --timeout <seconds>`
-  - 轮询间隔是内部固定值 `300ms`，不对外暴露 `interval`
+  - 轮询间隔是内部固定值 `100ms`，不对外暴露 `interval`
 
 - `oslog`
   - 支持 `--timeout <seconds>`，会在窗口期内轮询匹配
