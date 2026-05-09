@@ -207,7 +207,7 @@ export function normalizeNeedLogConfig(needLog: boolean | Record<string, unknown
 const VALID_ACTIONS = new Set([
   'tap', 'input', 'swipe', 'longpress', 'dom', 'find', 'screenshot',
   'waitFor',
-  'activateApp', 'terminateApp', 'oslog',
+  'activateApp', 'terminateApp', 'openURL', 'oslog',
   'nslog_start', 'nslog', 'nslog_clear',
 ]);
 
@@ -350,6 +350,15 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       return undefined;
     }
 
+    case 'openURL': {
+      requireDriver(driver, 'openURL');
+      const url = step.url || step.content;
+      if (!url) throw new Error('openURL requires url');
+      await driver!.openURL(url);
+      logger.success(`Opened URL: ${url}`);
+      return undefined;
+    }
+
     case 'activateApp': {
       requireDriver(driver, 'activateApp');
       const bundleId = step.bundleId || flowApp;
@@ -363,8 +372,12 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       requireDriver(driver, 'terminateApp');
       const bundleId = step.bundleId || flowApp;
       if (!bundleId) throw new Error('terminateApp requires bundleId');
-      await driver!.terminateApp(bundleId);
-      logger.success(`App ${bundleId} terminated`);
+      try {
+        await driver!.terminateApp(bundleId);
+        logger.success(`App ${bundleId} terminated`);
+      } catch {
+        logger.info(`App ${bundleId} not running, skipped terminate`);
+      }
       return undefined;
     }
 

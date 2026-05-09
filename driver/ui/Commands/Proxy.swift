@@ -1,145 +1,48 @@
 import Foundation
 
-/// Profile helper for `ios-use proxy`.
+/// Proxy helper for `ios-use proxy configca`.
 ///
-/// The data plane is Wi-Fi -> Mac LAN IP -> mitmdump. The driver only serves
-/// profile files to Safari over device loopback during the proxy session.
+/// The driver's only proxy responsibility is receiving a CA certificate via TCP
+/// and triggering the profile install page so the CA can be installed on device.
+/// All other proxy operations (mitmdump, Wi-Fi proxy config) are handled by
+/// CLI flows using tap/input/swipe commands.
 enum ProxyCommands {
-    private static let queue = DispatchQueue(label: "com.iosuse.profile-server", qos: .userInitiated)
-    private static var profileFd: Int32 = -1
-    private static var profileSource: DispatchSourceRead?
-    private static var isRunning = false
+    private static let queue = DispatchQueue(label: "com.iosuse.proxy-ca", qos: .userInitiated)
+    private static var serverFd: Int32 = -1
+    private static var serverSource: DispatchSourceRead?
+    private static var caData: Data?
+    private static let lock = NSLock()
 
-    private static var profileHtml: Data?
-    private static var proxyMobileconfig: Data?
-    private static var cleanupMobileconfig: Data?
-    private static var caMobileconfig: Data?
-    private static var caCertificate: Data?
-    private static let profileLock = NSLock()
+    // MARK: - Command
 
-    // MARK: - Commands
+    static func proxyCAPush(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
+        let args = try decodeArgs(rawArgs, as: ProxyCAPushArgs.self)
 
-    static func proxyIngressStart(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        guard !isRunning else {
-            return Codec.makeOK([
-                "proxyPort": 0,
-                "controlPort": 0,
-                "profilePort": 9088,
-                "status": "running",
-            ] as [String: Any])
+        guard let certData = Data(base64Encoded: args.caBase64) else {
+            return Codec.makeError("invalid CA base64 payload")
         }
 
-        let args = decodeArgsOptional(rawArgs, as: ProxyIngressStartArgs.self)
-        let profilePort = UInt16(args?.profilePort ?? 9088)
+        // Store cert and start a temporary HTTP server to serve it
+        lock.lock()
+        caData = certData
+        lock.unlock()
 
-        NSLog("[profile] starting profile server port=%d", profilePort)
-        let rfd = startListener(port: profilePort) { fd in handleProfileConn(fd) }
-        guard rfd >= 0 else { return Codec.makeError("bind profile port \(profilePort) failed") }
-
-        profileFd = rfd
-        isRunning = true
-
-        NSLog("[profile] listening profile=%d", profilePort)
-        return Codec.makeOK([
-            "proxyPort": 0,
-            "controlPort": 0,
-            "profilePort": Int(profilePort),
-            "status": "running",
-        ] as [String: Any])
-    }
-
-    static func proxyIngressStop(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        guard isRunning else { return Codec.makeOK(["status": "not_running"]) }
-
-        profileSource?.cancel()
-        profileSource = nil
-        if profileFd >= 0 {
-            close(profileFd)
-            profileFd = -1
+        // Start profile server if not already running
+        if serverFd < 0 {
+            let port: UInt16 = 9088
+            let fd = startListener(port: port) { connFd in handleConn(connFd) }
+            guard fd >= 0 else {
+                return Codec.makeError("failed to bind CA server on port \(port)")
+            }
+            serverFd = fd
+            NSLog("[proxy] CA server listening on port %d", port)
         }
 
-        profileLock.lock()
-        profileHtml = nil
-        proxyMobileconfig = nil
-        cleanupMobileconfig = nil
-        caMobileconfig = nil
-        caCertificate = nil
-        profileLock.unlock()
-
-        isRunning = false
-        NSLog("[profile] stopped")
-        return Codec.makeOK(["status": "stopped"])
+        NSLog("[proxy] CA pushed (%d bytes), server on :9088/ca.cer", certData.count)
+        return Codec.makeOK(["status": "pushed", "installURL": "http://127.0.0.1:9088/ca.cer"] as [String: Any])
     }
 
-    static func proxyPushProfile(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: ProxyPushProfileArgs.self)
-
-        guard let caData = Data(base64Encoded: args.caBase64),
-              let proxyData = Data(base64Encoded: args.mobileconfigBase64) else {
-            return Codec.makeError("invalid profile payload base64")
-        }
-        let caProfileData = args.caProfileBase64.flatMap { Data(base64Encoded: $0) }
-        let cleanupData = args.cleanupMobileconfigBase64.flatMap { Data(base64Encoded: $0) }
-
-        let html = """
-        <!DOCTYPE html>
-        <html>
-        <head><meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>ios-use Proxy Setup</title>
-        <style>
-        body { font-family: -apple-system, sans-serif; padding: 20px; max-width: 420px; margin: auto; }
-        h1 { font-size: 22px; }
-        .step { margin: 16px 0; padding: 12px; background: #f5f5f5; border-radius: 8px; }
-        a.btn { display: block; text-align: center; padding: 14px; background: #007AFF; color: white;
-                text-decoration: none; border-radius: 8px; margin: 12px 0; font-size: 16px; }
-        a.secondary { background: #5856D6; }
-        a.cleanup { background: #FF3B30; }
-        .note { font-size: 13px; color: #666; margin-top: 8px; }
-        </style>
-        </head>
-        <body>
-        <h1>ios-use Proxy Setup</h1>
-        <div class="step">
-        <strong>Step 1:</strong> Install the Wi-Fi proxy profile
-        <span class="note">This points the current Wi-Fi HTTP proxy to mitmdump on your Mac.</span>
-        </div>
-        <a class="btn" href="/profile.mobileconfig">Install Proxy Wi-Fi Profile</a>
-        <div class="step">
-        <strong>Step 2:</strong> First run only: install and trust the CA
-        <span class="note">After installing, enable full trust in Settings -> General -> About -> Certificate Trust Settings.</span>
-        </div>
-        <a class="btn secondary" href="/ca.mobileconfig">Install CA Profile</a>
-        <div class="step">
-        <strong>Cleanup:</strong> Install this before stopping if the proxy profile is still active.
-        </div>
-        <a class="btn cleanup" href="/cleanup.mobileconfig">Install Cleanup Profile</a>
-        </body>
-        </html>
-        """
-
-        profileLock.lock()
-        profileHtml = html.data(using: .utf8)
-        proxyMobileconfig = proxyData
-        cleanupMobileconfig = cleanupData
-        caMobileconfig = caProfileData
-        caCertificate = caData
-        profileLock.unlock()
-
-        NSLog("[profile] pushed proxy=%d cleanup=%d caProfile=%d ca=%d",
-              proxyData.count, cleanupData?.count ?? 0, caProfileData?.count ?? 0, caData.count)
-        return Codec.makeOK(["status": "pushed"])
-    }
-
-    // Keep legacy commands for backwards compatibility.
-    static func proxyStart(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        return try proxyIngressStart(rawArgs)
-    }
-
-    static func proxyStop(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        return try proxyIngressStop(rawArgs)
-    }
-
-    // MARK: - Socket Listener
+    // MARK: - HTTP Server
 
     private static func startListener(port: UInt16, handler: @escaping (Int32) -> Void) -> Int32 {
         let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
@@ -160,11 +63,10 @@ enum ProxyCommands {
             }
         }
         guard ok == 0 else {
-            NSLog("[profile] bind fail: %s", strerror(errno))
             close(fd)
             return -1
         }
-        guard listen(fd, 32) == 0 else {
+        guard listen(fd, 8) == 0 else {
             close(fd)
             return -1
         }
@@ -181,43 +83,29 @@ enum ProxyCommands {
         }
         src.setCancelHandler { close(fd) }
         src.resume()
-        profileSource = src
+        serverSource = src
         return fd
     }
 
-    // MARK: - Profile Page
-
-    private static func handleProfileConn(_ fd: Int32) {
+    private static func handleConn(_ fd: Int32) {
         DispatchQueue.global(qos: .userInitiated).async {
-            var buf = [UInt8](repeating: 0, count: 4096)
+            var buf = [UInt8](repeating: 0, count: 2048)
             let n = recv(fd, &buf, buf.count, 0)
             let request = n > 0 ? String(bytes: buf[0..<n], encoding: .utf8) ?? "" : ""
             let firstLine = request.components(separatedBy: "\r\n").first ?? ""
             let parts = firstLine.split(separator: " ")
-            let path = parts.count >= 2 ? String(parts[1]) : "/"
+            let reqPath = parts.count >= 2 ? String(parts[1]) : "/"
 
-            profileLock.lock()
-            let html = profileHtml
-            let proxy = proxyMobileconfig
-            let cleanup = cleanupMobileconfig
-            let caProfile = caMobileconfig
-            let ca = caCertificate
-            profileLock.unlock()
+            lock.lock()
+            let cert = caData
+            lock.unlock()
 
             let response: Data
-            if path == "/profile.mobileconfig", let body = proxy {
-                response = makeResponse(body: body, contentType: "application/x-apple-aspen-config", filename: "ios-use-proxy-wifi.mobileconfig")
-            } else if path == "/cleanup.mobileconfig", let body = cleanup {
-                response = makeResponse(body: body, contentType: "application/x-apple-aspen-config", filename: "ios-use-proxy-cleanup.mobileconfig")
-            } else if path == "/ca.mobileconfig", let body = caProfile {
-                response = makeResponse(body: body, contentType: "application/x-apple-aspen-config", filename: "ios-use-ca.mobileconfig")
-            } else if path == "/ca.cer", let body = ca {
-                response = makeResponse(body: body, contentType: "application/x-x509-ca-cert", filename: "ios-use-ca.cer")
-            } else if let body = html {
-                response = makeResponse(body: body, contentType: "text/html; charset=utf-8", filename: nil)
+            if reqPath == "/ca.cer", let body = cert {
+                response = httpResponse(body: body, contentType: "application/x-x509-ca-cert", filename: "mitmproxy-ca.cer")
             } else {
-                let body = "<h1>No profile available</h1><p>Run proxy start first.</p>".data(using: .utf8)!
-                response = makeResponse(status: "404 Not Found", body: body, contentType: "text/html", filename: nil)
+                let body = "Not Found".data(using: .utf8)!
+                response = httpResponse(status: "404 Not Found", body: body, contentType: "text/plain", filename: nil)
             }
 
             response.withUnsafeBytes { ptr in
@@ -233,7 +121,7 @@ enum ProxyCommands {
         }
     }
 
-    private static func makeResponse(status: String = "200 OK", body: Data, contentType: String, filename: String?) -> Data {
+    private static func httpResponse(status: String = "200 OK", body: Data, contentType: String, filename: String?) -> Data {
         var header = "HTTP/1.1 \(status)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n"
         if let filename = filename {
             header += "Content-Disposition: attachment; filename=\"\(filename)\"\r\n"
@@ -245,15 +133,6 @@ enum ProxyCommands {
 
 // MARK: - Args
 
-struct ProxyIngressStartArgs: Codable {
-    let proxyPort: Int?
-    let controlPort: Int?
-    let profilePort: Int?
-}
-
-struct ProxyPushProfileArgs: Codable {
+struct ProxyCAPushArgs: Codable {
     let caBase64: String
-    let mobileconfigBase64: String
-    let caProfileBase64: String?
-    let cleanupMobileconfigBase64: String?
 }

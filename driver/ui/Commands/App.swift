@@ -54,21 +54,7 @@ enum AppCommands {
             throw DriverError.invalidArgs("invalid url: \(args.url)")
         }
 
-        let sem = DispatchSemaphore(value: 0)
-        var opened = false
-        DispatchQueue.main.async {
-            UIApplication.shared.open(url, options: [:]) { ok in
-                opened = ok
-                sem.signal()
-            }
-        }
-
-        if sem.wait(timeout: .now() + .seconds(5)) == .timedOut {
-            return Codec.makeError("openURL timed out: \(args.url)")
-        }
-        guard opened else {
-            return Codec.makeError("openURL failed: \(args.url)")
-        }
+        XCUIDevice.shared.system.open(url)
         return Codec.makeOK(["url": args.url])
     }
 }
