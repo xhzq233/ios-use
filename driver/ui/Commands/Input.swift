@@ -104,7 +104,7 @@ private func prepareForInput(_ target: SafeSnapshot, fallback: SafeSnapshot, app
 
     let candidates = SnapshotMatchesElement(target.raw, fallback.raw) ? [target] : [target, fallback]
     for candidate in candidates {
-        guard tapSnapshotCenter(candidate) else { continue }
+        guard tapSnapshotCenter(candidate, app: app) else { continue }
         Thread.sleep(forTimeInterval: 0.2)
         invalidateSnapshot()
         if let refreshed = refreshedInputSnapshot(matching: target),
@@ -126,12 +126,11 @@ private func prepareForInput(_ target: SafeSnapshot, fallback: SafeSnapshot, app
     return false
 }
 
-private func tapSnapshotCenter(_ snapshot: SafeSnapshot) -> Bool {
+private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication) -> Bool {
     let frame = snapshot.frame.integral
     guard !frame.isEmpty else { return false }
     let point = CGPoint(x: frame.midX, y: frame.midY)
-    var error: NSError?
-    return XCSynthesizeTapAtPoint(point, &error)
+    return RawPointer.perform(app: app, event: .tap(point)) == nil
 }
 
 private func refreshedInputSnapshot(matching target: SafeSnapshot) -> SafeSnapshot? {
