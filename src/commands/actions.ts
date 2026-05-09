@@ -38,6 +38,7 @@ function requireDriver(driver: Driver | null, action: string) {
 
 let _verbose = false;
 export function setVerbose(v: boolean) { _verbose = v; }
+export function isVerbose() { return _verbose; }
 
 /**
  * Parse a label input: if it looks like `"x,y"` return a Point tuple,

@@ -294,17 +294,32 @@ steps:
     expect(elapsed).toBeGreaterThanOrEqual(40);
   });
 
-  test('sleep errors when ms is missing or invalid', async () => {
-    const dir = makeTempDir('ios-use-flow-sleep-invalid-');
+  test('sleep defaults to 1000ms when ms is omitted', async () => {
+    const dir = makeTempDir('ios-use-flow-sleep-default-');
     const flowPath = path.join(dir, 'flow.yaml');
 
     fs.writeFileSync(flowPath, `
-name: sleep-invalid
+name: sleep-default
 steps:
   - action: sleep
+  - action: tap
+    label: after-sleep
 `);
 
-    await expect(runFlowFile(createDriver(), flowPath, {})).rejects.toThrow('sleep requires "ms"');
+    const taps = [];
+    const driver = createDriver({
+      tap: async (target) => {
+        taps.push(target);
+        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
+      },
+    });
+
+    const t0 = Date.now();
+    await runFlowFile(driver, flowPath, {});
+    const elapsed = Date.now() - t0;
+
+    expect(taps).toEqual(['after-sleep']);
+    expect(elapsed).toBeGreaterThanOrEqual(900);
   });
 
   // ── dom fresh ──

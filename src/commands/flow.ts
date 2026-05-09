@@ -3,7 +3,7 @@ import path from 'path';
 import yaml from 'js-yaml';
 import { logger } from '../utils/logger';
 import { startSession, createDriverFromSession } from '../session';
-import { executeStep, sleep, setVerbose, resetAbort, setAbort, isAborted, normalizeNeedLogConfig, startNSLoggerServer } from './actions';
+import { executeStep, sleep, setVerbose, isVerbose, resetAbort, setAbort, isAborted, normalizeNeedLogConfig, startNSLoggerServer } from './actions';
 import { LOCK_FILE, isProcessAlive } from './nslog';
 import type { Driver, FlowContext, FlowStep } from './types';
 
@@ -162,14 +162,25 @@ async function executeFlowSteps(
   const flowContext: FlowContext = { ...context, flowApp, vars: flowVars };
   const nextFlowStack = [...flowStack, currentPath];
 
-  logger.info(`Running flow: ${flow.name || 'unnamed'} (${flow.steps.length} steps)`);
+  const visibleSteps = flow.steps.filter(s => (s as Record<string, unknown>).action !== 'sleep').length;
+  logger.info(`Running flow: ${flow.name || 'unnamed'} (${visibleSteps} steps)`);
+  let stepNum = 0;
 
   for (let i = 0; i < flow.steps.length; i++) {
     ensureNotAborted();
     const stepRaw = flow.steps[i];
     const step = resolveTemplates(stepRaw, flowVars) as unknown as FlowStep;
+
+    if (step.action === 'sleep') {
+      const ms = step.ms ?? 1000;
+      if (isVerbose()) logger.info(`  → Sleep ${ms}ms`);
+      await sleep(ms);
+      continue;
+    }
+
+    stepNum++;
     const label = (step.comment || stepRaw.text || step.label || step.action) as string;
-    logger.info(`Step ${i + 1}/${flow.steps.length}: ${label}`);
+    logger.info(`Step ${stepNum}/${visibleSteps}: ${label}`);
 
     try {
       if (step.action === 'returnIf') {
@@ -184,16 +195,6 @@ async function executeFlowSteps(
           ensureNotAborted();
           return collectFlowOutputs(flow, flowVars);
         }
-        continue;
-      }
-
-      if (step.action === 'sleep') {
-        const ms = step.ms;
-        if (typeof ms !== 'number' || ms <= 0) {
-          throw new Error('sleep requires "ms" (positive number)');
-        }
-        logger.info(`  → Sleep ${ms}ms`);
-        await sleep(ms);
         continue;
       }
 
@@ -235,7 +236,7 @@ async function executeFlowSteps(
       flowVars[outputNames[0]] = actionOutput;
     } catch (err: unknown) {
       const error = err as Error;
-      logger.error(`Step ${i + 1} [action: ${step.action}] failed: ${error.message}`);
+      logger.error(`Step ${stepNum} [action: ${step.action}] failed: ${error.message}`);
       throw err;
     }
   }
@@ -312,7 +313,8 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
     if (aborted) {
       throw new Error('Flow interrupted by Ctrl+C');
     } else {
-      logger.success(`Flow completed: ${flow.steps.length} steps executed`);
+      const visibleSteps = flow.steps.filter(s => (s as Record<string, unknown>).action !== 'sleep').length;
+      logger.success(`Flow completed: ${visibleSteps} steps executed`);
     }
   } catch (err: unknown) {
     const error = err as Error;
