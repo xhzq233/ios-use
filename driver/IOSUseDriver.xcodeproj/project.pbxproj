@@ -29,8 +29,10 @@
 		5C78D96B9AE1C0C47419D5E5 /* SnapshotWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A0FF7257FB4C92EC6C889D /* SnapshotWalker.swift */; };
 		6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
+		71116604C00B45958024BAE0 /* RawPointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8EE69CD9E44A379094C75D /* RawPointer.swift */; };
 		74CF9429D16DAEB3E1D277A8 /* Oslog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C407B5E6ED8BA3229FFB00A3 /* Oslog.swift */; };
 		80253DFDB846500A5A7E2567 /* Types.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E085B6529EF5B086A5B7A15 /* Types.swift */; };
+		816428CB1210BC8502D0CC55 /* RawPointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8EE69CD9E44A379094C75D /* RawPointer.swift */; };
 		81CD91B7F77CDB0EB872969C /* TypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */; };
 		935AEEC19759B9C9EC78FB3F /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AE99BB4D5AD93891B02F4CB /* Session.swift */; };
 		947BDE121DDB75E2D244D1BF /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 17BCFDE8A7DA91241BC86090 /* AppRegistry.m */; };
@@ -91,6 +93,7 @@
 		D394439301E45CC69DD7CB41 /* Server.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Server.swift; sourceTree = "<group>"; };
 		E3E262BB01AF4133E6AF8C75 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		F9FD7632270F764367EC208B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		FA8EE69CD9E44A379094C75D /* RawPointer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawPointer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -129,6 +132,7 @@
 				C407B5E6ED8BA3229FFB00A3 /* Oslog.swift */,
 				05472B7D1F53F7686793C318 /* Probe.swift */,
 				0F60F451C114B1CD47F9A702 /* Proxy.swift */,
+				FA8EE69CD9E44A379094C75D /* RawPointer.swift */,
 				A7314D09B4E47FB05DDAAF58 /* Screen.swift */,
 				65984823BF87C6EFC8233743 /* ScrollMechanics.swift */,
 				688FE3DE301B8593639EAB9B /* Swipe.swift */,
@@ -274,6 +278,7 @@
 				35267F7D02A7EC69C5BCEA40 /* Oslog.swift in Sources */,
 				EFBB4C9BDE512CA610CD097A /* Probe.swift in Sources */,
 				2A99D7083199D3C052817376 /* Proxy.swift in Sources */,
+				71116604C00B45958024BAE0 /* RawPointer.swift in Sources */,
 				C17AD8E6E19EB9DF22D2E31E /* Screen.swift in Sources */,
 				1C91F8F5B711B3F109EAA537 /* ScrollMechanics.swift in Sources */,
 				B4E55F7E5EE6BCDF2396AC5C /* ScrollMechanicsTests.swift in Sources */,
@@ -306,6 +311,7 @@
 				74CF9429D16DAEB3E1D277A8 /* Oslog.swift in Sources */,
 				B24F803C1B1C26B07BD489B3 /* Probe.swift in Sources */,
 				2D30D40139893E650198A77E /* Proxy.swift in Sources */,
+				816428CB1210BC8502D0CC55 /* RawPointer.swift in Sources */,
 				A77C65F2623A196E0C66EB99 /* RunnerTests.swift in Sources */,
 				ADB402EBA304FD6F23411372 /* Screen.swift in Sources */,
 				FEF28DB6B6ACFD3BCFAE0D1C /* ScrollMechanics.swift in Sources */,

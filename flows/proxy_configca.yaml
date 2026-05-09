@@ -9,18 +9,10 @@ steps:
   - action: openURL
     url: "http://127.0.0.1:9088/ca.cer"
 
-  - action: waitFor
-    label: 允许
-    timeout: 8
-    traits: Button
-
   - action: tap
     label: 允许
     traits: Button
     comment: "允许下载描述文件"
-
-  - action: sleep
-    ms: 300
 
   - action: dismissAlert
     comment: "关闭系统弹窗（已下载描述文件提示）"
@@ -38,45 +30,47 @@ steps:
     label: 已下载描述文件
     comment: "设置首页顶部入口"
 
-  - action: sleep
+  - action: waitFor
+    label: 安装
+    traits: Button
 
   - action: tap
     label: 安装
     traits: Button
     comment: "右上角安装"
 
-  - action: sleep
+  - action: waitFor
+    label: 安装
+    traits: Button
 
   - action: tap
     label: 安装
     traits: Button
     comment: "警告页右上角安装"
 
-  - action: sleep
-    ms: 2000
+  - action: waitFor
+    label: 安装
+    traits: Button
 
   - action: tap
     label: 安装
     traits: Button
     comment: "确认安装（Alert弹窗）"
 
-  - action: sleep
+  - action: waitFor
+    label: 完成
 
   - action: tap
     label: 完成
     comment: "安装完成 → 进入 VPN与设备管理"
 
   # ── 第三部分：从 VPN与设备管理 返回通用 → 关于本机 → 证书信任设置 ──
-
-  - action: sleep
-    ms: 500
-
+  - action: waitFor
+    label: BackButton
+  
   - action: tap
     label: BackButton
     comment: "返回通用页面"
-
-  - action: sleep
-    ms: 500
 
   - action: swipe
     to: 关于本机
@@ -84,17 +78,12 @@ steps:
   - action: tap
     label: 关于本机
 
-  - action: sleep
-    ms: 500
-
   - action: swipe
+    from: iOS版本
     to: 证书信任设置
 
   - action: tap
     label: 证书信任设置
-
-  - action: sleep
-    ms: 500
 
   - action: tap
     label: mitmproxy
@@ -102,10 +91,6 @@ steps:
     offset:
       xRatio: 0.9
     comment: "点击开关启用信任"
-
-  - action: waitFor
-    label: 继续
-    timeout: 3
 
   - action: tap
     label: 继续

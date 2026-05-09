@@ -167,11 +167,15 @@ func scrollAncestorByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIAp
     let startCoord = appCoord.withOffset(CGVector(dx: hitPoint.dx, dy: hitPoint.dy))
     let endCoord = startCoord.withOffset(CGVector(dx: vector.dx, dy: vector.dy))
 
-    startCoord.press(
-        forDuration: ScrollConstants.touchPressDuration,
-        thenDragTo: endCoord,
-        withVelocity: XCUIGestureVelocity(rawValue: CGFloat(ScrollConstants.touchVelocity)),
-        thenHoldForDuration: ScrollConstants.touchHoldDuration
+    _ = RawPointer.perform(
+        app: app,
+        event: .drag(
+            start: startCoord,
+            end: endCoord,
+            pressDuration: ScrollConstants.touchPressDuration,
+            velocity: ScrollConstants.touchVelocity,
+            holdDuration: ScrollConstants.touchHoldDuration
+        )
     )
 }
 
