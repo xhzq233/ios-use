@@ -14,6 +14,7 @@ import type {
   FindResult,
   Rect,
 } from '../driver-protocol/index.js';
+import { ACTIONS } from './registry.js';
 
 // ── Utilities ──
 
@@ -40,10 +41,6 @@ let _verbose = false;
 export function setVerbose(v: boolean) { _verbose = v; }
 export function isVerbose() { return _verbose; }
 
-/**
- * Parse a label input: if it looks like `"x,y"` return a Point tuple,
- * otherwise return the string as-is. Accepts existing Point/string values.
- */
 export function parseLabelOrPoint(v: LabelOrPoint | undefined): LabelOrPoint | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== 'string') return v;
@@ -203,258 +200,6 @@ export function normalizeNeedLogConfig(needLog: boolean | Record<string, unknown
   throw new Error('needLog must be true or an object');
 }
 
-// ── Action execution (maps 1:1 to host API commands) ──
-
-const VALID_ACTIONS = new Set([
-  'tap', 'input', 'swipe', 'longpress', 'dom', 'find', 'screenshot',
-  'waitFor',
-  'activateApp', 'terminateApp', 'openURL', 'dismissAlert', 'oslog',
-  'nslog_start', 'nslog', 'nslog_clear',
-]);
-
-export async function executeStep(driver: Driver | null, step: FlowStep, context: FlowContext = {}, stepIndex?: number): Promise<unknown> {
-  const flowApp = context.flowApp;
-
-  switch (step.action) {
-    case 'dom': {
-      requireDriver(driver, 'dom');
-      const result = await driver!.dom({ raw: !!step.raw, fresh: !!step.fresh });
-      if (step.save) {
-        const domName = step.name || `dom-step-${timestamp()}`;
-        const filepath = outputPath(`${domName}.json`);
-        fs.writeFileSync(filepath, JSON.stringify(result, null, 2));
-        logger.success(`DOM saved: ${filepath}`);
-      }
-      if (step.print ?? true) {
-        if (step.raw) {
-          let json = JSON.stringify(result, null, 2);
-          json = json.replace(/\[(\s+[^[\]]+?\s+)\]/g, (_, inner) => '[' + inner.replace(/\s+/g, ' ').trim() + ']');
-          console.log(json);
-        } else {
-          console.log(`\n  App: ${result.app}, Window: ${result.window.join('x')}`);
-          console.log('  Elements:\n');
-          printDomElements(result.elements, '  ');
-          console.log('');
-        }
-      }
-      return deriveDomOutput(result, step.candidates);
-    }
-
-    case 'find': {
-      requireDriver(driver, 'find');
-      const label = step.label;
-      if (typeof label !== 'string') throw new Error('find requires string "label"');
-      const result = await driver!.find({ label, traits: step.traits });
-      if (!result.ok) {
-        throw new Error(`label '${label}' not found`);
-      }
-      if (step.print ?? true) {
-        const { matches, suggestions, hint } = result;
-        if (matches.length === 0) {
-          // fuzzy suggestions only
-          console.log(`\n  Find "${label}" (0 matches, did you mean?):`);
-          if (suggestions && suggestions.length > 0) {
-            console.log(`    suggestions: ${suggestions.join(', ')}`);
-          }
-        } else if (matches.length === 1) {
-          const m = matches[0];
-          const title = m.value ? `${m.label}=${m.value}` : m.label;
-          const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
-          const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
-          console.log(`\n  Find "${label}":`);
-          console.log(`    [${ancestors}] ${m.type} "${title}" (${rect})`);
-        } else {
-          console.log(`\n  Find "${label}" (${matches.length} matches):`);
-          for (let i = 0; i < matches.length; i++) {
-            const m = matches[i];
-            const title = m.value ? `${m.label}=${m.value}` : m.label;
-            const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
-            const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
-            console.log(`    ${i + 1}. [${ancestors}] ${m.type} "${title}" (${rect})`);
-          }
-        }
-        if (hint) console.log(`  hint: ${hint}`);
-        console.log('');
-      }
-      return { matches: result.matches, firstMatch: result.matches[0] ?? null };
-    }
-
-    case 'tap': {
-      requireDriver(driver, 'tap');
-      const target = parseLabelOrPoint(step.label);
-      if (target === undefined) throw new Error('tap requires "label" (string or "x,y" coordinate)');
-      logger.info(`  → Tap ${formatLabel(target)}`);
-      const result = await driver!.tap(target, step.traits, step.offset);
-      logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
-      return undefined;
-    }
-
-    case 'longpress': {
-      requireDriver(driver, 'longpress');
-      const target = parseLabelOrPoint(step.label);
-      if (target === undefined) throw new Error('longpress requires "label" (string or "x,y" coordinate)');
-      // step.duration is in milliseconds (user-facing); host expects seconds
-      const durationSec = step.duration !== undefined ? step.duration / 1000 : undefined;
-      logger.info(`  → Longpress ${formatLabel(target)}${step.duration ? ` (${step.duration}ms)` : ''}`);
-      const result = await driver!.longPress(target, durationSec, step.traits);
-      logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
-      return undefined;
-    }
-
-    case 'input': {
-      requireDriver(driver, 'input');
-      const text = step.content;
-      if (typeof text !== 'string') throw new Error('input requires "content"');
-      const label = step.label;
-      if (typeof label !== 'string') throw new Error('input requires string "label"');
-      logger.info(`  → Input "${text}" into "${label}"`);
-      await driver!.input(label, text, step.traits);
-      return undefined;
-    }
-
-    case 'swipe': {
-      requireDriver(driver, 'swipe');
-      const to = parseLabelOrPoint(step.to);
-      const from = parseLabelOrPoint(step.from);
-      logger.info(`  → Swipe${to ? ` to ${formatLabel(to)}` : ''}${from ? ` from ${formatLabel(from)}` : ''}${step.dir ? ` dir=${step.dir}` : ''}${step.distance ? ` dist=${step.distance}` : ''}`);
-      const result = await driver!.swipe({
-        to,
-        from,
-        dir: step.dir as SwipeDir | undefined,
-        distance: step.distance,
-        traits: step.traits,
-      });
-      logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} scrolls=${result.scrolls}`);
-      return undefined;
-    }
-
-    case 'waitFor': {
-      requireDriver(driver, 'waitFor');
-      const label = step.label;
-      if (typeof label !== 'string') throw new Error('waitFor requires string "label"');
-      logger.info(`  → WaitFor "${label}"${step.timeout ? ` timeout=${step.timeout}s` : ''}`);
-      const result = await driver!.waitFor({
-        label,
-        timeout: step.timeout,
-        traits: step.traits,
-      });
-      logger.info(`    ${result.type} "${result.label}" (${result.rect.join(',')}) waited=${result.waited.toFixed(2)}s`);
-      return undefined;
-    }
-
-    case 'screenshot': {
-      requireDriver(driver, 'screenshot');
-      const name = step.name || `flow-step-${timestamp()}`;
-      const filepath = outputPath(`${name}.jpg`);
-      await driver!.saveScreenshot(filepath);
-      logger.success(`Screenshot saved: ${filepath}`);
-      return undefined;
-    }
-
-    case 'openURL': {
-      requireDriver(driver, 'openURL');
-      const url = step.url || step.content;
-      if (!url) throw new Error('openURL requires url');
-      await driver!.openURL(url);
-      logger.success(`Opened URL: ${url}`);
-      return undefined;
-    }
-
-    case 'dismissAlert': {
-      requireDriver(driver, 'dismissAlert');
-      const opts: { index?: number } = {};
-      if ((step as any).index !== undefined) opts.index = (step as any).index;
-      const res = await driver!.dismissAlert(Object.keys(opts).length ? opts : undefined);
-      if (res.dismissed) {
-        logger.success(`Alert dismissed: tapped "${res.button}" (text: ${res.text})`);
-      } else {
-        logger.info(`No alert found: ${res.reason}`);
-      }
-      return undefined;
-    }
-
-    case 'activateApp': {
-      requireDriver(driver, 'activateApp');
-      const bundleId = step.bundleId || flowApp;
-      if (!bundleId) throw new Error('activateApp requires bundleId');
-      await driver!.activateApp(bundleId);
-      logger.success(`App ${bundleId} activated`);
-      return undefined;
-    }
-
-    case 'terminateApp': {
-      requireDriver(driver, 'terminateApp');
-      const bundleId = step.bundleId || flowApp;
-      if (!bundleId) throw new Error('terminateApp requires bundleId');
-      try {
-        await driver!.terminateApp(bundleId);
-        logger.success(`App ${bundleId} terminated`);
-      } catch {
-        logger.info(`App ${bundleId} not running, skipped terminate`);
-      }
-      return undefined;
-    }
-
-    case 'oslog': {
-      requireDriver(driver, 'oslog');
-      const name = step.name || `oslog-${timestamp()}`;
-      const result = await driver!.oslog({
-        pattern: step.pattern,
-        flags: step.flags,
-        name,
-        clear: step.clear,
-        bundleId: step.bundleId,
-        timeout: step.timeout,
-      });
-      if ('cleared' in result) {
-        logger.info(`  → oslog: cleared=${result.cleared}`);
-      } else {
-        const outputFile = outputPath(`${name}.log`);
-        fs.writeFileSync(outputFile, result.content);
-        logger.info(`  → oslog: matched=${result.matched} total=${result.total} → ${outputFile}`);
-      }
-      return undefined;
-    }
-
-    case 'nslog_start': {
-      if (context.nsloggerServer) {
-        throw new Error(`nslog_start: server already running on port ${context.nsloggerServer.getPort()}. Use nslog_clear to reset.`);
-      }
-      context.nsloggerServer = await startNSLoggerServer(step, 'nslog_start');
-      return undefined;
-    }
-
-    case 'nslog': {
-      if (!context.nsloggerServer) throw new Error('nslog requires nslog_start first');
-      const pattern = step.pattern;
-      if (!pattern) throw new Error('nslog requires "pattern"');
-      const timeoutSec = step.timeout ?? 0;
-      const matched = await waitForNslogMatch(context.nsloggerServer, pattern, step.flags || '', timeoutSec);
-      const logName = step.name || `nslog-${timestamp()}`;
-      const outputFile = outputPath(`${logName}.log`);
-      fs.writeFileSync(outputFile, matched.join('\n'));
-      logger.info(`  → nslog: ${matched.length} matched /${pattern}/ → ${outputFile}`);
-      if (step.clearAfterRead) {
-        context.nsloggerServer.clear();
-        logger.info('  → nslog: buffer cleared');
-      }
-      return undefined;
-    }
-
-    case 'nslog_clear': {
-      if (!context.nsloggerServer) throw new Error('nslog_clear requires nslog_start first');
-      context.nsloggerServer.clear();
-      logger.info('  → nslog_clear: buffer cleared');
-      return undefined;
-    }
-
-    default: {
-      const prefix = stepIndex !== undefined ? `Step ${stepIndex}: ` : '';
-      throw new Error(`${prefix}Unknown action: "${(step as FlowStep).action}". Valid: ${[...VALID_ACTIONS].join(', ')}`);
-    }
-  }
-}
-
 // ── DOM tree display ──
 
 function printDomElements(elements: DomNode[], indent: string) {
@@ -486,6 +231,248 @@ function printDomElements(elements: DomNode[], indent: string) {
   }
 }
 
+// ── Action handlers (registered into ACTIONS) ──
+
+function registerHandlers() {
+  const handlerMap: Record<string, (driver: Driver, step: FlowStep, ctx: FlowContext) => Promise<unknown>> = {
+
+    async dom(driver, step) {
+      requireDriver(driver, 'dom');
+      const result = await driver.dom({ raw: !!step.raw, fresh: !!step.fresh });
+      if (step.save) {
+        const domName = step.name || `dom-step-${timestamp()}`;
+        const filepath = outputPath(`${domName}.json`);
+        fs.writeFileSync(filepath, JSON.stringify(result, null, 2));
+        logger.success(`DOM saved: ${filepath}`);
+      }
+      if (step.print ?? true) {
+        if (step.raw) {
+          let json = JSON.stringify(result, null, 2);
+          json = json.replace(/\[(\s+[^[\]]+?\s+)\]/g, (_, inner) => '[' + inner.replace(/\s+/g, ' ').trim() + ']');
+          console.log(json);
+        } else {
+          console.log(`\n  App: ${result.app}, Window: ${result.window.join('x')}`);
+          console.log('  Elements:\n');
+          printDomElements(result.elements, '  ');
+          console.log('');
+        }
+      }
+      return deriveDomOutput(result, step.candidates);
+    },
+
+    async find(driver, step) {
+      requireDriver(driver, 'find');
+      const label = step.label;
+      if (typeof label !== 'string') throw new Error('find requires string "label"');
+      const result = await driver.find({ label, traits: step.traits });
+      if (!result.ok) {
+        throw new Error(`label '${label}' not found`);
+      }
+      if (step.print ?? true) {
+        const { matches, suggestions, hint } = result;
+        if (matches.length === 0) {
+          console.log(`\n  Find "${label}" (0 matches, did you mean?):`);
+          if (suggestions && suggestions.length > 0) {
+            console.log(`    suggestions: ${suggestions.join(', ')}`);
+          }
+        } else if (matches.length === 1) {
+          const m = matches[0];
+          const title = m.value ? `${m.label}=${m.value}` : m.label;
+          const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
+          const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
+          console.log(`\n  Find "${label}":`);
+          console.log(`    [${ancestors}] ${m.type} "${title}" (${rect})`);
+        } else {
+          console.log(`\n  Find "${label}" (${matches.length} matches):`);
+          for (let i = 0; i < matches.length; i++) {
+            const m = matches[i];
+            const title = m.value ? `${m.label}=${m.value}` : m.label;
+            const ancestors = Array.isArray(m.ancestors) ? m.ancestors.join(' > ') : '';
+            const rect = Array.isArray(m.rect) ? m.rect.join(',') : '';
+            console.log(`    ${i + 1}. [${ancestors}] ${m.type} "${title}" (${rect})`);
+          }
+        }
+        if (hint) console.log(`  hint: ${hint}`);
+        console.log('');
+      }
+      return { matches: result.matches, firstMatch: result.matches[0] ?? null };
+    },
+
+    async tap(driver, step) {
+      requireDriver(driver, 'tap');
+      const target = parseLabelOrPoint(step.label);
+      if (target === undefined) throw new Error('tap requires "label" (string or "x,y" coordinate)');
+      logger.info(`  → Tap ${formatLabel(target)}`);
+      const result = await driver.tap(target, step.traits, step.offset);
+      logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
+    },
+
+    async longpress(driver, step) {
+      requireDriver(driver, 'longpress');
+      const target = parseLabelOrPoint(step.label);
+      if (target === undefined) throw new Error('longpress requires "label" (string or "x,y" coordinate)');
+      const durationSec = step.duration !== undefined ? step.duration / 1000 : undefined;
+      logger.info(`  → Longpress ${formatLabel(target)}${step.duration ? ` (${step.duration}ms)` : ''}`);
+      const result = await driver.longPress(target, durationSec, step.traits);
+      logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
+    },
+
+    async input(driver, step) {
+      requireDriver(driver, 'input');
+      const text = step.content;
+      if (typeof text !== 'string') throw new Error('input requires "content"');
+      const label = step.label;
+      if (typeof label !== 'string') throw new Error('input requires string "label"');
+      logger.info(`  → Input "${text}" into "${label}"`);
+      await driver.input(label, text, step.traits);
+    },
+
+    async swipe(driver, step) {
+      requireDriver(driver, 'swipe');
+      const to = parseLabelOrPoint(step.to);
+      const from = parseLabelOrPoint(step.from);
+      logger.info(`  → Swipe${to ? ` to ${formatLabel(to)}` : ''}${from ? ` from ${formatLabel(from)}` : ''}${step.dir ? ` dir=${step.dir}` : ''}${step.distance ? ` dist=${step.distance}` : ''}`);
+      const result = await driver.swipe({
+        to,
+        from,
+        dir: step.dir as SwipeDir | undefined,
+        distance: step.distance,
+        traits: step.traits,
+      });
+      logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} scrolls=${result.scrolls}`);
+    },
+
+    async waitFor(driver, step) {
+      requireDriver(driver, 'waitFor');
+      const label = step.label;
+      if (typeof label !== 'string') throw new Error('waitFor requires string "label"');
+      logger.info(`  → WaitFor "${label}"${step.timeout ? ` timeout=${step.timeout}s` : ''}`);
+      const result = await driver.waitFor({
+        label,
+        timeout: step.timeout,
+        traits: step.traits,
+      });
+      logger.info(`    ${result.type} "${result.label}" (${result.rect.join(',')}) waited=${result.waited.toFixed(2)}s`);
+    },
+
+    async screenshot(driver, step) {
+      requireDriver(driver, 'screenshot');
+      const name = step.name || `flow-step-${timestamp()}`;
+      const filepath = outputPath(`${name}.jpg`);
+      await driver.saveScreenshot(filepath);
+      logger.success(`Screenshot saved: ${filepath}`);
+    },
+
+    async openURL(driver, step) {
+      requireDriver(driver, 'openURL');
+      const url = step.url || step.content;
+      if (!url) throw new Error('openURL requires url');
+      await driver.openURL(url);
+      logger.success(`Opened URL: ${url}`);
+    },
+
+    async dismissAlert(driver, step) {
+      requireDriver(driver, 'dismissAlert');
+      const opts: { index?: number } = {};
+      if ((step as any).index !== undefined) opts.index = (step as any).index;
+      const res = await driver.dismissAlert(Object.keys(opts).length ? opts : undefined);
+      if (res.dismissed) {
+        logger.success(`Alert dismissed: tapped "${res.button}" (text: ${res.text})`);
+      } else {
+        logger.info(`No alert found: ${res.reason}`);
+      }
+    },
+
+    async activateApp(driver, step, ctx) {
+      requireDriver(driver, 'activateApp');
+      const bundleId = step.bundleId || ctx.flowApp;
+      if (!bundleId) throw new Error('activateApp requires bundleId');
+      await driver.activateApp(bundleId);
+      logger.success(`App ${bundleId} activated`);
+    },
+
+    async terminateApp(driver, step, ctx) {
+      requireDriver(driver, 'terminateApp');
+      const bundleId = step.bundleId || ctx.flowApp;
+      if (!bundleId) throw new Error('terminateApp requires bundleId');
+      try {
+        await driver.terminateApp(bundleId);
+        logger.success(`App ${bundleId} terminated`);
+      } catch {
+        logger.info(`App ${bundleId} not running, skipped terminate`);
+      }
+    },
+
+    async oslog(driver, step) {
+      requireDriver(driver, 'oslog');
+      const name = step.name || `oslog-${timestamp()}`;
+      const result = await driver.oslog({
+        pattern: step.pattern,
+        flags: step.flags,
+        name,
+        clear: step.clear,
+        bundleId: step.bundleId,
+        timeout: step.timeout,
+      });
+      if ('cleared' in result) {
+        logger.info(`  → oslog: cleared=${result.cleared}`);
+      } else {
+        const outputFile = outputPath(`${name}.log`);
+        fs.writeFileSync(outputFile, result.content);
+        logger.info(`  → oslog: matched=${result.matched} total=${result.total} → ${outputFile}`);
+      }
+    },
+
+    async nslog_start(_driver, step, ctx) {
+      if (ctx.nsloggerServer) {
+        throw new Error(`nslog_start: server already running on port ${ctx.nsloggerServer.getPort()}. Use nslog_clear to reset.`);
+      }
+      ctx.nsloggerServer = await startNSLoggerServer(step, 'nslog_start');
+    },
+
+    async nslog(_driver, step, ctx) {
+      if (!ctx.nsloggerServer) throw new Error('nslog requires nslog_start first');
+      const pattern = step.pattern;
+      if (!pattern) throw new Error('nslog requires "pattern"');
+      const timeoutSec = step.timeout ?? 0;
+      const matched = await waitForNslogMatch(ctx.nsloggerServer, pattern, step.flags || '', timeoutSec);
+      const logName = step.name || `nslog-${timestamp()}`;
+      const outputFile = outputPath(`${logName}.log`);
+      fs.writeFileSync(outputFile, matched.join('\n'));
+      logger.info(`  → nslog: ${matched.length} matched /${pattern}/ → ${outputFile}`);
+      if (step.clearAfterRead) {
+        ctx.nsloggerServer!.clear();
+        logger.info('  → nslog: buffer cleared');
+      }
+    },
+
+    nslog_clear(_driver, _step, ctx) {
+      if (!ctx.nsloggerServer) throw new Error('nslog_clear requires nslog_start first');
+      ctx.nsloggerServer.clear();
+      logger.info('  → nslog_clear: buffer cleared');
+    },
+  };
+
+  for (const def of ACTIONS) {
+    const handler = handlerMap[def.name];
+    if (handler) def.execute = handler;
+  }
+}
+
+registerHandlers();
+
+// ── executeStep: dispatches via registry ──
+
+export async function executeStep(driver: Driver | null, step: FlowStep, context: FlowContext = {}, stepIndex?: number): Promise<unknown> {
+  const def = ACTIONS.find(a => a.name === step.action);
+  if (!def) {
+    const prefix = stepIndex !== undefined ? `Step ${stepIndex}: ` : '';
+    const valid = ACTIONS.filter(a => !a.flowOnly).map(a => a.name);
+    throw new Error(`${prefix}Unknown action: "${step.action}". Valid: ${valid.join(', ')}`);
+  }
+  return def.execute(driver!, step, context);
+}
+
 // ── runCommandStep: wraps executeStep with auto-session ──
 
 interface CommandOpts {
@@ -511,71 +498,4 @@ export async function runCommandStep(step: FlowStep, opts: CommandOpts = {}, con
     };
     await executeStep(driver, step, localContext);
   });
-}
-
-// ── CLI convenience wrappers ──
-
-type ActionOpts = { udid?: string; bundleId?: string; verbose?: boolean };
-
-export async function tapAction(opts: ActionOpts & {
-  label?: string;
-  traits?: string;
-  offset?: FlowStep['offset'];
-}) {
-  if (opts.label === undefined) throw new Error('tap requires --label');
-  await runCommandStep({ action: 'tap', label: opts.label, traits: opts.traits, offset: opts.offset }, opts);
-}
-
-export async function swipeAction(opts: ActionOpts & { to?: string; from?: string; dir?: SwipeDir; distance?: number; traits?: string }) {
-  await runCommandStep({
-    action: 'swipe',
-    to: opts.to,
-    from: opts.from,
-    dir: opts.dir,
-    distance: opts.distance,
-    traits: opts.traits,
-  }, opts);
-}
-
-export async function inputAction(opts: ActionOpts & { content: string; label?: string; traits?: string }) {
-  if (opts.label === undefined) throw new Error('input requires --label');
-  await runCommandStep({ action: 'input', content: opts.content, label: opts.label, traits: opts.traits }, opts);
-}
-
-export async function longpressAction(opts: ActionOpts & { label?: string; duration?: number; traits?: string }) {
-  if (opts.label === undefined) throw new Error('longpress requires --label');
-  await runCommandStep({ action: 'longpress', label: opts.label, duration: opts.duration, traits: opts.traits }, opts);
-}
-
-export async function domAction(opts: ActionOpts & { raw?: boolean; save?: boolean; name?: string }) {
-  await runCommandStep({ action: 'dom', raw: opts.raw, save: opts.save, name: opts.name, print: true }, opts);
-}
-
-export async function findAction(opts: ActionOpts & { label: string; traits?: string }) {
-  await runCommandStep({ action: 'find', label: opts.label, traits: opts.traits, print: true }, opts);
-}
-
-export async function screenshotAction(opts: ActionOpts & { name?: string }) {
-  await runCommandStep({ action: 'screenshot', name: opts.name }, opts);
-}
-
-export async function waitForAction(opts: ActionOpts & { label: string; timeout?: number; traits?: string }) {
-  await runCommandStep({
-    action: 'waitFor',
-    label: opts.label,
-    timeout: opts.timeout,
-    traits: opts.traits,
-  }, opts);
-}
-
-export async function oslogAction(opts: ActionOpts & { pattern?: string; flags?: string; name?: string; clear?: boolean; bundleId?: string; timeout?: number }) {
-  await runCommandStep({
-    action: 'oslog',
-    pattern: opts.pattern,
-    flags: opts.flags,
-    name: opts.name,
-    clear: opts.clear,
-    bundleId: opts.bundleId,
-    timeout: opts.timeout,
-  }, opts);
 }
