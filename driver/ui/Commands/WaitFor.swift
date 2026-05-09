@@ -3,7 +3,7 @@ import XCTest
 // MARK: - WaitFor (doc 6.5)
 
 enum WaitForCommands {
-    private static let pollIntervalMs = 300
+    private static let pollIntervalMs = 100
 
     /// doc 6.5 — poll rawFind until target label is visible or timeout.
     static func waitFor(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
