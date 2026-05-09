@@ -207,7 +207,7 @@ export function normalizeNeedLogConfig(needLog: boolean | Record<string, unknown
 const VALID_ACTIONS = new Set([
   'tap', 'input', 'swipe', 'longpress', 'dom', 'find', 'screenshot',
   'waitFor',
-  'activateApp', 'terminateApp', 'openURL', 'oslog',
+  'activateApp', 'terminateApp', 'openURL', 'dismissAlert', 'oslog',
   'nslog_start', 'nslog', 'nslog_clear',
 ]);
 
@@ -356,6 +356,19 @@ export async function executeStep(driver: Driver | null, step: FlowStep, context
       if (!url) throw new Error('openURL requires url');
       await driver!.openURL(url);
       logger.success(`Opened URL: ${url}`);
+      return undefined;
+    }
+
+    case 'dismissAlert': {
+      requireDriver(driver, 'dismissAlert');
+      const opts: { index?: number } = {};
+      if ((step as any).index !== undefined) opts.index = (step as any).index;
+      const res = await driver!.dismissAlert(Object.keys(opts).length ? opts : undefined);
+      if (res.dismissed) {
+        logger.success(`Alert dismissed: tapped "${res.button}" (text: ${res.text})`);
+      } else {
+        logger.info(`No alert found: ${res.reason}`);
+      }
       return undefined;
     }
 

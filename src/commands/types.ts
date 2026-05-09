@@ -34,6 +34,7 @@ export interface Driver {
   activateApp(bundleId: string): Promise<void>;
   terminateApp(bundleId: string): Promise<void>;
   openURL(url: string): Promise<void>;
+  dismissAlert(opts?: { index?: number }): Promise<{ dismissed: boolean; text?: string; button?: string; reason?: string }>;
 
   // Screenshot / logs
   screenshot(): Promise<Buffer>;
@@ -62,6 +63,7 @@ export interface FlowStep {
     | 'activateApp'
     | 'terminateApp'
     | 'openURL'
+    | 'dismissAlert'
     | 'oslog'
     | 'nslog_start'
     | 'nslog'

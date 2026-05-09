@@ -19,6 +19,7 @@ enum Command: String, Codable {
     case input
     case swipe
     case waitFor
+    case dismissAlert
 }
 
 // MARK: - SwipeDir (doc 3.1 — forth/back only)

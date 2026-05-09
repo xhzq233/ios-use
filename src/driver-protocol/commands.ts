@@ -13,6 +13,7 @@ export const DRIVER_COMMANDS = {
   OPEN_URL: 'openURL',
   PROBE_FETCH: 'probeFetch',
   PROXY_CA_PUSH: 'proxyCAPush',
+  DISMISS_ALERT: 'dismissAlert',
   SCREENSHOT: 'screenshot',
   OSLOG: 'oslog',
 } as const;
