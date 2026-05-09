@@ -8,33 +8,34 @@ steps:
     bundleId: com.apple.Preferences
     comment: "确保设置在前台"
 
-  - action: tap
-    label: Wi-Fi
-    comment: "进入 Wi-Fi 设置"
-
-  - action: sleep
-    ms: 1000
-    comment: "等待 Wi-Fi 列表加载"
-
-  - action: find
-    label: 更多信息
-    context:
-      ancestorType: Cell
-    comment: "找到当前连接网络的 (i) 按钮"
+  - action: openURL
+    url: "App-Prefs:"
+    comment: "打开设置首页"
 
   - action: tap
-    label: 更多信息
-    context:
-      ancestorType: Cell
-    comment: "点击当前网络的详情按钮"
+    label: com.apple.settings.wifi
+    comment: "进入无线局域网设置"
+
+  - action: waitFor
+    label: 信号强度
+    traits: "Cell,selected"
+    timeout: 5
+
+  - action: tap
+    label: 信号强度
+    traits: "Cell,selected"
+    offset:
+      xRatio: 0.9
+      yRatio: 0.5
+    comment: "点击当前已连接网络行右侧的详情按钮"
 
   - action: waitFor
     label: 配置代理
     timeout: 5
 
   - action: swipe
-    to: 配置代理
-    comment: "滚动到配置代理"
+    to: HTTP代理
+    comment: "滚动到 HTTP 代理区域"
 
   - action: tap
     label: 配置代理
@@ -48,8 +49,9 @@ steps:
     label: 手动
     comment: "选择手动模式"
 
-  - action: sleep
-    ms: 500
+  - action: waitFor
+    label: 服务器
+    timeout: 3
 
   - action: input
     label: 服务器
@@ -61,6 +63,10 @@ steps:
     content: "${port}"
     comment: "填入代理端口"
 
+  - action: waitFor
+    label: 保存
+    timeout: 3
+
   - action: tap
-    label: 存储
+    label: 保存
     comment: "保存配置"

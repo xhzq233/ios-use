@@ -226,10 +226,16 @@ enum SwipeCommands {
         let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
         let start = origin.withOffset(CGVector(dx: from[0], dy: from[1]))
         let end = origin.withOffset(CGVector(dx: to[0], dy: to[1]))
-        XCPressAndDrag(start, end,
-                       ScrollConstants.touchPressDuration,
-                       ScrollConstants.touchVelocity,
-                       ScrollConstants.touchHoldDuration)
+        _ = RawPointer.perform(
+            app: app,
+            event: .drag(
+                start: start,
+                end: end,
+                pressDuration: ScrollConstants.touchPressDuration,
+                velocity: ScrollConstants.touchVelocity,
+                holdDuration: ScrollConstants.touchHoldDuration
+            )
+        )
         return Codec.makeOK([
             "ancestors": [String](),
             "type": "Coordinate",
