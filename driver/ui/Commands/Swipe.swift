@@ -106,7 +106,7 @@ enum SwipeCommands {
         }
 
         // STEP 6: scroll loop.
-        let scrolls = scrollLoop(scrollView: scrollView,
+        let scrolls = scrollUntilVisible(scrollView: scrollView,
                                  label: label,
                                  traits: args.traits,
                                  vertical: vertical,
@@ -164,8 +164,7 @@ enum SwipeCommands {
         } else {
             return Codec.makeError("anchor scroll requires 'from'")
         }
-        let scrollView = anchorScrollView
-        let cells = collectCellSnapshots(scrollView)
+        let cells = collectCellSnapshots(anchorScrollView)
         let visibleCells = cells.filter { $0.isVisible }
         guard visibleCells.count >= 2 else {
             return Codec.makeError("less than 2 visible cells in anchor's scrollable")
@@ -175,48 +174,22 @@ enum SwipeCommands {
         let vertical = abs(dy) > abs(dx)
         let scrollUpwards = (args.dir == .back)
 
-        var prevFrames = visibleCells.map { $0.frame }
-        let scrollFrame = scrollView.frame
-
-        for i in 0..<ScrollConstants.maxScrollCount {
-            if vertical {
-                scrollUpwards
-                    ? scrollUpByNormalizedDistance(0.75, scrollFrame: scrollFrame, app: app)
-                    : scrollDownByNormalizedDistance(0.75, scrollFrame: scrollFrame, app: app)
-            } else {
-                scrollUpwards
-                    ? scrollLeftByNormalizedDistance(0.75, scrollFrame: scrollFrame, app: app)
-                    : scrollRightByNormalizedDistance(0.75, scrollFrame: scrollFrame, app: app)
-            }
-            Thread.sleep(forTimeInterval: ScrollConstants.settleInterval)
-            invalidateSnapshot()
-
-            guard let freshCS = rebuildCleanedSnapshot() else { break }
-            switch rawFindInSnapshot(label, traits: args.traits, cs: freshCS) {
-            case .found(let elem):
-                if elem.isVisible {
-                    return okScrollWithAncestors(node: elem.node, scrolls: i + 1)
-                }
-            case .ambiguous(let matches):
-                if let visible = matches.first(where: { $0.isVisible }) {
-                    return okScrollWithAncestors(node: visible.node, scrolls: i + 1)
-                }
-            case .fuzzy, .notFound:
-                break
-            }
-
-            // Boundary detection: new visible frames identical to previous.
-            guard let freshScrollView = reResolveScrollable(in: freshCS.rawRoot,
-                                                            against: scrollView) else {
-                return Codec.makeError("anchor scroll: failed to re-resolve scrollable")
-            }
-            let freshCells = collectCellSnapshots(freshScrollView).filter { $0.isVisible }.map { $0.frame }
-            if freshCells == prevFrames {
-                return boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
-            }
-            prevFrames = freshCells
+        let result = scrollUntilVisible(scrollView: anchorScrollView,
+                                        label: label,
+                                        traits: args.traits,
+                                        vertical: vertical,
+                                        scrollUpwards: scrollUpwards,
+                                        app: app)
+        switch result {
+        case .found(let count, let target):
+            return okScrollWithAncestors(node: target, scrolls: count)
+        case .hitBoundary:
+            return boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
+        case .reachedMax:
+            return Codec.makeError("anchor scroll: max scroll count reached")
+        case .snapshotFailed:
+            return Codec.makeError("anchor scroll: failed to rebuild snapshot (app may have exited)")
         }
-        return Codec.makeError("anchor scroll: max scroll count reached")
     }
 
     private static func handleAbsolutePointSwipe(from: [Double],
@@ -321,9 +294,8 @@ enum SwipeCommands {
 
     /// Scrolls, rebuilds snapshots, and re-finds the target by label until it
     /// becomes visible or motion stops at the boundary.
-    /// Time complexity: O(r * n), where r is `maxScrollCount` and n is the
-    /// number of nodes visited across rebuilt snapshots.
-    private static func scrollLoop(scrollView: SafeSnapshot,
+    /// Shared by both label-to-scroll and anchor-scroll paths.
+    private static func scrollUntilVisible(scrollView: SafeSnapshot,
                                    label: String,
                                    traits: String?,
                                    vertical: Bool,
@@ -422,11 +394,6 @@ enum SwipeCommands {
             for c in n.children { stack.append(c) }
         }
         return nil
-    }
-
-    private static func reResolveScrollable(in root: SafeSnapshot,
-                                            against target: SafeSnapshot) -> SafeSnapshot? {
-        findMatching(in: root, against: target)
     }
 
     // STEP 7 precise adjust (doc 5.1)
