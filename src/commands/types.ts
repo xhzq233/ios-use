@@ -33,6 +33,7 @@ export interface Driver {
   // App
   activateApp(bundleId: string): Promise<void>;
   terminateApp(bundleId: string): Promise<void>;
+  openURL(url: string): Promise<void>;
 
   // Screenshot / logs
   screenshot(): Promise<Buffer>;
@@ -60,6 +61,7 @@ export interface FlowStep {
     | 'waitFor'
     | 'activateApp'
     | 'terminateApp'
+    | 'openURL'
     | 'oslog'
     | 'nslog_start'
     | 'nslog'
@@ -111,6 +113,7 @@ export interface FlowStep {
 
   // App
   bundleId?: string;
+  url?: string;
 
   // oslog
   pattern?: string;

@@ -294,11 +294,7 @@ import Foundation
         case .terminateApp:  return try AppCommands.terminateApp(req.args)
         case .openURL:       return try AppCommands.openURL(req.args)
         case .probeFetch:    return try ProbeCommands.probeFetch(req.args)
-        case .proxyStart:    return try ProxyCommands.proxyStart(req.args)
-        case .proxyStop:     return try ProxyCommands.proxyStop(req.args)
-        case .proxyIngressStart:  return try ProxyCommands.proxyIngressStart(req.args)
-        case .proxyIngressStop:   return try ProxyCommands.proxyIngressStop(req.args)
-        case .proxyPushProfile:   return try ProxyCommands.proxyPushProfile(req.args)
+        case .proxyCAPush:   return try ProxyCommands.proxyCAPush(req.args)
         case .screenshot:
             // Handled by handleConnection's two-frame path; dispatch should
             // never see it.

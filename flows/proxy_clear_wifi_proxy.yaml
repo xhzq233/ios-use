@@ -1,0 +1,53 @@
+name: "proxy: 关闭 Wi-Fi HTTP 代理"
+app: com.apple.Preferences
+steps:
+  - action: activateApp
+    bundleId: com.apple.Preferences
+    comment: "确保设置在前台"
+
+  - action: tap
+    label: Wi-Fi
+    comment: "进入 Wi-Fi 设置"
+
+  - action: sleep
+    ms: 1000
+    comment: "等待 Wi-Fi 列表加载"
+
+  - action: find
+    label: 更多信息
+    context:
+      ancestorType: Cell
+    comment: "找到当前连接网络的 (i) 按钮"
+
+  - action: tap
+    label: 更多信息
+    context:
+      ancestorType: Cell
+    comment: "点击当前网络的详情按钮"
+
+  - action: waitFor
+    label: 配置代理
+    timeout: 5
+
+  - action: swipe
+    to: 配置代理
+    comment: "滚动到配置代理"
+
+  - action: tap
+    label: 配置代理
+    comment: "进入配置代理"
+
+  - action: waitFor
+    label: 关闭
+    timeout: 3
+
+  - action: tap
+    label: 关闭
+    comment: "选择关闭代理"
+
+  - action: sleep
+    ms: 500
+
+  - action: tap
+    label: 存储
+    comment: "保存配置"

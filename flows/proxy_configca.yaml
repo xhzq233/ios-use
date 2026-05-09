@@ -1,0 +1,118 @@
+name: "proxy: 安装并信任 CA 证书"
+app: com.apple.Preferences
+steps:
+  # ── 第一部分：打开 CA 下载 URL，允许下载 ──
+
+  - action: terminateApp
+    bundleId: com.apple.mobilesafari
+
+  - action: openURL
+    url: "http://127.0.0.1:9088/ca.cer"
+
+  - action: waitFor
+    label: 允许
+    timeout: 8
+    traits: Button
+
+  - action: tap
+    label: 允许
+    traits: Button
+    comment: "允许下载描述文件"
+
+  - action: waitFor
+    label: 关闭
+    timeout: 5
+    traits: Button
+
+  - action: tap
+    label: 关闭
+    traits: Button
+    comment: "关闭下载完成提示"
+
+  - action: sleep
+    ms: 1000
+
+  # ── 第二部分：设置首页「已下载描述文件」→ 安装 CA ──
+
+  - action: activateApp
+    bundleId: com.apple.Preferences
+
+  - action: waitFor
+    label: 已下载描述文件
+    timeout: 5
+
+  - action: tap
+    label: 已下载描述文件
+    comment: "设置首页顶部入口"
+
+  - action: waitFor
+    label: 安装
+    timeout: 3
+
+  - action: tap
+    label: 安装
+    comment: "点击右上角安装"
+
+  - action: sleep
+    ms: 1000
+
+  - action: tap
+    label: 安装
+    comment: "确认安装（弹窗中的安装按钮）"
+
+  - action: sleep
+    ms: 500
+
+  - action: tap
+    label: 完成
+    comment: "安装完成"
+
+  # ── 第三部分：导航到证书信任设置，完全信任 CA ──
+
+  - action: terminateApp
+    bundleId: com.apple.Preferences
+
+  - action: activateApp
+    bundleId: com.apple.Preferences
+
+  - action: sleep
+    ms: 1500
+
+  - action: tap
+    label: 通用
+
+  - action: waitFor
+    label: 关于本机
+    timeout: 5
+
+  - action: tap
+    label: 关于本机
+
+  - action: sleep
+    ms: 2000
+
+  - action: swipe
+    to: 证书信任设置
+    from: iOS版本
+
+  - action: tap
+    label: 证书信任设置
+
+  - action: waitFor
+    label: mitmproxy
+    timeout: 5
+    traits: "Cell,Switch"
+
+  - action: tap
+    label: mitmproxy
+    traits: "Cell,Switch"
+    offset:
+      xRatio: 0.9
+    comment: "点击开关"
+
+  - action: sleep
+    ms: 500
+
+  - action: tap
+    label: 继续
+    comment: "确认信任弹窗"

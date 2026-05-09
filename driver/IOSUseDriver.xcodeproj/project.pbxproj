@@ -36,7 +36,6 @@
 		947BDE121DDB75E2D244D1BF /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 17BCFDE8A7DA91241BC86090 /* AppRegistry.m */; };
 		9B2D14D04A8484C749189950 /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C773A75C11E5CE2360A4FB4 /* Input.swift */; };
 		9B9DC8661A47D7EB2FF33C44 /* CodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABACD4A116F231BF1D16712 /* CodecTests.swift */; };
-		9DEB047682286E673B7659D2 /* Yamux.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A3E9852C95B8C16881E37FB /* Yamux.swift */; };
 		A2F46A49779B68AEAD78B0C2 /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 17BCFDE8A7DA91241BC86090 /* AppRegistry.m */; };
 		A77C65F2623A196E0C66EB99 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E262BB01AF4133E6AF8C75 /* RunnerTests.swift */; };
 		ADB402EBA304FD6F23411372 /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
@@ -48,7 +47,6 @@
 		C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
 		C17AD8E6E19EB9DF22D2E31E /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
 		CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C773A75C11E5CE2360A4FB4 /* Input.swift */; };
-		CDB213EC867DE24FB9127D49 /* Yamux.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A3E9852C95B8C16881E37FB /* Yamux.swift */; };
 		E1690C6B99691CCDC27F4FD6 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0AC56CC6B8335709D4A71 /* App.swift */; };
 		EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		EFBB4C9BDE512CA610CD097A /* Probe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05472B7D1F53F7686793C318 /* Probe.swift */; };
@@ -79,7 +77,6 @@
 		7C5B4B608C890EFE8841A177 /* Dom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dom.swift; sourceTree = "<group>"; };
 		7C773A75C11E5CE2360A4FB4 /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input.swift; sourceTree = "<group>"; };
 		8A018728001BB6A88192EAFD /* ServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTests.swift; sourceTree = "<group>"; };
-		8A3E9852C95B8C16881E37FB /* Yamux.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Yamux.swift; sourceTree = "<group>"; };
 		90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypesTests.swift; sourceTree = "<group>"; };
 		9DE69CDBA7F414F7325EFBD0 /* Codec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Codec.swift; sourceTree = "<group>"; };
@@ -133,7 +130,6 @@
 				688FE3DE301B8593639EAB9B /* Swipe.swift */,
 				58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */,
 				B82A6D94A3BC809E2C68F694 /* WaitFor.swift */,
-				8A3E9852C95B8C16881E37FB /* Yamux.swift */,
 			);
 			path = Commands;
 			sourceTree = "<group>";
@@ -287,7 +283,6 @@
 				81CD91B7F77CDB0EB872969C /* TypesTests.swift in Sources */,
 				6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */,
 				F23939ACC634CC69D0D7C5E0 /* XCTestPrivate.m in Sources */,
-				CDB213EC867DE24FB9127D49 /* Yamux.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -316,7 +311,6 @@
 				1C3EBE5B9344D22F327464D4 /* Types.swift in Sources */,
 				6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */,
 				F84D2C040ACBA005CD67B912 /* XCTestPrivate.m in Sources */,
-				9DEB047682286E673B7659D2 /* Yamux.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
