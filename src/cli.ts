@@ -4,38 +4,16 @@ import { Command } from 'commander';
 import { logger } from './utils/logger';
 import { configureDeviceSigning, readProjectConfig } from './config';
 import { detectRealDevices, detectBootedSimulators, formatDeviceLabel } from './device';
-import {
-  tapAction,
-  swipeAction,
-  inputAction,
-  longpressAction,
-  domAction,
-  findAction,
-  screenshotAction,
-  waitForAction,
-  oslogAction,
-  runCommandStep,
-} from './commands/actions';
+import { runCommandStep } from './commands/actions';
 import { flowAction } from './commands/flow';
 import { nslogStreamAction } from './commands/nslog';
 import { proxyConfigCA, proxyStart, proxyStop, proxyRead } from './commands/proxy';
+import { getCliActions, mapCliToStep, parseIntStrict, parseFloatStrict } from './commands/registry';
 import type { SwipeDir } from './driver-protocol/index.js';
 import { startSession, stopSession, sessionStatus, readSessionInfo } from './session';
 import { formatDriverError } from './utils/driverError';
 
 const program = new Command();
-
-function parseIntStrict(val: string): number {
-  const n = parseInt(val, 10);
-  if (!Number.isFinite(n)) throw new Error(`Invalid integer: "${val}"`);
-  return n;
-}
-
-function parseFloatStrict(val: string): number {
-  const n = Number(val);
-  if (!Number.isFinite(n)) throw new Error(`Invalid number: "${val}"`);
-  return n;
-}
 
 function handleAction<TArgs extends unknown[]>(action: (...args: TArgs) => Promise<unknown>) {
   return async (...args: TArgs) => {
@@ -53,23 +31,6 @@ function handleAction<TArgs extends unknown[]>(action: (...args: TArgs) => Promi
 }
 
 type ActionOpts = { udid?: string; bundleId?: string; verbose?: boolean };
-type TapOffset = { x?: number; y?: number; xRatio?: number; yRatio?: number };
-
-function extractTapOffset(opts: Record<string, unknown>): TapOffset | undefined {
-  const offsetX = opts['offsetX'] as number | undefined;
-  const offsetY = opts['offsetY'] as number | undefined;
-  const offsetXRatio = opts['offsetXRatio'] as number | undefined;
-  const offsetYRatio = opts['offsetYRatio'] as number | undefined;
-  if (offsetX === undefined && offsetY === undefined && offsetXRatio === undefined && offsetYRatio === undefined) {
-    return undefined;
-  }
-  return {
-    x: offsetX,
-    y: offsetY,
-    xRatio: offsetXRatio,
-    yRatio: offsetYRatio,
-  };
-}
 
 function addSessionOptions(command: Command): Command {
   return command
@@ -157,134 +118,45 @@ sessionCmd.command('status')
   .description('Show current session info')
   .action(handleAction(async () => { await sessionStatus(); }));
 
-// ── Host API commands (names match flow actions 1:1) ──
+// ── Action commands (auto-registered from registry) ──
 
-addSessionOptions(
-  program.command('activateApp <bundleId>')
-    .description('Launch or foreground an app by bundle ID'),
-).action(handleAction(async (bundleId: string, opts: ActionOpts) => {
-  await runCommandStep({ action: 'activateApp', bundleId }, opts);
-}));
+for (const def of getCliActions()) {
+  let cmd = program.command(def.name).description(def.desc);
 
-addSessionOptions(
-  program.command('terminateApp <bundleId>')
-    .description('Terminate an app by bundle ID'),
-).action(handleAction(async (bundleId: string, opts: ActionOpts) => {
-  await runCommandStep({ action: 'terminateApp', bundleId }, opts);
-}));
+  // Positional args
+  if (def.cli?.args) {
+    for (const arg of def.cli.args) {
+      cmd = cmd.argument(`<${arg}>`, arg);
+    }
+  }
 
-addSessionOptions(
-  program.command('dismissAlert')
-    .description('Dismiss the current system alert')
-    .option('--index <index>', 'Button index to tap (0-based, default: last)'),
-).action(handleAction(async (opts: ActionOpts & { index?: string }) => {
-  const index = opts.index !== undefined ? parseInt(opts.index, 10) : undefined;
-  await runCommandStep({ action: 'dismissAlert', index } as any, opts);
-}));
+  // Options
+  if (def.cli?.opts) {
+    for (const opt of def.cli.opts) {
+      const flag = opt.flag ? `--${opt.name}` : `--${opt.name} <${opt.name}>`;
+      if (opt.required) {
+        if (opt.parse) cmd = cmd.requiredOption(flag, opt.desc, opt.parse, opt.default);
+        else cmd = cmd.requiredOption(flag, opt.desc);
+      } else if (opt.flag) {
+        cmd = cmd.option(flag, opt.desc);
+      } else if (opt.parse) {
+        cmd = cmd.option(flag, opt.desc, opt.parse, opt.default);
+      } else {
+        cmd = cmd.option(flag, opt.desc);
+      }
+    }
+  }
 
-addSessionOptions(
-  program.command('dom')
-    .description('Dump current UI DOM tree')
-    .option('--raw', 'Return raw XCUI snapshot tree (default: cleaned)')
-    .option('--save', 'Save DOM tree to output/ directory')
-    .option('--name <name>', 'Filename prefix for saved DOM', 'dom'),
-).action(handleAction(async (opts: ActionOpts & { raw?: boolean; save?: boolean; name?: string }) => {
-  await domAction(opts);
-}));
+  addSessionOptions(cmd);
 
-addSessionOptions(
-  program.command('find <label>')
-    .description('Find UI element by label')
-    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
-).action(handleAction(async (label: string, opts: ActionOpts & { traits?: string }) => {
-  await findAction({ label, ...opts, traits: opts.traits });
-}));
-
-addSessionOptions(
-  program.command('tap')
-    .description('Tap on screen by label or coordinate ("x,y")')
-    .requiredOption('--label <target>', 'Element label or "x,y" coordinate')
-    .option('--offset-x <px>', 'Tap x offset from the target element top-left', parseIntStrict)
-    .option('--offset-y <px>', 'Tap y offset from the target element top-left', parseIntStrict)
-    .option('--offset-x-ratio <ratio>', 'Tap x ratio from the target element top-left', parseFloatStrict)
-    .option('--offset-y-ratio <ratio>', 'Tap y ratio from the target element top-left', parseFloatStrict)
-    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
-).action(handleAction(async (opts: ActionOpts & {
-  label: string;
-  traits?: string;
-  offsetX?: number;
-  offsetY?: number;
-  offsetXRatio?: number;
-  offsetYRatio?: number;
-}) => {
-  await tapAction({
-    ...opts,
-    traits: opts.traits,
-    offset: extractTapOffset(opts as Record<string, unknown>),
-  });
-}));
-
-addSessionOptions(
-  program.command('swipe')
-    .description('Swipe on screen')
-    .option('--to <target>', 'Target label (scroll until visible) or "x,y" coordinate')
-    .option('--from <anchor>', 'Anchor label or "x,y" coordinate to scroll from')
-    .option('--dir <direction>', 'Direction: forth (down/right) or back (up/left)')
-    .option('--distance <px>', 'Swipe distance in pixels (for pure distance swipe)', parseFloatStrict)
-    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
-).action(handleAction(async (opts: ActionOpts & { to?: string; from?: string; dir?: string; distance?: number; traits?: string }) => {
-  await swipeAction({ ...opts, dir: opts.dir as SwipeDir | undefined, traits: opts.traits });
-}));
-
-addSessionOptions(
-  program.command('input')
-    .description('Type text into an element')
-    .requiredOption('--content <text>', 'Text to type')
-    .requiredOption('--label <text>', 'Focus element by label before typing')
-    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
-).action(handleAction(async (opts: ActionOpts & { content: string; label: string; traits?: string }) => {
-  await inputAction({ ...opts, traits: opts.traits });
-}));
-
-addSessionOptions(
-  program.command('longpress')
-    .description('Long press on screen by label or coordinate ("x,y")')
-    .requiredOption('--label <target>', 'Element label or "x,y" coordinate')
-    .option('--duration <ms>', 'Long press duration in ms', parseIntStrict)
-    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
-).action(handleAction(async (opts: ActionOpts & { label: string; duration?: number; traits?: string }) => {
-  await longpressAction({ ...opts, traits: opts.traits });
-}));
-
-addSessionOptions(
-  program.command('screenshot')
-    .description('Take a screenshot (saved as .jpg)')
-    .option('--name <name>', 'Filename prefix', 'screenshot'),
-).action(handleAction(async (opts: ActionOpts & { name?: string }) => {
-  await screenshotAction(opts);
-}));
-
-addSessionOptions(
-  program.command('waitFor')
-    .description('Wait until an element becomes visible')
-    .requiredOption('--label <text>', 'Element label to wait for')
-    .option('--timeout <seconds>', 'Timeout in seconds', parseFloatStrict)
-    .option('--traits <traits>', 'Filter by traits (comma-separated, e.g. Cell,Button). AND semantics.'),
-).action(handleAction(async (opts: ActionOpts & { label: string; timeout?: number; traits?: string }) => {
-  await waitForAction({ ...opts, traits: opts.traits });
-}));
-
-addSessionOptions(
-  program.command('oslog')
-    .description('Fetch iOS system logs from the device')
-    .option('--pattern <pattern>', 'Regex pattern to filter logs')
-    .option('--flags <flags>', 'Regex flags')
-    .option('--timeout <seconds>', 'Timeout in seconds', parseFloatStrict)
-    .option('--name <name>', 'Output filename prefix')
-    .option('--clear', 'Clear log buffer and return cleared count'),
-).action(handleAction(async (opts: ActionOpts & { pattern?: string; flags?: string; timeout?: number; name?: string; clear?: boolean; bundleId?: string }) => {
-  await oslogAction(opts);
-}));
+  cmd.action(handleAction(async (...rest: unknown[]) => {
+    // commander passes (positional args..., cmdObj)
+    const cmdObj = rest[rest.length - 1] as Record<string, unknown>;
+    const args = rest.slice(0, rest.length - 1) as string[];
+    const step = mapCliToStep(def, args, cmdObj);
+    await runCommandStep(step, cmdObj as ActionOpts);
+  }));
+}
 
 // ── Flow ──
 

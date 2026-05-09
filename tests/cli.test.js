@@ -134,6 +134,7 @@ describe('cli', () => {
     ], ['--mode']);
     expectHelp(['find', '--help'], [
       'Find UI element by label',
+      '<label>',
       '--traits',
       '--udid',
       '--bundle-id',
@@ -159,25 +160,23 @@ describe('cli', () => {
 
   test('shows tap/longpress/swipe/waitFor/oslog help with all fields', () => {
     expectHelp(['tap', '--help'], [
-      '--label',
+      '<target>',
       '"x,y"',
-      '--offset-x',
-      '--offset-y',
-      '--offset-x-ratio',
-      '--offset-y-ratio',
+      '--offset',
+      '--offset-ratio',
       '--traits',
       '--udid',
       '--bundle-id',
       '--verbose',
-    ], ['--x ']);
+    ], ['--offset-x', '--offset-y']);
     expectHelp(['longpress', '--help'], [
-      '--label',
+      '<target>',
       '--duration',
       '--traits',
       '--udid',
       '--bundle-id',
       '--verbose',
-    ], ['--x ']);
+    ]);
     expectHelp(['swipe', '--help'], [
       '--to',
       '--from',
@@ -231,17 +230,17 @@ describe('cli', () => {
   test('accepts traits option on label commands', () => {
     expectAcceptedWithoutSession(['find', '通用', '--traits', 'Cell']);
     expectAcceptedWithoutSession(['find', '通用', '--traits', 'Cell,Button']);
-    expectAcceptedWithoutSession(['tap', '--label', '通用', '--traits', 'Cell']);
-    expectAcceptedWithoutSession(['tap', '--label', '通用', '--traits', 'Cell,Button']);
-    expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x', '12', '--offset-y', '5']);
-    expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x-ratio', '0.8', '--offset-y-ratio', '0.5']);
-    expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-x-ratio', '0.8']);
-    expectAcceptedWithoutSession(['tap', '--label', '通用', '--offset-y', '5']);
+    expectAcceptedWithoutSession(['tap', '通用', '--traits', 'Cell']);
+    expectAcceptedWithoutSession(['tap', '通用', '--traits', 'Cell,Button']);
+    expectAcceptedWithoutSession(['tap', '通用', '--offset', '12,5']);
+    expectAcceptedWithoutSession(['tap', '通用', '--offset-ratio', '0.8,0.5']);
+    expectAcceptedWithoutSession(['tap', '通用', '--offset-ratio', '0.8']);
+    expectAcceptedWithoutSession(['tap', '通用', '--offset', '0,5']);
     expectAcceptedWithoutSession(['input', '--label', '通用', '--content', 'abc', '--traits', 'Cell']);
     expectAcceptedWithoutSession(['input', '--label', '通用', '--content', 'abc', '--traits', 'Cell,Button']);
     expectAcceptedWithoutSession(['swipe', '--to', '通用', '--traits', 'Cell']);
     expectAcceptedWithoutSession(['swipe', '--to', '通用', '--traits', 'Cell,Button']);
-    expectAcceptedWithoutSession(['longpress', '--label', '通用', '--traits', 'Cell']);
+    expectAcceptedWithoutSession(['longpress', '通用', '--traits', 'Cell']);
     expectAcceptedWithoutSession(['waitFor', '--label', '通用', '--traits', 'Cell']);
   });
 
@@ -249,7 +248,7 @@ describe('cli', () => {
     expectNumericParseError(['config', '--port', 'abc', '--list'], 'Invalid integer: "abc"');
     expectNumericParseError(['swipe', '--distance', 'abc'], 'Invalid number: "abc"');
     expectNumericParseError(['waitFor', '--label', 'foo', '--timeout', 'abc'], 'Invalid number: "abc"');
-    expectNumericParseError(['longpress', '--label', 'foo', '--duration', 'abc'], 'Invalid integer: "abc"');
+    expectNumericParseError(['longpress', 'foo', '--duration', 'abc'], 'Invalid integer: "abc"');
     expectNumericParseError(['nslog', '--port', 'abc'], 'Invalid integer: "abc"');
   });
 
