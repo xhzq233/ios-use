@@ -56,6 +56,7 @@ interface StartSessionOpts {
   bundleId?: string;
   udid?: string;
   verbose?: boolean;
+  terminate?: boolean;
 }
 
 interface CreateDriverFromSessionOpts {
@@ -388,7 +389,7 @@ export async function startSession(opts: StartSessionOpts): Promise<void> {
     if (activeInfo && activeInfo.udid === device.udid) {
       try {
         client = await createClientFromSession(activeInfo, { verbose, ownsSession: true });
-        await client.createSession(bundleId);
+        await client.createSession(bundleId, opts.terminate);
         const nextInfo = saveReadySession(client, device, bundleId);
         logSessionReady(bundleId, nextInfo.sessionId);
         disconnectClient(client);
@@ -414,7 +415,7 @@ export async function startSession(opts: StartSessionOpts): Promise<void> {
         directTcp: isSimulator,
         ownsSession: true,
       });
-      await client.createSession(bundleId);
+      await client.createSession(bundleId, opts.terminate);
       const sessionInfo = saveReadySession(client, device, bundleId);
       logSessionReady(bundleId, sessionInfo.sessionId);
       disconnectClient(client);
@@ -466,7 +467,7 @@ export async function startSession(opts: StartSessionOpts): Promise<void> {
       throw new Error(`Driver did not start within ${maxWaitMs / 1000}s`);
     }
 
-    await client.createSession(bundleId);
+    await client.createSession(bundleId, opts.terminate);
     const sessionInfo = saveReadySession(client, device, bundleId);
     if (bundleId) {
       logger.success(`Session created: ${sessionInfo.sessionId.substring(0, 8)}...`);
