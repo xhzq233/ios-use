@@ -198,7 +198,9 @@ enum SwipeCommands {
                     return okScrollWithAncestors(node: elem.node, scrolls: i + 1)
                 }
             case .ambiguous(let matches):
-                return ambiguityResponse(label, matches: matches)
+                if let visible = matches.first(where: { $0.isVisible }) {
+                    return okScrollWithAncestors(node: visible.node, scrolls: i + 1)
+                }
             case .fuzzy, .notFound:
                 break
             }
@@ -351,6 +353,11 @@ enum SwipeCommands {
             switch rawFindInSnapshot(label, traits: traits, cs: freshCS) {
             case .found(let elem) where elem.isVisible:
                 return .found(count: i + 1, target: elem.node)
+            case .ambiguous(let matches):
+                if let visible = matches.first(where: { $0.isVisible }) {
+                    return .found(count: i + 1, target: visible.node)
+                }
+                break
             default:
                 break
             }
