@@ -76,6 +76,7 @@ enum StringOrPoint: Codable {
 
 struct CreateSessionArgs: Codable {
     let bundleId: String?
+    let terminate: Bool?
 }
 
 struct ActivateAppArgs: Codable {

@@ -266,7 +266,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
   logger.debug(`flowAction: needLog=${JSON.stringify(resolvedNeedLog ?? null)} app=${JSON.stringify(resolvedApp ?? flow.app ?? null)}`, !!opts.verbose);
 
   if (typeof resolvedApp === 'string') opts.bundleId = resolvedApp;
-  await startSession(opts);
+  await startSession({ ...opts, terminate: true });
 
   const driver = await createDriverFromSession({ verbose: opts.verbose }) as Driver;
 

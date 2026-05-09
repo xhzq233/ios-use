@@ -181,12 +181,21 @@ final class TypesTests: XCTestCase {
         let a = try JSONDecoder().decode(CreateSessionArgs.self,
             from: "{\"bundleId\":\"com.apple.Preferences\"}".data(using: .utf8)!)
         XCTAssertEqual(a.bundleId, "com.apple.Preferences")
+        XCTAssertNil(a.terminate)
+    }
+
+    func testCreateSessionArgs_Decode_WithTerminate() throws {
+        let a = try JSONDecoder().decode(CreateSessionArgs.self,
+            from: "{\"bundleId\":\"com.apple.Preferences\",\"terminate\":true}".data(using: .utf8)!)
+        XCTAssertEqual(a.bundleId, "com.apple.Preferences")
+        XCTAssertEqual(a.terminate, true)
     }
 
     func testCreateSessionArgs_EmptyIsDeviceSession() throws {
         let a = try JSONDecoder().decode(CreateSessionArgs.self,
             from: "{}".data(using: .utf8)!)
         XCTAssertNil(a.bundleId)
+        XCTAssertNil(a.terminate)
     }
 
     func testActivateAppArgs_RequiresBundleId() {
