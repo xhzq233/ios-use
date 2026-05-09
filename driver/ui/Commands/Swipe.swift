@@ -107,7 +107,8 @@ enum SwipeCommands {
 
         // STEP 6: scroll loop.
         let scrolls = scrollLoop(scrollView: scrollView,
-                                 target: target.node,
+                                 label: label,
+                                 traits: args.traits,
                                  vertical: vertical,
                                  scrollUpwards: scrollUpwards,
                                  app: app)
@@ -117,6 +118,8 @@ enum SwipeCommands {
             return Codec.makeError("max scroll count reached")
         case .hitBoundary:
             return boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
+        case .snapshotFailed:
+            return Codec.makeError("scroll: failed to rebuild snapshot (app may have exited)")
         case .found(let count, let finalTarget):
             // STEP 7: precise adjust via visibleFrame.
             preciseAdjust(targetCell: findCellAncestor(finalTarget),
@@ -305,14 +308,16 @@ enum SwipeCommands {
         case found(count: Int, target: SafeSnapshot)
         case hitBoundary
         case reachedMax
+        case snapshotFailed
     }
 
-    /// Scrolls, rebuilds snapshots, and re-matches the target until it becomes
-    /// visible or motion stops at the boundary.
+    /// Scrolls, rebuilds snapshots, and re-finds the target by label until it
+    /// becomes visible or motion stops at the boundary.
     /// Time complexity: O(r * n), where r is `maxScrollCount` and n is the
     /// number of nodes visited across rebuilt snapshots.
     private static func scrollLoop(scrollView: SafeSnapshot,
-                                   target: SafeSnapshot,
+                                   label: String,
+                                   traits: String?,
                                    vertical: Bool,
                                    scrollUpwards: Bool,
                                    app: XCUIApplication) -> ScrollOutcome {
@@ -334,15 +339,18 @@ enum SwipeCommands {
             Thread.sleep(forTimeInterval: ScrollConstants.settleInterval)
 
             invalidateSnapshot()
-            if let freshCS = rebuildCleanedSnapshot(),
-               let freshTarget = findMatching(in: freshCS.rawRoot, against: target),
-               freshTarget.isVisible {
-                return .found(count: i + 1, target: freshTarget)
+            guard let freshCS = rebuildCleanedSnapshot() else { return .snapshotFailed }
+
+            // Re-find target by label (not identity) — survives snapshot rebuilds.
+            switch rawFindInSnapshot(label, traits: traits, cs: freshCS) {
+            case .found(let elem) where elem.isVisible:
+                return .found(count: i + 1, target: elem.node)
+            default:
+                break
             }
 
             // Boundary: cells didn't move → at edge.
-            guard let freshCS = rebuildCleanedSnapshot(),
-                  let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) else {
+            guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) else {
                 return .hitBoundary
             }
             let nowFrames = collectCellSnapshots(freshScrollView).filter { $0.isVisible }.map { $0.frame }
