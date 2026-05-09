@@ -259,9 +259,9 @@ steps:
 ### 6.4 `swipe`
 
 - **目标导向（推荐）**：通过 `to` / `from` 自动循环滚动，直到目标进入可见区域
-  - 不需要目标一开始就在 AX 树中；driver 内部会重复滚动 → 重新 snapshot → 查找目标
-  - `from` 是锚点，传一个当前可见的元素，driver 从它所在的 scrollable 开始滚动
-  - 不传 `from` 时，driver 自动找最大的 scrollable 滚动
+  - 目标不需要初始可见，但必须已在 AX 树中（不确定时先 `dom` 确认）
+  - `from` 是锚点，传一个当前可见的元素，driver 从它所在的 scrollable 开始滚动；**目标不在当前屏幕时必须传 `from`**
+  - 不传 `from` 时目标必须初始可见，否则返回 not found
   - 方向自动推断，无需手动指定
 - 固定距离：通过 `dir + distance` 做纯距离滚动
 

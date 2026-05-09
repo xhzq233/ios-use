@@ -108,9 +108,9 @@ Flow 的编写规范、字段语义和 subflow 用法见 `references/flow.md`。
 
 - `swipe`
   - 目标导向（推荐）：`--to <label> --from <label|point>`，自动循环滚动直到目标进入可见区域
-    - **不需要目标一开始就在 AX 树中**；内部会重复滚动 → 重新 snapshot → 查找目标，直到目标出现或 hit boundary
-    - `--from` 是锚点：传一个当前可见的元素，driver 从它所在的 scrollable 开始滚动
-    - 不传 `--from` 时，driver 自动找最大的 scrollable 进行滚动
+    - 目标不需要初始可见，但必须已在 AX 树中（不确定时先 `dom` 确认）
+    - `--from` 是锚点：传一个当前可见的元素，driver 从它所在的 scrollable 开始滚动；**目标不在当前屏幕时必须传 `--from`**
+    - 不传 `--from` 时目标必须初始可见，否则返回 not found
     - 方向自动推断：根据目标 cell 相对于当前可见 cell 的位置决定 `forth`（向下/右）或 `back`（向上/左）
     - 页面内的长列表滚动，**优先用目标导向**，不要自己拆成多次纯距离 swipe
   - 固定距离：`--dir forth|back --distance <px>`，适合已经确认页面方向时做纯距离滚动
