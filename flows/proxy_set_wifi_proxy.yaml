@@ -34,8 +34,8 @@ steps:
     timeout: 5
 
   - action: swipe
-    to: HTTP代理
-    comment: "滚动到 HTTP 代理区域"
+    to: 配置代理
+    comment: "滚动到配置代理可见"
 
   - action: tap
     label: 配置代理
