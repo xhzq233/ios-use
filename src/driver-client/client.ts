@@ -175,8 +175,11 @@ export class DriverClient extends BaseRpcClient {
     this._ownsSession = opts.ownsSession ?? true;
   }
 
-  async createSession(bundleId?: string): Promise<CreateSessionResponse> {
-    const data = await this.send<CreateSessionResponse>(DRIVER_COMMANDS.CREATE_SESSION, bundleId ? { bundleId } : {});
+  async createSession(bundleId?: string, terminate?: boolean): Promise<CreateSessionResponse> {
+    const args: Record<string, unknown> = {};
+    if (bundleId) args.bundleId = bundleId;
+    if (terminate) args.terminate = true;
+    const data = await this.send<CreateSessionResponse>(DRIVER_COMMANDS.CREATE_SESSION, args);
     this._sessionId = nextSessionId();
     this._bundleId = bundleId ?? null;
     return data;

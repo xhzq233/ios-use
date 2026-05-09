@@ -26,34 +26,39 @@ final class Session {
 
     var bundleId: String? { _bundleId }
 
-    func create(bundleId: String?) throws {
+    func create(bundleId: String?, terminate: Bool = false) throws {
         if let bundleId = bundleId {
             _isDeviceSession = false
-            NSLog("[session] create called with bundleId=\(bundleId)")
-            let probeApp = (_bundleId == bundleId ? _app : nil) ?? XCUIApplication(bundleIdentifier: bundleId)
+            NSLog("[session] create called with bundleId=\(bundleId) terminate=\(terminate)")
+            let app = (_bundleId == bundleId ? _app : nil) ?? XCUIApplication(bundleIdentifier: bundleId)
 
-            let state = probeApp.state
+            let state = app.state
             NSLog("[session] app state=\(state.rawValue) (0=unknown,1=notRunning,2=suspended,3=background,4=foreground)")
             guard state != .unknown else {
                 NSLog("[session] ERROR: app not found, state=unknown bundleId=\(bundleId)")
                 throw DriverError.appNotFound(bundleId)
             }
-            if state != .notRunning && state != .unknown {
+
+            if terminate && state != .notRunning && state != .unknown {
                 NSLog("[session] terminating app for cold start...")
-                probeApp.terminate()
-                try waitForTermination(probeApp)
+                app.terminate()
+                try waitForTermination(app)
             }
 
-            // Explicit bundleId means cold-start the target app: terminate if
-            // needed, then relaunch via LaunchServices so the new session is
-            // not constrained by the previously foregrounded app.
-            let app = probeApp
-            NSLog("[session] launching app via LaunchServices...")
-            guard OpenApplicationWithBundleId(bundleId) else {
-                NSLog("[session] ERROR: LaunchServices could not open bundleId=\(bundleId)")
-                throw DriverError.appNotFound(bundleId)
+            if state == .notRunning || (terminate && state != .unknown) {
+                NSLog("[session] launching app via LaunchServices...")
+                guard OpenApplicationWithBundleId(bundleId) else {
+                    NSLog("[session] ERROR: LaunchServices could not open bundleId=\(bundleId)")
+                    throw DriverError.appNotFound(bundleId)
+                }
+                NSLog("[session] openApplicationWithBundleID() returned")
+            } else if state != .runningForeground {
+                NSLog("[session] app in background/suspended, activating...")
+                app.activate()
+            } else {
+                NSLog("[session] app already in foreground, skipping activate")
             }
-            NSLog("[session] openApplicationWithBundleID() returned")
+
             try waitForForeground(app, bundleId: bundleId)
             _app = app
             _bundleId = bundleId

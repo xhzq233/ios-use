@@ -9,7 +9,8 @@ enum AppCommands {
     static func createSession(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
         let args = decodeArgsOptional(rawArgs, as: CreateSessionArgs.self)
         let bundleId = args?.bundleId
-        try Session.shared.create(bundleId: bundleId)
+        let terminate = args?.terminate ?? false
+        try Session.shared.create(bundleId: bundleId, terminate: terminate)
         return Codec.makeOK(["bundleId": bundleId ?? ""])
     }
 
