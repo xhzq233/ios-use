@@ -52,6 +52,7 @@ Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
 
 - `runFlow`
 - `returnIf`
+- `sleep`
 
 **以下 action 不存在**，不要在 flow 中使用：
 
@@ -295,7 +296,21 @@ steps:
   name: settings-oslog
 ```
 
-### 6.6 `nslog`
+### 6.6 `sleep`
+
+- 等待指定毫秒，用于页面切换后等 UI 渲染、弹窗延迟出现等时序场景
+- `ms` 可选，不传默认 `1000ms`（1 秒）
+- 不显示、不计入步数（`--verbose` 时可见）
+- 可被 Ctrl+C 中断
+
+```yaml
+- action: sleep           # 默认等待 1000ms
+
+- action: sleep
+  ms: 500
+```
+
+### 6.7 `nslog`
 
 - 需要 `needLog: true` 或前置 `nslog_start` action
 - `pattern` 是正则匹配，`timeout` 轮询等待匹配出现
@@ -309,7 +324,7 @@ steps:
   clearAfterRead: true
 ```
 
-### 6.7 关闭弹窗
+### 6.8 关闭弹窗
 
 没有 `dismissPopup` action。关闭弹窗的标准做法：
 
