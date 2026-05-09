@@ -269,13 +269,25 @@ private func cleanTree(
 
     // Rule 4: single-child same-type merge — if this node has exactly one kept
     // child and that child is same type + same rect + same label, keep only
-    // the parent and discard the child duplicate.
+    // the parent and adopt the child's descendants.
     var effectiveSubtrees = childSubtrees
     if effectiveSubtrees.count == 1, let childRoot = effectiveSubtrees[0].records.first {
         if sameElementType(childRoot.node, node)
             && rectApproxEqual(childRoot.node.frame, node.frame)
             && displayName(for: childRoot.node) == displayName(for: node) {
-            effectiveSubtrees = []
+            let childRecords = effectiveSubtrees[0].records
+            let mergedRoot = SnapshotElement(
+                node: node,
+                traits: traits,
+                disabled: disabled,
+                invisible: invisible,
+                childCount: childRoot.childCount
+            )
+            var mergedRecords = [mergedRoot]
+            if childRecords.count > 1 {
+                mergedRecords.append(contentsOf: childRecords.dropFirst())
+            }
+            return .keep(CleanSubtree(records: mergedRecords))
         }
     }
 

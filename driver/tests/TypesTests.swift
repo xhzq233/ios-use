@@ -812,6 +812,46 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(cells.map { $0.label }, ["蓝牙", "通用", "开发者"])
     }
 
+    // MARK: - cleanTree Rule 4: same-type merge adopts grandchildren
+
+    func testCleanTree_SameTypeMerge_AdoptsGrandchildren() {
+        // Simulates nested WebView→WebView→StaticText (same type, same rect, both nil label)
+        let grandchild = FakeRawSnapshot(label: "硬核会员答题", elementType: .staticText)
+        let innerWebView = FakeRawSnapshot(
+            elementType: .webView,
+            children: [grandchild]
+        )
+        let outerWebView = FakeRawSnapshot(
+            elementType: .webView,
+            children: [innerWebView]
+        )
+        let root = SafeSnapshot(raw: outerWebView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let elements = buildCleanElements(from: root)
+
+        // Rule 4 merges outerWebView+innerWebView but must keep the grandchild.
+        // Expected: [WebView(childCount=1), StaticText]
+        XCTAssertEqual(elements.count, 2)
+        XCTAssertEqual(elements[0].traits.first, "WebView")
+        XCTAssertEqual(elements[0].childCount, 1)
+        XCTAssertEqual(elements[1].traits.first, "StaticText")
+        XCTAssertEqual(displayName(for: elements[1].node), "硬核会员答题")
+    }
+
+    func testCleanTree_SameTypeMerge_DifferentRect_NoMerge() {
+        // Different rect → should NOT merge
+        let child = FakeRawSnapshot(label: "内容", elementType: .webView, frame: CGRect(x: 10, y: 10, width: 80, height: 30))
+        let parent = FakeRawSnapshot(elementType: .webView, frame: CGRect(x: 0, y: 0, width: 100, height: 40), children: [child])
+        let root = SafeSnapshot(raw: parent, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let elements = buildCleanElements(from: root)
+
+        // Both should survive as separate nodes
+        XCTAssertEqual(elements.count, 2)
+        XCTAssertEqual(elements[0].childCount, 1)
+        XCTAssertEqual(elements[1].childCount, 0)
+    }
+
     // MARK: - cleanTree Rule 6: same-label parent-child merge
 
     func testCleanTree_MergesSameLabelParentChild() {
