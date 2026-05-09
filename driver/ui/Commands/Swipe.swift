@@ -120,6 +120,8 @@ enum SwipeCommands {
             return boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         case .snapshotFailed:
             return Codec.makeError("scroll: failed to rebuild snapshot (app may have exited)")
+        case .ambiguous(let lbl, let matches):
+            return ambiguityResponse(lbl, matches: matches)
         case .found(let count, let finalTarget):
             // STEP 7: precise adjust via visibleFrame.
             preciseAdjust(targetCell: findCellAncestor(finalTarget),
@@ -189,6 +191,8 @@ enum SwipeCommands {
             return Codec.makeError("anchor scroll: max scroll count reached")
         case .snapshotFailed:
             return Codec.makeError("anchor scroll: failed to rebuild snapshot (app may have exited)")
+        case .ambiguous(let lbl, let matches):
+            return ambiguityResponse(lbl, matches: matches)
         }
     }
 
@@ -290,6 +294,7 @@ enum SwipeCommands {
         case hitBoundary
         case reachedMax
         case snapshotFailed
+        case ambiguous(label: String, matches: [SnapshotElement])
     }
 
     /// Scrolls, rebuilds snapshots, and re-finds the target by label until it
@@ -326,10 +331,7 @@ enum SwipeCommands {
             case .found(let elem) where elem.isVisible:
                 return .found(count: i + 1, target: elem.node)
             case .ambiguous(let matches):
-                if let visible = matches.first(where: { $0.isVisible }) {
-                    return .found(count: i + 1, target: visible.node)
-                }
-                break
+                return .ambiguous(label: label, matches: matches)
             default:
                 break
             }
