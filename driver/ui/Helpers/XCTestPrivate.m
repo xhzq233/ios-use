@@ -630,18 +630,10 @@ BOOL XCFBTypeText(NSString *text, NSUInteger typingSpeed, NSError **error) {
 BOOL SnapshotMatchesElement(id a, id b) {
     if (!a || !b) return NO;
     if (a == b) return YES;
-    SEL sel = NSSelectorFromString(@"_matchesElement:");
+    static SEL sel = NULL;
+    if (!sel) sel = NSSelectorFromString(@"_matchesElement:");
     if (![a respondsToSelector:sel]) return NO;
-    NSMethodSignature *sig = [a methodSignatureForSelector:sel];
-    if (!sig) return NO;
-    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-    [inv setTarget:a];
-    [inv setSelector:sel];
-    [inv setArgument:&b atIndex:2];
-    [inv invoke];
-    BOOL result = NO;
-    [inv getReturnValue:&result];
-    return result;
+    return ((BOOL (*)(id, SEL, id))objc_msgSend)(a, sel, b);
 }
 
 // MARK: - SafeSnapshot

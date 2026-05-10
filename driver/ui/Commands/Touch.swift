@@ -35,6 +35,9 @@ enum TouchCommands {
         }
         switch rawFind(label, traits: args.traits) {
         case .found(let elem):
+            guard elem.isVisible else {
+                return Codec.makeError("tap: element '\(label)' is not visible")
+            }
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
                 return Codec.makeError("tap: element '\(label)' has zero-area frame")
@@ -90,6 +93,9 @@ enum TouchCommands {
         }
         switch rawFind(label, traits: args.traits) {
         case .found(let elem):
+            guard elem.isVisible else {
+                return Codec.makeError("longPress: element '\(label)' is not visible")
+            }
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
                 return Codec.makeError("longPress: element '\(label)' has zero-area frame")
