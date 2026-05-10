@@ -1,4 +1,5 @@
 import XCTest
+import Fory
 
 // MARK: - WaitFor (doc 6.5)
 
@@ -6,14 +7,14 @@ enum WaitForCommands {
     private static let pollIntervalMs = 100
 
     /// doc 6.5 — poll rawFind until target label is visible or timeout.
-    static func waitFor(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: WaitForArgs.self)
+    static func waitFor(_ args: ForyWaitForArgs, fory: Fory) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
 
-        let timeout = args.timeout ?? 10.0
+        let timeout = args.timeout > 0 ? args.timeout : 10.0
         guard timeout > 0 else {
-            return Codec.makeError("waitFor: timeout must be > 0")
+            return Codec.foryError("waitFor: timeout must be > 0")
         }
+        let traits = args.traits.isEmpty ? nil : args.traits
         let t0 = CFAbsoluteTimeGetCurrent()
 
         var shouldUseFreshSnapshot = false
@@ -21,30 +22,29 @@ enum WaitForCommands {
             if shouldUseFreshSnapshot {
                 invalidateSnapshot()
             }
-            let result = rawFind(args.label, traits: args.traits)
+            let result = rawFind(args.label, traits: traits)
 
             switch result {
             case .found(let elem):
                 if elem.isVisible {
                     let elapsed = CFAbsoluteTimeGetCurrent() - t0
-                    let tn = elementTypeName(XCUIElement.ElementType(rawValue: UInt(elem.node.elementType)) ?? .other)
-                    return Codec.makeOK([
-                        "type": tn,
-                        "label": elem.node.label ?? "",
-                        "rect": rectArray(elem.node.frame),
-                        "waited": Double(elapsed).sanitized,
-                    ])
+                    let payload = ForyWaitForPayload(
+                        elemType: Int32(truncatingIfNeeded: elem.node.elementType),
+                        label: elem.node.label ?? "",
+                        rect: makeForyRect(elem.node.frame),
+                        waited: Double(elapsed).sanitized
+                    )
+                    return try Codec.foryOK(payload, fory: fory)
                 }
-                // exists but invisible → keep polling
             case .ambiguous(let matches):
-                return ambiguityResponse(args.label, matches: matches)
+                return try ambiguityResponse(args.label, matches: matches, fory: fory)
             case .fuzzy, .notFound:
-                break  // keep polling
+                break
             }
 
             let elapsed = CFAbsoluteTimeGetCurrent() - t0
             if elapsed >= timeout {
-                return Codec.makeError("waitFor '\(args.label)' timed out after \(timeout)s")
+                return Codec.foryError("waitFor '\(args.label)' timed out after \(timeout)s")
             }
             shouldUseFreshSnapshot = true
             usleep(UInt32(pollIntervalMs * 1000))

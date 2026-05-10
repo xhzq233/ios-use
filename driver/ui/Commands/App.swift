@@ -1,40 +1,38 @@
 import XCTest
 import UIKit
+import Fory
 
 // MARK: - App commands (doc 1.2 — createSession/deleteSession/activateApp/terminateApp)
 
 enum AppCommands {
 
     /// doc 1.2 — bundleId is optional. Omitted → device session (no app bound).
-    static func createSession(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = decodeArgsOptional(rawArgs, as: CreateSessionArgs.self)
-        let bundleId = args?.bundleId
+    static func createSession(_ args: ForyCreateSessionArgs?, fory: Fory) throws -> ForyResponseFrame {
+        let bundleId = (args?.bundleId.isEmpty ?? true) ? nil : args?.bundleId
         let terminate = args?.terminate ?? false
         try Session.shared.create(bundleId: bundleId, terminate: terminate)
-        return Codec.makeOK(["bundleId": bundleId ?? ""])
+        return try Codec.foryOK(ForySimpleStringPayload(value: bundleId ?? ""), fory: fory)
     }
 
     /// doc 1.2 — destroy session. No args.
-    static func deleteSession(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
+    static func deleteSession() -> ForyResponseFrame {
         Session.shared.destroy()
-        return Codec.makeOK()
+        return Codec.foryOK()
     }
 
     /// doc 1.2 — activate (foreground) the app with given bundleId.
-    static func activateApp(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: ActivateAppArgs.self)
+    static func activateApp(_ args: ForyActivateAppArgs) throws -> ForyResponseFrame {
         if Session.shared.bundleId == args.bundleId {
             try Session.shared.activate()
         } else {
             try Session.shared.create(bundleId: args.bundleId)
         }
-        return Codec.makeOK()
+        return Codec.foryOK()
     }
 
     /// doc 1.2 — terminate the app. Polls for up to 5s because terminate()
     /// is asynchronous.
-    static func terminateApp(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: TerminateAppArgs.self)
+    static func terminateApp(_ args: ForyTerminateAppArgs) throws -> ForyResponseFrame {
         let app = XCUIApplication(bundleIdentifier: args.bundleId)
         app.terminate()
         let deadline = Date().addingTimeInterval(5)
@@ -45,20 +43,19 @@ enum AppCommands {
                     Session.shared.destroy()
                 }
                 invalidateSnapshot()
-                return Codec.makeOK()
+                return Codec.foryOK()
             }
             Thread.sleep(forTimeInterval: 0.2)
         }
-        return Codec.makeError("terminate failed: app state is \(app.state)")
+        return Codec.foryError("terminate failed: app state is \(app.state)")
     }
 
-    static func openURL(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: OpenURLArgs.self)
+    static func openURL(_ args: ForyOpenURLArgs, fory: Fory) throws -> ForyResponseFrame {
         guard let url = URL(string: args.url) else {
             throw DriverError.invalidArgs("invalid url: \(args.url)")
         }
 
         XCUIDevice.shared.system.open(url)
-        return Codec.makeOK(["url": args.url])
+        return try Codec.foryOK(ForySimpleStringPayload(value: args.url), fory: fory)
     }
 }

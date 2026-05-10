@@ -2,9 +2,14 @@ name: IOSUseDriver
 options:
   bundleIdPrefix: com.iosuse
   deploymentTarget:
-    iOS: "15.0"
+    iOS: "16.0"
   xcodeVersion: "15.0"
   generateEmptyDirectories: true
+
+packages:
+  Fory:
+    url: https://github.com/apache/fory.git
+    branch: main
 
 targets:
   IOSUseDriver:
@@ -14,6 +19,8 @@ targets:
       - path: tcp
       - path: ui
       - path: runner
+    dependencies:
+      - package: Fory
     info:
       path: runner/Info.plist
     settings:
@@ -26,6 +33,7 @@ targets:
         CODE_SIGN_IDENTITY: ""
         ENABLE_TESTABILITY: YES
         SWIFT_OBJC_BRIDGING_HEADER: ui/Helpers/IOSUseDriver-Bridging-Header.h
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) FORY_SWIFT_MACRO"
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/Frameworks"
@@ -42,6 +50,8 @@ targets:
       - path: tcp
       - path: ui
       - path: tests
+    dependencies:
+      - package: Fory
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.iosuse.xcuidriver.unittests
@@ -51,6 +61,7 @@ targets:
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
         ENABLE_TESTABILITY: YES
+        SWIFT_ENABLE_MACRO: YES
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/Frameworks"

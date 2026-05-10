@@ -70,6 +70,7 @@ if [ -n "$BOOTED_UDID" ] && [ -n "$BOOTED_OS" ]; then
     -project "$PROJECT_DIR/IOSUseDriver.xcodeproj" \
     -scheme IOSUseDriverUnitTests \
     -destination "platform=iOS Simulator,id=$BOOTED_UDID,OS=$BOOTED_OS" \
+    -skipMacroValidation \
     CODE_SIGNING_ALLOWED=NO \
     > "$TEST_LOG" 2>&1
   TEST_EXIT=$?
@@ -119,6 +120,7 @@ rm -rf "$XCTEST_WRAPPER_PATH"
 xcodebuild build-for-testing \
   "${XCODE_COMMON[@]}" \
   -destination 'generic/platform=iOS' \
+  -skipMacroValidation \
   | tail -5
 
 if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
@@ -163,6 +165,7 @@ rm -rf "$XCTEST_WRAPPER_PATH"
 xcodebuild build-for-testing \
   "${XCODE_COMMON[@]}" \
   -destination 'generic/platform=iOS Simulator' \
+  -skipMacroValidation \
   | tail -5
 
 if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then

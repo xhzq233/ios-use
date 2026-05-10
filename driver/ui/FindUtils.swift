@@ -1,4 +1,5 @@
 import XCTest
+import Fory
 
 // MARK: - FindResult (doc 6.1)
 
@@ -212,34 +213,26 @@ private func fuzzyThreshold(for length: Int) -> Int {
 
 // MARK: - Common formatting helpers (doc 3.3 / 6.1)
 
-private func rectInt(_ value: CGFloat) -> Double {
-    Double(Int(value.rounded()))
+/// Build ForyRect from a CGRect. Returns non-optional (callers assign nil when needed).
+func makeForyRect(_ r: CGRect) -> ForyRect {
+    ForyRect(
+        x: Int32(r.origin.x.rounded()),
+        y: Int32(r.origin.y.rounded()),
+        w: Int32(r.size.width.rounded()),
+        h: Int32(r.size.height.rounded())
+    )
 }
 
-/// Build [x, y, w, h] integer-formatted rect from a CGRect.
-func rectArray(_ r: CGRect) -> [Double] {
-    [rectInt(r.origin.x),
-     rectInt(r.origin.y),
-     rectInt(r.size.width),
-     rectInt(r.size.height)]
-}
-
-/// Serialize a snapshot element to the shape used in ambiguous/find responses.
-func elementInfo(_ elem: SnapshotElement, includeAncestors: Bool = false) -> [String: Any] {
-    let tn = elementTypeName(XCUIElement.ElementType(rawValue: UInt(elem.node.elementType)) ?? .other)
-    var out: [String: Any] = [
-        "type": tn,
-        "label": displayName(for: elem.node) ?? "",
-        "rect": rectArray(elem.node.frame),
-        "traits": elem.traits,
-    ]
-    if let value = displayValue(for: elem.node) {
-        out["value"] = value
-    }
-    if includeAncestors {
-        out["ancestors"] = ancestorChainNames(elem.node)
-    }
-    return out
+/// Build a ForyFindMatch from a SnapshotElement.
+func makeForyFindMatch(_ elem: SnapshotElement, includeAncestors: Bool = false) -> ForyFindMatch {
+    var m = ForyFindMatch()
+    m.elemType = Int32(truncatingIfNeeded: elem.node.elementType)
+    m.label = displayName(for: elem.node) ?? ""
+    m.rect = makeForyRect(elem.node.frame)
+    m.traits = elem.traits
+    if let v = displayValue(for: elem.node) { m.value = v }
+    if includeAncestors { m.ancestors = ancestorChainNames(elem.node) }
+    return m
 }
 
 /// Build ["App", "Table", "Cell[Developer]"]-style ancestor chain (doc 3.3).
@@ -273,30 +266,18 @@ private func shouldSkipAncestorInCleanChain(_ node: SafeSnapshot) -> Bool {
     return false
 }
 
-/// Build the ambiguity response payload (doc 3.3).
-func ambiguityResponse(_ label: String, matches: [SnapshotElement]) -> ResponseFrame {
-    let infos = matches.map { elementInfo($0, includeAncestors: true) }
-    let hint = "Try adding --traits to disambiguate"
-    return ResponseFrame(
-        ok: false,
-        error: "label '\(label)' is ambiguous (\(matches.count) matches)",
-        data: AnyCodable([
-            "matches": infos,
-            "hint": hint,
-        ])
-    )
+/// Build the ambiguity response (doc 3.3).
+func ambiguityResponse(_ label: String, matches: [SnapshotElement], fory: Fory) throws -> ForyResponseFrame {
+    var payload = ForyErrorPayload()
+    payload.matches = matches.map { makeForyFindMatch($0, includeAncestors: true) }
+    payload.hint = "Try adding --traits to disambiguate"
+    return try Codec.foryError("label '\(label)' is ambiguous (\(matches.count) matches)", payload: payload, fory: fory)
 }
 
 /// Build the fuzzy / notFound payload (doc 3.3).
-func notFoundResponse(_ label: String, suggestions: [String], hint: String? = nil) -> ResponseFrame {
-    var data: [String: Any] = [:]
-    if !suggestions.isEmpty { data["suggestions"] = suggestions }
-    if let hint, !hint.isEmpty {
-        data["hint"] = hint
-    }
-    return ResponseFrame(
-        ok: false,
-        error: "label '\(label)' not found",
-        data: AnyCodable(data)
-    )
+func notFoundResponse(_ label: String, suggestions: [String], hint: String? = nil, fory: Fory) throws -> ForyResponseFrame {
+    var payload = ForyErrorPayload()
+    payload.suggestions = suggestions
+    if let hint, !hint.isEmpty { payload.hint = hint }
+    return try Codec.foryError("label '\(label)' not found", payload: payload, fory: fory)
 }

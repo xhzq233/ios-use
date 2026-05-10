@@ -26,6 +26,7 @@
 		48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		4C1335951DE9BCB1ACEB1105 /* Touch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */; };
 		563B2CE6B340E53A14814EFB /* Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = D394439301E45CC69DD7CB41 /* Server.swift */; };
+		5746879AB22CCA470C5D92D9 /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */; };
 		5C78D96B9AE1C0C47419D5E5 /* SnapshotWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A0FF7257FB4C92EC6C889D /* SnapshotWalker.swift */; };
 		6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
@@ -43,6 +44,7 @@
 		A77C65F2623A196E0C66EB99 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E262BB01AF4133E6AF8C75 /* RunnerTests.swift */; };
 		AB27A981461305BDE97F5D25 /* Alert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02295CAF657EE98E21F5AAF8 /* Alert.swift */; };
 		ADB402EBA304FD6F23411372 /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
+		AE1FA7B53A46D8954639BE1A /* Fory in Frameworks */ = {isa = PBXBuildFile; productRef = 474ADCE2AB5D6821ABA4BBF2 /* Fory */; };
 		AF07412EEE37705E162B6743 /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DDB97D9F6B1FB7C45A9A1 /* Find.swift */; };
 		B03079F36E017EE33C677A3F /* ServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A018728001BB6A88192EAFD /* ServerTests.swift */; };
 		B24F803C1B1C26B07BD489B3 /* Probe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05472B7D1F53F7686793C318 /* Probe.swift */; };
@@ -51,6 +53,8 @@
 		C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
 		C17AD8E6E19EB9DF22D2E31E /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
 		CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C773A75C11E5CE2360A4FB4 /* Input.swift */; };
+		DBC049498CB7F7EC52F82C1E /* Fory in Frameworks */ = {isa = PBXBuildFile; productRef = A7A16F95F6EFE334D2178CD8 /* Fory */; };
+		DD15992A4F33EFC47AFC3D2B /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */; };
 		E1690C6B99691CCDC27F4FD6 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0AC56CC6B8335709D4A71 /* App.swift */; };
 		EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		EFBB4C9BDE512CA610CD097A /* Probe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05472B7D1F53F7686793C318 /* Probe.swift */; };
@@ -85,6 +89,7 @@
 		90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypesTests.swift; sourceTree = "<group>"; };
 		9DE69CDBA7F414F7325EFBD0 /* Codec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Codec.swift; sourceTree = "<group>"; };
+		A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForyModels.swift; sourceTree = "<group>"; };
 		A7314D09B4E47FB05DDAAF58 /* Screen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screen.swift; sourceTree = "<group>"; };
 		AABACD4A116F231BF1D16712 /* CodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecTests.swift; sourceTree = "<group>"; };
 		B82A6D94A3BC809E2C68F694 /* WaitFor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitFor.swift; sourceTree = "<group>"; };
@@ -95,6 +100,25 @@
 		F9FD7632270F764367EC208B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		FA8EE69CD9E44A379094C75D /* RawPointer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawPointer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D37817FEB3E8FFD558DE426D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DBC049498CB7F7EC52F82C1E /* Fory in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F1D05334C5278E4FDAE8AD3A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AE1FA7B53A46D8954639BE1A /* Fory in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		4C5BAC22ADE6167CB3E155D7 = {
@@ -170,6 +194,7 @@
 			isa = PBXGroup;
 			children = (
 				9DE69CDBA7F414F7325EFBD0 /* Codec.swift */,
+				A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */,
 				D394439301E45CC69DD7CB41 /* Server.swift */,
 			);
 			path = tcp;
@@ -201,6 +226,7 @@
 			buildConfigurationList = 9D766EFA2F42BD72E37ECCAC /* Build configuration list for PBXNativeTarget "IOSUseDriver" */;
 			buildPhases = (
 				9BCA94A84C0FA1BA8EB5D606 /* Sources */,
+				F1D05334C5278E4FDAE8AD3A /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -208,6 +234,7 @@
 			);
 			name = IOSUseDriver;
 			packageProductDependencies = (
+				474ADCE2AB5D6821ABA4BBF2 /* Fory */,
 			);
 			productName = IOSUseDriver;
 			productReference = 0FF744D2D049D91EDF84A9E9 /* IOSUseDriver.xctest */;
@@ -218,6 +245,7 @@
 			buildConfigurationList = 7C8140E89D77F2F4896E9962 /* Build configuration list for PBXNativeTarget "IOSUseDriverUnitTests" */;
 			buildPhases = (
 				21EC6305CB6888BF81639CBD /* Sources */,
+				D37817FEB3E8FFD558DE426D /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -225,6 +253,7 @@
 			);
 			name = IOSUseDriverUnitTests;
 			packageProductDependencies = (
+				A7A16F95F6EFE334D2178CD8 /* Fory */,
 			);
 			productName = IOSUseDriverUnitTests;
 			productReference = 3FAD42B95F7C35F08F218C45 /* IOSUseDriverUnitTests.xctest */;
@@ -250,6 +279,9 @@
 			);
 			mainGroup = 4C5BAC22ADE6167CB3E155D7;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				DB9BD71CAD37FF76C6551FAD /* XCRemoteSwiftPackageReference "fory" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E930FDF47DAA8E83B49679EE /* Products */;
 			projectDirPath = "";
@@ -274,6 +306,7 @@
 				48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */,
 				3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */,
 				17A60E236F1D12E058214F25 /* FindUtils.swift in Sources */,
+				DD15992A4F33EFC47AFC3D2B /* ForyModels.swift in Sources */,
 				CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */,
 				35267F7D02A7EC69C5BCEA40 /* Oslog.swift in Sources */,
 				EFBB4C9BDE512CA610CD097A /* Probe.swift in Sources */,
@@ -307,6 +340,7 @@
 				EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */,
 				AF07412EEE37705E162B6743 /* Find.swift in Sources */,
 				3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */,
+				5746879AB22CCA470C5D92D9 /* ForyModels.swift in Sources */,
 				9B2D14D04A8484C749189950 /* Input.swift in Sources */,
 				74CF9429D16DAEB3E1D277A8 /* Oslog.swift in Sources */,
 				B24F803C1B1C26B07BD489B3 /* Probe.swift in Sources */,
@@ -344,6 +378,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.iosuse.xcuidriver.unittests;
 				SDKROOT = iphoneos;
+				SWIFT_ENABLE_MACRO = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "ui/Helpers/IOSUseDriver-Bridging-Header.h";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -370,6 +405,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.iosuse.xcuidriver;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) FORY_SWIFT_MACRO";
 				SWIFT_OBJC_BRIDGING_HEADER = "ui/Helpers/IOSUseDriver-Bridging-Header.h";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -422,7 +458,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -484,7 +520,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -516,6 +552,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.iosuse.xcuidriver;
 				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) FORY_SWIFT_MACRO";
 				SWIFT_OBJC_BRIDGING_HEADER = "ui/Helpers/IOSUseDriver-Bridging-Header.h";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -538,6 +575,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.iosuse.xcuidriver.unittests;
 				SDKROOT = iphoneos;
+				SWIFT_ENABLE_MACRO = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "ui/Helpers/IOSUseDriver-Bridging-Header.h";
 				SWIFT_VERSION = 5.9;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -575,6 +613,30 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		DB9BD71CAD37FF76C6551FAD /* XCRemoteSwiftPackageReference "fory" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apache/fory.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		474ADCE2AB5D6821ABA4BBF2 /* Fory */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DB9BD71CAD37FF76C6551FAD /* XCRemoteSwiftPackageReference "fory" */;
+			productName = Fory;
+		};
+		A7A16F95F6EFE334D2178CD8 /* Fory */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DB9BD71CAD37FF76C6551FAD /* XCRemoteSwiftPackageReference "fory" */;
+			productName = Fory;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 2D9A77FCFDB237839C993C5A /* Project object */;
 }
