@@ -1,121 +1,107 @@
 import XCTest
+import Fory
 
 // MARK: - Touch commands (doc 1.2 — tap, longPress)
 
 enum TouchCommands {
     private static let defaultLongPressDuration = 0.5
 
-    /// doc 1.2 — tap. `label` is either a String (look up via rawFind) or a
-    /// 2-element [x, y] absolute point. Mutation → invalidates snapshot cache.
-    static func tap(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: TapArgs.self)
+    /// doc 1.2 — tap. `target` is decoded from ForyTapArgs.target (ForyTarget).
+    static func tap(_ args: ForyTapArgs, fory: Fory) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
 
+        let target = args.target
+
         // Path A: absolute coordinate.
-        if let pt = args.label.asPoint {
-            if args.offset != nil {
-                return Codec.makeError("tap: offset requires element label, not absolute point")
-            }
-            guard pt.count == 2 else {
-                return Codec.makeError("tap: point must be [x, y]")
-            }
-            let point = CGPoint(x: pt[0], y: pt[1])
+        if let pt = target.point {
+            let point = CGPoint(x: pt.x, y: pt.y)
             try tapAtPoint(point, app: app)
-            return Codec.makeOK([
-                "type": "Coordinate",
-                "label": "",
-                "rect": rectArray(CGRect(x: point.x, y: point.y, width: 0, height: 0)),
-            ])
+            let payload = ForyElementPayload(
+                elemType: 1, // Other (coordinate)
+                label: "",
+                rect: makeForyRect(CGRect(x: point.x, y: point.y, width: 0, height: 0))
+            )
+            return try Codec.foryOK(payload, fory: fory)
         }
 
-        // Path B: label lookup via rawFind (exact + fuzzy + context filter).
-        guard let label = args.label.asLabel else {
-            return Codec.makeError("tap: invalid label/point")
+        // Path B: label lookup via rawFind.
+        guard !target.label.isEmpty else {
+            return Codec.foryError("tap: invalid label/point")
         }
-        switch rawFind(label, traits: args.traits) {
+        let traits = args.traits.isEmpty ? nil : args.traits
+        switch rawFind(target.label, traits: traits) {
         case .found(let elem):
             guard elem.isVisible else {
-                return Codec.makeError("tap: element '\(label)' is not visible")
+                return Codec.foryError("tap: element '\(target.label)' is not visible")
             }
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
-                return Codec.makeError("tap: element '\(label)' has zero-area frame")
+                return Codec.foryError("tap: element '\(target.label)' has zero-area frame")
             }
-            let point: CGPoint
-            do {
-                point = try resolveTapPoint(frame: f, offset: args.offset)
-            } catch let error as DriverError {
-                return Codec.makeError("tap: \(error.description)")
-            }
+            let point = resolveTapPoint(frame: f, offset: args.offset, ratio: args.ratio)
             try tapAtPoint(point, app: app)
-            return Codec.makeOK([
-                "type": elementTypeName(XCUIElement.ElementType(rawValue: UInt(elem.node.elementType)) ?? .other),
-                "label": elem.node.label ?? "",
-                "rect": rectArray(f),
-            ])
+            let payload = ForyElementPayload(
+                elemType: Int32(truncatingIfNeeded: elem.node.elementType),
+                label: elem.node.label ?? "",
+                rect: makeForyRect(f)
+            )
+            return try Codec.foryOK(payload, fory: fory)
         case .ambiguous(let matches):
-            return ambiguityResponse(label, matches: matches)
+            return try ambiguityResponse(target.label, matches: matches, fory: fory)
         case .fuzzy(let s):
-            return notFoundResponse(label,
-                                    suggestions: s,
-                                    hint: "Try adding --traits, or verify the active app")
+            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app", fory: fory)
         case .notFound(let s):
-            return notFoundResponse(label,
-                                    suggestions: s,
-                                    hint: "Try adding --traits, or verify the active app")
+            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app", fory: fory)
         }
     }
 
     /// doc 1.2 — longPress. Same label/point semantics as `tap`, plus an
     /// optional duration (default 500ms).
-    static func longPress(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: LongPressArgs.self)
+    static func longPress(_ args: ForyLongPressArgs, fory: Fory) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        let duration = args.duration ?? defaultLongPressDuration
+        let duration = args.duration > 0 ? args.duration : defaultLongPressDuration
         defer { invalidateSnapshot() }
 
-        if let pt = args.label.asPoint {
-            guard pt.count == 2 else {
-                return Codec.makeError("longPress: point must be [x, y]")
-            }
-            let point = CGPoint(x: pt[0], y: pt[1])
+        let target = args.target
+
+        if let pt = target.point {
+            let point = CGPoint(x: pt.x, y: pt.y)
             try pressAtPoint(point, duration: duration, app: app)
-            return Codec.makeOK([
-                "type": "Coordinate",
-                "label": "",
-                "rect": rectArray(CGRect(x: point.x, y: point.y, width: 0, height: 0)),
-            ])
+            let payload = ForyElementPayload(
+                elemType: 1, // Other (coordinate)
+                label: "",
+                rect: makeForyRect(CGRect(x: point.x, y: point.y, width: 0, height: 0))
+            )
+            return try Codec.foryOK(payload, fory: fory)
         }
 
-        guard let label = args.label.asLabel else {
-            return Codec.makeError("longPress: invalid label/point")
+        guard !target.label.isEmpty else {
+            return Codec.foryError("longPress: invalid label/point")
         }
-        switch rawFind(label, traits: args.traits) {
+        let traits = args.traits.isEmpty ? nil : args.traits
+        switch rawFind(target.label, traits: traits) {
         case .found(let elem):
             guard elem.isVisible else {
-                return Codec.makeError("longPress: element '\(label)' is not visible")
+                return Codec.foryError("longPress: element '\(target.label)' is not visible")
             }
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
-                return Codec.makeError("longPress: element '\(label)' has zero-area frame")
+                return Codec.foryError("longPress: element '\(target.label)' has zero-area frame")
             }
             try pressAtPoint(CGPoint(x: f.midX, y: f.midY), duration: duration, app: app)
-            return Codec.makeOK([
-                "type": elementTypeName(XCUIElement.ElementType(rawValue: UInt(elem.node.elementType)) ?? .other),
-                "label": elem.node.label ?? "",
-                "rect": rectArray(f),
-            ])
+            let payload = ForyElementPayload(
+                elemType: Int32(truncatingIfNeeded: elem.node.elementType),
+                label: elem.node.label ?? "",
+                rect: makeForyRect(f)
+            )
+            return try Codec.foryOK(payload, fory: fory)
         case .ambiguous(let matches):
-            return ambiguityResponse(label, matches: matches)
+            return try ambiguityResponse(target.label, matches: matches, fory: fory)
         case .fuzzy(let s):
-            return notFoundResponse(label,
-                                    suggestions: s,
-                                    hint: "Try adding --traits, or verify the active app")
+            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app", fory: fory)
         case .notFound(let s):
-            return notFoundResponse(label,
-                                    suggestions: s,
-                                    hint: "Try adding --traits, or verify the active app")
+            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app", fory: fory)
         }
     }
 
@@ -134,25 +120,12 @@ enum TouchCommands {
     }
 }
 
-func resolveTapPoint(frame: CGRect, offset: TapOffset?) throws -> CGPoint {
-    guard let offset else {
-        return CGPoint(x: frame.midX, y: frame.midY)
+func resolveTapPoint(frame: CGRect, offset: ForyPoint?, ratio: ForyPoint) -> CGPoint {
+    if let offset = offset {
+        return CGPoint(x: frame.minX + offset.x, y: frame.minY + offset.y)
     }
-
-    let hasX = offset.x != nil
-    let hasY = offset.y != nil
-    let hasXRatio = offset.xRatio != nil
-    let hasYRatio = offset.yRatio != nil
-
-    if hasX && hasXRatio {
-        throw DriverError.invalidArgs("offset.x and offset.xRatio are mutually exclusive")
-    }
-    if hasY && hasYRatio {
-        throw DriverError.invalidArgs("offset.y and offset.yRatio are mutually exclusive")
-    }
-
-    let localX = offset.x ?? frame.width * (offset.xRatio ?? 0.5)
-    let localY = offset.y ?? frame.height * (offset.yRatio ?? 0.5)
-
-    return CGPoint(x: frame.minX + localX, y: frame.minY + localY)
+    return CGPoint(
+        x: frame.minX + frame.width * ratio.x,
+        y: frame.minY + frame.height * ratio.y
+    )
 }

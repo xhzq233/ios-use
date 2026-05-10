@@ -1,66 +1,78 @@
 import XCTest
+import Fory
 
 // MARK: - Dom command (doc 2)
 
 enum DomCommands {
     /// doc 2.2 — nested tree with rule 1-6 applied (or raw if --raw).
-    /// Both containers and leaves may carry `l` when the source node has a label.
-    static func dom(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = decodeArgsOptional(rawArgs, as: DomArgs.self)
+    static func dom(_ args: ForyDomArgs, fory: Fory) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         let bundleId = Session.shared.bundleId ?? app.value(forKey: "bundleID") as? String ?? ""
 
         // --raw mode: format the pre-clean snapshot as an indented string.
-        if args?.raw == true {
+        if args.raw {
             invalidateSnapshot()
             guard let root = SafeSnapshot(ofApp: app) else {
-                return Codec.makeError("failed to take snapshot")
+                return Codec.foryError("failed to take snapshot")
             }
             let lines = formatRawTree(root, parentDisabled: false, indent: "")
-            return Codec.makeOK([
-                "app": bundleId,
-                "window": [Double(Int(root.frame.size.width.rounded())), Double(Int(root.frame.size.height.rounded()))],
-                "raw": lines,
-            ])
+            let payload = ForyDomPayload(
+                app: bundleId,
+                windowSize: ForyPoint(
+                    x: Double(Int(root.frame.size.width.rounded())),
+                    y: Double(Int(root.frame.size.height.rounded()))
+                ),
+                raw: lines,
+                elements: []
+            )
+            return try Codec.foryOK(payload, fory: fory)
         }
 
         // --fresh mode: invalidate cache before taking snapshot.
-        if args?.fresh == true {
+        if args.fresh {
             invalidateSnapshot()
         }
 
         guard let cs = getCleanedSnapshot() else {
-            return Codec.makeError("failed to take snapshot")
+            return Codec.foryError("failed to take snapshot")
         }
         let flatElements = serializeDomFlat(from: cs.elements)
-        return Codec.makeOK([
-            "app": bundleId,
-            "window": [Double(Int(cs.appFrame.size.width.rounded())), Double(Int(cs.appFrame.size.height.rounded()))],
-            "elements": flatElements,
-        ])
+        let payload = ForyDomPayload(
+            app: bundleId,
+            windowSize: ForyPoint(
+                x: Double(Int(cs.appFrame.size.width.rounded())),
+                y: Double(Int(cs.appFrame.size.height.rounded()))
+            ),
+            raw: "",
+            elements: flatElements
+        )
+        return try Codec.foryOK(payload, fory: fory)
     }
 }
 
 // MARK: - flat cleaned snapshot -> flat preorder DOM
 
-func serializeDomFlat(from elements: [SnapshotElement]) -> [[String: Any]] {
+func serializeDomFlat(from elements: [SnapshotElement]) -> [ForyDomElement] {
     elements.map { element in
-        var out: [String: Any] = ["tr": element.traits, "cc": element.childCount]
         let node = element.node
-        if let l = displayName(for: node), !l.isEmpty { out["l"] = l }
-        if let value = displayValue(for: node) { out["v"] = value }
+        var fEl = ForyDomElement()
+        fEl.traits = element.traits
+        fEl.childCount = Int32(element.childCount)
+        if let l = displayName(for: node), !l.isEmpty { fEl.label = l }
+        if let value = displayValue(for: node) { fEl.value = value }
         if element.childCount == 0 {
-            out["r"] = nodeRect(node)
+            fEl.rect = makeForyRect(node.frame)
         }
-        return out
+        return fEl
     }
 }
 
-private func nodeRect(_ node: SafeSnapshot) -> [Double] {
-    rectArray(node.frame)
-}
-
 // MARK: - walkRaw — raw tree as indented string (--raw mode)
+
+private func nodeRect(_ node: SafeSnapshot) -> String {
+    let r = node.frame
+    return "\(Int(r.origin.x.rounded())),\(Int(r.origin.y.rounded())),\(Int(r.size.width.rounded())),\(Int(r.size.height.rounded()))"
+}
 
 private func formatRawTree(_ node: SafeSnapshot, parentDisabled: Bool, indent: String) -> String {
     let disabled = parentDisabled || !node.isEnabled
@@ -84,8 +96,7 @@ private func formatRawTree(_ node: SafeSnapshot, parentDisabled: Bool, indent: S
 
     let kids = node.children
     if kids.isEmpty {
-        let r = nodeRect(node)
-        return "\(indent)- \(title) [\(traitStr)] (\(r.map { String(Int($0)) }.joined(separator: ",")))"
+        return "\(indent)- \(title) [\(traitStr)] (\(nodeRect(node)))"
     }
 
     var lines: [String] = ["\(indent)\(title) [\(traitStr)]:"]

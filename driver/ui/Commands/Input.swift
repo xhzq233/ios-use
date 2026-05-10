@@ -1,4 +1,5 @@
 import XCTest
+import Fory
 
 // MARK: - Input command (doc 1.2, 6.3 — find label → prepare → type)
 
@@ -7,24 +8,26 @@ enum InputCommands {
     /// doc 6.3 — two-step typing:
     ///   1) prepare: tap the target to grab keyboard focus when missing.
     ///   2) type:    synthesize text via WDA-style FBTypeText event path.
-    static func input(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: InputArgs.self)
+    static func input(_ args: ForyInputArgs, fory: Fory) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
+        let traits = args.traits.isEmpty ? nil : args.traits
 
         // Locate the target via rawFind.
         let elem: SnapshotElement
-        switch rawFind(args.label, traits: args.traits) {
+        switch rawFind(args.label, traits: traits) {
         case .found(let e): elem = e
-        case .ambiguous(let matches): return ambiguityResponse(args.label, matches: matches)
+        case .ambiguous(let matches): return try ambiguityResponse(args.label, matches: matches, fory: fory)
         case .fuzzy(let s):
-            return notFoundResponse(args.label,
-                                    suggestions: s,
-                                    hint: "Try adding --traits, or verify the active app before typing")
+            return try notFoundResponse(args.label,
+                                        suggestions: s,
+                                        hint: "Try adding --traits, or verify the active app before typing",
+                                        fory: fory)
         case .notFound(let s):
-            return notFoundResponse(args.label,
-                                    suggestions: s,
-                                    hint: "Try adding --traits, or verify the active app before typing")
+            return try notFoundResponse(args.label,
+                                        suggestions: s,
+                                        hint: "Try adding --traits, or verify the active app before typing",
+                                        fory: fory)
         }
 
         let editableSnapshot = preferredInputSnapshot(around: elem.node)
@@ -33,20 +36,19 @@ enum InputCommands {
         // STEP 1 — prepare: prefer an editable ancestor, but allow keyboard-visible
         // cases where XCTest doesn't expose hasKeyboardFocus reliably.
         guard prepareForInput(editableSnapshot, fallback: elem.node, app: app) else {
-            return Codec.makeError("input: failed to focus '\(args.label)' for typing")
+            return Codec.foryError("input: failed to focus '\(args.label)' for typing")
         }
 
-        // STEP 2 — when the keyboard is already up, type globally so web inputs
-        // and placeholder labels can reuse the active responder. This mirrors
-        // WDA's fb_typeText -> FBTypeText synthesized event path.
+        // STEP 2 — type text.
         guard typeText(args.content) else {
-            return Codec.makeError("input: failed to type text into '\(args.label)'")
+            return Codec.foryError("input: failed to type text into '\(args.label)'")
         }
-        return Codec.makeOK([
-            "type": elementTypeName(XCUIElement.ElementType(rawValue: UInt(elem.node.elementType)) ?? .other),
-            "label": elem.node.label ?? "",
-            "rect": rectArray(frame),
-        ])
+        let payload = ForyElementPayload(
+            elemType: Int32(truncatingIfNeeded: elem.node.elementType),
+            label: elem.node.label ?? "",
+            rect: makeForyRect(frame)
+        )
+        return try Codec.foryOK(payload, fory: fory)
     }
 }
 

@@ -1,5 +1,5 @@
 import { execFileSync } from 'child_process';
-import { listUsbDeviceUdids } from './driver-client/usbmux.js';
+import { listUsbDeviceUdids } from './driver-protocol/usbmux.js';
 
 export interface Device {
   name: string;

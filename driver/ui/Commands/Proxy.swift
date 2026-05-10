@@ -1,11 +1,6 @@
 import Foundation
+import Fory
 
-/// Proxy helper for `ios-use proxy configca`.
-///
-/// The driver's only proxy responsibility is receiving a CA certificate via TCP
-/// and triggering the profile install page so the CA can be installed on device.
-/// All other proxy operations (mitmdump, Wi-Fi proxy config) are handled by
-/// CLI flows using tap/input/swipe commands.
 enum ProxyCommands {
     private static let queue = DispatchQueue(label: "com.iosuse.proxy-ca", qos: .userInitiated)
     private static var serverFd: Int32 = -1
@@ -13,33 +8,28 @@ enum ProxyCommands {
     private static var caData: Data?
     private static let lock = NSLock()
 
-    // MARK: - Command
-
-    static func proxyCAPush(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: ProxyCAPushArgs.self)
-
+    static func proxyCAPush(_ args: ForyProxyCAPushArgs, fory: Fory) throws -> ForyResponseFrame {
         guard let certData = Data(base64Encoded: args.caBase64) else {
-            return Codec.makeError("invalid CA base64 payload")
+            return Codec.foryError("invalid CA base64 payload")
         }
 
-        // Store cert and start a temporary HTTP server to serve it
         lock.lock()
         caData = certData
         lock.unlock()
 
-        // Start profile server if not already running
         if serverFd < 0 {
             let port: UInt16 = 9088
             let fd = startListener(port: port) { connFd in handleConn(connFd) }
             guard fd >= 0 else {
-                return Codec.makeError("failed to bind CA server on port \(port)")
+                return Codec.foryError("failed to bind CA server on port \(port)")
             }
             serverFd = fd
             NSLog("[proxy] CA server listening on port %d", port)
         }
 
         NSLog("[proxy] CA pushed (%d bytes), server on :9088/ca.cer", certData.count)
-        return Codec.makeOK(["status": "pushed", "installURL": "http://127.0.0.1:9088/ca.cer"] as [String: Any])
+        let payload = ForyProxyPayload(status: "pushed")
+        return try Codec.foryOK(payload, fory: fory)
     }
 
     // MARK: - HTTP Server
@@ -129,10 +119,4 @@ enum ProxyCommands {
         header += "\r\n"
         return header.data(using: .utf8)! + body
     }
-}
-
-// MARK: - Args
-
-struct ProxyCAPushArgs: Codable {
-    let caBase64: String
 }

@@ -1,81 +1,83 @@
 import XCTest
+import Fory
 
 // MARK: - Swipe command (doc 3 & 5)
 
 enum SwipeCommands {
 
     /// doc 5 — unified swipe with to/from/distance/dir/context.
-    static func swipe(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = decodeArgsOptional(rawArgs, as: SwipeArgs.self) ?? SwipeArgs(
-            to: nil, from: nil, distance: nil, dir: nil, traits: nil)
+    static func swipe(_ args: ForySwipeArgs, fory: Fory) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
+        defer { invalidateSnapshot() }
 
-        defer { invalidateSnapshot() }  // mutation — drop cache
-
-        // STEP 1: take cleaned snapshot (doc 5.1)
         guard let cs = getCleanedSnapshot() else {
-            return Codec.makeError("failed to take snapshot")
+            return Codec.foryError("failed to take snapshot")
         }
+
+        let toTarget = args.toTarget
+        let fromTarget = args.fromTarget
+        let traits = args.traits.isEmpty ? nil : args.traits
 
         // Path A0: from/to are both absolute points -> direct drag.
-        if let from = args.from?.asPoint, let to = args.to?.asPoint {
-            return handleAbsolutePointSwipe(from: from, to: to, app: app)
+        if let from = fromTarget.point, let to = toTarget.point {
+            return try handleAbsolutePointSwipe(from: from, to: to, app: app, fory: fory)
         }
 
-        // Path B: `to` is a point [x, y] → STEP_POINT
-        if let to = args.to, let point = to.asPoint {
-            return handlePointSwipe(point, cs: cs, app: app)
+        // Path B: `to` is a point → STEP_POINT
+        if let point = toTarget.point {
+            return try handlePointSwipe(point, cs: cs, app: app, fory: fory)
         }
-        // Path C: no `to` at all → STEP_DISTANCE
-        if args.to == nil {
-            return handleDistanceSwipe(args: args, cs: cs, app: app)
+        // Path C: no `to` label → STEP_DISTANCE
+        if toTarget.label.isEmpty && toTarget.point == nil {
+            return try handleDistanceSwipe(args: args, cs: cs, app: app, fory: fory)
         }
         // Path A: `to` is a label → STEP 2+
-        guard let label = args.to?.asLabel else {
-            return Codec.makeError("swipe: invalid 'to' argument")
-        }
+        let label = toTarget.label
 
-        return handleLabelSwipe(label: label, args: args, cs: cs, app: app)
+        return try handleLabelSwipe(label: label, args: args, fromTarget: fromTarget, traits: traits, cs: cs, app: app, fory: fory)
     }
 
     // MARK: - STEP 2-8 (label path)
 
     private static func handleLabelSwipe(label: String,
-                                         args: SwipeArgs,
+                                         args: ForySwipeArgs,
+                                         fromTarget: ForyTarget,
+                                         traits: String?,
                                          cs: CleanedSnapshot,
-                                         app: XCUIApplication) -> ResponseFrame {
-        // STEP 2: all label commands share rawFind semantics so future changes
-        // to exact/fuzzy/context behavior stay aligned automatically.
+                                         app: XCUIApplication,
+                                         fory: Fory) throws -> ForyResponseFrame {
         let target: SnapshotElement
-        switch rawFind(label, traits: args.traits) {
+        switch rawFind(label, traits: traits) {
         case .found(let elem):
             target = elem
         case .ambiguous(let matches):
-            return ambiguityResponse(label, matches: matches)
+            return try ambiguityResponse(label, matches: matches, fory: fory)
         case .fuzzy(let suggestions):
-            if args.from != nil {
-                return handleAnchorScroll(label: label, args: args, cs: cs, app: app)
+            if !fromTarget.label.isEmpty || fromTarget.point != nil {
+                return try handleAnchorScroll(label: label, args: args, fromTarget: fromTarget, traits: traits, cs: cs, app: app, fory: fory)
             }
-            return notFoundResponse(label,
-                                    suggestions: suggestions,
-                                    hint: "Try passing --from (anchor) to scroll from a known element")
+            return try notFoundResponse(label,
+                                        suggestions: suggestions,
+                                        hint: "Try passing --from (anchor) to scroll from a known element",
+                                        fory: fory)
         case .notFound(let suggestions):
-            if args.from != nil {
-                return handleAnchorScroll(label: label, args: args, cs: cs, app: app)
+            if !fromTarget.label.isEmpty || fromTarget.point != nil {
+                return try handleAnchorScroll(label: label, args: args, fromTarget: fromTarget, traits: traits, cs: cs, app: app, fory: fory)
             }
-            return notFoundResponse(label,
-                                    suggestions: suggestions,
-                                    hint: "Try passing --from (anchor) to scroll from a known element")
+            return try notFoundResponse(label,
+                                        suggestions: suggestions,
+                                        hint: "Try passing --from (anchor) to scroll from a known element",
+                                        fory: fory)
         }
 
         // STEP 3: already visible? return ok with 0 scrolls.
         if target.isVisible {
-            return okScroll(target: target, scrolls: 0)
+            return okScroll(target: target, scrolls: 0, fory: fory)
         }
 
         // STEP 4: find scrollable ancestor.
         guard let scrollView = findScrollableAncestor(target.node) else {
-            return okScroll(target: target, scrolls: 0)
+            return okScroll(target: target, scrolls: 0, fory: fory)
         }
 
         // STEP 5: direction inference from visible cells.
@@ -85,7 +87,7 @@ enum SwipeCommands {
 
         let visibleCells = cellSnapshots.filter { $0.isVisible }
         guard visibleCells.count >= 2 else {
-            return Codec.makeError("less than 2 visible cells in scrollable")
+            return Codec.foryError("less than 2 visible cells in scrollable")
         }
         let firstVisibleCell = visibleCells.first!
         let lastVisibleCell = visibleCells.last!
@@ -95,116 +97,117 @@ enum SwipeCommands {
         let dy = firstVisibleCell.frame.minY - lastVisibleCell.frame.minY
         let vertical = abs(dy) > abs(dx)
 
-        // scrollUpwards: true = finger moves down/right (back/negative direction).
         let scrollUpwards: Bool
-        if let d = args.dir {
-            scrollUpwards = (d == .back)
+        if args.dir == 1 { // back
+            scrollUpwards = true
         } else if let tci = targetCellIdx {
             scrollUpwards = tci < lastVisibleIdx
         } else {
-            scrollUpwards = false  // default forth
+            scrollUpwards = false
         }
 
         // STEP 6: scroll loop.
         let scrolls = scrollUntilVisible(scrollView: scrollView,
                                  label: label,
-                                 traits: args.traits,
+                                 traits: traits,
                                  vertical: vertical,
                                  scrollUpwards: scrollUpwards,
                                  app: app)
 
         switch scrolls {
         case .reachedMax:
-            return Codec.makeError("max scroll count reached")
+            return Codec.foryError("max scroll count reached")
         case .hitBoundary:
-            return boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
+            return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards, fory: fory)
         case .snapshotFailed:
-            return Codec.makeError("scroll: failed to rebuild snapshot (app may have exited)")
+            return Codec.foryError("scroll: failed to rebuild snapshot (app may have exited)")
         case .ambiguous(let lbl, let matches):
-            return ambiguityResponse(lbl, matches: matches)
+            return try ambiguityResponse(lbl, matches: matches, fory: fory)
         case .found(let count, let finalTarget):
-            // STEP 7: precise adjust via visibleFrame.
             preciseAdjust(targetCell: findCellAncestor(finalTarget),
                           scrollFrame: scrollView.frame,
                           app: app)
-            return okScrollWithAncestors(node: finalTarget, scrolls: count)
+            return okScrollWithAncestors(node: finalTarget, scrolls: count, fory: fory)
         }
     }
 
     // MARK: - Anchor scroll (doc 5.3)
 
     private static func handleAnchorScroll(label: String,
-                                           args: SwipeArgs,
+                                           args: ForySwipeArgs,
+                                           fromTarget: ForyTarget,
+                                           traits: String?,
                                            cs: CleanedSnapshot,
-                                           app: XCUIApplication) -> ResponseFrame {
+                                           app: XCUIApplication,
+                                           fory: Fory) throws -> ForyResponseFrame {
         let anchorScrollView: SafeSnapshot
-        if let from = args.from, let pt = from.asPoint, pt.count == 2 {
-            guard let scrollView = findScrollableAtPoint(CGPoint(x: pt[0], y: pt[1]), cs.root) else {
-                return Codec.makeError("no scrollable found at from point")
+        if let pt = fromTarget.point {
+            guard let scrollView = findScrollableAtPoint(CGPoint(x: pt.x, y: pt.y), cs.root) else {
+                return Codec.foryError("no scrollable found at from point")
             }
             anchorScrollView = scrollView
-        } else if let from = args.from, let flabel = from.asLabel {
+        } else if !fromTarget.label.isEmpty {
             let anchor: SnapshotElement
-            switch rawFindInSnapshot(flabel, traits: nil, cs: cs) {
+            switch rawFindInSnapshot(fromTarget.label, traits: nil, cs: cs) {
             case .found(let elem):
                 anchor = elem
             case .ambiguous(let matches):
-                return ambiguityResponse(flabel, matches: matches)
+                return try ambiguityResponse(fromTarget.label, matches: matches, fory: fory)
             case .fuzzy(let suggestions):
-                return notFoundResponse(flabel,
-                                        suggestions: suggestions,
-                                        hint: "Try a more specific --from label or a coordinate anchor")
+                return try notFoundResponse(fromTarget.label,
+                                            suggestions: suggestions,
+                                            hint: "Try a more specific --from label or a coordinate anchor",
+                                            fory: fory)
             case .notFound(let suggestions):
-                return notFoundResponse(flabel,
-                                        suggestions: suggestions,
-                                        hint: "Try a more specific --from label or a coordinate anchor")
+                return try notFoundResponse(fromTarget.label,
+                                            suggestions: suggestions,
+                                            hint: "Try a more specific --from label or a coordinate anchor",
+                                            fory: fory)
             }
             guard let scrollView = findScrollableAncestor(anchor.node) else {
-                return Codec.makeError("anchor not inside a scrollable")
+                return Codec.foryError("anchor not inside a scrollable")
             }
             anchorScrollView = scrollView
         } else {
-            return Codec.makeError("anchor scroll requires 'from'")
+            return Codec.foryError("anchor scroll requires 'from'")
         }
         let cells = collectCellSnapshots(anchorScrollView)
         let visibleCells = cells.filter { $0.isVisible }
         guard visibleCells.count >= 2 else {
-            return Codec.makeError("less than 2 visible cells in anchor's scrollable")
+            return Codec.foryError("less than 2 visible cells in anchor's scrollable")
         }
         let dx = visibleCells.first!.frame.minX - visibleCells.last!.frame.minX
         let dy = visibleCells.first!.frame.minY - visibleCells.last!.frame.minY
         let vertical = abs(dy) > abs(dx)
-        let scrollUpwards = (args.dir == .back)
+        let scrollUpwards = (args.dir == 1) // back
 
         let result = scrollUntilVisible(scrollView: anchorScrollView,
                                         label: label,
-                                        traits: args.traits,
+                                        traits: traits,
                                         vertical: vertical,
                                         scrollUpwards: scrollUpwards,
                                         app: app)
         switch result {
         case .found(let count, let target):
-            return okScrollWithAncestors(node: target, scrolls: count)
+            return okScrollWithAncestors(node: target, scrolls: count, fory: fory)
         case .hitBoundary:
-            return boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
+            return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards, fory: fory)
         case .reachedMax:
-            return Codec.makeError("anchor scroll: max scroll count reached")
+            return Codec.foryError("anchor scroll: max scroll count reached")
         case .snapshotFailed:
-            return Codec.makeError("anchor scroll: failed to rebuild snapshot (app may have exited)")
+            return Codec.foryError("anchor scroll: failed to rebuild snapshot (app may have exited)")
         case .ambiguous(let lbl, let matches):
-            return ambiguityResponse(lbl, matches: matches)
+            return try ambiguityResponse(lbl, matches: matches, fory: fory)
         }
     }
 
-    private static func handleAbsolutePointSwipe(from: [Double],
-                                                 to: [Double],
-                                                 app: XCUIApplication) -> ResponseFrame {
-        guard from.count == 2, to.count == 2 else {
-            return Codec.makeError("swipe: point arguments must be [x, y]")
-        }
+    private static func handleAbsolutePointSwipe(from: ForyPoint,
+                                                 to: ForyPoint,
+                                                 app: XCUIApplication,
+                                                 fory: Fory) throws -> ForyResponseFrame {
         let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
-        let start = origin.withOffset(CGVector(dx: from[0], dy: from[1]))
-        let end = origin.withOffset(CGVector(dx: to[0], dy: to[1]))
+        let start = origin.withOffset(CGVector(dx: from.x, dy: from.y))
+        let end = origin.withOffset(CGVector(dx: to.x, dy: to.y))
         _ = RawPointer.perform(
             app: app,
             event: .drag(
@@ -215,31 +218,33 @@ enum SwipeCommands {
                 holdDuration: ScrollConstants.touchHoldDuration
             )
         )
-        return Codec.makeOK([
-            "ancestors": [String](),
-            "type": "Coordinate",
-            "label": "",
-            "rect": [from[0].sanitized, from[1].sanitized, to[0].sanitized, to[1].sanitized],
-            "scrolls": 1,
-        ])
+        let payload = ForySwipePayload(
+            ancestors: [],
+            elemType: 1, // Other (coordinate)
+            label: "",
+            rect: ForyRect(
+                x: Int32(from.x.sanitized),
+                y: Int32(from.y.sanitized),
+                w: Int32(to.x.sanitized),
+                h: Int32(to.y.sanitized)
+            ),
+            scrolls: 1
+        )
+        return try Codec.foryOK(payload, fory: fory)
     }
 
     // MARK: - Point swipe (doc 5.2)
 
-    private static func handlePointSwipe(_ point: [Double],
+    private static func handlePointSwipe(_ point: ForyPoint,
                                          cs: CleanedSnapshot,
-                                         app: XCUIApplication) -> ResponseFrame {
-        guard point.count == 2 else {
-            return Codec.makeError("swipe: 'to' point must be [x, y]")
-        }
-        let p = CGPoint(x: point[0], y: point[1])
+                                         app: XCUIApplication,
+                                         fory: Fory) throws -> ForyResponseFrame {
+        let p = CGPoint(x: point.x, y: point.y)
         guard let scrollView = findScrollableAtPoint(p, cs.root) else {
-            return Codec.makeError("no scrollable at point")
+            return Codec.foryError("no scrollable at point")
         }
         let frame = scrollView.frame
         let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView), scrollFrame: frame)
-        // Point-swipe semantics: move the content point toward the viewport
-        // center, so the finger drag vector is the inverse of point offset.
         let center = CGPoint(x: frame.midX, y: frame.midY)
         let rawVector = CGVector(dx: center.x - p.x, dy: center.y - p.y)
         let vector = projectVectorToPrimaryAxis(rawVector, axis: axis)
@@ -251,40 +256,41 @@ enum SwipeCommands {
               axisName,
               rawVector.dx, rawVector.dy,
               vector.dx, vector.dy)
-        return performDirectScroll(scrollView: scrollView,
+        return try performDirectScroll(scrollView: scrollView,
                                    responseNode: scrollView,
                                    vector: vector,
                                    vertical: vertical,
                                    scrollUpwards: scrollUpwards,
-                                   app: app)
+                                   app: app,
+                                   fory: fory)
     }
 
     // MARK: - Distance-only swipe (doc 5.3)
 
-    private static func handleDistanceSwipe(args: SwipeArgs,
+    private static func handleDistanceSwipe(args: ForySwipeArgs,
                                             cs: CleanedSnapshot,
-                                            app: XCUIApplication) -> ResponseFrame {
+                                            app: XCUIApplication,
+                                            fory: Fory) throws -> ForyResponseFrame {
         let scrollNode = findLargestScrollable(cs.root)
         let scrollFrame = scrollNode?.frame ?? app.frame
-        let dir = args.dir ?? .forth
+        let isBack = args.dir == 1
         let axisSize = scrollFrame.height
-        let distance = args.distance ?? (ScrollConstants.scrollTouchProportion * Double(axisSize))
+        let distance = args.distance > 0 ? args.distance : (ScrollConstants.scrollTouchProportion * Double(axisSize))
 
-        // Default to vertical direction — forth = content moves down (finger up = -dy).
         let vector: CGVector
-        switch dir {
-        case .forth:
-            vector = CGVector(dx: 0, dy: -CGFloat(distance))
-        case .back:
+        if isBack {
             vector = CGVector(dx: 0, dy: CGFloat(distance))
+        } else {
+            vector = CGVector(dx: 0, dy: -CGFloat(distance))
         }
         let node = scrollNode ?? cs.root
-        return performDirectScroll(scrollView: node,
+        return try performDirectScroll(scrollView: node,
                                    responseNode: node,
                                    vector: vector,
                                    vertical: true,
-                                   scrollUpwards: dir == .back,
-                                   app: app)
+                                   scrollUpwards: isBack,
+                                   app: app,
+                                   fory: fory)
     }
 
     // MARK: - STEP 6 helper
@@ -297,9 +303,6 @@ enum SwipeCommands {
         case ambiguous(label: String, matches: [SnapshotElement])
     }
 
-    /// Scrolls, rebuilds snapshots, and re-finds the target by label until it
-    /// becomes visible or motion stops at the boundary.
-    /// Shared by both label-to-scroll and anchor-scroll paths.
     private static func scrollUntilVisible(scrollView: SafeSnapshot,
                                    label: String,
                                    traits: String?,
@@ -326,7 +329,6 @@ enum SwipeCommands {
             invalidateSnapshot()
             guard let freshCS = rebuildCleanedSnapshot() else { return .snapshotFailed }
 
-            // Re-find target by label (not identity) — survives snapshot rebuilds.
             switch rawFindInSnapshot(label, traits: traits, cs: freshCS) {
             case .found(let elem) where elem.isVisible:
                 return .found(count: i + 1, target: elem.node)
@@ -336,7 +338,6 @@ enum SwipeCommands {
                 break
             }
 
-            // Boundary: cells didn't move → at edge.
             guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) else {
                 return .hitBoundary
             }
@@ -349,20 +350,17 @@ enum SwipeCommands {
         return .reachedMax
     }
 
-    /// Executes a single direct scroll (point/distance) and re-checks whether
-    /// the scrollable subtree actually moved. If no effective drag is emitted,
-    /// report a dedicated "too small to scroll" error; if frames stay unchanged
-    /// after a real drag, report boundary.
     private static func performDirectScroll(scrollView: SafeSnapshot,
                                             responseNode: SafeSnapshot,
                                             vector: CGVector,
                                             vertical: Bool,
                                             scrollUpwards: Bool,
-                                            app: XCUIApplication) -> ResponseFrame {
+                                            app: XCUIApplication,
+                                            fory: Fory) throws -> ForyResponseFrame {
         let segments = scrollSegments(for: vector, scrollFrame: scrollView.frame)
         guard !segments.isEmpty else {
             NSLog("[point-swipe] too small to scroll vector=(%.1f,%.1f)", vector.dx, vector.dy)
-            return tooSmallToScrollResponse(vertical: vertical, scrollUpwards: scrollUpwards)
+            return try tooSmallToScrollResponse(vertical: vertical, scrollUpwards: scrollUpwards, fory: fory)
         }
 
         let prevFrames = collectVisibleCellFrames(scrollView)
@@ -376,19 +374,16 @@ enum SwipeCommands {
             let nowFrames = collectVisibleCellFrames(freshScrollView)
             if nowFrames == prevFrames {
                 NSLog("[point-swipe] hit boundary after %d segment(s)", segmentCount)
-                return boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
+                return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards, fory: fory)
             }
 
             let freshResponseNode = findMatching(in: freshCS.rawRoot, against: responseNode) ?? freshScrollView
-            return okNodeScroll(node: freshResponseNode, scrolls: segmentCount)
+            return okNodeScroll(node: freshResponseNode, scrolls: segmentCount, fory: fory)
         }
 
-        return okNodeScroll(node: responseNode, scrolls: segmentCount)
+        return okNodeScroll(node: responseNode, scrolls: segmentCount, fory: fory)
     }
 
-    // Find a node in the freshly built snapshot that matches (by identity, doc 5.4)
-    // the original target pre-scroll.
-    // Time complexity: O(n), where n is the number of nodes in the snapshot tree.
     private static func findMatching(in root: SafeSnapshot, against target: SafeSnapshot) -> SafeSnapshot? {
         var stack: [SafeSnapshot] = [root]
         while let n = stack.popLast() {
@@ -415,60 +410,50 @@ enum SwipeCommands {
 
     // MARK: - Responses
 
-    private static func okScroll(target: SnapshotElement, scrolls: Int) -> ResponseFrame {
-        let tn = elementTypeName(XCUIElement.ElementType(rawValue: UInt(target.node.elementType)) ?? .other)
-        return Codec.makeOK([
-            "ancestors": ancestorChainNames(target.node),
-            "type": tn,
-            "label": target.node.label ?? "",
-            "rect": rectArray(target.node.frame),
-            "scrolls": scrolls,
-        ])
+    private static func okScroll(target: SnapshotElement, scrolls: Int, fory: Fory) -> ForyResponseFrame {
+        let payload = ForySwipePayload(
+            ancestors: ancestorChainNames(target.node),
+            elemType: Int32(truncatingIfNeeded: target.node.elementType),
+            label: target.node.label ?? "",
+            rect: makeForyRect(target.node.frame),
+            scrolls: Int32(scrolls)
+        )
+        return (try? Codec.foryOK(payload, fory: fory)) ?? Codec.foryError("serialization failed")
     }
 
-    private static func okNodeScroll(node: SafeSnapshot, scrolls: Int) -> ResponseFrame {
-        let tn = elementTypeName(XCUIElement.ElementType(rawValue: UInt(node.elementType)) ?? .other)
-        return Codec.makeOK([
-            "ancestors": ancestorChainNames(node),
-            "type": tn,
-            "label": node.label ?? "",
-            "rect": rectArray(node.frame),
-            "scrolls": scrolls,
-        ])
+    private static func okNodeScroll(node: SafeSnapshot, scrolls: Int, fory: Fory) -> ForyResponseFrame {
+        let payload = ForySwipePayload(
+            ancestors: ancestorChainNames(node),
+            elemType: Int32(truncatingIfNeeded: node.elementType),
+            label: node.label ?? "",
+            rect: makeForyRect(node.frame),
+            scrolls: Int32(scrolls)
+        )
+        return (try? Codec.foryOK(payload, fory: fory)) ?? Codec.foryError("serialization failed")
     }
 
-    private static func okScrollWithAncestors(node: SafeSnapshot, scrolls: Int) -> ResponseFrame {
-        okNodeScroll(node: node, scrolls: scrolls)
+    private static func okScrollWithAncestors(node: SafeSnapshot, scrolls: Int, fory: Fory) -> ForyResponseFrame {
+        okNodeScroll(node: node, scrolls: scrolls, fory: fory)
     }
 
-    private static func boundaryResponse(vertical: Bool, scrollUpwards: Bool) -> ResponseFrame {
+    private static func boundaryResponse(vertical: Bool, scrollUpwards: Bool, fory: Fory) throws -> ForyResponseFrame {
+        let dir: Int32 = scrollUpwards ? 1 : 0 // 1=back, 0=forth
         let axisName = vertical ? "vertical" : "horizontal"
         let dirStr = scrollUpwards ? "back" : "forth"
-        return ResponseFrame(
-            ok: false,
-            error: "hit scroll boundary (\(axisName) \(dirStr))",
-            data: AnyCodable([
-                "atBoundary": true,
-                "direction": dirStr,
-            ] as [String: Any])
-        )
+        var payload = ForyErrorPayload()
+        payload.atBoundary = true
+        payload.direction = dir
+        return try Codec.foryError("hit scroll boundary (\(axisName) \(dirStr))", payload: payload, fory: fory)
     }
 
-    private static func tooSmallToScrollResponse(vertical: Bool, scrollUpwards: Bool) -> ResponseFrame {
+    private static func tooSmallToScrollResponse(vertical: Bool, scrollUpwards: Bool, fory: Fory) throws -> ForyResponseFrame {
+        let dir: Int32 = scrollUpwards ? 1 : 0
         let axisName = vertical ? "vertical" : "horizontal"
         let dirStr = scrollUpwards ? "back" : "forth"
-        return ResponseFrame(
-            ok: false,
-            error: "swipe displacement too small to scroll (\(axisName) \(dirStr))",
-            data: AnyCodable([
-                "tooSmallToScroll": true,
-                "direction": dirStr,
-                "minDragDistance": Double(ScrollConstants.fuzzyPointThreshold),
-            ] as [String: Any])
-        )
+        var payload = ForyErrorPayload()
+        payload.tooSmallToScroll = true
+        payload.direction = dir
+        payload.minDragDistance = Double(ScrollConstants.fuzzyPointThreshold)
+        return try Codec.foryError("swipe displacement too small to scroll (\(axisName) \(dirStr))", payload: payload, fory: fory)
     }
 }
-
-/// Label-based scroll-until-visible: contains → fuzzy → trait filter.
-/// Time complexity: O(m + s), where m is the number of exact-label matches and
-/// s is the number of fuzzy suggestions examined when no exact match exists.

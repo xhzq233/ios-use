@@ -1,7 +1,10 @@
 import Foundation
+import Fory
 
 @objc final class DriverServer: NSObject {
     static let shared = DriverServer()
+
+    private let fory: Fory = createFory()
 
     @objc static func startSharedIfNeeded() {
         let server = DriverServer.shared
@@ -29,7 +32,7 @@ import Foundation
 
     func start(port: UInt16? = nil) throws {
         let port = port ?? defaultPort
-        NSLog("[driver] server start v2")
+        NSLog("[driver] server start v3 (fory)")
 
         guard !running else {
             throw DriverError.serverError("server already running")
@@ -122,31 +125,34 @@ import Foundation
         do {
             while self.running {
                 do {
-                    let req = try Codec.readFrame(fd)
-
-                    // doc 6.2 — screenshot uses a two-frame protocol:
-                    //   1) JSON {ok:true, data:{size:N}}
-                    //   2) raw JPEG bytes
-                    // Handled specially since ResponseFrame cannot carry the
-                    // binary payload.
-                    if req.c == .screenshot {
-                        try handleScreenshot(fd: fd)
+                    let foryReq = try Codec.readFrame(fd, fory: self.fory)
+                    let command = Command(rawValue: foryReq.command)
+                    guard let command else {
+                        let errFrame = ForyResponseFrame(ok: false, error: "unknown command: \(foryReq.command)")
+                        try Codec.writeResponseFrame(fd, frame: errFrame, fory: self.fory)
                         continue
                     }
 
-                    // All other commands: dispatch (on main thread for UI
-                    // XCTest calls) and write a single JSON frame.
-                    let prepared = try dispatchOnMainThread(req)
-                    if !prepared.response.ok, let err = prepared.response.error, err.contains("timed out") {
-                        _ = try? Codec.writeFrameData(fd, data: prepared.encoded)
+                    let foryResp: ForyResponseFrame
+                    if command == .oslog {
+                        let startedAt = CFAbsoluteTimeGetCurrent()
+                        NSLog("[driver] dispatch start command=\(command.rawValue)")
+                        foryResp = try self.dispatchFory(foryReq.payload, command: command)
+                        NSLog("[driver] dispatch finish command=\(command.rawValue) ok=\(foryResp.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))ms")
+                    } else {
+                        foryResp = try self.dispatchOnMainThread(foryReq.payload, command: command)
+                    }
+
+                    if !foryResp.ok, foryResp.error.contains("timed out") {
+                        try Codec.writeResponseFrame(fd, frame: foryResp, fory: self.fory)
                         break
                     }
-                    try Codec.writeFrameData(fd, data: prepared.encoded)
+                    try Codec.writeResponseFrame(fd, frame: foryResp, fory: self.fory)
                 } catch FrameError.readFailed {
                     break
                 } catch {
-                    let resp = Codec.makeError("\(error)")
-                    _ = try? Codec.writeResponse(fd, resp: resp)
+                    let errFrame = ForyResponseFrame(ok: false, error: "\(error)")
+                    _ = try? Codec.writeResponseFrame(fd, frame: errFrame, fory: self.fory)
                     break
                 }
             }
@@ -155,68 +161,11 @@ import Foundation
         }
     }
 
-    // MARK: - Screenshot (doc 6.2)
-
-    /// Run screenshot on main thread, then write JSON header frame + raw JPEG
-    /// frame. The header contains `{size: N}` so the client can read exactly N
-    /// bytes from the next frame.
-    private func handleScreenshot(fd: Int32) throws {
-        let sem = DispatchSemaphore(value: 0)
-        var result: ScreenshotResult?
-        var captureError: Error?
-
-        DispatchQueue.main.async {
-            do {
-                result = try ScreenCommands.screenshot()
-            } catch {
-                captureError = error
-            }
-            sem.signal()
-        }
-        let waitResult = sem.wait(timeout: .now() + .seconds(45))
-        if waitResult == .timedOut {
-            let err = Codec.makeError("screenshot timed out after 45s")
-            try Codec.writeResponse(fd, resp: err)
-            return
-        }
-        if let e = captureError {
-            let err = Codec.makeError("screenshot failed: \(e)")
-            try Codec.writeResponse(fd, resp: err)
-            return
-        }
-        guard let result else {
-            let err = Codec.makeError("screenshot returned no data")
-            try Codec.writeResponse(fd, resp: err)
-            return
-        }
-
-        // Frame 1: JSON header.
-        let header = Codec.makeOK(["size": result.size])
-        try Codec.writeResponse(fd, resp: header)
-        // Frame 2: raw JPEG payload.
-        try Codec.writeBinaryFrame(fd, data: result.jpegData)
-    }
-
     // MARK: - Main-thread dispatch
 
-    private struct PreparedResponse {
-        let response: ResponseFrame
-        let encoded: Data
-    }
-
-    private func dispatchOnMainThread(_ req: RequestFrame) throws -> PreparedResponse {
-        // oslog does not touch XCTest UI APIs and is safe on any thread.
-        if req.c == .oslog {
-            let startedAt = CFAbsoluteTimeGetCurrent()
-            NSLog("[driver] dispatch start command=\(req.c.rawValue)")
-            let response = try self.dispatch(req)
-            NSLog("[driver] dispatch finish command=\(req.c.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))ms")
-            let encoded = try Codec.encodeResponse(response)
-            return PreparedResponse(response: response, encoded: encoded)
-        }
-
+    private func dispatchOnMainThread(_ payload: Data, command: Command) throws -> ForyResponseFrame {
         let sem = DispatchSemaphore(value: 0)
-        var result: PreparedResponse?
+        var result: ForyResponseFrame?
         var dispatchError: Error?
         let cancelLock = NSLock()
         var cancelled = false
@@ -235,13 +184,12 @@ import Foundation
             }
             do {
                 let startedAt = CFAbsoluteTimeGetCurrent()
-                NSLog("[driver] dispatch start command=\(req.c.rawValue)")
-                let response = try self.dispatch(req)
-                NSLog("[driver] dispatch finish command=\(req.c.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))ms")
-                let encoded = try Codec.encodeResponse(response)
-                result = PreparedResponse(response: response, encoded: encoded)
+                NSLog("[driver] dispatch start command=\(command.rawValue)")
+                let response = try self.dispatchFory(payload, command: command)
+                NSLog("[driver] dispatch finish command=\(command.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))ms")
+                result = response
             } catch {
-                NSLog("[driver] dispatch error command=\(req.c.rawValue) error=\(error)")
+                NSLog("[driver] dispatch error command=\(command.rawValue) error=\(error)")
                 dispatchError = error
             }
             sem.signal()
@@ -255,59 +203,90 @@ import Foundation
             }
             cancelLock.unlock()
             if !commandStarted {
-                let timeoutResponse = Codec.makeError("Command timed out after 45s (XCTest main thread may be blocked or crashed)")
-                let encoded = try Codec.encodeResponse(timeoutResponse)
-                return PreparedResponse(response: timeoutResponse, encoded: encoded)
+                return ForyResponseFrame(ok: false, error: "Command timed out after 45s (XCTest main thread may be blocked or crashed)")
             }
 
-            // The command has already started on the XCTest main thread, so
-            // returning a timeout here would leave the client observing a
-            // failure while the original command later mutates driver state.
             let completionWaitResult = sem.wait(timeout: .now() + .seconds(120))
             if completionWaitResult == .timedOut {
-                let timeoutResponse = Codec.makeError(
-                    "Command started on the XCTest main thread but did not finish within 120s; driver state may be inconsistent"
-                )
-                let encoded = try Codec.encodeResponse(timeoutResponse)
-                return PreparedResponse(response: timeoutResponse, encoded: encoded)
+                return ForyResponseFrame(ok: false, error: "Command started on the XCTest main thread but did not finish within 120s; driver state may be inconsistent")
             }
         }
 
         if let error = dispatchError {
             throw error
         }
-        guard let result else {
-            let fallback = Codec.makeError("Command dispatch failed: result is nil after wait (this should not happen)")
-            let encoded = try Codec.encodeResponse(fallback)
-            return PreparedResponse(response: fallback, encoded: encoded)
-        }
-        return result
+        return result ?? ForyResponseFrame(ok: false, error: "Command dispatch failed: result is nil after wait")
     }
 
     // MARK: - Dispatch
 
-    private func dispatch(_ req: RequestFrame) throws -> ResponseFrame {
-        switch req.c {
-        case .createSession: return try AppCommands.createSession(req.args)
-        case .deleteSession: return try AppCommands.deleteSession(req.args)
-        case .activateApp:   return try AppCommands.activateApp(req.args)
-        case .terminateApp:  return try AppCommands.terminateApp(req.args)
-        case .openURL:       return try AppCommands.openURL(req.args)
-        case .probeFetch:    return try ProbeCommands.probeFetch(req.args)
-        case .proxyCAPush:   return try ProxyCommands.proxyCAPush(req.args)
+    private func dispatchFory(_ payload: Data, command: Command) throws -> ForyResponseFrame {
+        switch command {
+        case .createSession:
+            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyCreateSessionArgs.self) : nil
+            return try AppCommands.createSession(args, fory: fory)
+
+        case .deleteSession:
+            return AppCommands.deleteSession()
+
+        case .activateApp:
+            let args = try fory.deserialize(payload, as: ForyActivateAppArgs.self)
+            return try AppCommands.activateApp(args)
+
+        case .terminateApp:
+            let args = try fory.deserialize(payload, as: ForyTerminateAppArgs.self)
+            return try AppCommands.terminateApp(args)
+
+        case .openURL:
+            let args = try fory.deserialize(payload, as: ForyOpenURLArgs.self)
+            return try AppCommands.openURL(args, fory: fory)
+
+        case .probeFetch:
+            let args = try fory.deserialize(payload, as: ForyProbeFetchArgs.self)
+            return try ProbeCommands.probeFetch(args, fory: fory)
+
+        case .proxyCAPush:
+            let args = try fory.deserialize(payload, as: ForyProxyCAPushArgs.self)
+            return try ProxyCommands.proxyCAPush(args, fory: fory)
+
         case .screenshot:
-            // Handled by handleConnection's two-frame path; dispatch should
-            // never see it.
-            return Codec.makeError("screenshot must use binary protocol path")
-        case .oslog:         return try OslogCommands.oslog(req.args)
-        case .dom:           return try DomCommands.dom(req.args)
-        case .find:          return try FindCommands.find(req.args)
-        case .tap:           return try TouchCommands.tap(req.args)
-        case .longPress:     return try TouchCommands.longPress(req.args)
-        case .input:         return try InputCommands.input(req.args)
-        case .swipe:         return try SwipeCommands.swipe(req.args)
-        case .waitFor:       return try WaitForCommands.waitFor(req.args)
-        case .dismissAlert:  return try AlertCommands.dismissAlert(req.args)
+            return try ScreenCommands.screenshot(fory: fory)
+
+        case .oslog:
+            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyOslogArgs.self) : nil
+            return try OslogCommands.oslog(args, fory: fory)
+
+        case .dom:
+            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyDomArgs.self) : ForyDomArgs()
+            return try DomCommands.dom(args, fory: fory)
+
+        case .find:
+            let args = try fory.deserialize(payload, as: ForyFindArgs.self)
+            return try FindCommands.find(args, fory: fory)
+
+        case .tap:
+            let args = try fory.deserialize(payload, as: ForyTapArgs.self)
+            return try TouchCommands.tap(args, fory: fory)
+
+        case .longPress:
+            let args = try fory.deserialize(payload, as: ForyLongPressArgs.self)
+            return try TouchCommands.longPress(args, fory: fory)
+
+        case .input:
+            let args = try fory.deserialize(payload, as: ForyInputArgs.self)
+            return try InputCommands.input(args, fory: fory)
+
+        case .swipe:
+            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForySwipeArgs.self) : ForySwipeArgs()
+            return try SwipeCommands.swipe(args, fory: fory)
+
+        case .waitFor:
+            let args = try fory.deserialize(payload, as: ForyWaitForArgs.self)
+            return try WaitForCommands.waitFor(args, fory: fory)
+
+        case .dismissAlert:
+            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyDismissAlertArgs.self) : nil
+            return try AlertCommands.dismissAlert(args, fory: fory)
         }
     }
 }
