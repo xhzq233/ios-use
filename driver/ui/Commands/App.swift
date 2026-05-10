@@ -41,6 +41,9 @@ enum AppCommands {
         while Date() < deadline {
             let state = app.state
             if state == .notRunning || state == .unknown {
+                if Session.shared.bundleId == args.bundleId {
+                    Session.shared.destroy()
+                }
                 invalidateSnapshot()
                 return Codec.makeOK()
             }
