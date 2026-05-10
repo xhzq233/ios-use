@@ -126,8 +126,7 @@ describe('cli', () => {
     expectHelp(['dom', '--help'], [
       'Dump current UI DOM tree',
       '--raw',
-      '--save',
-      '--name',
+      '--fresh',
       '--udid',
       '--bundle-id',
       '--verbose',

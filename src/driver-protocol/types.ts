@@ -9,20 +9,21 @@ export interface CreateSessionResponse {
   bundleId?: string;
 }
 
-// DOM nodes may carry a label on containers as well, which is useful for
-// SpringBoard-specific grouping like "Home screen icons".
+// DOM nodes in cleaned mode arrive as a flat preorder array; each node carries
+// `cc` (childCount) encoding tree structure. Raw mode sends a formatted string.
 export interface DomNode {
   tr: string[];
   l?: string;
   v?: string;
   r?: Rect;
-  c?: DomNode[];
+  cc?: number; // childCount (flat preorder mode)
 }
 
 export interface DomResponse {
   app: string;
   window: [number, number];
   elements: DomNode[];
+  raw?: string;  // indented tree text (--raw mode)
 }
 
 export interface FindMatch {
