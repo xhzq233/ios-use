@@ -171,6 +171,23 @@ struct ResponseFrame: Codable {
     let ok: Bool
     let error: String?
     let data: AnyCodable?
+
+    enum CodingKeys: String, CodingKey { case ok, error, data }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(ok, forKey: .ok)
+        if let error {
+            try container.encode(error, forKey: .error)
+        } else {
+            try container.encodeNil(forKey: .error)
+        }
+        if let data {
+            try container.encode(data, forKey: .data)
+        } else {
+            try container.encodeNil(forKey: .data)
+        }
+    }
 }
 
 // MARK: - DriverError
@@ -234,7 +251,8 @@ struct AnyCodable: Codable {
         case is NSNull: try container.encodeNil()
         case let v as String: try container.encode(v)
         case let v as Int: try container.encode(v)
-        case let v as Double: try container.encode(v)
+        case let v as Double:
+            if v.isFinite { try container.encode(v) } else { try container.encodeNil() }
         case let v as Bool: try container.encode(v)
         case let v as [String: Any]:
             var nested = encoder.container(keyedBy: JSONCodingKeys.self)
@@ -259,7 +277,8 @@ struct AnyCodable: Codable {
             case is NSNull: try container.encodeNil(forKey: codingKey)
             case let v as String: try container.encode(v, forKey: codingKey)
             case let v as Int: try container.encode(v, forKey: codingKey)
-            case let v as Double: try container.encode(v, forKey: codingKey)
+            case let v as Double:
+                if v.isFinite { try container.encode(v, forKey: codingKey) } else { try container.encodeNil(forKey: codingKey) }
             case let v as Bool: try container.encode(v, forKey: codingKey)
             case let v as [String: Any]:
                 var nested = container.nestedContainer(keyedBy: JSONCodingKeys.self, forKey: codingKey)
@@ -278,7 +297,8 @@ struct AnyCodable: Codable {
             case is NSNull: try container.encodeNil()
             case let v as String: try container.encode(v)
             case let v as Int: try container.encode(v)
-            case let v as Double: try container.encode(v)
+            case let v as Double:
+                if v.isFinite { try container.encode(v) } else { try container.encodeNil() }
             case let v as Bool: try container.encode(v)
             case let v as [String: Any]:
                 var nested = container.nestedContainer(keyedBy: JSONCodingKeys.self)
