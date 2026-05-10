@@ -47,8 +47,10 @@ export interface ActionDef {
 function parseOffsetPair(v: string | undefined): { x?: number; y?: number } | undefined {
   if (!v) return undefined;
   const parts = v.split(',');
-  const x = parts[0]?.trim() ? Number(parts[0]) : undefined;
-  const y = parts[1]?.trim() ? Number(parts[1]) : undefined;
+  const rawX = parts[0]?.trim();
+  const rawY = parts[1]?.trim();
+  const x = rawX ? parseFloatStrict(rawX) : undefined;
+  const y = rawY ? parseFloatStrict(rawY) : undefined;
   if (x === undefined && y === undefined) return undefined;
   return { x, y };
 }
@@ -279,7 +281,7 @@ export function mapCliToStep(
   for (const [key, val] of Object.entries(opts)) {
     if (key === 'udid' || key === 'verbose') continue;
     const camel = key.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    if (val !== undefined) step[camel] = val;
+    if (val !== undefined && step[camel] === undefined) step[camel] = val;
   }
 
   // CLI always prints

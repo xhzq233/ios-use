@@ -9,7 +9,7 @@ steps:
     comment: "验证 subflow、vars、outputs，以及主 flow 复用子 flow 输出"
 
   - action: find
-    label: ${matchedNode.label}
+    label: ${matchedNode.firstMatch.label}
     print: false
     comment: "验证主 flow 可以消费子 flow 返回的节点信息"
 
