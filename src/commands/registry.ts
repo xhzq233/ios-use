@@ -129,9 +129,8 @@ export const ACTIONS: ActionDef[] = [
     desc: 'Dump current UI DOM tree',
     cli: {
       opts: [
-        { name: 'raw', desc: 'Return raw XCUI snapshot tree', flag: true },
-        { name: 'save', desc: 'Save DOM tree to output/', flag: true },
-        { name: 'name', desc: 'Filename prefix for saved DOM', default: 'dom' },
+        { name: 'raw', desc: 'Output raw snapshot as indented text (skip clean tree)', flag: true },
+        { name: 'fresh', desc: 'Invalidate cache and take a fresh snapshot', flag: true },
       ],
     },
     execute: () => { throw new Error('dom handler not registered'); },
