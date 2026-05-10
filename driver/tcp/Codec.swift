@@ -47,11 +47,7 @@ final class Codec {
     // MARK: - Write
 
     static func encodeResponse(_ resp: ResponseFrame) throws -> Data {
-        let payload = responseJSONObject(resp)
-        guard JSONSerialization.isValidJSONObject(payload) else {
-            throw FrameError.writeFailed
-        }
-        return try JSONSerialization.data(withJSONObject: payload, options: [])
+        return try JSONEncoder().encode(resp)
     }
 
     /// Write a length-prefixed JSON frame. `data` is the JSON body.
@@ -92,62 +88,6 @@ final class Codec {
         }
     }
 
-    // MARK: - JSON sanitation
-
-    private static func responseJSONObject(_ resp: ResponseFrame) -> [String: Any] {
-        var obj: [String: Any] = ["ok": resp.ok]
-        if let error = resp.error {
-            obj["error"] = error
-        } else {
-            obj["error"] = NSNull()
-        }
-        if let data = resp.data {
-            obj["data"] = sanitizeJSONValue(data.value)
-        } else {
-            obj["data"] = NSNull()
-        }
-        return obj
-    }
-
-    private static func sanitizeJSONValue(_ value: Any) -> Any {
-        if value is NSNull { return NSNull() }
-        if let v = value as? String { return v }
-        if let v = value as? NSString { return String(v) }
-        if let v = value as? Bool { return v }
-        if let v = value as? Int { return v }
-        if let v = value as? Int8 { return Int(v) }
-        if let v = value as? Int16 { return Int(v) }
-        if let v = value as? Int32 { return Int(v) }
-        if let v = value as? Int64 { return v }
-        if let v = value as? UInt { return v }
-        if let v = value as? UInt8 { return UInt(v) }
-        if let v = value as? UInt16 { return UInt(v) }
-        if let v = value as? UInt32 { return UInt(v) }
-        if let v = value as? UInt64 { return v }
-        if let v = value as? Double { return v.isFinite ? v : NSNull() }
-        if let v = value as? Float { return v.isFinite ? Double(v) : NSNull() }
-        if let v = value as? NSNumber { return v }
-
-        if let arr = value as? [Any] { return arr.map { sanitizeJSONValue($0) } }
-        if let dict = value as? [String: Any] {
-            var out: [String: Any] = [:]
-            out.reserveCapacity(dict.count)
-            for (k, v) in dict {
-                out[k] = sanitizeJSONValue(v)
-            }
-            return out
-        }
-
-        // Encodable fallback — best-effort generic serialization.
-        if let encodable = value as? Encodable,
-           let data = try? JSONEncoder().encode(AnyEncodableWrapper(encodable)),
-           let obj = try? JSONSerialization.jsonObject(with: data, options: []) {
-            return obj
-        }
-
-        return NSNull()
-    }
-
     // MARK: - Helpers
 
     static func makeOK(_ data: Any? = nil) -> ResponseFrame {
@@ -157,13 +97,4 @@ final class Codec {
     static func makeError(_ msg: String) -> ResponseFrame {
         ResponseFrame(ok: false, error: msg, data: nil)
     }
-}
-
-// Type-erasing Encodable wrapper (used only as a fallback in sanitizeJSONValue).
-private struct AnyEncodableWrapper: Encodable {
-    let encode: (Encoder) throws -> Void
-    init(_ encodable: Encodable) {
-        self.encode = { enc in try encodable.encode(to: enc) }
-    }
-    func encode(to encoder: Encoder) throws { try encode(encoder) }
 }
