@@ -1,5 +1,6 @@
 export { DRIVER_COMMANDS } from './commands';
-export { createRequestFrame, isBinaryResponseCommand, omitUndefined } from './helpers';
+export { omitUndefined } from './helpers';
+export { Connection, DriverError } from './connection';
 export type { DriverCommand } from './commands';
 export type { RequestFrame, ResponseFrame } from './frames';
 export type {

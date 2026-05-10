@@ -1,4 +1,5 @@
 import Foundation
+import Fory
 
 enum FrameError: Error {
     case readFailed
@@ -8,13 +9,12 @@ enum FrameError: Error {
 }
 
 final class Codec {
-    // doc 1.1 — protocol is 4-byte length prefix + JSON body; binary frame
-    // follows the same length-prefix format.
-    static let maxFrameSize = 10 * 1024 * 1024 // 10MB
+    static let maxFrameSize = 50 * 1024 * 1024 // 50MB (accommodates screenshots)
 
     // MARK: - Read
 
-    static func readFrame(_ fd: Int32) throws -> RequestFrame {
+    /// Read a single length-prefixed Fory frame and deserialize as ForyRequestFrame.
+    static func readFrame(_ fd: Int32, fory: Fory) throws -> ForyRequestFrame {
         var lenBuf = [UInt8](repeating: 0, count: 4)
         try readExact(fd, into: &lenBuf, count: 4)
 
@@ -27,7 +27,7 @@ final class Codec {
             try readExact(fd, into: base, count: length)
         }
 
-        return try JSONDecoder().decode(RequestFrame.self, from: body)
+        return try fory.deserialize(body, as: ForyRequestFrame.self)
     }
 
     private static func readExact(_ fd: Int32, into ptr: UnsafeMutableRawPointer, count: Int) throws {
@@ -46,22 +46,13 @@ final class Codec {
 
     // MARK: - Write
 
-    static func encodeResponse(_ resp: ResponseFrame) throws -> Data {
-        return try JSONEncoder().encode(resp)
-    }
-
-    /// Write a length-prefixed JSON frame. `data` is the JSON body.
-    static func writeFrameData(_ fd: Int32, data: Data) throws {
+    /// Serialize and write a ForyResponseFrame as a single length-prefixed frame.
+    static func writeResponseFrame(_ fd: Int32, frame: ForyResponseFrame, fory: Fory) throws {
+        let data = try fory.serialize(frame)
         try writeLengthPrefixedData(fd, data: data)
     }
 
-    /// doc 6.2 — binary frame. Same 4-byte length prefix as JSON frames,
-    /// but the payload is raw bytes (e.g. JPEG for `screenshot`).
-    static func writeBinaryFrame(_ fd: Int32, data: Data) throws {
-        try writeLengthPrefixedData(fd, data: data)
-    }
-
-    private static func writeLengthPrefixedData(_ fd: Int32, data: Data) throws {
+    static func writeLengthPrefixedData(_ fd: Int32, data: Data) throws {
         guard data.count <= maxFrameSize else { throw FrameError.maxSizeExceeded }
         var lenBigEndian = UInt32(data.count).bigEndian
         try withUnsafeBytes(of: &lenBigEndian) { buf in
@@ -74,11 +65,6 @@ final class Codec {
         }
     }
 
-    static func writeResponse(_ fd: Int32, resp: ResponseFrame) throws {
-        let data = try encodeResponse(resp)
-        try writeFrameData(fd, data: data)
-    }
-
     private static func writeExact(_ fd: Int32, _ ptr: UnsafeRawPointer, count: Int) throws {
         var offset = 0
         while offset < count {
@@ -88,13 +74,23 @@ final class Codec {
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - ForyResponseFrame helpers
 
-    static func makeOK(_ data: Any? = nil) -> ResponseFrame {
-        ResponseFrame(ok: true, error: nil, data: data.map { AnyCodable($0) })
+    static func foryOK() -> ForyResponseFrame {
+        ForyResponseFrame(ok: true, error: "", payload: Data())
     }
 
-    static func makeError(_ msg: String) -> ResponseFrame {
-        ResponseFrame(ok: false, error: msg, data: nil)
+    static func foryOK<P>(_ payload: P, fory: Fory) throws -> ForyResponseFrame {
+        let data = try fory.serialize(payload)
+        return ForyResponseFrame(ok: true, error: "", payload: data)
+    }
+
+    static func foryError(_ msg: String) -> ForyResponseFrame {
+        ForyResponseFrame(ok: false, error: msg, payload: Data())
+    }
+
+    static func foryError(_ msg: String, payload: ForyErrorPayload, fory: Fory) throws -> ForyResponseFrame {
+        let data = try fory.serialize(payload)
+        return ForyResponseFrame(ok: false, error: msg, payload: data)
     }
 }

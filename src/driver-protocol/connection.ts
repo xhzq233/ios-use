@@ -1,6 +1,11 @@
 import net from 'node:net';
-import { createRequestFrame, isBinaryResponseCommand } from '../driver-protocol/index.js';
-import type { DriverCommand, RequestFrame, ResponseFrame } from '../driver-protocol/index.js';
+import {
+  serializeRequestFrame,
+  serializeArgs,
+  deserializeResponse,
+  deserializeResponsePayload,
+} from './fory.js';
+import type { ResponseFrame } from './frames.js';
 import { connectUsbmux } from './usbmux.js';
 
 export class DriverError extends Error {
@@ -12,8 +17,7 @@ export class DriverError extends Error {
   }
 }
 
-const MAX_JSON_FRAME = 10 * 1024 * 1024; // 10 MB
-const MAX_BINARY_FRAME = 50 * 1024 * 1024; // 50 MB
+const MAX_FRAME_SIZE = 50 * 1024 * 1024; // 50 MB
 
 export class Connection {
   private host: string;
@@ -78,7 +82,7 @@ export class Connection {
     });
   }
 
-  async send(command: DriverCommand, args?: Record<string, unknown>): Promise<ResponseFrame> {
+  async send(command: string, args?: Record<string, unknown>): Promise<ResponseFrame> {
     if (!this.socket) throw new Error('not connected');
     return new Promise((resolve, reject) => {
       this.sendQueue = this.sendQueue
@@ -88,88 +92,42 @@ export class Connection {
     });
   }
 
-  /**
-   * Send a command that returns: 1) a JSON frame with `{size: N}`, then 2) an N-byte binary frame.
-   * Used by screenshot (§6.2).
-   */
-  async sendExpectingBinary(
-    command: DriverCommand,
-    args?: Record<string, unknown>,
-  ): Promise<{ data: { size: number } & Record<string, unknown>; binary: Buffer }> {
-    if (!this.socket) throw new Error('not connected');
-    if (!isBinaryResponseCommand(command)) {
-      throw new Error(`command ${command} does not use binary responses`);
-    }
-    return new Promise((resolve, reject) => {
-      this.sendQueue = this.sendQueue
-        .then(() => this._sendUnsafeExpectingBinary(command, args).then(resolve, reject))
-        .catch((err: Error) => { reject(err); })
-        .then(() => {});
-    });
-  }
-
-  private async writeFrame(command: DriverCommand, args?: Record<string, unknown>): Promise<void> {
-    const frame: RequestFrame = createRequestFrame(command, args);
-    const body = Buffer.from(JSON.stringify(frame), 'utf-8');
+  private async writeForyFrame(command: string, args?: Record<string, unknown>): Promise<void> {
+    const argsPayload = serializeArgs(command, args);
+    const frameData = serializeRequestFrame(command, argsPayload);
     const header = Buffer.alloc(4);
-    header.writeUInt32BE(body.length, 0);
+    header.writeUInt32BE(frameData.length, 0);
     await new Promise<void>((resolve, reject) => {
-      this.socket!.write(Buffer.concat([header, body]), (err?: Error | null) => err ? reject(err) : resolve());
+      this.socket!.write(Buffer.concat([header, Buffer.from(frameData)]), (err?: Error | null) => err ? reject(err) : resolve());
     });
   }
 
-  private async _sendUnsafe(command: DriverCommand, args?: Record<string, unknown>): Promise<ResponseFrame> {
-    if (!this.socket) throw new Error('not connected');
-    await this.writeFrame(command, args);
-
-    const respHeader = await this.readExact(4);
-    const respLen = respHeader.readUInt32BE(0);
-    if (respLen === 0 || respLen > MAX_JSON_FRAME) {
-      throw new Error(`invalid response length: ${respLen}`);
+  private async readForyFrame(): Promise<Uint8Array> {
+    const header = await this.readExact(4);
+    const len = header.readUInt32BE(0);
+    if (len === 0 || len > MAX_FRAME_SIZE) {
+      throw new Error(`invalid frame length: ${len}`);
     }
-    const respBody = await this.readExact(respLen);
-    const result = JSON.parse(respBody.toString('utf-8')) as ResponseFrame;
-    return result;
+    const body = await this.readExact(len);
+    return new Uint8Array(body);
   }
 
-  private async _sendUnsafeExpectingBinary(
-    command: DriverCommand,
-    args?: Record<string, unknown>,
-  ): Promise<{ data: { size: number } & Record<string, unknown>; binary: Buffer }> {
+  private async _sendUnsafe(command: string, args?: Record<string, unknown>): Promise<ResponseFrame> {
     if (!this.socket) throw new Error('not connected');
-    await this.writeFrame(command, args);
+    await this.writeForyFrame(command, args);
 
-    const respHeader = await this.readExact(4);
-    const respLen = respHeader.readUInt32BE(0);
-    if (respLen === 0 || respLen > MAX_JSON_FRAME) {
-      throw new Error(`invalid response length: ${respLen}`);
-    }
-    const respBody = await this.readExact(respLen);
-    const result = JSON.parse(respBody.toString('utf-8')) as ResponseFrame;
-    if (!result.ok) {
-      throw new DriverError(result.error ?? `command ${command} failed`, result.data);
-    }
-    const data = (result.data ?? {}) as { size?: number } & Record<string, unknown>;
-    const size = typeof data.size === 'number' ? data.size : 0;
-    if (size <= 0) {
-      throw new Error(`invalid binary frame size: ${size}`);
-    }
-    if (size > MAX_BINARY_FRAME) {
-      throw new Error(`binary frame too large: ${size} (max ${MAX_BINARY_FRAME})`);
-    }
+    const frameData = await this.readForyFrame();
+    const { frame, payloadBytes } = deserializeResponse(frameData);
 
-    // Read 4-byte length-prefixed binary frame
-    const binHeader = await this.readExact(4);
-    const binLen = binHeader.readUInt32BE(0);
-    if (binLen !== size) {
-      throw new Error(`binary frame length mismatch: header says ${binLen}, json says ${size}`);
+    if (payloadBytes && payloadBytes.length > 0) {
+      const payload = deserializeResponsePayload(command, payloadBytes);
+      return { ok: frame.ok, error: frame.error, data: payload };
     }
-    const binary = await this.readExact(binLen);
-    return { data: data as { size: number } & Record<string, unknown>, binary };
+    return frame;
   }
 
   private onData(data: Buffer): void {
-    const MAX_BUFFER_SIZE = 64 * 1024 * 1024; // 64 MB to accommodate large JPEG
+    const MAX_BUFFER_SIZE = 64 * 1024 * 1024;
     const chunk = Buffer.from(data);
     this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
     if (this.buffer.length > MAX_BUFFER_SIZE) {

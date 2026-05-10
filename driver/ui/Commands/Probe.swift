@@ -1,13 +1,13 @@
 import Foundation
+import Fory
 
 enum ProbeCommands {
-    static func probeFetch(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = try decodeArgs(rawArgs, as: ProbeFetchArgs.self)
+    static func probeFetch(_ args: ForyProbeFetchArgs, fory: Fory) throws -> ForyResponseFrame {
         guard let url = URL(string: args.url) else {
             throw DriverError.invalidArgs("invalid url: \(args.url)")
         }
 
-        let timeout = max(1, min(args.timeout ?? 10, 30))
+        let timeout = max(1, min(args.timeout > 0 ? args.timeout : 10, 30))
         NSLog("[probe] fetch start url=\(url.absoluteString) timeout=\(timeout)s")
 
         var request = URLRequest(url: url)
@@ -15,20 +15,20 @@ enum ProbeCommands {
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
         let sem = DispatchSemaphore(value: 0)
-        var result: ResponseFrame?
+        var result: ForyResponseFrame?
 
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
             defer { sem.signal() }
 
             if let error {
                 NSLog("[probe] fetch error url=\(url.absoluteString) error=\(error.localizedDescription)")
-                result = Codec.makeError("probeFetch failed: \(error.localizedDescription)")
+                result = Codec.foryError("probeFetch failed: \(error.localizedDescription)")
                 return
             }
 
             guard let http = response as? HTTPURLResponse else {
                 NSLog("[probe] fetch error url=\(url.absoluteString) error=non-http-response")
-                result = Codec.makeError("probeFetch failed: non-http-response")
+                result = Codec.foryError("probeFetch failed: non-http-response")
                 return
             }
 
@@ -41,11 +41,12 @@ enum ProbeCommands {
 
             NSLog("[probe] fetch response url=\(url.absoluteString) status=\(http.statusCode) bytes=\(bodyBytes) contentType=\(contentType) preview=\(preview)")
 
-            result = Codec.makeOK([
-                "statusCode": http.statusCode,
-                "bodyBytes": bodyBytes,
-                "contentType": contentType,
-            ])
+            let payload = ForyProbePayload(
+                statusCode: Int32(http.statusCode),
+                bodyBytes: Int32(bodyBytes),
+                contentType: contentType
+            )
+            result = (try? Codec.foryOK(payload, fory: fory)) ?? Codec.foryError("probeFetch: serialization failed")
         }
 
         task.resume()
@@ -54,9 +55,9 @@ enum ProbeCommands {
         if waitResult == .timedOut {
             task.cancel()
             NSLog("[probe] fetch timeout url=\(url.absoluteString)")
-            return Codec.makeError("probeFetch timed out after \(timeout)s")
+            return Codec.foryError("probeFetch timed out after \(timeout)s")
         }
 
-        return result ?? Codec.makeError("probeFetch failed: no result")
+        return result ?? Codec.foryError("probeFetch failed: no result")
     }
 }

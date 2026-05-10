@@ -1,46 +1,40 @@
 import Foundation
 import OSLog
+import Fory
 
 // MARK: - Oslog command (doc 6.4)
 
 enum OslogCommands {
     private static let pollIntervalMs = 300
 
-    /// Cumulative log buffer. Populated on each oslog call from OSLogStore and
-    /// preserved across calls so a subsequent `clear` can report how many
-    /// entries were wiped.
     private static var buffer: [String] = []
     private static let bufferLock = NSLock()
     private static var lastRefreshAt: Date?
 
-    /// doc 6.4 — oslog command.
-    /// args.clear: true → clear buffer, return {cleared: N}
-    /// args.pattern nil → write whole buffer to file, return {matched: total, total}
-    /// args.pattern set → regex filter, write matches, return {matched, total, outputFile}
-    static func oslog(_ rawArgs: AnyCodable?) throws -> ResponseFrame {
-        let args = decodeArgsOptional(rawArgs, as: OslogArgs.self)
-        let bundleId = args?.bundleId?.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func oslog(_ args: ForyOslogArgs?, fory: Fory) throws -> ForyResponseFrame {
+        let bundleId = args?.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         let targetBundleId = (bundleId?.isEmpty == false) ? bundleId : nil
 
-        // clear=true: reset the buffer and exit early (doc 6.4).
+        // clear=true: reset the buffer and exit early.
         if args?.clear == true {
             bufferLock.lock()
             let n = buffer.count
             buffer.removeAll()
             lastRefreshAt = nil
             bufferLock.unlock()
-            return Codec.makeOK(["cleared": n])
+            let payload = ForyOslogPayload(matched: 0, total: 0, content: "", cleared: Int32(n))
+            return try Codec.foryOK(payload, fory: fory)
         }
 
         guard #available(iOS 15.0, *) else {
-            return Codec.makeError("oslog requires iOS 15.0+")
+            return Codec.foryError("oslog requires iOS 15.0+")
         }
 
         let matcher: ((String) -> Bool)?
         do {
-            matcher = try makeMatcher(pattern: args?.pattern, flags: args?.flags)
+            matcher = try makeMatcher(pattern: args?.pattern.isEmpty == true ? nil : args?.pattern, flags: args?.flags.isEmpty == true ? nil : args?.flags)
         } catch {
-            return Codec.makeError("invalid regex: \(error.localizedDescription)")
+            return Codec.foryError("invalid regex: \(error.localizedDescription)")
         }
 
         let timeoutSec = max(args?.timeout ?? 0, 0)
@@ -58,11 +52,13 @@ enum OslogCommands {
         } while true
 
         let total = snapshot.count
-        return Codec.makeOK([
-            "matched": matchedLines.count,
-            "total": total,
-            "content": matchedLines.joined(separator: "\n") + "\n",
-        ])
+        let payload = ForyOslogPayload(
+            matched: Int32(matchedLines.count),
+            total: Int32(total),
+            content: matchedLines.joined(separator: "\n") + "\n",
+            cleared: 0
+        )
+        return try Codec.foryOK(payload, fory: fory)
     }
 
     // MARK: - OSLogStore ingestion
@@ -102,7 +98,6 @@ enum OslogCommands {
             lastRefreshAt = newestDate.addingTimeInterval(0.001)
             bufferLock.unlock()
         } catch {
-            // Leave buffer unchanged on failure.
             NSLog("[oslog] refreshBuffer failed: \(error)")
         }
     }
@@ -114,11 +109,8 @@ enum OslogCommands {
         if entry.category == bundleId { return true }
         if entry.process == bundleId { return true }
         if entry.composedMessage.contains(bundleId) { return true }
-        // If the current store scope does not expose app-identifying metadata,
-        // do not drop the line silently; keep it in the cumulative buffer.
         return entry.subsystem.isEmpty && entry.category.isEmpty && entry.process.isEmpty
     }
-
 }
 
 func makeMatcher(pattern: String?, flags: String?) throws -> ((String) -> Bool)? {

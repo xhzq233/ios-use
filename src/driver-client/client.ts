@@ -1,5 +1,5 @@
 import { writeFileSync } from 'fs';
-import { Connection, DriverError } from './connection';
+import { Connection, DriverError } from '../driver-protocol/connection.js';
 import {
   DRIVER_COMMANDS,
   omitUndefined,
@@ -125,8 +125,8 @@ abstract class BaseRpcClient {
   }
 
   async screenshot(): Promise<Buffer> {
-    const { binary } = await this.conn.sendExpectingBinary(DRIVER_COMMANDS.SCREENSHOT, {});
-    return binary;
+    const result = await this.send<{ jpeg: Buffer }>(DRIVER_COMMANDS.SCREENSHOT, {});
+    return result.jpeg;
   }
 
   async saveScreenshot(filepath: string): Promise<void> {
