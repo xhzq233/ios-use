@@ -61,7 +61,8 @@ ios-use session start --udid <udid>
 
 ```bash
 ios-use dom                        # 先看当前页面元素树
-ios-use dom --save --name settings # 保存到 ~/.ios-use/artifacts/settings.json
+ios-use dom --raw                  # 原始 snapshot 文本，调试用
+ios-use dom --fresh                # 忽略缓存，重新构建
 ios-use find "蓝牙"                # 在 dom 基础上查目标元素
 ios-use waitFor --label "蓝牙" --timeout 8
 ```
@@ -138,8 +139,8 @@ ios-use swipe --dir back --distance 300
   - 保存为 JPEG 到 `~/.ios-use/artifacts/<name>.jpg`
 
 - `dom`
-  - `--raw` 返回原始 XCUI snapshot 树（默认返回 clean tree）
-  - `--save --name <name>` 时，保存到 `~/.ios-use/artifacts/<name>.json`
+  - `--raw` 输出原始 snapshot 格式化文本字符串（跳过 clean tree，调试用）
+  - `--fresh` 忽略缓存，重新构建 snapshot
 
 - `find`
   - `find <label>` 查找元素。歧义和模糊建议不报错，返回所有匹配；只有真正未找到才报错

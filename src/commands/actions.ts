@@ -134,7 +134,7 @@ export function waitForNslogMatch(server: NSLoggerServerLike, pattern: string, f
   });
 }
 
-function normalizeSearchText(text: string): string {
+export function normalizeSearchText(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return '';
   return trimmed
@@ -146,7 +146,7 @@ function domNodeLabel(node: DomNode): string {
   return typeof node.l === 'string' && node.l.trim() ? node.l : typeof node.v === 'string' ? node.v : '';
 }
 
-function domNodeOutput(node: DomNode): { type: string; label: string; rect?: Rect; value?: string } {
+export function domNodeOutput(node: DomNode): { type: string; label: string; rect?: Rect; value?: string } {
   const out: { type: string; label: string; rect?: Rect; value?: string } = {
     type: node.tr[0] || 'Unknown',
     label: domNodeLabel(node),
@@ -156,25 +156,17 @@ function domNodeOutput(node: DomNode): { type: string; label: string; rect?: Rec
   return out;
 }
 
-function flattenDomNodes(nodes: DomNode[], out: DomNode[] = []): DomNode[] {
-  for (const node of nodes) {
-    out.push(node);
-    if (Array.isArray(node.c)) flattenDomNodes(node.c, out);
-  }
-  return out;
-}
-
 function deriveDomOutput(result: DomResponse, candidates?: string[]) {
-  const flattened = flattenDomNodes(result.elements);
+  const elements = result.elements;
   const matches: Array<{ type: string; label: string; rect?: Rect; value?: string }> = [];
   const matchedIndices = new Set<number>();
 
   for (const candidate of candidates ?? []) {
     const normalizedCandidate = normalizeSearchText(candidate);
     if (!normalizedCandidate) continue;
-    for (let i = 0; i < flattened.length; i++) {
+    for (let i = 0; i < elements.length; i++) {
       if (matchedIndices.has(i)) continue;
-      const node = flattened[i];
+      const node = elements[i];
       const normalizedTexts = [node.l, node.v]
         .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
         .map((value) => normalizeSearchText(value));
@@ -203,32 +195,52 @@ export function normalizeNeedLogConfig(needLog: boolean | Record<string, unknown
 // ── DOM tree display ──
 
 function printDomElements(elements: DomNode[], indent: string) {
-  for (const el of elements) {
-    const type = el.tr[0] || '?';
-    const flags = el.tr.slice(1).join(',');
-    const allTraits = flags ? `${type},${flags}` : type;
-    const flagStr = ` [${allTraits}]`;
-
-    const label = el.l?.trim();
-    const value = el.v?.trim();
-    let title: string;
-    if (label) {
-      title = value ? `${label}=${value}` : label;
-    } else if (value) {
-      title = `=${value}`;
-    } else {
-      title = type;
-    }
-
-    if (Array.isArray(el.c)) {
-      console.log(`${indent}${title}${flagStr}:`);
-      printDomElements(el.c, indent + '  ');
-      continue;
-    }
-
-    const rect = Array.isArray(el.r) ? ` (${el.r.join(',')})` : '';
-    console.log(`${indent}- ${title}${flagStr}${rect}`);
+  let idx = 0;
+  while (idx < elements.length) {
+    idx = printDomFlatSubtree(elements, idx, indent, 0);
   }
+}
+
+// Print one subtree from a flat preorder array. Returns index after the subtree.
+function printDomFlatSubtree(elements: DomNode[], index: number, baseIndent: string, depth: number): number {
+  const el = elements[index];
+  const { line, isContainer } = formatDomLine(el);
+  const padding = baseIndent + '  '.repeat(depth);
+
+  if (isContainer) {
+    console.log(`${padding}${line}:`);
+    let childIdx = index + 1;
+    for (let i = 0; i < (el.cc ?? 0); i++) {
+      if (childIdx >= elements.length) break;
+      childIdx = printDomFlatSubtree(elements, childIdx, baseIndent, depth + 1);
+    }
+    return childIdx;
+  }
+
+  const rect = Array.isArray(el.r) ? ` (${el.r.join(',')})` : '';
+  console.log(`${padding}- ${line}${rect}`);
+  return index + 1;
+}
+
+function formatDomLine(el: DomNode): { line: string; isContainer: boolean } {
+  const type = el.tr[0] || '?';
+  const flags = el.tr.slice(1).join(',');
+  const allTraits = flags ? `${type},${flags}` : type;
+  const flagStr = ` [${allTraits}]`;
+
+  const label = el.l?.trim();
+  const value = el.v?.trim();
+  let title: string;
+  if (label) {
+    title = value ? `${label}=${value}` : label;
+  } else if (value) {
+    title = `=${value}`;
+  } else {
+    title = type;
+  }
+
+  const isContainer = (el.cc ?? 0) > 0;
+  return { line: `${title}${flagStr}`, isContainer };
 }
 
 // ── Action handlers (registered into ACTIONS) ──
@@ -239,17 +251,11 @@ function registerHandlers() {
     async dom(driver, step) {
       requireDriver(driver, 'dom');
       const result = await driver.dom({ raw: !!step.raw, fresh: !!step.fresh });
-      if (step.save) {
-        const domName = step.name || `dom-step-${timestamp()}`;
-        const filepath = outputPath(`${domName}.json`);
-        fs.writeFileSync(filepath, JSON.stringify(result, null, 2));
-        logger.success(`DOM saved: ${filepath}`);
-      }
       if (step.print ?? true) {
-        if (step.raw) {
-          let json = JSON.stringify(result, null, 2);
-          json = json.replace(/\[(\s+[^[\]]+?\s+)\]/g, (_, inner) => '[' + inner.replace(/\s+/g, ' ').trim() + ']');
-          console.log(json);
+        if (result.raw) {
+          console.log(`\n  App: ${result.app}, Window: ${result.window.join('x')}`);
+          console.log(result.raw);
+          console.log('');
         } else {
           console.log(`\n  App: ${result.app}, Window: ${result.window.join('x')}`);
           console.log('  Elements:\n');

@@ -10,17 +10,17 @@ enum DomCommands {
         let app = try Session.shared.ensureActive()
         let bundleId = Session.shared.bundleId ?? app.value(forKey: "bundleID") as? String ?? ""
 
-        // --raw mode: return the pre-clean snapshot as nested nodes for debugging.
+        // --raw mode: format the pre-clean snapshot as an indented string.
         if args?.raw == true {
             invalidateSnapshot()
             guard let root = SafeSnapshot(ofApp: app) else {
                 return Codec.makeError("failed to take snapshot")
             }
-            let rootNode = walkRaw(root, parentDisabled: false)
+            let lines = formatRawTree(root, parentDisabled: false, indent: "")
             return Codec.makeOK([
                 "app": bundleId,
                 "window": [Double(Int(root.frame.size.width.rounded())), Double(Int(root.frame.size.height.rounded()))],
-                "elements": rootNode["c"] as? [[String: Any]] ?? [],
+                "raw": lines,
             ])
         }
 
@@ -32,79 +32,65 @@ enum DomCommands {
         guard let cs = getCleanedSnapshot() else {
             return Codec.makeError("failed to take snapshot")
         }
-        let cleanElements = serializeDomForest(from: cs.elements)
+        let flatElements = serializeDomFlat(from: cs.elements)
         return Codec.makeOK([
             "app": bundleId,
             "window": [Double(Int(cs.appFrame.size.width.rounded())), Double(Int(cs.appFrame.size.height.rounded()))],
-            "elements": cleanElements,
+            "elements": flatElements,
         ])
     }
 }
 
-// MARK: - flat cleaned snapshot -> nested DOM
+// MARK: - flat cleaned snapshot -> flat preorder DOM
 
-func serializeDomForest(from elements: [SnapshotElement]) -> [[String: Any]] {
-    var out: [[String: Any]] = []
-    var index = 0
-    while index < elements.count {
-        let (node, nextIndex) = serializeDomNode(elements, at: index)
-        out.append(node)
-        index = nextIndex
-    }
-    return out
-}
-
-private func serializeDomNode(_ elements: [SnapshotElement], at index: Int) -> ([String: Any], Int) {
-    let element = elements[index]
-    let node = element.node
-
-    if element.childCount == 0 {
-        var out: [String: Any] = ["tr": element.traits, "r": nodeRect(node)]
+func serializeDomFlat(from elements: [SnapshotElement]) -> [[String: Any]] {
+    elements.map { element in
+        var out: [String: Any] = ["tr": element.traits, "cc": element.childCount]
+        let node = element.node
         if let l = displayName(for: node), !l.isEmpty { out["l"] = l }
         if let value = displayValue(for: node) { out["v"] = value }
-        return (out, index + 1)
+        if element.childCount == 0 {
+            out["r"] = nodeRect(node)
+        }
+        return out
     }
-
-    var children: [[String: Any]] = []
-    var childIndex = index + 1
-    for _ in 0..<element.childCount {
-        guard childIndex < elements.count else { break }
-        let (childNode, nextChildIndex) = serializeDomNode(elements, at: childIndex)
-        children.append(childNode)
-        childIndex = nextChildIndex
-    }
-
-    var out: [String: Any] = ["tr": element.traits, "c": children]
-    if let l = displayName(for: node), !l.isEmpty { out["l"] = l }
-    if let value = displayValue(for: node) { out["v"] = value }
-    return (out, childIndex)
 }
 
-/// Constant-time rect serialization helper for DOM leaves.
-/// Time complexity: O(1).
 private func nodeRect(_ node: SafeSnapshot) -> [Double] {
     rectArray(node.frame)
 }
 
-// MARK: - walkRaw — raw nested tree (--raw mode, doc 2.5)
+// MARK: - walkRaw — raw tree as indented string (--raw mode)
 
-/// Raw DFS serializer used for debugging output without clean-tree rules.
-/// Time complexity: O(n), where n is the number of nodes in the subtree.
-private func walkRaw(_ node: SafeSnapshot, parentDisabled: Bool) -> [String: Any] {
+private func formatRawTree(_ node: SafeSnapshot, parentDisabled: Bool, indent: String) -> String {
     let disabled = parentDisabled || !node.isEnabled
     let invisible = !node.isVisible
-
     let tr = snapshotTraits(for: node, disabled: disabled, invisible: invisible)
+    let type = tr[0]
+    let flags = tr.dropFirst().joined(separator: ",")
+    let traitStr = flags.isEmpty ? type : "\(type),\(flags)"
 
-    var out: [String: Any] = ["tr": tr]
-    if let l = displayName(for: node), !l.isEmpty { out["l"] = l }
-    if let value = displayValue(for: node) { out["v"] = value }
+    let label = displayName(for: node)?.trimmingCharacters(in: .whitespaces)
+    let value = displayValue(for: node)?.trimmingCharacters(in: .whitespaces)
 
-    let kids = node.children.map { walkRaw($0, parentDisabled: disabled) }
-    if !kids.isEmpty {
-        out["c"] = kids
+    var title: String
+    if let l = label, !l.isEmpty {
+        title = value.map { "\(l)=\($0)" } ?? l
+    } else if let v = value {
+        title = "=\(v)"
     } else {
-        out["r"] = nodeRect(node)
+        title = type
     }
-    return out
+
+    let kids = node.children
+    if kids.isEmpty {
+        let r = nodeRect(node)
+        return "\(indent)- \(title) [\(traitStr)] (\(r.map { String(Int($0)) }.joined(separator: ",")))"
+    }
+
+    var lines: [String] = ["\(indent)\(title) [\(traitStr)]:"]
+    for child in kids {
+        lines.append(formatRawTree(child, parentDisabled: disabled, indent: indent + "  "))
+    }
+    return lines.joined(separator: "\n")
 }

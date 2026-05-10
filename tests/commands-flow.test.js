@@ -154,10 +154,9 @@ steps:
         app: 'Demo',
         window: [390, 844],
         elements: [
-          { tr: ['Window'], c: [
-            { tr: ['Button'], l: '取消', r: [10, 10, 50, 20] },
-            { tr: ['Button'], l: '关闭', r: [70, 10, 50, 20] },
-          ] },
+          { tr: ['Window'], cc: 2 },
+          { tr: ['Button'], l: '取消', r: [10, 10, 50, 20], cc: 0 },
+          { tr: ['Button'], l: '关闭', r: [70, 10, 50, 20], cc: 0 },
         ],
       }),
       tap: async (target) => {
@@ -177,9 +176,8 @@ steps:
         app: 'Demo',
         window: [390, 844],
         elements: [
-          { tr: ['Window'], c: [
-            { tr: ['Button'], l: '保存', r: [10, 10, 50, 20] },
-          ] },
+          { tr: ['Window'], cc: 1 },
+          { tr: ['Button'], l: '保存', r: [10, 10, 50, 20], cc: 0 },
         ],
       }),
     }), {
@@ -363,9 +361,8 @@ steps:
       dom: async (opts) => {
         domCalls.push(opts);
         return { app: 'Demo', window: [390, 844], elements: [
-          { tr: ['Window'], c: [
-            { tr: ['Button'], l: '取消', r: [10, 10, 50, 20] },
-          ] },
+          { tr: ['Window'], cc: 1 },
+          { tr: ['Button'], l: '取消', r: [10, 10, 50, 20], cc: 0 },
         ] };
       },
     });

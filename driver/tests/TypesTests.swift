@@ -582,35 +582,37 @@ final class TypesTests: XCTestCase {
             child2,
         ]
 
-        let dom = serializeDomForest(from: elements)
+        let dom = serializeDomFlat(from: elements)
 
-        XCTAssertEqual(dom.count, 1)
+        // Flat preorder: Root(cc:3), Child1(cc:0), Parent(cc:1), Grandchild(cc:0), Child2(cc:0)
+        XCTAssertEqual(dom.count, 5)
         XCTAssertEqual(dom[0]["l"] as? String, "Root")
-        let children = dom[0]["c"] as? [[String: Any]]
-        XCTAssertEqual(children?.count, 3)
-        XCTAssertEqual(children?[0]["l"] as? String, "Child 1")
-        XCTAssertEqual(children?[1]["l"] as? String, "Parent")
-        let grandChildren = children?[1]["c"] as? [[String: Any]]
-        XCTAssertEqual(grandChildren?.count, 1)
-        XCTAssertEqual(grandChildren?[0]["l"] as? String, "Grandchild")
-        XCTAssertEqual(children?[2]["l"] as? String, "Child 2")
+        XCTAssertEqual(dom[0]["cc"] as? Int, 3)
+        XCTAssertEqual(dom[1]["l"] as? String, "Child 1")
+        XCTAssertEqual(dom[1]["cc"] as? Int, 0)
+        XCTAssertEqual(dom[2]["l"] as? String, "Parent")
+        XCTAssertEqual(dom[2]["cc"] as? Int, 1)
+        XCTAssertEqual(dom[3]["l"] as? String, "Grandchild")
+        XCTAssertEqual(dom[3]["cc"] as? Int, 0)
+        XCTAssertEqual(dom[4]["l"] as? String, "Child 2")
+        XCTAssertEqual(dom[4]["cc"] as? Int, 0)
     }
 
-    func testSerializeDomForest_EmptyElementsReturnsEmptyDom() {
-        XCTAssertTrue(serializeDomForest(from: []).isEmpty)
+    func testSerializeDomFlat_EmptyElementsReturnsEmptyArray() {
+        XCTAssertTrue(serializeDomFlat(from: []).isEmpty)
     }
 
-    func testSerializeDomForest_ChildCountZeroSerializesLeafRect() {
+    func testSerializeDomFlat_ChildCountZeroSerializesLeafRect() {
         let leaf = makeElement(label: "Leaf", type: .button)
-        let dom = serializeDomForest(from: [leaf])
+        let dom = serializeDomFlat(from: [leaf])
 
         XCTAssertEqual(dom.count, 1)
         XCTAssertEqual(dom[0]["l"] as? String, "Leaf")
         XCTAssertNotNil(dom[0]["r"] as? [Double])
-        XCTAssertNil(dom[0]["c"])
+        XCTAssertEqual(dom[0]["cc"] as? Int, 0)
     }
 
-    func testSerializeDomForest_StopsWhenChildCountExceedsRemainingElements() {
+    func testSerializeDomFlat_StopsWhenChildCountExceedsRemainingElements() {
         let root = makeElement(label: "Root", type: .other)
         let child = makeElement(label: "Child", type: .button)
         let elements = [
@@ -618,13 +620,12 @@ final class TypesTests: XCTestCase {
             child,
         ]
 
-        let dom = serializeDomForest(from: elements)
+        let dom = serializeDomFlat(from: elements)
 
-        XCTAssertEqual(dom.count, 1)
+        XCTAssertEqual(dom.count, 2)
         XCTAssertEqual(dom[0]["l"] as? String, "Root")
-        let children = dom[0]["c"] as? [[String: Any]]
-        XCTAssertEqual(children?.count, 1)
-        XCTAssertEqual(children?.first?["l"] as? String, "Child")
+        XCTAssertEqual(dom[0]["cc"] as? Int, 2)
+        XCTAssertEqual(dom[1]["l"] as? String, "Child")
     }
 
     func testDomCleaning_KeepsPromotedHomeScreenChildrenUnderParent() {
@@ -670,19 +671,25 @@ final class TypesTests: XCTestCase {
         let root = SafeSnapshot(raw: rootRaw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
 
         let elements = buildCleanElements(from: root)
-        let dom = serializeDomForest(from: elements)
+        let dom = serializeDomFlat(from: elements)
 
-        XCTAssertEqual(dom.count, 1)
-        XCTAssertEqual(dom[0]["l"] as? String, "Home screen icons")
-        let children = dom[0]["c"] as? [[String: Any]]
-        XCTAssertEqual(children?.count, 3)
-        XCTAssertEqual(children?[0]["tr"] as? [String], ["Icon", "invisible"])
-        XCTAssertEqual(children?[1]["tr"] as? [String], ["Icon", "invisible"])
-        XCTAssertEqual(children?[2]["l"] as? String, "spotlight-pill")
+        // Flat preorder: "Home screen icons"(cc:N), invisiblePage-Icon(cc:1), 天气(cc:0),
+        //   visiblePage-Icon(cc:2), 股市(cc:0), 查找(cc:0), spotlight-pill(cc:1), 搜索(cc:0)
+        let homeIdx = dom.firstIndex(where: { ($0["l"] as? String) == "Home screen icons" })
+        XCTAssertNotNil(homeIdx)
+        XCTAssertEqual(dom[homeIdx!]["l"] as? String, "Home screen icons")
 
-        let visibleIcons = children?[1]["c"] as? [[String: Any]]
-        XCTAssertEqual(visibleIcons?.map { $0["l"] as? String }, ["股市", "查找"])
-        XCTAssertFalse(dom.dropFirst().contains { ($0["l"] as? String) == "spotlight-pill" })
+        let invisibleIcons = dom.filter { ($0["tr"] as? [String])?.contains("invisible") == true }
+        XCTAssertEqual(invisibleIcons.count, 3)
+
+        let spotlightIdx = dom.firstIndex(where: { ($0["l"] as? String) == "spotlight-pill" })
+        XCTAssertNotNil(spotlightIdx)
+
+        // visiblePage's visible children: 股市, 查找
+        let guShiIdx = dom.firstIndex(where: { ($0["l"] as? String) == "股市" })
+        let chaZhaoIdx = dom.firstIndex(where: { ($0["l"] as? String) == "查找" })
+        XCTAssertNotNil(guShiIdx)
+        XCTAssertNotNil(chaZhaoIdx)
     }
 
     func testSearchableTexts_MergesLabelAndValueWithoutDuplicates() {
