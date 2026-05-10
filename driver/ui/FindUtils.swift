@@ -100,13 +100,14 @@ func searchableTexts(label: String?, value: String?) -> [String] {
     return out
 }
 
+private let ignoredSearchScalars = CharacterSet.whitespacesAndNewlines
+    .union(CharacterSet(charactersIn: "-_:/()[]{}.,'\""))
+
 func normalizeSearchText(_ text: String) -> String {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return "" }
-
-    let ignoredScalars = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "-_:/()[]{}.,'\""))
-    let filtered = trimmed.unicodeScalars.filter { !ignoredScalars.contains($0) }
-    return String(String.UnicodeScalarView(filtered)).lowercased()
+    let filtered = trimmed.unicodeScalars.filter { !ignoredSearchScalars.contains($0) }
+    return String(filtered).lowercased()
 }
 
 func normalizedSearchableTexts(from texts: [String]) -> [String] {

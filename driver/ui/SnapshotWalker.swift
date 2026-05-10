@@ -4,13 +4,11 @@ import XCTest
 
 /// The cleaned snapshot: root survives unchanged, but `elements` is a flat
 /// post-rule-1..6 view used by find/swipe/waitFor/etc.
-/// `byLabel` provides O(1) exact-label lookup.
 struct CleanedSnapshot {
     let root: SafeSnapshot
     let appFrame: CGRect
     let rawRoot: SafeSnapshot
     let elements: [SnapshotElement]
-    let byLabel: [String: [SnapshotElement]]
     let searchEntries: [SearchEntry]
     let searchCandidates: [SearchCandidate]
 }
@@ -111,7 +109,6 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
     guard let raw = SafeSnapshot(ofApp: app) else { return nil }
 
     let elements = buildCleanElements(from: raw)
-    let byLabel = rebuildLabelIndex(from: elements)
 
     let searchEntries = buildSearchEntries(from: elements)
     let searchCandidates = buildSearchCandidates(from: searchEntries)
@@ -121,7 +118,6 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
         appFrame: app.frame,
         rawRoot: raw,
         elements: elements,
-        byLabel: byLabel,
         searchEntries: searchEntries,
         searchCandidates: searchCandidates
     )
@@ -132,19 +128,6 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
 // `CleanBuildResult`; this step only linearizes those already-built subtrees.
 func buildCleanElements(from root: SafeSnapshot) -> [SnapshotElement] {
     flattenCleanBuildResult(cleanTree(root, parentDisabled: false))
-}
-
-private func rebuildLabelIndex(from elements: [SnapshotElement]) -> [String: [SnapshotElement]] {
-    var byLabel: [String: [SnapshotElement]] = [:]
-    for element in elements {
-        if let label = element.node.label, !label.isEmpty {
-            byLabel[label, default: []].append(element)
-        }
-        if let name = displayName(for: element.node), !name.isEmpty, name != element.node.label {
-            byLabel[name, default: []].append(element)
-        }
-    }
-    return byLabel
 }
 
 private func buildSearchEntries(from elements: [SnapshotElement]) -> [SearchEntry] {
@@ -422,9 +405,8 @@ func findScrollableAncestor(_ node: SafeSnapshot) -> SafeSnapshot? {
         if accepted.contains(UInt(p.elementType))
             && p.isVisible
             && p.frame.width > 0 && p.frame.height > 0 {
-            let cells = collectCellSnapshots(p)
-            let visibleCells = cells.filter { $0.isVisible }
-            if visibleCells.count > 1 { return p }
+            let frames = collectVisibleCellFrames(p, limit: 2)
+            if frames.count > 1 { return p }
         }
         cur = p.parent
     }
@@ -447,6 +429,8 @@ func findScrollableAtPoint(_ point: CGPoint, _ root: SafeSnapshot) -> SafeSnapsh
     var stack: [SafeSnapshot] = [root]
     while let node = stack.popLast() {
         if accepted.contains(UInt(node.elementType))
+            && node.isVisible
+            && node.frame.width > 0 && node.frame.height > 0
             && node.frame.contains(point) {
             let a = node.frame.width * node.frame.height
             if a < bestArea { best = node; bestArea = a }
@@ -471,6 +455,38 @@ func collectCellSnapshots(_ scrollView: SafeSnapshot) -> [SafeSnapshot] {
     if !icons.isEmpty { return icons }
     // 3) All descendants (bottom-of-barrel fallback)
     return scrollView.allDescendants
+}
+
+/// Early-terminating variant: collects up to `limit` visible cell/icon frames.
+/// Used by boundary detection in scroll loops — only needs a few anchor frames
+/// to detect movement, not the full cell list.
+func collectVisibleCellFrames(_ scrollView: SafeSnapshot, limit: Int = 3) -> [CGRect] {
+    let accepted: Set<UInt> = [
+        XCUIElement.ElementType.cell.rawValue,
+        XCUIElement.ElementType.icon.rawValue,
+    ]
+    var frames: [CGRect] = []
+    frames.reserveCapacity(limit)
+    var stack: [SafeSnapshot] = [scrollView]
+    while let n = stack.popLast() {
+        if accepted.contains(UInt(n.elementType)) && n.isVisible {
+            frames.append(n.frame)
+            if frames.count >= limit { return frames }
+        }
+        for c in n.children.reversed() { stack.append(c) }
+    }
+    // Fallback: if no Cell/Icon found, use any visible descendant
+    if frames.isEmpty {
+        var fallback: [SafeSnapshot] = [scrollView]
+        while let n = fallback.popLast() {
+            if n.isVisible && n !== scrollView {
+                frames.append(n.frame)
+                if frames.count >= limit { return frames }
+            }
+            for c in n.children.reversed() { fallback.append(c) }
+        }
+    }
+    return frames
 }
 
 /// Iterative DFS over the subtree rooted at `root`.
