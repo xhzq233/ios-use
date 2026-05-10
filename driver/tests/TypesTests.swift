@@ -100,7 +100,6 @@ final class TypesTests: XCTestCase {
             appFrame: CGRect(x: 0, y: 0, width: 375, height: 812),
             rawRoot: root,
             elements: elements,
-            byLabel: [:],
             searchEntries: searchEntries,
             searchCandidates: searchCandidates
         )
@@ -859,6 +858,76 @@ final class TypesTests: XCTestCase {
 
         let cells = collectCellSnapshots(root)
         XCTAssertEqual(cells.map { $0.label }, ["蓝牙", "通用", "开发者"])
+    }
+
+    // MARK: - collectVisibleCellFrames (early-termination)
+
+    func testCollectVisibleCellFrames_ReturnsVisibleCellFrames() {
+        let c1 = FakeRawSnapshot(label: "A", elementType: .cell, frame: CGRect(x: 0, y: 0, width: 375, height: 44))
+        let c2 = FakeRawSnapshot(label: "B", elementType: .cell, frame: CGRect(x: 0, y: 50, width: 375, height: 44))
+        let c3 = FakeRawSnapshot(label: "C", elementType: .cell, frame: CGRect(x: 0, y: 100, width: 375, height: 44))
+        let scrollView = FakeRawSnapshot(elementType: .scrollView, children: [c1, c2, c3])
+        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let frames = collectVisibleCellFrames(root)
+        XCTAssertEqual(frames.count, 3)
+        XCTAssertEqual(frames[0].origin.y, 0)
+        XCTAssertEqual(frames[1].origin.y, 50)
+        XCTAssertEqual(frames[2].origin.y, 100)
+    }
+
+    func testCollectVisibleCellFrames_StopsAtLimit() {
+        let cells = (0..<10).map { i in
+            FakeRawSnapshot(label: "C\(i)", elementType: .cell, frame: CGRect(x: 0, y: CGFloat(i * 50), width: 375, height: 44))
+        }
+        let scrollView = FakeRawSnapshot(elementType: .scrollView, children: cells)
+        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let frames = collectVisibleCellFrames(root, limit: 2)
+        XCTAssertEqual(frames.count, 2)
+        XCTAssertEqual(frames[0].origin.y, 0)
+        XCTAssertEqual(frames[1].origin.y, 50)
+    }
+
+    func testCollectVisibleCellFrames_SkipsInvisibleCells() {
+        let visible = FakeRawSnapshot(label: "A", elementType: .cell, frame: CGRect(x: 0, y: 0, width: 375, height: 44), isVisible: true)
+        let hidden = FakeRawSnapshot(label: "B", elementType: .cell, frame: CGRect(x: 0, y: 50, width: 375, height: 44), isVisible: false)
+        let visible2 = FakeRawSnapshot(label: "C", elementType: .cell, frame: CGRect(x: 0, y: 100, width: 375, height: 44), isVisible: true)
+        let scrollView = FakeRawSnapshot(elementType: .scrollView, children: [visible, hidden, visible2])
+        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let frames = collectVisibleCellFrames(root)
+        XCTAssertEqual(frames.count, 2)
+        XCTAssertEqual(frames[0].origin.y, 0)
+        XCTAssertEqual(frames[1].origin.y, 100)
+    }
+
+    func testCollectVisibleCellFrames_FallbackToIcon() {
+        let icon = FakeRawSnapshot(label: "Safari", elementType: .icon, frame: CGRect(x: 28, y: 389, width: 68, height: 68))
+        let scrollView = FakeRawSnapshot(elementType: .scrollView, children: [icon])
+        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let frames = collectVisibleCellFrames(root)
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertEqual(frames[0].origin.x, 28)
+    }
+
+    func testCollectVisibleCellFrames_FallbackToAllDescendants() {
+        let text = FakeRawSnapshot(label: "content", elementType: .staticText, frame: CGRect(x: 10, y: 20, width: 100, height: 30))
+        let scrollView = FakeRawSnapshot(elementType: .scrollView, children: [text])
+        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let frames = collectVisibleCellFrames(root)
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertEqual(frames[0].origin.y, 20)
+    }
+
+    func testCollectVisibleCellFrames_EmptyReturnsEmpty() {
+        let scrollView = FakeRawSnapshot(elementType: .scrollView, children: [])
+        let root = SafeSnapshot(raw: scrollView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let frames = collectVisibleCellFrames(root)
+        XCTAssertTrue(frames.isEmpty)
     }
 
     // MARK: - cleanTree Rule 4: same-type merge adopts grandchildren

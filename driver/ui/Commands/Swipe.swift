@@ -237,7 +237,7 @@ enum SwipeCommands {
             return Codec.makeError("no scrollable at point")
         }
         let frame = scrollView.frame
-        let axis = primaryScrollAxis(visibleCellFrames: visibleCellFrames(scrollView), scrollFrame: frame)
+        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView), scrollFrame: frame)
         // Point-swipe semantics: move the content point toward the viewport
         // center, so the finger drag vector is the inverse of point offset.
         let center = CGPoint(x: frame.midX, y: frame.midY)
@@ -306,7 +306,7 @@ enum SwipeCommands {
                                    vertical: Bool,
                                    scrollUpwards: Bool,
                                    app: XCUIApplication) -> ScrollOutcome {
-        var prevFrames = collectCellSnapshots(scrollView).filter { $0.isVisible }.map { $0.frame }
+        var prevFrames = collectVisibleCellFrames(scrollView)
         let scrollFrame = scrollView.frame
 
         for i in 0..<ScrollConstants.maxScrollCount {
@@ -340,7 +340,7 @@ enum SwipeCommands {
             guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) else {
                 return .hitBoundary
             }
-            let nowFrames = collectCellSnapshots(freshScrollView).filter { $0.isVisible }.map { $0.frame }
+            let nowFrames = collectVisibleCellFrames(freshScrollView)
             if nowFrames == prevFrames {
                 return .hitBoundary
             }
@@ -365,7 +365,7 @@ enum SwipeCommands {
             return tooSmallToScrollResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         }
 
-        let prevFrames = visibleCellFrames(scrollView)
+        let prevFrames = collectVisibleCellFrames(scrollView)
         let segmentCount = dispatchScrollSegments(segments, scrollFrame: scrollView.frame, app: app)
 
         Thread.sleep(forTimeInterval: ScrollConstants.settleInterval)
@@ -373,7 +373,7 @@ enum SwipeCommands {
         if !prevFrames.isEmpty,
            let freshCS = rebuildCleanedSnapshot(),
            let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) {
-            let nowFrames = visibleCellFrames(freshScrollView)
+            let nowFrames = collectVisibleCellFrames(freshScrollView)
             if nowFrames == prevFrames {
                 NSLog("[point-swipe] hit boundary after %d segment(s)", segmentCount)
                 return boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
@@ -469,10 +469,6 @@ enum SwipeCommands {
     }
 }
 
-private func visibleCellFrames(_ scrollView: SafeSnapshot) -> [CGRect] {
-    collectCellSnapshots(scrollView).filter { $0.isVisible }.map { $0.frame }
-}
-
-/// Uses the pre-indexed `byLabel` map first, then narrows by ancestor filters.
+/// Label-based scroll-until-visible: contains → fuzzy → trait filter.
 /// Time complexity: O(m + s), where m is the number of exact-label matches and
 /// s is the number of fuzzy suggestions examined when no exact match exists.
