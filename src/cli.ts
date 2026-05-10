@@ -150,11 +150,11 @@ for (const def of getCliActions()) {
   addSessionOptions(cmd);
 
   cmd.action(handleAction(async (...rest: unknown[]) => {
-    // commander passes (positional args..., cmdObj)
-    const cmdObj = rest[rest.length - 1] as Record<string, unknown>;
-    const args = rest.slice(0, rest.length - 1) as string[];
-    const step = mapCliToStep(def, args, cmdObj);
-    await runCommandStep(step, cmdObj as ActionOpts);
+    // Commander v14: (positionalArgs..., options, command)
+    const options = rest[rest.length - 2] as Record<string, unknown>;
+    const args = rest.slice(0, rest.length - 2) as string[];
+    const step = mapCliToStep(def, args, options);
+    await runCommandStep(step, options as ActionOpts);
   }));
 }
 
