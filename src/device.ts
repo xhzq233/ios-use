@@ -52,9 +52,22 @@ export function parseDeviceOutput(output: string): Device[] {
 
 const SIMULATOR_UDID_RE = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 
+let _cachedDevices: Device[] | null = null;
+let _cachedDevicesAt = 0;
+const DETECT_CACHE_TTL = 5000; // 5 seconds
+
 export function detectDevices(): Device[] {
+  const now = Date.now();
+  if (_cachedDevices && now - _cachedDevicesAt < DETECT_CACHE_TTL) return _cachedDevices;
   const output = execFileSync('xcrun', ['xctrace', 'list', 'devices'], { encoding: 'utf-8' });
-  return parseDeviceOutput(output);
+  _cachedDevices = parseDeviceOutput(output);
+  _cachedDevicesAt = now;
+  return _cachedDevices;
+}
+
+export function invalidateDeviceCache(): void {
+  _cachedDevices = null;
+  _cachedDevicesAt = 0;
 }
 
 function normalizeUdid(udid: string): string {

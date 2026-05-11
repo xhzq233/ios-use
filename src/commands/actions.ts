@@ -14,7 +14,7 @@ import type {
   FindResult,
   Rect,
 } from '../driver-protocol/index.js';
-import { ACTIONS } from './registry.js';
+import { ACTIONS, getActionDef, getCliActions } from './registry.js';
 
 // ── Utilities ──
 
@@ -470,10 +470,10 @@ registerHandlers();
 // ── executeStep: dispatches via registry ──
 
 export async function executeStep(driver: Driver | null, step: FlowStep, context: FlowContext = {}, stepIndex?: number): Promise<unknown> {
-  const def = ACTIONS.find(a => a.name === step.action);
+  const def = getActionDef(step.action);
   if (!def) {
     const prefix = stepIndex !== undefined ? `Step ${stepIndex}: ` : '';
-    const valid = ACTIONS.filter(a => !a.flowOnly).map(a => a.name);
+    const valid = getCliActions().map(a => a.name);
     throw new Error(`${prefix}Unknown action: "${step.action}". Valid: ${valid.join(', ')}`);
   }
   return def.execute(driver!, step, context);

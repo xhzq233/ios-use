@@ -29,10 +29,6 @@ func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapsh
         return .notFound(suggestions: [])
     }
 
-    let normalizedTextsByNode = Dictionary(uniqueKeysWithValues: cs.searchEntries.map {
-        (nodeIdentity($0.element.node), $0.normalizedTexts)
-    })
-
     // 1. Unified normalized contains match across label + value.
     var matches = matchingElements(in: cs.searchEntries) { entry in
         entry.normalizedTexts.contains { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }
@@ -59,7 +55,7 @@ func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapsh
         }
     }
 
-    matches = finalizeFindMatches(matches, normalizedQuery: normalizedQuery, normalizedTextsByNode: normalizedTextsByNode)
+    matches = preferVisibleMatches(matches)
 
     if matches.isEmpty { return .notFound(suggestions: []) }
     if matches.count > 1 { return .ambiguous(matches: matches) }
@@ -73,16 +69,6 @@ func rawFind(_ label: String, traits: String? = nil) -> FindResult {
         return .notFound(suggestions: [])
     }
     return rawFindInSnapshot(label, traits: traits, cs: cs)
-}
-
-func finalizeFindMatches(
-    _ matches: [SnapshotElement],
-    normalizedQuery: String,
-    normalizedTextsByNode: [ObjectIdentifier: [String]]
-) -> [SnapshotElement] {
-    _ = normalizedQuery
-    _ = normalizedTextsByNode
-    return preferVisibleMatches(matches)
 }
 
 private func preferVisibleMatches(_ matches: [SnapshotElement]) -> [SnapshotElement] {

@@ -25,9 +25,9 @@ function formatMatch(match: DriverMatch): string {
 }
 
 export function formatDriverError(error: unknown): string {
-  const err = error as Error & { data?: unknown };
-  const lines = [err.message || String(error)];
-  const data = err.data as DriverErrorData | undefined;
+  const err = error instanceof Error ? error : new Error(String(error ?? ''));
+  const lines = [err.message];
+  const data = (error as { data?: unknown })?.data as DriverErrorData | undefined;
 
   if (data?.matches?.length) {
     lines.push('matches:');
