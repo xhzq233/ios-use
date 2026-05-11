@@ -7,12 +7,12 @@ import Fory
 enum ScreenCommands {
 
     /// Captures a JPEG screenshot and returns it as a ForyResponseFrame.
-    static func screenshot(fory: Fory) throws -> ForyResponseFrame {
+    static func screenshot() throws -> ForyResponseFrame {
         var error: NSError?
         guard let jpeg = XCRequestScreenshotJPEG(0.8, &error) as Data? else {
             throw DriverError.serverError("screenshot JPEG capture failed: \(error?.localizedDescription ?? "unknown error")")
         }
         let payload = ForyScreenshotPayload(jpeg: jpeg)
-        return try Codec.foryOK(payload, fory: fory)
+        return try Codec.foryOK(payload)
     }
 }

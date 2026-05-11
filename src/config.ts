@@ -9,8 +9,9 @@ import {
   ensureIosUseHome,
 } from './utils/paths.js';
 
+import { DEFAULT_PORT } from './constants.js';
+
 const DEFAULT_DRIVER_BUNDLE_PREFIX = 'com.ios-use.driver';
-const DEFAULT_PORT = '8100';
 const CACHED_APPLE_ID_RE = /Using cached session for ([^\s]+)/;
 const NON_ALPHANUM_RE = /[^a-z0-9]/g;
 

@@ -7,11 +7,11 @@ import Fory
 enum AppCommands {
 
     /// doc 1.2 — bundleId is optional. Omitted → device session (no app bound).
-    static func createSession(_ args: ForyCreateSessionArgs?, fory: Fory) throws -> ForyResponseFrame {
+    static func createSession(_ args: ForyCreateSessionArgs?) throws -> ForyResponseFrame {
         let bundleId = (args?.bundleId.isEmpty ?? true) ? nil : args?.bundleId
         let terminate = args?.terminate ?? false
         try Session.shared.create(bundleId: bundleId, terminate: terminate)
-        return try Codec.foryOK(ForySimpleStringPayload(value: bundleId ?? ""), fory: fory)
+        return try Codec.foryOK(ForySimpleStringPayload(value: bundleId ?? ""))
     }
 
     /// doc 1.2 — destroy session. No args.
@@ -50,12 +50,12 @@ enum AppCommands {
         return Codec.foryError("terminate failed: app state is \(app.state)")
     }
 
-    static func openURL(_ args: ForyOpenURLArgs, fory: Fory) throws -> ForyResponseFrame {
+    static func openURL(_ args: ForyOpenURLArgs) throws -> ForyResponseFrame {
         guard let url = URL(string: args.url) else {
             throw DriverError.invalidArgs("invalid url: \(args.url)")
         }
 
         XCUIDevice.shared.system.open(url)
-        return try Codec.foryOK(ForySimpleStringPayload(value: args.url), fory: fory)
+        return try Codec.foryOK(ForySimpleStringPayload(value: args.url))
     }
 }

@@ -8,7 +8,7 @@ enum ProxyCommands {
     private static var caData: Data?
     private static let lock = NSLock()
 
-    static func proxyCAPush(_ args: ForyProxyCAPushArgs, fory: Fory) throws -> ForyResponseFrame {
+    static func proxyCAPush(_ args: ForyProxyCAPushArgs) throws -> ForyResponseFrame {
         guard let certData = Data(base64Encoded: args.caBase64) else {
             return Codec.foryError("invalid CA base64 payload")
         }
@@ -29,7 +29,7 @@ enum ProxyCommands {
 
         NSLog("[proxy] CA pushed (%d bytes), server on :9088/ca.cer", certData.count)
         let payload = ForyProxyPayload(status: "pushed")
-        return try Codec.foryOK(payload, fory: fory)
+        return try Codec.foryOK(payload)
     }
 
     // MARK: - HTTP Server

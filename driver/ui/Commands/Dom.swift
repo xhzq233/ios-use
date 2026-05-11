@@ -5,7 +5,7 @@ import Fory
 
 enum DomCommands {
     /// doc 2.2 — nested tree with rule 1-6 applied (or raw if --raw).
-    static func dom(_ args: ForyDomArgs, fory: Fory) throws -> ForyResponseFrame {
+    static func dom(_ args: ForyDomArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         let bundleId = Session.shared.bundleId ?? app.value(forKey: "bundleID") as? String ?? ""
 
@@ -25,7 +25,7 @@ enum DomCommands {
                 raw: lines,
                 elements: []
             )
-            return try Codec.foryOK(payload, fory: fory)
+            return try Codec.foryOK(payload)
         }
 
         // --fresh mode: invalidate cache before taking snapshot.
@@ -46,7 +46,7 @@ enum DomCommands {
             raw: "",
             elements: flatElements
         )
-        return try Codec.foryOK(payload, fory: fory)
+        return try Codec.foryOK(payload)
     }
 }
 
