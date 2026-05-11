@@ -308,6 +308,7 @@ function registerHandlers() {
       requireDriver(driver, 'tap');
       const target = parseLabelOrPoint(step.label);
       if (target === undefined) throw new Error('tap requires "label" (string or "x,y" coordinate)');
+      if (Array.isArray(target) && step.offset) throw new Error('offset requires element label, not absolute point');
       logger.info(`  → Tap ${formatLabel(target)}`);
       const result = await driver.tap(target, step.traits, step.offset);
       logger.info(`    ${result.type}${result.label ? ` "${result.label}"` : ''} (${result.rect.join(',')})`);
