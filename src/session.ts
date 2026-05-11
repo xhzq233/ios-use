@@ -11,8 +11,12 @@ import {
   ensureLogDir,
   ensureStateDir,
 } from './utils/paths.js';
+import {
+  DEFAULT_PORT,
+  DRIVER_LAUNCH_MAX_WAIT_MS,
+  DRIVER_LAUNCH_POLL_INTERVAL_MS,
+} from './constants.js';
 
-const DEFAULT_PORT = 8100;
 const DRIVER_HOST = '127.0.0.1';
 const DEVICECTL_LOG = DRIVER_LOG_FILE;
 
@@ -428,8 +432,8 @@ export async function startSession(opts: StartSessionOpts): Promise<DriverClient
   logger.info('Launching driver on device...');
   runnerProc = startXctestRunner(device.udid, { verbose });
 
-  const maxWaitMs = 30_000;
-  const intervalMs = 2_000;
+  const maxWaitMs = DRIVER_LAUNCH_MAX_WAIT_MS;
+  const intervalMs = DRIVER_LAUNCH_POLL_INTERVAL_MS;
   const deadline = Date.now() + maxWaitMs;
 
   let client: DriverClient | null = null;

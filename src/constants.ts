@@ -1,0 +1,5 @@
+export const DEFAULT_PORT = 8100;
+export const CONNECT_TIMEOUT_MS = 10_000;
+export const READ_TIMEOUT_MS = 45_000;
+export const DRIVER_LAUNCH_MAX_WAIT_MS = 30_000;
+export const DRIVER_LAUNCH_POLL_INTERVAL_MS = 500;

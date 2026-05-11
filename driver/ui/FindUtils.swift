@@ -253,17 +253,17 @@ private func shouldSkipAncestorInCleanChain(_ node: SafeSnapshot) -> Bool {
 }
 
 /// Build the ambiguity response (doc 3.3).
-func ambiguityResponse(_ label: String, matches: [SnapshotElement], fory: Fory) throws -> ForyResponseFrame {
+func ambiguityResponse(_ label: String, matches: [SnapshotElement]) throws -> ForyResponseFrame {
     var payload = ForyErrorPayload()
     payload.matches = matches.map { makeForyFindMatch($0, includeAncestors: true) }
     payload.hint = "Try adding --traits to disambiguate"
-    return try Codec.foryError("label '\(label)' is ambiguous (\(matches.count) matches)", payload: payload, fory: fory)
+    return try Codec.foryError("label '\(label)' is ambiguous (\(matches.count) matches)", payload: payload)
 }
 
 /// Build the fuzzy / notFound payload (doc 3.3).
-func notFoundResponse(_ label: String, suggestions: [String], hint: String? = nil, fory: Fory) throws -> ForyResponseFrame {
+func notFoundResponse(_ label: String, suggestions: [String], hint: String? = nil) throws -> ForyResponseFrame {
     var payload = ForyErrorPayload()
     payload.suggestions = suggestions
     if let hint, !hint.isEmpty { payload.hint = hint }
-    return try Codec.foryError("label '\(label)' not found", payload: payload, fory: fory)
+    return try Codec.foryError("label '\(label)' not found", payload: payload)
 }

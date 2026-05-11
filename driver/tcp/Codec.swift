@@ -10,11 +10,12 @@ enum FrameError: Error {
 
 final class Codec {
     static let maxFrameSize = 50 * 1024 * 1024 // 50MB (accommodates screenshots)
+    static let sharedFory: Fory = createFory()
 
     // MARK: - Read
 
     /// Read a single length-prefixed Fory frame and deserialize as ForyRequestFrame.
-    static func readFrame(_ fd: Int32, fory: Fory) throws -> ForyRequestFrame {
+    static func readFrame(_ fd: Int32) throws -> ForyRequestFrame {
         var lenBuf = [UInt8](repeating: 0, count: 4)
         try readExact(fd, into: &lenBuf, count: 4)
 
@@ -27,7 +28,7 @@ final class Codec {
             try readExact(fd, into: base, count: length)
         }
 
-        return try fory.deserialize(body, as: ForyRequestFrame.self)
+        return try sharedFory.deserialize(body, as: ForyRequestFrame.self)
     }
 
     private static func readExact(_ fd: Int32, into ptr: UnsafeMutableRawPointer, count: Int) throws {
@@ -51,8 +52,8 @@ final class Codec {
     // MARK: - Write
 
     /// Serialize and write a ForyResponseFrame as a single length-prefixed frame.
-    static func writeResponseFrame(_ fd: Int32, frame: ForyResponseFrame, fory: Fory) throws {
-        let data = try fory.serialize(frame)
+    static func writeResponseFrame(_ fd: Int32, frame: ForyResponseFrame) throws {
+        let data = try sharedFory.serialize(frame)
         try writeLengthPrefixedData(fd, data: data)
     }
 
@@ -88,8 +89,8 @@ final class Codec {
         ForyResponseFrame(ok: true, error: "", payload: Data())
     }
 
-    static func foryOK<P>(_ payload: P, fory: Fory) throws -> ForyResponseFrame {
-        let data = try fory.serialize(payload)
+    static func foryOK<P>(_ payload: P) throws -> ForyResponseFrame {
+        let data = try sharedFory.serialize(payload)
         return ForyResponseFrame(ok: true, error: "", payload: data)
     }
 
@@ -97,8 +98,8 @@ final class Codec {
         ForyResponseFrame(ok: false, error: msg, payload: Data())
     }
 
-    static func foryError(_ msg: String, payload: ForyErrorPayload, fory: Fory) throws -> ForyResponseFrame {
-        let data = try fory.serialize(payload)
+    static func foryError(_ msg: String, payload: ForyErrorPayload) throws -> ForyResponseFrame {
+        let data = try sharedFory.serialize(payload)
         return ForyResponseFrame(ok: false, error: msg, payload: data)
     }
 }

@@ -2,6 +2,7 @@
 
 import { Command } from 'commander';
 import { logger } from './utils/logger';
+import { DEFAULT_PORT } from './constants.js';
 import { configureDeviceSigning, readProjectConfig } from './config';
 import { detectRealDevices, detectBootedSimulators, formatDeviceLabel } from './device';
 import { runCommandStep } from './commands/actions';
@@ -72,7 +73,7 @@ program
   .option('--apple-id <email>', 'Apple ID email (optional if session cached)')
   .option('--password <pwd>', 'Apple ID password (optional if session cached)')
   .option('--ipa <path>', 'Path to prebuilt driver IPA (default: assets/driver.ipa)')
-  .option('--port <port>', 'Driver local port (default: 8100)', parseIntStrict)
+  .option('--port <port>', `Driver local port (default: ${DEFAULT_PORT})`, parseIntStrict)
   .option('--verbose', 'Show detailed output')
   .action(handleAction(async (opts: {
     udid?: string; list?: boolean; simulator?: boolean;

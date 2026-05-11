@@ -7,7 +7,7 @@ enum TouchCommands {
     private static let defaultLongPressDuration = 0.5
 
     /// doc 1.2 — tap. `target` is decoded from ForyTapArgs.target (ForyTarget).
-    static func tap(_ args: ForyTapArgs, fory: Fory) throws -> ForyResponseFrame {
+    static func tap(_ args: ForyTapArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
 
@@ -22,7 +22,7 @@ enum TouchCommands {
                 label: "",
                 rect: makeForyRect(CGRect(x: point.x, y: point.y, width: 0, height: 0))
             )
-            return try Codec.foryOK(payload, fory: fory)
+            return try Codec.foryOK(payload)
         }
 
         // Path B: label lookup via rawFind.
@@ -46,19 +46,19 @@ enum TouchCommands {
                 label: elem.node.label ?? "",
                 rect: makeForyRect(f)
             )
-            return try Codec.foryOK(payload, fory: fory)
+            return try Codec.foryOK(payload)
         case .ambiguous(let matches):
-            return try ambiguityResponse(target.label, matches: matches, fory: fory)
+            return try ambiguityResponse(target.label, matches: matches)
         case .fuzzy(let s):
-            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app", fory: fory)
+            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
         case .notFound(let s):
-            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app", fory: fory)
+            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
         }
     }
 
     /// doc 1.2 — longPress. Same label/point semantics as `tap`, plus an
     /// optional duration (default 500ms).
-    static func longPress(_ args: ForyLongPressArgs, fory: Fory) throws -> ForyResponseFrame {
+    static func longPress(_ args: ForyLongPressArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         let duration = args.duration > 0 ? args.duration : defaultLongPressDuration
         defer { invalidateSnapshot() }
@@ -73,7 +73,7 @@ enum TouchCommands {
                 label: "",
                 rect: makeForyRect(CGRect(x: point.x, y: point.y, width: 0, height: 0))
             )
-            return try Codec.foryOK(payload, fory: fory)
+            return try Codec.foryOK(payload)
         }
 
         guard !target.label.isEmpty else {
@@ -95,13 +95,13 @@ enum TouchCommands {
                 label: elem.node.label ?? "",
                 rect: makeForyRect(f)
             )
-            return try Codec.foryOK(payload, fory: fory)
+            return try Codec.foryOK(payload)
         case .ambiguous(let matches):
-            return try ambiguityResponse(target.label, matches: matches, fory: fory)
+            return try ambiguityResponse(target.label, matches: matches)
         case .fuzzy(let s):
-            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app", fory: fory)
+            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
         case .notFound(let s):
-            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app", fory: fory)
+            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
         }
     }
 
