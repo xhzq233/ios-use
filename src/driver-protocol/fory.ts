@@ -253,8 +253,14 @@ export function deserializeResponse(data: Uint8Array): RawResponse {
 
 // ── Label/Point conversion ──
 
+const COORD_RE = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/;
+
 export function toForyTarget(label: unknown): { label: string; point: { x: number; y: number } | null } {
-  if (typeof label === 'string') return { label, point: null };
+  if (typeof label === 'string') {
+    const m = label.match(COORD_RE);
+    if (m) return { label: '', point: { x: Number(m[1]), y: Number(m[2]) } };
+    return { label, point: null };
+  }
   if (Array.isArray(label) && label.length === 2) {
     return { label: '', point: { x: label[0] as number, y: label[1] as number } };
   }
