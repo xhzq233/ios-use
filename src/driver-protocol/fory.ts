@@ -1,4 +1,5 @@
-import Fury, { Type } from '@apache-fory/core';
+import Fury from '@apache-fory/core/lib/fory';
+import { Type } from '@apache-fory/core';
 import type { ResponseFrame } from './frames.js';
 import { DRIVER_COMMANDS } from './commands.js';
 import { elementTypeName, SWIPE_DIR_FORTH, SWIPE_DIR_BACK } from './fory-constants.js';
