@@ -90,6 +90,7 @@ import Fory
             if clientFD >= 0 {
                 var yes: Int32 = 1
                 Darwin.setsockopt(clientFD, SOL_SOCKET, SO_KEEPALIVE, &yes, UInt32(MemoryLayout<Int32>.size))
+                Darwin.setsockopt(clientFD, IPPROTO_TCP, TCP_NODELAY, &yes, UInt32(MemoryLayout<Int32>.size))
             }
             guard clientFD >= 0 else {
                 if errno == EINTR { continue }
@@ -143,7 +144,7 @@ import Fory
                         foryResp = try self.dispatchOnMainThread(foryReq.payload, command: command)
                     }
 
-                    if !foryResp.ok, foryResp.error.contains("timed out") {
+                    if !foryResp.ok && foryResp.error.hasPrefix("[FATAL]") {
                         try Codec.writeResponseFrame(fd, frame: foryResp, fory: self.fory)
                         break
                     }
@@ -203,12 +204,12 @@ import Fory
             }
             cancelLock.unlock()
             if !commandStarted {
-                return ForyResponseFrame(ok: false, error: "Command timed out after 45s (XCTest main thread may be blocked or crashed)")
+                return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after 45s (XCTest main thread may be blocked or crashed)")
             }
 
             let completionWaitResult = sem.wait(timeout: .now() + .seconds(120))
             if completionWaitResult == .timedOut {
-                return ForyResponseFrame(ok: false, error: "Command started on the XCTest main thread but did not finish within 120s; driver state may be inconsistent")
+                return ForyResponseFrame(ok: false, error: "[FATAL] Command started on the XCTest main thread but did not finish within 120s; driver state may be inconsistent")
             }
         }
 

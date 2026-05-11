@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger';
-import { NSLoggerServer, formatBonjourStatusMessages } from '../nslogger';
+import { NSLoggerServer, formatBonjourStatusMessages, regexTest } from '../nslogger';
 import { NSLOG_LOCK_FILE } from '../utils/paths.js';
 
 export const LOCK_FILE = NSLOG_LOCK_FILE;
@@ -62,7 +62,7 @@ export async function nslogStreamAction(opts: {
     bonjourName: opts.name || '',
     publishBonjour: opts.publishBonjour !== false,
   });
-  const regex = opts.grep ? new RegExp(opts.grep, opts.flags || '') : null;
+  const regex = opts.grep ? (() => { try { return new RegExp(opts.grep, opts.flags || ''); } catch (e) { throw new Error(`Invalid --grep regex: ${(e as Error).message}`); } })() : null;
   let stopped = false;
 
   const stop = async (): Promise<void> => {
@@ -73,7 +73,7 @@ export async function nslogStreamAction(opts: {
   };
 
   server.onMessage((entry: string) => {
-    if (!regex || regex.test(entry)) {
+    if (!regex || regexTest(regex, entry)) {
       console.log(entry);
     }
   });

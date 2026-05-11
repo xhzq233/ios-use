@@ -308,7 +308,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
     process.on('SIGINT', sigintHandler);
     process.on('SIGTERM', sigintHandler);
 
-    await runFlowFile(driver, resolvedPath, context);
+    await executeFlowSteps(driver, flow, resolvedPath, context);
 
     if (aborted) {
       throw new Error('Flow interrupted by Ctrl+C');

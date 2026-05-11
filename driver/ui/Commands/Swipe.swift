@@ -123,9 +123,9 @@ enum SwipeCommands {
             return Codec.foryError("scroll: failed to rebuild snapshot (app may have exited)")
         case .ambiguous(let lbl, let matches):
             return try ambiguityResponse(lbl, matches: matches, fory: fory)
-        case .found(let count, let finalTarget):
+        case .found(let count, let finalTarget, let freshScrollView):
             preciseAdjust(targetCell: findCellAncestor(finalTarget),
-                          scrollFrame: scrollView.frame,
+                          scrollFrame: freshScrollView.frame,
                           app: app)
             return okScrollWithAncestors(node: finalTarget, scrolls: count, fory: fory)
         }
@@ -188,7 +188,7 @@ enum SwipeCommands {
                                         scrollUpwards: scrollUpwards,
                                         app: app)
         switch result {
-        case .found(let count, let target):
+        case .found(let count, let target, _):
             return okScrollWithAncestors(node: target, scrolls: count, fory: fory)
         case .hitBoundary:
             return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards, fory: fory)
@@ -296,7 +296,7 @@ enum SwipeCommands {
     // MARK: - STEP 6 helper
 
     private enum ScrollOutcome {
-        case found(count: Int, target: SafeSnapshot)
+        case found(count: Int, target: SafeSnapshot, freshScrollView: SafeSnapshot)
         case hitBoundary
         case reachedMax
         case snapshotFailed
@@ -329,18 +329,19 @@ enum SwipeCommands {
             invalidateSnapshot()
             guard let freshCS = rebuildCleanedSnapshot() else { return .snapshotFailed }
 
+            guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) else {
+                return .hitBoundary
+            }
+
             switch rawFindInSnapshot(label, traits: traits, cs: freshCS) {
             case .found(let elem) where elem.isVisible:
-                return .found(count: i + 1, target: elem.node)
+                return .found(count: i + 1, target: elem.node, freshScrollView: freshScrollView)
             case .ambiguous(let matches):
                 return .ambiguous(label: label, matches: matches)
             default:
                 break
             }
 
-            guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) else {
-                return .hitBoundary
-            }
             let nowFrames = collectVisibleCellFrames(freshScrollView)
             if nowFrames == prevFrames {
                 return .hitBoundary

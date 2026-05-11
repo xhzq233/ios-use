@@ -31,6 +31,7 @@ export class Connection {
   private readNeeded = 0;
   private readTimer: ReturnType<typeof setTimeout> | null = null;
   private sendQueue: Promise<void> = Promise.resolve();
+  private _disconnecting = false;
 
   constructor(opts: { host?: string; port?: number; udid?: string; directTcp?: boolean }) {
     this.host = opts.host ?? '127.0.0.1';
@@ -55,6 +56,7 @@ export class Connection {
     }
 
     this.socket.setKeepAlive(true, 5000);
+    this.socket.setNoDelay(true);
     this.socket.on('data', (data: Buffer) => this.onData(data));
     this.socket.on('end', () => {
       if (this.readReject) {
@@ -95,10 +97,12 @@ export class Connection {
   private async writeForyFrame(command: string, args?: Record<string, unknown>): Promise<void> {
     const argsPayload = serializeArgs(command, args);
     const frameData = serializeRequestFrame(command, argsPayload);
-    const header = Buffer.alloc(4);
+    const header = Buffer.allocUnsafe(4);
     header.writeUInt32BE(frameData.length, 0);
+    const payload = frameData instanceof Buffer ? frameData : Buffer.from(frameData);
     await new Promise<void>((resolve, reject) => {
-      this.socket!.write(Buffer.concat([header, Buffer.from(frameData)]), (err?: Error | null) => err ? reject(err) : resolve());
+      this.socket!.write(header);
+      this.socket!.write(payload, (err?: Error | null) => err ? reject(err) : resolve());
     });
   }
 
@@ -109,7 +113,7 @@ export class Connection {
       throw new Error(`invalid frame length: ${len}`);
     }
     const body = await this.readExact(len);
-    return new Uint8Array(body);
+    return body;
   }
 
   private async _sendUnsafe(command: string, args?: Record<string, unknown>): Promise<ResponseFrame> {
@@ -128,8 +132,7 @@ export class Connection {
 
   private onData(data: Buffer): void {
     const MAX_BUFFER_SIZE = 64 * 1024 * 1024;
-    const chunk = Buffer.from(data);
-    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
+    this.buffer = this.buffer.length === 0 ? data : Buffer.concat([this.buffer, data]);
     if (this.buffer.length > MAX_BUFFER_SIZE) {
       this.disconnect();
       return;
@@ -176,6 +179,8 @@ export class Connection {
   }
 
   disconnect(): void {
+    if (this._disconnecting) return;
+    this._disconnecting = true;
     if (this.readTimer) { clearTimeout(this.readTimer); this.readTimer = null; }
     if (this.readReject) {
       this.readReject(new Error('connection disconnected'));
@@ -190,6 +195,7 @@ export class Connection {
     }
     this.buffer = Buffer.alloc(0);
     this.sendQueue = Promise.resolve();
+    this._disconnecting = false;
   }
 
   get isConnected(): boolean {

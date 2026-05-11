@@ -1,4 +1,10 @@
 import net from 'net';
+
+/** Test with global-regex, resetting lastIndex first. */
+export function regexTest(re: RegExp, s: string): boolean {
+  re.lastIndex = 0;
+  return re.test(s);
+}
 import tls from 'tls';
 import fs from 'fs';
 import path from 'path';
@@ -263,7 +269,7 @@ export function parseMessage(buf: Buffer): ParsedMessage | null {
     parts[partKey] = value;
   }
 
-  return { totalSize, parts, consumed: 4 + totalSize };
+  return { totalSize, parts, consumed: 4 + Math.max(totalSize, 2) };
 }
 
 // ── Formatting ──
@@ -597,7 +603,7 @@ export class NSLoggerServer {
     let idx = this._ringHead;
     for (let i = 0; i < this._ringSize; i++) {
       const entry = this._ringBuffer[idx];
-      if (entry !== undefined && regex.test(entry)) {
+      if (entry !== undefined && regexTest(regex, entry)) {
         result.push(entry);
       }
       idx++;

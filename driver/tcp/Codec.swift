@@ -34,7 +34,11 @@ final class Codec {
         var offset = 0
         while offset < count {
             let n = Darwin.read(fd, ptr.advanced(by: offset), count - offset)
-            if n <= 0 { throw FrameError.readFailed }
+            if n < 0 {
+                if errno == EINTR { continue }
+                throw FrameError.readFailed
+            }
+            if n == 0 { throw FrameError.readFailed }
             offset += n
         }
     }
@@ -69,7 +73,11 @@ final class Codec {
         var offset = 0
         while offset < count {
             let n = Darwin.write(fd, ptr.advanced(by: offset), count - offset)
-            if n <= 0 { throw FrameError.writeFailed }
+            if n < 0 {
+                if errno == EINTR { continue }
+                throw FrameError.writeFailed
+            }
+            if n == 0 { throw FrameError.writeFailed }
             offset += n
         }
     }

@@ -385,7 +385,7 @@ export async function startSession(opts: StartSessionOpts): Promise<void> {
   let runnerProc: ChildProcess | null = null;
   let client: DriverClient | null = null;
   try {
-    const activeInfo = readSessionInfo();
+    const activeInfo = hasReachableDriver ? existingInfo : readSessionInfo();
     if (activeInfo && activeInfo.udid === device.udid) {
       try {
         client = await createClientFromSession(activeInfo, { verbose, ownsSession: true });
