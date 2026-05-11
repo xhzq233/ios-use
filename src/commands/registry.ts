@@ -227,20 +227,8 @@ export const ACTIONS: ActionDef[] = [
     execute: () => Promise.resolve(undefined),
   },
   {
-    name: 'nslog_start',
-    desc: 'Start NSLogger server',
-    flowOnly: true,
-    execute: () => Promise.resolve(undefined),
-  },
-  {
     name: 'nslog',
     desc: 'Poll NSLogger for matching log',
-    flowOnly: true,
-    execute: () => Promise.resolve(undefined),
-  },
-  {
-    name: 'nslog_clear',
-    desc: 'Clear NSLogger buffer',
     flowOnly: true,
     execute: () => Promise.resolve(undefined),
   },
