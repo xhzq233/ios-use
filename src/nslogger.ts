@@ -423,7 +423,7 @@ export class NSLoggerServer {
       const connectionHandler = (socket: net.Socket) => {
         this._clientCounter += 1;
         const clientId = `client-${this._clientCounter}`;
-        logger.debug(`NSLogger: client connected from ${clientId} (${socket.remoteAddress}:${socket.remotePort})`, this.verbose);
+        logger.info(`NSLogger: client connected from ${socket.remoteAddress}:${socket.remotePort}`);
 
         let recvBuf = Buffer.alloc(0);
 
@@ -472,13 +472,16 @@ export class NSLoggerServer {
           key: fs.readFileSync(this.keyPath),
           cert: fs.readFileSync(this.certPath),
         }, connectionHandler);
+        this.server.on('tlsClientError', (err: Error) => {
+          logger.info(`NSLogger: TLS client error: ${err.message}`);
+        });
       } else {
         this.server = net.createServer(connectionHandler);
       }
 
       const onError = (err: Error) => reject(err);
       this.server.once('error', onError);
-      this.server.listen(this.port, () => {
+      this.server.listen(this.port, '0.0.0.0', () => {
         this.server!.off('error', onError);
         const addr = this.server!.address() as net.AddressInfo;
         this.port = addr.port;

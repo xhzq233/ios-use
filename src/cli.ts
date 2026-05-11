@@ -172,17 +172,11 @@ program.command('flow <file>')
 
 program.command('nslog')
   .description('Start NSLogger server and stream logs')
-  .option('--port <port>', 'Listen port', parseIntStrict, 0)
-  .option('--ssl', 'Enable TLS', true)
-  .option('--no-ssl', 'Disable TLS')
   .option('--name <name>', 'Bonjour name')
   .option('--grep <pattern>', 'Filter pattern')
   .option('--flags <flags>', 'Regex flags', '')
-  .option('--publish-bonjour', 'Publish Bonjour', true)
-  .option('--no-publish-bonjour', 'Disable Bonjour')
   .action(handleAction(async (opts: {
-    port?: number; ssl?: boolean; name?: string;
-    grep?: string; flags?: string; publishBonjour?: boolean;
+    name?: string; grep?: string; flags?: string;
   }) => {
     await nslogStreamAction(opts);
   }));
