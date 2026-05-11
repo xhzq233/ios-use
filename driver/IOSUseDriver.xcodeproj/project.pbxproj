@@ -21,6 +21,7 @@
 		3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35DDA5A7967522B295F5AEDB /* FindUtils.swift */; };
 		3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DDB97D9F6B1FB7C45A9A1 /* Find.swift */; };
 		40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
+		4179D4DAE1445E343CAEF9C4 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AA55C0A90C86228E35F4AF /* Constants.swift */; };
 		47E166A3CA2BC186D06626FC /* SessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */; };
 		48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		4C1335951DE9BCB1ACEB1105 /* Touch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */; };
@@ -30,6 +31,7 @@
 		6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		71116604C00B45958024BAE0 /* RawPointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8EE69CD9E44A379094C75D /* RawPointer.swift */; };
+		72F06E899109E3420F9CAB5C /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AA55C0A90C86228E35F4AF /* Constants.swift */; };
 		80253DFDB846500A5A7E2567 /* Types.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E085B6529EF5B086A5B7A15 /* Types.swift */; };
 		816428CB1210BC8502D0CC55 /* RawPointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8EE69CD9E44A379094C75D /* RawPointer.swift */; };
 		81CD91B7F77CDB0EB872969C /* TypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */; };
@@ -77,6 +79,7 @@
 		561DD9A295FA2CA856529D37 /* XCTestPrivate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = XCTestPrivate.h; sourceTree = "<group>"; };
 		577DDB97D9F6B1FB7C45A9A1 /* Find.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Find.swift; sourceTree = "<group>"; };
 		58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Touch.swift; sourceTree = "<group>"; };
+		59AA55C0A90C86228E35F4AF /* Constants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constants.swift; sourceTree = "<group>"; };
 		65984823BF87C6EFC8233743 /* ScrollMechanics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollMechanics.swift; sourceTree = "<group>"; };
 		688FE3DE301B8593639EAB9B /* Swipe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Swipe.swift; sourceTree = "<group>"; };
 		6E085B6529EF5B086A5B7A15 /* Types.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Types.swift; sourceTree = "<group>"; };
@@ -190,6 +193,7 @@
 			isa = PBXGroup;
 			children = (
 				9DE69CDBA7F414F7325EFBD0 /* Codec.swift */,
+				59AA55C0A90C86228E35F4AF /* Constants.swift */,
 				A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */,
 				D394439301E45CC69DD7CB41 /* Server.swift */,
 			);
@@ -299,6 +303,7 @@
 				947BDE121DDB75E2D244D1BF /* AppRegistry.m in Sources */,
 				40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */,
 				9B9DC8661A47D7EB2FF33C44 /* CodecTests.swift in Sources */,
+				72F06E899109E3420F9CAB5C /* Constants.swift in Sources */,
 				48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */,
 				3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */,
 				17A60E236F1D12E058214F25 /* FindUtils.swift in Sources */,
@@ -332,6 +337,7 @@
 				1B726C3B9607D5E0FD84652B /* App.swift in Sources */,
 				A2F46A49779B68AEAD78B0C2 /* AppRegistry.m in Sources */,
 				C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */,
+				4179D4DAE1445E343CAEF9C4 /* Constants.swift in Sources */,
 				EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */,
 				AF07412EEE37705E162B6743 /* Find.swift in Sources */,
 				3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */,

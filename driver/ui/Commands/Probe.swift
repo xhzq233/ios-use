@@ -2,7 +2,7 @@ import Foundation
 import Fory
 
 enum ProbeCommands {
-    static func probeFetch(_ args: ForyProbeFetchArgs, fory: Fory) throws -> ForyResponseFrame {
+    static func probeFetch(_ args: ForyProbeFetchArgs) throws -> ForyResponseFrame {
         guard let url = URL(string: args.url) else {
             throw DriverError.invalidArgs("invalid url: \(args.url)")
         }
@@ -46,7 +46,7 @@ enum ProbeCommands {
                 bodyBytes: Int32(bodyBytes),
                 contentType: contentType
             )
-            result = (try? Codec.foryOK(payload, fory: fory)) ?? Codec.foryError("probeFetch: serialization failed")
+            result = (try? Codec.foryOK(payload)) ?? Codec.foryError("probeFetch: serialization failed")
         }
 
         task.resume()

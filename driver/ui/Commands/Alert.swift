@@ -6,24 +6,24 @@ import Fory
 enum AlertCommands {
 
     /// Dismiss system alert on SpringBoard or current app.
-    static func dismissAlert(_ args: ForyDismissAlertArgs?, fory: Fory) throws -> ForyResponseFrame {
+    static func dismissAlert(_ args: ForyDismissAlertArgs?) throws -> ForyResponseFrame {
         let index = args.map { Int($0.index) } ?? -1
 
         // 1. Check SpringBoard for system alerts
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        if let result = tryDismissAlert(in: springboard, index: index, fory: fory) {
+        if let result = tryDismissAlert(in: springboard, index: index) {
             return result
         }
 
         // 2. Check current foreground app
         if let app = Session.shared.activeApp {
-            if let result = tryDismissAlert(in: app, index: index, fory: fory) {
+            if let result = tryDismissAlert(in: app, index: index) {
                 return result
             }
         }
 
         let payload = ForyAlertPayload(dismissed: false, text: "", button: "", reason: "no alert found")
-        return try Codec.foryOK(payload, fory: fory)
+        return try Codec.foryOK(payload)
     }
 
     // MARK: - Private
@@ -36,7 +36,7 @@ enum AlertCommands {
         return buttonCount - 1
     }
 
-    private static func tryDismissAlert(in app: XCUIApplication, index: Int, fory: Fory) -> ForyResponseFrame? {
+    private static func tryDismissAlert(in app: XCUIApplication, index: Int) -> ForyResponseFrame? {
         guard let alertElement = findAlertElement(in: app) else { return nil }
 
         let alertText = collectAlertText(alertElement)
@@ -44,7 +44,7 @@ enum AlertCommands {
         let buttons = alertElement.descendants(matching: .button).allElementsBoundByIndex
         guard let resolvedIdx = resolveButtonIndex(buttonCount: buttons.count, requestedIndex: index >= 0 ? index : nil) else {
             let payload = ForyAlertPayload(dismissed: false, text: alertText, button: "", reason: "alert has no buttons")
-            return try? Codec.foryOK(payload, fory: fory)
+            return try? Codec.foryOK(payload)
         }
 
         let targetButton = buttons[resolvedIdx]
@@ -55,7 +55,7 @@ enum AlertCommands {
         NSLog("[alert] dismissed: tapped '\(tappedLabel)' (index \(index)) in \(appId)")
 
         let payload = ForyAlertPayload(dismissed: true, text: alertText, button: tappedLabel, reason: "")
-        return try? Codec.foryOK(payload, fory: fory)
+        return try? Codec.foryOK(payload)
     }
 
     private static func findAlertElement(in app: XCUIApplication) -> XCUIElement? {

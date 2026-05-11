@@ -1,4 +1,5 @@
 import { writeFileSync } from 'fs';
+import { DEFAULT_PORT } from '../constants.js';
 import { Connection, DriverError } from '../driver-protocol/connection.js';
 import {
   serializeRequestFrame,
@@ -40,7 +41,7 @@ export class DriverClient {
   } = {}) {
     this.conn = new Connection({
       host: opts.host ?? '127.0.0.1',
-      port: opts.port ?? 8100,
+      port: opts.port ?? DEFAULT_PORT,
       udid: opts.udid,
       directTcp: opts.directTcp,
     });

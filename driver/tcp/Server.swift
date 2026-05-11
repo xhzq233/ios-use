@@ -4,8 +4,6 @@ import Fory
 @objc final class DriverServer: NSObject {
     static let shared = DriverServer()
 
-    private let fory: Fory = createFory()
-
     @objc static func startSharedIfNeeded() {
         let server = DriverServer.shared
         guard !server.isRunning else { return }
@@ -16,8 +14,8 @@ import Fory
         }
     }
 
-    private let defaultPort: UInt16 = 8100
-    private let maxConnections = 8
+    private let defaultPort = DriverConstants.defaultPort
+    private let maxConnections = DriverConstants.maxConnections
     private var socketFD: Int32 = -1
     private var _running = false
     private var running: Bool {
@@ -56,7 +54,7 @@ import Fory
         }
         guard bindResult >= 0 else { throw DriverError.serverError("bind failed: \(errno)") }
 
-        guard Darwin.listen(socketFD, 5) >= 0 else { throw DriverError.serverError("listen failed: \(errno)") }
+        guard Darwin.listen(socketFD, DriverConstants.listenBacklog) >= 0 else { throw DriverError.serverError("listen failed: \(errno)") }
 
         running = true
         NSLog("[driver] listening on port \(port)")
@@ -78,7 +76,7 @@ import Fory
         if fd >= 0 {
             Darwin.close(fd)
         }
-        _ = acceptLoopSem?.wait(timeout: .now() + .seconds(5))
+        _ = acceptLoopSem?.wait(timeout: .now() + .seconds(DriverConstants.serverStopTimeoutSeconds))
         acceptLoopSem = nil
     }
 
@@ -105,7 +103,6 @@ import Fory
                 }
                 return false
             }
-
             if shouldAccept {
                 DispatchQueue.global().async {
                     self.handleConnection(clientFD)
@@ -123,14 +120,13 @@ import Fory
             connectionLock.sync { activeConnections -= 1 }
         }
 
-        do {
-            while self.running {
+        while self.running {
                 do {
-                    let foryReq = try Codec.readFrame(fd, fory: self.fory)
+                    let foryReq = try Codec.readFrame(fd)
                     let command = Command(rawValue: foryReq.command)
                     guard let command else {
                         let errFrame = ForyResponseFrame(ok: false, error: "unknown command: \(foryReq.command)")
-                        try Codec.writeResponseFrame(fd, frame: errFrame, fory: self.fory)
+                        try Codec.writeResponseFrame(fd, frame: errFrame)
                         continue
                     }
 
@@ -138,20 +134,17 @@ import Fory
                     foryResp = try self.dispatchOnMainThread(foryReq.payload, command: command)
 
                     if !foryResp.ok && foryResp.error.hasPrefix("[FATAL]") {
-                        try Codec.writeResponseFrame(fd, frame: foryResp, fory: self.fory)
+                        try Codec.writeResponseFrame(fd, frame: foryResp)
                         break
                     }
-                    try Codec.writeResponseFrame(fd, frame: foryResp, fory: self.fory)
+                    try Codec.writeResponseFrame(fd, frame: foryResp)
                 } catch FrameError.readFailed {
                     break
                 } catch {
                     let errFrame = ForyResponseFrame(ok: false, error: "\(error)")
-                    _ = try? Codec.writeResponseFrame(fd, frame: errFrame, fory: self.fory)
+                    _ = try? Codec.writeResponseFrame(fd, frame: errFrame)
                     break
                 }
-            }
-        } catch {
-            NSLog("[driver] handleConnection fatal error: \(error)")
         }
     }
 
@@ -188,7 +181,7 @@ import Fory
             }
             sem.signal()
         }
-        let waitResult = sem.wait(timeout: .now() + .seconds(45))
+        let waitResult = sem.wait(timeout: .now() + .seconds(DriverConstants.commandTimeoutSeconds))
         if waitResult == .timedOut {
             cancelLock.lock()
             let commandStarted = started
@@ -200,7 +193,7 @@ import Fory
                 return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after 45s (XCTest main thread may be blocked or crashed)")
             }
 
-            let completionWaitResult = sem.wait(timeout: .now() + .seconds(120))
+            let completionWaitResult = sem.wait(timeout: .now() + .seconds(DriverConstants.commandCompletionTimeoutSeconds))
             if completionWaitResult == .timedOut {
                 return ForyResponseFrame(ok: false, error: "[FATAL] Command started on the XCTest main thread but did not finish within 120s; driver state may be inconsistent")
             }
@@ -217,66 +210,66 @@ import Fory
     private func dispatchFory(_ payload: Data, command: Command) throws -> ForyResponseFrame {
         switch command {
         case .createSession:
-            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyCreateSessionArgs.self) : nil
-            return try AppCommands.createSession(args, fory: fory)
+            let args = payload.count > 0 ? try Codec.sharedFory.deserialize(payload, as: ForyCreateSessionArgs.self) : nil
+            return try AppCommands.createSession(args)
 
         case .deleteSession:
             return AppCommands.deleteSession()
 
         case .activateApp:
-            let args = try fory.deserialize(payload, as: ForyActivateAppArgs.self)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyActivateAppArgs.self)
             return try AppCommands.activateApp(args)
 
         case .terminateApp:
-            let args = try fory.deserialize(payload, as: ForyTerminateAppArgs.self)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyTerminateAppArgs.self)
             return try AppCommands.terminateApp(args)
 
         case .openURL:
-            let args = try fory.deserialize(payload, as: ForyOpenURLArgs.self)
-            return try AppCommands.openURL(args, fory: fory)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyOpenURLArgs.self)
+            return try AppCommands.openURL(args)
 
         case .probeFetch:
-            let args = try fory.deserialize(payload, as: ForyProbeFetchArgs.self)
-            return try ProbeCommands.probeFetch(args, fory: fory)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyProbeFetchArgs.self)
+            return try ProbeCommands.probeFetch(args)
 
         case .proxyCAPush:
-            let args = try fory.deserialize(payload, as: ForyProxyCAPushArgs.self)
-            return try ProxyCommands.proxyCAPush(args, fory: fory)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyProxyCAPushArgs.self)
+            return try ProxyCommands.proxyCAPush(args)
 
         case .screenshot:
-            return try ScreenCommands.screenshot(fory: fory)
+            return try ScreenCommands.screenshot()
 
         case .dom:
-            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyDomArgs.self) : ForyDomArgs()
-            return try DomCommands.dom(args, fory: fory)
+            let args = payload.count > 0 ? try Codec.sharedFory.deserialize(payload, as: ForyDomArgs.self) : ForyDomArgs()
+            return try DomCommands.dom(args)
 
         case .find:
-            let args = try fory.deserialize(payload, as: ForyFindArgs.self)
-            return try FindCommands.find(args, fory: fory)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyFindArgs.self)
+            return try FindCommands.find(args)
 
         case .tap:
-            let args = try fory.deserialize(payload, as: ForyTapArgs.self)
-            return try TouchCommands.tap(args, fory: fory)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyTapArgs.self)
+            return try TouchCommands.tap(args)
 
         case .longPress:
-            let args = try fory.deserialize(payload, as: ForyLongPressArgs.self)
-            return try TouchCommands.longPress(args, fory: fory)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyLongPressArgs.self)
+            return try TouchCommands.longPress(args)
 
         case .input:
-            let args = try fory.deserialize(payload, as: ForyInputArgs.self)
-            return try InputCommands.input(args, fory: fory)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyInputArgs.self)
+            return try InputCommands.input(args)
 
         case .swipe:
-            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForySwipeArgs.self) : ForySwipeArgs()
-            return try SwipeCommands.swipe(args, fory: fory)
+            let args = payload.count > 0 ? try Codec.sharedFory.deserialize(payload, as: ForySwipeArgs.self) : ForySwipeArgs()
+            return try SwipeCommands.swipe(args)
 
         case .waitFor:
-            let args = try fory.deserialize(payload, as: ForyWaitForArgs.self)
-            return try WaitForCommands.waitFor(args, fory: fory)
+            let args = try Codec.sharedFory.deserialize(payload, as: ForyWaitForArgs.self)
+            return try WaitForCommands.waitFor(args)
 
         case .dismissAlert:
-            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyDismissAlertArgs.self) : nil
-            return try AlertCommands.dismissAlert(args, fory: fory)
+            let args = payload.count > 0 ? try Codec.sharedFory.deserialize(payload, as: ForyDismissAlertArgs.self) : nil
+            return try AlertCommands.dismissAlert(args)
         }
     }
 }

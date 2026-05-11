@@ -1,5 +1,6 @@
 import net from 'node:net';
 import { connectUsbmux } from './usbmux.js';
+import { CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS } from '../constants.js';
 
 export class DriverError extends Error {
   data?: unknown;
@@ -28,7 +29,7 @@ export class Connection {
 
   constructor(opts: { host?: string; port?: number; udid?: string; directTcp?: boolean }) {
     this.host = opts.host ?? '127.0.0.1';
-    this.port = opts.port ?? 8100;
+    this.port = opts.port ?? DEFAULT_PORT;
     this.udid = opts.udid;
     this.directTcp = opts.directTcp ?? false;
   }
@@ -41,8 +42,8 @@ export class Connection {
         const sock = net.createConnection({ host: this.host, port: this.port }, () => resolve(sock));
         const timer = setTimeout(() => {
           sock.destroy();
-          reject(new Error(`connect timeout after 10s (${this.host}:${this.port})`));
-        }, 10_000);
+          reject(new Error(`connect timeout after ${CONNECT_TIMEOUT_MS}ms (${this.host}:${this.port})`));
+        }, CONNECT_TIMEOUT_MS);
         sock.once('error', (err: Error) => { clearTimeout(timer); reject(err); });
         sock.once('connect', () => { clearTimeout(timer); });
       });
@@ -155,7 +156,7 @@ export class Connection {
           rejectFn(new Error(`read timeout after 45s (got ${gotBytes}/${n} bytes)`));
         }
         this.disconnect();
-      }, 45_000);
+      }, READ_TIMEOUT_MS);
     });
   }
 
@@ -177,9 +178,5 @@ export class Connection {
     this.buffer = Buffer.alloc(0);
     this.sendQueue = Promise.resolve();
     this._disconnecting = false;
-  }
-
-  get isConnected(): boolean {
-    return this.socket !== null;
   }
 }

@@ -26,10 +26,6 @@ steps:
       yRatio: 0.5
     comment: "点击当前已连接网络行右侧的详情按钮"
 
-  - action: waitFor
-    label: 配置代理
-    timeout: 5
-
   - action: swipe
     to: 配置代理
     comment: "滚动到配置代理可见"

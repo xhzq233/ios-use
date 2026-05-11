@@ -22,7 +22,7 @@ final class CodecTests: XCTestCase {
     func testForyOK_WithPayload() throws {
         let fory = createFory()
         let payload = ForySimpleStringPayload(value: "test")
-        let resp = try Codec.foryOK(payload, fory: fory)
+        let resp = try Codec.foryOK(payload)
         XCTAssertTrue(resp.ok)
         XCTAssertTrue(resp.error.isEmpty)
         XCTAssertFalse(resp.payload.isEmpty)
@@ -37,7 +37,7 @@ final class CodecTests: XCTestCase {
         var errPayload = ForyErrorPayload()
         errPayload.hint = "try again"
         errPayload.suggestions = ["a", "b"]
-        let resp = try Codec.foryError("not found", payload: errPayload, fory: fory)
+        let resp = try Codec.foryError("not found", payload: errPayload)
         XCTAssertFalse(resp.ok)
         XCTAssertEqual(resp.error, "not found")
         XCTAssertFalse(resp.payload.isEmpty)
@@ -87,7 +87,7 @@ final class CodecTests: XCTestCase {
         }
 
         let frame = ForyResponseFrame(ok: true, error: "", payload: Data())
-        try Codec.writeResponseFrame(writeFD, frame: frame, fory: fory)
+        try Codec.writeResponseFrame(writeFD, frame: frame)
 
         // Read back as ForyRequestFrame (same wire format, different type).
         // Actually we need to write a ForyRequestFrame and read it back.
@@ -107,7 +107,7 @@ final class CodecTests: XCTestCase {
         let frameData = try fory.serialize(frame)
         try Codec.writeLengthPrefixedData(writeFD, data: frameData)
 
-        let readBack = try Codec.readFrame(readFD, fory: fory)
+        let readBack = try Codec.readFrame(readFD)
         XCTAssertEqual(readBack.command, "createSession")
         let decodedPayload = try fory.deserialize(readBack.payload, as: ForyCreateSessionArgs.self)
         XCTAssertEqual(decodedPayload.bundleId, "com.test")

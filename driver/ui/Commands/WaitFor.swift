@@ -7,7 +7,7 @@ enum WaitForCommands {
     private static let pollIntervalMs = 100
 
     /// doc 6.5 — poll rawFind until target label is visible or timeout.
-    static func waitFor(_ args: ForyWaitForArgs, fory: Fory) throws -> ForyResponseFrame {
+    static func waitFor(_ args: ForyWaitForArgs) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
 
         let timeout = args.timeout > 0 ? args.timeout : 10.0
@@ -34,10 +34,10 @@ enum WaitForCommands {
                         rect: makeForyRect(elem.node.frame),
                         waited: Double(elapsed).sanitized
                     )
-                    return try Codec.foryOK(payload, fory: fory)
+                    return try Codec.foryOK(payload)
                 }
             case .ambiguous(let matches):
-                return try ambiguityResponse(args.label, matches: matches, fory: fory)
+                return try ambiguityResponse(args.label, matches: matches)
             case .fuzzy, .notFound:
                 break
             }

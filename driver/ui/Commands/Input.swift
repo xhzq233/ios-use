@@ -8,7 +8,7 @@ enum InputCommands {
     /// doc 6.3 — two-step typing:
     ///   1) prepare: tap the target to grab keyboard focus when missing.
     ///   2) type:    synthesize text via WDA-style FBTypeText event path.
-    static func input(_ args: ForyInputArgs, fory: Fory) throws -> ForyResponseFrame {
+    static func input(_ args: ForyInputArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
         let traits = args.traits.isEmpty ? nil : args.traits
@@ -17,17 +17,15 @@ enum InputCommands {
         let elem: SnapshotElement
         switch rawFind(args.label, traits: traits) {
         case .found(let e): elem = e
-        case .ambiguous(let matches): return try ambiguityResponse(args.label, matches: matches, fory: fory)
+        case .ambiguous(let matches): return try ambiguityResponse(args.label, matches: matches)
         case .fuzzy(let s):
             return try notFoundResponse(args.label,
                                         suggestions: s,
-                                        hint: "Try adding --traits, or verify the active app before typing",
-                                        fory: fory)
+                                        hint: "Try adding --traits, or verify the active app before typing")
         case .notFound(let s):
             return try notFoundResponse(args.label,
                                         suggestions: s,
-                                        hint: "Try adding --traits, or verify the active app before typing",
-                                        fory: fory)
+                                        hint: "Try adding --traits, or verify the active app before typing")
         }
 
         let editableSnapshot = preferredInputSnapshot(around: elem.node)
@@ -48,7 +46,7 @@ enum InputCommands {
             label: elem.node.label ?? "",
             rect: makeForyRect(frame)
         )
-        return try Codec.foryOK(payload, fory: fory)
+        return try Codec.foryOK(payload)
     }
 }
 
