@@ -18,7 +18,6 @@
 		25DE35CCD54476506D2B33E1 /* Swipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688FE3DE301B8593639EAB9B /* Swipe.swift */; };
 		2A99D7083199D3C052817376 /* Proxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F60F451C114B1CD47F9A702 /* Proxy.swift */; };
 		2D30D40139893E650198A77E /* Proxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F60F451C114B1CD47F9A702 /* Proxy.swift */; };
-		35267F7D02A7EC69C5BCEA40 /* Oslog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C407B5E6ED8BA3229FFB00A3 /* Oslog.swift */; };
 		3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35DDA5A7967522B295F5AEDB /* FindUtils.swift */; };
 		3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DDB97D9F6B1FB7C45A9A1 /* Find.swift */; };
 		40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
@@ -31,7 +30,6 @@
 		6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		71116604C00B45958024BAE0 /* RawPointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8EE69CD9E44A379094C75D /* RawPointer.swift */; };
-		74CF9429D16DAEB3E1D277A8 /* Oslog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C407B5E6ED8BA3229FFB00A3 /* Oslog.swift */; };
 		80253DFDB846500A5A7E2567 /* Types.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E085B6529EF5B086A5B7A15 /* Types.swift */; };
 		816428CB1210BC8502D0CC55 /* RawPointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8EE69CD9E44A379094C75D /* RawPointer.swift */; };
 		81CD91B7F77CDB0EB872969C /* TypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */; };
@@ -93,7 +91,6 @@
 		A7314D09B4E47FB05DDAAF58 /* Screen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screen.swift; sourceTree = "<group>"; };
 		AABACD4A116F231BF1D16712 /* CodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecTests.swift; sourceTree = "<group>"; };
 		B82A6D94A3BC809E2C68F694 /* WaitFor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitFor.swift; sourceTree = "<group>"; };
-		C407B5E6ED8BA3229FFB00A3 /* Oslog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Oslog.swift; sourceTree = "<group>"; };
 		C4770592925B5EBF43640011 /* IOSUseDriver-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "IOSUseDriver-Bridging-Header.h"; sourceTree = "<group>"; };
 		D394439301E45CC69DD7CB41 /* Server.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Server.swift; sourceTree = "<group>"; };
 		E3E262BB01AF4133E6AF8C75 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
@@ -153,7 +150,6 @@
 				7C5B4B608C890EFE8841A177 /* Dom.swift */,
 				577DDB97D9F6B1FB7C45A9A1 /* Find.swift */,
 				7C773A75C11E5CE2360A4FB4 /* Input.swift */,
-				C407B5E6ED8BA3229FFB00A3 /* Oslog.swift */,
 				05472B7D1F53F7686793C318 /* Probe.swift */,
 				0F60F451C114B1CD47F9A702 /* Proxy.swift */,
 				FA8EE69CD9E44A379094C75D /* RawPointer.swift */,
@@ -308,7 +304,6 @@
 				17A60E236F1D12E058214F25 /* FindUtils.swift in Sources */,
 				DD15992A4F33EFC47AFC3D2B /* ForyModels.swift in Sources */,
 				CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */,
-				35267F7D02A7EC69C5BCEA40 /* Oslog.swift in Sources */,
 				EFBB4C9BDE512CA610CD097A /* Probe.swift in Sources */,
 				2A99D7083199D3C052817376 /* Proxy.swift in Sources */,
 				71116604C00B45958024BAE0 /* RawPointer.swift in Sources */,
@@ -342,7 +337,6 @@
 				3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */,
 				5746879AB22CCA470C5D92D9 /* ForyModels.swift in Sources */,
 				9B2D14D04A8484C749189950 /* Input.swift in Sources */,
-				74CF9429D16DAEB3E1D277A8 /* Oslog.swift in Sources */,
 				B24F803C1B1C26B07BD489B3 /* Probe.swift in Sources */,
 				2D30D40139893E650198A77E /* Proxy.swift in Sources */,
 				816428CB1210BC8502D0CC55 /* RawPointer.swift in Sources */,

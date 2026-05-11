@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger.js';
-import { withAutoSession } from '../session.js';
+import { withAutoSession, readSessionInfo } from '../session.js';
 import { NSLoggerServer, formatBonjourStatusMessages } from '../nslogger.js';
 import { ARTIFACT_DIR, ensureArtifactDir } from '../utils/paths.js';
 import { DriverClient, DriverError } from '../driver-client/client.js';
@@ -10,13 +10,14 @@ import type { RawResponse } from '../driver-client/client.js';
 import {
   tapArgsSer, longPressArgsSer, swipeArgsSer, inputArgsSer,
   waitForArgsSer, findArgsSer, domArgsSer,
-  dismissAlertArgsSer, oslogArgsSer,
+  dismissAlertArgsSer,
   terminateAppArgsSer, activateAppArgsSer, openURLArgsSer,
   toForyTarget,
   deserializeElementPayload, deserializeDomPayload, deserializeFindPayload,
   deserializeSwipePayload, deserializeWaitForPayload,
-  deserializeAlertPayload, deserializeOslogPayload, deserializeSimpleStringPayload,
+  deserializeAlertPayload, deserializeSimpleStringPayload,
 } from '../driver-protocol/fory.js';
+import { clearBuffer, fetchOslog, configureOslog } from '../device-log/oslog.js';
 import type { FlowStep, FlowContext, NSLoggerServerLike } from './types.js';
 import type {
   DomNode,
@@ -253,7 +254,7 @@ async function send(client: DriverClient, command: string, payload: Uint8Array):
 type ActionHandler = (client: DriverClient, step: FlowStep, ctx: FlowContext) => Promise<unknown>;
 
 const { TAP, LONG_PRESS, INPUT, SWIPE, DOM, FIND, WAIT_FOR, SCREENSHOT,
-  ACTIVATE_APP, TERMINATE_APP, OPEN_URL, DISMISS_ALERT, OSLOG } = DRIVER_COMMANDS;
+  ACTIVATE_APP, TERMINATE_APP, OPEN_URL, DISMISS_ALERT } = DRIVER_COMMANDS;
 
 const HANDLERS: Record<string, ActionHandler> = {
 
@@ -447,26 +448,26 @@ const HANDLERS: Record<string, ActionHandler> = {
     }
   },
 
-  async oslog(client, step) {
-    requireClient(client, 'oslog');
-    const name = step.name || `oslog-${timestamp()}`;
-    const payload = oslogArgsSer.serialize({
-      pattern: step.pattern ?? '',
-      flags: step.flags ?? '',
-      name,
-      clear: !!step.clear,
-      bundleId: step.bundleId ?? '',
-      timeout: step.timeout ?? 0,
-    });
-    const resp = await send(client, OSLOG, payload);
-    const result = deserializeOslogPayload(resp.payloadBytes!);
-    if ('cleared' in result && result.cleared) {
-      logger.info(`  → oslog: cleared=${result.cleared}`);
-    } else {
-      const outputFile = outputPath(`${name}.log`);
-      fs.writeFileSync(outputFile, String(result.content ?? ''));
-      logger.info(`  → oslog: matched=${result.matched} total=${result.total} → ${outputFile}`);
+  async oslog(_client, step, ctx) {
+    if (step.clear) {
+      const n = clearBuffer();
+      logger.info(`  → oslog: cleared=${n}`);
+      return;
     }
+    const udid = ctx.udid;
+    if (!udid) throw new Error('oslog requires --udid or an active session');
+    configureOslog({ simulator: ctx.deviceType === 'simulator', udid });
+    const result = await fetchOslog({
+      udid,
+      pattern: step.pattern,
+      flags: step.flags,
+      bundleId: step.bundleId,
+      timeout: step.timeout,
+    });
+    const name = step.name || `oslog-${timestamp()}`;
+    const outputFile = outputPath(`${name}.log`);
+    fs.writeFileSync(outputFile, result.content);
+    logger.info(`  → oslog: matched=${result.matched} total=${result.total} → ${outputFile}`);
   },
 
   async nslog(_client, step, ctx) {
@@ -474,11 +475,13 @@ const HANDLERS: Record<string, ActionHandler> = {
     const pattern = step.pattern;
     if (!pattern) throw new Error('nslog requires "pattern"');
     const timeoutSec = step.timeout ?? 0;
+    const t0 = Date.now();
     const matched = await waitForNslogMatch(ctx.nsloggerServer, pattern, step.flags || '', timeoutSec);
+    const elapsed = Date.now() - t0;
     const logName = step.name || `nslog-${timestamp()}`;
     const outputFile = outputPath(`${logName}.log`);
     fs.writeFileSync(outputFile, matched.join('\n'));
-    logger.info(`  → nslog: ${matched.length} matched /${pattern}/ → ${outputFile}`);
+    logger.info(`  → nslog: ${matched.length} matched /${pattern}/ in ${elapsed}ms → ${outputFile}`);
     if (step.clearAfterRead) {
       ctx.nsloggerServer!.clear();
       logger.info('  → nslog: buffer cleared');
@@ -517,9 +520,12 @@ export async function runCommandStep(step: FlowStep, opts: CommandOpts = {}, con
   }
 
   await withAutoSession(sessionOpts, async (client: DriverClient) => {
+    const sessionInfo = readSessionInfo();
     const localContext: FlowContext = {
       ...context,
       flowApp: context.flowApp ?? sessionOpts.bundleId,
+      udid: (opts.udid as string | undefined) ?? sessionInfo?.udid,
+      deviceType: sessionInfo?.deviceType as 'real' | 'simulator' | undefined,
     };
     await executeStep(client, step, localContext);
   });

@@ -135,14 +135,7 @@ import Fory
                     }
 
                     let foryResp: ForyResponseFrame
-                    if command == .oslog {
-                        let startedAt = CFAbsoluteTimeGetCurrent()
-                        NSLog("[driver] dispatch start command=\(command.rawValue)")
-                        foryResp = try self.dispatchFory(foryReq.payload, command: command)
-                        NSLog("[driver] dispatch finish command=\(command.rawValue) ok=\(foryResp.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))ms")
-                    } else {
-                        foryResp = try self.dispatchOnMainThread(foryReq.payload, command: command)
-                    }
+                    foryResp = try self.dispatchOnMainThread(foryReq.payload, command: command)
 
                     if !foryResp.ok && foryResp.error.hasPrefix("[FATAL]") {
                         try Codec.writeResponseFrame(fd, frame: foryResp, fory: self.fory)
@@ -252,10 +245,6 @@ import Fory
 
         case .screenshot:
             return try ScreenCommands.screenshot(fory: fory)
-
-        case .oslog:
-            let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyOslogArgs.self) : nil
-            return try OslogCommands.oslog(args, fory: fory)
 
         case .dom:
             let args = payload.count > 0 ? try fory.deserialize(payload, as: ForyDomArgs.self) : ForyDomArgs()
