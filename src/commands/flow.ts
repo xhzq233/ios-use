@@ -288,7 +288,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
   const context: FlowContext = { flowApp: typeof resolvedApp === 'string' ? resolvedApp : flow.app, nsloggerServer: null, udid: opts.udid ?? sessionInfo?.udid, deviceType: sessionInfo?.deviceType };
 
   let sigintHandler: (() => void) | undefined;
-  let serverStarted = false;
+  let driver: DriverClient | undefined;
   try {
     if (resolvedApp || flow.app) {
       if (needNSLogConfig) {
@@ -306,7 +306,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
       logger.info(`Target app: ${resolvedApp || flow.app}`);
     }
 
-    const driver = await startSession({ ...opts, terminate: true });
+    driver = await startSession({ ...opts, terminate: true });
 
     if (context.nsloggerServer) {
       logger.info('Waiting for app to connect to NSLogger...');

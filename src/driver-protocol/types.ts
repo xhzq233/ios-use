@@ -102,19 +102,6 @@ export interface WaitForResult {
   waited: number;
 }
 
-export interface OslogArgs {
-  pattern?: string;
-  flags?: string;
-  name?: string;
-  clear?: boolean;
-  bundleId?: string;
-  timeout?: number;
-}
-
-export type OslogResult =
-  | { cleared: number }
-  | { matched: number; total: number; content: string };
-
 export interface ProbeFetchArgs {
   url: string;
   timeout?: number;

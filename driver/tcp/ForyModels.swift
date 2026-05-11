@@ -136,16 +136,6 @@ struct ForyAlertPayload {
     var reason: String = ""
 }
 
-// MARK: - Oslog
-
-@ForyStruct
-struct ForyOslogPayload {
-    var matched: Int32 = 0
-    var total: Int32 = 0
-    var content: String = ""
-    var cleared: Int32 = 0
-}
-
 // MARK: - Probe
 
 @ForyStruct
@@ -248,16 +238,6 @@ struct ForyDismissAlertArgs {
 }
 
 @ForyStruct
-struct ForyOslogArgs {
-    var pattern: String = ""
-    var flags: String = ""
-    var name: String = ""
-    var clear: Bool = false
-    var bundleId: String = ""
-    var timeout: Double = 0
-}
-
-@ForyStruct
 struct ForyProbeFetchArgs {
     var url: String = ""
     var timeout: Double = 0
@@ -297,8 +277,6 @@ func createFory() -> Fory {
     try! fory.register(ForyWaitForPayload.self, name: "ForyWaitForPayload")
     // Alert
     try! fory.register(ForyAlertPayload.self, name: "ForyAlertPayload")
-    // Oslog
-    try! fory.register(ForyOslogPayload.self, name: "ForyOslogPayload")
     // Probe
     try! fory.register(ForyProbePayload.self, name: "ForyProbePayload")
     // Proxy
@@ -318,7 +296,6 @@ func createFory() -> Fory {
     try! fory.register(ForyLongPressArgs.self, name: "ForyLongPressArgs")
     try! fory.register(ForySwipeArgs.self, name: "ForySwipeArgs")
     try! fory.register(ForyDismissAlertArgs.self, name: "ForyDismissAlertArgs")
-    try! fory.register(ForyOslogArgs.self, name: "ForyOslogArgs")
     try! fory.register(ForyProbeFetchArgs.self, name: "ForyProbeFetchArgs")
     try! fory.register(ForyProxyCAPushArgs.self, name: "ForyProxyCAPushArgs")
     return fory

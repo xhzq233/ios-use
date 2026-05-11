@@ -1,0 +1,7 @@
+name: "nslog perf"
+app: com.lemon.ee.retouch.inHouse
+needNSLog: true
+steps:
+  - action: nslog
+    pattern: "."
+    name: nslog-perf
