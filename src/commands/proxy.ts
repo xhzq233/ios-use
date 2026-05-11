@@ -153,14 +153,17 @@ async function generateMitmproxyCA(confdir: string): Promise<void> {
   if (!fs.existsSync(confdir)) fs.mkdirSync(confdir, { recursive: true });
   const proc = spawn('mitmdump', ['--set', `confdir=${confdir}`, '--listen-port', '0'], { stdio: 'ignore' });
   await new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; resolve(); } };
     const check = setInterval(() => {
       if (fs.existsSync(path.join(confdir, 'mitmproxy-ca-cert.pem'))) {
         clearInterval(check);
+        clearTimeout(fallback);
         proc.kill('SIGTERM');
-        resolve();
+        done();
       }
     }, 200);
-    setTimeout(() => { clearInterval(check); proc.kill('SIGKILL'); resolve(); }, 10000);
+    const fallback = setTimeout(() => { clearInterval(check); proc.kill('SIGKILL'); done(); }, 10000);
   });
 }
 
