@@ -5,12 +5,24 @@ import { logger } from '../utils/logger';
 import { startSession, createDriverFromSession } from '../session';
 import { executeStep, sleep, setVerbose, isVerbose, resetAbort, setAbort, isAborted, normalizeNeedLogConfig, startNSLoggerServer } from './actions';
 import { LOCK_FILE, isProcessAlive } from './nslog';
-import type { Driver, FlowContext, FlowStep } from './types';
+import type { Driver, FlowContext, FlowStep, NSLoggerServerLike } from './types';
+
+async function waitForNslogConnection(server: NSLoggerServerLike & { clients: Map<string, unknown> }, timeoutMs: number): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (server.clients.size > 0) {
+      logger.info('App connected to NSLogger');
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  logger.warn('Timeout waiting for app to connect to NSLogger, continuing...');
+}
 
 interface FlowFile {
   name?: string;
   app?: string;
-  needLog?: boolean | Record<string, unknown>;
+  needNSLog?: boolean | Record<string, unknown>;
   vars?: Record<string, unknown>;
   outputs?: string | string[];
   steps: Array<Record<string, unknown>>;
@@ -24,7 +36,7 @@ function loadFlowFile(resolvedPath: string): FlowFile {
   const flow = yaml.load(fs.readFileSync(resolvedPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as {
     name?: string;
     app?: string;
-    needLog?: boolean | Record<string, unknown>;
+    needNSLog?: boolean | Record<string, unknown>;
     vars?: Record<string, unknown>;
     outputs?: string | string[];
     steps?: Array<Record<string, unknown>>;
@@ -39,7 +51,7 @@ function loadFlowFile(resolvedPath: string): FlowFile {
   return {
     name: flow.name,
     app: flow.app,
-    needLog: flow.needLog,
+    needNSLog: flow.needNSLog,
     vars: flow.vars,
     outputs: flow.outputs,
     steps: flow.steps,
@@ -261,10 +273,10 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
   const resolvedPath = path.resolve(filePath);
   const flow = loadFlowFile(resolvedPath);
   const resolvedVars = resolveVars(flow.vars, {});
-  const resolvedNeedLog = resolveTemplates(flow.needLog, resolvedVars);
+  const resolvedNeedNSLog = resolveTemplates(flow.needNSLog, resolvedVars);
   const resolvedApp = flow.app ? resolveTemplates(flow.app, resolvedVars) : undefined;
-  const needLogConfig = normalizeNeedLogConfig(resolvedNeedLog);
-  logger.debug(`flowAction: needLog=${JSON.stringify(resolvedNeedLog ?? null)} app=${JSON.stringify(resolvedApp ?? flow.app ?? null)}`, !!opts.verbose);
+  const needNSLogConfig = normalizeNeedLogConfig(resolvedNeedNSLog);
+  logger.debug(`flowAction: needNSLog=${JSON.stringify(resolvedNeedNSLog ?? null)} app=${JSON.stringify(resolvedApp ?? flow.app ?? null)}`, !!opts.verbose);
 
   if (typeof resolvedApp === 'string') opts.bundleId = resolvedApp;
   await startSession({ ...opts, terminate: true });
@@ -278,7 +290,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
   let sigintHandler: (() => void) | undefined;
   try {
     if (resolvedApp || flow.app) {
-      if (needLogConfig) {
+      if (needNSLogConfig) {
         try {
           const pid = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim(), 10);
           if (pid && isProcessAlive(pid)) {
@@ -287,7 +299,10 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
           }
           fs.unlinkSync(LOCK_FILE);
         } catch {}
-        context.nsloggerServer = await startNSLoggerServer(needLogConfig, 'needLog');
+        context.nsloggerServer = await startNSLoggerServer(needNSLogConfig, 'needNSLog');
+        // Wait for app to connect to nslog server
+        logger.info('Waiting for app to connect to NSLogger...');
+        await waitForNslogConnection(context.nsloggerServer, 10000);
       }
       logger.info(`Target app: ${resolvedApp || flow.app}`);
     }

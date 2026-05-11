@@ -65,9 +65,7 @@ export interface FlowStep {
     | 'openURL'
     | 'dismissAlert'
     | 'oslog'
-    | 'nslog_start'
-    | 'nslog'
-    | 'nslog_clear';
+    | 'nslog';
 
   // Label / traits (tap/longpress/input/find/swipe/waitFor)
   label?: LabelOrPoint;
@@ -146,4 +144,5 @@ export interface NSLoggerServerLike {
   getLogCount(): number;
   clear(): void;
   getPort(): number;
+  clients: Map<string, unknown>;
 }
