@@ -66,6 +66,14 @@ function runText(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
+function runTextWithInput(cmd: string, args: string[], input: string): string {
+  return execFileSync(cmd, args, {
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    input,
+  }).trim();
+}
+
 function parseDurationMs(input: string): number {
   const match = input.trim().match(/^(\d+(?:\.\d+)?)(ms|s|m)?$/);
   if (!match) throw new Error(`Invalid duration: ${input}`);
@@ -91,23 +99,31 @@ function getWifiInterface(): string {
   throw new Error('WIFI_INTERFACE_NOT_FOUND');
 }
 
-function getWifiSsid(iface: string): string {
+function getWifiSsid(): string {
   try {
-    const out = runText('networksetup', ['-getairportnetwork', iface]);
-    const match = out.match(/Current Wi-Fi Network:\s*(.+)$/);
-    if (match?.[1]) return match[1].trim();
+    const plist = execFileSync('system_profiler', ['SPAirPortDataType', '-xml'], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    const ssid = runTextWithInput(
+      '/usr/libexec/PlistBuddy',
+      ['-c', 'Print :0:_items:0:spairport_airport_interfaces:0:spairport_current_network_information:_name', '/dev/stdin'],
+      plist,
+    );
+    if (ssid && ssid !== '<redacted>') return ssid;
   } catch {}
   try {
-    const out = runText('wdutil', ['info']);
-    const match = out.match(/SSID\s*:\s*(.+)$/m);
-    if (match?.[1]) return match[1].trim();
+    const out = runText('system_profiler', ['SPAirPortDataType']);
+    const match = out.match(/Current Network Information:\s*\n\s*([^:\n]+):/);
+    if (match?.[1] && match[1] !== '<redacted>') return match[1].trim();
   } catch {}
   throw new Error(`WIFI_SSID_NOT_FOUND`);
 }
 
 function detectWifiInfo(): WifiInfo {
   const iface = getWifiInterface();
-  const ssid = getWifiSsid(iface);
+  const ssid = getWifiSsid();
   let macLanIp: string;
   try {
     macLanIp = runText('ipconfig', ['getifaddr', iface]);
