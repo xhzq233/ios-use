@@ -1,11 +1,4 @@
 import net from 'node:net';
-import {
-  serializeRequestFrame,
-  serializeArgs,
-  deserializeResponse,
-  deserializeResponsePayload,
-} from './fory.js';
-import type { ResponseFrame } from './frames.js';
 import { connectUsbmux } from './usbmux.js';
 
 export class DriverError extends Error {
@@ -84,50 +77,38 @@ export class Connection {
     });
   }
 
-  async send(command: string, args?: Record<string, unknown>): Promise<ResponseFrame> {
+  /** Send raw bytes with 4-byte BE length prefix. Returns raw response bytes. */
+  async send(payload: Buffer): Promise<Buffer> {
     if (!this.socket) throw new Error('not connected');
     return new Promise((resolve, reject) => {
       this.sendQueue = this.sendQueue
-        .then(() => this._sendUnsafe(command, args).then(resolve, reject))
-        .catch((err: Error) => { reject(err); })
-        .then(() => {});
+        .then(() => this._sendUnsafe(payload))
+        .then(resolve, reject);
     });
   }
 
-  private async writeForyFrame(command: string, args?: Record<string, unknown>): Promise<void> {
-    const argsPayload = serializeArgs(command, args);
-    const frameData = serializeRequestFrame(command, argsPayload);
+  private async _sendUnsafe(payload: Buffer): Promise<Buffer> {
+    if (!this.socket) throw new Error('not connected');
+    await this.writeFrame(payload);
+    return await this.readFrame();
+  }
+
+  private async writeFrame(data: Buffer): Promise<void> {
     const header = Buffer.allocUnsafe(4);
-    header.writeUInt32BE(frameData.length, 0);
-    const payload = frameData instanceof Buffer ? frameData : Buffer.from(frameData);
+    header.writeUInt32BE(data.length, 0);
     await new Promise<void>((resolve, reject) => {
       this.socket!.write(header);
-      this.socket!.write(payload, (err?: Error | null) => err ? reject(err) : resolve());
+      this.socket!.write(data, (err?: Error | null) => err ? reject(err) : resolve());
     });
   }
 
-  private async readForyFrame(): Promise<Uint8Array> {
+  private async readFrame(): Promise<Buffer> {
     const header = await this.readExact(4);
     const len = header.readUInt32BE(0);
     if (len === 0 || len > MAX_FRAME_SIZE) {
       throw new Error(`invalid frame length: ${len}`);
     }
-    const body = await this.readExact(len);
-    return body;
-  }
-
-  private async _sendUnsafe(command: string, args?: Record<string, unknown>): Promise<ResponseFrame> {
-    if (!this.socket) throw new Error('not connected');
-    await this.writeForyFrame(command, args);
-
-    const frameData = await this.readForyFrame();
-    const { frame, payloadBytes } = deserializeResponse(frameData);
-
-    if (payloadBytes && payloadBytes.length > 0) {
-      const payload = deserializeResponsePayload(command, payloadBytes);
-      return { ok: frame.ok, error: frame.error, data: payload };
-    }
-    return frame;
+    return await this.readExact(len);
   }
 
   private onData(data: Buffer): void {

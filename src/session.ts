@@ -369,129 +369,105 @@ function saveReadySession(client: DriverClient, device: { udid: string; name: st
   }));
 }
 
-export async function startSession(opts: StartSessionOpts): Promise<void> {
+export async function startSession(opts: StartSessionOpts): Promise<DriverClient> {
   const bundleId = opts.bundleId;
   const verbose = opts.verbose || false;
 
   const device = opts.udid ? resolveDevice(opts.udid) : await resolveDefaultDevice();
   const isSimulator = device.type === 'simulator';
   const existingInfo = readSessionInfo();
-  const hasReachableDriver = !!(existingInfo && existingInfo.udid === device.udid && await isDriverAlive(existingInfo, { verbose }));
-  if (existingInfo && !hasReachableDriver) clearSessionInfo();
 
   logger.info(`Starting session${bundleId ? ` for bundleId=${bundleId}` : ' (device session)'}`);
   logger.info(`${opts.udid ? 'Using requested device' : 'Using default device'}: ${formatDeviceLabel(device)}`);
 
   let runnerProc: ChildProcess | null = null;
-  let client: DriverClient | null = null;
-  try {
-    const activeInfo = hasReachableDriver ? existingInfo : readSessionInfo();
-    if (activeInfo && activeInfo.udid === device.udid) {
-      try {
-        client = await createClientFromSession(activeInfo, { verbose, ownsSession: true });
-        await client.createSession(bundleId, opts.terminate);
-        const nextInfo = saveReadySession(client, device, bundleId);
-        logSessionReady(bundleId, nextInfo.sessionId);
-        disconnectClient(client);
-        client = null;
-        return;
-      } catch (error) {
-        disconnectClient(client);
-        client = null;
-        if (isSessionBroken(error)) {
-          logger.warn('Existing session became unconnected, rebuilding session...');
-          clearSessionInfo();
-        } else {
-          throw error;
-        }
+
+  // Try to reuse existing session (skip throwaway liveness check)
+  if (existingInfo && existingInfo.udid === device.udid) {
+    try {
+      const client = await createClientFromSession(existingInfo, { verbose, ownsSession: true });
+      await client.createSession(bundleId, opts.terminate);
+      saveReadySession(client, device, bundleId);
+      logSessionReady(bundleId, client.sessionId);
+      return client;
+    } catch (error) {
+      if (isSessionBroken(error)) {
+        logger.warn('Existing session became unconnected, rebuilding session...');
+        clearSessionInfo();
+      } else {
+        throw normalizeDeviceError(error, device.udid);
       }
     }
+  }
 
+  // Fresh connect
+  try {
+    const client = await createClient({
+      port: DEFAULT_PORT,
+      udid: device.udid,
+      verbose,
+      directTcp: isSimulator,
+      ownsSession: true,
+    });
+    await client.createSession(bundleId, opts.terminate);
+    saveReadySession(client, device, bundleId);
+    logSessionReady(bundleId, client.sessionId);
+    return client;
+  } catch {
+    // Fall through to driver launch
+  }
+
+  if (isSimulator) {
+    throw new Error(
+      'Simulator driver is not running. Please run:\n'
+      + '  ios-use config --simulator\n'
+      + 'Then retry `ios-use session start`.',
+    );
+  }
+
+  logger.info('Launching driver on device...');
+  runnerProc = startXctestRunner(device.udid, { verbose });
+
+  const maxWaitMs = 30_000;
+  const intervalMs = 2_000;
+  const deadline = Date.now() + maxWaitMs;
+
+  let client: DriverClient | null = null;
+  while (Date.now() < deadline) {
     try {
       client = await createClient({
         port: DEFAULT_PORT,
         udid: device.udid,
         verbose,
-        directTcp: isSimulator,
         ownsSession: true,
       });
-      await client.createSession(bundleId, opts.terminate);
-      const sessionInfo = saveReadySession(client, device, bundleId);
-      logSessionReady(bundleId, sessionInfo.sessionId);
-      disconnectClient(client);
-      client = null;
-      return;
-    } catch {
-      disconnectClient(client);
-      client = null;
-    }
-
-    if (isSimulator) {
-      throw new Error(
-        'Simulator driver is not running. Please run:\n'
-        + '  ios-use config --simulator\n'
-        + 'Then retry `ios-use session start`.',
-      );
-    }
-
-    logger.info('Launching driver on device...');
-    runnerProc = startXctestRunner(device.udid, { verbose });
-
-    const maxWaitMs = 30_000;
-    const intervalMs = 2_000;
-    const deadline = Date.now() + maxWaitMs;
-
-    while (Date.now() < deadline) {
-      try {
-        client = await createClient({
-          port: DEFAULT_PORT,
-          udid: device.udid,
-          verbose,
-          ownsSession: true,
-        });
-        logger.info('Driver TCP server ready');
-        break;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '';
-        if (message.includes('not found via usbmux')) {
-          throw normalizeDeviceError(error, device.udid);
-        }
-        if (runnerProc.exitCode !== null && runnerProc.exitCode !== 0) {
-          throw new Error(`Runner process exited with code ${runnerProc.exitCode}. Run with --verbose for details.`);
-        }
-        await delay(intervalMs);
+      logger.info('Driver TCP server ready');
+      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('not found via usbmux')) {
+        throw normalizeDeviceError(error, device.udid);
       }
+      if (runnerProc.exitCode !== null && runnerProc.exitCode !== 0) {
+        throw new Error(`Runner process exited with code ${runnerProc.exitCode}. Run with --verbose for details.`);
+      }
+      await delay(intervalMs);
     }
+  }
 
-    if (!client) {
-      throw new Error(`Driver did not start within ${maxWaitMs / 1000}s`);
-    }
+  if (!client) {
+    throw new Error(`Driver did not start within ${maxWaitMs / 1000}s`);
+  }
 
+  try {
     await client.createSession(bundleId, opts.terminate);
     const sessionInfo = saveReadySession(client, device, bundleId);
-    if (bundleId) {
-      logger.success(`Session created: ${sessionInfo.sessionId.substring(0, 8)}...`);
-    } else {
-      logger.success(`Device session created: ${sessionInfo.sessionId.substring(0, 8)}...`);
-    }
+    logger.success(`Session created: ${sessionInfo.sessionId.substring(0, 8)}...`);
     logger.info('Run `ios-use session stop` to end the session.');
-    disconnectClient(client);
-    client = null;
+    return client;
   } catch (error) {
-    disconnectClient(client);
-    if (runnerProc && !runnerProc.killed) {
-      runnerProc.kill();
-    }
-    if (isSimulator) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('ECONNREFUSED') || message.includes('connect')) {
-        throw new Error(
-          `Simulator connection failed: ${message}\n`
-          + '  → Make sure IOSUseDriver is running in the Simulator.\n'
-          + '  → Open driver/IOSUseDriver.xcodeproj in Xcode, select the simulator, and run IOSUseDriver.',
-        );
-      }
-    }
+    client.disconnect();
+    if (runnerProc && !runnerProc.killed) runnerProc.kill();
     throw normalizeDeviceError(error, device.udid);
   }
 }
@@ -502,11 +478,12 @@ export async function createDriverFromSession(opts: CreateDriverFromSessionOpts 
   if (!info?.udid) {
     throw new Error('No active session found. Run `ios-use session start` first.');
   }
-  if (!(await isDriverAlive(info, { verbose }))) {
+  try {
+    return await createClientFromSession(info, { verbose, ownsSession: false });
+  } catch {
     clearSessionInfo();
     throw new Error('No active session found. Run `ios-use session start` first.');
   }
-  return await createClientFromSession(info, { verbose, ownsSession: false });
 }
 
 export async function stopSession(): Promise<void> {

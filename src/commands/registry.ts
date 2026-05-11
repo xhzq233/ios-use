@@ -70,7 +70,7 @@ function targetMapArgs(args: string[], opts: Record<string, unknown>): Record<st
 
 // ── Action registry ──
 
-export const ACTIONS: ActionDef[] = [
+export const ACTIONS = [
   {
     name: 'tap',
     desc: 'Tap on screen by label or coordinate ("x,y")',
@@ -232,7 +232,9 @@ export const ACTIONS: ActionDef[] = [
     flowOnly: true,
     execute: () => Promise.resolve(undefined),
   },
-];
+] as const;
+
+export type ActionName = typeof ACTIONS[number]['name'];
 
 const ACTION_MAP = new Map(ACTIONS.map(a => [a.name, a]));
 

@@ -1,71 +1,12 @@
 import type { NSLoggerServer } from '../nslogger.js';
 import type {
-  DomResponse,
-  FindResult,
-  FindArgs,
-  SwipeArgs,
-  SwipeResult,
-  TapResult,
   LabelOrPoint,
-  WaitForArgs,
-  WaitForResult,
-  OslogArgs,
-  OslogResult,
   SwipeDir,
 } from '../driver-protocol/index.js';
+import type { ActionName } from './registry.js';
 
-/**
- * Driver interface consumed by actions.ts and flow.ts.
- * Maps 1:1 to host API commands (docs/api/api_des.md §1.2).
- */
-export interface Driver {
-  // DOM / find
-  dom(opts?: { raw?: boolean; fresh?: boolean }): Promise<DomResponse>;
-  find(args: FindArgs): Promise<FindResult>;
-
-  // Interaction
-  tap(target: LabelOrPoint, traits?: string, offset?: FlowStep['offset']): Promise<TapResult>;
-  longPress(target: LabelOrPoint, duration?: number, traits?: string): Promise<TapResult>;
-  input(label: string, content: string, traits?: string): Promise<void>;
-  swipe(args: SwipeArgs): Promise<SwipeResult>;
-  waitFor(args: WaitForArgs): Promise<WaitForResult>;
-
-  // App
-  activateApp(bundleId: string): Promise<void>;
-  terminateApp(bundleId: string): Promise<void>;
-  openURL(url: string): Promise<void>;
-  dismissAlert(opts?: { index?: number }): Promise<{ dismissed: boolean; text?: string; button?: string; reason?: string }>;
-
-  // Screenshot / logs
-  screenshot(): Promise<Buffer>;
-  saveScreenshot(filepath: string): Promise<void>;
-  oslog(args: OslogArgs): Promise<OslogResult>;
-
-  // Lifecycle
-  deleteSession(): Promise<void>;
-  disconnect(): void;
-}
-
-/** FlowStep actions map 1:1 to host API commands (plus nslog_* as a separate client system). */
 export interface FlowStep {
-  action:
-    | 'tap'
-    | 'input'
-    | 'swipe'
-    | 'longpress'
-    | 'dom'
-    | 'find'
-    | 'returnIf'
-    | 'runFlow'
-    | 'sleep'
-    | 'screenshot'
-    | 'waitFor'
-    | 'activateApp'
-    | 'terminateApp'
-    | 'openURL'
-    | 'dismissAlert'
-    | 'oslog'
-    | 'nslog';
+  action: ActionName;
 
   // Label / traits (tap/longpress/input/find/swipe/waitFor)
   label?: LabelOrPoint;
@@ -141,7 +82,6 @@ export interface FlowContext {
 
 export interface NSLoggerServerLike {
   grep(pattern: string, flags?: string): string[];
-  getLogCount(): number;
   clear(): void;
   getPort(): number;
   clients: Map<string, unknown>;
