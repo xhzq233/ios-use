@@ -4,8 +4,8 @@ import { connectUsbmux } from '../driver-protocol/usbmux.js';
 
 const SYSLOG_SERVICE_NAME = 'com.apple.syslog_relay';
 
-/** Collect syslog lines from a real device for timeoutMs. */
-export async function collectSyslog(udid: string, timeoutMs: number): Promise<string[]> {
+/** Collect syslog lines from a real device for timeoutMs. Cancelled early if signal fires. */
+export async function collectSyslog(udid: string, timeoutMs: number, signal?: AbortSignal): Promise<string[]> {
   const pairRecord = await getPairRecord(udid);
   const hostId = pairRecord.HostID as string;
   const systemBUID = pairRecord.SystemBUID as string;
@@ -45,13 +45,23 @@ export async function collectSyslog(udid: string, timeoutMs: number): Promise<st
   return new Promise<string[]>((resolve) => {
     const lines: string[] = [];
     let buf = '';
+    let settled = false;
 
-    const timer = setTimeout(() => {
-      socket.removeAllListeners('data');
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.removeAllListeners();
       socket.destroy();
       if (buf.trim()) lines.push(buf.trimEnd());
       resolve(lines);
-    }, timeoutMs);
+    };
+
+    const timer = setTimeout(finish, timeoutMs);
+
+    if (signal) {
+      signal.addEventListener('abort', finish, { once: true });
+    }
 
     socket.on('data', (data: Buffer) => {
       buf += data.toString('utf8');
@@ -63,7 +73,7 @@ export async function collectSyslog(udid: string, timeoutMs: number): Promise<st
       }
     });
 
-    socket.on('error', () => { clearTimeout(timer); resolve(lines); });
-    socket.on('end', () => { clearTimeout(timer); if (buf.trim()) lines.push(buf.trimEnd()); resolve(lines); });
+    socket.on('error', finish);
+    socket.on('end', finish);
   });
 }
