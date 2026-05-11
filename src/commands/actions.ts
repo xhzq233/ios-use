@@ -430,15 +430,8 @@ function registerHandlers() {
       }
     },
 
-    async nslog_start(_driver, step, ctx) {
-      if (ctx.nsloggerServer) {
-        throw new Error(`nslog_start: server already running on port ${ctx.nsloggerServer.getPort()}. Use nslog_clear to reset.`);
-      }
-      ctx.nsloggerServer = await startNSLoggerServer(step, 'nslog_start');
-    },
-
     async nslog(_driver, step, ctx) {
-      if (!ctx.nsloggerServer) throw new Error('nslog requires nslog_start first');
+      if (!ctx.nsloggerServer) throw new Error('nslog requires needNSLog in flow config');
       const pattern = step.pattern;
       if (!pattern) throw new Error('nslog requires "pattern"');
       const timeoutSec = step.timeout ?? 0;
@@ -451,12 +444,6 @@ function registerHandlers() {
         ctx.nsloggerServer!.clear();
         logger.info('  → nslog: buffer cleared');
       }
-    },
-
-    nslog_clear(_driver, _step, ctx) {
-      if (!ctx.nsloggerServer) throw new Error('nslog_clear requires nslog_start first');
-      ctx.nsloggerServer.clear();
-      logger.info('  → nslog_clear: buffer cleared');
     },
   };
 

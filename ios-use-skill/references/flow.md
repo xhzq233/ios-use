@@ -11,7 +11,7 @@
 ```yaml
 name: Settings Search
 app: com.apple.Preferences
-needLog: true
+needNSLog: true
 steps:
   - action: waitFor
     label: 蓝牙
@@ -26,7 +26,7 @@ steps:
 
 - `name`：flow 名称，建议能说明页面或目标
 - `app`：可选；指定目标 app，常用于主 flow
-- `needLog`：设为 `true` 时自动启动 nslog 服务，flow 中的 `nslog` action 需要它
+- `needNSLog`：设为 `true` 时自动启动 nslog 服务并等待 app 连接，flow 中的 `nslog` action 需要它
 - `steps`：按顺序执行的动作列表
 
 ## 3. 支持的 action
@@ -44,9 +44,7 @@ steps:
 - `activateApp`
 - `terminateApp`
 - `oslog`
-- `nslog_start`
 - `nslog`
-- `nslog_clear`
 
 Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
 
@@ -312,7 +310,7 @@ steps:
 
 ### 6.7 `nslog`
 
-- 需要 `needLog: true` 或前置 `nslog_start` action
+- 需要 `needNSLog: true`（自动启动 nslog 服务并等待 app 连接）
 - `pattern` 是正则匹配，`timeout` 轮询等待匹配出现
 - `clearAfterRead: true` 读取后清空 buffer，避免后续 action 重复命中
 - 适合验证 app 内 NSLog 埋点是否触发
@@ -367,4 +365,4 @@ steps:
 - 第一次 Ctrl+C：优雅中断，等待当前 step 完成后停止
 - 第二次 Ctrl+C：强制退出
 - 中断时自动清理：断开 driver 连接、停止 nslog 服务、移除信号处理器
-- `needLog: true` 的 flow 结束时自动停止 nslog server（无论正常结束还是中断）
+- `needNSLog: true` 的 flow 结束时自动停止 nslog server（无论正常结束还是中断）
