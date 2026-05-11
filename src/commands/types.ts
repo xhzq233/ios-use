@@ -78,6 +78,8 @@ export interface FlowContext {
   flowApp?: string;
   nsloggerServer?: NSLoggerServer | null;
   vars?: Record<string, unknown>;
+  udid?: string;
+  deviceType?: 'real' | 'simulator';
 }
 
 export interface NSLoggerServerLike {

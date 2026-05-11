@@ -7,19 +7,19 @@ import { runFlowFile } from '../src/commands/flow.ts';
 import {
   tapArgsSer, longPressArgsSer, swipeArgsSer, inputArgsSer,
   waitForArgsSer, findArgsSer, domArgsSer,
-  dismissAlertArgsSer, oslogArgsSer,
+  dismissAlertArgsSer,
   terminateAppArgsSer, activateAppArgsSer, openURLArgsSer,
   elementPayloadSer, domPayloadSer, screenshotPayloadSer,
   findPayloadSer, swipePayloadSer, waitForPayloadSer,
-  alertPayloadSer, oslogPayloadSer, simpleStringPayloadSer,
+  alertPayloadSer, simpleStringPayloadSer,
 } from '../src/driver-protocol/fory.ts';
 
 const { TAP, LONG_PRESS, INPUT, SWIPE, DOM, FIND, WAIT_FOR, SCREENSHOT,
-  ACTIVATE_APP, TERMINATE_APP, OPEN_URL, DISMISS_ALERT, OSLOG } = {
+  ACTIVATE_APP, TERMINATE_APP, OPEN_URL, DISMISS_ALERT } = {
   TAP: 'tap', LONG_PRESS: 'longPress', INPUT: 'input', SWIPE: 'swipe',
   DOM: 'dom', FIND: 'find', WAIT_FOR: 'waitFor', SCREENSHOT: 'screenshot',
   ACTIVATE_APP: 'activateApp', TERMINATE_APP: 'terminateApp', OPEN_URL: 'openURL',
-  DISMISS_ALERT: 'dismissAlert', OSLOG: 'oslog',
+  DISMISS_ALERT: 'dismissAlert',
 };
 
 function makeTempDir(prefix) {
@@ -79,10 +79,6 @@ function defaultSendRaw(command, payload) {
       return { ok: true, payloadBytes: simpleStringPayloadSer.serialize({ value: '' }) };
     case DISMISS_ALERT:
       return { ok: true, payloadBytes: alertPayloadSer.serialize({ dismissed: true, text: '', button: 'OK', reason: '' }) };
-    case OSLOG: {
-      const args = oslogArgsSer.deserialize(payload);
-      return { ok: true, payloadBytes: oslogPayloadSer.serialize({ matched: args.pattern ? 1 : 0, total: 3, content: args.pattern ? 'ready\n' : '', cleared: args.clear ? 5 : 0 }) };
-    }
     default:
       return { ok: true, payloadBytes: new Uint8Array(0) };
   }
@@ -111,15 +107,6 @@ function domSpy(callback) {
   return async (command, payload) => {
     if (command === DOM) {
       const args = domArgsSer.deserialize(payload);
-      callback(args);
-    }
-  };
-}
-
-function oslogSpy(callback) {
-  return async (command, payload) => {
-    if (command === OSLOG) {
-      const args = oslogArgsSer.deserialize(payload);
       callback(args);
     }
   };
@@ -520,56 +507,6 @@ steps:
     await mockedRunCommandStep({ action: 'tap', label: 'effect-slider', offset: { x: 12, y: 5 } });
 
     expect(taps).toEqual([{ target: 'effect-slider', offset: { x: 12, y: 5 } }]);
-  });
-
-  test('passes oslog timeout through to driver', async () => {
-    await withTempHome(async () => {
-      const calls = [];
-      const driver = createDriver({
-        sendRaw: composeSendRaw(oslogSpy(args => calls.push({ pattern: args.pattern, flags: args.flags || undefined, name: args.name || undefined, clear: args.clear || undefined, bundleId: args.bundleId || undefined, timeout: args.timeout || undefined }))),
-      });
-
-      await executeStep(driver, {
-        action: 'oslog',
-        pattern: 'ready',
-        timeout: 1,
-        name: 'oslog-poll-test',
-      }, {});
-
-      expect(calls).toEqual([{
-        pattern: 'ready',
-        flags: undefined,
-        name: 'oslog-poll-test',
-        clear: undefined,
-        bundleId: undefined,
-        timeout: 1,
-      }]);
-    });
-  });
-
-  test('passes oslog timeout through command wrapper', async () => {
-    const calls = [];
-    const driver = createDriver({
-      sendRaw: composeSendRaw(oslogSpy(args => calls.push({ pattern: args.pattern, flags: args.flags || undefined, name: args.name || undefined, clear: args.clear || undefined, bundleId: args.bundleId || undefined, timeout: args.timeout || undefined }))),
-    });
-
-    mock.module('../src/session.js', () => ({
-      withAutoSession: async (_opts, run) => await run(driver),
-    }));
-
-    await withTempHome(async () => {
-      const { runCommandStep: mockedRunCommandStep } = await import(`../src/commands/actions.ts?test=${Date.now()}`);
-      await mockedRunCommandStep({ action: 'oslog', pattern: 'ready', timeout: 2, name: 'cli-oslog-timeout' });
-    });
-
-    expect(calls).toEqual([{
-      pattern: 'ready',
-      flags: undefined,
-      name: 'cli-oslog-timeout',
-      clear: undefined,
-      bundleId: undefined,
-      timeout: 2,
-    }]);
   });
 
   test('nslog polling stops promptly after abort', async () => {

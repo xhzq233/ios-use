@@ -11,7 +11,6 @@ enum Command: String, Codable {
     case probeFetch
     case proxyCAPush
     case screenshot
-    case oslog
     case dom
     case find
     case tap

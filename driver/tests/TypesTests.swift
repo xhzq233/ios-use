@@ -111,13 +111,13 @@ final class TypesTests: XCTestCase {
     func testCommandRawValues() {
         let cmds: [Command] = [
             .createSession, .deleteSession,
-            .activateApp, .terminateApp, .probeFetch, .screenshot, .oslog,
+            .activateApp, .terminateApp, .probeFetch, .screenshot,
             .dom, .find, .tap, .longPress, .input, .swipe, .waitFor,
         ]
         for cmd in cmds {
             XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")
         }
-        XCTAssertEqual(cmds.count, 14)
+        XCTAssertEqual(cmds.count, 13)
     }
 
     // MARK: - resolveTapPoint
@@ -164,19 +164,6 @@ final class TypesTests: XCTestCase {
             keyboardVisible: true,
             phase: .afterTapAttempt
         ))
-    }
-
-    // MARK: - makeMatcher / filterLines
-
-    func testMakeMatcher_WithFlags() throws {
-        let matcher = try XCTUnwrap(makeMatcher(pattern: "error", flags: "i"))
-        XCTAssertTrue(matcher("ERROR happened"))
-        XCTAssertFalse(matcher("all good"))
-    }
-
-    func testFilterLines_WithoutMatcherReturnsOriginal() {
-        let lines = ["a", "b"]
-        XCTAssertEqual(filterLines(lines, matcher: nil), lines)
     }
 
     // MARK: - Double.sanitized

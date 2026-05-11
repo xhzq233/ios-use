@@ -22,8 +22,6 @@ export type {
   SwipeResult,
   WaitForArgs,
   WaitForResult,
-  OslogArgs,
-  OslogResult,
   ProbeFetchArgs,
   ProbeFetchResult,
   ProxyCAPushArgs,

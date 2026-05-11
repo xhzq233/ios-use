@@ -15,7 +15,6 @@ export const DRIVER_COMMANDS = {
   PROXY_CA_PUSH: 'proxyCAPush',
   DISMISS_ALERT: 'dismissAlert',
   SCREENSHOT: 'screenshot',
-  OSLOG: 'oslog',
 } as const;
 
 export type DriverCommand = typeof DRIVER_COMMANDS[keyof typeof DRIVER_COMMANDS];
