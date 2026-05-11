@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { connectUsbmux } from './usbmux.js';
-import { CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS } from '../constants.js';
+import { CONNECT_TIMEOUT_MS, DEFAULT_PORT, READ_TIMEOUT_MS } from '../constants.js';
 
 export class DriverError extends Error {
   data?: unknown;
