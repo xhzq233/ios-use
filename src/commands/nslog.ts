@@ -43,24 +43,20 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 export async function nslogStreamAction(opts: {
-  port?: number;
-  ssl?: boolean;
   name?: string;
   grep?: string;
   flags?: string;
-  publishBonjour?: boolean;
   setExitCode?: boolean;
   skipLock?: boolean;
 }): Promise<void> {
   const ownsLock = opts.skipLock !== true;
   if (ownsLock) acquireLock();
 
-  const useSSL = opts.ssl ?? true;
   const server = new NSLoggerServer({
-    port: opts.port,
-    useSSL,
+    port: 50000,
+    useSSL: true,
     bonjourName: opts.name || '',
-    publishBonjour: opts.publishBonjour !== false,
+    publishBonjour: true,
   });
   const regex = opts.grep ? (() => { try { return new RegExp(opts.grep, opts.flags || ''); } catch (e) { throw new Error(`Invalid --grep regex: ${(e as Error).message}`); } })() : null;
   let stopped = false;
@@ -79,7 +75,7 @@ export async function nslogStreamAction(opts: {
   });
 
   await server.start();
-  logger.info(`NSLogger listening on port ${server.getPort()} (${useSSL ? 'SSL' : 'plain'})`);
+  logger.info(`NSLogger listening on port ${server.getPort()} (SSL)`);
   const bonjourMessages = formatBonjourStatusMessages(server.getBonjourStatus());
   for (const entry of bonjourMessages) {
     logger[entry.level as 'info' | 'warn' | 'error'](entry.message);
