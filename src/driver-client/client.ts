@@ -73,9 +73,7 @@ export class DriverClient {
   // ── Session lifecycle (used by session.ts) ──
 
   async createSession(bundleId?: string, terminate?: boolean): Promise<CreateSessionResponse> {
-    const args: Record<string, unknown> = {};
-    if (bundleId) args.bundleId = bundleId;
-    if (terminate) args.terminate = true;
+    const args = { bundleId: bundleId ?? '', terminate: terminate ?? false };
     const payload = createSessionArgsSer.serialize(args);
     const resp = await this.sendRaw(DRIVER_COMMANDS.CREATE_SESSION, payload);
     if (!resp.ok) throw new DriverError(resp.error ?? 'createSession failed', resp.errorData);
