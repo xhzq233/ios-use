@@ -1,10 +1,4 @@
 import net from 'net';
-
-/** Test with global-regex, resetting lastIndex first. */
-export function regexTest(re: RegExp, s: string): boolean {
-  re.lastIndex = 0;
-  return re.test(s);
-}
 import tls from 'tls';
 import fs from 'fs';
 import path from 'path';
@@ -56,6 +50,12 @@ export interface FormattedMessage {
 }
 
 // ── Constants ──
+
+/** Test with global-regex, resetting lastIndex first. */
+export function regexTest(re: RegExp, s: string): boolean {
+  re.lastIndex = 0;
+  return re.test(s);
+}
 
 const WHITESPACE_RE = /\s+/g;
 const DEFAULT_NSLOGGER_RUNTIME_DIR = path.join(IOS_USE_HOME, 'runtime');
@@ -429,8 +429,7 @@ export class NSLoggerServer {
 
         const MAX_RECV_BUF = 1024 * 1024; // 1MB cap per client to prevent DoS
         socket.on('data', (data: Buffer) => {
-          const chunk = Buffer.from(data);
-          recvBuf = recvBuf.length === 0 ? chunk : Buffer.concat([recvBuf, chunk]);
+          recvBuf = recvBuf.length === 0 ? data : Buffer.concat([recvBuf, data]);
           if (recvBuf.length > MAX_RECV_BUF) {
             logger.warn(`NSLogger: client ${clientId} recvBuf exceeded ${MAX_RECV_BUF}, disconnecting`);
             socket.destroy();

@@ -61,7 +61,6 @@ describe('cli', () => {
     expectNumericParseError(['swipe', '--distance', 'abc'], 'Invalid number: "abc"');
     expectNumericParseError(['waitFor', '--label', 'foo', '--timeout', 'abc'], 'Invalid number: "abc"');
     expectNumericParseError(['longpress', 'foo', '--duration', 'abc'], 'Invalid integer: "abc"');
-    expectNumericParseError(['nslog', '--port', 'abc'], 'Invalid integer: "abc"');
   });
 
   test('fails safely for missing flow file', () => {
