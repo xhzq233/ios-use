@@ -1,19 +1,19 @@
 import Fury, { Type } from '@apache-fory/core';
 import type { ResponseFrame } from './frames.js';
-import { elementTypeName } from './fory-constants.js';
+import { DRIVER_COMMANDS } from './commands.js';
+import { elementTypeName, SWIPE_DIR_FORTH, SWIPE_DIR_BACK } from './fory-constants.js';
+import type { Rect, DomNode } from './types.js';
 
-// MARK: - Fory instance + registration
+// ── Fory instance + type registration ──
 
 const fory = new Fury();
 
-// Shared types
 const ForyRect = Type.struct('ForyRect', {
   x: Type.int32(), y: Type.int32(), w: Type.int32(), h: Type.int32(),
 });
 const ForyPoint = Type.struct('ForyPoint', {
   x: Type.float64(), y: Type.float64(),
 });
-
 const ForyTarget = Type.struct('ForyTarget', {
   label: Type.string(),
   point: ForyPoint.setNullable(true),
@@ -49,7 +49,7 @@ const ForyErrorPayload = Type.struct('ForyErrorPayload', {
   minDragDistance: Type.float64(),
 });
 
-// DOM
+// Payloads
 const ForyDomElement = Type.struct('ForyDomElement', {
   traits: Type.list(Type.string()),
   childCount: Type.int32(),
@@ -63,27 +63,19 @@ const ForyDomPayload = Type.struct('ForyDomPayload', {
   raw: Type.string(),
   elements: Type.list(ForyDomElement),
 });
-
-// Screenshot
 const ForyScreenshotPayload = Type.struct('ForyScreenshotPayload', {
   jpeg: Type.binary(),
 });
-
-// Find
 const ForyFindPayload = Type.struct('ForyFindPayload', {
   matches: Type.list(ForyFindMatch),
   hint: Type.string(),
   suggestions: Type.list(Type.string()),
 });
-
-// Element (tap/longPress/input)
 const ForyElementPayload = Type.struct('ForyElementPayload', {
   elemType: Type.int32(),
   label: Type.string(),
   rect: ForyRect.setNullable(true),
 });
-
-// Swipe
 const ForySwipePayload = Type.struct('ForySwipePayload', {
   ancestors: Type.list(Type.string()),
   elemType: Type.int32(),
@@ -91,44 +83,32 @@ const ForySwipePayload = Type.struct('ForySwipePayload', {
   rect: ForyRect.setNullable(true),
   scrolls: Type.int32(),
 });
-
-// WaitFor
 const ForyWaitForPayload = Type.struct('ForyWaitForPayload', {
   elemType: Type.int32(),
   label: Type.string(),
   rect: ForyRect.setNullable(true),
   waited: Type.float64(),
 });
-
-// Alert
 const ForyAlertPayload = Type.struct('ForyAlertPayload', {
   dismissed: Type.bool(),
   text: Type.string(),
   button: Type.string(),
   reason: Type.string(),
 });
-
-// Oslog
 const ForyOslogPayload = Type.struct('ForyOslogPayload', {
   matched: Type.int32(),
   total: Type.int32(),
   content: Type.string(),
   cleared: Type.int32(),
 });
-
-// Probe
 const ForyProbePayload = Type.struct('ForyProbePayload', {
   statusCode: Type.int32(),
   bodyBytes: Type.int32(),
   contentType: Type.string(),
 });
-
-// Proxy
 const ForyProxyPayload = Type.struct('ForyProxyPayload', {
   status: Type.string(),
 });
-
-// Simple String
 const ForySimpleStringPayload = Type.struct('ForySimpleStringPayload', {
   value: Type.string(),
 });
@@ -198,240 +178,131 @@ const ForyProbeFetchArgs = Type.struct('ForyProbeFetchArgs', {
   url: Type.string(),
   timeout: Type.float64(),
 });
-
 const ForyProxyCAPushArgs = Type.struct('ForyProxyCAPushArgs', {
   caBase64: Type.string(),
 });
 
-// Register all types
+// ── Serializer instances ──
+// Nested types must be registered before types that reference them as fields.
 fory.register(ForyRect);
 fory.register(ForyPoint);
 fory.register(ForyTarget);
-fory.register(ForyRequestFrame);
-fory.register(ForyResponseFrame);
-fory.register(ForyErrorPayload);
-fory.register(ForyDomElement);
-fory.register(ForyDomPayload);
-fory.register(ForyScreenshotPayload);
 fory.register(ForyFindMatch);
-fory.register(ForyFindPayload);
-fory.register(ForyElementPayload);
-fory.register(ForySwipePayload);
-fory.register(ForyWaitForPayload);
-fory.register(ForyAlertPayload);
-fory.register(ForyOslogPayload);
-fory.register(ForyProbePayload);
-fory.register(ForyProxyPayload);
-fory.register(ForySimpleStringPayload);
-fory.register(ForyCreateSessionArgs);
-fory.register(ForyActivateAppArgs);
-fory.register(ForyTerminateAppArgs);
-fory.register(ForyOpenURLArgs);
-fory.register(ForyDomArgs);
-fory.register(ForyFindArgs);
-fory.register(ForyInputArgs);
-fory.register(ForyWaitForArgs);
-fory.register(ForyTapArgs);
-fory.register(ForyLongPressArgs);
-fory.register(ForySwipeArgs);
-fory.register(ForyDismissAlertArgs);
-fory.register(ForyOslogArgs);
-fory.register(ForyProbeFetchArgs);
-fory.register(ForyProxyCAPushArgs);
-
-// MARK: - Serializers (cached, avoid repeated register() which regenerates serializer code)
+fory.register(ForyDomElement);
 
 const reqFrameSer = fory.register(ForyRequestFrame);
 const respFrameSer = fory.register(ForyResponseFrame);
-const createSessionArgsSer = fory.register(ForyCreateSessionArgs);
-const activateAppArgsSer = fory.register(ForyActivateAppArgs);
-const terminateAppArgsSer = fory.register(ForyTerminateAppArgs);
-const openURLArgsSer = fory.register(ForyOpenURLArgs);
-const domArgsSer = fory.register(ForyDomArgs);
-const findArgsSer = fory.register(ForyFindArgs);
-const inputArgsSer = fory.register(ForyInputArgs);
-const waitForArgsSer = fory.register(ForyWaitForArgs);
-const tapArgsSer = fory.register(ForyTapArgs);
-const longPressArgsSer = fory.register(ForyLongPressArgs);
-const swipeArgsSer = fory.register(ForySwipeArgs);
-const dismissAlertArgsSer = fory.register(ForyDismissAlertArgs);
-const oslogArgsSer = fory.register(ForyOslogArgs);
-const probeFetchArgsSer = fory.register(ForyProbeFetchArgs);
-const proxyCAPushArgsSer = fory.register(ForyProxyCAPushArgs);
 const errorPayloadSer = fory.register(ForyErrorPayload);
-const domPayloadSer = fory.register(ForyDomPayload);
-const screenshotPayloadSer = fory.register(ForyScreenshotPayload);
-const elementPayloadSer = fory.register(ForyElementPayload);
-const findPayloadSer = fory.register(ForyFindPayload);
-const swipePayloadSer = fory.register(ForySwipePayload);
-const waitForPayloadSer = fory.register(ForyWaitForPayload);
-const alertPayloadSer = fory.register(ForyAlertPayload);
-const oslogPayloadSer = fory.register(ForyOslogPayload);
-const probePayloadSer = fory.register(ForyProbePayload);
-const proxyPayloadSer = fory.register(ForyProxyPayload);
-const simpleStringPayloadSer = fory.register(ForySimpleStringPayload);
 
-// MARK: - Request serialization
+export const createSessionArgsSer = fory.register(ForyCreateSessionArgs);
+export const activateAppArgsSer = fory.register(ForyActivateAppArgs);
+export const terminateAppArgsSer = fory.register(ForyTerminateAppArgs);
+export const openURLArgsSer = fory.register(ForyOpenURLArgs);
+export const domArgsSer = fory.register(ForyDomArgs);
+export const findArgsSer = fory.register(ForyFindArgs);
+export const inputArgsSer = fory.register(ForyInputArgs);
+export const waitForArgsSer = fory.register(ForyWaitForArgs);
+export const tapArgsSer = fory.register(ForyTapArgs);
+export const longPressArgsSer = fory.register(ForyLongPressArgs);
+export const swipeArgsSer = fory.register(ForySwipeArgs);
+export const dismissAlertArgsSer = fory.register(ForyDismissAlertArgs);
+export const oslogArgsSer = fory.register(ForyOslogArgs);
+export const probeFetchArgsSer = fory.register(ForyProbeFetchArgs);
+export const proxyCAPushArgsSer = fory.register(ForyProxyCAPushArgs);
+export const elementPayloadSer = fory.register(ForyElementPayload);
+export const domPayloadSer = fory.register(ForyDomPayload);
+export const screenshotPayloadSer = fory.register(ForyScreenshotPayload);
+export const findPayloadSer = fory.register(ForyFindPayload);
+export const swipePayloadSer = fory.register(ForySwipePayload);
+export const waitForPayloadSer = fory.register(ForyWaitForPayload);
+export const alertPayloadSer = fory.register(ForyAlertPayload);
+export const oslogPayloadSer = fory.register(ForyOslogPayload);
+export const probePayloadSer = fory.register(ForyProbePayload);
+export const proxyPayloadSer = fory.register(ForyProxyPayload);
+export const simpleStringPayloadSer = fory.register(ForySimpleStringPayload);
+
+// ── Request frame ──
 
 export function serializeRequestFrame(command: string, argsPayload: Uint8Array): Uint8Array {
   return reqFrameSer.serialize({ command, payload: argsPayload });
 }
 
-export function serializeArgs(command: string, args?: Record<string, unknown>): Uint8Array {
-  switch (command) {
-    case 'createSession':
-      return createSessionArgsSer.serialize({
-        bundleId: (args?.bundleId as string) ?? '',
-        terminate: (args?.terminate as boolean) ?? false,
-      });
-    case 'activateApp':
-      return activateAppArgsSer.serialize({ bundleId: args?.bundleId as string });
-    case 'terminateApp':
-      return terminateAppArgsSer.serialize({ bundleId: args?.bundleId as string });
-    case 'openURL':
-      return openURLArgsSer.serialize({ url: args?.url as string });
-    case 'dom':
-      return domArgsSer.serialize({ raw: !!args?.raw, fresh: !!args?.fresh });
-    case 'find':
-      return findArgsSer.serialize({
-        label: (args?.label as string) ?? '',
-        traits: (args?.traits as string) ?? '',
-      });
-    case 'input':
-      return inputArgsSer.serialize({
-        label: (args?.label as string) ?? '',
-        content: (args?.content as string) ?? '',
-        traits: (args?.traits as string) ?? '',
-      });
-    case 'waitFor':
-      return waitForArgsSer.serialize({
-        label: (args?.label as string) ?? '',
-        timeout: (args?.timeout as number) ?? 0,
-        traits: (args?.traits as string) ?? '',
-      });
-    case 'tap': {
-      const target = toForyTarget(args?.label);
-      const offset = args?.offset as { x?: number; y?: number; xRatio?: number; yRatio?: number } | undefined;
-      const hasAbsolute = offset && (offset.x != null || offset.y != null);
-      return tapArgsSer.serialize({
-        target,
-        traits: (args?.traits as string) ?? '',
-        offset: hasAbsolute ? { x: offset.x ?? 0, y: offset.y ?? 0 } : null,
-        ratio: !hasAbsolute && (offset?.xRatio != null || offset?.yRatio != null)
-          ? { x: offset.xRatio ?? 0.5, y: offset.yRatio ?? 0.5 }
-          : { x: 0.5, y: 0.5 },
-      });
-    }
-    case 'longPress': {
-      const target = toForyTarget(args?.label);
-      return longPressArgsSer.serialize({
-        target,
-        duration: (args?.duration as number) ?? 0,
-        traits: (args?.traits as string) ?? '',
-      });
-    }
-    case 'swipe': {
-      const toTarget = toForyTarget(args?.to);
-      const fromTarget = toForyTarget(args?.from);
-      const dirStr = args?.dir as string | undefined;
-      return swipeArgsSer.serialize({
-        toTarget,
-        fromTarget,
-        distance: (args?.distance as number) ?? 0,
-        dir: dirStr === 'back' ? 1 : 0,
-        traits: (args?.traits as string) ?? '',
-      });
-    }
-    case 'dismissAlert':
-      return dismissAlertArgsSer.serialize({
-        index: (args?.index as number) ?? -1,
-      });
-    case 'oslog':
-      return oslogArgsSer.serialize({
-        pattern: (args?.pattern as string) ?? '',
-        flags: (args?.flags as string) ?? '',
-        name: (args?.name as string) ?? '',
-        clear: !!args?.clear,
-        bundleId: (args?.bundleId as string) ?? '',
-        timeout: (args?.timeout as number) ?? 0,
-      });
-    case 'probeFetch':
-      return probeFetchArgsSer.serialize({
-        url: (args?.url as string) ?? '',
-        timeout: (args?.timeout as number) ?? 0,
-      });
-    case 'proxyCAPush':
-      return proxyCAPushArgsSer.serialize({
-        caBase64: (args?.caBase64 as string) ?? '',
-      });
-    default:
-      return new Uint8Array(0);
-  }
+// ── Response frame ──
+
+export interface RawResponse {
+  ok: boolean;
+  error?: string;
+  payloadBytes?: Uint8Array;
+  errorData?: Record<string, unknown>;
 }
 
-function toForyTarget(label: unknown): { label: string; point: { x: number; y: number } | null } {
-  if (typeof label === 'string') {
-    return { label, point: null };
+export function deserializeResponse(data: Uint8Array): RawResponse {
+  const outer = respFrameSer.deserialize(data);
+
+  if (!outer.ok) {
+    const errorData = outer.payload.length > 0
+      ? parseError(outer.payload)
+      : undefined;
+    return { ok: false, error: outer.error, errorData };
   }
+
+  if (outer.payload.length === 0) return { ok: true };
+
+  return { ok: true, payloadBytes: outer.payload };
+}
+
+// ── Label/Point conversion ──
+
+export function toForyTarget(label: unknown): { label: string; point: { x: number; y: number } | null } {
+  if (typeof label === 'string') return { label, point: null };
   if (Array.isArray(label) && label.length === 2) {
     return { label: '', point: { x: label[0] as number, y: label[1] as number } };
   }
   return { label: '', point: null };
 }
 
-// MARK: - Response deserialization
+// ── Deserialized payload types ──
 
-export function deserializeResponse(data: Uint8Array): { frame: ResponseFrame; command?: string } {
-  const outer = respFrameSer.deserialize(data);
-
-  if (!outer.ok) {
-    const errorData = outer.payload.length > 0
-      ? deserializeErrorPayload(outer.payload)
-      : undefined;
-    return { frame: { ok: false, error: outer.error, data: errorData } };
-  }
-
-  if (outer.payload.length === 0) {
-    return { frame: { ok: true } };
-  }
-
-  // Payload is deserialized by the caller based on command
-  return { frame: { ok: true }, payloadBytes: outer.payload };
+export interface FindMatchDict {
+  type: string;
+  label: string;
+  traits: string[];
+  value?: string;
+  rect?: Rect;
+  ancestors?: string[];
 }
 
-export function deserializeResponsePayload(command: string, payload: Uint8Array): unknown {
-  switch (command) {
-    case 'dom':
-      return deserializeDomPayload(payload);
-    case 'screenshot':
-      return deserializeScreenshotPayload(payload);
-    case 'tap':
-    case 'longPress':
-    case 'input':
-      return deserializeElementPayload(payload);
-    case 'find':
-      return deserializeFindPayload(payload);
-    case 'swipe':
-      return deserializeSwipePayload(payload);
-    case 'waitFor':
-      return deserializeWaitForPayload(payload);
-    case 'dismissAlert':
-      return deserializeAlertPayload(payload);
-    case 'oslog':
-      return deserializeOslogPayload(payload);
-    case 'probeFetch':
-      return deserializeProbePayload(payload);
-    case 'proxyCAPush':
-      return deserializeProxyPayload(payload);
-    case 'createSession':
-    case 'openURL':
-      return deserializeSimpleStringPayload(payload);
-    default:
-      return undefined;
-  }
+// ── Deserializer helpers ──
+
+function foryRectToArray(rect: { x: number; y: number; w: number; h: number } | null): Rect | undefined {
+  if (!rect) return undefined;
+  return [rect.x, rect.y, rect.w, rect.h];
 }
 
-function deserializeErrorPayload(data: Uint8Array): unknown {
+function foryDomElementToDict(el: any): DomNode {
+  const result: DomNode = {
+    tr: el.traits ?? [],
+    cc: el.childCount,
+  };
+  if (el.label) result.l = el.label;
+  if (el.value) result.v = el.value;
+  if (el.rect) result.r = [el.rect.x, el.rect.y, el.rect.w, el.rect.h];
+  return result;
+}
+
+function foryFindMatchToDict(m: any): FindMatchDict {
+  const result: FindMatchDict = {
+    type: elementTypeName(m.elemType),
+    label: m.label ?? '',
+    traits: m.traits ?? [],
+  };
+  if (m.value) result.value = m.value;
+  if (m.rect) result.rect = [m.rect.x, m.rect.y, m.rect.w, m.rect.h];
+  if (m.ancestors?.length) result.ancestors = m.ancestors;
+  return result;
+}
+
+function parseError(data: Uint8Array): Record<string, unknown> {
   const p = errorPayloadSer.deserialize(data);
   const result: Record<string, unknown> = {};
   if (p.hint) result.hint = p.hint;
@@ -444,9 +315,9 @@ function deserializeErrorPayload(data: Uint8Array): unknown {
   return result;
 }
 
-function deserializeDomPayload(data: Uint8Array): unknown {
+export function deserializeDomPayload(data: Uint8Array): { app: string; window: [number, number]; elements: DomNode[]; raw?: string } {
   const p = domPayloadSer.deserialize(data);
-  const result: Record<string, unknown> = {
+  const result: { app: string; window: [number, number]; elements: DomNode[]; raw?: string } = {
     app: p.app,
     window: [p.windowSize.x, p.windowSize.y],
     elements: (p.elements ?? []).map(foryDomElementToDict),
@@ -455,12 +326,12 @@ function deserializeDomPayload(data: Uint8Array): unknown {
   return result;
 }
 
-function deserializeScreenshotPayload(data: Uint8Array): unknown {
+export function deserializeScreenshotPayload(data: Uint8Array): { jpeg: Buffer } {
   const p = screenshotPayloadSer.deserialize(data);
   return { jpeg: Buffer.from(p.jpeg) };
 }
 
-function deserializeElementPayload(data: Uint8Array): unknown {
+export function deserializeElementPayload(data: Uint8Array): { type: string; label: string; rect?: Rect } {
   const p = elementPayloadSer.deserialize(data);
   return {
     type: elementTypeName(p.elemType),
@@ -469,7 +340,7 @@ function deserializeElementPayload(data: Uint8Array): unknown {
   };
 }
 
-function deserializeFindPayload(data: Uint8Array): unknown {
+export function deserializeFindPayload(data: Uint8Array): { matches: FindMatchDict[]; hint?: string; suggestions?: string[] } {
   const p = findPayloadSer.deserialize(data);
   return {
     matches: (p.matches ?? []).map(foryFindMatchToDict),
@@ -478,7 +349,7 @@ function deserializeFindPayload(data: Uint8Array): unknown {
   };
 }
 
-function deserializeSwipePayload(data: Uint8Array): unknown {
+export function deserializeSwipePayload(data: Uint8Array): { ancestors: string[]; type: string; label: string; rect?: Rect; scrolls: number } {
   const p = swipePayloadSer.deserialize(data);
   return {
     ancestors: p.ancestors ?? [],
@@ -489,7 +360,7 @@ function deserializeSwipePayload(data: Uint8Array): unknown {
   };
 }
 
-function deserializeWaitForPayload(data: Uint8Array): unknown {
+export function deserializeWaitForPayload(data: Uint8Array): { type: string; label: string; rect?: Rect; waited: number } {
   const p = waitForPayloadSer.deserialize(data);
   return {
     type: elementTypeName(p.elemType),
@@ -499,56 +370,22 @@ function deserializeWaitForPayload(data: Uint8Array): unknown {
   };
 }
 
-function deserializeAlertPayload(data: Uint8Array): unknown {
+export function deserializeAlertPayload(data: Uint8Array): { dismissed: boolean; text: string; button: string; reason: string } {
   return alertPayloadSer.deserialize(data);
 }
 
-function deserializeOslogPayload(data: Uint8Array): unknown {
+export function deserializeOslogPayload(data: Uint8Array): { matched: number; total: number; content: string; cleared: number } {
   return oslogPayloadSer.deserialize(data);
 }
 
-function deserializeProbePayload(data: Uint8Array): unknown {
+export function deserializeProbePayload(data: Uint8Array): { statusCode: number; bodyBytes: number; contentType: string } {
   return probePayloadSer.deserialize(data);
 }
 
-function deserializeProxyPayload(data: Uint8Array): unknown {
+export function deserializeProxyPayload(data: Uint8Array): { status: string } {
   return proxyPayloadSer.deserialize(data);
 }
 
-function deserializeSimpleStringPayload(data: Uint8Array): unknown {
-  const p = simpleStringPayloadSer.deserialize(data);
-  return { value: p.value };
+export function deserializeSimpleStringPayload(data: Uint8Array): { value: string } {
+  return simpleStringPayloadSer.deserialize(data);
 }
-
-// MARK: - Conversion helpers
-
-function foryRectToArray(rect: { x: number; y: number; w: number; h: number } | null): number[] | undefined {
-  if (!rect) return undefined;
-  return [rect.x, rect.y, rect.w, rect.h];
-}
-
-function foryDomElementToDict(el: any): Record<string, unknown> {
-  const result: Record<string, unknown> = {
-    tr: el.traits ?? [],
-    cc: el.childCount,
-  };
-  if (el.label) result.l = el.label;
-  if (el.value) result.v = el.value;
-  if (el.rect) result.r = [el.rect.x, el.rect.y, el.rect.w, el.rect.h];
-  return result;
-}
-
-function foryFindMatchToDict(m: any): Record<string, unknown> {
-  const result: Record<string, unknown> = {
-    type: elementTypeName(m.elemType),
-    label: m.label ?? '',
-    traits: m.traits ?? [],
-  };
-  if (m.value) result.value = m.value;
-  if (m.rect) result.rect = [m.rect.x, m.rect.y, m.rect.w, m.rect.h];
-  if (m.ancestors?.length) result.ancestors = m.ancestors;
-  return result;
-}
-
-// Re-export for response frame type
-export { respFrameSer };

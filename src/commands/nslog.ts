@@ -3,6 +3,7 @@ import path from 'path';
 import { logger } from '../utils/logger';
 import { NSLoggerServer, formatBonjourStatusMessages, regexTest } from '../nslogger';
 import { NSLOG_LOCK_FILE } from '../utils/paths.js';
+import { isProcessAlive } from '../utils/process.js';
 
 export const LOCK_FILE = NSLOG_LOCK_FILE;
 
@@ -31,15 +32,6 @@ function releaseLock(): void {
     const pid = parseInt(raw[0], 10);
     if (pid === process.pid) fs.unlinkSync(LOCK_FILE);
   } catch {}
-}
-
-export function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function nslogStreamAction(opts: {

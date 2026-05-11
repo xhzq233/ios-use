@@ -8,7 +8,7 @@ import { runCommandStep } from './commands/actions';
 import { flowAction } from './commands/flow';
 import { nslogStreamAction } from './commands/nslog';
 import { proxyConfigCA, proxyStart, proxyStop, proxyRead } from './commands/proxy';
-import { getCliActions, mapCliToStep, parseIntStrict, parseFloatStrict } from './commands/registry';
+import { getCliActions, mapCliToStep, parseIntStrict } from './commands/registry';
 import type { SwipeDir } from './driver-protocol/index.js';
 import { startSession, stopSession, sessionStatus, readSessionInfo } from './session';
 import { formatDriverError } from './utils/driverError';
@@ -107,7 +107,8 @@ sessionCmd.command('start')
   .option('--udid <udid>', 'Device UDID')
   .option('--verbose', 'Verbose output')
   .action(handleAction(async (opts: { bundleId?: string; udid?: string; verbose?: boolean }) => {
-    await startSession(opts);
+    const client = await startSession(opts);
+    client.disconnect();
   }));
 
 sessionCmd.command('stop')

@@ -2,10 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { logger } from '../utils/logger';
-import { startSession, createDriverFromSession } from '../session';
+import { startSession } from '../session';
 import { executeStep, sleep, setVerbose, isVerbose, resetAbort, setAbort, isAborted, normalizeNeedLogConfig, startNSLoggerServer } from './actions';
-import { LOCK_FILE, isProcessAlive } from './nslog';
-import type { Driver, FlowContext, FlowStep, NSLoggerServerLike } from './types';
+import { LOCK_FILE } from './nslog';
+import { isProcessAlive } from '../utils/process.js';
+import type { FlowContext, FlowStep, NSLoggerServerLike } from './types';
+import type { DriverClient } from '../driver-client/client.js';
 
 async function waitForNslogConnection(server: NSLoggerServerLike & { clients: Map<string, unknown> }, timeoutMs: number): Promise<void> {
   const start = Date.now();
@@ -161,7 +163,7 @@ function syncSharedFlowState(target: FlowContext, source: FlowContext): void {
 }
 
 async function executeFlowSteps(
-  driver: Driver,
+  driver: DriverClient,
   flow: FlowFile,
   resolvedPath: string,
   context: FlowContext,
@@ -259,7 +261,7 @@ async function executeFlowSteps(
 }
 
 export async function runFlowFile(
-  driver: Driver,
+  driver: DriverClient,
   filePath: string,
   context: FlowContext = {},
   inheritedVars: Record<string, unknown> = {},
@@ -279,9 +281,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
   logger.debug(`flowAction: needNSLog=${JSON.stringify(resolvedNeedNSLog ?? null)} app=${JSON.stringify(resolvedApp ?? flow.app ?? null)}`, !!opts.verbose);
 
   if (typeof resolvedApp === 'string') opts.bundleId = resolvedApp;
-  await startSession({ ...opts, terminate: true });
-
-  const driver = await createDriverFromSession({ verbose: opts.verbose }) as Driver;
+  const driver = await startSession({ ...opts, terminate: true });
 
   logger.info('Executing flow...');
   setVerbose(!!opts.verbose);

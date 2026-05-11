@@ -2,8 +2,9 @@ import net from 'node:net';
 import fs from 'fs';
 import path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
-import { IOS_USE_HOME } from '../utils/paths.js';
+import { IOS_USE_HOME, ensureStateDir } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
+import { isProcessAlive } from '../utils/process.js';
 import type { DriverClient } from '../driver-client/client.js';
 import { flowAction } from './flow.js';
 
@@ -40,11 +41,6 @@ let mitmdumpProc: ChildProcess | null = null;
 
 // ── Utilities ──
 
-function ensureStateDir(): void {
-  const dir = path.dirname(STATE_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
 export function readProxyState(): ProxySessionState | null {
   if (!fs.existsSync(STATE_FILE)) return null;
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8')); } catch { return null; }
@@ -55,20 +51,15 @@ function writeState(state: ProxySessionState): void {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n');
 }
 
-function isPidAlive(pid: number | undefined): boolean {
-  if (!pid) return false;
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
-
 async function killPid(pid: number | undefined): Promise<void> {
-  if (!pid || !isPidAlive(pid)) return;
+  if (!pid || !isProcessAlive(pid)) return;
   process.kill(pid, 'SIGTERM');
   const deadline = Date.now() + 3000;
   while (Date.now() < deadline) {
-    if (!isPidAlive(pid)) return;
+    if (!isProcessAlive(pid)) return;
     await new Promise(r => setTimeout(r, 100));
   }
-  if (isPidAlive(pid)) process.kill(pid, 'SIGKILL');
+  if (isProcessAlive(pid)) process.kill(pid, 'SIGKILL');
 }
 
 function runText(cmd: string, args: string[]): string {
@@ -369,7 +360,7 @@ export async function proxyStart(
   opts: { udid?: string; stream?: boolean; noBody?: boolean; bodyLimit?: number },
 ): Promise<void> {
   const state = readProxyState();
-  if (state?.status === 'running' && isPidAlive(state.mitmdumpPid)) {
+  if (state?.status === 'running' && isProcessAlive(state.mitmdumpPid)) {
     throw new Error('Proxy already running. Run `proxy stop` first.');
   }
 
@@ -511,7 +502,7 @@ export function proxyDoctor(): void {
   checks.push({ name: 'CA installed on device', ok: !!state?.caInstalled, fix: 'Run `proxy configca`' });
   checks.push({
     name: 'Proxy running',
-    ok: state?.status === 'running' && isPidAlive(state.mitmdumpPid),
+    ok: state?.status === 'running' && isProcessAlive(state.mitmdumpPid),
     fix: 'Run `proxy start`',
   });
 

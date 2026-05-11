@@ -4,6 +4,23 @@ import os from 'os';
 import path from 'path';
 import { executeStep, resetAbort, setAbort, waitForNslogMatch } from '../src/commands/actions.ts';
 import { runFlowFile } from '../src/commands/flow.ts';
+import {
+  tapArgsSer, longPressArgsSer, swipeArgsSer, inputArgsSer,
+  waitForArgsSer, findArgsSer, domArgsSer,
+  dismissAlertArgsSer, oslogArgsSer,
+  terminateAppArgsSer, activateAppArgsSer, openURLArgsSer,
+  elementPayloadSer, domPayloadSer, screenshotPayloadSer,
+  findPayloadSer, swipePayloadSer, waitForPayloadSer,
+  alertPayloadSer, oslogPayloadSer, simpleStringPayloadSer,
+} from '../src/driver-protocol/fory.ts';
+
+const { TAP, LONG_PRESS, INPUT, SWIPE, DOM, FIND, WAIT_FOR, SCREENSHOT,
+  ACTIVATE_APP, TERMINATE_APP, OPEN_URL, DISMISS_ALERT, OSLOG } = {
+  TAP: 'tap', LONG_PRESS: 'longPress', INPUT: 'input', SWIPE: 'swipe',
+  DOM: 'dom', FIND: 'find', WAIT_FOR: 'waitFor', SCREENSHOT: 'screenshot',
+  ACTIVATE_APP: 'activateApp', TERMINATE_APP: 'terminateApp', OPEN_URL: 'openURL',
+  DISMISS_ALERT: 'dismissAlert', OSLOG: 'oslog',
+};
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -30,22 +47,110 @@ function makeMatch(label, rect = [10, 20, 100, 40]) {
   };
 }
 
+function defaultSendRaw(command, payload) {
+  switch (command) {
+    case TAP:
+    case LONG_PRESS: {
+      const args = command === TAP ? tapArgsSer.deserialize(payload) : longPressArgsSer.deserialize(payload);
+      return { ok: true, payloadBytes: elementPayloadSer.serialize({ elemType: 7, label: args.target?.label ?? '', rect: {x:0, y:0, w:0, h:0} }) };
+    }
+    case FIND: {
+      const args = findArgsSer.deserialize(payload);
+      const label = args.label || 'test';
+      return { ok: true, payloadBytes: findPayloadSer.serialize({ matches: [{ elemType: 7, label, rect: {x:10, y:20, w:100, h:40}, traits: ['Button'], value: '', ancestors: ['App', 'Window'] }], hint: '', suggestions: [] }) };
+    }
+    case DOM: {
+      const args = domArgsSer.deserialize(payload);
+      return { ok: true, payloadBytes: domPayloadSer.serialize({ app: 'Demo', windowSize: {x:390, y:844}, raw: args.raw ? 'raw' : '', elements: [] }) };
+    }
+    case SWIPE:
+      return { ok: true, payloadBytes: swipePayloadSer.serialize({ ancestors: [], elemType: 27, label: '', rect: {x:0, y:0, w:0, h:0}, scrolls: 1 }) };
+    case WAIT_FOR: {
+      const args = waitForArgsSer.deserialize(payload);
+      return { ok: true, payloadBytes: waitForPayloadSer.serialize({ elemType: 9, label: args.label || '', rect: {x:0, y:0, w:0, h:0}, waited: 0.1 }) };
+    }
+    case INPUT:
+      return { ok: true, payloadBytes: elementPayloadSer.serialize({ elemType: 7, label: '', rect: {x:0, y:0, w:0, h:0} }) };
+    case SCREENSHOT:
+      return { ok: true, payloadBytes: screenshotPayloadSer.serialize({ jpeg: Buffer.alloc(0) }) };
+    case ACTIVATE_APP:
+    case TERMINATE_APP:
+    case OPEN_URL:
+      return { ok: true, payloadBytes: simpleStringPayloadSer.serialize({ value: '' }) };
+    case DISMISS_ALERT:
+      return { ok: true, payloadBytes: alertPayloadSer.serialize({ dismissed: true, text: '', button: 'OK', reason: '' }) };
+    case OSLOG: {
+      const args = oslogArgsSer.deserialize(payload);
+      return { ok: true, payloadBytes: oslogPayloadSer.serialize({ matched: args.pattern ? 1 : 0, total: 3, content: args.pattern ? 'ready\n' : '', cleared: args.clear ? 5 : 0 }) };
+    }
+    default:
+      return { ok: true, payloadBytes: new Uint8Array(0) };
+  }
+}
+
+function composeSendRaw(...handlers) {
+  return async (command, payload) => {
+    for (const h of handlers) {
+      const result = await h(command, payload);
+      if (result !== undefined) return result;
+    }
+    return defaultSendRaw(command, payload);
+  };
+}
+
+function tapSpy(callback) {
+  return async (command, payload) => {
+    if (command === TAP) {
+      const args = tapArgsSer.deserialize(payload);
+      callback(args);
+    }
+  };
+}
+
+function domSpy(callback) {
+  return async (command, payload) => {
+    if (command === DOM) {
+      const args = domArgsSer.deserialize(payload);
+      callback(args);
+    }
+  };
+}
+
+function oslogSpy(callback) {
+  return async (command, payload) => {
+    if (command === OSLOG) {
+      const args = oslogArgsSer.deserialize(payload);
+      callback(args);
+    }
+  };
+}
+
+function customDom(jsElements) {
+  return async (command, _payload) => {
+    if (command === DOM) {
+      const els = (jsElements || []).map(el => ({
+        traits: el.tr || [],
+        childCount: el.cc ?? 0,
+        label: el.l || '',
+        value: el.v || '',
+        rect: el.r ? {x: el.r[0], y: el.r[1], w: el.r[2], h: el.r[3]} : null,
+      }));
+      return { ok: true, payloadBytes: domPayloadSer.serialize({
+        app: 'Demo', windowSize: {x:390, y:844}, raw: '', elements: els,
+      })};
+    }
+  };
+}
+
 function createDriver(overrides = {}) {
+  const sendRaw = overrides.sendRaw;
+  delete overrides.sendRaw;
   return {
-    dom: async () => ({ app: 'Demo', window: [390, 844], elements: [] }),
-    find: async ({ label }) => ({ ok: true, matches: [makeMatch(label)] }),
-    tap: async (target) => ({ type: Array.isArray(target) ? 'Coordinate' : 'Button', label: Array.isArray(target) ? '' : target, rect: [0, 0, 0, 0] }),
-    longPress: async () => ({ type: 'Button', label: '', rect: [0, 0, 0, 0] }),
-    input: async () => undefined,
-    swipe: async () => ({ ancestors: [], type: 'ScrollView', label: '', rect: [0, 0, 0, 0], scrolls: 1 }),
-    waitFor: async ({ label }) => ({ type: 'StaticText', label, rect: [0, 0, 0, 0], waited: 0.1 }),
-    activateApp: async () => undefined,
-    terminateApp: async () => undefined,
-    screenshot: async () => Buffer.alloc(0),
-    saveScreenshot: async () => undefined,
-    oslog: async () => ({ matched: 0, total: 0, content: '' }),
-    deleteSession: async () => undefined,
-    disconnect: () => undefined,
+    sendRaw: sendRaw || defaultSendRaw,
+    async screenshot() { return Buffer.alloc(0); },
+    async saveScreenshot() {},
+    async deleteSession() {},
+    disconnect() {},
     ...overrides,
   };
 }
@@ -85,10 +190,7 @@ steps:
 `);
 
     const driver = createDriver({
-      tap: async (target) => {
-        taps.push(target);
-        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
-      },
+      sendRaw: composeSendRaw(tapSpy(args => taps.push(args.target.label))),
     });
 
     await runFlowFile(driver, parentPath, {});
@@ -121,10 +223,7 @@ steps:
 `);
 
     const driver = createDriver({
-      tap: async (target) => {
-        taps.push(target);
-        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
-      },
+      sendRaw: composeSendRaw(tapSpy(args => taps.push(args.target.label))),
     });
 
     await runFlowFile(driver, parentPath, {});
@@ -150,19 +249,14 @@ steps:
 `);
 
     const driver = createDriver({
-      dom: async () => ({
-        app: 'Demo',
-        window: [390, 844],
-        elements: [
+      sendRaw: composeSendRaw(
+        tapSpy(args => taps.push(args.target.label)),
+        customDom([
           { tr: ['Window'], cc: 2 },
           { tr: ['Button'], l: '取消', r: [10, 10, 50, 20], cc: 0 },
           { tr: ['Button'], l: '关闭', r: [70, 10, 50, 20], cc: 0 },
-        ],
-      }),
-      tap: async (target) => {
-        taps.push(target);
-        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
-      },
+        ]),
+      ),
     });
 
     await runFlowFile(driver, flowPath, {});
@@ -172,14 +266,10 @@ steps:
 
   test('sets dom firstMatch to null when candidates miss', async () => {
     const output = await executeStep(createDriver({
-      dom: async () => ({
-        app: 'Demo',
-        window: [390, 844],
-        elements: [
-          { tr: ['Window'], cc: 1 },
-          { tr: ['Button'], l: '保存', r: [10, 10, 50, 20], cc: 0 },
-        ],
-      }),
+      sendRaw: customDom([
+        { tr: ['Window'], cc: 1 },
+        { tr: ['Button'], l: '保存', r: [10, 10, 50, 20], cc: 0 },
+      ]),
     }), {
       action: 'dom',
       candidates: ['关闭', '取消'],
@@ -235,10 +325,7 @@ steps:
 `);
 
     const driver = createDriver({
-      tap: async (target) => {
-        taps.push(target);
-        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
-      },
+      sendRaw: composeSendRaw(tapSpy(args => taps.push(args.target.label))),
     });
 
     await runFlowFile(driver, flowPath, {});
@@ -278,10 +365,7 @@ steps:
 `);
 
     const driver = createDriver({
-      tap: async (target) => {
-        taps.push(target);
-        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
-      },
+      sendRaw: composeSendRaw(tapSpy(args => taps.push(args.target.label))),
     });
 
     const t0 = Date.now();
@@ -306,10 +390,7 @@ steps:
 
     const taps = [];
     const driver = createDriver({
-      tap: async (target) => {
-        taps.push(target);
-        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
-      },
+      sendRaw: composeSendRaw(tapSpy(args => taps.push(args.target.label))),
     });
 
     const t0 = Date.now();
@@ -325,10 +406,7 @@ steps:
   test('dom passes fresh flag to driver', async () => {
     const domCalls = [];
     const driver = createDriver({
-      dom: async (opts) => {
-        domCalls.push(opts);
-        return { app: 'Demo', window: [390, 844], elements: [] };
-      },
+      sendRaw: composeSendRaw(domSpy(args => domCalls.push(args))),
     });
 
     await executeStep(driver, { action: 'dom', fresh: true }, {});
@@ -340,10 +418,7 @@ steps:
   test('dom defaults fresh to false when not specified', async () => {
     const domCalls = [];
     const driver = createDriver({
-      dom: async (opts) => {
-        domCalls.push(opts);
-        return { app: 'Demo', window: [390, 844], elements: [] };
-      },
+      sendRaw: composeSendRaw(domSpy(args => domCalls.push(args))),
     });
 
     await executeStep(driver, { action: 'dom' }, {});
@@ -358,13 +433,13 @@ steps:
     const domCalls = [];
 
     const driver = createDriver({
-      dom: async (opts) => {
-        domCalls.push(opts);
-        return { app: 'Demo', window: [390, 844], elements: [
+      sendRaw: composeSendRaw(
+        domSpy(args => domCalls.push(args)),
+        customDom([
           { tr: ['Window'], cc: 1 },
           { tr: ['Button'], l: '取消', r: [10, 10, 50, 20], cc: 0 },
-        ] };
-      },
+        ]),
+      ),
     });
 
     fs.writeFileSync(flowPath, `
@@ -389,10 +464,12 @@ steps:
   test('passes tap offset x/y through to driver', async () => {
     const taps = [];
     const driver = createDriver({
-      tap: async (target, _context, offset) => {
-        taps.push({ target, offset });
-        return { type: 'Button', label: String(target), rect: [10, 20, 100, 40] };
-      },
+      sendRaw: composeSendRaw(async (command, payload) => {
+        if (command === TAP) {
+          const args = tapArgsSer.deserialize(payload);
+          taps.push({ target: args.target.label, offset: { x: args.offset.x, y: args.offset.y } });
+        }
+      }),
     });
 
     await executeStep(driver, {
@@ -407,10 +484,12 @@ steps:
   test('passes tap offset xRatio/yRatio through to driver', async () => {
     const taps = [];
     const driver = createDriver({
-      tap: async (target, _context, offset) => {
-        taps.push({ target, offset });
-        return { type: 'Button', label: String(target), rect: [10, 20, 100, 40] };
-      },
+      sendRaw: composeSendRaw(async (command, payload) => {
+        if (command === TAP) {
+          const args = tapArgsSer.deserialize(payload);
+          taps.push({ target: args.target.label, offset: { xRatio: args.ratio.x, yRatio: args.ratio.y } });
+        }
+      }),
     });
 
     await executeStep(driver, {
@@ -425,10 +504,12 @@ steps:
   test('passes tap offset through command wrapper', async () => {
     const taps = [];
     const driver = createDriver({
-      tap: async (target, _context, offset) => {
-        taps.push({ target, offset });
-        return { type: 'Button', label: String(target), rect: [10, 20, 100, 40] };
-      },
+      sendRaw: composeSendRaw(async (command, payload) => {
+        if (command === TAP) {
+          const args = tapArgsSer.deserialize(payload);
+          taps.push({ target: args.target.label, offset: { x: args.offset.x, y: args.offset.y } });
+        }
+      }),
     });
 
     mock.module('../src/session.js', () => ({
@@ -445,10 +526,7 @@ steps:
     await withTempHome(async () => {
       const calls = [];
       const driver = createDriver({
-        oslog: async (args) => {
-          calls.push(args);
-          return { matched: 1, total: 3, content: 'ready\n' };
-        },
+        sendRaw: composeSendRaw(oslogSpy(args => calls.push({ pattern: args.pattern, flags: args.flags || undefined, name: args.name || undefined, clear: args.clear || undefined, bundleId: args.bundleId || undefined, timeout: args.timeout || undefined }))),
       });
 
       await executeStep(driver, {
@@ -472,10 +550,7 @@ steps:
   test('passes oslog timeout through command wrapper', async () => {
     const calls = [];
     const driver = createDriver({
-      oslog: async (args) => {
-        calls.push(args);
-        return { matched: 1, total: 1, content: 'ready\n' };
-      },
+      sendRaw: composeSendRaw(oslogSpy(args => calls.push({ pattern: args.pattern, flags: args.flags || undefined, name: args.name || undefined, clear: args.clear || undefined, bundleId: args.bundleId || undefined, timeout: args.timeout || undefined }))),
     });
 
     mock.module('../src/session.js', () => ({
@@ -524,12 +599,13 @@ steps:
 `);
 
     const driver = createDriver({
-      tap: async (target) => {
-        taps.push(target);
-        if (target === 'first') {
-          setAbort();
+      sendRaw: async (command, payload) => {
+        if (command === TAP) {
+          const args = tapArgsSer.deserialize(payload);
+          taps.push(args.target.label);
+          if (args.target.label === 'first') setAbort();
         }
-        return { type: 'Button', label: String(target), rect: [0, 0, 0, 0] };
+        return defaultSendRaw(command, payload);
       },
     });
 
