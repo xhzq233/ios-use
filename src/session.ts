@@ -245,19 +245,6 @@ function normalizeDeviceError(error: unknown, udid: string): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-function isSessionBroken(error: unknown): boolean {
-  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return [
-    'no active session',
-    'not connected',
-    'socket closed',
-    'connection disconnected',
-    'econnrefused',
-    'connect timeout',
-    'broken pipe',
-  ].some(fragment => message.includes(fragment));
-}
-
 async function isDriverAlive(info: SessionInfo | null, { verbose = false }: IsDriverAliveOpts = {}): Promise<boolean> {
   if (!info?.udid) return false;
   let client: DriverClient | null = null;
@@ -299,13 +286,9 @@ export async function withAutoSession<T>(opts: WithAutoSessionOpts, fn: (driver:
 
         opts.bundleId = requestedBundleId || info.bundleId;
         return await fn(client);
-      } catch (error) {
-        if (isSessionBroken(error)) {
-          logger.warn('Existing session became unconnected, clearing session info');
-          clearSessionInfo();
-        } else {
-          throw error;
-        }
+      } catch {
+        logger.warn('Existing session became unconnected, clearing session info');
+        clearSessionInfo();
       } finally {
         disconnectClient(client);
       }
@@ -394,13 +377,9 @@ export async function startSession(opts: StartSessionOpts): Promise<DriverClient
       saveReadySession(client, device, bundleId);
       logSessionReady(bundleId, client.sessionId);
       return client;
-    } catch (error) {
-      if (isSessionBroken(error)) {
-        logger.warn('Existing session became unconnected, rebuilding session...');
-        clearSessionInfo();
-      } else {
-        throw normalizeDeviceError(error, device.udid);
-      }
+    } catch {
+      logger.warn('Existing session became unconnected, rebuilding session...');
+      clearSessionInfo();
     }
   }
 
