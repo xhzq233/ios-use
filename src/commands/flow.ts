@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import yaml from 'js-yaml';
 import { logger } from '../utils/logger';
-import { startSession } from '../session';
+import { startSession, readSessionInfo } from '../session';
 import { executeStep, sleep, setVerbose, isVerbose, resetAbort, setAbort, isAborted, normalizeNeedLogConfig, startNSLoggerServer } from './actions';
 import { LOCK_FILE } from './nslog';
 import { isProcessAlive } from '../utils/process.js';
@@ -13,12 +13,12 @@ async function waitForNslogConnection(server: NSLoggerServerLike & { clients: Ma
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (server.clients.size > 0) {
-      logger.info('App connected to NSLogger');
+      logger.info(`App connected to NSLogger (${Date.now() - start}ms)`);
       return;
     }
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  logger.warn('Timeout waiting for app to connect to NSLogger, continuing...');
+  logger.warn(`Timeout waiting for app to connect to NSLogger after ${Date.now() - start}ms, continuing...`);
 }
 
 interface FlowFile {
@@ -281,13 +281,14 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
   logger.debug(`flowAction: needNSLog=${JSON.stringify(resolvedNeedNSLog ?? null)} app=${JSON.stringify(resolvedApp ?? flow.app ?? null)}`, !!opts.verbose);
 
   if (typeof resolvedApp === 'string') opts.bundleId = resolvedApp;
-  const driver = await startSession({ ...opts, terminate: true });
 
-  logger.info('Executing flow...');
+  // Start NSLogger server BEFORE session so Bonjour is published when app cold-starts
   setVerbose(!!opts.verbose);
-  const context: FlowContext = { flowApp: typeof resolvedApp === 'string' ? resolvedApp : flow.app, nsloggerServer: null };
+  const sessionInfo = readSessionInfo();
+  const context: FlowContext = { flowApp: typeof resolvedApp === 'string' ? resolvedApp : flow.app, nsloggerServer: null, udid: opts.udid ?? sessionInfo?.udid, deviceType: sessionInfo?.deviceType };
 
   let sigintHandler: (() => void) | undefined;
+  let serverStarted = false;
   try {
     if (resolvedApp || flow.app) {
       if (needNSLogConfig) {
@@ -300,12 +301,19 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
           fs.unlinkSync(LOCK_FILE);
         } catch {}
         context.nsloggerServer = await startNSLoggerServer(needNSLogConfig, 'needNSLog');
-        // Wait for app to connect to nslog server
-        logger.info('Waiting for app to connect to NSLogger...');
-        await waitForNslogConnection(context.nsloggerServer, 10000);
+        serverStarted = true;
       }
       logger.info(`Target app: ${resolvedApp || flow.app}`);
     }
+
+    const driver = await startSession({ ...opts, terminate: true });
+
+    if (context.nsloggerServer) {
+      logger.info('Waiting for app to connect to NSLogger...');
+      await waitForNslogConnection(context.nsloggerServer, 15000);
+    }
+
+    logger.info('Executing flow...');
 
     resetAbort();
     let aborted = false;
