@@ -456,18 +456,30 @@ const HANDLERS: Record<string, ActionHandler> = {
     }
     const udid = ctx.udid;
     if (!udid) throw new Error('oslog requires --udid or an active session');
+    if (isAborted()) throw new Error('Flow interrupted');
     configureOslog({ simulator: ctx.deviceType === 'simulator', udid });
-    const result = await fetchOslog({
-      udid,
-      pattern: step.pattern,
-      flags: step.flags,
-      bundleId: step.bundleId,
-      timeout: step.timeout,
-    });
-    const name = step.name || `oslog-${timestamp()}`;
-    const outputFile = outputPath(`${name}.log`);
-    fs.writeFileSync(outputFile, result.content);
-    logger.info(`  → oslog: matched=${result.matched} total=${result.total} → ${outputFile}`);
+    const ctrl = new AbortController();
+    const poll = setInterval(() => {
+      if (_aborted) { ctrl.abort(); clearInterval(poll); }
+    }, 200);
+    try {
+      ctrl.signal.addEventListener('abort', () => clearInterval(poll), { once: true });
+      const result = await fetchOslog({
+        udid,
+        pattern: step.pattern,
+        flags: step.flags,
+        bundleId: step.bundleId,
+        timeout: step.timeout,
+        signal: ctrl.signal,
+      });
+      if (isAborted()) throw new Error('Flow interrupted');
+      const name = step.name || `oslog-${timestamp()}`;
+      const outputFile = outputPath(`${name}.log`);
+      fs.writeFileSync(outputFile, result.content);
+      logger.info(`  → oslog: matched=${result.matched} total=${result.total} → ${outputFile}`);
+    } finally {
+      clearInterval(poll);
+    }
   },
 
   async nslog(_client, step, ctx) {

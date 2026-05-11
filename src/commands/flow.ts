@@ -301,12 +301,15 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
           fs.unlinkSync(LOCK_FILE);
         } catch {}
         context.nsloggerServer = await startNSLoggerServer(needNSLogConfig, 'needNSLog');
-        serverStarted = true;
       }
       logger.info(`Target app: ${resolvedApp || flow.app}`);
     }
 
     driver = await startSession({ ...opts, terminate: true });
+    // Refresh context from session info populated by startSession
+    const freshInfo = readSessionInfo();
+    if (!context.udid) context.udid = freshInfo?.udid;
+    if (!context.deviceType) context.deviceType = freshInfo?.deviceType;
 
     if (context.nsloggerServer) {
       logger.info('Waiting for app to connect to NSLogger...');

@@ -24,7 +24,7 @@ function filterByBundleId(lines: string[], bundleId: string): string[] {
   // The process name is in parentheses: Preferences
   // Also try matching bundleId directly
   return lines.filter(line => {
-    const procMatch = line.match(/^\w+\s+\d+\s+\d+:\d+:\d+\s+\S+\s+(\w+)/);
+    const procMatch = line.match(/^\w+\s+\d+\s+\d+:\d+:\d+\s+\S+\s+([\w-]+)/);
     if (procMatch) {
       const proc = procMatch[1];
       if (proc === bundleId || bundleId.includes(proc) || proc.includes(bundleId)) return true;
@@ -45,18 +45,19 @@ export async function fetchOslog(opts: {
   flags?: string;
   bundleId?: string;
   timeout?: number;
+  signal?: AbortSignal;
 }): Promise<{ matched: number; total: number; content: string }> {
   const timeoutMs = (opts.timeout && opts.timeout > 0) ? opts.timeout * 1000 : 5000;
 
   // Collect new log lines from the device
   let newLines: string[];
   if (isSimulator) {
-    newLines = await collectSimulatorLog(simulatorUdis || opts.udid, {
+    newLines = await collectSimulatorLog(simulatorUdid || opts.udid, {
       lastSec: opts.timeout && opts.timeout > 0 ? opts.timeout : 10,
       bundleId: opts.bundleId,
     });
   } else {
-    newLines = await collectSyslog(opts.udid, timeoutMs);
+    newLines = await collectSyslog(opts.udid, timeoutMs, opts.signal);
   }
 
   // Deduplicate against existing buffer
