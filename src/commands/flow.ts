@@ -30,6 +30,43 @@ interface FlowFile {
   steps: Array<Record<string, unknown>>;
 }
 
+const FLOW_RESERVED_OPTIONS = new Set(['udid', 'verbose']);
+const FLOW_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+export function parseFlowCliVars(args: string[]): Record<string, string> {
+  const vars: Record<string, string> = {};
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (!arg.startsWith('--') || arg === '--') {
+      throw new Error(`Invalid flow variable argument: ${arg}`);
+    }
+
+    const raw = arg.slice(2);
+    const eq = raw.indexOf('=');
+    const name = eq >= 0 ? raw.slice(0, eq) : raw;
+    if (!FLOW_VAR_NAME_RE.test(name)) {
+      throw new Error(`Invalid flow variable name: ${name}`);
+    }
+    if (FLOW_RESERVED_OPTIONS.has(name)) {
+      throw new Error(`Reserved flow option cannot be used as var: --${name}`);
+    }
+
+    let value: string;
+    if (eq >= 0) {
+      value = raw.slice(eq + 1);
+    } else {
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith('--')) {
+        throw new Error(`Missing value for flow variable: --${name}`);
+      }
+      value = next;
+      i += 1;
+    }
+    vars[name] = value;
+  }
+  return vars;
+}
+
 function loadFlowFile(resolvedPath: string): FlowFile {
   if (!fs.existsSync(resolvedPath)) {
     throw new Error(`Flow file not found: ${resolvedPath}`);
@@ -271,10 +308,11 @@ export async function runFlowFile(
   return await executeFlowSteps(driver, flow, resolvedPath, context, inheritedVars);
 }
 
-export async function flowAction(filePath: string, opts: { udid?: string; bundleId?: string; verbose?: boolean }): Promise<void> {
+export async function flowAction(filePath: string, opts: { udid?: string; bundleId?: string; verbose?: boolean; vars?: Record<string, unknown> }): Promise<void> {
   const resolvedPath = path.resolve(filePath);
   const flow = loadFlowFile(resolvedPath);
-  const resolvedVars = resolveVars(flow.vars, {});
+  const inheritedVars = opts.vars ?? {};
+  const resolvedVars = resolveVars(flow.vars, inheritedVars);
   const resolvedNeedNSLog = resolveTemplates(flow.needNSLog, resolvedVars);
   const resolvedApp = flow.app ? resolveTemplates(flow.app, resolvedVars) : undefined;
   const needNSLogConfig = normalizeNeedLogConfig(resolvedNeedNSLog);
@@ -305,7 +343,8 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
       logger.info(`Target app: ${resolvedApp || flow.app}`);
     }
 
-    driver = await startSession({ ...opts, terminate: true });
+    const { vars: _vars, ...sessionOpts } = opts;
+    driver = await startSession({ ...sessionOpts, terminate: true });
     // Refresh context from session info populated by startSession
     const freshInfo = readSessionInfo();
     if (!context.udid) context.udid = freshInfo?.udid;
@@ -334,7 +373,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
     process.on('SIGINT', sigintHandler);
     process.on('SIGTERM', sigintHandler);
 
-    await executeFlowSteps(driver, flow, resolvedPath, context);
+    await executeFlowSteps(driver, flow, resolvedPath, context, inheritedVars);
 
     if (aborted) {
       throw new Error('Flow interrupted by Ctrl+C');

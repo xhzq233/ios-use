@@ -7,13 +7,15 @@ import {
   activateAppArgsSer,
   createSessionArgsSer,
   proxyCAPushArgsSer,
+  probeFetchArgsSer,
+  deserializeProbePayload,
   deserializeSimpleStringPayload,
   deserializeScreenshotPayload,
   deserializeProxyPayload,
 } from '../driver-protocol/fory.js';
 import type { RawResponse } from '../driver-protocol/fory.js';
 import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
-import type { CreateSessionResponse } from '../driver-protocol/index.js';
+import type { CreateSessionResponse, ProbeFetchResult } from '../driver-protocol/index.js';
 
 export { DriverError };
 export type { RawResponse };
@@ -117,5 +119,12 @@ export class DriverClient {
     const resp = await this.sendRaw(DRIVER_COMMANDS.PROXY_CA_PUSH, payload);
     if (!resp.ok) throw new DriverError(resp.error ?? 'proxyCAPush failed', resp.errorData);
     return deserializeProxyPayload(resp.payloadBytes!);
+  }
+
+  async probeFetch(url: string, timeout = 5): Promise<ProbeFetchResult> {
+    const payload = probeFetchArgsSer.serialize({ url, timeout });
+    const resp = await this.sendRaw(DRIVER_COMMANDS.PROBE_FETCH, payload);
+    if (!resp.ok) throw new DriverError(resp.error ?? 'probeFetch failed', resp.errorData);
+    return deserializeProbePayload(resp.payloadBytes!);
   }
 }
