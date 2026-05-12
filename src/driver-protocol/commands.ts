@@ -11,7 +11,6 @@ export const DRIVER_COMMANDS = {
   ACTIVATE_APP: 'activateApp',
   TERMINATE_APP: 'terminateApp',
   OPEN_URL: 'openURL',
-  PROBE_FETCH: 'probeFetch',
   PROXY_CA_PUSH: 'proxyCAPush',
   DISMISS_ALERT: 'dismissAlert',
   SCREENSHOT: 'screenshot',

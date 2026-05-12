@@ -22,8 +22,6 @@ export type {
   SwipeResult,
   WaitForArgs,
   WaitForResult,
-  ProbeFetchArgs,
-  ProbeFetchResult,
   ProxyCAPushArgs,
   ProxyCAPushResult,
 } from './types';
