@@ -136,15 +136,6 @@ struct ForyAlertPayload {
     var reason: String = ""
 }
 
-// MARK: - Probe
-
-@ForyStruct
-struct ForyProbePayload {
-    var statusCode: Int32 = 0
-    var bodyBytes: Int32 = 0
-    var contentType: String = ""
-}
-
 // MARK: - Proxy
 
 @ForyStruct
@@ -238,12 +229,6 @@ struct ForyDismissAlertArgs {
 }
 
 @ForyStruct
-struct ForyProbeFetchArgs {
-    var url: String = ""
-    var timeout: Double = 0
-}
-
-@ForyStruct
 struct ForyProxyCAPushArgs {
     var caBase64: String = ""
 }
@@ -277,8 +262,6 @@ func createFory() -> Fory {
     try! fory.register(ForyWaitForPayload.self, name: "ForyWaitForPayload")
     // Alert
     try! fory.register(ForyAlertPayload.self, name: "ForyAlertPayload")
-    // Probe
-    try! fory.register(ForyProbePayload.self, name: "ForyProbePayload")
     // Proxy
     try! fory.register(ForyProxyPayload.self, name: "ForyProxyPayload")
     // Simple String
@@ -296,7 +279,6 @@ func createFory() -> Fory {
     try! fory.register(ForyLongPressArgs.self, name: "ForyLongPressArgs")
     try! fory.register(ForySwipeArgs.self, name: "ForySwipeArgs")
     try! fory.register(ForyDismissAlertArgs.self, name: "ForyDismissAlertArgs")
-    try! fory.register(ForyProbeFetchArgs.self, name: "ForyProbeFetchArgs")
     try! fory.register(ForyProxyCAPushArgs.self, name: "ForyProxyCAPushArgs")
     return fory
 }

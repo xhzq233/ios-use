@@ -122,13 +122,13 @@ final class TypesTests: XCTestCase {
     func testCommandRawValues() {
         let cmds: [Command] = [
             .createSession, .deleteSession,
-            .activateApp, .terminateApp, .probeFetch, .screenshot,
+            .activateApp, .terminateApp, .screenshot,
             .dom, .find, .tap, .longPress, .input, .swipe, .waitFor,
         ]
         for cmd in cmds {
             XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")
         }
-        XCTAssertEqual(cmds.count, 13)
+        XCTAssertEqual(cmds.count, 12)
     }
 
     // MARK: - resolveTapPoint

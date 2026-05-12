@@ -238,9 +238,9 @@ ios-use proxy stop
 
 - `proxy doctor` — 诊断 proxy 环境（mitmdump 安装、CA 状态、网络连通性）
 
-### 5.3 首次网络权限
+### 5.3 LAN 连通性验证
 
-driver 首次安装后发起网络请求时，iOS 会弹「"IOSUseDriver-Runner"想使用无线局域网与蜂窝网络」权限弹窗。`proxy start` 会自动检测并授权，无需手动处理。
+`proxy start` 在配置 Wi-Fi 代理前，会先在 Mac 上启动临时 HTTP probe server，并用设备 Safari 打开 `http://<mac-lan-ip>:<probe-port>/ping`，再通过 DOM 校验页面里是否出现固定文本。这样验证的是设备自身能否访问 Mac LAN IP，不依赖 driver 进程自身发起网络请求。
 
 ## 6. 常见排障
 

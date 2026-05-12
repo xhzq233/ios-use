@@ -96,11 +96,6 @@ const ForyAlertPayload = Type.struct('ForyAlertPayload', {
   button: Type.string(),
   reason: Type.string(),
 });
-const ForyProbePayload = Type.struct('ForyProbePayload', {
-  statusCode: Type.int32(),
-  bodyBytes: Type.int32(),
-  contentType: Type.string(),
-});
 const ForyProxyPayload = Type.struct('ForyProxyPayload', {
   status: Type.string(),
 });
@@ -161,10 +156,6 @@ const ForySwipeArgs = Type.struct('ForySwipeArgs', {
 const ForyDismissAlertArgs = Type.struct('ForyDismissAlertArgs', {
   index: Type.int32(),
 });
-const ForyProbeFetchArgs = Type.struct('ForyProbeFetchArgs', {
-  url: Type.string(),
-  timeout: Type.float64(),
-});
 const ForyProxyCAPushArgs = Type.struct('ForyProxyCAPushArgs', {
   caBase64: Type.string(),
 });
@@ -193,7 +184,6 @@ export const tapArgsSer = fory.register(ForyTapArgs);
 export const longPressArgsSer = fory.register(ForyLongPressArgs);
 export const swipeArgsSer = fory.register(ForySwipeArgs);
 export const dismissAlertArgsSer = fory.register(ForyDismissAlertArgs);
-export const probeFetchArgsSer = fory.register(ForyProbeFetchArgs);
 export const proxyCAPushArgsSer = fory.register(ForyProxyCAPushArgs);
 export const elementPayloadSer = fory.register(ForyElementPayload);
 export const domPayloadSer = fory.register(ForyDomPayload);
@@ -202,7 +192,6 @@ export const findPayloadSer = fory.register(ForyFindPayload);
 export const swipePayloadSer = fory.register(ForySwipePayload);
 export const waitForPayloadSer = fory.register(ForyWaitForPayload);
 export const alertPayloadSer = fory.register(ForyAlertPayload);
-export const probePayloadSer = fory.register(ForyProbePayload);
 export const proxyPayloadSer = fory.register(ForyProxyPayload);
 export const simpleStringPayloadSer = fory.register(ForySimpleStringPayload);
 
@@ -363,10 +352,6 @@ export function deserializeWaitForPayload(data: Uint8Array): { type: string; lab
 
 export function deserializeAlertPayload(data: Uint8Array): { dismissed: boolean; text: string; button: string; reason: string } {
   return alertPayloadSer.deserialize(data);
-}
-
-export function deserializeProbePayload(data: Uint8Array): { statusCode: number; bodyBytes: number; contentType: string } {
-  return probePayloadSer.deserialize(data);
 }
 
 export function deserializeProxyPayload(data: Uint8Array): { status: string } {

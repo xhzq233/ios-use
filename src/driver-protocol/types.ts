@@ -102,19 +102,8 @@ export interface WaitForResult {
   waited: number;
 }
 
-export interface ProbeFetchArgs {
-  url: string;
-  timeout?: number;
-}
-
 export interface OpenURLArgs {
   url: string;
-}
-
-export interface ProbeFetchResult {
-  statusCode: number;
-  bodyBytes: number;
-  contentType?: string;
 }
 
 export interface ProxyCAPushArgs {
