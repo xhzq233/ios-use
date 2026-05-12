@@ -330,7 +330,7 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   fs.rmSync(extractDir, { recursive: true, force: true });
   if (rewrittenIpa !== ipaPath) fs.rmSync(rewrittenIpa, { force: true });
 
-  logger.success('Device config complete! Run `ios-use session start --bundle-id <app>` to start.');
+  logger.success('Device config complete! Run `ios-use activateApp <bundleId>` to start, or just use any action command.');
 }
 
 // ── Simulator configuration (no signing required) ──
@@ -404,7 +404,7 @@ async function configureSimulator(udid: string, opts: ConfigureSimulatorOpts = {
     port: DEFAULT_PORT,
   });
 
-  logger.success('Simulator config complete! Run `ios-use session start --bundle-id <app>` to connect.');
+  logger.success('Simulator config complete! Run `ios-use activateApp <bundleId>` to start, or just use any action command.');
 }
 
 export {

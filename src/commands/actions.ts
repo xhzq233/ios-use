@@ -526,16 +526,10 @@ export async function runCommandStep(step: FlowStep, opts: CommandOpts = {}, con
   const verbose = !!opts.verbose;
   if (verbose !== _verbose) setVerbose(verbose);
 
-  const sessionOpts: CommandOpts = { ...opts };
-  if (step.action === 'activateApp' || step.action === 'terminateApp') {
-    sessionOpts.bundleId = step.bundleId || opts.bundleId;
-  }
-
-  await withAutoSession(sessionOpts, async (client: DriverClient) => {
+  await withAutoSession(opts, async (client: DriverClient) => {
     const sessionInfo = readSessionInfo();
     const localContext: FlowContext = {
       ...context,
-      flowApp: context.flowApp ?? sessionOpts.bundleId,
       udid: (opts.udid as string | undefined) ?? sessionInfo?.udid,
       deviceType: sessionInfo?.deviceType as 'real' | 'simulator' | undefined,
     };

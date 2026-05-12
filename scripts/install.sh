@@ -162,14 +162,20 @@ fi
 
 echo "Installed ios-use to $TARGET_PATH"
 
+if ! xcrun --find xctrace >/dev/null 2>&1; then
+  echo ""
+  echo "⚠  Xcode not detected. Real device and Simulator commands require Xcode."
+  echo "   Install from Mac App Store or run: xcode-select --install"
+fi
+
+echo ""
 echo "Next steps:"
 echo "  ios-use device"
 echo "  ios-use config --udid <udid>"
-echo "  ios-use session start --bundle-id <bundleId> --udid <udid>"
+echo "  ios-use dom --bundle-id <bundleId>"
 echo ""
-echo "Before driving a device or Simulator you will need:"
-echo "  - A full Xcode installation (provides xcrun devicectl, xctrace, simctl)"
-echo "  - USB connection (for real devices)"
+echo "No session start needed — ios-use auto-creates session on first command."
+echo "USB connection required for real devices."
 
 case ":$PATH:" in
   *":$TARGET_DIR:"*) ;;

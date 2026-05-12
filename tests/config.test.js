@@ -186,7 +186,7 @@ describe('config helpers', () => {
     });
 
     await configModule.configureDeviceSigning({ udid: 'udid-1' });
-    expect(loggerSuccessMock).toHaveBeenCalledWith('Device config complete! Run `ios-use session start --bundle-id <app>` to start.');
+    expect(loggerSuccessMock).toHaveBeenCalledWith('Device config complete! Run `ios-use activateApp <bundleId>` to start, or just use any action command.');
   });
 
   test('configureDeviceSigning signs with apple-id and installs driver', async () => {
@@ -240,7 +240,7 @@ describe('config helpers', () => {
     const installCall = spawnCalls.find(c => c[0] === 'xcrun' && c[1]?.includes('install'));
     expect(installCall).toBeDefined();
 
-    expect(loggerSuccessMock).toHaveBeenCalledWith('Device config complete! Run `ios-use session start --bundle-id <app>` to start.');
+    expect(loggerSuccessMock).toHaveBeenCalledWith('Device config complete! Run `ios-use activateApp <bundleId>` to start, or just use any action command.');
   });
 
   test('configureDeviceSigning throws when altsign does not produce signed IPA', async () => {
