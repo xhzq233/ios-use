@@ -24,6 +24,7 @@ private final class FakeRawSnapshot: NSObject {
         placeholderValue: String? = nil,
         elementType: XCUIElement.ElementType = .staticText,
         frame: CGRect = CGRect(x: 0, y: 0, width: 100, height: 40),
+        visibleFrame: CGRect? = nil,
         isVisible: Bool = true,
         isEnabled: Bool = true,
         isSelected: Bool = false,
@@ -37,7 +38,7 @@ private final class FakeRawSnapshot: NSObject {
         self.placeholderValue = placeholderValue
         self.elementType = NSNumber(value: elementType.rawValue)
         self.frame = NSValue(cgRect: frame)
-        self.visibleFrame = NSValue(cgRect: frame)
+        self.visibleFrame = NSValue(cgRect: visibleFrame ?? frame)
         self.isVisible = NSNumber(value: isVisible)
         self.isEnabled = NSNumber(value: isEnabled)
         self.isSelected = NSNumber(value: isSelected)
@@ -103,6 +104,16 @@ final class TypesTests: XCTestCase {
             elements: elements,
             searchEntries: searchEntries,
             searchCandidates: searchCandidates
+        )
+    }
+
+    private func makeSnapshotElement(_ snapshot: SafeSnapshot) -> SnapshotElement {
+        SnapshotElement(
+            node: snapshot,
+            traits: snapshotTraits(for: snapshot, disabled: false, invisible: !snapshot.isVisible),
+            disabled: false,
+            invisible: !snapshot.isVisible,
+            childCount: 0
         )
     }
 
@@ -382,6 +393,39 @@ final class TypesTests: XCTestCase {
             break // expected: Button does not have StaticText trait
         default:
             XCTFail("expected notFound when traits don't all match")
+        }
+    }
+
+    func testRawFindInSnapshot_PrefersElementWithEffectiveGeometry() {
+        let offscreenLabel = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .staticText,
+            frame: CGRect(x: 0, y: 900, width: 80, height: 20),
+            isVisible: true
+        )
+        let visibleLabel = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .staticText,
+            frame: CGRect(x: 32, y: 600, width: 80, height: 20),
+            isVisible: true
+        )
+        let visibleCell = FakeRawSnapshot(
+            elementType: .cell,
+            frame: CGRect(x: 0, y: 580, width: 375, height: 64),
+            isVisible: true,
+            children: [visibleLabel]
+        )
+        let table = FakeRawSnapshot(elementType: .table, children: [offscreenLabel, visibleCell])
+        let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let offscreen = makeSnapshotElement(root.children[0])
+        let visible = makeSnapshotElement(root.children[1].children[0])
+        let cs = makeCleanedSnapshot([offscreen, visible])
+
+        switch rawFindInSnapshot("配置代理", cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.frame.origin.y, 600)
+        default:
+            XCTFail("expected rawFindInSnapshot to prefer the element with effective geometry")
         }
     }
 

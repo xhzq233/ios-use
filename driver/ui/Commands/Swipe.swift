@@ -67,14 +67,21 @@ enum SwipeCommands {
                                         hint: "Try passing --from (anchor) to scroll from a known element")
         }
 
-        // STEP 3: already visible? return ok with 0 scrolls.
-        if target.isVisible {
+        // STEP 3: find scrollable ancestor.
+        guard let scrollView = findScrollableAncestor(target.node) else {
+            if isVisibleWithEffectiveGeometry(target, in: app.frame) {
+                return okScroll(target: target, scrolls: 0)
+            }
             return okScroll(target: target, scrolls: 0)
         }
 
-        // STEP 4: find scrollable ancestor.
-        guard let scrollView = findScrollableAncestor(target.node) else {
-            return okScroll(target: target, scrolls: 0)
+        // STEP 4: already visible in app frame. Still try centering the target
+        // in its scrollable so edge / overlay-adjacent targets become easier to tap.
+        if isVisibleWithEffectiveGeometry(target, in: app.frame) {
+            let adjusted = centerTargetInScrollFrame(targetCell: findCellAncestor(target.node),
+                                                     scrollFrame: scrollView.frame,
+                                                     app: app)
+            return okScroll(target: target, scrolls: adjusted)
         }
 
         // STEP 5: direction inference from visible cells.
@@ -120,10 +127,7 @@ enum SwipeCommands {
             return Codec.foryError("scroll: failed to rebuild snapshot (app may have exited)")
         case .ambiguous(let lbl, let matches):
             return try ambiguityResponse(lbl, matches: matches)
-        case .found(let count, let finalTarget, let freshScrollView):
-            preciseAdjust(targetCell: findCellAncestor(finalTarget),
-                          scrollFrame: freshScrollView.frame,
-                          app: app)
+        case .found(let count, let finalTarget, _):
             return okScrollWithAncestors(node: finalTarget, scrolls: count)
         }
     }
@@ -323,7 +327,7 @@ enum SwipeCommands {
             }
 
             switch rawFindInSnapshot(label, traits: traits, cs: freshCS) {
-            case .found(let elem) where elem.isVisible:
+            case .found(let elem) where isVisibleWithEffectiveGeometry(elem, in: freshCS.appFrame):
                 return .found(count: i + 1, target: elem.node, freshScrollView: freshScrollView)
             case .ambiguous(let matches):
                 return .ambiguous(label: label, matches: matches)
@@ -382,19 +386,13 @@ enum SwipeCommands {
         return nil
     }
 
-    // STEP 7 precise adjust (doc 5.1)
-    private static func preciseAdjust(targetCell: SafeSnapshot, scrollFrame: CGRect, app: XCUIApplication) {
-        let frame = targetCell.frame
-        var visible = targetCell.visibleFrame
-        if visible.width <= 0 || visible.height <= 0 {
-            visible = frame.intersection(scrollFrame)
-        }
-        guard visible.width > 0, visible.height > 0 else { return }
-        let adjust = CGVector(dx: visible.width - frame.width,
-                              dy: visible.height - frame.height)
+    /// Time complexity: O(k), where k is the emitted center-scroll segment count.
+    private static func centerTargetInScrollFrame(targetCell: SafeSnapshot, scrollFrame: CGRect, app: XCUIApplication) -> Int {
+        let adjust = centerScrollAdjustment(targetFrame: targetCell.frame, scrollFrame: scrollFrame)
         if abs(adjust.dx) > 1 || abs(adjust.dy) > 1 {
-            scrollByVector(adjust, scrollFrame: scrollFrame, app: app)
+            return scrollByVector(adjust, scrollFrame: scrollFrame, app: app)
         }
+        return 0
     }
 
     // MARK: - Responses

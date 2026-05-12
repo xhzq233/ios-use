@@ -522,6 +522,26 @@ func findCellAncestor(_ node: SafeSnapshot) -> SafeSnapshot {
     return node  // fallback: use node itself if no cell ancestor
 }
 
+/// Time complexity: O(1).
+private func effectiveVisibleFrame(_ node: SafeSnapshot) -> CGRect {
+    node.visibleFrame
+}
+
+/// Time complexity: O(1).
+func hasEffectiveVisibleGeometry(_ node: SafeSnapshot, in bounds: CGRect) -> Bool {
+    let frame = effectiveVisibleFrame(node)
+    guard frame.width > 0, frame.height > 0, bounds.width > 0, bounds.height > 0 else {
+        return false
+    }
+    let clipped = frame.intersection(bounds)
+    return clipped.width > 0 && clipped.height > 0
+}
+
+/// Time complexity: O(1).
+func isVisibleWithEffectiveGeometry(_ element: SnapshotElement, in bounds: CGRect) -> Bool {
+    element.isVisible && hasEffectiveVisibleGeometry(element.node, in: bounds)
+}
+
 // MARK: - Element type name
 
 func elementTypeName(_ type: XCUIElement.ElementType) -> String {
