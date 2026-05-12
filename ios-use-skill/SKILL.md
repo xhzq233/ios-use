@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Use ios-use to drive iOS devices via CLI. Covers auto-session, device management, UI element inspection (dom/find), tap/swipe/input actions, screenshot, oslog/nslog, app lifecycle, and YAML flow authoring. Use this skill when the user wants to interact with an iOS device, inspect screen elements, automate UI steps, write or debug automation flows, or check device logs."
+description: "Use ios-use to drive iOS devices via CLI. Covers auto-session, device management, UI element inspection (dom/find), tap/swipe/input actions, screenshot, oslog/nslog, app lifecycle, HTTP/HTTPS proxy capture, and YAML flow authoring. Use this skill when the user wants to interact with an iOS device, inspect screen elements, automate UI steps, capture network traffic, write or debug automation flows, or check device logs."
 ---
 
 # ios-use Skill
@@ -82,7 +82,15 @@ ios-use activateApp com.apple.Preferences
 ios-use terminateApp com.apple.Preferences
 ```
 
-### 3.5 跑 flow
+### 3.5 打开 URL 和关闭弹窗
+
+```bash
+ios-use openURL --url "https://example.com"
+ios-use dismissAlert                # 默认点最后一个按钮
+ios-use dismissAlert --index 0      # 点第一个按钮
+```
+
+### 3.6 跑 flow
 
 ```bash
 ios-use flow my-flow.yaml
@@ -91,16 +99,27 @@ ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 
 Flow 的编写规范、字段语义、外部 `vars` 和 subflow 用法见 `references/flow.md`。
 
+### 3.7 停止 session
+
+```bash
+ios-use stop                        # 停止 driver 进程并清理 session
+```
+
 ## 4. 当前命令语义
 
 - `tap` / `longpress`
   - `<target>` — 元素 label 或 `"x,y"` 坐标（positional，不是 option）
+  - 支持 `--traits <traits>` 按 traits 过滤（逗号分隔，AND 语义）
   - `tap` 支持 `--offset "x,y"`（像素偏移）和 `--offset-ratio "x,y"`（比例偏移）
   - offset 原点固定为目标元素左上角 `(0,0)`
   - 缺失单轴时默认补 `0.5` ratio
   - 若 target 是绝对坐标 `x,y`，则不能再传 offset
   - `longpress` 默认 `500ms`，可通过 `--duration <ms>` 自定义
-  - 底层走 synthesized pointer
+
+```bash
+ios-use tap "通用" --traits Button
+ios-use tap "亮度" --offset-ratio 0.8,
+```
 
 - `swipe`
   - 目标导向（推荐）：`--to <label> --from <label|point>`，自动循环滚动直到目标进入可见区域
@@ -112,6 +131,7 @@ Flow 的编写规范、字段语义、外部 `vars` 和 subflow 用法见 `refer
   - 固定距离：`--dir forth|back --distance <px>`，适合已经确认页面方向时做纯距离滚动
   - `forth` 通常表示继续往前浏览当前列表，`back` 表示反方向回拉
   - 自动检测竖直/水平方向，不需要额外传方向轴
+  - 支持 `--traits <traits>`
   - 页面没变化或没找到目标时，先 `dom` 再决定是否继续滑
 
 ```bash
@@ -129,6 +149,7 @@ ios-use swipe --dir back --distance 300
   - `--label <text> --content <text>`
   - 不需要先 `tap` 输入框，命令会自动切换焦点再输入
   - 不隐式 clear
+  - 支持 `--traits <traits>`
 
 - `screenshot`
   - 保存为 JPEG 到 `~/.ios-use/artifacts/<name>.jpg`
@@ -145,32 +166,81 @@ ios-use swipe --dir back --distance 300
   - 轮询等待元素出现，超时返回 not-found
   - `--label <text> --timeout <seconds>`
   - 轮询间隔是内部固定值 `100ms`，不对外暴露 `interval`
+  - 支持 `--traits <traits>`
+
+- `openURL`
+  - `--url <url>` 在设备上打开 URL
+  - Safari 会处理该 URL
+
+- `dismissAlert`
+  - 关闭当前系统弹窗（Alert）
+  - `--index <n>` 点击第几个按钮（0-based），不传则默认点最后一个
 
 - `oslog`
   - 支持 `--timeout <seconds>`，会在窗口期内轮询匹配
   - `--pattern` 正则过滤，`--flags` 正则标志（`i`/`s`/`m`）
   - `--clear` 清空 buffer
+  - `--bundle-id` 按 bundle ID 过滤
   - 日志文件保存到 `~/.ios-use/artifacts/<name>.log`
 
 - `nslog`
   - 启动本地 NSLogger server，iOS app 主动推送日志（与 oslog 互补）
+  - `--name <name>` Bonjour 服务名
   - `--grep <pattern>` 正则过滤，`--flags` 正则标志
-  - `--port <port>` 监听端口（默认自动分配）
-  - `--ssl` / `--no-ssl` TLS 开关（默认开启）
   - 适合验证 app 内 NSLog 埋点
 
-## 5. Flow 入口
+## 5. Proxy 抓包
 
-- 运行 flow：
+通过 mitmdump 在 Mac 上抓取设备的 HTTP/HTTPS 流量。
+
+### 5.1 完整流程
 
 ```bash
-ios-use flow my-flow.yaml
-ios-use flow flows/proxy_set_wifi_proxy.yaml --server 192.168.1.10 --port 9080
+# 1. 确保 mitmdump 已安装
+pip install mitmproxy
+
+# 2. 一次性：安装并信任 CA（HTTPS 解密所需，HTTP 抓包可跳过）
+ios-use proxy configca
+
+# 3. 启动抓包
+ios-use proxy start
+
+# 4. 读取抓包数据
+ios-use proxy read                     # 最近 10 条
+ios-use proxy read --count 20          # 最近 20 条
+ios-use proxy read --duration 30s      # 最近 30 秒内的流量
+ios-use proxy read --save my-capture   # 保存到 ~/.ios-use/artifacts/my-capture.jsonl
+
+# 5. 停止抓包
+ios-use proxy stop
 ```
 
-- 写 flow、拆 subflow、设计 `vars` / `outputs`、传 CLI 外部变量、使用 `dom.candidates`、`returnIf` 时，查看 `references/flow.md`
-- 手动排查 flow 某一步失败时，先回到本文件，用 `dom` / `find` / `screenshot` / `oslog` 单独验证该步骤
-- 新写 flow 时，先手动跑通每一个动作，再回到 YAML 里组装
+### 5.2 命令详解
+
+- `proxy configca` — 生成 mitmproxy CA 并在设备上安装+信任（一次性）
+  - 流程：Safari 下载 CA → 设置安装描述文件 → 证书信任设置启用
+  - 只需执行一次，CA 不会变
+
+- `proxy start` — 启动 mitmdump + 配置设备 Wi-Fi 代理
+  - `--stream` 实时输出 JSONL 到 stdout（前台阻塞，Ctrl+C 停止）
+  - `-i, --interface <iface>` 指定 Mac 网卡（默认自动选 Wi-Fi）
+  - `--no-body` 不记录请求/响应 body
+  - `--body-limit <bytes>` body 最大字节数（默认 102400）
+  - 非 stream 模式下命令执行完即退出，mitmdump 在后台运行
+  - 首次安装 driver 后会自动检测网络权限弹窗并授权
+
+- `proxy stop` — 清除设备 Wi-Fi 代理 + 停止 mitmdump
+
+- `proxy read` — 读取抓包数据
+  - `--count <n>` 条数（默认 10）
+  - `--duration <time>` 时间窗口（如 `30s`、`1m`）
+  - `--save [name]` 保存到文件
+
+- `proxy doctor` — 诊断 proxy 环境（mitmdump 安装、CA 状态、网络连通性）
+
+### 5.3 首次网络权限
+
+driver 首次安装后发起网络请求时，iOS 会弹「"IOSUseDriver-Runner"想使用无线局域网与蜂窝网络」权限弹窗。`proxy start` 会自动检测并授权，无需手动处理。
 
 ## 6. 常见排障
 
@@ -189,22 +259,3 @@ ios-use config --udid <udid>    # 重新签名安装（会自动清理旧 sessio
 - 改了 driver 代码但行为没变：设备上还是旧 IPA，重新 `bash scripts/build_host_app.sh` + `ios-use config`
 
 - 调试时可以加 `--verbose` 看完整输入输出。
-
-- 旧写法迁移：
-
-| 旧写法 | 新写法 |
-|--------|--------|
-| `session start` | 不需要，首次操作命令自动建连 |
-| `session stop` | `ios-use stop`（非必须） |
-| `session status` | `ios-use devices`（查看设备配置状态） |
-| `tap --text` | `tap <target>` |
-| `tap --label` | `tap <target>` |
-| `longpress --label` | `longpress <target>` |
-| `--offset-x / --offset-y` | `--offset "x,y"` |
-| `--offset-x-ratio / --offset-y-ratio` | `--offset-ratio "x,y"` |
-| `input --text` | `input --content` |
-| `wait-for` | `waitFor` |
-| `app launch` | `activateApp` |
-| `app close` | `terminateApp` |
-| `waitFor --interval` | 不支持，轮询间隔由 driver 内部控制 |
-| `nslog --interval-ms` | 不支持，轮询间隔固定 300ms |

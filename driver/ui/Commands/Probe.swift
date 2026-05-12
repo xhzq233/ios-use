@@ -2,6 +2,11 @@ import Foundation
 import Fory
 
 enum ProbeCommands {
+    private static func describeError(_ error: Error) -> String {
+        let nsError = error as NSError
+        return "\(nsError.domain)(\(nsError.code)): \(nsError.localizedDescription)"
+    }
+
     static func probeFetch(_ args: ForyProbeFetchArgs) throws -> ForyResponseFrame {
         guard let url = URL(string: args.url) else {
             throw DriverError.invalidArgs("invalid url: \(args.url)")
@@ -14,15 +19,23 @@ enum ProbeCommands {
         request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        config.connectionProxyDictionary = [:]
+        let session = URLSession(configuration: config)
+
         let sem = DispatchSemaphore(value: 0)
         var result: ForyResponseFrame?
 
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = session.dataTask(with: request) { data, response, error in
             defer { sem.signal() }
 
             if let error {
-                NSLog("[probe] fetch error url=\(url.absoluteString) error=\(error.localizedDescription)")
-                result = Codec.foryError("probeFetch failed: \(error.localizedDescription)")
+                let message = describeError(error)
+                NSLog("[probe] fetch error url=\(url.absoluteString) error=\(message)")
+                result = Codec.foryError("probeFetch failed: \(message)")
                 return
             }
 
@@ -54,10 +67,12 @@ enum ProbeCommands {
         let waitResult = sem.wait(timeout: .now() + timeout + 5)
         if waitResult == .timedOut {
             task.cancel()
+            session.invalidateAndCancel()
             NSLog("[probe] fetch timeout url=\(url.absoluteString)")
             return Codec.foryError("probeFetch timed out after \(timeout)s")
         }
 
+        session.finishTasksAndInvalidate()
         return result ?? Codec.foryError("probeFetch failed: no result")
     }
 }

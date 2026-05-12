@@ -43,6 +43,8 @@ steps:
 - `waitFor`
 - `activateApp`
 - `terminateApp`
+- `openURL`
+- `dismissAlert`
 - `oslog`
 - `nslog`
 
@@ -55,7 +57,7 @@ Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
 **以下 action 不存在**，不要在 flow 中使用：
 
 - ~~`wait`~~ — 没有固定等待 action；需要等待时用 `waitFor` 配合一个必定存在的元素
-- ~~`dismissPopup`~~ — 关弹窗用 `dom` + `candidates` + `tap`
+- ~~`dismissPopup`~~ — 关弹窗用 `dismissAlert` 或 `dom` + `candidates` + `tap`
 - ~~`assert`~~ — 断言页面状态用 `waitFor`
 
 ## 4. 编写原则
@@ -338,7 +340,30 @@ steps:
   clearAfterRead: true
 ```
 
-### 6.8 关闭弹窗
+### 6.8 `openURL`
+
+- 在设备上打开 URL（Safari 处理）
+- `url` 是必填字段
+
+```yaml
+- action: openURL
+  url: "https://example.com"
+```
+
+### 6.9 `dismissAlert`
+
+- 关闭当前系统 Alert 弹窗
+- 不传 `index` 时默认点击最后一个按钮
+- `index` 是 0-based，`0` 表示第一个按钮
+
+```yaml
+- action: dismissAlert
+
+- action: dismissAlert
+  index: 0
+```
+
+### 6.10 关闭弹窗
 
 没有 `dismissPopup` action。关闭弹窗的标准做法：
 

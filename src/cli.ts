@@ -206,26 +206,34 @@ proxyCmd.command('start')
   .description('Start proxy: mitmdump + configure device Wi-Fi proxy')
   .option('--stream', 'Stream captured requests to stdout as jsonl')
   .option('--udid <udid>', 'Device UDID')
+  .option('-i, --interface <interface>', 'Mac network interface to advertise as proxy host (default: Wi-Fi)')
   .option('--no-body', 'Omit request/response body from output')
   .option('--body-limit <bytes>', 'Max body size in bytes (default 102400)', parseIntStrict)
-  .action(handleAction(async (opts: { stream?: boolean; udid?: string; noBody?: boolean; bodyLimit?: number }) => {
+  .action(handleAction(async (opts: { stream?: boolean; udid?: string; interface?: string; noBody?: boolean; bodyLimit?: number }) => {
     const { withAutoSession } = await import('./session.js');
+    let udid: string | undefined;
+    let started = false;
     await withAutoSession({ udid: opts.udid }, async (client) => {
       const info = readSessionInfo();
-      const udid = opts.udid || info?.udid;
+      udid = opts.udid || info?.udid;
       if (!udid) throw new Error('No device UDID. Pass --udid or run an action command first.');
-      try {
-        await proxyStart(client, { udid, stream: opts.stream, noBody: opts.noBody, bodyLimit: opts.bodyLimit });
-        if (opts.stream) process.stderr.write('Proxy running. Press Ctrl+C to stop.\n');
-        else logger.info('Proxy running. Press Ctrl+C to stop.');
-        await new Promise<void>((resolve) => {
-          process.on('SIGINT', () => { resolve(); });
-          process.on('SIGTERM', () => { resolve(); });
-        });
-      } finally {
-        await proxyStop(client, { udid }).catch(() => {});
-      }
+      await proxyStart(client, { udid, stream: opts.stream, noBody: opts.noBody, bodyLimit: opts.bodyLimit, interfaceName: opts.interface });
+      started = true;
     });
+    if (opts.stream) process.stderr.write('Proxy running. Press Ctrl+C to stop.\n');
+    else {
+      logger.info('Proxy running. Run `proxy stop` to stop.');
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      process.on('SIGINT', () => { resolve(); });
+      process.on('SIGTERM', () => { resolve(); });
+    });
+    if (started) {
+      await withAutoSession({ udid }, async (client) => {
+        await proxyStop(client, { udid }).catch(() => {});
+      });
+    }
   }));
 
 proxyCmd.command('stop')

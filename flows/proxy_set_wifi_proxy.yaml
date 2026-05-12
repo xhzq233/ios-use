@@ -22,14 +22,8 @@ steps:
     comment: "点击当前已连接网络行右侧的详情按钮"
 
   - action: swipe
-    dir: forth
-    distance: 450
-    comment: "向下滚动到 IPv4/DNS 区域"
-
-  - action: swipe
-    dir: forth
-    distance: 150
-    comment: "继续滚动到 HTTP 代理区域"
+    to: 配置代理
+    comment: "滚动到 HTTP 代理区域"
 
   - action: waitFor
     label: 配置代理
