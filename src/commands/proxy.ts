@@ -9,7 +9,7 @@ import { IOS_USE_HOME, ensureStateDir } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
 import { isProcessAlive } from '../utils/process.js';
 import type { DriverClient } from '../driver-client/client.js';
-import { flowAction } from './flow.js';
+import { runFlowFile } from './flow.js';
 
 const MITMDUMP_PORT = 9080;
 const STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-session.json');
@@ -360,13 +360,14 @@ function flowPath(name: string): string {
   return path.join(FLOWS_DIR, name);
 }
 
-async function runFlow(name: string, opts?: { udid?: string; vars?: Record<string, unknown> }): Promise<void> {
+async function runFlow(client: DriverClient, name: string, opts?: { udid?: string; vars?: Record<string, unknown> }): Promise<void> {
   const file = flowPath(name);
   if (!fs.existsSync(file)) {
     throw new Error(`Flow file not found: ${file}`);
   }
 
-  await flowAction(file, { udid: opts?.udid, vars: opts?.vars });
+  await client.createSession('com.apple.Preferences', true);
+  await runFlowFile(client, file, { udid: opts?.udid, flowApp: 'com.apple.Preferences' }, opts?.vars);
 }
 
 // ── Commands ──
@@ -400,7 +401,7 @@ export async function proxyConfigCA(
 
   // Run flow to install + trust the CA (single combined flow)
   logger.info('Installing and trusting CA on device...');
-  await runFlow('proxy_configca.yaml', { udid: opts.udid });
+  await runFlow(_client, 'proxy_configca.yaml', { udid: opts.udid });
 
   // Update state
   const state = readProxyState() || {
@@ -464,7 +465,7 @@ export async function proxyStart(
   });
 
   logger.info('Configuring device Wi-Fi proxy...');
-  await runFlow('proxy_set_wifi_proxy.yaml', {
+  await runFlow(_client, 'proxy_set_wifi_proxy.yaml', {
     udid: opts.udid,
     vars: { server: wifi.macLanIp, port: String(MITMDUMP_PORT) },
   });
@@ -497,7 +498,7 @@ export async function proxyStop(
   logger.info('Clearing device Wi-Fi proxy...');
   const targetUdid = opts.udid || state?.udid;
   try {
-    await runFlow('proxy_clear_wifi_proxy.yaml', { udid: targetUdid });
+    await runFlow(_client, 'proxy_clear_wifi_proxy.yaml', { udid: targetUdid });
   } catch (err) {
     logger.warn(`Failed to clear Wi-Fi proxy via flow: ${err}`);
     logger.warn('Manually disable Wi-Fi proxy: Settings → Wi-Fi → current network (i) → Configure Proxy → Off');
