@@ -4,11 +4,11 @@ import { Command } from 'commander';
 import { logger } from './utils/logger';
 import { DEFAULT_PORT } from './constants.js';
 import { configureDeviceSigning, readProjectConfig } from './config';
-import { detectRealDevices, detectBootedSimulators, formatDeviceLabel } from './device';
+import { detectRealDevices, detectBootedSimulators, formatDeviceLabel, getConfiguredUdids } from './device';
 import { runCommandStep } from './commands/actions';
 import { flowAction } from './commands/flow';
 import { nslogStreamAction } from './commands/nslog';
-import { proxyConfigCA, proxyStart, proxyStop, proxyRead } from './commands/proxy';
+import { proxyConfigCA, proxyStart, proxyStop, proxyRead, readProxyState } from './commands/proxy';
 import { getCliActions, mapCliToStep, parseIntStrict } from './commands/registry';
 import type { SwipeDir } from './driver-protocol/index.js';
 import { startSession, stopSession, readSessionInfo } from './session';
@@ -46,21 +46,36 @@ program
 
 // ── Device & Config (local operations) ──
 
+interface DeviceListOpts { simulator?: boolean; verbose?: boolean }
+
+async function listDevices(opts: DeviceListOpts): Promise<void> {
+  const configured = getConfiguredUdids();
+  if (opts.simulator) {
+    const sims = detectBootedSimulators();
+    if (sims.length === 0) { logger.info('No booted Simulators found'); return; }
+    for (const sim of sims) logger.info(formatDeviceLabel(sim, configured));
+    return;
+  }
+  const reals = await detectRealDevices();
+  if (reals.length === 0) { logger.info('No connected real devices found'); return; }
+  for (const d of reals) logger.info(formatDeviceLabel(d, configured));
+}
+
 program
   .command('devices')
   .description('Show connected iOS device info')
   .option('-s, --simulator', 'Show only booted Simulators')
   .option('--verbose', 'Verbose output')
-  .action(handleAction(async (opts: { simulator?: boolean; verbose?: boolean }) => {
-    if (opts.simulator) {
-      const sims = detectBootedSimulators();
-      if (sims.length === 0) { logger.info('No booted Simulators found'); return; }
-      for (const sim of sims) logger.info(formatDeviceLabel(sim));
-      return;
-    }
-    const reals = await detectRealDevices();
-    if (reals.length === 0) { logger.info('No connected real devices found'); return; }
-    for (const d of reals) logger.info(formatDeviceLabel(d));
+  .action(handleAction(listDevices));
+
+program
+  .command('device', { hidden: true })
+  .description('Alias for devices')
+  .option('-s, --simulator', 'Show only booted Simulators')
+  .option('--verbose', 'Verbose output')
+  .action(handleAction(async (opts: DeviceListOpts) => {
+    logger.warn('`ios-use device` is deprecated; use `ios-use devices`.');
+    await listDevices(opts);
   }));
 
 program
@@ -89,10 +104,12 @@ program
       return;
     }
     if (!opts.udid) {
-      const devices = await detectRealDevices();
-      if (devices.length === 0) throw new Error('No --udid and no devices detected.');
+      const devices = opts.simulator ? detectBootedSimulators() : await detectRealDevices();
+      if (devices.length === 0) {
+        throw new Error(opts.simulator ? 'No --udid and no booted Simulators found.' : 'No --udid and no USB devices detected.');
+      }
       opts.udid = devices[0].udid;
-      logger.info(`Using default device: ${formatDeviceLabel(devices[0])}`);
+      logger.info(`Using default device: ${formatDeviceLabel(devices[0], getConfiguredUdids())}`);
     }
     await configureDeviceSigning(opts);
   }));
@@ -175,16 +192,11 @@ proxyCmd.command('configca')
   .description('Install and trust mitmproxy CA on device (one-time)')
   .option('--udid <udid>', 'Device UDID')
   .action(handleAction(async (opts: { udid?: string }) => {
-    const info = readSessionInfo();
-    if (!info?.sessionId) throw new Error('No active session. Run any action command to auto-create one.');
-    const udid = opts.udid || info.udid;
-    const { createClientFromSession } = await import('./session.js');
-    const client = await createClientFromSession(info, { ownsSession: false });
-    try {
-      await proxyConfigCA(client, { udid });
-    } finally {
-      client.disconnect();
-    }
+    const { withAutoSession } = await import('./session.js');
+    await withAutoSession({ udid: opts.udid }, async (client) => {
+      const info = readSessionInfo();
+      await proxyConfigCA(client, { udid: opts.udid || info?.udid });
+    });
   }));
 
 proxyCmd.command('start')
@@ -194,24 +206,23 @@ proxyCmd.command('start')
   .option('--no-body', 'Omit request/response body from output')
   .option('--body-limit <bytes>', 'Max body size in bytes (default 102400)', parseIntStrict)
   .action(handleAction(async (opts: { stream?: boolean; udid?: string; noBody?: boolean; bodyLimit?: number }) => {
-    const info = readSessionInfo();
-    if (!info?.sessionId) throw new Error('No active session. Run any action command to auto-create one.');
-    const udid = opts.udid || info.udid;
-    if (!udid) throw new Error('No device UDID. Pass --udid or start session first.');
-    const { createClientFromSession } = await import('./session.js');
-    const client = await createClientFromSession(info, { ownsSession: false });
-    try {
-      await proxyStart(client, { udid, stream: opts.stream, noBody: opts.noBody, bodyLimit: opts.bodyLimit });
-      if (opts.stream) process.stderr.write('Proxy running. Press Ctrl+C to stop.\n');
-      else logger.info('Proxy running. Press Ctrl+C to stop.');
-      await new Promise<void>((resolve) => {
-        process.on('SIGINT', () => { resolve(); });
-        process.on('SIGTERM', () => { resolve(); });
-      });
-    } finally {
-      await proxyStop(client).catch(() => {});
-      client.disconnect();
-    }
+    const { withAutoSession } = await import('./session.js');
+    await withAutoSession({ udid: opts.udid }, async (client) => {
+      const info = readSessionInfo();
+      const udid = opts.udid || info?.udid;
+      if (!udid) throw new Error('No device UDID. Pass --udid or run an action command first.');
+      try {
+        await proxyStart(client, { udid, stream: opts.stream, noBody: opts.noBody, bodyLimit: opts.bodyLimit });
+        if (opts.stream) process.stderr.write('Proxy running. Press Ctrl+C to stop.\n');
+        else logger.info('Proxy running. Press Ctrl+C to stop.');
+        await new Promise<void>((resolve) => {
+          process.on('SIGINT', () => { resolve(); });
+          process.on('SIGTERM', () => { resolve(); });
+        });
+      } finally {
+        await proxyStop(client, { udid }).catch(() => {});
+      }
+    });
   }));
 
 proxyCmd.command('stop')
@@ -219,8 +230,9 @@ proxyCmd.command('stop')
   .option('--udid <udid>', 'Device UDID')
   .action(handleAction(async (opts: { udid?: string }) => {
     const { withAutoSession } = await import('./session.js');
-    await withAutoSession({}, async (client) => {
-      await proxyStop(client, opts);
+    const targetUdid = opts.udid || readProxyState()?.udid;
+    await withAutoSession({ udid: targetUdid }, async (client) => {
+      await proxyStop(client, { ...opts, udid: targetUdid });
     });
   }));
 

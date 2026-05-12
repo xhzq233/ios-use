@@ -1,7 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import fs from 'fs';
 import path from 'path';
-import { clearSessionInfo, readSessionInfo, writeSessionInfo } from '../src/session.js';
 import { SESSION_FILE } from '../src/utils/paths.js';
 
 function backupSession() {
@@ -23,8 +22,10 @@ describe('session file helpers', () => {
   beforeEach(() => { saved = backupSession(); });
   afterEach(() => { restoreSession(saved); });
 
-  test('write/read/clear session info', () => {
+  test('write/read/clear session info', async () => {
+    const { clearSessionInfo, readSessionInfo, writeSessionInfo } = await import(`../src/session.ts?session-test=${Date.now()}`);
     clearSessionInfo();
+    expect(readSessionInfo()).toBeNull();
 
     writeSessionInfo({ sessionId: 's1', bundleId: 'com.demo.app' });
     expect(fs.existsSync(SESSION_FILE)).toBe(true);
@@ -32,10 +33,6 @@ describe('session file helpers', () => {
 
     clearSessionInfo();
     expect(fs.existsSync(SESSION_FILE)).toBe(false);
-  });
-
-  test('readSessionInfo returns null when file missing', () => {
-    clearSessionInfo();
     expect(readSessionInfo()).toBeNull();
   });
 });

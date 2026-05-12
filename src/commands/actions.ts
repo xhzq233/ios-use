@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger.js';
-import { withAutoSession, readSessionInfo } from '../session.js';
+import { withAutoSession, readSessionInfo, updateSessionBundleId } from '../session.js';
 import { NSLoggerServer, formatBonjourStatusMessages } from '../nslogger.js';
 import { ARTIFACT_DIR, ensureArtifactDir } from '../utils/paths.js';
 import { DriverClient, DriverError } from '../driver-client/client.js';
@@ -18,6 +18,7 @@ import {
   deserializeAlertPayload, deserializeSimpleStringPayload,
 } from '../driver-protocol/fory.js';
 import { clearBuffer, fetchOslog, configureOslog } from '../device-log/oslog.js';
+import { resolveDevice } from '../device.js';
 import type { FlowStep, FlowContext, NSLoggerServerLike } from './types.js';
 import type {
   DomNode,
@@ -323,12 +324,13 @@ const HANDLERS: Record<string, ActionHandler> = {
     requireClient(client, 'tap');
     const target = step.label;
     if (target === undefined) throw new Error('tap requires "label" (string or "x,y" coordinate)');
-    if (Array.isArray(target) && step.offset) throw new Error('offset requires element label, not absolute point');
+    const foryTarget = toForyTarget(target);
+    if (foryTarget.point && step.offset) throw new Error('offset requires element label, not absolute point');
     logger.info(`  → Tap ${formatLabel(target)}`);
     const offset = step.offset;
     const hasAbsolute = offset && (offset.x != null || offset.y != null);
     const payload = tapArgsSer.serialize({
-      target: toForyTarget(target),
+      target: foryTarget,
       traits: step.traits ?? '',
       offset: hasAbsolute ? { x: offset.x ?? 0, y: offset.y ?? 0 } : null,
       ratio: !hasAbsolute && (offset?.xRatio != null || offset?.yRatio != null)
@@ -432,6 +434,7 @@ const HANDLERS: Record<string, ActionHandler> = {
     if (!bundleId) throw new Error('activateApp requires bundleId');
     const payload = activateAppArgsSer.serialize({ bundleId });
     await send(client, ACTIVATE_APP, payload);
+    updateSessionBundleId(bundleId);
     logger.success(`App ${bundleId} activated`);
   },
 
@@ -525,6 +528,20 @@ interface CommandOpts {
 export async function runCommandStep(step: FlowStep, opts: CommandOpts = {}, context: FlowContext = {}) {
   const verbose = !!opts.verbose;
   if (verbose !== _verbose) setVerbose(verbose);
+
+  if (step.action === 'oslog') {
+    const sessionInfo = readSessionInfo();
+    const requestedUdid = opts.udid as string | undefined;
+    const shouldResolveDevice = !!requestedUdid && (sessionInfo?.udid !== requestedUdid || !sessionInfo?.deviceType);
+    const resolvedDevice = shouldResolveDevice ? resolveDevice(requestedUdid) : null;
+    const localContext: FlowContext = {
+      ...context,
+      udid: requestedUdid ?? sessionInfo?.udid,
+      deviceType: (resolvedDevice?.type ?? sessionInfo?.deviceType) as 'real' | 'simulator' | undefined,
+    };
+    await executeStep(null, step, localContext);
+    return;
+  }
 
   await withAutoSession(opts, async (client: DriverClient) => {
     const sessionInfo = readSessionInfo();

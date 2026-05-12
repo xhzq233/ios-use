@@ -3,7 +3,7 @@ import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import { getDeviceSigningConfig } from './config.js';
 import { DriverClient } from './driver-client/index.js';
-import { formatDeviceLabel, resolveDefaultDevice, resolveDevice } from './device.js';
+import { formatDeviceLabel, getConfiguredUdids, resolveDefaultDevice, resolveDevice } from './device.js';
 import { logger } from './utils/logger.js';
 import {
   DRIVER_LOG_FILE,
@@ -24,6 +24,7 @@ const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\''`)}'`;
 const nextSessionId = () => `session-${Date.now()}`;
 const DRIVER_RUNNER_EXECUTABLE = 'IOSUseDriver-Runner';
+const MAX_DRIVER_LOG_BYTES = 10 * 1024 * 1024;
 
 export interface SessionInfo {
   sessionId: string;
@@ -127,6 +128,14 @@ function startXctestRunner(udid: string, { verbose = false }: StartXctestRunnerO
     logger.info(`Running: xcrun ${args.join(' ')}`);
   }
   ensureLogDir();
+  try {
+    const stat = fs.existsSync(DEVICECTL_LOG) ? fs.statSync(DEVICECTL_LOG) : null;
+    if (stat && stat.size > MAX_DRIVER_LOG_BYTES) {
+      fs.renameSync(DEVICECTL_LOG, `${DEVICECTL_LOG}.1`);
+    }
+  } catch {
+    // Log rotation is best-effort only.
+  }
   const separator = `\n--- session start ${new Date().toISOString()} ---\n`;
   fs.appendFileSync(DEVICECTL_LOG, separator);
   const shellCommand = `exec ${['xcrun', ...args].map(shellQuote).join(' ')} >> ${shellQuote(DEVICECTL_LOG)} 2>&1`;
@@ -148,7 +157,7 @@ async function launchAndConnectDriver(device: { udid: string; type: string }, ve
   if (device.type === 'simulator') {
     throw new Error(
       'Simulator driver is not running. Please run:\n'
-      + '  ios-use config --simulator\n'
+      + '  ios-use config --simulator --udid <simulator-udid>\n'
       + 'Then retry the action command.',
     );
   }
@@ -176,7 +185,7 @@ async function launchAndConnectDriver(device: { udid: string; type: string }, ve
       if (message.includes('not found via usbmux')) {
         throw normalizeDeviceError(error, device.udid);
       }
-      if (runnerProc.exitCode !== null) {
+      if (runnerProc.exitCode !== null && runnerProc.exitCode !== 0) {
         throw new Error(`Runner process exited with code ${runnerProc.exitCode}. Run with --verbose for details.`);
       }
       await delay(intervalMs);
@@ -247,6 +256,12 @@ export function clearSessionInfo(): void {
   try { fs.unlinkSync(SESSION_FILE); } catch {}
 }
 
+export function updateSessionBundleId(bundleId: string | undefined): void {
+  const info = readSessionInfo();
+  if (!info?.sessionId || info.bundleId === bundleId) return;
+  writeSessionInfo({ ...info, bundleId });
+}
+
 function buildSessionInfo(info: {
   sessionId?: string;
   udid: string;
@@ -310,7 +325,7 @@ export async function withAutoSession<T>(opts: WithAutoSessionOpts, fn: (driver:
   const info = readSessionInfo();
   const requestedUdid = opts.udid;
   const verbose = opts.verbose || false;
-  const fallbackUdid = requestedUdid || info?.udid;
+  const configured = getConfiguredUdids();
 
   if (info?.sessionId) {
     const udidMatch = !requestedUdid || requestedUdid === info.udid;
@@ -319,20 +334,26 @@ export async function withAutoSession<T>(opts: WithAutoSessionOpts, fn: (driver:
       let client: DriverClient | null = null;
       try {
         client = await createClientFromSession(info, { verbose, ownsSession: false });
-        return await fn(client);
       } catch (err) {
         logger.warn(`Existing session became unconnected (${err instanceof Error ? err.message : String(err)}), clearing session info`);
         clearSessionInfo();
-      } finally {
-        disconnectClient(client);
+        client = null;
+      }
+
+      if (client) {
+        try {
+          return await fn(client);
+        } finally {
+          disconnectClient(client);
+        }
       }
     }
 
     clearSessionInfo();
   }
 
-  const device = fallbackUdid ? resolveDevice(fallbackUdid) : await resolveDefaultDevice();
-  logger.info(`${opts.udid ? 'Using requested device' : 'Using default device'}: ${formatDeviceLabel(device)}`);
+  const device = requestedUdid ? resolveDevice(requestedUdid) : await resolveDefaultDevice();
+  logger.info(`${opts.udid ? 'Using requested device' : 'Using default device'}: ${formatDeviceLabel(device, configured)}`);
 
   // Try fresh TCP connect; if driver not running, auto-launch
   let client: DriverClient;
@@ -344,7 +365,8 @@ export async function withAutoSession<T>(opts: WithAutoSessionOpts, fn: (driver:
       directTcp: device.type === 'simulator',
       ownsSession: true,
     });
-  } catch {
+  } catch (error) {
+    logger.warn(`Unable to connect to existing driver on ${device.udid} (${error instanceof Error ? error.message : String(error)}), launching driver...`);
     client = await launchAndConnectDriver(device, verbose);
   }
 
@@ -389,13 +411,14 @@ function saveReadySession(client: DriverClient, device: { udid: string; name: st
 export async function startSession(opts: StartSessionOpts): Promise<DriverClient> {
   const bundleId = opts.bundleId;
   const verbose = opts.verbose || false;
+  const configured = getConfiguredUdids();
 
   const device = opts.udid ? resolveDevice(opts.udid) : await resolveDefaultDevice();
   const isSimulator = device.type === 'simulator';
   const existingInfo = readSessionInfo();
 
   logger.info(`Starting session${bundleId ? ` for bundleId=${bundleId}` : ' (device session)'}`);
-  logger.info(`${opts.udid ? 'Using requested device' : 'Using default device'}: ${formatDeviceLabel(device)}`);
+  logger.info(`${opts.udid ? 'Using requested device' : 'Using default device'}: ${formatDeviceLabel(device, configured)}`);
 
   // Try to reuse existing session (skip throwaway liveness check)
   if (existingInfo && existingInfo.udid === device.udid) {
@@ -421,7 +444,8 @@ export async function startSession(opts: StartSessionOpts): Promise<DriverClient
       directTcp: isSimulator,
       ownsSession: true,
     });
-  } catch {
+  } catch (error) {
+    logger.warn(`Unable to connect to existing driver on ${device.udid} (${error instanceof Error ? error.message : String(error)}), launching driver...`);
     client = await launchAndConnectDriver(device, verbose);
   }
 

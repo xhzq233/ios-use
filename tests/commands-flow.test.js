@@ -145,6 +145,7 @@ function createDriver(overrides = {}) {
 describe('flow commands', () => {
   afterEach(() => {
     resetAbort();
+    mock.restore();
   });
 
   test('passes vars into subflow and binds declared outputs by name', async () => {
@@ -501,6 +502,8 @@ steps:
 
     mock.module('../src/session.js', () => ({
       withAutoSession: async (_opts, run) => await run(driver),
+      readSessionInfo: () => null,
+      updateSessionBundleId: () => undefined,
     }));
 
     const { runCommandStep: mockedRunCommandStep } = await import(`../src/commands/actions.ts?test=${Date.now()}`);

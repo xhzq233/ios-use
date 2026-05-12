@@ -2,6 +2,7 @@ import net from 'node:net';
 import fs from 'fs';
 import path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
+import { fileURLToPath } from 'url';
 import { IOS_USE_HOME, ensureStateDir } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
 import { isProcessAlive } from '../utils/process.js';
@@ -12,7 +13,8 @@ const MITMDUMP_PORT = 9080;
 const STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-session.json');
 const EVENTS_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-events.jsonl');
 const ADDON_FILE = path.join(IOS_USE_HOME, 'state', 'proxy_jsonl_addon.py');
-const FLOWS_DIR = path.join(import.meta.dir, '../../flows');
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const FLOWS_DIR = path.join(MODULE_DIR, '../../flows');
 
 export interface ProxySessionState {
   sessionId: string;
@@ -285,12 +287,24 @@ async function startMitmdump(confdir: string, eventsFile: string, opts: { stream
   }
   proc.stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk));
 
-  proc.on('error', (err) => {
+  proc.once('error', (err) => {
     logger.error(`mitmdump failed to start: ${err.message}`);
   });
 
-  await waitForPort(MITMDUMP_PORT, 5000);
-  return proc;
+  try {
+    await Promise.race([
+      waitForPort(MITMDUMP_PORT, 5000),
+      new Promise<never>((_, reject) => {
+        proc.once('error', reject);
+        proc.once('exit', (code, signal) => reject(new Error(`mitmdump exited before ready: code=${code} signal=${signal}`)));
+      }),
+    ]);
+    return proc;
+  } catch (error) {
+    try { proc.kill('SIGTERM'); } catch {}
+    setTimeout(() => { try { if (!proc.killed) proc.kill('SIGKILL'); } catch {} }, 1000).unref?.();
+    throw error;
+  }
 }
 
 // ── Flow Helpers ──
@@ -436,8 +450,9 @@ export async function proxyStop(
 
   // First: clear the proxy on device (before stopping mitmdump!)
   logger.info('Clearing device Wi-Fi proxy...');
+  const targetUdid = opts.udid || state?.udid;
   try {
-    await runFlow('proxy_clear_wifi_proxy.yaml', { udid: opts.udid });
+    await runFlow('proxy_clear_wifi_proxy.yaml', { udid: targetUdid });
   } catch (err) {
     logger.warn(`Failed to clear Wi-Fi proxy via flow: ${err}`);
     logger.warn('Manually disable Wi-Fi proxy: Settings → Wi-Fi → current network (i) → Configure Proxy → Off');
