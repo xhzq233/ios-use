@@ -142,6 +142,21 @@ func scrollByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIApplicatio
     return dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app)
 }
 
+/// Computes the vector that drags the target's center to the scroll frame's
+/// center. Positive values mean finger moves down/right.
+/// Time complexity: O(1).
+func centerScrollAdjustment(targetFrame: CGRect, scrollFrame: CGRect) -> CGVector {
+    guard targetFrame.width > 0,
+          targetFrame.height > 0,
+          scrollFrame.width > 0,
+          scrollFrame.height > 0 else {
+        return .zero
+    }
+
+    return CGVector(dx: scrollFrame.midX - targetFrame.midX,
+                    dy: scrollFrame.midY - targetFrame.midY)
+}
+
 // MARK: - hitPoint (doc 5.8)
 
 /// WDA's fb_hitPointOffsetForScrollingVector:
