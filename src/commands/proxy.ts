@@ -10,10 +10,11 @@ import { logger } from '../utils/logger.js';
 import { isProcessAlive } from '../utils/process.js';
 import { DriverClient } from '../driver-client/client.js';
 import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
-import { tapArgsSer, toForyTarget } from '../driver-protocol/fory.js';
+import { deserializeDomPayload, domArgsSer, openURLArgsSer } from '../driver-protocol/fory.js';
 import { runFlowFile } from './flow.js';
 
 const MITMDUMP_PORT = 9080;
+const LAN_PROBE_TEXT = 'ios-use-lan-ok';
 const STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-session.json');
 const CA_STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-ca.json');
 const EVENTS_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-events.jsonl');
@@ -161,7 +162,7 @@ function waitForPort(port: number, timeoutMs: number): Promise<void> {
 async function startLanProbeServer(): Promise<{ port: number; close: () => Promise<void> }> {
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('ios-use-ok');
+    res.end(LAN_PROBE_TEXT);
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -181,44 +182,35 @@ async function startLanProbeServer(): Promise<{ port: number; close: () => Promi
   };
 }
 
-async function tapElement(client: DriverClient, label: string): Promise<void> {
-  const payload = tapArgsSer.serialize({
-    target: toForyTarget(label),
-    traits: '',
-    offset: null,
-    ratio: { x: 0.5, y: 0.5 },
-  });
-  const resp = await client.sendRaw(DRIVER_COMMANDS.TAP, payload);
-  if (!resp.ok) throw new Error(`tap "${label}" failed: ${resp.error}`);
+async function openURL(client: DriverClient, url: string): Promise<void> {
+  const payload = openURLArgsSer.serialize({ url });
+  const resp = await client.sendRaw(DRIVER_COMMANDS.OPEN_URL, payload);
+  if (!resp.ok) throw new Error(`openURL failed: ${resp.error}`);
+}
+
+async function readDomText(client: DriverClient): Promise<string> {
+  const payload = domArgsSer.serialize({ raw: true, fresh: true });
+  const resp = await client.sendRaw(DRIVER_COMMANDS.DOM, payload);
+  if (!resp.ok) throw new Error(`dom failed: ${resp.error}`);
+  const dom = deserializeDomPayload(resp.payloadBytes!);
+  return dom.raw || JSON.stringify(dom.elements);
 }
 
 async function verifyDeviceCanReachMac(client: DriverClient, macLanIp: string): Promise<void> {
   const probe = await startLanProbeServer();
   try {
     logger.info(`Verifying device can reach Mac LAN IP: ${macLanIp}`);
-    const result = await client.probeFetch(`http://${macLanIp}:${probe.port}/ping`, 5);
-    if (result.statusCode !== 200) {
-      throw new Error(`DEVICE_CANNOT_REACH_MAC: LAN probe returned status ${result.statusCode}`);
-    }
-  } catch (err) {
-    const msg = String(err?.message ?? err);
-    if (!msg.includes('-1009')) throw err;
+    const url = `http://${macLanIp}:${probe.port}/ping`;
+    await openURL(client, url);
 
-    logger.info('Network permission dialog may be blocking driver — attempting to grant...');
-    try {
-      await new Promise(r => setTimeout(r, 1000));
-      await tapElement(client, '无线局域网与蜂窝网络');
-      logger.info('Granted network permission. Retrying LAN verification...');
-    } catch (tapErr) {
-      logger.warn(`Could not auto-grant network permission: ${tapErr}`);
-      throw err;
+    const deadline = Date.now() + 8000;
+    let lastDom = '';
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 500));
+      lastDom = await readDomText(client);
+      if (lastDom.includes(LAN_PROBE_TEXT)) return;
     }
-
-    const result = await client.probeFetch(`http://${macLanIp}:${probe.port}/ping`, 5);
-    if (result.statusCode !== 200) {
-      throw new Error(`DEVICE_CANNOT_REACH_MAC: LAN probe returned status ${result.statusCode}`);
-    }
-    logger.info('LAN verification succeeded after granting network permission.');
+    throw new Error(`DEVICE_CANNOT_REACH_MAC: opened ${url} but DOM did not contain "${LAN_PROBE_TEXT}". Last DOM preview: ${lastDom.slice(0, 500)}`);
   } finally {
     await probe.close();
   }

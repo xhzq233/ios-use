@@ -8,7 +8,6 @@ enum Command: String, Codable {
     case activateApp
     case terminateApp
     case openURL
-    case probeFetch
     case proxyCAPush
     case screenshot
     case dom
