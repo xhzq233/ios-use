@@ -8,7 +8,9 @@ import { fileURLToPath } from 'url';
 import { IOS_USE_HOME, ensureStateDir } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
 import { isProcessAlive } from '../utils/process.js';
-import type { DriverClient } from '../driver-client/client.js';
+import { DriverClient } from '../driver-client/client.js';
+import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
+import { tapArgsSer, toForyTarget } from '../driver-protocol/fory.js';
 import { runFlowFile } from './flow.js';
 
 const MITMDUMP_PORT = 9080;
@@ -104,7 +106,7 @@ function parseDurationMs(input: string): number {
   return value;
 }
 
-// ── Wi-Fi Detection ──
+// ── LAN Detection ──
 
 function getWifiInterface(): string {
   const out = runText('networksetup', ['-listallhardwareports']);
@@ -118,15 +120,23 @@ function getWifiInterface(): string {
   throw new Error('WIFI_INTERFACE_NOT_FOUND');
 }
 
-function detectWifiInfo(): WifiInfo {
-  const iface = getWifiInterface();
-  let macLanIp: string;
+function getInterfaceIPv4(iface: string): string | null {
+  let out: string;
   try {
-    macLanIp = runText('ipconfig', ['getifaddr', iface]);
+    out = runText('ifconfig', [iface]);
   } catch {
-    throw new Error(`MAC_LAN_IP_NOT_FOUND`);
+    return null;
   }
-  if (!macLanIp) throw new Error(`MAC_LAN_IP_NOT_FOUND`);
+  if (!/status:\s*active/.test(out)) return null;
+  const ip = out.match(/\binet\s+(\d+\.\d+\.\d+\.\d+)\b/)?.[1];
+  if (!ip || ip.startsWith('127.') || ip.startsWith('169.254.')) return null;
+  return ip;
+}
+
+function detectLanInfo(interfaceName?: string): WifiInfo {
+  const iface = interfaceName || getWifiInterface();
+  const macLanIp = getInterfaceIPv4(iface);
+  if (!macLanIp) throw new Error(`MAC_LAN_IP_NOT_FOUND: ${iface}`);
   return { interface: iface, macLanIp };
 }
 
@@ -146,16 +156,6 @@ function waitForPort(port: number, timeoutMs: number): Promise<void> {
     };
     tryConnect();
   });
-}
-
-async function waitForFileGrowth(file: string, previousSize: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const size = fs.existsSync(file) ? fs.statSync(file).size : 0;
-    if (size > previousSize) return true;
-    await new Promise(resolve => setTimeout(resolve, 200));
-  }
-  return false;
 }
 
 async function startLanProbeServer(): Promise<{ port: number; close: () => Promise<void> }> {
@@ -181,27 +181,46 @@ async function startLanProbeServer(): Promise<{ port: number; close: () => Promi
   };
 }
 
+async function tapElement(client: DriverClient, label: string): Promise<void> {
+  const payload = tapArgsSer.serialize({
+    target: toForyTarget(label),
+    traits: '',
+    offset: null,
+    ratio: { x: 0.5, y: 0.5 },
+  });
+  const resp = await client.sendRaw(DRIVER_COMMANDS.TAP, payload);
+  if (!resp.ok) throw new Error(`tap "${label}" failed: ${resp.error}`);
+}
+
 async function verifyDeviceCanReachMac(client: DriverClient, macLanIp: string): Promise<void> {
   const probe = await startLanProbeServer();
   try {
-    logger.info('Verifying device can reach Mac LAN IP...');
+    logger.info(`Verifying device can reach Mac LAN IP: ${macLanIp}`);
     const result = await client.probeFetch(`http://${macLanIp}:${probe.port}/ping`, 5);
     if (result.statusCode !== 200) {
       throw new Error(`DEVICE_CANNOT_REACH_MAC: LAN probe returned status ${result.statusCode}`);
     }
+  } catch (err) {
+    const msg = String(err?.message ?? err);
+    if (!msg.includes('-1009')) throw err;
+
+    logger.info('Network permission dialog may be blocking driver — attempting to grant...');
+    try {
+      await new Promise(r => setTimeout(r, 1000));
+      await tapElement(client, '无线局域网与蜂窝网络');
+      logger.info('Granted network permission. Retrying LAN verification...');
+    } catch (tapErr) {
+      logger.warn(`Could not auto-grant network permission: ${tapErr}`);
+      throw err;
+    }
+
+    const result = await client.probeFetch(`http://${macLanIp}:${probe.port}/ping`, 5);
+    if (result.statusCode !== 200) {
+      throw new Error(`DEVICE_CANNOT_REACH_MAC: LAN probe returned status ${result.statusCode}`);
+    }
+    logger.info('LAN verification succeeded after granting network permission.');
   } finally {
     await probe.close();
-  }
-}
-
-async function verifyProxyTraffic(client: DriverClient, eventsFile: string): Promise<void> {
-  const beforeSize = fs.existsSync(eventsFile) ? fs.statSync(eventsFile).size : 0;
-  const url = `http://example.com/ios-use-proxy-probe-${Date.now()}`;
-  logger.info('Verifying device traffic reaches mitmdump...');
-  await client.probeFetch(url, 8);
-  const observed = await waitForFileGrowth(eventsFile, beforeSize, 5000);
-  if (!observed) {
-    throw new Error('DEVICE_CANNOT_REACH_MAC: device probe did not appear in mitmdump events.');
   }
 }
 
@@ -327,12 +346,18 @@ async function startMitmdump(confdir: string, eventsFile: string, opts: { stream
   if (opts.noBody) env.IOS_USE_NO_BODY = '1';
   if (opts.bodyLimit) env.IOS_USE_BODY_LIMIT = String(opts.bodyLimit);
 
-  const proc = spawn('mitmdump', args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+  const detached = !opts.stream;
+  const proc = spawn('mitmdump', args, {
+    stdio: detached ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
+    detached,
+    env,
+  });
 
-  if (opts.stream) {
+  if (!detached) {
     proc.stdout?.on('data', (chunk: Buffer) => process.stdout.write(chunk));
+    proc.stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk));
   }
-  proc.stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk));
+  if (detached) proc.unref();
 
   proc.once('error', (err) => {
     logger.error(`mitmdump failed to start: ${err.message}`);
@@ -425,7 +450,7 @@ export async function proxyConfigCA(
 
 export async function proxyStart(
   _client: DriverClient,
-  opts: { udid?: string; stream?: boolean; noBody?: boolean; bodyLimit?: number },
+  opts: { udid?: string; stream?: boolean; noBody?: boolean; bodyLimit?: number; interfaceName?: string },
 ): Promise<void> {
   const state = readProxyState();
   if (state?.status === 'running' && isProcessAlive(state.mitmdumpPid)) {
@@ -446,15 +471,14 @@ export async function proxyStart(
   const caState = readCAState();
   const caReady = !!opts.udid && !!caPem && caState?.udid === opts.udid && caState?.fingerprint === fingerprintPem(caPem);
   if (!caReady) {
-    logger.warn('CA not configured. Run `proxy configca` first for HTTPS decryption.');
+    logger.info('CA trust record not found. HTTP capture can still work; HTTPS decryption requires the CA to be installed and trusted.');
   }
 
   ensureStateDir();
   fs.writeFileSync(EVENTS_FILE, '');
 
-  logger.info('Detecting Mac Wi-Fi...');
-  const wifi = detectWifiInfo();
-  logger.info(`Wi-Fi: ${wifi.interface}, ${wifi.macLanIp}`);
+  const wifi = detectLanInfo(opts.interfaceName);
+  logger.info(`${opts.interfaceName ? 'Using requested interface' : 'Using Wi-Fi interface'}: ${wifi.interface}, ${wifi.macLanIp}`);
   await verifyDeviceCanReachMac(_client, wifi.macLanIp);
 
   logger.info('Starting mitmdump...');
@@ -469,8 +493,6 @@ export async function proxyStart(
     udid: opts.udid,
     vars: { server: wifi.macLanIp, port: String(MITMDUMP_PORT) },
   });
-
-  await verifyProxyTraffic(_client, EVENTS_FILE);
 
   const now = Date.now();
   writeState({
@@ -555,24 +577,24 @@ export function proxyRead(opts: { count?: number; duration?: string; save?: stri
 }
 
 export function proxyDoctor(): void {
-  const checks: Array<{ name: string; ok: boolean; fix: string; warn?: boolean }> = [];
+  const checks: Array<{ name: string; status: 'ok' | 'fail' | 'info' | 'warn'; fix?: string }> = [];
 
   try {
     execFileSync('mitmdump', ['--version'], { stdio: 'pipe' });
-    checks.push({ name: 'mitmdump installed', ok: true, fix: '' });
+    checks.push({ name: 'mitmdump installed', status: 'ok' });
   } catch {
-    checks.push({ name: 'mitmdump installed', ok: false, fix: 'Install: pip install mitmproxy' });
+    checks.push({ name: 'mitmdump installed', status: 'fail', fix: 'Install: pip install mitmproxy' });
   }
 
   const caPath = path.join(process.env.HOME || '', '.mitmproxy', 'mitmproxy-ca-cert.pem');
   const caGenerated = fs.existsSync(caPath);
-  checks.push({ name: 'CA generated', ok: caGenerated, fix: 'Run `proxy configca`' });
+  checks.push({ name: 'CA generated', status: caGenerated ? 'ok' : 'fail', fix: 'Run `proxy configca`' });
 
   try {
-    const wifi = detectWifiInfo();
-    checks.push({ name: `LAN IP: ${wifi.macLanIp} (${wifi.interface})`, ok: true, fix: '' });
+    const wifi = detectLanInfo();
+    checks.push({ name: `Wi-Fi LAN IP: ${wifi.macLanIp} (${wifi.interface})`, status: 'ok' });
   } catch (err) {
-    checks.push({ name: 'Mac Wi-Fi', ok: false, fix: String(err) });
+    checks.push({ name: 'Mac Wi-Fi LAN IP', status: 'fail', fix: String(err) });
   }
 
   const state = readProxyState();
@@ -582,18 +604,20 @@ export function proxyDoctor(): void {
     const caPem = fs.readFileSync(caPath, 'utf-8');
     caMatches = caState.fingerprint === fingerprintPem(caPem);
   }
-  checks.push({ name: 'CA installed on device', ok: !!caState && caMatches, fix: 'Run `proxy configca`' });
   checks.push({
-    name: 'Proxy running',
-    ok: state?.status === 'running' && isProcessAlive(state.mitmdumpPid),
-    fix: 'Run `proxy start`',
+    name: caMatches ? 'CA trust record: current CA recorded for this host' : 'CA trust record: not recorded',
+    status: caMatches ? 'ok' : 'info',
+    fix: caMatches ? undefined : 'Run `proxy configca` to record CA install/trust state',
   });
+
+  const running = state?.status === 'running' && isProcessAlive(state.mitmdumpPid);
+  checks.push({ name: running ? 'Proxy: running' : 'Proxy: not running', status: running ? 'ok' : 'info' });
 
   console.log('\nProxy Doctor:\n');
   for (const c of checks) {
-    const icon = c.ok ? (c.warn ? '!' : '✓') : '✗';
+    const icon = c.status === 'ok' ? '✓' : c.status === 'fail' ? '✗' : c.status === 'warn' ? '!' : '-';
     console.log(`  ${icon} ${c.name}`);
-    if (!c.ok && c.fix) console.log(`    → ${c.fix}`);
+    if (c.status !== 'ok' && c.fix) console.log(`    → ${c.fix}`);
   }
   console.log('');
 }
