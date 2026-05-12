@@ -170,9 +170,10 @@ fi
 
 echo ""
 echo "Next steps:"
-echo "  ios-use device"
+echo "  ios-use devices"
 echo "  ios-use config --udid <udid>"
-echo "  ios-use dom --bundle-id <bundleId>"
+echo "  ios-use activateApp <bundleId>"
+echo "  ios-use dom"
 echo ""
 echo "No session start needed — ios-use auto-creates session on first command."
 echo "USB connection required for real devices."

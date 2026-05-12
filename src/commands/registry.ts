@@ -5,7 +5,9 @@ import type { LabelOrPoint, SwipeDir } from '../driver-protocol/index.js';
 // ── Parse helpers (throw on invalid) ──
 
 export function parseIntStrict(val: string): number {
-  const n = parseInt(val, 10);
+  const normalized = val.trim();
+  if (!/^[+-]?\d+$/.test(normalized)) throw new Error(`Invalid integer: "${val}"`);
+  const n = Number(normalized);
   if (!Number.isFinite(n)) throw new Error(`Invalid integer: "${val}"`);
   return n;
 }
@@ -34,8 +36,8 @@ export interface ActionDef {
   desc: string;
   execute: (driver: Driver, step: FlowStep, ctx: FlowContext) => Promise<unknown>;
   cli?: {
-    args?: string[];
-    opts?: CliOpt[];
+    args?: readonly string[];
+    opts?: readonly CliOpt[];
     mapArgs?: (args: string[], opts: Record<string, unknown>) => Record<string, unknown>;
   };
   flowOnly?: boolean;
@@ -237,14 +239,14 @@ export const ACTIONS = [
 
 export type ActionName = typeof ACTIONS[number]['name'];
 
-const ACTION_MAP = new Map(ACTIONS.map(a => [a.name, a]));
+const ACTION_MAP = new Map<string, ActionDef>(ACTIONS.map(a => [a.name, a as ActionDef]));
 
 export function getActionDef(name: string): ActionDef | undefined {
   return ACTION_MAP.get(name);
 }
 
 export function getCliActions(): ActionDef[] {
-  return ACTIONS.filter(a => !a.flowOnly);
+  return ACTIONS.filter(a => !(a as ActionDef).flowOnly).map(a => a as ActionDef);
 }
 
 /** Default CLI opts → FlowStep mapper for actions without custom mapArgs */

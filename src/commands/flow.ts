@@ -167,7 +167,7 @@ async function executeFlowSteps(
   flow: FlowFile,
   resolvedPath: string,
   context: FlowContext,
-  inheritedVars: Record<string, unknown>,
+  inheritedVars: Record<string, unknown> = {},
   flowStack: string[] = [],
 ): Promise<Record<string, unknown>> {
   const currentPath = path.resolve(resolvedPath);

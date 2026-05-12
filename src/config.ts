@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync, spawn } from 'child_process';
-import { formatDeviceLabel, resolveDevice } from './device.js';
+import { fileURLToPath } from 'url';
+import { formatDeviceLabel, getConfiguredUdids, resolveDevice } from './device.js';
 import { logger } from './utils/logger.js';
 import {
   CONFIG_FILE,
@@ -14,6 +15,7 @@ import { DEFAULT_PORT } from './constants.js';
 const DEFAULT_DRIVER_BUNDLE_PREFIX = 'com.ios-use.driver';
 const CACHED_APPLE_ID_RE = /Using cached session for ([^\s]+)/;
 const NON_ALPHANUM_RE = /[^a-z0-9]/g;
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // Bundle IDs baked into the prebuilt driver.ipa by xcodegen (local dev values).
 const DEV_RUNNER_BUNDLE_ID = 'com.iosuse.xcuidriver.xctrunner';
@@ -187,13 +189,13 @@ function runCommand(
 }
 
 export function getPrebuiltIPAPath(): string {
-  const localAsset = path.resolve(import.meta.dirname, '..', 'assets', 'driver.ipa');
+  const localAsset = path.resolve(MODULE_DIR, '..', 'assets', 'driver.ipa');
   if (fs.existsSync(localAsset)) return localAsset;
   return path.join(IOS_USE_HOME, 'driver.ipa');
 }
 
 export function getPrebuiltSimulatorIPAPath(): string {
-  const localAsset = path.resolve(import.meta.dirname, '..', 'assets', 'driver-sim.ipa');
+  const localAsset = path.resolve(MODULE_DIR, '..', 'assets', 'driver-sim.ipa');
   if (fs.existsSync(localAsset)) return localAsset;
   return path.join(IOS_USE_HOME, 'driver-sim.ipa');
 }
@@ -230,7 +232,7 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   }
   const device = resolveDevice(opts.udid);
   const verbose = opts.verbose || false;
-  logger.info(`Using device: ${formatDeviceLabel(device)}`);
+  logger.info(`Using device: ${formatDeviceLabel(device, getConfiguredUdids())}`);
 
   if (opts.simulator || device.type === 'simulator') {
     return configureSimulator(device.udid, { verbose });
@@ -341,6 +343,10 @@ interface ConfigureSimulatorOpts {
   verbose?: boolean;
 }
 
+function waitForSimulatorBoot(udid: string, verbose = false): void {
+  execFileSync('xcrun', ['simctl', 'bootstatus', udid, '-b'], { stdio: verbose ? 'inherit' : 'pipe', timeout: 120000 });
+}
+
 async function configureSimulator(udid: string, opts: ConfigureSimulatorOpts = {}): Promise<void> {
   const verbose = opts.verbose || false;
 
@@ -384,6 +390,7 @@ async function configureSimulator(udid: string, opts: ConfigureSimulatorOpts = {
     if (msg.includes('Shutdown') || msg.includes('current state')) {
       logger.info(`Simulator is not booted, booting ${udid}...`);
       execFileSync('xcrun', ['simctl', 'boot', udid], { stdio: 'pipe' });
+      waitForSimulatorBoot(udid, verbose);
       execFileSync('xcrun', ['simctl', 'install', udid, appPath], { stdio: verbose ? 'inherit' : 'pipe' });
     } else {
       throw error;
@@ -401,7 +408,7 @@ async function configureSimulator(udid: string, opts: ConfigureSimulatorOpts = {
   // Save config so session commands know the bundle ID
   saveDeviceSigningConfig(udid, {
     bundleId: SIMULATOR_BUNDLE_ID,
-    port: DEFAULT_PORT,
+    port: String(DEFAULT_PORT),
   });
 
   logger.success('Simulator config complete! Run `ios-use activateApp <bundleId>` to start, or just use any action command.');

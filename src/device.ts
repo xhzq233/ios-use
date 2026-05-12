@@ -72,6 +72,16 @@ export function invalidateDeviceCache(): void {
   _cachedDevicesAt = 0;
 }
 
+export function getConfiguredUdids(): Set<string> {
+  try {
+    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
+    const config = JSON.parse(raw);
+    return new Set(Object.keys(config.devices || {}));
+  } catch {
+    return new Set();
+  }
+}
+
 function normalizeUdid(udid: string): string {
   return udid.replace(/-/g, '').toLowerCase();
 }
@@ -79,7 +89,6 @@ function normalizeUdid(udid: string): string {
 export async function detectRealDevices(): Promise<Device[]> {
   const all = detectDevices().filter(d => d.type === 'real');
   const usbUdids = await listUsbDeviceUdids();
-  if (usbUdids.length === 0) return all;
   const usbSet = new Set(usbUdids.map(normalizeUdid));
   return all.filter(d => usbSet.has(normalizeUdid(d.udid)));
 }
@@ -149,8 +158,10 @@ export function resolveDevice(udid: string | undefined, devices: Device[] = dete
     } catch {
       // May already be booting or booted; ignore and retry detection
     }
+    invalidateDeviceCache();
     // Retry detection up to 3s for the simulator to appear in xctrace
     for (let i = 0; i < 6; i++) {
+      invalidateDeviceCache();
       const redevices = detectDevices();
       const rede = redevices.find((item) => item.udid === udid);
       if (rede) return rede;
@@ -158,17 +169,7 @@ export function resolveDevice(udid: string | undefined, devices: Device[] = dete
     }
   }
 
-  throw new Error(`Requested device not found: ${udid}. Run "ios-use devices" to see available devices.`);
-}
-
-function getConfiguredUdids(): Set<string> {
-  try {
-    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-    const config = JSON.parse(raw);
-    return new Set(Object.keys(config.devices || {}));
-  } catch {
-    return new Set();
-  }
+  throw new Error(`Requested device not found: ${udid}. Run "ios-use devices" or "ios-use devices --simulator" to see available devices.`);
 }
 
 export function formatDeviceLabel(device: Device, configured?: Set<string>): string {

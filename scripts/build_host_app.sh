@@ -60,8 +60,8 @@ XCODE_COMMON=(
 )
 
 # Run unit tests first (logic tests on a booted Simulator, or skip if none)
-BOOTED_UDID=$(xcrun simctl list devices booted 2>/dev/null | grep -o -E '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' | head -1)
-BOOTED_OS=$(xcrun simctl list devices booted 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+BOOTED_UDID=$(xcrun simctl list devices booted 2>/dev/null | grep -o -E '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' | head -1 || true)
+BOOTED_OS=$(xcrun simctl list devices booted 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
 if [ -n "$BOOTED_UDID" ] && [ -n "$BOOTED_OS" ]; then
   echo "[build] Running Swift unit tests (Simulator $BOOTED_UDID OS=$BOOTED_OS)..."
   TEST_LOG=$(mktemp)

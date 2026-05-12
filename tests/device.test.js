@@ -76,7 +76,7 @@ describe('device helpers', () => {
   test('resolveDevice throws for unknown udid', () => {
     const devices = parseDeviceOutput(sampleOutput);
     expect(() => resolveDevice('missing-udid', devices)).toThrow('Requested device not found');
-    expect(() => resolveDevice('missing-udid', devices)).toThrow('ios-use device');
+    expect(() => resolveDevice('missing-udid', devices)).toThrow('ios-use devices');
   });
 
   test('formatDeviceLabel prints name version type and udid', () => {
