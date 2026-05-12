@@ -1,4 +1,6 @@
 import { execFileSync } from 'child_process';
+import fs from 'fs';
+import { CONFIG_FILE } from './utils/paths.js';
 import { listUsbDeviceUdids } from './driver-protocol/usbmux.js';
 
 export interface Device {
@@ -156,10 +158,22 @@ export function resolveDevice(udid: string | undefined, devices: Device[] = dete
     }
   }
 
-  throw new Error(`Requested device not found: ${udid}. Run "ios-use device" to see available devices.`);
+  throw new Error(`Requested device not found: ${udid}. Run "ios-use devices" to see available devices.`);
 }
 
-export function formatDeviceLabel(device: Device): string {
+function getConfiguredUdids(): Set<string> {
+  try {
+    const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
+    const config = JSON.parse(raw);
+    return new Set(Object.keys(config.devices || {}));
+  } catch {
+    return new Set();
+  }
+}
+
+export function formatDeviceLabel(device: Device, configured?: Set<string>): string {
   const typeLabel = device.type === 'simulator' ? 'Simulator' : 'Device';
-  return `${device.name || 'Unknown'} | iOS ${device.version || 'unknown'} | ${typeLabel} | UDID: ${device.udid}`;
+  const configuredSet = configured ?? getConfiguredUdids();
+  const tag = configuredSet.has(device.udid) ? ' | configured' : '';
+  return `${device.name || 'Unknown'} | iOS ${device.version || 'unknown'} | ${typeLabel} | UDID: ${device.udid}${tag}`;
 }

@@ -214,6 +214,7 @@ export const ACTIONS = [
         { name: 'timeout', desc: 'Timeout in seconds', parse: parseFloatStrict },
         { name: 'name', desc: 'Output filename prefix' },
         { name: 'clear', desc: 'Clear log buffer and return cleared count', flag: true },
+        { name: 'bundle-id', desc: 'Filter logs by app bundle ID' },
       ],
     },
     execute: () => { throw new Error('oslog handler not registered'); },

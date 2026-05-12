@@ -11,7 +11,7 @@ import { nslogStreamAction } from './commands/nslog';
 import { proxyConfigCA, proxyStart, proxyStop, proxyRead } from './commands/proxy';
 import { getCliActions, mapCliToStep, parseIntStrict } from './commands/registry';
 import type { SwipeDir } from './driver-protocol/index.js';
-import { startSession, stopSession, sessionStatus, readSessionInfo } from './session';
+import { startSession, stopSession, readSessionInfo } from './session';
 import { formatDriverError } from './utils/driverError';
 
 const program = new Command();
@@ -36,7 +36,6 @@ type ActionOpts = { udid?: string; bundleId?: string; verbose?: boolean };
 function addSessionOptions(command: Command): Command {
   return command
     .option('--udid <udid>', 'Device UDID')
-    .option('--bundle-id <id>', 'App bundle ID')
     .option('--verbose', 'Verbose output');
 }
 
@@ -48,7 +47,7 @@ program
 // ── Device & Config (local operations) ──
 
 program
-  .command('device')
+  .command('devices')
   .description('Show connected iOS device info')
   .option('-s, --simulator', 'Show only booted Simulators')
   .option('--verbose', 'Verbose output')
@@ -98,27 +97,12 @@ program
     await configureDeviceSigning(opts);
   }));
 
-// ── Session ──
+// ── Stop ──
 
-const sessionCmd = program.command('session').description('Session management (reuse driver across commands)');
-
-sessionCmd.command('start')
-  .description('Start a persistent session (keeps driver running)')
-  .option('--bundle-id <id>', 'App bundle ID (optional; session controls the device regardless)')
-  .option('--udid <udid>', 'Device UDID')
-  .option('--verbose', 'Verbose output')
-  .action(handleAction(async (opts: { bundleId?: string; udid?: string; verbose?: boolean }) => {
-    const client = await startSession(opts);
-    client.disconnect();
-  }));
-
-sessionCmd.command('stop')
-  .description('Stop the current session and driver')
+program
+  .command('stop')
+  .description('Stop driver process and clear session')
   .action(handleAction(async () => { await stopSession(); }));
-
-sessionCmd.command('status')
-  .description('Show current session info')
-  .action(handleAction(async () => { await sessionStatus(); }));
 
 // ── Action commands (auto-registered from registry) ──
 
@@ -192,7 +176,7 @@ proxyCmd.command('configca')
   .option('--udid <udid>', 'Device UDID')
   .action(handleAction(async (opts: { udid?: string }) => {
     const info = readSessionInfo();
-    if (!info?.sessionId) throw new Error('No active session. Run `session start` first.');
+    if (!info?.sessionId) throw new Error('No active session. Run any action command to auto-create one.');
     const udid = opts.udid || info.udid;
     const { createClientFromSession } = await import('./session.js');
     const client = await createClientFromSession(info, { ownsSession: false });
@@ -211,7 +195,7 @@ proxyCmd.command('start')
   .option('--body-limit <bytes>', 'Max body size in bytes (default 102400)', parseIntStrict)
   .action(handleAction(async (opts: { stream?: boolean; udid?: string; noBody?: boolean; bodyLimit?: number }) => {
     const info = readSessionInfo();
-    if (!info?.sessionId) throw new Error('No active session. Run `session start` first.');
+    if (!info?.sessionId) throw new Error('No active session. Run any action command to auto-create one.');
     const udid = opts.udid || info.udid;
     if (!udid) throw new Error('No device UDID. Pass --udid or start session first.');
     const { createClientFromSession } = await import('./session.js');
