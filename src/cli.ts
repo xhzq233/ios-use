@@ -6,7 +6,7 @@ import { DEFAULT_PORT } from './constants.js';
 import { configureDeviceSigning, readProjectConfig } from './config';
 import { detectRealDevices, detectBootedSimulators, formatDeviceLabel, getConfiguredUdids } from './device';
 import { runCommandStep } from './commands/actions';
-import { flowAction } from './commands/flow';
+import { flowAction, parseFlowCliVars } from './commands/flow';
 import { nslogStreamAction } from './commands/nslog';
 import { proxyConfigCA, proxyStart, proxyStop, proxyRead, readProxyState } from './commands/proxy';
 import { getCliActions, mapCliToStep, parseIntStrict } from './commands/registry';
@@ -165,10 +165,13 @@ for (const def of getCliActions()) {
 
 program.command('flow <file>')
   .description('Execute a flow file')
+  .allowUnknownOption(true)
+  .allowExcessArguments(true)
   .option('--udid <udid>', 'Device UDID')
   .option('--verbose', 'Verbose output')
-  .action(handleAction(async (file: string, opts: { udid?: string; verbose?: boolean }) => {
-    await flowAction(file, opts);
+  .action(handleAction(async (file: string, opts: { udid?: string; verbose?: boolean }, command: Command) => {
+    const externalArgs = command.args.slice(1);
+    await flowAction(file, { ...opts, vars: parseFlowCliVars(externalArgs) });
   }));
 
 // ── NSLogger (separate client-side system) ──
