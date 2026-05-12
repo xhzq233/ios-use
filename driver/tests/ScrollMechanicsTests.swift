@@ -53,4 +53,45 @@ final class ScrollMechanicsTests: XCTestCase {
         XCTAssertEqual(projectedHorizontal.dx, 87.5)
         XCTAssertEqual(projectedHorizontal.dy, 0)
     }
+
+    func testCenterScrollAdjustment_MovesBottomCellToScrollCenter() {
+        let scrollFrame = CGRect(x: 0, y: 116, width: 402, height: 696)
+        let targetFrame = CGRect(x: 0, y: 790, width: 402, height: 53)
+
+        let adjust = centerScrollAdjustment(targetFrame: targetFrame, scrollFrame: scrollFrame)
+
+        XCTAssertEqual(adjust.dx, 0)
+        XCTAssertEqual(adjust.dy, -352.5)
+    }
+
+    func testCenterScrollAdjustment_MovesCellInsideAppButBelowScrollableFrameToCenter() {
+        let collectionScrollFrame = CGRect(x: 0, y: 116, width: 402, height: 672)
+        let generalCellFrame = CGRect(x: 0, y: 842, width: 402, height: 53)
+
+        let adjust = centerScrollAdjustment(targetFrame: generalCellFrame,
+                                            scrollFrame: collectionScrollFrame)
+
+        XCTAssertEqual(adjust.dx, 0)
+        XCTAssertEqual(adjust.dy, -416.5)
+    }
+
+    func testCenterScrollAdjustment_MovesSafeAreaClippedCellToCenter() {
+        let scrollFrame = CGRect(x: 0, y: 116, width: 402, height: 696)
+        let targetFrame = CGRect(x: 0, y: 750, width: 402, height: 53)
+
+        let adjust = centerScrollAdjustment(targetFrame: targetFrame, scrollFrame: scrollFrame)
+
+        XCTAssertEqual(adjust.dx, 0)
+        XCTAssertEqual(adjust.dy, -312.5)
+    }
+
+    func testCenterScrollAdjustment_MovesTopCellToScrollCenter() {
+        let scrollFrame = CGRect(x: 0, y: 116, width: 402, height: 696)
+        let targetFrame = CGRect(x: 0, y: 90, width: 402, height: 53)
+
+        let adjust = centerScrollAdjustment(targetFrame: targetFrame, scrollFrame: scrollFrame)
+
+        XCTAssertEqual(adjust.dx, 0)
+        XCTAssertEqual(adjust.dy, 347.5)
+    }
 }

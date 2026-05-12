@@ -18,7 +18,8 @@ enum FindResult {
 /// the indexed element count, s is the number of precomputed searchable texts
 /// per element, m is the number of contains matches, h is ancestor depth for
 /// context filtering, c is candidate string count, q is query length, and t is
-/// candidate length used by fuzzy fallback.
+/// candidate length used by fuzzy fallback. Effective-visible preference adds
+/// O(m) only for contains matches.
 func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapshot) -> FindResult {
     let query = label.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else {
@@ -55,7 +56,7 @@ func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapsh
         }
     }
 
-    matches = preferVisibleMatches(matches)
+    matches = preferVisibleMatches(matches, appFrame: cs.appFrame)
 
     if matches.isEmpty { return .notFound(suggestions: []) }
     if matches.count > 1 { return .ambiguous(matches: matches) }
@@ -71,8 +72,8 @@ func rawFind(_ label: String, traits: String? = nil) -> FindResult {
     return rawFindInSnapshot(label, traits: traits, cs: cs)
 }
 
-private func preferVisibleMatches(_ matches: [SnapshotElement]) -> [SnapshotElement] {
-    let visible = matches.filter { $0.isVisible }
+private func preferVisibleMatches(_ matches: [SnapshotElement], appFrame: CGRect) -> [SnapshotElement] {
+    let visible = matches.filter { isVisibleWithEffectiveGeometry($0, in: appFrame) }
     return visible.isEmpty ? matches : visible
 }
 
