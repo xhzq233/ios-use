@@ -4,14 +4,6 @@ vars:
   server: "192.168.1.1"
   port: "9080"
 steps:
-  - action: activateApp
-    bundleId: com.apple.Preferences
-    comment: "确保设置在前台"
-
-  - action: openURL
-    url: "App-Prefs:"
-    comment: "打开设置首页"
-
   - action: tap
     label: com.apple.settings.wifi
     comment: "进入无线局域网设置"
@@ -30,12 +22,26 @@ steps:
     comment: "点击当前已连接网络行右侧的详情按钮"
 
   - action: swipe
-    to: 配置代理
-    comment: "滚动到配置代理可见"
+    dir: forth
+    distance: 450
+    comment: "向下滚动到 IPv4/DNS 区域"
+
+  - action: swipe
+    dir: forth
+    distance: 150
+    comment: "继续滚动到 HTTP 代理区域"
+
+  - action: waitFor
+    label: 配置代理
+    timeout: 3
+    comment: "确认配置代理已可见"
 
   - action: tap
     label: 配置代理
     comment: "进入配置代理"
+
+  - action: sleep
+    ms: 500
 
   - action: waitFor
     label: 手动
