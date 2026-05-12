@@ -80,8 +80,8 @@ export async function connectUsbmux(udid: string, port: number): Promise<net.Soc
     }, 0);
 
     const devices = listResp.DeviceList as Array<{ Properties: { SerialNumber: string; DeviceID: number } }>;
-    const normalizedUdid = udid.replace(/-/g, '');
-    const device = devices.find(d => d.Properties.SerialNumber.replace(/-/g, '') === normalizedUdid);
+    const normalizedUdid = udid.replace(/-/g, '').toLowerCase();
+    const device = devices.find(d => d.Properties.SerialNumber.replace(/-/g, '').toLowerCase() === normalizedUdid);
     if (!device) {
       socket.destroy();
       throw new Error(

@@ -1,12 +1,16 @@
 import type { NSLoggerServer } from '../nslogger.js';
+import type { DriverClient } from '../driver-client/client.js';
 import type {
   LabelOrPoint,
   SwipeDir,
 } from '../driver-protocol/index.js';
 import type { ActionName } from './registry.js';
 
+export type FlowControlAction = 'runFlow' | 'returnIf';
+export type Driver = DriverClient;
+
 export interface FlowStep {
-  action: ActionName;
+  action: ActionName | FlowControlAction;
 
   // Label / traits (tap/longpress/input/find/swipe/waitFor)
   label?: LabelOrPoint;

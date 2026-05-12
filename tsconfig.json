@@ -15,11 +15,12 @@
     "rootDir": ".",
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "maxNodeModuleJsDepth": 0,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
-    "types": ["bun-types", "node"]
+    "types": ["node"]
   },
   "include": ["src/**/*", "driver/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "dist", "altsign-cli"]
+  "exclude": ["node_modules", "dist", "altsign-cli", "driver/build"]
 }

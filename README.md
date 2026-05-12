@@ -13,7 +13,7 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 - **Zero external dependencies**: No Appium server, no WDA, no iproxy, no ideviceinstaller — only macOS system tools (`xcrun`, `usbmuxd`) and a free Apple ID.
 - **Custom TCP driver**: The CLI talks directly to a lightweight XCTest driver over TCP or usbmuxd, without an HTTP bridge.
 - **Free Apple ID signing**: Signs and installs the driver using a regular (free) Apple ID via altsign-cli. No paid developer account required.
-- **Fast session reuse**: `session start` prepares the driver once; later commands reconnect automatically. DOM queries hit `~74 ms`, find hits `~45 ms`.
+- **Auto session reuse**: the first action command starts or reconnects the driver automatically; later commands reuse the saved session state. DOM queries hit `~74 ms`, find hits `~45 ms`.
 - **Real device and Simulator**: Real devices connect through usbmuxd; Simulators connect over `localhost:8100`.
 - **Smart DOM tree**: a unified cleaning pipeline trims the raw XCUI snapshot into a concise, readable tree while preserving visible hierarchy and useful traits.
 - **Normalized find with context disambiguation**: contains-match over label/value text with whitespace, punctuation, and case normalization, plus fuzzy fallback and `ancestorType`/`ancestorLabel` filtering.
@@ -61,16 +61,17 @@ ios-use config --simulator --udid <simulator-udid>
 
 `config` signs and installs the driver onto the target. CLI installation alone does not require Xcode, but **driving any real device or Simulator currently depends on a full Xcode installation**.
 
-### 3. Start A Session
+### 3. Select An App
 
 ```bash
-ios-use session start --udid <device-udid> --bundle-id com.apple.Preferences
+ios-use devices
+ios-use activateApp com.apple.Preferences --udid <device-udid>
 ```
 
-Or create a device session without binding an app:
+No manual `session start` is required. The first action command auto-creates a device session; `activateApp` foregrounds the target app when needed.
 
 ```bash
-ios-use session start --udid <device-udid>
+ios-use dom --udid <device-udid>
 ```
 
 ### 4. Run Commands
@@ -78,7 +79,7 @@ ios-use session start --udid <device-udid>
 ```bash
 ios-use dom
 ios-use find "蓝牙"
-ios-use tap --label "通用"
+ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use input --label "搜索" --content "蓝牙"
 ios-use screenshot --name settings-home
@@ -113,17 +114,18 @@ The host side is implemented in TypeScript and Bun. The device side is a Swift X
 
 ### Session Model
 
-- `session start` prepares the driver and stores local session state under `~/.ios-use/`
-- Later commands reuse that session and reconnect directly to the driver
+- The first action command prepares the driver and stores local session state under `~/.ios-use/`
+- Later commands reuse that session metadata and reconnect directly to the driver
+- `ios-use stop` stops the driver process and clears local session state
 - Lifecycle mutations such as `activateApp`, `terminateApp`, and session creation invalidate stale snapshots before the next DOM-based command
 
 ### Command Surface
 
 The public CLI mirrors the flow action set:
 
-- `device`
+- `devices`
 - `config`
-- `session start|stop|status`
+- `stop`
 - `activateApp`
 - `terminateApp`
 - `dom`
@@ -160,7 +162,7 @@ Setup summary:
 
 | Case | ios-use Avg (ms) | Appium+WDA Avg (ms) | Reduction |
 | --- | ---: | ---: | --- |
-| `session_start_app` | 9621.9 | 10371.4 | `7.2%` |
+| `auto_session_activate_app` | 9621.9 | 10371.4 | `7.2%` |
 | `dom` | 74.4 | 1642.3 | `95.5%` |
 | `find` | 45.8 | 368.3 | `87.6%` |
 | `waitFor` | 55.7 | 364.1 | `84.7%` |

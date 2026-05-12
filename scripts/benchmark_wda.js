@@ -122,7 +122,7 @@ Options:
   --bundle-id <id>    app bundle to benchmark, default: ${DEFAULT_APP_BUNDLE}
   --label <text>      anchor label for find/waitFor, default: ${DEFAULT_LABEL}
   --custom-udid <id>  custom-driver device UDID, default: WDA_INSTALLED_DEVICE
-  --cases <list>      comma-separated subset, e.g. session_start_app,dom_vs_source,find
+  --cases <list>      comma-separated subset, e.g. auto_session_activate_app,dom_vs_source,find
 
 Optional env:
   APPIUM_WDA_URL      existing WDA base URL for Appium attach mode
@@ -237,7 +237,7 @@ function terminateProcessesByExecutableName(udid, executableNames) {
 }
 
 function terminateCustomDriverProcesses(udid) {
-  terminateProcessesByExecutableName(udid, ['IOSUseDriverXCTest-Runner']);
+  terminateProcessesByExecutableName(udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
 }
 
 function terminateWdaProcesses(udid) {
@@ -304,16 +304,19 @@ async function startAppiumServer() {
   ensureDir(LOG_DIR);
   const logFile = path.join(LOG_DIR, 'appium-benchmark.log');
   const outFd = fs.openSync(logFile, 'a');
-
-  appiumProcess = spawn('appium', ['server', '--address', APPIUM_HOST, '--port', String(APPIUM_PORT)], {
-    cwd: ROOT,
-    stdio: ['ignore', outFd, outFd],
-    detached: true,
-    env: {
-      ...process.env,
-      APPIUM_XCUITEST_PREFER_DEVICECTL: process.env.APPIUM_XCUITEST_PREFER_DEVICECTL || '1',
-    },
-  });
+  try {
+    appiumProcess = spawn('appium', ['server', '--address', APPIUM_HOST, '--port', String(APPIUM_PORT)], {
+      cwd: ROOT,
+      stdio: ['ignore', outFd, outFd],
+      detached: true,
+      env: {
+        ...process.env,
+        APPIUM_XCUITEST_PREFER_DEVICECTL: process.env.APPIUM_XCUITEST_PREFER_DEVICECTL || '1',
+      },
+    });
+  } finally {
+    try { fs.closeSync(outFd); } catch {}
+  }
   appiumProcess.unref();
   appiumStartedByScript = true;
 
@@ -583,26 +586,26 @@ class AppiumDriver {
 
 function customStopSessionQuiet() {
   try {
-    cli(['session', 'stop'], { allowFailure: true });
+    cli(['stop'], { allowFailure: true });
   } catch {
     // ignore
   }
 }
 
-async function customPrepareNoSession() {
+async function customPrepareNoSession(customUdid = WDA_DEVICE_UDID) {
   customStopSessionQuiet();
-  terminateCustomDriverProcesses(WDA_DEVICE_UDID);
-  terminateWdaProcesses(WDA_DEVICE_UDID);
-  await waitForProcessesGone(WDA_DEVICE_UDID, ['IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
+  terminateCustomDriverProcesses(customUdid);
+  terminateWdaProcesses(customUdid);
+  await waitForProcessesGone(customUdid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
   await sleep(3000);
 }
 
 async function customPrepareAppSession(customUdid, appBundle, label) {
   customStopSessionQuiet();
-  terminateCustomDriverProcesses(WDA_DEVICE_UDID);
-  terminateWdaProcesses(WDA_DEVICE_UDID);
-  await waitForProcessesGone(WDA_DEVICE_UDID, ['IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
-  cli(['session', 'start', '--udid', customUdid, '--bundle-id', appBundle]);
+  terminateCustomDriverProcesses(customUdid);
+  terminateWdaProcesses(customUdid);
+  await waitForProcessesGone(customUdid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
+  cli(['activateApp', appBundle, '--udid', customUdid]);
   cli(['waitFor', '--label', label, '--timeout', '8']);
 }
 
@@ -610,7 +613,7 @@ async function appiumPrepareNoSession(driver) {
   customStopSessionQuiet();
   terminateCustomDriverProcesses(driver.udid);
   await driver.resetState();
-  await waitForProcessesGone(driver.udid, ['IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
+  await waitForProcessesGone(driver.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
   await sleep(2000);
 }
 
@@ -618,7 +621,7 @@ async function appiumPrepareSettingsHome(driver, label) {
   customStopSessionQuiet();
   terminateCustomDriverProcesses(driver.udid);
   await driver.resetState();
-  await waitForProcessesGone(driver.udid, ['IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
+  await waitForProcessesGone(driver.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
   await sleep(1000);
   await driver.createSession();
   await driver.updateSettings({ screenshotQuality: WDA_SCREENSHOT_QUALITY });
@@ -670,17 +673,18 @@ function buildCases(ctx) {
 
   return [
     {
-      name: 'session_start_app',
+      name: 'auto_session_activate_app',
       kind: 'lifecycle',
       runs: 1,
-      mapping: '`session start --bundle-id` ↔ `POST /session`',
-      customPrepare: async () => { await customPrepareNoSession(); },
+      mapping: '`activateApp` auto-session ↔ `POST /session` + activate app',
+      customPrepare: async () => { await customPrepareNoSession(ctx.customUdid); },
       customRun: async () => {
-        cli(['session', 'start', '--udid', ctx.customUdid, '--bundle-id', ctx.appBundle]);
+        cli(['activateApp', ctx.appBundle, '--udid', ctx.customUdid]);
       },
       appiumPrepare: async () => { await appiumPrepareNoSession(ctx.appium); },
       appiumRun: async () => {
         await ctx.appium.createSession();
+        await ctx.appium.activateApp(ctx.appBundle);
       },
     },
     {
@@ -735,11 +739,11 @@ function buildCases(ctx) {
       name: 'tap_coord',
       kind: 'mutate',
       runs: ctx.iterations,
-      mapping: '`tap --label x,y` ↔ `POST /actions`',
+      mapping: '`tap x,y` ↔ `POST /actions`',
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['tap', '--label', `${centerX},${topTapY}`]); },
+      customRun: async () => { cli(['tap', `${centerX},${topTapY}`]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.tap(centerX, topTapY); },
     },
@@ -747,11 +751,11 @@ function buildCases(ctx) {
       name: 'tap_label',
       kind: 'mutate',
       runs: ctx.iterations,
-      mapping: '`tap --label 蓝牙` ↔ `POST /element` + `POST /element/:id/click`',
+      mapping: '`tap 蓝牙` ↔ `POST /element` + `POST /element/:id/click`',
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['tap', '--label', ctx.label]); },
+      customRun: async () => { cli(['tap', ctx.label]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => {
         const elementId = await ctx.appium.findElement(ctx.label);
@@ -762,11 +766,11 @@ function buildCases(ctx) {
       name: 'longpress_coord',
       kind: 'mutate',
       runs: ctx.iterations,
-      mapping: '`longpress --label x,y` ↔ `POST /actions`',
+      mapping: '`longpress x,y` ↔ `POST /actions`',
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['longpress', '--label', `${centerX},${topTapY}`, '--duration', '500']); },
+      customRun: async () => { cli(['longpress', `${centerX},${topTapY}`, '--duration', '500']); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.longPress(centerX, topTapY, 500); },
     },
@@ -778,7 +782,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['input', '--label', '搜索', '--content', '蓝牙', '--context.ancestor-type', 'SearchField']); },
+      customRun: async () => { cli(['input', '--label', '搜索', '--content', '蓝牙', '--traits', 'SearchField']); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => {
         const elementId = await ctx.appium.findElement('搜索');
