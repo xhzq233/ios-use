@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Use ios-use to drive iOS devices via CLI. Covers session management, UI element inspection (dom/find), tap/swipe/input actions, screenshot, oslog/nslog, app lifecycle, and YAML flow authoring. Use this skill when the user wants to interact with an iOS device, inspect screen elements, automate UI steps, write or debug automation flows, or check device logs."
+description: "Use ios-use to drive iOS devices via CLI. Covers auto-session, device management, UI element inspection (dom/find), tap/swipe/input actions, screenshot, oslog/nslog, app lifecycle, and YAML flow authoring. Use this skill when the user wants to interact with an iOS device, inspect screen elements, automate UI steps, write or debug automation flows, or check device logs."
 ---
 
 # ios-use Skill
@@ -17,8 +17,8 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 - 真机首次使用，或升级到新版本后，先执行：
 
 ```bash
-ios-use device              # 查看设备列表和 udid
-ios-use config --udid <udid>  # 签名并安装 driver
+ios-use devices               # 查看设备列表、udid 和配置状态
+ios-use config --udid <udid>  # 签名并安装 driver（显示 configured 后即可使用）
 ```
 
 - 首次若 altsign session 不存在，需要补 Apple ID：`--apple-id you@example.com --password 'app-password'`
@@ -30,32 +30,26 @@ ios-use config --udid <udid>  # 签名并安装 driver
 
 - 真机必须 USB 连接，WiFi 连接的设备在 usbmux 中不可见，会报错
 - 不传 `--udid` 时默认只选 USB 真机；如果要用 Simulator，必须显式传 `--udid`
-- 起 session 前先看当前状态：
-
-```bash
-ios-use session status
-```
-
-- `--udid` 只在 `session start` 时需要，后续命令复用 session 状态，不需要再传
+- 执行操作前先 `ios-use devices` 确认设备已连接且显示 `configured`
+- 任意操作命令（dom/tap/swipe/...）首次执行时自动创建 session，无需手动 `session start`
 - 执行动作前，多用 `dom` 查看当前页面状态，不要盲点
 
 ## 3. 推荐工作流
 
-### 3.1 先看 session，再起 session
+### 3.1 前置准备
 
 ```bash
-ios-use session status
+ios-use devices               # 确认设备已连接且 configured
 ```
+
+设备未显示 `configured` 时先执行 `ios-use config --udid <udid>`。
+
+无需手动创建 session——首次执行任意操作命令（dom、tap 等）时自动建连。需要操作特定 app 时先 `activateApp`：
 
 ```bash
-# app session —— 指定目标 app
-ios-use session start --udid <udid> --bundle-id com.apple.Preferences
-
-# 或 device session —— 不绑定 app，后续用 activateApp 切换
-ios-use session start --udid <udid>
+ios-use activateApp com.apple.Preferences
+ios-use dom
 ```
-
-`session start` 之后的所有命令（dom、find、tap 等）直接复用 session，不需要再传 `--udid`。
 
 ### 3.2 先用 dom 探索页面
 
@@ -178,14 +172,11 @@ ios-use flow my-flow.yaml
 
 ## 6. 常见排障
 
-- `session start` 异常：
+- 操作命令异常（连不上设备）：
 
 ```bash
-ios-use session status
-ios-use config --udid <udid>
-ios-use session stop 2>/dev/null || true
-sleep 3
-ios-use session start --udid <udid> --bundle-id com.apple.Preferences
+ios-use devices                 # 确认设备 configured
+ios-use config --udid <udid>    # 重新签名安装（会自动清理旧 session）
 ```
 
 - 行为和预期不一致：
@@ -201,6 +192,9 @@ ios-use session start --udid <udid> --bundle-id com.apple.Preferences
 
 | 旧写法 | 新写法 |
 |--------|--------|
+| `session start` | 不需要，首次操作命令自动建连 |
+| `session stop` | `ios-use stop`（非必须） |
+| `session status` | `ios-use devices`（查看设备配置状态） |
 | `tap --text` | `tap <target>` |
 | `tap --label` | `tap <target>` |
 | `longpress --label` | `longpress <target>` |
