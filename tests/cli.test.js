@@ -59,4 +59,11 @@ describe('cli surface', () => {
     expect(result.status).toBe(1);
     expect(combinedOutput(result)).toContain('Flow file not found');
   });
+
+  test('flow accepts external vars before session setup', () => {
+    const result = runCli(['flow', 'missing-file.yaml', '--server', '192.168.1.10', '--port', '9080'], { HOME: isolatedHome() });
+    expect(result.status).toBe(1);
+    expect(combinedOutput(result)).toContain('Flow file not found');
+    expect(combinedOutput(result)).not.toContain('too many arguments');
+  });
 });

@@ -1,4 +1,6 @@
 import net from 'node:net';
+import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
@@ -11,6 +13,7 @@ import { flowAction } from './flow.js';
 
 const MITMDUMP_PORT = 9080;
 const STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-session.json');
+const CA_STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-ca.json');
 const EVENTS_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-events.jsonl');
 const ADDON_FILE = path.join(IOS_USE_HOME, 'state', 'proxy_jsonl_addon.py');
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -25,7 +28,6 @@ export interface ProxySessionState {
   eventsFile: string;
   caInstalled?: boolean;
   network?: {
-    ssid: string;
     interface: string;
     macLanIp: string;
   };
@@ -35,8 +37,13 @@ export interface ProxySessionState {
 
 interface WifiInfo {
   interface: string;
-  ssid: string;
   macLanIp: string;
+}
+
+interface ProxyCAState {
+  udid: string;
+  fingerprint: string;
+  installedAt: number;
 }
 
 let mitmdumpProc: ChildProcess | null = null;
@@ -53,6 +60,24 @@ function writeState(state: ProxySessionState): void {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n');
 }
 
+function readCAState(): ProxyCAState | null {
+  if (!fs.existsSync(CA_STATE_FILE)) return null;
+  try { return JSON.parse(fs.readFileSync(CA_STATE_FILE, 'utf-8')); } catch { return null; }
+}
+
+function writeCAState(state: ProxyCAState): void {
+  ensureStateDir();
+  fs.writeFileSync(CA_STATE_FILE, JSON.stringify(state, null, 2) + '\n');
+}
+
+function fingerprintPem(pem: string): string {
+  const body = pem
+    .replace(/-----BEGIN CERTIFICATE-----/, '')
+    .replace(/-----END CERTIFICATE-----/, '')
+    .replace(/\s/g, '');
+  return crypto.createHash('sha256').update(Buffer.from(body, 'base64')).digest('hex');
+}
+
 async function killPid(pid: number | undefined): Promise<void> {
   if (!pid || !isProcessAlive(pid)) return;
   process.kill(pid, 'SIGTERM');
@@ -66,14 +91,6 @@ async function killPid(pid: number | undefined): Promise<void> {
 
 function runText(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
-
-function runTextWithInput(cmd: string, args: string[], input: string): string {
-  return execFileSync(cmd, args, {
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-    input,
-  }).trim();
 }
 
 function parseDurationMs(input: string): number {
@@ -101,31 +118,8 @@ function getWifiInterface(): string {
   throw new Error('WIFI_INTERFACE_NOT_FOUND');
 }
 
-function getWifiSsid(): string {
-  try {
-    const plist = execFileSync('system_profiler', ['SPAirPortDataType', '-xml'], {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    const ssid = runTextWithInput(
-      '/usr/libexec/PlistBuddy',
-      ['-c', 'Print :0:_items:0:spairport_airport_interfaces:0:spairport_current_network_information:_name', '/dev/stdin'],
-      plist,
-    );
-    if (ssid && ssid !== '<redacted>') return ssid;
-  } catch {}
-  try {
-    const out = runText('system_profiler', ['SPAirPortDataType']);
-    const match = out.match(/Current Network Information:\s*\n\s*([^:\n]+):/);
-    if (match?.[1] && match[1] !== '<redacted>') return match[1].trim();
-  } catch {}
-  throw new Error(`WIFI_SSID_NOT_FOUND`);
-}
-
 function detectWifiInfo(): WifiInfo {
   const iface = getWifiInterface();
-  const ssid = getWifiSsid();
   let macLanIp: string;
   try {
     macLanIp = runText('ipconfig', ['getifaddr', iface]);
@@ -133,14 +127,10 @@ function detectWifiInfo(): WifiInfo {
     throw new Error(`MAC_LAN_IP_NOT_FOUND`);
   }
   if (!macLanIp) throw new Error(`MAC_LAN_IP_NOT_FOUND`);
-  return { interface: iface, ssid, macLanIp };
+  return { interface: iface, macLanIp };
 }
 
 // ── mitmdump ──
-
-function killExistingMitmdump(): void {
-  try { execFileSync('pkill', ['-f', `mitmdump.*${MITMDUMP_PORT}`], { stdio: 'ignore' }); } catch {}
-}
 
 function waitForPort(port: number, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -156,6 +146,63 @@ function waitForPort(port: number, timeoutMs: number): Promise<void> {
     };
     tryConnect();
   });
+}
+
+async function waitForFileGrowth(file: string, previousSize: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const size = fs.existsSync(file) ? fs.statSync(file).size : 0;
+    if (size > previousSize) return true;
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  return false;
+}
+
+async function startLanProbeServer(): Promise<{ port: number; close: () => Promise<void> }> {
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('ios-use-ok');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '0.0.0.0', () => {
+      server.off('error', reject);
+      resolve();
+    });
+  });
+  const addr = server.address();
+  if (!addr || typeof addr === 'string') {
+    server.close();
+    throw new Error('LAN_PROBE_SERVER_FAILED');
+  }
+  return {
+    port: addr.port,
+    close: () => new Promise(resolve => server.close(() => resolve())),
+  };
+}
+
+async function verifyDeviceCanReachMac(client: DriverClient, macLanIp: string): Promise<void> {
+  const probe = await startLanProbeServer();
+  try {
+    logger.info('Verifying device can reach Mac LAN IP...');
+    const result = await client.probeFetch(`http://${macLanIp}:${probe.port}/ping`, 5);
+    if (result.statusCode !== 200) {
+      throw new Error(`DEVICE_CANNOT_REACH_MAC: LAN probe returned status ${result.statusCode}`);
+    }
+  } finally {
+    await probe.close();
+  }
+}
+
+async function verifyProxyTraffic(client: DriverClient, eventsFile: string): Promise<void> {
+  const beforeSize = fs.existsSync(eventsFile) ? fs.statSync(eventsFile).size : 0;
+  const url = `http://example.com/ios-use-proxy-probe-${Date.now()}`;
+  logger.info('Verifying device traffic reaches mitmdump...');
+  await client.probeFetch(url, 8);
+  const observed = await waitForFileGrowth(eventsFile, beforeSize, 5000);
+  if (!observed) {
+    throw new Error('DEVICE_CANNOT_REACH_MAC: device probe did not appear in mitmdump events.');
+  }
 }
 
 async function generateMitmproxyCA(confdir: string): Promise<void> {
@@ -319,24 +366,7 @@ async function runFlow(name: string, opts?: { udid?: string; vars?: Record<strin
     throw new Error(`Flow file not found: ${file}`);
   }
 
-  if (opts?.vars && Object.keys(opts.vars).length > 0) {
-    // Write a temp flow that includes vars
-    const yaml = fs.readFileSync(file, 'utf-8');
-    const varsYaml = Object.entries(opts.vars)
-      .map(([k, v]) => `  ${k}: "${v}"`)
-      .join('\n');
-    const augmented = `vars:\n${varsYaml}\n${yaml}`;
-    const tmpFile = path.join(IOS_USE_HOME, 'state', `_proxy_flow_${Date.now()}.yaml`);
-    ensureStateDir();
-    fs.writeFileSync(tmpFile, augmented);
-    try {
-      await flowAction(tmpFile, { udid: opts.udid });
-    } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
-    }
-  } else {
-    await flowAction(file, { udid: opts?.udid });
-  }
+  await flowAction(file, { udid: opts?.udid, vars: opts?.vars });
 }
 
 // ── Commands ──
@@ -381,6 +411,13 @@ export async function proxyConfigCA(
     eventsFile: EVENTS_FILE,
   };
   writeState({ ...state, caInstalled: true });
+  if (opts.udid) {
+    writeCAState({
+      udid: opts.udid,
+      fingerprint: fingerprintPem(caPem),
+      installedAt: Date.now(),
+    });
+  }
 
   logger.success('CA installed and trusted on device.');
 }
@@ -394,26 +431,32 @@ export async function proxyStart(
     throw new Error('Proxy already running. Run `proxy stop` first.');
   }
 
-  if (!state?.caInstalled) {
-    logger.warn('CA not configured. Run `proxy configca` first for HTTPS decryption.');
-  }
-
-  ensureStateDir();
-  fs.writeFileSync(EVENTS_FILE, '');
-
   const mitmproxyDir = path.join(process.env.HOME || '', '.mitmproxy');
   const caPath = path.join(mitmproxyDir, 'mitmproxy-ca-cert.pem');
   if (!fs.existsSync(caPath)) {
     logger.info('Generating mitmproxy CA...');
     await generateMitmproxyCA(mitmproxyDir);
   }
+  if (!fs.existsSync(caPath)) {
+    throw new Error('CA_NOT_GENERATED: Failed to generate mitmproxy CA.');
+  }
+
+  const caPem = fs.readFileSync(caPath, 'utf-8');
+  const caState = readCAState();
+  const caReady = !!opts.udid && !!caPem && caState?.udid === opts.udid && caState?.fingerprint === fingerprintPem(caPem);
+  if (!caReady) {
+    logger.warn('CA not configured. Run `proxy configca` first for HTTPS decryption.');
+  }
+
+  ensureStateDir();
+  fs.writeFileSync(EVENTS_FILE, '');
 
   logger.info('Detecting Mac Wi-Fi...');
   const wifi = detectWifiInfo();
-  logger.info(`Wi-Fi: ${wifi.ssid} (${wifi.interface}, ${wifi.macLanIp})`);
+  logger.info(`Wi-Fi: ${wifi.interface}, ${wifi.macLanIp}`);
+  await verifyDeviceCanReachMac(_client, wifi.macLanIp);
 
   logger.info('Starting mitmdump...');
-  killExistingMitmdump();
   mitmdumpProc = await startMitmdump(mitmproxyDir, EVENTS_FILE, {
     stream: opts.stream,
     noBody: opts.noBody,
@@ -426,6 +469,8 @@ export async function proxyStart(
     vars: { server: wifi.macLanIp, port: String(MITMDUMP_PORT) },
   });
 
+  await verifyProxyTraffic(_client, EVENTS_FILE);
+
   const now = Date.now();
   writeState({
     sessionId: `proxy-${now}`,
@@ -433,7 +478,7 @@ export async function proxyStart(
     startedAt: now,
     udid: opts.udid || '',
     eventsFile: EVENTS_FILE,
-    caInstalled: state?.caInstalled,
+    caInstalled: caReady,
     network: wifi,
     mitmdumpPid: mitmdumpProc?.pid,
     mitmdumpPort: MITMDUMP_PORT,
@@ -509,7 +554,7 @@ export function proxyRead(opts: { count?: number; duration?: string; save?: stri
 }
 
 export function proxyDoctor(): void {
-  const checks: Array<{ name: string; ok: boolean; fix: string }> = [];
+  const checks: Array<{ name: string; ok: boolean; fix: string; warn?: boolean }> = [];
 
   try {
     execFileSync('mitmdump', ['--version'], { stdio: 'pipe' });
@@ -519,18 +564,24 @@ export function proxyDoctor(): void {
   }
 
   const caPath = path.join(process.env.HOME || '', '.mitmproxy', 'mitmproxy-ca-cert.pem');
-  checks.push({ name: 'CA generated', ok: fs.existsSync(caPath), fix: 'Run `proxy configca`' });
+  const caGenerated = fs.existsSync(caPath);
+  checks.push({ name: 'CA generated', ok: caGenerated, fix: 'Run `proxy configca`' });
 
   try {
     const wifi = detectWifiInfo();
-    checks.push({ name: `Wi-Fi SSID: ${wifi.ssid}`, ok: true, fix: '' });
     checks.push({ name: `LAN IP: ${wifi.macLanIp} (${wifi.interface})`, ok: true, fix: '' });
   } catch (err) {
     checks.push({ name: 'Mac Wi-Fi', ok: false, fix: String(err) });
   }
 
   const state = readProxyState();
-  checks.push({ name: 'CA installed on device', ok: !!state?.caInstalled, fix: 'Run `proxy configca`' });
+  const caState = readCAState();
+  let caMatches = false;
+  if (caGenerated && caState) {
+    const caPem = fs.readFileSync(caPath, 'utf-8');
+    caMatches = caState.fingerprint === fingerprintPem(caPem);
+  }
+  checks.push({ name: 'CA installed on device', ok: !!caState && caMatches, fix: 'Run `proxy configca`' });
   checks.push({
     name: 'Proxy running',
     ok: state?.status === 'running' && isProcessAlive(state.mitmdumpPid),
@@ -539,7 +590,7 @@ export function proxyDoctor(): void {
 
   console.log('\nProxy Doctor:\n');
   for (const c of checks) {
-    const icon = c.ok ? '✓' : '✗';
+    const icon = c.ok ? (c.warn ? '!' : '✓') : '✗';
     console.log(`  ${icon} ${c.name}`);
     if (!c.ok && c.fix) console.log(`    → ${c.fix}`);
   }

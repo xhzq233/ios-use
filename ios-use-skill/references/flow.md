@@ -72,8 +72,12 @@ Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
 ### 5.1 `vars`
 
 - `vars` 是唯一输入模型
+- 顶层 `vars` 是默认值；CLI 外部变量可以覆盖同名默认值
+- CLI 外部变量写法：`ios-use flow <file> --targetLabel 蓝牙 --timeout 5`
+- `--udid`、`--verbose` 等 flow 命令自身选项不进入 `vars`
 - 普通字符串字段支持模板替换，例如 `${vars.targetLabel}`
 - 整段 `${...}` 可以传对象或数组原值，不只限于字符串
+- 实现上应在解析后的 flow runtime 合并外部变量，不能靠拼接 YAML 注入新的 `vars:` 块
 
 ```yaml
 vars:
@@ -83,6 +87,18 @@ steps:
   - action: waitFor
     label: ${vars.targetLabel}
     timeout: 5
+```
+
+运行时覆盖默认值：
+
+```bash
+ios-use flow settings.yaml --targetLabel Wi-Fi
+```
+
+适合 proxy 这类需要从 CLI 注入运行时参数的 flow：
+
+```bash
+ios-use flow flows/proxy_set_wifi_proxy.yaml --server 192.168.1.10 --port 9080
 ```
 
 ### 5.2 `outputs`

@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { executeStep, resetAbort, setAbort, waitForNslogMatch } from '../src/commands/actions.ts';
-import { runFlowFile } from '../src/commands/flow.ts';
+import { parseFlowCliVars, runFlowFile } from '../src/commands/flow.ts';
 import {
   tapArgsSer, longPressArgsSer, swipeArgsSer, inputArgsSer,
   waitForArgsSer, findArgsSer, domArgsSer,
@@ -107,6 +107,15 @@ function domSpy(callback) {
   return async (command, payload) => {
     if (command === DOM) {
       const args = domArgsSer.deserialize(payload);
+      callback(args);
+    }
+  };
+}
+
+function inputSpy(callback) {
+  return async (command, payload) => {
+    if (command === INPUT) {
+      const args = inputArgsSer.deserialize(payload);
       callback(args);
     }
   };
@@ -217,6 +226,46 @@ steps:
     await runFlowFile(driver, parentPath, {});
 
     expect(taps).toEqual(['调用方覆盖值']);
+  });
+
+  test('top-level external vars override flow defaults without rewriting yaml', async () => {
+    const dir = makeTempDir('ios-use-flow-external-vars-');
+    const flowPath = path.join(dir, 'flow.yaml');
+    const inputs = [];
+
+    fs.writeFileSync(flowPath, `
+name: external-vars
+vars:
+  server: 192.168.1.1
+  port: "8080"
+steps:
+  - action: input
+    label: 服务器
+    content: \${vars.server}
+  - action: input
+    label: 端口
+    content: \${vars.port}
+`);
+
+    const driver = createDriver({
+      sendRaw: composeSendRaw(inputSpy(args => inputs.push({ label: args.label, content: args.content }))),
+    });
+
+    await runFlowFile(driver, flowPath, {}, { server: '192.168.1.10', port: '9080' });
+
+    expect(inputs).toEqual([
+      { label: '服务器', content: '192.168.1.10' },
+      { label: '端口', content: '9080' },
+    ]);
+  });
+
+  test('parseFlowCliVars parses external vars and rejects reserved options', () => {
+    expect(parseFlowCliVars(['--server', '192.168.1.10', '--port=9080'])).toEqual({
+      server: '192.168.1.10',
+      port: '9080',
+    });
+    expect(() => parseFlowCliVars(['--verbose', 'true'])).toThrow('Reserved flow option');
+    expect(() => parseFlowCliVars(['--server'])).toThrow('Missing value');
   });
 
   test('derives dom candidates at flow layer and respects candidate priority', async () => {

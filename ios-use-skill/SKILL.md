@@ -86,9 +86,10 @@ ios-use terminateApp com.apple.Preferences
 
 ```bash
 ios-use flow my-flow.yaml
+ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 ```
 
-Flow 的编写规范、字段语义和 subflow 用法见 `references/flow.md`。
+Flow 的编写规范、字段语义、外部 `vars` 和 subflow 用法见 `references/flow.md`。
 
 ## 4. 当前命令语义
 
@@ -164,9 +165,10 @@ ios-use swipe --dir back --distance 300
 
 ```bash
 ios-use flow my-flow.yaml
+ios-use flow flows/proxy_set_wifi_proxy.yaml --server 192.168.1.10 --port 9080
 ```
 
-- 写 flow、拆 subflow、设计 `vars` / `outputs`、使用 `dom.candidates`、`returnIf` 时，查看 `references/flow.md`
+- 写 flow、拆 subflow、设计 `vars` / `outputs`、传 CLI 外部变量、使用 `dom.candidates`、`returnIf` 时，查看 `references/flow.md`
 - 手动排查 flow 某一步失败时，先回到本文件，用 `dom` / `find` / `screenshot` / `oslog` 单独验证该步骤
 - 新写 flow 时，先手动跑通每一个动作，再回到 YAML 里组装
 
