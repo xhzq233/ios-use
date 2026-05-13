@@ -16,8 +16,6 @@ import { runFlowFile } from './flow.js';
 const MITMDUMP_PORT = 9080;
 const STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-session.json');
 const CA_STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-ca.json');
-const EVENTS_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-events.jsonl');
-const ADDON_FILE = path.join(IOS_USE_HOME, 'state', 'proxy_jsonl_addon.py');
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FLOWS_DIR = path.join(MODULE_DIR, '../../flows');
 
@@ -27,7 +25,7 @@ export interface ProxySessionState {
   startedAt: number;
   stoppedAt?: number;
   udid: string;
-  eventsFile: string;
+  flowFile: string;
   caInstalled?: boolean;
   network?: {
     interface: string;
@@ -42,11 +40,12 @@ interface WifiInfo {
   macLanIp: string;
 }
 
-interface ProxyCAState {
-  udid: string;
+interface ProxyCADevice {
   fingerprint: string;
   installedAt: number;
 }
+
+type ProxyCAState = Record<string, ProxyCADevice>;
 
 let mitmdumpProc: ChildProcess | null = null;
 
@@ -62,9 +61,9 @@ function writeState(state: ProxySessionState): void {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n');
 }
 
-function readCAState(): ProxyCAState | null {
-  if (!fs.existsSync(CA_STATE_FILE)) return null;
-  try { return JSON.parse(fs.readFileSync(CA_STATE_FILE, 'utf-8')); } catch { return null; }
+function readCAState(): ProxyCAState {
+  if (!fs.existsSync(CA_STATE_FILE)) return {};
+  try { return JSON.parse(fs.readFileSync(CA_STATE_FILE, 'utf-8')); } catch { return {}; }
 }
 
 function writeCAState(state: ProxyCAState): void {
@@ -93,17 +92,6 @@ async function killPid(pid: number | undefined): Promise<void> {
 
 function runText(cmd: string, args: string[]): string {
   return execFileSync(cmd, args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
-
-function parseDurationMs(input: string): number {
-  const match = input.trim().match(/^(\d+(?:\.\d+)?)(ms|s|m)?$/);
-  if (!match) throw new Error(`Invalid duration: ${input}`);
-  const value = Number(match[1]);
-  const unit = match[2] ?? 'ms';
-  if (unit === 'ms') return value;
-  if (unit === 's') return value * 1000;
-  if (unit === 'm') return value * 60_000;
-  return value;
 }
 
 // ── LAN Detection ──
@@ -220,92 +208,7 @@ async function generateMitmproxyCA(confdir: string): Promise<void> {
   });
 }
 
-function writeMitmdumpAddon(file: string): void {
-  const script = String.raw`import json
-import os
-import time
-from mitmproxy import http
-
-events_file = os.environ.get("IOS_USE_PROXY_EVENTS")
-body_limit = int(os.environ.get("IOS_USE_BODY_LIMIT", "102400"))
-no_body = os.environ.get("IOS_USE_NO_BODY") == "1"
-
-TEXT_TYPES = ("json", "xml", "html", "text", "javascript", "css", "csv", "yaml", "form")
-
-def _is_text(content_type: str | None) -> bool:
-    if not content_type:
-        return False
-    ct = content_type.lower()
-    return any(t in ct for t in TEXT_TYPES)
-
-def _get_body(raw: bytes | None, content_type: str | None) -> tuple:
-    """Returns (body_str_or_none, truncated)"""
-    if no_body or raw is None:
-        return (None, False)
-    if not _is_text(content_type):
-        return (f"<binary {len(raw)} bytes>", False)
-    try:
-        text = raw.decode("utf-8", errors="replace")
-    except Exception:
-        return (f"<binary {len(raw)} bytes>", False)
-    if len(text) > body_limit:
-        return (text[:body_limit], True)
-    return (text, False)
-
-def _write(event):
-    line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
-    if events_file:
-        with open(events_file, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    print(line, flush=True)
-
-def response(flow: http.HTTPFlow):
-    req = flow.request
-    resp = flow.response
-    started = int((req.timestamp_start or time.time()) * 1000)
-    finished = int(((resp.timestamp_end if resp else None) or time.time()) * 1000)
-    
-    req_ct = req.headers.get("content-type")
-    resp_ct = resp.headers.get("content-type") if resp else None
-    req_body, req_trunc = _get_body(req.raw_content, req_ct)
-    resp_body, resp_trunc = _get_body(resp.raw_content if resp else None, resp_ct)
-    
-    _write({
-        "id": flow.id,
-        "method": req.method,
-        "url": req.pretty_url,
-        "host": req.pretty_host,
-        "status": resp.status_code if resp else None,
-        "contentType": resp_ct,
-        "requestHeaders": dict(req.headers),
-        "responseHeaders": dict(resp.headers) if resp else None,
-        "requestBody": req_body,
-        "responseBody": resp_body,
-        "bodyBytes": len(resp.raw_content or b"") if resp else 0,
-        "truncated": req_trunc or resp_trunc,
-        "startedAt": started,
-        "finishedAt": finished,
-    })
-
-def error(flow: http.HTTPFlow):
-    req = flow.request
-    _write({
-        "id": flow.id,
-        "method": req.method,
-        "url": req.pretty_url,
-        "host": req.pretty_host,
-        "error": str(flow.error) if flow.error else "unknown",
-        "startedAt": int((req.timestamp_start or time.time()) * 1000),
-        "finishedAt": int(time.time() * 1000),
-    })
-`;
-  fs.writeFileSync(file, script);
-}
-
-async function startMitmdump(confdir: string, eventsFile: string, opts: { stream?: boolean; noBody?: boolean; bodyLimit?: number }): Promise<ChildProcess> {
-  ensureStateDir();
-  writeMitmdumpAddon(ADDON_FILE);
-
+async function startMitmdump(confdir: string, flowFile: string): Promise<ChildProcess> {
   const args = [
     '-q',
     '--mode', 'regular',
@@ -314,28 +217,14 @@ async function startMitmdump(confdir: string, eventsFile: string, opts: { stream
     '--set', `confdir=${confdir}`,
     '--set', 'ssl_insecure=true',
     '--set', 'connection_strategy=lazy',
-    '-s', ADDON_FILE,
+    '--set', `save_stream_file=${flowFile}`,
   ];
 
-  const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
-    IOS_USE_PROXY_EVENTS: eventsFile,
-  };
-  if (opts.noBody) env.IOS_USE_NO_BODY = '1';
-  if (opts.bodyLimit !== undefined) env.IOS_USE_BODY_LIMIT = String(opts.bodyLimit);
-
-  const detached = !opts.stream;
   const proc = spawn('mitmdump', args, {
-    stdio: detached ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
-    detached,
-    env,
+    stdio: ['ignore', 'ignore', 'ignore'],
+    detached: true,
   });
-
-  if (!detached) {
-    proc.stdout?.on('data', (chunk: Buffer) => process.stdout.write(chunk));
-    proc.stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk));
-  }
-  if (detached) proc.unref();
+  proc.unref();
 
   proc.once('error', (err) => {
     logger.error(`mitmdump failed to start: ${err.message}`);
@@ -412,15 +301,16 @@ export async function proxyConfigCA(
     status: 'stopped' as const,
     startedAt: Date.now(),
     udid: opts.udid || '',
-    eventsFile: EVENTS_FILE,
+    flowFile: '',
   };
   writeState({ ...state, caInstalled: true });
   if (opts.udid) {
-    writeCAState({
-      udid: opts.udid,
+    const caState = readCAState();
+    caState[opts.udid] = {
       fingerprint: fingerprintPem(caPem),
       installedAt: Date.now(),
-    });
+    };
+    writeCAState(caState);
   }
 
   logger.success('CA installed and trusted on device.');
@@ -428,7 +318,7 @@ export async function proxyConfigCA(
 
 export async function proxyStart(
   _client: DriverClient,
-  opts: { udid?: string; stream?: boolean; noBody?: boolean; bodyLimit?: number; interfaceName?: string },
+  opts: { udid?: string; interfaceName?: string },
 ): Promise<void> {
   const state = readProxyState();
   if (state?.status === 'running' && isProcessAlive(state.mitmdumpPid)) {
@@ -447,13 +337,15 @@ export async function proxyStart(
 
   const caPem = fs.readFileSync(caPath, 'utf-8');
   const caState = readCAState();
-  const caReady = !!opts.udid && !!caPem && caState?.udid === opts.udid && caState?.fingerprint === fingerprintPem(caPem);
+  const caDevice = opts.udid ? caState[opts.udid] : undefined;
+  const caReady = !!caDevice && !!caPem && caDevice.fingerprint === fingerprintPem(caPem);
   if (!caReady) {
     logger.info('CA trust record not found. HTTP capture can still work; HTTPS decryption requires the CA to be installed and trusted.');
   }
 
-  ensureStateDir();
-  fs.writeFileSync(EVENTS_FILE, '');
+  const artifactsDir = path.join(IOS_USE_HOME, 'artifacts');
+  if (!fs.existsSync(artifactsDir)) fs.mkdirSync(artifactsDir, { recursive: true });
+  const flowFile = path.join(artifactsDir, `proxy-${new Date().toISOString().replace(/[:.]/g, '-')}.flow`);
 
   const wifi = detectLanInfo(opts.interfaceName);
   logger.info(`${opts.interfaceName ? 'Using requested interface' : 'Using Wi-Fi interface'}: ${wifi.interface}, ${wifi.macLanIp}`);
@@ -461,11 +353,7 @@ export async function proxyStart(
 
   logger.info('Starting mitmdump...');
   try {
-    mitmdumpProc = await startMitmdump(mitmproxyDir, EVENTS_FILE, {
-      stream: opts.stream,
-      noBody: opts.noBody,
-      bodyLimit: opts.bodyLimit,
-    });
+    mitmdumpProc = await startMitmdump(mitmproxyDir, flowFile);
 
     logger.info('Configuring device Wi-Fi proxy...');
     await runFlow(_client, 'proxy_set_wifi_proxy.yaml', {
@@ -486,7 +374,7 @@ export async function proxyStart(
     status: 'running',
     startedAt: now,
     udid: opts.udid || '',
-    eventsFile: EVENTS_FILE,
+    flowFile,
     caInstalled: caReady,
     network: wifi,
     mitmdumpPid: mitmdumpProc?.pid,
@@ -494,6 +382,8 @@ export async function proxyStart(
   });
 
   logger.success(`Proxy started. Traffic: device → ${wifi.macLanIp}:${MITMDUMP_PORT} → mitmdump`);
+  logger.info(`Capture: ${flowFile}`);
+  logger.info(`View with: mitmweb -r ${flowFile}`);
 }
 
 export async function proxyStop(
@@ -530,38 +420,6 @@ export async function proxyStop(
   logger.success('Proxy stopped.');
 }
 
-export function proxyRead(opts: { count?: number; duration?: string; save?: string }): void {
-  const state = readProxyState();
-  if (!state?.eventsFile) throw new Error('No recent proxy session.');
-  if (!fs.existsSync(state.eventsFile)) throw new Error(`Events file not found: ${state.eventsFile}`);
-
-  const lines = fs.readFileSync(state.eventsFile, 'utf-8').split('\n').filter(Boolean);
-  const since = opts.duration ? Date.now() - parseDurationMs(opts.duration) : 0;
-  const filtered = since > 0
-    ? lines.filter(line => {
-        try {
-          const ev = JSON.parse(line);
-          return (ev.finishedAt ?? ev.startedAt ?? 0) >= since;
-        } catch { return false; }
-      })
-    : lines;
-  const selected = filtered.slice(-Math.max(1, opts.count ?? 10));
-
-  if (opts.save !== undefined) {
-    const dir = path.join(IOS_USE_HOME, 'artifacts');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const name = typeof opts.save === 'string' && opts.save.length > 0
-      ? opts.save.replace(/[^A-Za-z0-9._-]/g, '_')
-      : `proxy-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
-    const out = path.join(dir, name.endsWith('.jsonl') ? name : `${name}.jsonl`);
-    fs.writeFileSync(out, selected.join('\n') + (selected.length ? '\n' : ''));
-    logger.success(`Saved ${selected.length} events to ${out}`);
-    return;
-  }
-
-  for (const line of selected) console.log(line);
-}
-
 export function proxyDoctor(): void {
   const checks: Array<{ name: string; status: 'ok' | 'fail' | 'info' | 'warn'; fix?: string }> = [];
 
@@ -569,7 +427,16 @@ export function proxyDoctor(): void {
     execFileSync('mitmdump', ['--version'], { stdio: 'pipe' });
     checks.push({ name: 'mitmdump installed', status: 'ok' });
   } catch {
-    checks.push({ name: 'mitmdump installed', status: 'fail', fix: 'Install: pip install mitmproxy' });
+    logger.info('mitmdump not found, installing mitmproxy...');
+    try {
+      const pip = ['pip3', 'pip'].find(p => { try { execFileSync(p, ['--version'], { stdio: 'pipe' }); return true; } catch { return false; } });
+      if (!pip) throw new Error('pip not found');
+      execFileSync(pip, ['install', 'mitmproxy'], { stdio: 'inherit' });
+      execFileSync('mitmdump', ['--version'], { stdio: 'pipe' });
+      checks.push({ name: 'mitmdump installed', status: 'ok' });
+    } catch (installErr) {
+      checks.push({ name: 'mitmdump installed', status: 'fail', fix: `Install failed: ${installErr}. Manual: pip install mitmproxy` });
+    }
   }
 
   const caPath = path.join(process.env.HOME || '', '.mitmproxy', 'mitmproxy-ca-cert.pem');
@@ -585,15 +452,21 @@ export function proxyDoctor(): void {
 
   const state = readProxyState();
   const caState = readCAState();
-  let caMatches = false;
-  if (caGenerated && caState) {
+  const caDeviceCount = Object.keys(caState).length;
+  let caCurrent = false;
+  if (caGenerated && caDeviceCount > 0) {
     const caPem = fs.readFileSync(caPath, 'utf-8');
-    caMatches = caState.fingerprint === fingerprintPem(caPem);
+    const fp = fingerprintPem(caPem);
+    caCurrent = Object.values(caState).some(d => d.fingerprint === fp);
   }
   checks.push({
-    name: caMatches ? 'CA trust record: current CA recorded for this host' : 'CA trust record: not recorded',
-    status: caMatches ? 'ok' : 'info',
-    fix: caMatches ? undefined : 'Run `proxy configca` to record CA install/trust state',
+    name: caCurrent
+      ? `CA trust record: current CA recorded (${caDeviceCount} device(s))`
+      : caDeviceCount > 0
+        ? `CA trust record: ${caDeviceCount} device(s) recorded, but CA fingerprint mismatch`
+        : 'CA trust record: not recorded',
+    status: caCurrent ? 'ok' : 'info',
+    fix: caCurrent ? undefined : 'Run `proxy configca` to record CA install/trust state',
   });
 
   const running = state?.status === 'running' && isProcessAlive(state.mitmdumpPid);
