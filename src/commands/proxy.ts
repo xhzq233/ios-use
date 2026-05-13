@@ -10,11 +10,10 @@ import { logger } from '../utils/logger.js';
 import { isProcessAlive } from '../utils/process.js';
 import { DriverClient } from '../driver-client/client.js';
 import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
-import { deserializeDomPayload, domArgsSer, openURLArgsSer } from '../driver-protocol/fory.js';
+import { openURLArgsSer } from '../driver-protocol/fory.js';
 import { runFlowFile } from './flow.js';
 
 const MITMDUMP_PORT = 9080;
-const LAN_PROBE_TEXT = 'ios-use-lan-ok';
 const STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-session.json');
 const CA_STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-ca.json');
 const EVENTS_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-events.jsonl');
@@ -159,10 +158,16 @@ function waitForPort(port: number, timeoutMs: number): Promise<void> {
   });
 }
 
-async function startLanProbeServer(): Promise<{ port: number; close: () => Promise<void> }> {
-  const server = http.createServer((_req, res) => {
+async function verifyDeviceCanReachMac(client: DriverClient, macLanIp: string): Promise<void> {
+  const token = crypto.randomUUID();
+  let received = false;
+  const server = http.createServer((req, res) => {
+    if (req.url === `/${token}`) {
+      received = true;
+      logger.info(`LAN probe verified: ${req.method} ${req.url} from ${req.socket.remoteAddress}`);
+    }
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(LAN_PROBE_TEXT);
+    res.end('ok');
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -173,46 +178,27 @@ async function startLanProbeServer(): Promise<{ port: number; close: () => Promi
   });
   const addr = server.address();
   if (!addr || typeof addr === 'string') {
-    server.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
     throw new Error('LAN_PROBE_SERVER_FAILED');
   }
-  return {
-    port: addr.port,
-    close: () => new Promise(resolve => server.close(() => resolve())),
-  };
-}
-
-async function openURL(client: DriverClient, url: string): Promise<void> {
-  const payload = openURLArgsSer.serialize({ url });
-  const resp = await client.sendRaw(DRIVER_COMMANDS.OPEN_URL, payload);
-  if (!resp.ok) throw new Error(`openURL failed: ${resp.error}`);
-}
-
-async function readDomText(client: DriverClient): Promise<string> {
-  const payload = domArgsSer.serialize({ raw: true, fresh: true });
-  const resp = await client.sendRaw(DRIVER_COMMANDS.DOM, payload);
-  if (!resp.ok) throw new Error(`dom failed: ${resp.error}`);
-  const dom = deserializeDomPayload(resp.payloadBytes!);
-  return dom.raw || JSON.stringify(dom.elements);
-}
-
-async function verifyDeviceCanReachMac(client: DriverClient, macLanIp: string): Promise<void> {
-  const probe = await startLanProbeServer();
   try {
     logger.info(`Verifying device can reach Mac LAN IP: ${macLanIp}`);
-    const url = `http://${macLanIp}:${probe.port}/ping`;
-    await openURL(client, url);
+    const url = `http://${macLanIp}:${addr.port}/${token}`;
+    const payload = openURLArgsSer.serialize({ url });
+    const resp = await client.sendRaw(DRIVER_COMMANDS.OPEN_URL, payload);
+    if (!resp.ok) throw new Error(`openURL failed: ${resp.error}`);
 
-    const deadline = Date.now() + 8000;
-    let lastDom = '';
+    const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 500));
-      lastDom = await readDomText(client);
-      if (lastDom.includes(LAN_PROBE_TEXT)) return;
+      await new Promise(r => setTimeout(r, 300));
+      if (received) return;
     }
-    throw new Error(`DEVICE_CANNOT_REACH_MAC: opened ${url} but DOM did not contain "${LAN_PROBE_TEXT}". Last DOM preview: ${lastDom.slice(0, 500)}`);
+    throw new Error(
+      `DEVICE_CANNOT_REACH_MAC: probe server received no requests to http://${macLanIp}:${addr.port}/${token}. ` +
+      `Ensure the iPhone is on the same WiFi and the network allows device-to-device communication (no AP isolation).`,
+    );
   } finally {
-    await probe.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
   }
 }
 
