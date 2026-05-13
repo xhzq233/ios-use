@@ -3,6 +3,7 @@ import {
   DRIVER_COMMANDS,
   omitUndefined,
 } from '../src/driver-protocol/index.js';
+import { toForyTarget } from '../src/driver-protocol/fory.js';
 
 describe('driver protocol', () => {
   test('exports stable command names', () => {
@@ -21,5 +22,12 @@ describe('driver protocol', () => {
       label: '蓝牙',
       raw: false,
     });
+  });
+
+  test('toForyTarget validates coordinate arrays', () => {
+    expect(toForyTarget([10, 20])).toEqual({ label: '', point: { x: 10, y: 20 } });
+    expect(() => toForyTarget(['10', '20'])).toThrow('Invalid coordinate point');
+    expect(() => toForyTarget([Number.NaN, 20])).toThrow('Invalid coordinate point');
+    expect(() => toForyTarget([Number.POSITIVE_INFINITY, 20])).toThrow('Invalid coordinate point');
   });
 });

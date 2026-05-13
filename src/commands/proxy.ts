@@ -336,7 +336,7 @@ async function startMitmdump(confdir: string, eventsFile: string, opts: { stream
     IOS_USE_PROXY_EVENTS: eventsFile,
   };
   if (opts.noBody) env.IOS_USE_NO_BODY = '1';
-  if (opts.bodyLimit) env.IOS_USE_BODY_LIMIT = String(opts.bodyLimit);
+  if (opts.bodyLimit !== undefined) env.IOS_USE_BODY_LIMIT = String(opts.bodyLimit);
 
   const detached = !opts.stream;
   const proc = spawn('mitmdump', args, {
@@ -474,17 +474,25 @@ export async function proxyStart(
   await verifyDeviceCanReachMac(_client, wifi.macLanIp);
 
   logger.info('Starting mitmdump...');
-  mitmdumpProc = await startMitmdump(mitmproxyDir, EVENTS_FILE, {
-    stream: opts.stream,
-    noBody: opts.noBody,
-    bodyLimit: opts.bodyLimit,
-  });
+  try {
+    mitmdumpProc = await startMitmdump(mitmproxyDir, EVENTS_FILE, {
+      stream: opts.stream,
+      noBody: opts.noBody,
+      bodyLimit: opts.bodyLimit,
+    });
 
-  logger.info('Configuring device Wi-Fi proxy...');
-  await runFlow(_client, 'proxy_set_wifi_proxy.yaml', {
-    udid: opts.udid,
-    vars: { server: wifi.macLanIp, port: String(MITMDUMP_PORT) },
-  });
+    logger.info('Configuring device Wi-Fi proxy...');
+    await runFlow(_client, 'proxy_set_wifi_proxy.yaml', {
+      udid: opts.udid,
+      vars: { server: wifi.macLanIp, port: String(MITMDUMP_PORT) },
+    });
+  } catch (error) {
+    const pid = mitmdumpProc?.pid;
+    try { mitmdumpProc?.kill('SIGTERM'); } catch {}
+    mitmdumpProc = null;
+    await killPid(pid);
+    throw error;
+  }
 
   const now = Date.now();
   writeState({

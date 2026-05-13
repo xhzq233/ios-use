@@ -20,7 +20,7 @@ enum FindResult {
 /// context filtering, c is candidate string count, q is query length, and t is
 /// candidate length used by fuzzy fallback. Effective-visible preference adds
 /// O(m) only for contains matches.
-func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapshot) -> FindResult {
+func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapshot, enableFuzzy: Bool = true) -> FindResult {
     let query = label.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else {
         return .notFound(suggestions: [])
@@ -37,6 +37,7 @@ func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapsh
 
     // 2. Fuzzy fallback when contains-match is empty.
     if matches.isEmpty {
+        guard enableFuzzy else { return .notFound(suggestions: []) }
         let suggestions = fuzzySuggestions(forNormalizedQuery: normalizedQuery, from: cs.searchCandidates)
         if !suggestions.isEmpty { return .fuzzy(suggestions: suggestions) }
         return .notFound(suggestions: [])

@@ -3,18 +3,36 @@ import { collectSimulatorLog } from './simulator-log.js';
 
 const MAX_BUFFER_SIZE = 5000;
 
-let buffer: string[] = [];
+const buffers = new Map<string, string[]>();
 let isSimulator = false;
 let simulatorUdid = '';
+let currentKey = 'real:';
+
+function makeBufferKey(simulator: boolean, udid?: string): string {
+  return `${simulator ? 'simulator' : 'real'}:${udid ?? ''}`;
+}
+
+function activeBuffer(): string[] {
+  const existing = buffers.get(currentKey);
+  if (existing) return existing;
+  const created: string[] = [];
+  buffers.set(currentKey, created);
+  return created;
+}
+
+function setActiveBuffer(next: string[]): void {
+  buffers.set(currentKey, next);
+}
 
 export function configureOslog(opts: { simulator: boolean; udid?: string }) {
   isSimulator = opts.simulator;
   if (opts.udid) simulatorUdid = opts.udid;
+  currentKey = makeBufferKey(opts.simulator, opts.udid);
 }
 
 export function clearBuffer(): number {
-  const n = buffer.length;
-  buffer = [];
+  const n = activeBuffer().length;
+  setActiveBuffer([]);
   return n;
 }
 
@@ -61,6 +79,7 @@ export async function fetchOslog(opts: {
   }
 
   // Deduplicate against existing buffer
+  let buffer = activeBuffer();
   const existing = new Set(buffer.map(l => l.trim()));
   const uniqueNew = newLines.filter(l => !existing.has(l.trim()));
 
@@ -68,6 +87,7 @@ export async function fetchOslog(opts: {
   buffer.push(...uniqueNew);
   if (buffer.length > MAX_BUFFER_SIZE) {
     buffer = buffer.slice(buffer.length - MAX_BUFFER_SIZE);
+    setActiveBuffer(buffer);
   }
 
   // Filter by bundleId

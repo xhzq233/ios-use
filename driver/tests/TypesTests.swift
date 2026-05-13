@@ -159,6 +159,30 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(point.y, 40)
     }
 
+    func testRawFindInSnapshot_DisableFuzzyReturnsNotFoundWithoutSuggestions() {
+        let element = makeElement(label: "Bluetooth")
+        let cs = makeCleanedSnapshot([element])
+
+        switch rawFindInSnapshot("Bluetoth", cs: cs, enableFuzzy: false) {
+        case .notFound(let suggestions):
+            XCTAssertTrue(suggestions.isEmpty)
+        default:
+            XCTFail("Expected notFound when fuzzy is disabled")
+        }
+    }
+
+    func testRawFindInSnapshot_DefaultFuzzyReturnsSuggestions() {
+        let element = makeElement(label: "Bluetooth")
+        let cs = makeCleanedSnapshot([element])
+
+        switch rawFindInSnapshot("Bluetoth", cs: cs) {
+        case .fuzzy(let suggestions):
+            XCTAssertEqual(suggestions, ["Bluetooth"])
+        default:
+            XCTFail("Expected fuzzy suggestions by default")
+        }
+    }
+
     // MARK: - canProceedWithTyping
 
     func testCanProceedWithTyping_InitialLookupRequiresTargetFocus() {
