@@ -11,12 +11,21 @@ final class Session {
     }
 
     func ensureActive() throws -> XCUIApplication {
+        // Fast path: cached non-springboard app still in foreground — return directly.
+        // Springboard is excluded because its state is always .runningForeground,
+        // even when the user has switched to another app.
         if let app = _app, app.state == .runningForeground {
-            return app
+            let bid = app.value(forKey: "bundleID") as? String ?? ""
+            if bid != "com.apple.springboard" {
+                return app
+            }
         }
+        // Slow path: cached app gone/suspended, or it was springboard.
         if let detected = GetActiveApplication() {
+            if detected !== _app {
+                invalidateSnapshot()
+            }
             _app = detected
-            invalidateSnapshot()
             return detected
         }
         throw DriverError.noSession
