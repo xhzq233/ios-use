@@ -261,7 +261,8 @@ async function runFlow(client: DriverClient, name: string, opts?: { udid?: strin
     throw new Error(`Flow file not found: ${file}`);
   }
 
-  await client.createSession('com.apple.Preferences', true);
+  await client.terminateApp('com.apple.Preferences');
+  await client.activateApp('com.apple.Preferences');
   await runFlowFile(client, file, { udid: opts?.udid, flowApp: 'com.apple.Preferences' }, opts?.vars);
 }
 

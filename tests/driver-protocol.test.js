@@ -7,7 +7,8 @@ import { toForyTarget } from '../src/driver-protocol/fory.js';
 
 describe('driver protocol', () => {
   test('exports stable command names', () => {
-    expect(DRIVER_COMMANDS.CREATE_SESSION).toBe('createSession');
+    expect(DRIVER_COMMANDS.ACTIVATE_APP).toBe('activateApp');
+    expect(DRIVER_COMMANDS.HOME).toBe('home');
     expect(DRIVER_COMMANDS.LONG_PRESS).toBe('longPress');
     expect(DRIVER_COMMANDS.WAIT_FOR).toBe('waitFor');
     expect(DRIVER_COMMANDS.OPEN_URL).toBe('openURL');

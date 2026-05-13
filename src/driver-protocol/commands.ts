@@ -1,6 +1,4 @@
 export const DRIVER_COMMANDS = {
-  CREATE_SESSION: 'createSession',
-  DELETE_SESSION: 'deleteSession',
   DOM: 'dom',
   FIND: 'find',
   TAP: 'tap',
@@ -10,6 +8,7 @@ export const DRIVER_COMMANDS = {
   WAIT_FOR: 'waitFor',
   ACTIVATE_APP: 'activateApp',
   TERMINATE_APP: 'terminateApp',
+  HOME: 'home',
   OPEN_URL: 'openURL',
   PROXY_CA_PUSH: 'proxyCAPush',
   DISMISS_ALERT: 'dismissAlert',

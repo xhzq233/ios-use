@@ -4,7 +4,6 @@ export { Connection, DriverError } from './connection';
 export type { DriverCommand } from './commands';
 export type { RequestFrame, ResponseFrame } from './frames';
 export type {
-  CreateSessionResponse,
   Point,
   Rect,
   LabelOrPoint,
