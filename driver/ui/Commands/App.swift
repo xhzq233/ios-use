@@ -2,52 +2,103 @@ import XCTest
 import UIKit
 import Fory
 
-// MARK: - App commands (doc 1.2 — createSession/deleteSession/activateApp/terminateApp)
+func foregroundWaitFailureError(state: XCUIApplication.State, bundleId: String?) -> DriverError {
+    if state == .unknown, let bundleId, !bundleId.isEmpty {
+        return DriverError.appNotFound(bundleId)
+    }
+    return DriverError.appNotFound("app failed to enter foreground (state=\(state.rawValue))")
+}
+
+func terminationWaitFailureError(state: XCUIApplication.State) -> DriverError {
+    DriverError.appNotFound("app failed to terminate (state=\(state.rawValue))")
+}
+
+enum App {
+    static func activateApp(bundleId: String) throws -> XCUIApplication {
+        NSLog("[app] activate called with bundleId=\(bundleId)")
+        let app = XCUIApplication(bundleIdentifier: bundleId)
+        let state = app.state
+        NSLog("[app] app state=\(state.rawValue) (0=unknown,1=notRunning,2=suspended,3=background,4=foreground)")
+        guard state != .unknown else {
+            NSLog("[app] ERROR: app not found, state=unknown bundleId=\(bundleId)")
+            throw DriverError.appNotFound(bundleId)
+        }
+
+        if state != .runningForeground {
+            NSLog("[app] launching app via LaunchServices...")
+            guard OpenApplicationWithBundleId(bundleId) else {
+                NSLog("[app] ERROR: LaunchServices could not open bundleId=\(bundleId)")
+                throw DriverError.appNotFound(bundleId)
+            }
+            NSLog("[app] openApplicationWithBundleID() returned")
+        } else {
+            NSLog("[app] app already in foreground, skipping activate")
+        }
+
+        try waitForForeground(app, bundleId: bundleId)
+        Session.shared.cache(app: app)
+        NSLog("[app] activate completed, final state=\(app.state.rawValue)")
+        return app
+    }
+
+    static func terminateApp(bundleId: String) throws {
+        NSLog("[app] terminate called with bundleId=\(bundleId)")
+        let app = XCUIApplication(bundleIdentifier: bundleId)
+        app.terminate()
+        try waitForTermination(app)
+    }
+
+    private static func waitForForeground(_ app: XCUIApplication, bundleId: String?) throws {
+        NSLog("[app] waiting for app to enter foreground...")
+        let deadline = CFAbsoluteTimeGetCurrent() + 10
+        var state = app.state
+        while state != .runningForeground && CFAbsoluteTimeGetCurrent() < deadline {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            state = app.state
+        }
+        guard state == .runningForeground else {
+            NSLog("[app] ERROR: app failed to enter foreground, state=\(state.rawValue)")
+            throw foregroundWaitFailureError(state: state, bundleId: bundleId)
+        }
+        NSLog("[app] foreground wait completed, state=\(state.rawValue)")
+    }
+
+    private static func waitForTermination(_ app: XCUIApplication) throws {
+        NSLog("[app] waiting for app to terminate...")
+        let deadline = CFAbsoluteTimeGetCurrent() + 5
+        var state = app.state
+        while state != .notRunning && state != .unknown && CFAbsoluteTimeGetCurrent() < deadline {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            state = app.state
+        }
+        guard state == .notRunning || state == .unknown else {
+            NSLog("[app] ERROR: app failed to terminate, state=\(state.rawValue)")
+            throw terminationWaitFailureError(state: state)
+        }
+        NSLog("[app] terminate completed, state=\(state.rawValue)")
+    }
+}
+
+// MARK: - App commands (doc 1.2 — activateApp/terminateApp/openURL)
 
 enum AppCommands {
 
-    /// doc 1.2 — bundleId is optional. Omitted → device session (no app bound).
-    static func createSession(_ args: ForyCreateSessionArgs?) throws -> ForyResponseFrame {
-        let bundleId = (args?.bundleId.isEmpty ?? true) ? nil : args?.bundleId
-        let terminate = args?.terminate ?? false
-        try Session.shared.create(bundleId: bundleId, terminate: terminate)
-        return try Codec.foryOK(ForySimpleStringPayload(value: bundleId ?? ""))
-    }
-
-    /// doc 1.2 — destroy session. No args.
-    static func deleteSession() -> ForyResponseFrame {
-        Session.shared.destroy()
-        return Codec.foryOK()
-    }
-
     /// doc 1.2 — activate (foreground) the app with given bundleId.
     static func activateApp(_ args: ForyActivateAppArgs) throws -> ForyResponseFrame {
-        if Session.shared.bundleId == args.bundleId {
-            try Session.shared.activate()
-        } else {
-            try Session.shared.create(bundleId: args.bundleId)
-        }
+        _ = try App.activateApp(bundleId: args.bundleId)
         return Codec.foryOK()
     }
 
     /// doc 1.2 — terminate the app. Polls for up to 5s because terminate()
     /// is asynchronous.
     static func terminateApp(_ args: ForyTerminateAppArgs) throws -> ForyResponseFrame {
-        let app = XCUIApplication(bundleIdentifier: args.bundleId)
-        app.terminate()
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            let state = app.state
-            if state == .notRunning || state == .unknown {
-                if Session.shared.bundleId == args.bundleId {
-                    Session.shared.destroy()
-                }
-                invalidateSnapshot()
-                return Codec.foryOK()
-            }
-            Thread.sleep(forTimeInterval: 0.2)
-        }
-        return Codec.foryError("terminate failed: app state is \(app.state)")
+        try App.terminateApp(bundleId: args.bundleId)
+        return Codec.foryOK()
+    }
+
+    static func home() throws -> ForyResponseFrame {
+        XCUIDevice.shared.press(.home)
+        return Codec.foryOK()
     }
 
     static func openURL(_ args: ForyOpenURLArgs) throws -> ForyResponseFrame {

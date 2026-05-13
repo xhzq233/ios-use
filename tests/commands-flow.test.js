@@ -145,7 +145,6 @@ function createDriver(overrides = {}) {
     sendRaw: sendRaw || defaultSendRaw,
     async screenshot() { return Buffer.alloc(0); },
     async saveScreenshot() {},
-    async deleteSession() {},
     disconnect() {},
     ...overrides,
   };

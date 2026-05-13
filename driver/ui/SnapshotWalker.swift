@@ -117,7 +117,7 @@ func getCleanedSnapshot() -> CleanedSnapshot? {
 /// Time complexity: O(n), where n is the number of nodes traversed by
 /// `cleanTree` while rebuilding the flat index.
 func rebuildCleanedSnapshot() -> CleanedSnapshot? {
-    guard let app = Session.shared.activeApp else { return nil }
+    guard let app = try? Session.shared.ensureActive() else { return nil }
     guard let raw = SafeSnapshot(ofApp: app) else { return nil }
 
     let elements = buildCleanElements(from: raw)

@@ -209,13 +209,6 @@ import Fory
 
     private func dispatchFory(_ payload: Data, command: Command) throws -> ForyResponseFrame {
         switch command {
-        case .createSession:
-            let args = payload.count > 0 ? try Codec.sharedFory.deserialize(payload, as: ForyCreateSessionArgs.self) : nil
-            return try AppCommands.createSession(args)
-
-        case .deleteSession:
-            return AppCommands.deleteSession()
-
         case .activateApp:
             let args = try Codec.sharedFory.deserialize(payload, as: ForyActivateAppArgs.self)
             return try AppCommands.activateApp(args)
@@ -223,6 +216,9 @@ import Fory
         case .terminateApp:
             let args = try Codec.sharedFory.deserialize(payload, as: ForyTerminateAppArgs.self)
             return try AppCommands.terminateApp(args)
+
+        case .home:
+            return try AppCommands.home()
 
         case .openURL:
             let args = try Codec.sharedFory.deserialize(payload, as: ForyOpenURLArgs.self)

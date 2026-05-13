@@ -371,7 +371,7 @@ export async function withAutoSession<T>(opts: WithAutoSessionOpts, fn: (driver:
   }
 
   try {
-    await client.createSession();
+    client.markSessionReady();
     const sessionInfo = persistSession(buildSessionInfo({
       sessionId: client.sessionId,
       udid: device.udid,
@@ -408,6 +408,15 @@ function saveReadySession(client: DriverClient, device: { udid: string; name: st
   }));
 }
 
+async function prepareSession(client: DriverClient, bundleId: string | undefined, terminate: boolean | undefined): Promise<void> {
+  client.markSessionReady();
+  if (!bundleId) return;
+  if (terminate) {
+    await client.terminateApp(bundleId);
+  }
+  await client.activateApp(bundleId);
+}
+
 export async function startSession(opts: StartSessionOpts): Promise<DriverClient> {
   const bundleId = opts.bundleId;
   const verbose = opts.verbose || false;
@@ -424,7 +433,7 @@ export async function startSession(opts: StartSessionOpts): Promise<DriverClient
   if (existingInfo && existingInfo.udid === device.udid) {
     try {
       const client = await createClientFromSession(existingInfo, { verbose, ownsSession: true });
-      await client.createSession(bundleId, opts.terminate);
+      await prepareSession(client, bundleId, opts.terminate);
       saveReadySession(client, device, bundleId);
       logSessionReady(bundleId, client.sessionId);
       return client;
@@ -450,7 +459,7 @@ export async function startSession(opts: StartSessionOpts): Promise<DriverClient
   }
 
   try {
-    await client.createSession(bundleId, opts.terminate);
+    await prepareSession(client, bundleId, opts.terminate);
     const sessionInfo = saveReadySession(client, device, bundleId);
     logger.success(`Session created: ${sessionInfo.sessionId.substring(0, 8)}...`);
     logger.info('Run `ios-use stop` to end the session.');
@@ -494,19 +503,6 @@ export async function stopSession(): Promise<void> {
   }
 
   const isSimulator = deviceType === 'simulator';
-
-  let client: DriverClient | null = null;
-  try {
-    client = info
-      ? await createClientFromSession(info, { ownsSession: true })
-      : await createClient({ port: DEFAULT_PORT, udid, directTcp: isSimulator, ownsSession: true });
-    await client.deleteSession();
-    logger.info('Session deleted');
-  } catch {
-    // Session already gone.
-  } finally {
-    disconnectClient(client);
-  }
 
   if (!isSimulator) {
     try {

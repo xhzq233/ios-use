@@ -7,7 +7,7 @@ enum DomCommands {
     /// doc 2.2 — nested tree with rule 1-6 applied (or raw if --raw).
     static func dom(_ args: ForyDomArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        let bundleId = Session.shared.bundleId ?? app.value(forKey: "bundleID") as? String ?? ""
+        let bundleId = app.value(forKey: "bundleID") as? String ?? ""
 
         // --raw mode: format the pre-clean snapshot as an indented string.
         if args.raw {

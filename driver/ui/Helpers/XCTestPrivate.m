@@ -2,15 +2,6 @@
 #import <objc/message.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
-#if __has_include("IOSUseDriver-Swift.h")
-#import "IOSUseDriver-Swift.h"
-__attribute__((constructor))
-static void IOSUseDriverStartServerOnBundleLoad(void) {
-    NSLog(@"[debug][xctest-bundle-load] starting IOSUseDriver TCP server");
-    [DriverServer startSharedIfNeeded];
-}
-#endif
-
 static const NSUInteger XCMaxTextAbbrLen = 12;
 static const NSUInteger XCMaxClearRetries = 3;
 static const double XCTapLiftUpDelay = 0.08;
@@ -101,162 +92,138 @@ void XCPressAndDrag(XCUICoordinate *start, XCUICoordinate *end,
 
 // MARK: - Public: GetActiveApplication
 
-static pid_t PIDFromElement(id element) {
-    pid_t pid = 0;
-    NSMethodSignature *pidSig = [element methodSignatureForSelector:@selector(processIdentifier)];
-    if (pidSig) {
-        NSInvocation *pidInv = [NSInvocation invocationWithMethodSignature:pidSig];
-        [pidInv setTarget:element];
-        [pidInv setSelector:@selector(processIdentifier)];
-        [pidInv invoke];
-        [pidInv getReturnValue:&pid];
-    }
-    return pid;
-}
+@protocol FBXCAccessibilityElement <NSObject>
+@property(readonly) int processIdentifier;
+@end
 
-static XCUIApplication *ApplicationFromPID(pid_t pid) {
-    if (pid <= 0) return nil;
+@protocol XCTestManager_ManagerInterface <NSObject>
+- (void)_XCT_requestElementAtPoint:(CGPoint)point reply:(void (^)(id element, NSError *error))reply;
+@end
 
-    id client = [[XCUIDevice sharedDevice] performSelector:NSSelectorFromString(@"accessibilityInterface")];
-    if (!client) return nil;
+@protocol XCApplicationProcessTracker <NSObject>
+- (XCUIApplication *)monitoredApplicationWithProcessIdentifier:(pid_t)pid;
+@end
 
-    id tracker = [client performSelector:NSSelectorFromString(@"applicationProcessTracker")];
-    if (!tracker) return nil;
+@interface XCUIApplication (IOSUsePrivateRunning)
+@property(readonly) BOOL running;
+@end
 
-    SEL sel = NSSelectorFromString(@"monitoredApplicationWithProcessIdentifier:");
-    NSMethodSignature *sig = [tracker methodSignatureForSelector:sel];
-    if (!sig) return nil;
-
-    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-    [inv setTarget:tracker];
-    [inv setSelector:sel];
-    [inv setArgument:&pid atIndex:2];
-    [inv retainArguments];
-    [inv invoke];
-
-    __unsafe_unretained XCUIApplication *tmp = nil;
-    [inv getReturnValue:&tmp];
-    return tmp;
-}
-
-static NSString *BundleIdFromApplication(XCUIApplication *app) {
-    if (!app) return nil;
-    id bundle = [app valueForKey:@"bundleID"];
-    return [bundle isKindOfClass:[NSString class]] ? bundle : nil;
-}
-
-static NSString *BundleIdFromElement(id element) {
-    pid_t pid = PIDFromElement(element);
-    XCUIApplication *app = ApplicationFromPID(pid);
-    return BundleIdFromApplication(app);
-}
-
-static id DetectionPointElement(void) {
+static id XCTestRunnerProxy(void)
+{
     Class daemonSessionClass = NSClassFromString(@"XCTRunnerDaemonSession");
     SEL sharedSel = NSSelectorFromString(@"sharedSession");
     if (!daemonSessionClass || ![daemonSessionClass respondsToSelector:sharedSel]) {
         return nil;
     }
-
     id session = ((id (*)(id, SEL))objc_msgSend)(daemonSessionClass, sharedSel);
-    if (!session) return nil;
+    return [session valueForKey:@"daemonProxy"];
+}
 
-    id proxy = [session valueForKey:@"daemonProxy"];
-    SEL requestSel = NSSelectorFromString(@"_XCT_requestElementAtPoint:reply:");
-    NSMethodSignature *sig = [proxy methodSignatureForSelector:requestSel];
-    if (!sig) return nil;
+static id AccessibilityClient(void)
+{
+    static id client = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        client = [XCUIDevice.sharedDevice performSelector:NSSelectorFromString(@"accessibilityInterface")];
+    });
+    return client;
+}
 
+static id<FBXCAccessibilityElement> DetectionPointElement(void)
+{
     CGSize screenSize = [UIScreen mainScreen].bounds.size;
-    CGFloat pointDistance = MIN(screenSize.width, screenSize.height) * 0.2;
+    CGFloat pointDistance = MIN(screenSize.width, screenSize.height) * (CGFloat)0.2;
     CGPoint point = CGPointMake(pointDistance, pointDistance);
 
-    __block id onScreenElement = nil;
+    __block id<FBXCAccessibilityElement> onScreenElement = nil;
+    id<XCTestManager_ManagerInterface> proxy = XCTestRunnerProxy();
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    void (^reply)(id, NSError *) = ^(id element, NSError *error) {
-        if (!error) {
-            onScreenElement = element;
-        }
-        dispatch_semaphore_signal(sem);
-    };
-
-    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-    [inv setTarget:proxy];
-    [inv setSelector:requestSel];
-    [inv setArgument:&point atIndex:2];
-    [inv setArgument:&reply atIndex:3];
-    [inv retainArguments];
-    [inv invoke];
-
+    [proxy _XCT_requestElementAtPoint:point
+                                reply:^(id element, NSError *error) {
+                                    if (nil == error) {
+                                        onScreenElement = element;
+                                    } else {
+                                        NSLog(@"Cannot request the screen point at %@", NSStringFromCGPoint(point));
+                                    }
+                                    dispatch_semaphore_signal(sem);
+                                }];
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)));
     return onScreenElement;
 }
 
-// WDA-style active app resolution. Time complexity: O(a), where a is the
-// number of active applications reported by XCTest. We scan that list at most
-// twice while PID/bundle resolution remains constant-time per element.
-XCUIApplication *GetActiveApplicationWithDefaultBundleId(NSString *bundleId) {
-    id device = [XCUIDevice sharedDevice];
-    id client = [device performSelector:NSSelectorFromString(@"accessibilityInterface")];
-    if (!client) return nil;
+static XCUIApplication *ApplicationWithPID(pid_t pid)
+{
+    static NSMutableDictionary<NSNumber *, XCUIApplication *> *appsCache = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        appsCache = [NSMutableDictionary dictionary];
+    });
 
-    NSArray *apps = [client performSelector:NSSelectorFromString(@"activeApplications")];
-    id activeAppElement = nil;
-    id currentElement = nil;
-
-    if (bundleId.length > 0) {
-        currentElement = DetectionPointElement();
-        NSString *detectedBundle = BundleIdFromElement(currentElement);
-        if ([detectedBundle isEqualToString:bundleId]) {
-            activeAppElement = currentElement;
+    NSMutableSet *terminatedAppIds = [NSMutableSet set];
+    for (NSNumber *appPid in appsCache) {
+        if (![appsCache[appPid] running]) {
+            [terminatedAppIds addObject:appPid];
         }
     }
+    for (NSNumber *appPid in terminatedAppIds) {
+        [appsCache removeObjectForKey:appPid];
+    }
 
-    if (!activeAppElement && apps.count > 1) {
-        if (bundleId.length > 0) {
-            for (id appElement in apps) {
-                if ([BundleIdFromElement(appElement) isEqualToString:bundleId]) {
-                    activeAppElement = appElement;
+    XCUIApplication *result = [appsCache objectForKey:@(pid)];
+    if (nil != result) {
+        return result;
+    }
+
+    id<XCApplicationProcessTracker> tracker = [AccessibilityClient() performSelector:NSSelectorFromString(@"applicationProcessTracker")];
+    XCUIApplication *app = [tracker monitoredApplicationWithProcessIdentifier:pid];
+    if (nil == app) {
+        return nil;
+    }
+
+    [appsCache setObject:app forKey:@(pid)];
+    return app;
+}
+
+XCUIApplication *GetActiveApplication(void)
+{
+    NSArray<id<FBXCAccessibilityElement>> *activeApplicationElements = [AccessibilityClient() performSelector:NSSelectorFromString(@"activeApplications")];
+    id<FBXCAccessibilityElement> activeApplicationElement = nil;
+
+    if (activeApplicationElements.count > 1) {
+        id<FBXCAccessibilityElement> currentElement = DetectionPointElement();
+        if (nil == currentElement) {
+            NSLog(@"Cannot precisely detect the current application. Will use the system's recently active one");
+        } else {
+            for (id<FBXCAccessibilityElement> appElement in activeApplicationElements) {
+                if (appElement.processIdentifier == currentElement.processIdentifier) {
+                    activeApplicationElement = appElement;
                     break;
                 }
             }
         }
+    }
 
-        if (!activeAppElement) {
-            if (!currentElement) {
-                currentElement = DetectionPointElement();
-            }
-            pid_t currentPid = PIDFromElement(currentElement);
-            if (currentPid > 0) {
-                for (id appElement in apps) {
-                    if (PIDFromElement(appElement) == currentPid) {
-                        activeAppElement = appElement;
-                        break;
-                    }
-                }
+    if (nil != activeApplicationElement) {
+        XCUIApplication *application = ApplicationWithPID(activeApplicationElement.processIdentifier);
+        if (nil != application) {
+            return application;
+        }
+        NSLog(@"Cannot translate the active process identifier into an application object");
+    }
+
+    if (activeApplicationElements.count > 0) {
+        NSLog(@"Getting the most recent active application (out of %@ total items)", @(activeApplicationElements.count));
+        for (id<FBXCAccessibilityElement> appElement in activeApplicationElements) {
+            XCUIApplication *application = ApplicationWithPID(appElement.processIdentifier);
+            if (nil != application) {
+                return application;
             }
         }
     }
 
-    if (activeAppElement) {
-        XCUIApplication *result = ApplicationFromPID(PIDFromElement(activeAppElement));
-        if (result) return result;
-    }
-
-    if (apps.count > 0) {
-        for (id appElement in apps) {
-            XCUIApplication *result = ApplicationFromPID(PIDFromElement(appElement));
-            if (result) return result;
-        }
-    }
-
-    id systemApp = [client performSelector:NSSelectorFromString(@"systemApplication")];
-    if (systemApp) {
-        pid_t pid = PIDFromElement(systemApp);
-        XCUIApplication *result = ApplicationFromPID(pid);
-        if (result) return result;
-    }
-
-    return nil;
+    NSLog(@"Cannot retrieve any active applications. Assuming the system application is the active one");
+    id<FBXCAccessibilityElement> systemApplication = [AccessibilityClient() performSelector:NSSelectorFromString(@"systemApplication")];
+    return ApplicationWithPID(systemApplication.processIdentifier);
 }
 
 id SnapshotOfElement(XCUIElement *element) {
