@@ -7,7 +7,7 @@ import { detectRealDevices, detectBootedSimulators, formatDeviceLabel, getConfig
 import { runCommandStep } from './commands/actions';
 import { flowAction, parseFlowCliVars } from './commands/flow';
 import { nslogStreamAction } from './commands/nslog';
-import { proxyConfigCA, proxyStart, proxyStop, proxyRead, readProxyState } from './commands/proxy';
+import { proxyConfigCA, proxyStart, proxyStop, readProxyState } from './commands/proxy';
 import { getCliActions, mapCliToStep, parseNonNegativeIntStrict, parsePositiveIntStrict } from './commands/registry';
 import type { SwipeDir } from './driver-protocol/index.js';
 import { startSession, stopSession, readSessionInfo } from './session';
@@ -201,48 +201,16 @@ proxyCmd.command('configca')
 
 proxyCmd.command('start')
   .description('Start proxy: mitmdump + configure device Wi-Fi proxy')
-  .option('--stream', 'Stream captured requests to stdout as jsonl')
   .option('--udid <udid>', 'Device UDID')
   .option('-i, --interface <interface>', 'Mac network interface to advertise as proxy host (default: Wi-Fi)')
-  .option('--no-body', 'Omit request/response body from output')
-  .option('--body-limit <bytes>', 'Max body size in bytes (default 102400)', parseNonNegativeIntStrict)
-  .action(handleAction(async (opts: { stream?: boolean; udid?: string; interface?: string; noBody?: boolean; bodyLimit?: number }) => {
+  .action(handleAction(async (opts: { udid?: string; interface?: string }) => {
     const { withAutoSession } = await import('./session.js');
-    let udid: string | undefined;
-    let started = false;
     await withAutoSession({ udid: opts.udid }, async (client) => {
       const info = readSessionInfo();
-      udid = opts.udid || info?.udid;
+      const udid = opts.udid || info?.udid;
       if (!udid) throw new Error('No device UDID. Pass --udid or run an action command first.');
-      await proxyStart(client, { udid, stream: opts.stream, noBody: opts.noBody, bodyLimit: opts.bodyLimit, interfaceName: opts.interface });
-      started = true;
+      await proxyStart(client, { udid, interfaceName: opts.interface });
     });
-    if (opts.stream) process.stderr.write('Proxy running. Press Ctrl+C to stop.\n');
-    else {
-      logger.info('Proxy running. Run `proxy stop` to stop.');
-      return;
-    }
-    let signalExitCode = 0;
-    let resolveSignal: (() => void) | undefined;
-    const waitForSignal = new Promise<void>((resolve) => {
-      resolveSignal = resolve;
-    });
-    const onSigint = () => { signalExitCode = 130; resolveSignal?.(); };
-    const onSigterm = () => { signalExitCode = 143; resolveSignal?.(); };
-    process.once('SIGINT', onSigint);
-    process.once('SIGTERM', onSigterm);
-    try {
-      await waitForSignal;
-    } finally {
-      process.removeListener('SIGINT', onSigint);
-      process.removeListener('SIGTERM', onSigterm);
-      if (signalExitCode) process.exitCode = signalExitCode;
-    }
-    if (started) {
-      await withAutoSession({ udid }, async (client) => {
-        await proxyStop(client, { udid }).catch(() => {});
-      });
-    }
   }));
 
 proxyCmd.command('stop')
@@ -254,15 +222,6 @@ proxyCmd.command('stop')
     await withAutoSession({ udid: targetUdid }, async (client) => {
       await proxyStop(client, { ...opts, udid: targetUdid });
     });
-  }));
-
-proxyCmd.command('read')
-  .description('Read recent proxy captured requests')
-  .option('--count <n>', 'Number of requests', parsePositiveIntStrict, 10)
-  .option('--duration <duration>', 'Time window (e.g. 5s, 1m)')
-  .option('--save [name]', 'Save to jsonl file')
-  .action(handleAction(async (opts: { count?: number; duration?: string; save?: string }) => {
-    proxyRead(opts);
   }));
 
 proxyCmd.command('doctor')
