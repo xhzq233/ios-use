@@ -22,11 +22,14 @@ enum WaitForCommands {
             if shouldUseFreshSnapshot {
                 invalidateSnapshot()
             }
-            let result = rawFind(args.label, traits: traits)
+            guard let cs = getCleanedSnapshot() else {
+                return Codec.foryError("waitFor: failed to take snapshot")
+            }
+            let result = rawFindInSnapshot(args.label, traits: traits, cs: cs, enableFuzzy: false)
 
             switch result {
             case .found(let elem):
-                if elem.isVisible {
+                if isVisibleWithEffectiveGeometry(elem, in: cs.appFrame) {
                     let elapsed = CFAbsoluteTimeGetCurrent() - t0
                     let payload = ForyWaitForPayload(
                         elemType: Int32(truncatingIfNeeded: elem.node.elementType),

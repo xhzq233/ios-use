@@ -47,7 +47,7 @@ struct ForyErrorPayload {
     var matches: [ForyFindMatch] = []
     var atBoundary: Bool = false
     var tooSmallToScroll: Bool = false
-    var direction: Int32 = 0
+    var direction: Int32 = -1
     var minDragDistance: Double = 0
 }
 
@@ -244,8 +244,6 @@ func createFory() -> Fory {
     // Frames
     try! fory.register(ForyRequestFrame.self, name: "ForyRequestFrame")
     try! fory.register(ForyResponseFrame.self, name: "ForyResponseFrame")
-    // Error
-    try! fory.register(ForyErrorPayload.self, name: "ForyErrorPayload")
     // DOM
     try! fory.register(ForyDomElement.self, name: "ForyDomElement")
     try! fory.register(ForyDomPayload.self, name: "ForyDomPayload")
@@ -253,6 +251,8 @@ func createFory() -> Fory {
     try! fory.register(ForyScreenshotPayload.self, name: "ForyScreenshotPayload")
     // Find
     try! fory.register(ForyFindMatch.self, name: "ForyFindMatch")
+    // Error
+    try! fory.register(ForyErrorPayload.self, name: "ForyErrorPayload")
     try! fory.register(ForyFindPayload.self, name: "ForyFindPayload")
     // Element
     try! fory.register(ForyElementPayload.self, name: "ForyElementPayload")

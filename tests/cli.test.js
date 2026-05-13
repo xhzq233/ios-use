@@ -40,7 +40,6 @@ describe('cli surface', () => {
 
   test('rejects invalid numeric option values before session setup', () => {
     const cases = [
-      [['config', '--port', 'abc', '--list'], 'Invalid integer: "abc"'],
       [['swipe', '--distance', 'abc'], 'Invalid number: "abc"'],
       [['waitFor', '--label', 'foo', '--timeout', 'abc'], 'Invalid number: "abc"'],
       [['longpress', 'foo', '--duration', 'abc'], 'Invalid integer: "abc"'],
@@ -51,6 +50,19 @@ describe('cli surface', () => {
       const result = runCli(args, { HOME: isolatedHome() });
       expect(result.status).toBe(1);
       expect(combinedOutput(result)).toContain(message);
+    }
+  });
+
+  test('config no longer exposes ipa or port options', () => {
+    const help = runCli(['config', '--help'], { HOME: isolatedHome() });
+    expect(help.status).toBe(0);
+    expect(combinedOutput(help)).not.toContain('--ipa');
+    expect(combinedOutput(help)).not.toContain('--port');
+
+    for (const args of [['config', '--ipa', 'driver.ipa', '--list'], ['config', '--port', '8101', '--list']]) {
+      const result = runCli(args, { HOME: isolatedHome() });
+      expect(result.status).toBe(1);
+      expect(combinedOutput(result)).toContain('unknown option');
     }
   });
 

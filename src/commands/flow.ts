@@ -30,6 +30,8 @@ interface FlowFile {
   steps: Array<Record<string, unknown>>;
 }
 
+const flowFileCache = new Map<string, { mtimeMs: number; flow: FlowFile }>();
+
 const FLOW_RESERVED_OPTIONS = new Set(['udid', 'verbose']);
 const FLOW_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
@@ -72,6 +74,10 @@ function loadFlowFile(resolvedPath: string): FlowFile {
     throw new Error(`Flow file not found: ${resolvedPath}`);
   }
 
+  const stat = fs.statSync(resolvedPath);
+  const cached = flowFileCache.get(resolvedPath);
+  if (cached && cached.mtimeMs === stat.mtimeMs) return cached.flow;
+
   const flow = yaml.load(fs.readFileSync(resolvedPath, 'utf-8'), { schema: yaml.JSON_SCHEMA }) as {
     name?: string;
     app?: string;
@@ -87,7 +93,7 @@ function loadFlowFile(resolvedPath: string): FlowFile {
     throw new Error(`Invalid flow file: ${resolvedPath} — missing required "steps" array field`);
   }
 
-  return {
+  const normalized: FlowFile = {
     name: flow.name,
     app: flow.app,
     needNSLog: flow.needNSLog,
@@ -95,6 +101,8 @@ function loadFlowFile(resolvedPath: string): FlowFile {
     outputs: flow.outputs,
     steps: flow.steps,
   };
+  flowFileCache.set(resolvedPath, { mtimeMs: stat.mtimeMs, flow: normalized });
+  return normalized;
 }
 
 function templateScope(vars: Record<string, unknown>): Record<string, unknown> {
@@ -166,7 +174,13 @@ function normalizeOutputNames(raw: string | string[] | undefined, fieldName: str
   if (names.some((name) => typeof name !== 'string' || !name.trim())) {
     throw new Error(`${fieldName} must contain non-empty variable names`);
   }
-  return names.map((name) => name.trim());
+  const normalized = names.map((name) => name.trim());
+  for (const name of normalized) {
+    if (!FLOW_VAR_NAME_RE.test(name)) {
+      throw new Error(`${fieldName} contains invalid variable name: ${name}`);
+    }
+  }
+  return normalized;
 }
 
 function collectFlowOutputs(flow: FlowFile, vars: Record<string, unknown>): Record<string, unknown> {
@@ -224,6 +238,9 @@ async function executeFlowSteps(
 
     if (step.action === 'sleep') {
       const ms = step.ms ?? 1000;
+      if (typeof ms !== 'number' || !Number.isFinite(ms)) {
+        throw new Error('sleep.ms must be a number');
+      }
       if (isVerbose()) logger.info(`  → Sleep ${ms}ms`);
       await sleep(ms);
       continue;

@@ -341,6 +341,20 @@ steps:
     await expect(runFlowFile(createDriver(), parentPath, {})).rejects.toThrow('runFlow requested undeclared output "missingValue"');
   });
 
+  test('rejects invalid output variable names early', async () => {
+    const dir = makeTempDir('ios-use-flow-invalid-output-');
+    const flowPath = path.join(dir, 'flow.yaml');
+
+    fs.writeFileSync(flowPath, `
+name: invalid-output
+steps:
+  - action: dom
+    outputs: foo.bar
+`);
+
+    await expect(runFlowFile(createDriver(), flowPath, {})).rejects.toThrow('invalid variable name: foo.bar');
+  });
+
   test('returnIf can no-op return current flow when value matches null', async () => {
     const dir = makeTempDir('ios-use-flow-returnif-null-');
     const flowPath = path.join(dir, 'flow.yaml');

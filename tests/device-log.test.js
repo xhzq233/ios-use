@@ -119,6 +119,27 @@ describe('fetchOslog', () => {
     expect(r2.total).toBe(2); // no new unique lines added
   });
 
+  test('keeps buffers isolated per udid', async () => {
+    const collectSyslogMock = mock(async (udid) => [`${udid}-line`]);
+    mock.module('../src/device-log/syslog-relay.js', () => ({
+      collectSyslog: collectSyslogMock,
+    }));
+
+    configureOslog({ simulator: false, udid: 'device-a' });
+    clearBuffer();
+    configureOslog({ simulator: false, udid: 'device-b' });
+    clearBuffer();
+
+    configureOslog({ simulator: false, udid: 'device-a' });
+    const a = await fetchOslog({ udid: 'device-a' });
+    expect(a.content).toContain('device-a-line');
+
+    configureOslog({ simulator: false, udid: 'device-b' });
+    const b = await fetchOslog({ udid: 'device-b' });
+    expect(b.content).toContain('device-b-line');
+    expect(b.content).not.toContain('device-a-line');
+  });
+
   test('passes abort signal through to collectSyslog', async () => {
     let receivedSignal = undefined;
     const collectSyslogMock = mock(async (_udid, _timeoutMs, signal) => {

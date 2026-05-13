@@ -7,6 +7,7 @@ const execFileSyncMock = mock();
 const spawnMock = mock();
 const resolveDeviceMock = mock();
 const formatDeviceLabelMock = mock();
+const getConfiguredUdidsMock = mock(() => new Set());
 const loggerInfoMock = mock();
 const loggerSuccessMock = mock();
 const loggerWarnMock = mock();
@@ -22,6 +23,7 @@ mock.module('child_process', () => ({
 mock.module('../src/device.js', () => ({
   resolveDevice: resolveDeviceMock,
   formatDeviceLabel: formatDeviceLabelMock,
+  getConfiguredUdids: getConfiguredUdidsMock,
 }));
 
 mock.module('../src/utils/logger.js', () => ({

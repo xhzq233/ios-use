@@ -87,9 +87,10 @@ function normalizeUdid(udid: string): string {
 }
 
 export async function detectRealDevices(): Promise<Device[]> {
-  const all = detectDevices().filter(d => d.type === 'real');
   const usbUdids = await listUsbDeviceUdids();
+  if (usbUdids.length === 0) return [];
   const usbSet = new Set(usbUdids.map(normalizeUdid));
+  const all = detectDevices().filter(d => d.type === 'real');
   return all.filter(d => usbSet.has(normalizeUdid(d.udid)));
 }
 
@@ -132,8 +133,11 @@ export function getDefaultDevice(
 }
 
 export async function resolveDefaultDevice(): Promise<Device> {
-  const devices = detectDevices();
   const usbUdids = await listUsbDeviceUdids();
+  if (usbUdids.length === 0) {
+    return getDefaultDevice([], { usbUdids });
+  }
+  const devices = detectDevices();
   return getDefaultDevice(devices, { usbUdids });
 }
 

@@ -44,6 +44,9 @@ enum RawPointer {
             return
         }
 
+        // Match WebDriverAgent's XCUIApplicationProcess+FBQuiescence wrapper:
+        // prefer the legacy selector when present; on newer XCTest builds that only expose
+        // the pre-event variant, pass isPreEvent=false for an explicit command-side wait.
         if currentProcess.responds(to: waitForQuiescenceSelector) {
             let imp = currentProcess.method(for: waitForQuiescenceSelector)
             let fn = unsafeBitCast(imp, to: WaitForQuiescenceFn.self)

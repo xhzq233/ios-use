@@ -44,6 +44,18 @@ struct SearchCandidate {
     let normalizedText: String
 }
 
+private let scrollableElementTypes: Set<UInt> = [
+    XCUIElement.ElementType.scrollView.rawValue,
+    XCUIElement.ElementType.collectionView.rawValue,
+    XCUIElement.ElementType.table.rawValue,
+    XCUIElement.ElementType.webView.rawValue,
+]
+
+private let cellLikeElementTypes: Set<UInt> = [
+    XCUIElement.ElementType.cell.rawValue,
+    XCUIElement.ElementType.icon.rawValue,
+]
+
 func displayName(for node: SafeSnapshot) -> String? {
     if let identifier = node.identifier, !identifier.isEmpty {
         return identifier
@@ -131,12 +143,15 @@ func buildCleanElements(from root: SafeSnapshot) -> [SnapshotElement] {
 }
 
 private func buildSearchEntries(from elements: [SnapshotElement]) -> [SearchEntry] {
-    elements.map { element in
+    elements.compactMap { element in
         let rawTexts = searchableTexts(for: element.node)
+        guard !rawTexts.isEmpty else { return nil }
+        let normalizedTexts = normalizedSearchableTexts(from: rawTexts)
+        guard !normalizedTexts.isEmpty else { return nil }
         return SearchEntry(
             element: element,
             rawTexts: rawTexts,
-            normalizedTexts: normalizedSearchableTexts(from: rawTexts)
+            normalizedTexts: normalizedTexts
         )
     }
 }
@@ -369,17 +384,11 @@ func hasAncestor(_ node: SafeSnapshot, withLabel label: String) -> Bool {
 /// Single DFS that picks the largest scrollable container by area.
 /// Time complexity: O(n), where n is the number of nodes in the subtree.
 func findLargestScrollable(_ root: SafeSnapshot) -> SafeSnapshot? {
-    let accepted: Set<UInt> = [
-        XCUIElement.ElementType.scrollView.rawValue,
-        XCUIElement.ElementType.collectionView.rawValue,
-        XCUIElement.ElementType.table.rawValue,
-        XCUIElement.ElementType.webView.rawValue,
-    ]
     var best: SafeSnapshot?
     var bestArea: CGFloat = 0
     var stack: [SafeSnapshot] = [root]
     while let node = stack.popLast() {
-        if accepted.contains(UInt(node.elementType)) {
+        if scrollableElementTypes.contains(UInt(node.elementType)) {
             let a = node.frame.width * node.frame.height
             if a > bestArea { best = node; bestArea = a }
         }
@@ -394,15 +403,9 @@ func findLargestScrollable(_ root: SafeSnapshot) -> SafeSnapshot? {
 /// Time complexity: O(h * n_sub) in the worst case, where h is ancestor depth
 /// and n_sub is the size of each checked ancestor subtree.
 func findScrollableAncestor(_ node: SafeSnapshot) -> SafeSnapshot? {
-    let accepted: Set<UInt> = [
-        XCUIElement.ElementType.scrollView.rawValue,
-        XCUIElement.ElementType.collectionView.rawValue,
-        XCUIElement.ElementType.table.rawValue,
-        XCUIElement.ElementType.webView.rawValue,
-    ]
     var cur: SafeSnapshot? = node.parent
     while let p = cur {
-        if accepted.contains(UInt(p.elementType))
+        if scrollableElementTypes.contains(UInt(p.elementType))
             && p.isVisible
             && p.frame.width > 0 && p.frame.height > 0 {
             let frames = collectVisibleCellFrames(p, limit: 2)
@@ -418,17 +421,11 @@ func findScrollableAncestor(_ node: SafeSnapshot) -> SafeSnapshot? {
 /// Chooses the smallest scrollable whose frame contains the target point.
 /// Time complexity: O(n), where n is the number of nodes in the subtree.
 func findScrollableAtPoint(_ point: CGPoint, _ root: SafeSnapshot) -> SafeSnapshot? {
-    let accepted: Set<UInt> = [
-        XCUIElement.ElementType.scrollView.rawValue,
-        XCUIElement.ElementType.collectionView.rawValue,
-        XCUIElement.ElementType.table.rawValue,
-        XCUIElement.ElementType.webView.rawValue,
-    ]
     var best: SafeSnapshot?
     var bestArea: CGFloat = .greatestFiniteMagnitude
     var stack: [SafeSnapshot] = [root]
     while let node = stack.popLast() {
-        if accepted.contains(UInt(node.elementType))
+        if scrollableElementTypes.contains(UInt(node.elementType))
             && node.isVisible
             && node.frame.width > 0 && node.frame.height > 0
             && node.frame.contains(point) {
@@ -461,15 +458,11 @@ func collectCellSnapshots(_ scrollView: SafeSnapshot) -> [SafeSnapshot] {
 /// Used by boundary detection in scroll loops — only needs a few anchor frames
 /// to detect movement, not the full cell list.
 func collectVisibleCellFrames(_ scrollView: SafeSnapshot, limit: Int = 3) -> [CGRect] {
-    let accepted: Set<UInt> = [
-        XCUIElement.ElementType.cell.rawValue,
-        XCUIElement.ElementType.icon.rawValue,
-    ]
     var frames: [CGRect] = []
     frames.reserveCapacity(limit)
     var stack: [SafeSnapshot] = [scrollView]
     while let n = stack.popLast() {
-        if accepted.contains(UInt(n.elementType)) && n.isVisible {
+        if cellLikeElementTypes.contains(UInt(n.elementType)) && n.isVisible {
             frames.append(n.frame)
             if frames.count >= limit { return frames }
         }

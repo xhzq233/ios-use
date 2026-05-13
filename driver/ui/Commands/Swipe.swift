@@ -10,10 +10,6 @@ enum SwipeCommands {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
 
-        guard let cs = getCleanedSnapshot() else {
-            return Codec.foryError("failed to take snapshot")
-        }
-
         let toTarget = args.toTarget
         let fromTarget = args.fromTarget
         let traits = args.traits.isEmpty ? nil : args.traits
@@ -21,6 +17,10 @@ enum SwipeCommands {
         // Path A0: from/to are both absolute points -> direct drag.
         if let from = fromTarget.point, let to = toTarget.point {
             return try handleAbsolutePointSwipe(from: from, to: to, app: app)
+        }
+
+        guard let cs = getCleanedSnapshot() else {
+            return Codec.foryError("failed to take snapshot")
         }
 
         // Path B: `to` is a point → STEP_POINT
@@ -46,7 +46,7 @@ enum SwipeCommands {
                                          cs: CleanedSnapshot,
                                          app: XCUIApplication) throws -> ForyResponseFrame {
         let target: SnapshotElement
-        switch rawFind(label, traits: traits) {
+        switch rawFindInSnapshot(label, traits: traits, cs: cs) {
         case .found(let elem):
             target = elem
         case .ambiguous(let matches):
@@ -102,8 +102,10 @@ enum SwipeCommands {
         let vertical = abs(dy) > abs(dx)
 
         let scrollUpwards: Bool
-        if args.dir == 1 { // back
+        if args.dir == 1 { // explicit back
             scrollUpwards = true
+        } else if args.dir == 0 { // explicit forth
+            scrollUpwards = false
         } else if let tci = targetCellIdx {
             scrollUpwards = tci < lastVisibleIdx
         } else {
@@ -268,20 +270,26 @@ enum SwipeCommands {
         let scrollNode = findLargestScrollable(cs.root)
         let scrollFrame = scrollNode?.frame ?? app.frame
         let isBack = args.dir == 1
-        let axisSize = scrollFrame.height
+        let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root), scrollFrame: scrollFrame)
+        let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
         let distance = args.distance > 0 ? args.distance : (ScrollConstants.scrollTouchProportion * Double(axisSize))
 
         let vector: CGVector
-        if isBack {
-            vector = CGVector(dx: 0, dy: CGFloat(distance))
+        let vertical = axis == .vertical
+        if vertical {
+            vector = isBack
+                ? CGVector(dx: 0, dy: CGFloat(distance))
+                : CGVector(dx: 0, dy: -CGFloat(distance))
         } else {
-            vector = CGVector(dx: 0, dy: -CGFloat(distance))
+            vector = isBack
+                ? CGVector(dx: CGFloat(distance), dy: 0)
+                : CGVector(dx: -CGFloat(distance), dy: 0)
         }
         let node = scrollNode ?? cs.root
         return try performDirectScroll(scrollView: node,
                                    responseNode: node,
                                    vector: vector,
-                                   vertical: true,
+                                   vertical: vertical,
                                    scrollUpwards: isBack,
                                    app: app)
     }
@@ -326,7 +334,7 @@ enum SwipeCommands {
                 return .hitBoundary
             }
 
-            switch rawFindInSnapshot(label, traits: traits, cs: freshCS) {
+            switch rawFindInSnapshot(label, traits: traits, cs: freshCS, enableFuzzy: false) {
             case .found(let elem) where isVisibleWithEffectiveGeometry(elem, in: freshCS.appFrame):
                 return .found(count: i + 1, target: elem.node, freshScrollView: freshScrollView)
             case .ambiguous(let matches):
@@ -370,7 +378,9 @@ enum SwipeCommands {
                 return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
             }
 
-            let freshResponseNode = findMatching(in: freshCS.rawRoot, against: responseNode) ?? freshScrollView
+            let freshResponseNode = SnapshotMatchesElement(responseNode.raw, scrollView.raw)
+                ? freshScrollView
+                : (findMatching(in: freshCS.rawRoot, against: responseNode) ?? freshScrollView)
             return okNodeScroll(node: freshResponseNode, scrolls: segmentCount)
         }
 

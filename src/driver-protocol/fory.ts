@@ -236,7 +236,11 @@ export function toForyTarget(label: unknown): { label: string; point: { x: numbe
     return { label, point: null };
   }
   if (Array.isArray(label) && label.length === 2) {
-    return { label: '', point: { x: label[0] as number, y: label[1] as number } };
+    const [x, y] = label;
+    if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('Invalid coordinate point: expected [number, number]');
+    }
+    return { label: '', point: { x, y } };
   }
   return { label: '', point: null };
 }
@@ -290,7 +294,7 @@ function parseError(data: Uint8Array): Record<string, unknown> {
   if (p.matches?.length) result.matches = p.matches.map(foryFindMatchToDict);
   if (p.atBoundary) result.atBoundary = true;
   if (p.tooSmallToScroll) result.tooSmallToScroll = true;
-  if (p.direction !== undefined) result.direction = p.direction === 1 ? 'back' : 'forth';
+  if (p.direction === 0 || p.direction === 1) result.direction = p.direction === 1 ? 'back' : 'forth';
   if (p.minDragDistance) result.minDragDistance = p.minDragDistance;
   return result;
 }
