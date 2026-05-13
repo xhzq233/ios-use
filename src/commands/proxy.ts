@@ -17,7 +17,10 @@ const MITMDUMP_PORT = 9080;
 const STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-session.json');
 const CA_STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-ca.json');
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
-const FLOWS_DIR = path.join(MODULE_DIR, '../../flows');
+const DEV_FLOWS_DIR = path.join(MODULE_DIR, '../../flows');
+const FLOWS_DIR = fs.existsSync(path.join(IOS_USE_HOME, 'flows'))
+  ? path.join(IOS_USE_HOME, 'flows')
+  : DEV_FLOWS_DIR;
 
 export interface ProxySessionState {
   sessionId: string;

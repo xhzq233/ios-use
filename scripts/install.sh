@@ -111,6 +111,14 @@ install_binary() {
     ln -sfn "$skill_dst" "$skill_link"
   fi
 
+  # flows: install YAML flows to ~/.ios-use/flows/
+  local flows_src="$ROOT_DIR/flows"
+  local flows_dst="$HOME/.ios-use/flows"
+  if [[ -d "$flows_src" ]]; then
+    rm -rf "$flows_dst"
+    cp -R "$flows_src" "$flows_dst"
+  fi
+
   # altsign-cli: local > GitHub Release
   local alt_bin="$HOME/.ios-use/altsign-cli/altsign-cli"
   if [[ -x "$ROOT_DIR/altsign-cli/altsign-cli" ]]; then
