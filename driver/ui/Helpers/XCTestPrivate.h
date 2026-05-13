@@ -5,10 +5,7 @@
 void XCPressAndDrag(XCUICoordinate *start, XCUICoordinate *end,
                     double pressDuration, double velocity, double holdDuration);
 
-/// Detects the current foreground application via XCAXClient_iOS.activeApplications.
-/// Time complexity: O(a), where a is the number of active applications reported
-/// by XCTest. Detection-point probing and PID translation are constant-time.
-XCUIApplication * _Nullable GetActiveApplicationWithDefaultBundleId(NSString * _Nullable bundleId);
+XCUIApplication * _Nullable GetActiveApplication(void);
 
 /// Takes a raw snapshot of an XCUIElement via `snapshotWithError:`.
 id _Nullable SnapshotOfElement(XCUIElement * _Nonnull element);

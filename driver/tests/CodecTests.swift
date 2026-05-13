@@ -101,17 +101,16 @@ final class CodecTests: XCTestCase {
             close(writeFD)
         }
 
-        let payload = ForyCreateSessionArgs(bundleId: "com.test", terminate: true)
+        let payload = ForyActivateAppArgs(bundleId: "com.test")
         let payloadData = try fory.serialize(payload)
-        let frame = ForyRequestFrame(command: "createSession", payload: payloadData)
+        let frame = ForyRequestFrame(command: "activateApp", payload: payloadData)
         let frameData = try fory.serialize(frame)
         try Codec.writeLengthPrefixedData(writeFD, data: frameData)
 
         let readBack = try Codec.readFrame(readFD)
-        XCTAssertEqual(readBack.command, "createSession")
-        let decodedPayload = try fory.deserialize(readBack.payload, as: ForyCreateSessionArgs.self)
+        XCTAssertEqual(readBack.command, "activateApp")
+        let decodedPayload = try fory.deserialize(readBack.payload, as: ForyActivateAppArgs.self)
         XCTAssertEqual(decodedPayload.bundleId, "com.test")
-        XCTAssertTrue(decodedPayload.terminate)
     }
 
     // MARK: - Helpers

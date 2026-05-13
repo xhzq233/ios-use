@@ -5,15 +5,13 @@ import {
   serializeRequestFrame,
   deserializeResponse,
   activateAppArgsSer,
-  createSessionArgsSer,
+  terminateAppArgsSer,
   proxyCAPushArgsSer,
-  deserializeSimpleStringPayload,
   deserializeScreenshotPayload,
   deserializeProxyPayload,
 } from '../driver-protocol/fory.js';
 import type { RawResponse } from '../driver-protocol/fory.js';
 import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
-import type { CreateSessionResponse } from '../driver-protocol/index.js';
 
 export { DriverError };
 export type { RawResponse };
@@ -27,7 +25,6 @@ export class DriverClient {
   private _sessionId: string | null;
   private _bundleId: string | null;
   private verbose: boolean;
-  private _ownsSession: boolean;
 
   constructor(opts: {
     host?: string;
@@ -48,7 +45,6 @@ export class DriverClient {
     this._sessionId = opts.sessionId ?? null;
     this._bundleId = opts.bundleId ?? null;
     this.verbose = opts.verbose ?? false;
-    this._ownsSession = opts.ownsSession ?? true;
   }
 
   async connect(): Promise<void> {
@@ -71,23 +67,9 @@ export class DriverClient {
     return deserializeResponse(responseBytes);
   }
 
-  // ── Session lifecycle (used by session.ts) ──
-
-  async createSession(bundleId?: string, terminate?: boolean): Promise<CreateSessionResponse> {
-    const args = { bundleId: bundleId ?? '', terminate: terminate ?? false };
-    const payload = createSessionArgsSer.serialize(args);
-    const resp = await this.sendRaw(DRIVER_COMMANDS.CREATE_SESSION, payload);
-    if (!resp.ok) throw new DriverError(resp.error ?? 'createSession failed', resp.errorData);
+  markSessionReady(bundleId?: string): void {
     this._sessionId = nextSessionId();
     this._bundleId = bundleId ?? null;
-    return (resp.payloadBytes ? deserializeSimpleStringPayload(resp.payloadBytes) : {}) as CreateSessionResponse;
-  }
-
-  async deleteSession(): Promise<void> {
-    if (!this._ownsSession) return;
-    await this.sendRaw(DRIVER_COMMANDS.DELETE_SESSION, new Uint8Array(0));
-    this._sessionId = null;
-    this._bundleId = null;
   }
 
   async activateApp(bundleId: string): Promise<void> {
@@ -95,6 +77,13 @@ export class DriverClient {
     const resp = await this.sendRaw(DRIVER_COMMANDS.ACTIVATE_APP, payload);
     if (!resp.ok) throw new DriverError(resp.error ?? 'activateApp failed', resp.errorData);
     this._bundleId = bundleId;
+  }
+
+  async terminateApp(bundleId: string): Promise<void> {
+    const payload = terminateAppArgsSer.serialize({ bundleId });
+    const resp = await this.sendRaw(DRIVER_COMMANDS.TERMINATE_APP, payload);
+    if (!resp.ok) throw new DriverError(resp.error ?? 'terminateApp failed', resp.errorData);
+    if (this._bundleId === bundleId) this._bundleId = null;
   }
 
   // ── Screenshot (used by handler + proxy) ──

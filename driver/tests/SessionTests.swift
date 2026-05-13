@@ -1,43 +1,36 @@
 import XCTest
 
 final class SessionTests: XCTestCase {
-    func testActiveAppResolutionStrategy_DeviceSessionAlwaysDetectsWithoutBundleHint() {
-        let strategy = activeAppResolutionStrategy(
-            isDeviceSession: true,
-            cachedAppState: .runningForeground,
-            bundleIdHint: "com.apple.mobilesafari"
+    func testForegroundWaitFailureError_UnknownStateUsesBundleId() {
+        let error = foregroundWaitFailureError(
+            state: .unknown,
+            bundleId: "com.example.missing"
         )
 
-        XCTAssertEqual(strategy, .detect(bundleIdHint: nil))
+        XCTAssertEqual(error.description, "app not found: com.example.missing")
     }
 
-    func testActiveAppResolutionStrategy_AppSessionUsesCachedForegroundApp() {
-        let strategy = activeAppResolutionStrategy(
-            isDeviceSession: false,
-            cachedAppState: .runningForeground,
-            bundleIdHint: "com.apple.Preferences"
+    func testForegroundWaitFailureError_NonUnknownStateIncludesState() {
+        let error = foregroundWaitFailureError(
+            state: .runningBackground,
+            bundleId: "com.example.app"
         )
 
-        XCTAssertEqual(strategy, .useCachedForegroundApp)
+        XCTAssertEqual(error.description, "app not found: app failed to enter foreground (state=3)")
     }
 
-    func testActiveAppResolutionStrategy_AppSessionFallsBackToBundleHintWhenCacheMisses() {
-        let strategy = activeAppResolutionStrategy(
-            isDeviceSession: false,
-            cachedAppState: .notRunning,
-            bundleIdHint: "com.apple.Preferences"
+    func testForegroundWaitFailureError_UnknownStateWithoutBundleUsesStateMessage() {
+        let error = foregroundWaitFailureError(
+            state: .unknown,
+            bundleId: nil
         )
 
-        XCTAssertEqual(strategy, .detect(bundleIdHint: "com.apple.Preferences"))
+        XCTAssertEqual(error.description, "app not found: app failed to enter foreground (state=0)")
     }
 
-    func testActiveAppResolutionStrategy_AppSessionWithoutBundleHintFallsBackToGenericDetection() {
-        let strategy = activeAppResolutionStrategy(
-            isDeviceSession: false,
-            cachedAppState: nil,
-            bundleIdHint: nil
-        )
+    func testTerminationWaitFailureError_IncludesState() {
+        let error = terminationWaitFailureError(state: .runningForeground)
 
-        XCTAssertEqual(strategy, .detect(bundleIdHint: nil))
+        XCTAssertEqual(error.description, "app not found: app failed to terminate (state=4)")
     }
 }

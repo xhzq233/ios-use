@@ -210,6 +210,11 @@ export const ACTIONS = [
     execute: () => { throw new Error('terminateApp handler not registered'); },
   },
   {
+    name: 'home',
+    desc: 'Press the device Home button',
+    execute: () => { throw new Error('home handler not registered'); },
+  },
+  {
     name: 'openURL',
     desc: 'Open a URL on the device',
     cli: {

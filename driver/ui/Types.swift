@@ -3,10 +3,9 @@ import Foundation
 // MARK: - Command
 
 enum Command: String, Codable {
-    case createSession
-    case deleteSession
     case activateApp
     case terminateApp
+    case home
     case openURL
     case proxyCAPush
     case screenshot

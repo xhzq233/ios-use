@@ -104,10 +104,6 @@ const ForySimpleStringPayload = Type.struct('ForySimpleStringPayload', {
 });
 
 // Request Args
-const ForyCreateSessionArgs = Type.struct('ForyCreateSessionArgs', {
-  bundleId: Type.string(),
-  terminate: Type.bool(),
-});
 const ForyActivateAppArgs = Type.struct('ForyActivateAppArgs', {
   bundleId: Type.string(),
 });
@@ -172,7 +168,6 @@ const reqFrameSer = fory.register(ForyRequestFrame);
 const respFrameSer = fory.register(ForyResponseFrame);
 const errorPayloadSer = fory.register(ForyErrorPayload);
 
-export const createSessionArgsSer = fory.register(ForyCreateSessionArgs);
 export const activateAppArgsSer = fory.register(ForyActivateAppArgs);
 export const terminateAppArgsSer = fory.register(ForyTerminateAppArgs);
 export const openURLArgsSer = fory.register(ForyOpenURLArgs);

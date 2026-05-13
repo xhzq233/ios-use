@@ -269,7 +269,7 @@ async function send(client: DriverClient, command: string, payload: Uint8Array):
 type ActionHandler = (client: DriverClient, step: FlowStep, ctx: FlowContext) => Promise<unknown>;
 
 const { TAP, LONG_PRESS, INPUT, SWIPE, DOM, FIND, WAIT_FOR, SCREENSHOT,
-  ACTIVATE_APP, TERMINATE_APP, OPEN_URL, DISMISS_ALERT } = DRIVER_COMMANDS;
+  ACTIVATE_APP, TERMINATE_APP, HOME, OPEN_URL, DISMISS_ALERT } = DRIVER_COMMANDS;
 
 const HANDLERS: Record<string, ActionHandler> = {
 
@@ -429,6 +429,12 @@ const HANDLERS: Record<string, ActionHandler> = {
     const resp = await send(client, OPEN_URL, payload);
     deserializeSimpleStringPayload(resp.payloadBytes!);
     logger.success(`Opened URL: ${url}`);
+  },
+
+  async home(client) {
+    requireClient(client, 'home');
+    await send(client, HOME, new Uint8Array(0));
+    logger.success('Pressed Home');
   },
 
   async dismissAlert(client, step) {

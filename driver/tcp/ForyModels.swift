@@ -153,12 +153,6 @@ struct ForySimpleStringPayload {
 // MARK: - Request Args
 
 @ForyStruct
-struct ForyCreateSessionArgs {
-    var bundleId: String = ""
-    var terminate: Bool = false
-}
-
-@ForyStruct
 struct ForyActivateAppArgs {
     var bundleId: String = ""
 }
@@ -267,7 +261,6 @@ func createFory() -> Fory {
     // Simple String
     try! fory.register(ForySimpleStringPayload.self, name: "ForySimpleStringPayload")
     // Request Args
-    try! fory.register(ForyCreateSessionArgs.self, name: "ForyCreateSessionArgs")
     try! fory.register(ForyActivateAppArgs.self, name: "ForyActivateAppArgs")
     try! fory.register(ForyTerminateAppArgs.self, name: "ForyTerminateAppArgs")
     try! fory.register(ForyOpenURLArgs.self, name: "ForyOpenURLArgs")

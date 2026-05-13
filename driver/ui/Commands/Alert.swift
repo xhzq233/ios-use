@@ -16,7 +16,7 @@ enum AlertCommands {
         }
 
         // 2. Check current foreground app
-        if let app = Session.shared.activeApp {
+        if let app = try? Session.shared.ensureActive() {
             if let result = tryDismissAlert(in: app, index: index) {
                 return result
             }

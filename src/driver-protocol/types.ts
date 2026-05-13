@@ -5,10 +5,6 @@ export type Rect = [number, number, number, number];
 export type LabelOrPoint = string | Point;
 export type SwipeDir = 'forth' | 'back';
 
-export interface CreateSessionResponse {
-  bundleId?: string;
-}
-
 // DOM nodes in cleaned mode arrive as a flat preorder array; each node carries
 // `cc` (childCount) encoding tree structure. Raw mode sends a formatted string.
 export interface DomNode {
