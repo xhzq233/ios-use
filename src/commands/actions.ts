@@ -80,6 +80,20 @@ export function sleep(ms: number) {
   });
 }
 
+function requireNumber(value: unknown, fieldName: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${fieldName} must be a number`);
+  }
+  return value;
+}
+
+export function normalizeSwipeDir(dir: unknown): -1 | 0 | 1 {
+  if (dir === undefined || dir === null || dir === '') return -1;
+  if (dir === 'forth') return 0;
+  if (dir === 'back') return 1;
+  throw new Error(`Invalid swipe dir: "${String(dir)}", expected "forth" or "back"`);
+}
+
 // ── NSLogger ──
 
 export async function startNSLoggerServer(step: FlowStep | Record<string, unknown> = {}, reason = 'nslog_start') {
@@ -371,14 +385,16 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async swipe(client, step) {
     requireClient(client, 'swipe');
+    const distance = step.distance === undefined ? 0 : requireNumber(step.distance, 'swipe.distance');
+    const dir = normalizeSwipeDir(step.dir);
     const toTarget = toForyTarget(step.to);
     const fromTarget = toForyTarget(step.from);
     logger.info(`  → Swipe${step.to ? ` to ${formatLabel(step.to)}` : ''}${step.from ? ` from ${formatLabel(step.from)}` : ''}${step.dir ? ` dir=${step.dir}` : ''}${step.distance ? ` dist=${step.distance}` : ''}`);
     const payload = swipeArgsSer.serialize({
       toTarget,
       fromTarget,
-      distance: step.distance ?? 0,
-      dir: step.dir === 'back' ? 1 : 0,
+      distance,
+      dir,
       traits: step.traits ?? '',
     });
     const resp = await send(client, SWIPE, payload);
@@ -452,15 +468,15 @@ const HANDLERS: Record<string, ActionHandler> = {
   },
 
   async oslog(_client, step, ctx) {
+    const udid = ctx.udid;
+    if (!udid) throw new Error('oslog requires --udid or an active session');
+    configureOslog({ simulator: ctx.deviceType === 'simulator', udid });
     if (step.clear) {
       const n = clearBuffer();
       logger.info(`  → oslog: cleared=${n}`);
       return;
     }
-    const udid = ctx.udid;
-    if (!udid) throw new Error('oslog requires --udid or an active session');
     if (isAborted()) throw new Error('Flow interrupted');
-    configureOslog({ simulator: ctx.deviceType === 'simulator', udid });
     const ctrl = new AbortController();
     const poll = setInterval(() => {
       if (_aborted) { ctrl.abort(); clearInterval(poll); }

@@ -2,14 +2,13 @@
 
 import { Command } from 'commander';
 import { logger } from './utils/logger';
-import { DEFAULT_PORT } from './constants.js';
 import { configureDeviceSigning, readProjectConfig } from './config';
 import { detectRealDevices, detectBootedSimulators, formatDeviceLabel, getConfiguredUdids } from './device';
 import { runCommandStep } from './commands/actions';
 import { flowAction, parseFlowCliVars } from './commands/flow';
 import { nslogStreamAction } from './commands/nslog';
 import { proxyConfigCA, proxyStart, proxyStop, proxyRead, readProxyState } from './commands/proxy';
-import { getCliActions, mapCliToStep, parseIntStrict } from './commands/registry';
+import { getCliActions, mapCliToStep, parseNonNegativeIntStrict, parsePositiveIntStrict } from './commands/registry';
 import type { SwipeDir } from './driver-protocol/index.js';
 import { startSession, stopSession, readSessionInfo } from './session';
 import { formatDriverError } from './utils/driverError';
@@ -86,12 +85,10 @@ program
   .option('--simulator', 'Configure for iOS Simulator (skips signing, builds and installs driver directly)')
   .option('--apple-id <email>', 'Apple ID email (optional if session cached)')
   .option('--password <pwd>', 'Apple ID password (optional if session cached)')
-  .option('--ipa <path>', 'Path to prebuilt driver IPA (default: assets/driver.ipa)')
-  .option('--port <port>', `Driver local port (default: ${DEFAULT_PORT})`, parseIntStrict)
   .option('--verbose', 'Show detailed output')
   .action(handleAction(async (opts: {
     udid?: string; list?: boolean; simulator?: boolean;
-    appleId?: string; password?: string; ipa?: string; port?: number; verbose?: boolean;
+    appleId?: string; password?: string; verbose?: boolean;
   }) => {
     if (opts.list) {
       const config = readProjectConfig();
@@ -208,7 +205,7 @@ proxyCmd.command('start')
   .option('--udid <udid>', 'Device UDID')
   .option('-i, --interface <interface>', 'Mac network interface to advertise as proxy host (default: Wi-Fi)')
   .option('--no-body', 'Omit request/response body from output')
-  .option('--body-limit <bytes>', 'Max body size in bytes (default 102400)', parseIntStrict)
+  .option('--body-limit <bytes>', 'Max body size in bytes (default 102400)', parseNonNegativeIntStrict)
   .action(handleAction(async (opts: { stream?: boolean; udid?: string; interface?: string; noBody?: boolean; bodyLimit?: number }) => {
     const { withAutoSession } = await import('./session.js');
     let udid: string | undefined;
@@ -225,10 +222,22 @@ proxyCmd.command('start')
       logger.info('Proxy running. Run `proxy stop` to stop.');
       return;
     }
-    await new Promise<void>((resolve) => {
-      process.on('SIGINT', () => { resolve(); });
-      process.on('SIGTERM', () => { resolve(); });
+    let signalExitCode = 0;
+    let resolveSignal: (() => void) | undefined;
+    const waitForSignal = new Promise<void>((resolve) => {
+      resolveSignal = resolve;
     });
+    const onSigint = () => { signalExitCode = 130; resolveSignal?.(); };
+    const onSigterm = () => { signalExitCode = 143; resolveSignal?.(); };
+    process.once('SIGINT', onSigint);
+    process.once('SIGTERM', onSigterm);
+    try {
+      await waitForSignal;
+    } finally {
+      process.removeListener('SIGINT', onSigint);
+      process.removeListener('SIGTERM', onSigterm);
+      if (signalExitCode) process.exitCode = signalExitCode;
+    }
     if (started) {
       await withAutoSession({ udid }, async (client) => {
         await proxyStop(client, { udid }).catch(() => {});
@@ -249,7 +258,7 @@ proxyCmd.command('stop')
 
 proxyCmd.command('read')
   .description('Read recent proxy captured requests')
-  .option('--count <n>', 'Number of requests', parseIntStrict, 10)
+  .option('--count <n>', 'Number of requests', parsePositiveIntStrict, 10)
   .option('--duration <duration>', 'Time window (e.g. 5s, 1m)')
   .option('--save [name]', 'Save to jsonl file')
   .action(handleAction(async (opts: { count?: number; duration?: string; save?: string }) => {

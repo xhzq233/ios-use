@@ -12,10 +12,32 @@ export function parseIntStrict(val: string): number {
   return n;
 }
 
+export function parseNonNegativeIntStrict(val: string): number {
+  const n = parseIntStrict(val);
+  if (n < 0) throw new Error(`Invalid non-negative integer: "${val}"`);
+  return n;
+}
+
+export function parsePositiveIntStrict(val: string): number {
+  const n = parseIntStrict(val);
+  if (n <= 0) throw new Error(`Invalid positive integer: "${val}"`);
+  return n;
+}
+
 export function parseFloatStrict(val: string): number {
-  const n = Number(val);
+  const normalized = val.trim();
+  if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(normalized)) throw new Error(`Invalid number: "${val}"`);
+  const n = Number(normalized);
   if (!Number.isFinite(n)) throw new Error(`Invalid number: "${val}"`);
   return n;
+}
+
+export function parseSwipeDir(val: string): SwipeDir {
+  const normalized = val.trim();
+  if (normalized !== 'forth' && normalized !== 'back') {
+    throw new Error(`Invalid swipe dir: "${val}", expected "forth" or "back"`);
+  }
+  return normalized;
 }
 
 // ── CLI option definition ──
@@ -46,9 +68,10 @@ export interface ActionDef {
 
 // ── Offset parsing ──
 
-function parseOffsetPair(v: string | undefined): { x?: number; y?: number } | undefined {
+export function parseOffsetPair(v: string | undefined): { x?: number; y?: number } | undefined {
   if (!v) return undefined;
   const parts = v.split(',');
+  if (parts.length !== 2) throw new Error(`Invalid offset pair: "${v}"`);
   const rawX = parts[0]?.trim();
   const rawY = parts[1]?.trim();
   const x = rawX ? parseFloatStrict(rawX) : undefined;
@@ -119,7 +142,7 @@ export const ACTIONS = [
       opts: [
         { name: 'to', desc: 'Target label or "x,y" (scroll until visible)' },
         { name: 'from', desc: 'Anchor label or "x,y" to scroll from' },
-        { name: 'dir', desc: 'Direction: forth (down/right) or back (up/left)' },
+        { name: 'dir', desc: 'Direction: forth (down/right) or back (up/left)', parse: parseSwipeDir },
         { name: 'distance', desc: 'Swipe distance in pixels', parse: parseFloatStrict },
         { name: 'traits', desc: 'Filter by traits (comma-separated). AND semantics.' },
       ],

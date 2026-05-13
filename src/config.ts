@@ -221,8 +221,6 @@ interface ConfigureDeviceSigningOpts {
   verbose?: boolean;
   appleId?: string;
   password?: string;
-  ipa?: string;
-  port?: string | number;
   simulator?: boolean;
 }
 
@@ -261,15 +259,11 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   }
   // xctest bundle ID = runner bundle ID without the .xctrunner suffix
   const xctestBundleId = bundleId.replace(/\.xctrunner$/, '');
-  saveDeviceSigningConfig(device.udid, {
-    bundleId,
-    port: opts.port !== undefined ? String(opts.port) : undefined,
-  });
   logger.info(`Driver Bundle ID: ${bundleId}`);
   logger.info(`XCTest Bundle ID: ${xctestBundleId}`);
 
   // Locate prebuilt IPA
-  const ipaPath = opts.ipa || getPrebuiltIPAPath();
+  const ipaPath = getPrebuiltIPAPath();
   if (!fs.existsSync(ipaPath)) {
     throw new Error(
       `Prebuilt driver IPA not found at ${ipaPath}\n`
@@ -327,6 +321,10 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   logger.info(`Installing driver to device ${device.udid}...`);
   await runCommand('xcrun', ['devicectl', 'device', 'install', 'app', '--device', device.udid, appPath], 'Install driver to device', { capture: !verbose });
   logger.success('Driver installed to device');
+
+  saveDeviceSigningConfig(device.udid, {
+    bundleId,
+  });
 
   // Cleanup
   fs.rmSync(extractDir, { recursive: true, force: true });
