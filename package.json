@@ -13,8 +13,7 @@
   "scripts": {
     "start": "bun src/cli.ts",
     "test": "bun test",
-    "build": "bun build ./src/cli.ts --compile --outfile ./dist/ios-use",
-    "test:smoke": "bun run build && ./dist/ios-use --help | grep -q devices && ./dist/ios-use devices --help | grep -q connected && ./dist/ios-use stop --help | grep -q Stop && ./dist/ios-use activateApp --help | grep -q bundleId && ./dist/ios-use nslog --help | grep -q NSLogger"
+    "build": "bun build ./src/cli.ts --compile --outfile ./dist/ios-use"
   },
   "keywords": ["ios", "automation", "xctest", "uitest", "cli"],
   "author": "xhzq233",

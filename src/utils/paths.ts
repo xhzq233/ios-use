@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-export const IOS_USE_HOME = path.resolve(os.homedir(), '.ios-use');
+export const IOS_USE_HOME = path.resolve(process.env.IOS_USE_HOME || path.join(os.homedir(), '.ios-use'));
 export const STATE_DIR = path.join(IOS_USE_HOME, 'state');
 export const LOG_DIR = path.join(IOS_USE_HOME, 'logs');
 export const ARTIFACT_DIR = path.join(IOS_USE_HOME, 'artifacts');

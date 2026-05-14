@@ -271,7 +271,7 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
   if (!fs.existsSync(ipaPath)) {
     throw new Error(
       `Prebuilt driver IPA not found at ${ipaPath}\n`
-      + 'Build it first: ./scripts/build_host_app.sh',
+      + 'Build it first: ./scripts/build_driver.sh',
     );
   }
   logger.info(`Using prebuilt driver: ${ipaPath}`);
@@ -358,7 +358,7 @@ async function configureSimulator(udid: string, opts: ConfigureSimulatorOpts = {
     throw new Error(
       'Prebuilt Simulator driver IPA not found.\n'
       + '  Expected: assets/driver-sim.ipa\n'
-      + '  Build it first: ./scripts/build_host_app.sh',
+      + '  Build it first: ./scripts/build_driver.sh',
     );
   }
   logger.info(`Using prebuilt driver: ${ipaPath}`);
