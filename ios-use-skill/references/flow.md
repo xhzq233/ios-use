@@ -265,6 +265,7 @@ steps:
 - 用于观察当前页面全量结构
 - 调试阶段建议多用
 - 需要落盘时加 `save: true`
+- 非 raw DOM 保存为 JSON，结构为 `{ dom, matches, firstMatch }`；raw DOM 保存为 `.txt`
 
 ```yaml
 - action: dom
