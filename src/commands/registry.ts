@@ -128,7 +128,7 @@ export const ACTIONS = [
     desc: 'Type text into an element',
     cli: {
       opts: [
-        { name: 'label', desc: 'Element label or "x,y" coordinate', required: true },
+        { name: 'label', desc: 'Element label', required: true },
         { name: 'content', desc: 'Text to type', required: true },
         { name: 'traits', desc: 'Filter by traits (comma-separated). AND semantics.' },
       ],
