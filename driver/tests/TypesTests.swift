@@ -494,6 +494,43 @@ final class TypesTests: XCTestCase {
         }
     }
 
+    func testRawFindInSnapshot_OnlyDoesNotFallbackToFrameForNonIconElements() {
+        let proxyLabel = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .staticText,
+            frame: CGRect(x: 0, y: 116, width: 80, height: 20),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: proxyLabel, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
+
+        switch rawFindInSnapshot("配置代理", cs: cs, visibility: .only) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected non-icon elements with empty visibleFrame to remain not effectively visible even when frame is in bounds")
+        }
+    }
+
+    func testRawFindInSnapshot_OnlyFallsBackToFrameForIconElements() {
+        let icon = FakeRawSnapshot(
+            label: "醒图开发版",
+            elementType: .icon,
+            frame: CGRect(x: 22, y: 489, width: 80, height: 90),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: icon, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
+
+        switch rawFindInSnapshot("醒图开发版", cs: cs, visibility: .only) {
+        case .found(let found):
+            XCTAssertEqual(found.node.frame.origin.x, 22)
+            XCTAssertEqual(found.node.frame.origin.y, 489)
+        default:
+            XCTFail("expected icon elements with empty visibleFrame to fallback to frame when frame is in bounds")
+        }
+    }
+
     func testRawFindInSnapshot_OnlyFuzzyIgnoresNotEffectivelyVisibleCandidates() {
         let offscreenLabel = FakeRawSnapshot(
             label: "Blue",
