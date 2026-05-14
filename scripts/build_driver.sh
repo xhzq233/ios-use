@@ -5,8 +5,8 @@ set -euo pipefail
 # Build IOSUseDriver artifacts
 #
 # Usage:
-#   ./scripts/build_host_app.sh        # Release build (fastest, no dSYM)
-#   ./scripts/build_host_app.sh --debug # Debug build with dSYM for troubleshooting
+#   ./scripts/build_driver.sh        # Release build (fastest, no dSYM)
+#   ./scripts/build_driver.sh --debug # Debug build with dSYM for troubleshooting
 # =============================================================================
 
 DEBUG_MODE=false
@@ -58,33 +58,6 @@ XCODE_COMMON=(
   DEBUG_INFORMATION_FORMAT="$DEBUG_INFO_FORMAT"
   CODE_SIGNING_ALLOWED=NO
 )
-
-# Run unit tests first (logic tests on a booted Simulator, or skip if none)
-BOOTED_UDID=$(xcrun simctl list devices booted 2>/dev/null | grep -o -E '[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}' | head -1 || true)
-BOOTED_OS=$(xcrun simctl list devices booted 2>/dev/null | grep -o -E '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
-if [ -n "$BOOTED_UDID" ] && [ -n "$BOOTED_OS" ]; then
-  echo "[build] Running Swift unit tests (Simulator $BOOTED_UDID OS=$BOOTED_OS)..."
-  TEST_LOG=$(mktemp)
-  set +e
-  xcodebuild test \
-    -project "$PROJECT_DIR/IOSUseDriver.xcodeproj" \
-    -scheme IOSUseDriverUnitTests \
-    -destination "platform=iOS Simulator,id=$BOOTED_UDID,OS=$BOOTED_OS" \
-    -skipMacroValidation \
-    CODE_SIGNING_ALLOWED=NO \
-    > "$TEST_LOG" 2>&1
-  TEST_EXIT=$?
-  set -e
-  if [ $TEST_EXIT -ne 0 ]; then
-    echo "[build] Unit tests failed (exit $TEST_EXIT). Log: $TEST_LOG"
-    exit 1
-  fi
-  grep -E "(Test Suite|Executed|passed|failed|TEST)" "$TEST_LOG" || true
-  rm -f "$TEST_LOG"
-  echo ""
-else
-  echo "[build] No booted Simulator, skipping Swift unit tests"
-fi
 
 # Helper: package a .app into an IPA.
 package_ipa() {

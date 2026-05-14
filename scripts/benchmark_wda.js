@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, '..');
 process.chdir(ROOT);
 
-const IOS_USE_HOME = path.join(os.homedir(), '.ios-use');
+const IOS_USE_HOME = path.resolve(process.env.IOS_USE_HOME || path.join(os.homedir(), '.ios-use'));
 const BENCHMARK_DIR = path.join(IOS_USE_HOME, 'artifacts', 'benchmark');
 const SCREENSHOT_DIR = path.join(BENCHMARK_DIR, 'screenshots');
 const LOG_DIR = path.join(IOS_USE_HOME, 'logs');
@@ -195,7 +195,7 @@ function buildReleaseDriverArtifacts() {
   if (process.env.IOS_USE_BENCHMARK_SKIP_DRIVER_BUILD === '1') {
     return 'skipped';
   }
-  runSync('bash', ['scripts/build_host_app.sh'], { capture: false });
+  runSync('bash', ['scripts/build_driver.sh'], { capture: false });
   return 'Release';
 }
 
