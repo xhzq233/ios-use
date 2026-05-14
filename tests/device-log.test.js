@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { clearBuffer, fetchOslog, configureOslog } from '../src/device-log/oslog.ts';
 
 // ── clearBuffer ──
@@ -14,6 +14,12 @@ describe('clearBuffer', () => {
 // ── fetchOslog real device (mock collectSyslog) ──
 
 describe('fetchOslog', () => {
+  afterEach(() => {
+    clearBuffer();
+    configureOslog({ simulator: false });
+    mock.restore();
+  });
+
   test('collects lines from real device and deduplicates', async () => {
     // Push some data into the buffer by faking a syslog collect
     const collectSyslogMock = mock(async (_udid, _timeoutMs, _signal) => ['line one', 'line two']);
@@ -173,5 +179,26 @@ describe('fetchOslog', () => {
     const result = await fetchOslog({ udid: 'sim-udid' });
     expect(result.total).toBe(1);
     expect(result.content).toContain('simulator log line');
+  });
+
+  test('simulator log collection forwards bundleId for simctl predicate filtering', async () => {
+    let receivedOpts = undefined;
+    const simLogMock = mock(async (_udid, opts) => {
+      receivedOpts = opts;
+      return ['May 11 15:30:45 Mac Preferences[123] <Notice>: settings opened'];
+    });
+    mock.module('../src/device-log/syslog-relay.js', () => ({
+      collectSyslog: mock(async () => []),
+    }));
+    mock.module('../src/device-log/simulator-log.js', () => ({
+      collectSimulatorLog: simLogMock,
+    }));
+
+    clearBuffer();
+    configureOslog({ simulator: true, udid: 'sim-udid' });
+
+    const result = await fetchOslog({ udid: 'sim-udid', bundleId: 'Preferences' });
+    expect(receivedOpts).toMatchObject({ bundleId: 'Preferences' });
+    expect(result.matched).toBe(1);
   });
 });
