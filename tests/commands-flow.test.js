@@ -317,6 +317,51 @@ steps:
     });
   });
 
+  test('dom save writes derived output with dom matches and firstMatch', async () => {
+    const name = `dom-save-test-${Date.now()}`;
+    const originalMkdirSync = fs.mkdirSync;
+    const originalWriteFileSync = fs.writeFileSync;
+    let savedPath = '';
+    let savedContent = '';
+
+    try {
+      fs.mkdirSync = ((target, opts) => {
+        if (String(target).endsWith(path.join('.ios-use', 'artifacts'))) return undefined;
+        return originalMkdirSync(target, opts);
+      });
+      fs.writeFileSync = ((target, data, opts) => {
+        if (String(target).endsWith(`${name}.json`)) {
+          savedPath = String(target);
+          savedContent = String(data);
+          return undefined;
+        }
+        return originalWriteFileSync(target, data, opts);
+      });
+
+      await executeStep(createDriver({
+        sendRaw: customDom([
+          { tr: ['Window'], cc: 1 },
+          { tr: ['Button'], l: '关闭', r: [10, 10, 50, 20], cc: 0 },
+        ]),
+      }), {
+        action: 'dom',
+        candidates: ['关闭'],
+        save: true,
+        name,
+        print: false,
+      }, {});
+
+      expect(savedPath.endsWith(`${name}.json`)).toBe(true);
+      const saved = JSON.parse(savedContent);
+      expect(saved.dom.app).toBe('Demo');
+      expect(saved.matches).toHaveLength(1);
+      expect(saved.firstMatch).toMatchObject({ label: '关闭', type: 'Button' });
+    } finally {
+      fs.mkdirSync = originalMkdirSync;
+      fs.writeFileSync = originalWriteFileSync;
+    }
+  });
+
   test('errors when runFlow requests an undeclared output', async () => {
     const dir = makeTempDir('ios-use-flow-missing-output-');
     const childPath = path.join(dir, 'child.yaml');

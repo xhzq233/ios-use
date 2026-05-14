@@ -335,7 +335,7 @@ export async function configureDeviceSigning(opts: ConfigureDeviceSigningOpts): 
 
 // ── Simulator configuration (no signing required) ──
 
-const SIMULATOR_BUNDLE_ID = 'com.iosuse.xcuidriver';
+const SIMULATOR_BUNDLE_ID = 'com.iosuse.xcuidriver.xctrunner';
 
 interface ConfigureSimulatorOpts {
   verbose?: boolean;

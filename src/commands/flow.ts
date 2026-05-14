@@ -364,8 +364,8 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
     driver = await startSession({ ...sessionOpts, terminate: true });
     // Refresh context from session info populated by startSession
     const freshInfo = readSessionInfo();
-    if (!context.udid) context.udid = freshInfo?.udid;
-    if (!context.deviceType) context.deviceType = freshInfo?.deviceType;
+    context.udid = opts.udid ?? freshInfo?.udid;
+    context.deviceType = freshInfo?.deviceType;
 
     if (context.nsloggerServer) {
       logger.info('Waiting for app to connect to NSLogger...');
