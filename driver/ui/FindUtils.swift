@@ -10,6 +10,11 @@ enum FindResult {
     case notFound(suggestions: [String])
 }
 
+enum RawFindVisibility {
+    case any
+    case only
+}
+
 // MARK: - rawFind (doc 6.1)
 
 /// Unified label search against an explicit cleaned snapshot.
@@ -18,9 +23,13 @@ enum FindResult {
 /// the indexed element count, s is the number of precomputed searchable texts
 /// per element, m is the number of contains matches, r is the number of
 /// requested traits, c is candidate string count, q is query length, and t is
-/// candidate length used by fuzzy fallback. Effective-visible preference adds
-/// O(m) only for contains matches.
-func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapshot, enableFuzzy: Bool = true) -> FindResult {
+/// candidate length used by fuzzy fallback. Effective-visible filtering adds
+/// O(n) before contains/fuzzy when `visibility == .only`.
+func rawFindInSnapshot(_ label: String,
+                       traits: String? = nil,
+                       cs: CleanedSnapshot,
+                       enableFuzzy: Bool = true,
+                       visibility: RawFindVisibility = .only) -> FindResult {
     let query = label.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else {
         return .notFound(suggestions: [])
@@ -30,15 +39,20 @@ func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapsh
         return .notFound(suggestions: [])
     }
 
+    let searchEntries = visibility == .only
+        ? cs.searchEntries.filter { isVisibleWithEffectiveGeometry($0.element, in: cs.appFrame) }
+        : cs.searchEntries
+
     // 1. Unified normalized contains match across label + value.
-    var matches = matchingElements(in: cs.searchEntries) { entry in
+    var matches = matchingElements(in: searchEntries) { entry in
         entry.normalizedTexts.contains { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }
     }
 
     // 2. Fuzzy fallback when contains-match is empty.
     if matches.isEmpty {
         guard enableFuzzy else { return .notFound(suggestions: []) }
-        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizedQuery, from: cs.searchCandidates)
+        let candidates = visibility == .only ? searchCandidates(from: searchEntries) : cs.searchCandidates
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizedQuery, from: candidates)
         if !suggestions.isEmpty { return .fuzzy(suggestions: suggestions) }
         return .notFound(suggestions: [])
     }
@@ -57,8 +71,6 @@ func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapsh
         }
     }
 
-    matches = preferVisibleMatches(matches, appFrame: cs.appFrame)
-
     if matches.isEmpty { return .notFound(suggestions: []) }
     if matches.count > 1 { return .ambiguous(matches: matches) }
     return .found(matches[0])
@@ -66,16 +78,21 @@ func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapsh
 
 /// Unified label search: contains(label/value) → fuzzy → trait filter.
 /// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
-func rawFind(_ label: String, traits: String? = nil) -> FindResult {
+func rawFind(_ label: String, traits: String? = nil, visibility: RawFindVisibility = .only) -> FindResult {
     guard let cs = getCleanedSnapshot() else {
         return .notFound(suggestions: [])
     }
-    return rawFindInSnapshot(label, traits: traits, cs: cs)
+    return rawFindInSnapshot(label, traits: traits, cs: cs, visibility: visibility)
 }
 
-private func preferVisibleMatches(_ matches: [SnapshotElement], appFrame: CGRect) -> [SnapshotElement] {
-    let visible = matches.filter { isVisibleWithEffectiveGeometry($0, in: appFrame) }
-    return visible.isEmpty ? matches : visible
+private func searchCandidates(from entries: [SearchEntry]) -> [SearchCandidate] {
+    entries.flatMap { entry in
+        entry.rawTexts.compactMap { text -> SearchCandidate? in
+            let normalized = normalizeSearchText(text)
+            guard !normalized.isEmpty else { return nil }
+            return SearchCandidate(displayText: text, normalizedText: normalized)
+        }
+    }
 }
 
 func searchableTexts(label: String?, value: String?) -> [String] {

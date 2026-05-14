@@ -28,11 +28,8 @@ enum TouchCommands {
             return Codec.foryError("tap: invalid label/point")
         }
         let traits = args.traits.isEmpty ? nil : args.traits
-        switch rawFind(target.label, traits: traits) {
+        switch rawFind(target.label, traits: traits, visibility: .only) {
         case .found(let elem):
-            guard elem.isVisible else {
-                return Codec.foryError("tap: element '\(target.label)' is not visible")
-            }
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
                 return Codec.foryError("tap: element '\(target.label)' has zero-area frame")
@@ -78,11 +75,8 @@ enum TouchCommands {
             return Codec.foryError("longPress: invalid label/point")
         }
         let traits = args.traits.isEmpty ? nil : args.traits
-        switch rawFind(target.label, traits: traits) {
+        switch rawFind(target.label, traits: traits, visibility: .only) {
         case .found(let elem):
-            guard elem.isVisible else {
-                return Codec.foryError("longPress: element '\(target.label)' is not visible")
-            }
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
                 return Codec.foryError("longPress: element '\(target.label)' has zero-area frame")

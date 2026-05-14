@@ -15,7 +15,7 @@ enum InputCommands {
 
         // Locate the target via rawFind.
         let elem: SnapshotElement
-        switch rawFind(args.label, traits: traits) {
+        switch rawFind(args.label, traits: traits, visibility: .only) {
         case .found(let e): elem = e
         case .ambiguous(let matches): return try ambiguityResponse(args.label, matches: matches)
         case .fuzzy(let s):

@@ -23,20 +23,18 @@ enum WaitForCommands {
             guard let cs = getCleanedSnapshot() else {
                 return Codec.foryError("waitFor: failed to take snapshot")
             }
-            let result = rawFindInSnapshot(args.label, traits: traits, cs: cs, enableFuzzy: false)
+            let result = rawFindInSnapshot(args.label, traits: traits, cs: cs, enableFuzzy: false, visibility: .only)
 
             switch result {
             case .found(let elem):
-                if isVisibleWithEffectiveGeometry(elem, in: cs.appFrame) {
-                    let elapsed = CFAbsoluteTimeGetCurrent() - t0
-                    let payload = ForyWaitForPayload(
-                        elemType: Int32(truncatingIfNeeded: elem.node.elementType),
-                        label: elem.node.label ?? "",
-                        rect: makeForyRect(elem.node.frame),
-                        waited: Double(elapsed).sanitized
-                    )
-                    return try Codec.foryOK(payload)
-                }
+                let elapsed = CFAbsoluteTimeGetCurrent() - t0
+                let payload = ForyWaitForPayload(
+                    elemType: Int32(truncatingIfNeeded: elem.node.elementType),
+                    label: elem.node.label ?? "",
+                    rect: makeForyRect(elem.node.frame),
+                    waited: Double(elapsed).sanitized
+                )
+                return try Codec.foryOK(payload)
             case .ambiguous(let matches):
                 return try ambiguityResponse(args.label, matches: matches)
             case .fuzzy, .notFound:
