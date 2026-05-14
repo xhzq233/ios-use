@@ -76,9 +76,7 @@ if [ -n "$BOOTED_UDID" ] && [ -n "$BOOTED_OS" ]; then
   TEST_EXIT=$?
   set -e
   if [ $TEST_EXIT -ne 0 ]; then
-    echo "[build] Unit tests/build failed. Full log:"
-    cat "$TEST_LOG"
-    rm -f "$TEST_LOG"
+    echo "[build] Unit tests failed (exit $TEST_EXIT). Log: $TEST_LOG"
     exit 1
   fi
   grep -E "(Test Suite|Executed|passed|failed|TEST)" "$TEST_LOG" || true
