@@ -48,6 +48,11 @@ function requireClient(client: DriverClient | null, action: string) {
   if (!client) throw new Error(`${action} requires an active session`);
 }
 
+function isAppNotRunningError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /not running|already terminated|no such process|state=1|state=0/i.test(message);
+}
+
 let _verbose = false;
 export function setVerbose(v: boolean) { _verbose = v; }
 export function isVerbose() { return _verbose; }
@@ -182,16 +187,24 @@ function deriveDomOutput(result: DomResponse, candidates?: string[]) {
     return { dom: result, matches, firstMatch: null };
   }
 
-  for (const candidate of candidates) {
-    const normalizedCandidate = normalizeSearchText(candidate);
-    if (!normalizedCandidate) continue;
+  const normalizedCandidates = candidates
+    .map((candidate) => normalizeSearchText(candidate))
+    .filter((candidate) => candidate.length > 0);
+  if (normalizedCandidates.length === 0) {
+    return { dom: result, matches, firstMatch: null };
+  }
+
+  const normalizedElements = elements.map((node) => {
+    const texts = [node.l, node.v]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+    return texts.map((value) => normalizeSearchText(value));
+  });
+
+  for (const normalizedCandidate of normalizedCandidates) {
     for (let i = 0; i < elements.length; i++) {
       if (matchedIndices.has(i)) continue;
       const node = elements[i];
-      const normalizedTexts = [node.l, node.v]
-        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-        .map((value) => normalizeSearchText(value));
-      if (normalizedTexts.some((value) => value.includes(normalizedCandidate))) {
+      if (normalizedElements[i].some((value) => value.includes(normalizedCandidate))) {
         matchedIndices.add(i);
         matches.push(domNodeOutput(node));
       }
@@ -211,29 +224,33 @@ export function normalizeNeedLogConfig(needLog: boolean | Record<string, unknown
 // ── DOM tree display ──
 
 function printDomElements(elements: DomNode[], indent: string) {
+  const lines: string[] = [];
   let idx = 0;
   while (idx < elements.length) {
-    idx = printDomFlatSubtree(elements, idx, indent, 0);
+    idx = collectDomFlatSubtreeLines(elements, idx, indent, 0, lines);
+  }
+  if (lines.length > 0) {
+    console.log(lines.join('\n'));
   }
 }
 
-function printDomFlatSubtree(elements: DomNode[], index: number, baseIndent: string, depth: number): number {
+function collectDomFlatSubtreeLines(elements: DomNode[], index: number, baseIndent: string, depth: number, lines: string[]): number {
   const el = elements[index];
   const { line, isContainer } = formatDomLine(el);
   const padding = baseIndent + '  '.repeat(depth);
 
   if (isContainer) {
-    console.log(`${padding}${line}:`);
+    lines.push(`${padding}${line}:`);
     let childIdx = index + 1;
     for (let i = 0; i < (el.cc ?? 0); i++) {
       if (childIdx >= elements.length) break;
-      childIdx = printDomFlatSubtree(elements, childIdx, baseIndent, depth + 1);
+      childIdx = collectDomFlatSubtreeLines(elements, childIdx, baseIndent, depth + 1, lines);
     }
     return childIdx;
   }
 
   const rect = Array.isArray(el.r) ? ` (${el.r.join(',')})` : '';
-  console.log(`${padding}- ${line}${rect}`);
+  lines.push(`${padding}- ${line}${rect}`);
   return index + 1;
 }
 
@@ -278,6 +295,19 @@ const HANDLERS: Record<string, ActionHandler> = {
     const payload = domArgsSer.serialize({ raw: !!step.raw, fresh: !!step.fresh });
     const resp = await send(client, DOM, payload);
     const result = deserializeDomPayload(resp.payloadBytes!);
+    const output = deriveDomOutput(result, step.candidates);
+    if (step.save) {
+      const name = step.name || `dom-${timestamp()}`;
+      if (result.raw) {
+        const outputFile = outputPath(`${name}.txt`);
+        fs.writeFileSync(outputFile, result.raw);
+        logger.info(`  → DOM saved: ${outputFile}`);
+      } else {
+        const outputFile = outputPath(`${name}.json`);
+        fs.writeFileSync(outputFile, JSON.stringify(output, null, 2));
+        logger.info(`  → DOM saved: ${outputFile}`);
+      }
+    }
     if (step.print ?? true) {
       if (result.raw) {
         console.log(`\n  App: ${result.app}, Window: ${result.window.join('x')}`);
@@ -290,7 +320,7 @@ const HANDLERS: Record<string, ActionHandler> = {
         console.log('');
       }
     }
-    return deriveDomOutput(result, step.candidates);
+    return output;
   },
 
   async find(client, step) {
@@ -468,8 +498,12 @@ const HANDLERS: Record<string, ActionHandler> = {
       const payload = terminateAppArgsSer.serialize({ bundleId });
       await send(client, TERMINATE_APP, payload);
       logger.success(`App ${bundleId} terminated`);
-    } catch {
-      logger.info(`App ${bundleId} not running, skipped terminate`);
+    } catch (error) {
+      if (isAppNotRunningError(error)) {
+        logger.info(`App ${bundleId} not running, skipped terminate`);
+        return;
+      }
+      throw error;
     }
   },
 
