@@ -5,7 +5,7 @@ import Fory
 
 enum SwipeCommands {
 
-    /// doc 5 — unified swipe with to/from/distance/dir/context.
+    /// doc 5 — unified swipe with to/from/distance/dir/traits.
     static func swipe(_ args: ForySwipeArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
@@ -317,12 +317,12 @@ enum SwipeCommands {
             autoreleasepool {
                 if vertical {
                     scrollUpwards
-                        ? scrollUpByNormalizedDistance(0.75, scrollFrame: scrollFrame, app: app)
-                        : scrollDownByNormalizedDistance(0.75, scrollFrame: scrollFrame, app: app)
+                        ? scrollUpByNormalizedDistance(ScrollConstants.scrollTouchProportion, scrollFrame: scrollFrame, app: app)
+                        : scrollDownByNormalizedDistance(ScrollConstants.scrollTouchProportion, scrollFrame: scrollFrame, app: app)
                 } else {
                     scrollUpwards
-                        ? scrollLeftByNormalizedDistance(0.75, scrollFrame: scrollFrame, app: app)
-                        : scrollRightByNormalizedDistance(0.75, scrollFrame: scrollFrame, app: app)
+                        ? scrollLeftByNormalizedDistance(ScrollConstants.scrollTouchProportion, scrollFrame: scrollFrame, app: app)
+                        : scrollRightByNormalizedDistance(ScrollConstants.scrollTouchProportion, scrollFrame: scrollFrame, app: app)
                 }
             }
             Thread.sleep(forTimeInterval: ScrollConstants.settleInterval)

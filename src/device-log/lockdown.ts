@@ -3,6 +3,7 @@ import tls from 'node:tls';
 import { execSync } from 'node:child_process';
 import plist from 'plist';
 import { connectUsbmux } from '../driver-protocol/usbmux.js';
+import { LOCKDOWN_MAX_PLIST_SIZE_BYTES, LOCKDOWN_PLIST_RECV_TIMEOUT_MS } from '../constants.js';
 
 const LOCKDOWN_PORT = 62078;
 const LABEL = 'ios-use';
@@ -18,7 +19,7 @@ function plistSend(socket: net.Socket, msg: Record<string, unknown>): void {
   socket.write(xml);
 }
 
-function plistRecv(socket: net.Socket, timeoutMs = 10000): Promise<Record<string, unknown>> {
+function plistRecv(socket: net.Socket, timeoutMs = LOCKDOWN_PLIST_RECV_TIMEOUT_MS): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`plist recv timeout after ${timeoutMs}ms`)), timeoutMs);
     let buf = Buffer.alloc(0);
@@ -33,7 +34,7 @@ function plistRecv(socket: net.Socket, timeoutMs = 10000): Promise<Record<string
     function tryParse() {
       if (buf.length < 4) return;
       const size = buf.readUInt32BE(0);
-      if (size > 10 * 1024 * 1024) { clearTimeout(timer); return reject(new Error(`plist too large: ${size}`)); }
+      if (size > LOCKDOWN_MAX_PLIST_SIZE_BYTES) { clearTimeout(timer); return reject(new Error(`plist too large: ${size}`)); }
       if (buf.length < 4 + size) return;
       clearTimeout(timer);
       socket.removeListener('data', onData);

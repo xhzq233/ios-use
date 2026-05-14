@@ -10,7 +10,12 @@ import {
   ensureIosUseHome,
 } from './utils/paths.js';
 
-import { DEFAULT_PORT } from './constants.js';
+import {
+  DEFAULT_PORT,
+  MAX_CAPTURE_SIZE_BYTES,
+  SIMULATOR_BOOT_TIMEOUT_MS,
+  SIMULATOR_TERMINATE_TIMEOUT_MS,
+} from './constants.js';
 
 const DEFAULT_DRIVER_BUNDLE_PREFIX = 'com.ios-use.driver';
 const CACHED_APPLE_ID_RE = /Using cached session for ([^\s]+)/;
@@ -158,18 +163,17 @@ function runCommand(
     let stdout = '';
     let stderr = '';
 
-    const MAX_CAPTURE_SIZE = 10 * 1024 * 1024;
     let stdoutSize = 0;
     let stderrSize = 0;
     if (capture) {
       proc.stdout?.on('data', (chunk: Buffer) => {
-        if (stdoutSize < MAX_CAPTURE_SIZE) {
+        if (stdoutSize < MAX_CAPTURE_SIZE_BYTES) {
           stdout += chunk.toString();
           stdoutSize += chunk.length;
         }
       });
       proc.stderr?.on('data', (chunk: Buffer) => {
-        if (stderrSize < MAX_CAPTURE_SIZE) {
+        if (stderrSize < MAX_CAPTURE_SIZE_BYTES) {
           stderr += chunk.toString();
           stderrSize += chunk.length;
         }
@@ -342,7 +346,7 @@ interface ConfigureSimulatorOpts {
 }
 
 function waitForSimulatorBoot(udid: string, verbose = false): void {
-  execFileSync('xcrun', ['simctl', 'bootstatus', udid, '-b'], { stdio: verbose ? 'inherit' : 'pipe', timeout: 120000 });
+  execFileSync('xcrun', ['simctl', 'bootstatus', udid, '-b'], { stdio: verbose ? 'inherit' : 'pipe', timeout: SIMULATOR_BOOT_TIMEOUT_MS });
 }
 
 async function configureSimulator(udid: string, opts: ConfigureSimulatorOpts = {}): Promise<void> {
@@ -374,7 +378,7 @@ async function configureSimulator(udid: string, opts: ConfigureSimulatorOpts = {
 
   // Terminate existing driver before reinstalling
   try {
-    execFileSync('xcrun', ['simctl', 'terminate', udid, SIMULATOR_BUNDLE_ID], { stdio: 'pipe', timeout: 5000 });
+    execFileSync('xcrun', ['simctl', 'terminate', udid, SIMULATOR_BUNDLE_ID], { stdio: 'pipe', timeout: SIMULATOR_TERMINATE_TIMEOUT_MS });
     logger.info('Terminated existing driver on Simulator');
   } catch {
     // Not running, ignore

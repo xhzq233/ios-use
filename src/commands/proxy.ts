@@ -11,8 +11,19 @@ import { isProcessAlive } from '../utils/process.js';
 import { DriverClient } from '../driver-client/client.js';
 import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
 import { runFlowFile } from './flow.js';
+import {
+  DEFAULT_DRIVER_HOST,
+  MITMPROXY_CA_GENERATION_POLL_MS,
+  MITMPROXY_CA_GENERATION_TIMEOUT_MS,
+  PROXY_LAN_PROBE_POLL_MS,
+  PROXY_LAN_PROBE_TIMEOUT_MS,
+  PROXY_FORCED_KILL_DELAY_MS,
+  PROXY_MITMDUMP_PORT,
+  PROXY_PROCESS_GRACE_MS,
+  PROXY_PROCESS_POLL_MS,
+  PROXY_WAIT_PORT_POLL_MS,
+} from '../constants.js';
 
-const MITMDUMP_PORT = 9080;
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEV_FLOWS_DIR = path.join(MODULE_DIR, '../../flows');
 let proxyHome = IOS_USE_HOME;
@@ -113,10 +124,10 @@ function fingerprintPem(pem: string): string {
 async function killPid(pid: number | undefined): Promise<void> {
   if (!pid || !isProcessAlive(pid)) return;
   process.kill(pid, 'SIGTERM');
-  const deadline = Date.now() + 3000;
+  const deadline = Date.now() + PROXY_PROCESS_GRACE_MS;
   while (Date.now() < deadline) {
     if (!isProcessAlive(pid)) return;
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise(r => setTimeout(r, PROXY_PROCESS_POLL_MS));
   }
   if (isProcessAlive(pid)) process.kill(pid, 'SIGKILL');
 }
@@ -165,12 +176,12 @@ function waitForPort(port: number, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMs;
     const tryConnect = () => {
-      const sock = net.createConnection(port, '127.0.0.1');
+      const sock = net.createConnection(port, DEFAULT_DRIVER_HOST);
       sock.on('connect', () => { sock.destroy(); resolve(); });
       sock.on('error', () => {
         sock.destroy();
         if (Date.now() > deadline) reject(new Error(`Port ${port} not ready after ${timeoutMs}ms`));
-        else setTimeout(tryConnect, 200);
+        else setTimeout(tryConnect, PROXY_WAIT_PORT_POLL_MS);
       });
     };
     tryConnect();
@@ -208,9 +219,9 @@ async function verifyDeviceCanReachMac(client: DriverClient, macLanIp: string): 
     const resp = await client.sendRaw(DRIVER_COMMANDS.OPEN_URL, payload);
     if (!resp.ok) throw new Error(`openURL failed: ${resp.error}`);
 
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + PROXY_LAN_PROBE_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 300));
+      await new Promise(r => setTimeout(r, PROXY_LAN_PROBE_POLL_MS));
       if (received) return;
     }
     throw new Error(
@@ -235,8 +246,8 @@ async function generateMitmproxyCA(confdir: string): Promise<void> {
         proc.kill('SIGTERM');
         done();
       }
-    }, 200);
-    const fallback = setTimeout(() => { clearInterval(check); proc.kill('SIGKILL'); done(); }, 10000);
+    }, MITMPROXY_CA_GENERATION_POLL_MS);
+    const fallback = setTimeout(() => { clearInterval(check); proc.kill('SIGKILL'); done(); }, MITMPROXY_CA_GENERATION_TIMEOUT_MS);
   });
 }
 
@@ -245,7 +256,7 @@ async function startMitmdump(confdir: string, flowFile: string): Promise<ChildPr
     '-q',
     '--mode', 'regular',
     '--listen-host', '0.0.0.0',
-    '--listen-port', String(MITMDUMP_PORT),
+    '--listen-port', String(PROXY_MITMDUMP_PORT),
     '--set', `confdir=${confdir}`,
     '--set', 'ssl_insecure=true',
     '--set', 'connection_strategy=lazy',
@@ -264,7 +275,7 @@ async function startMitmdump(confdir: string, flowFile: string): Promise<ChildPr
 
   try {
     await Promise.race([
-      waitForPort(MITMDUMP_PORT, 5000),
+      waitForPort(PROXY_MITMDUMP_PORT, PROXY_LAN_PROBE_TIMEOUT_MS),
       new Promise<never>((_, reject) => {
         proc.once('error', reject);
         proc.once('exit', (code, signal) => reject(new Error(`mitmdump exited before ready: code=${code} signal=${signal}`)));
@@ -273,7 +284,7 @@ async function startMitmdump(confdir: string, flowFile: string): Promise<ChildPr
     return proc;
   } catch (error) {
     try { proc.kill('SIGTERM'); } catch {}
-    setTimeout(() => { try { if (!proc.killed) proc.kill('SIGKILL'); } catch {} }, 1000).unref?.();
+    setTimeout(() => { try { if (!proc.killed) proc.kill('SIGKILL'); } catch {} }, PROXY_FORCED_KILL_DELAY_MS).unref?.();
     throw error;
   }
 }
@@ -391,7 +402,7 @@ export async function proxyStart(
     logger.info('Configuring device Wi-Fi proxy...');
     await runFlow(_client, 'proxy_set_wifi_proxy.yaml', {
       udid: opts.udid,
-      vars: { server: wifi.macLanIp, port: String(MITMDUMP_PORT) },
+      vars: { server: wifi.macLanIp, port: String(PROXY_MITMDUMP_PORT) },
     });
   } catch (error) {
     const pid = mitmdumpProc?.pid;
@@ -411,10 +422,10 @@ export async function proxyStart(
     caInstalled: caReady,
     network: wifi,
     mitmdumpPid: mitmdumpProc?.pid,
-    mitmdumpPort: MITMDUMP_PORT,
+    mitmdumpPort: PROXY_MITMDUMP_PORT,
   });
 
-  logger.success(`Proxy started. Traffic: device → ${wifi.macLanIp}:${MITMDUMP_PORT} → mitmdump`);
+  logger.success(`Proxy started. Traffic: device → ${wifi.macLanIp}:${PROXY_MITMDUMP_PORT} → mitmdump`);
   logger.info(`Capture: ${flowFile}`);
   logger.info(`View with: mitmweb -r ${flowFile}`);
 }
@@ -439,7 +450,7 @@ export async function proxyStop(
   if (mitmdumpProc) {
     mitmdumpProc.kill('SIGTERM');
     await new Promise<void>(resolve => {
-      const timer = setTimeout(() => { mitmdumpProc?.kill('SIGKILL'); resolve(); }, 3000);
+      const timer = setTimeout(() => { mitmdumpProc?.kill('SIGKILL'); resolve(); }, PROXY_PROCESS_GRACE_MS);
       mitmdumpProc!.on('exit', () => { clearTimeout(timer); resolve(); });
     });
     mitmdumpProc = null;

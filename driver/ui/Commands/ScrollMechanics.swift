@@ -1,18 +1,5 @@
 import XCTest
 
-// MARK: - Constants (doc 7)
-
-enum ScrollConstants {
-    static let scrollTouchProportion: CGFloat = 0.75
-    static let touchPressDuration: Double = 0.03
-    static let touchHoldDuration: Double = 0.07
-    static let touchVelocity: Double = 350
-    static let settleInterval: Double = 0.1
-    static let fuzzyPointThreshold: CGFloat = 20
-    static let preciseScrollMaxSegments = 20
-    static let maxScrollCount = 25
-}
-
 enum ScrollAxis {
     case vertical
     case horizontal

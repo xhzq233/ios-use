@@ -10,6 +10,14 @@ import type { RawResponse } from '../driver-client/client.js';
 import { clearBuffer, fetchOslog, configureOslog } from '../device-log/oslog.js';
 import { resolveDevice } from '../device.js';
 import type { FlowStep, FlowContext, NSLoggerServerLike } from './types.js';
+import {
+  DEFAULT_TARGET_RATIO,
+  FLOW_ABORT_CHECK_INTERVAL_MS,
+  FLOW_SHORT_SLEEP_THRESHOLD_MS,
+  LOG_POLL_INTERVAL_MS,
+  MILLISECONDS_PER_SECOND,
+  OSLOG_ABORT_POLL_INTERVAL_MS,
+} from '../constants.js';
 import type {
   DomNode,
   DomResponse,
@@ -41,8 +49,6 @@ function timestamp() {
   return new Date().toISOString().replace(TIMESTAMP_RE, '-');
 }
 
-export const LOG_POLL_INTERVAL_MS = 300;
-
 function requireClient(client: DriverClient | null, action: string) {
   if (!client) throw new Error(`${action} requires an active session`);
 }
@@ -71,7 +77,7 @@ export function sleep(ms: number) {
   ms = Math.max(0, Number.isFinite(ms) ? ms : 0);
   return new Promise<void>((resolve, reject) => {
     if (_aborted) return reject(new Error('Flow interrupted'));
-    if (ms <= 200) {
+    if (ms <= FLOW_SHORT_SLEEP_THRESHOLD_MS) {
       setTimeout(() => {
         if (_aborted) reject(new Error('Flow interrupted')); else resolve();
       }, ms);
@@ -80,7 +86,7 @@ export function sleep(ms: number) {
     const timer = setTimeout(() => { clearInterval(check); resolve(); }, ms);
     const check = setInterval(() => {
       if (_aborted) { clearTimeout(timer); clearInterval(check); reject(new Error('Flow interrupted')); }
-    }, 500);
+    }, FLOW_ABORT_CHECK_INTERVAL_MS);
   });
 }
 
@@ -127,7 +133,7 @@ export async function startNSLoggerServer(step: FlowStep | Record<string, unknow
 }
 
 export function waitForNslogMatch(server: NSLoggerServerLike, pattern: string, flags = '', timeoutSeconds = 0) {
-  const timeoutMs = Math.max(0, (Number.isFinite(timeoutSeconds) ? timeoutSeconds : 0) * 1000);
+  const timeoutMs = Math.max(0, (Number.isFinite(timeoutSeconds) ? timeoutSeconds : 0) * MILLISECONDS_PER_SECOND);
   const startedAt = Date.now();
 
   return new Promise<string[]>((resolve, reject) => {
@@ -380,8 +386,8 @@ const HANDLERS: Record<string, ActionHandler> = {
       traits: step.traits ?? '',
       offset: hasAbsolute ? { x: offset.x ?? 0, y: offset.y ?? 0 } : null,
       ratio: !hasAbsolute && (offset?.xRatio != null || offset?.yRatio != null)
-        ? { x: offset.xRatio ?? 0.5, y: offset.yRatio ?? 0.5 }
-        : { x: 0.5, y: 0.5 },
+        ? { x: offset.xRatio ?? DEFAULT_TARGET_RATIO, y: offset.yRatio ?? DEFAULT_TARGET_RATIO }
+        : { x: DEFAULT_TARGET_RATIO, y: DEFAULT_TARGET_RATIO },
     });
     const resp = await send(client, TAP, payload);
     const result = deserializeElementPayload(resp.payloadBytes!);
@@ -393,7 +399,7 @@ const HANDLERS: Record<string, ActionHandler> = {
     const { longPressArgsSer, toForyTarget, deserializeElementPayload } = await loadForyProtocol();
     const target = step.label;
     if (target === undefined) throw new Error('longpress requires "label" (string or "x,y" coordinate)');
-    const durationSec = step.duration !== undefined ? step.duration / 1000 : 0;
+    const durationSec = step.duration !== undefined ? step.duration / MILLISECONDS_PER_SECOND : 0;
     logger.info(`  → Longpress ${formatLabel(target)}${step.duration ? ` (${step.duration}ms)` : ''}`);
     const payload = longPressArgsSer.serialize({
       target: toForyTarget(target),
@@ -530,7 +536,7 @@ const HANDLERS: Record<string, ActionHandler> = {
     const ctrl = new AbortController();
     const poll = setInterval(() => {
       if (_aborted) { ctrl.abort(); clearInterval(poll); }
-    }, 200);
+    }, OSLOG_ABORT_POLL_INTERVAL_MS);
     try {
       ctrl.signal.addEventListener('abort', () => clearInterval(poll), { once: true });
       const result = await fetchOslog({

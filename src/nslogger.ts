@@ -6,6 +6,7 @@ import os from 'os';
 import { execFileSync, spawn, ChildProcess } from 'child_process';
 import { logger } from './utils/logger.js';
 import { IOS_USE_HOME, ensureDir } from './utils/paths.js';
+import { MILLISECONDS_PER_SECOND, NSLOGGER_DEFAULT_BUFFER_SIZE, NSLOGGER_MAX_RECV_BUFFER_BYTES } from './constants.js';
 
 // ── Types ──
 
@@ -287,8 +288,8 @@ export function formatLogEntry(parts: Record<number, unknown>): string {
   const ts = parts[PART_KEY_TIMESTAMP_S] as number | undefined;
   const tsMs = (parts[PART_KEY_TIMESTAMP_MS] as number) || 0;
   const tsUs = (parts[PART_KEY_TIMESTAMP_US] as number) || 0;
-  const ms = tsMs || Math.floor(tsUs / 1000);
-  const date = ts ? new Date(ts * 1000 + ms) : null;
+  const ms = tsMs || Math.floor(tsUs / MILLISECONDS_PER_SECOND);
+  const date = ts ? new Date(ts * MILLISECONDS_PER_SECOND + ms) : null;
   const timeStr = date ? date.toISOString() : '';
 
   const levelStr = level !== undefined ? `L${level}` : '';
@@ -393,8 +394,8 @@ export class NSLoggerServer {
     this.bonjourProcess = null;
     this.clients = new Map();
     const raw = opts.maxBufferSize;
-    const num = Number.isFinite(raw) ? (raw as number) : 50000;
-    const capacity = Math.max(0, Math.floor(num)) || 50000;
+    const num = Number.isFinite(raw) ? (raw as number) : NSLOGGER_DEFAULT_BUFFER_SIZE;
+    const capacity = Math.max(0, Math.floor(num)) || NSLOGGER_DEFAULT_BUFFER_SIZE;
     this._ringBuffer = new Array(capacity);
     this._ringHead = 0;
     this._ringTail = 0;
@@ -427,11 +428,10 @@ export class NSLoggerServer {
 
         let recvBuf = Buffer.alloc(0);
 
-        const MAX_RECV_BUF = 1024 * 1024; // 1MB cap per client to prevent DoS
         socket.on('data', (data: Buffer) => {
           recvBuf = recvBuf.length === 0 ? data : Buffer.concat([recvBuf, data]);
-          if (recvBuf.length > MAX_RECV_BUF) {
-            logger.warn(`NSLogger: client ${clientId} recvBuf exceeded ${MAX_RECV_BUF}, disconnecting`);
+          if (recvBuf.length > NSLOGGER_MAX_RECV_BUFFER_BYTES) {
+            logger.warn(`NSLogger: client ${clientId} recvBuf exceeded ${NSLOGGER_MAX_RECV_BUFFER_BYTES}, disconnecting`);
             socket.destroy();
             return;
           }

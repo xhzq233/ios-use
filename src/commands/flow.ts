@@ -8,6 +8,7 @@ import { LOCK_FILE } from './nslog';
 import { isProcessAlive } from '../utils/process.js';
 import type { FlowContext, FlowStep, NSLoggerServerLike } from './types';
 import type { DriverClient } from '../driver-client/client.js';
+import { FLOW_DEFAULT_SLEEP_MS, FLOW_NSLOG_CONNECT_POLL_MS, FLOW_NSLOG_CONNECT_TIMEOUT_MS } from '../constants.js';
 
 async function waitForNslogConnection(server: NSLoggerServerLike & { clients: Map<string, unknown> }, timeoutMs: number): Promise<void> {
   const start = Date.now();
@@ -16,7 +17,7 @@ async function waitForNslogConnection(server: NSLoggerServerLike & { clients: Ma
       logger.info(`App connected to NSLogger (${Date.now() - start}ms)`);
       return;
     }
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, FLOW_NSLOG_CONNECT_POLL_MS));
   }
   logger.warn(`Timeout waiting for app to connect to NSLogger after ${Date.now() - start}ms, continuing...`);
 }
@@ -237,7 +238,7 @@ async function executeFlowSteps(
     const step = resolveTemplates(stepRaw, flowVars) as unknown as FlowStep;
 
     if (step.action === 'sleep') {
-      const ms = step.ms ?? 1000;
+      const ms = step.ms ?? FLOW_DEFAULT_SLEEP_MS;
       if (typeof ms !== 'number' || !Number.isFinite(ms)) {
         throw new Error('sleep.ms must be a number');
       }
@@ -369,7 +370,7 @@ export async function flowAction(filePath: string, opts: { udid?: string; bundle
 
     if (context.nsloggerServer) {
       logger.info('Waiting for app to connect to NSLogger...');
-      await waitForNslogConnection(context.nsloggerServer, 15000);
+      await waitForNslogConnection(context.nsloggerServer, FLOW_NSLOG_CONNECT_TIMEOUT_MS);
     }
 
     logger.info('Executing flow...');

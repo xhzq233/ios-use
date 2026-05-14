@@ -4,8 +4,6 @@ import Fory
 // MARK: - Touch commands (doc 1.2 — tap, longPress)
 
 enum TouchCommands {
-    private static let defaultLongPressDuration = 0.5
-
     /// doc 1.2 — tap. `target` is decoded from ForyTapArgs.target (ForyTarget).
     static func tap(_ args: ForyTapArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
@@ -60,7 +58,7 @@ enum TouchCommands {
     /// optional duration (default 500ms).
     static func longPress(_ args: ForyLongPressArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        let duration = args.duration > 0 ? args.duration : defaultLongPressDuration
+        let duration = args.duration > 0 ? args.duration : TouchConstants.defaultLongPressDurationSeconds
         defer { invalidateSnapshot() }
 
         let target = args.target
