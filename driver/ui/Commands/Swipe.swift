@@ -46,7 +46,7 @@ enum SwipeCommands {
                                          cs: CleanedSnapshot,
                                          app: XCUIApplication) throws -> ForyResponseFrame {
         let target: SnapshotElement
-        switch rawFindInSnapshot(label, traits: traits, cs: cs) {
+        switch rawFindInSnapshot(label, traits: traits, cs: cs, visibility: .any) {
         case .found(let elem):
             target = elem
         case .ambiguous(let matches):
@@ -150,7 +150,7 @@ enum SwipeCommands {
             anchorScrollView = scrollView
         } else if !fromTarget.label.isEmpty {
             let anchor: SnapshotElement
-            switch rawFindInSnapshot(fromTarget.label, traits: nil, cs: cs) {
+            switch rawFindInSnapshot(fromTarget.label, traits: nil, cs: cs, visibility: .only) {
             case .found(let elem):
                 anchor = elem
             case .ambiguous(let matches):
@@ -334,8 +334,8 @@ enum SwipeCommands {
                 return .hitBoundary
             }
 
-            switch rawFindInSnapshot(label, traits: traits, cs: freshCS, enableFuzzy: false) {
-            case .found(let elem) where isVisibleWithEffectiveGeometry(elem, in: freshCS.appFrame):
+            switch rawFindInSnapshot(label, traits: traits, cs: freshCS, enableFuzzy: false, visibility: .only) {
+            case .found(let elem):
                 return .found(count: i + 1, target: elem.node, freshScrollView: freshScrollView)
             case .ambiguous(let matches):
                 return .ambiguous(label: label, matches: matches)

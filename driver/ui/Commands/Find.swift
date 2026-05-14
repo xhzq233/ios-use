@@ -11,7 +11,7 @@ enum FindCommands {
     static func find(_ args: ForyFindArgs) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
 
-        switch rawFind(args.label, traits: args.traits.isEmpty ? nil : args.traits) {
+        switch rawFind(args.label, traits: args.traits.isEmpty ? nil : args.traits, visibility: .any) {
         case .found(let elem):
             let match = makeForyFindMatch(elem, includeAncestors: true)
             var payload = ForyFindPayload()

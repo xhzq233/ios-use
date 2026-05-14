@@ -444,7 +444,7 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    func testRawFindInSnapshot_PrefersElementWithEffectiveGeometry() {
+    func testRawFindInSnapshot_OnlyReturnsElementWithEffectiveGeometry() {
         let offscreenLabel = FakeRawSnapshot(
             label: "配置代理",
             elementType: .staticText,
@@ -473,7 +473,86 @@ final class TypesTests: XCTestCase {
         case .found(let found):
             XCTAssertEqual(found.node.frame.origin.y, 600)
         default:
-            XCTFail("expected rawFindInSnapshot to prefer the element with effective geometry")
+            XCTFail("expected rawFindInSnapshot to return the element with effective geometry")
+        }
+    }
+
+    func testRawFindInSnapshot_OnlyReturnsNotFoundWhenMatchesAreNotEffectivelyVisible() {
+        let offscreenLabel = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .staticText,
+            frame: CGRect(x: 0, y: 900, width: 80, height: 20),
+            isVisible: true
+        )
+        let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: offscreenLabel, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
+
+        switch rawFindInSnapshot("配置代理", cs: cs, visibility: .only) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected rawFindInSnapshot to return notFound when visibility is .only and matches are not effectively visible")
+        }
+    }
+
+    func testRawFindInSnapshot_OnlyFuzzyIgnoresNotEffectivelyVisibleCandidates() {
+        let offscreenLabel = FakeRawSnapshot(
+            label: "Blue",
+            elementType: .staticText,
+            frame: CGRect(x: 0, y: 900, width: 80, height: 20),
+            isVisible: true
+        )
+        let visibleLabel = FakeRawSnapshot(
+            label: "Bloc",
+            elementType: .staticText,
+            frame: CGRect(x: 32, y: 100, width: 80, height: 20),
+            isVisible: true
+        )
+        let table = FakeRawSnapshot(elementType: .table, children: [offscreenLabel, visibleLabel])
+        let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let offscreen = makeSnapshotElement(root.children[0])
+        let visible = makeSnapshotElement(root.children[1])
+        let cs = makeCleanedSnapshot([offscreen, visible])
+
+        switch rawFindInSnapshot("Bloo", cs: cs, visibility: .only) {
+        case .fuzzy(let suggestions):
+            XCTAssertEqual(suggestions, ["Bloc"])
+        default:
+            XCTFail("expected rawFindInSnapshot fuzzy suggestions to ignore not effectively visible candidates when visibility is .only")
+        }
+    }
+
+    func testRawFindInSnapshot_AnyPreservesAllMatches() {
+        let offscreenLabel = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .staticText,
+            frame: CGRect(x: 0, y: 900, width: 80, height: 20),
+            isVisible: true
+        )
+        let visibleLabel = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .staticText,
+            frame: CGRect(x: 32, y: 600, width: 80, height: 20),
+            isVisible: true
+        )
+        let visibleCell = FakeRawSnapshot(
+            elementType: .cell,
+            frame: CGRect(x: 0, y: 580, width: 375, height: 64),
+            isVisible: true,
+            children: [visibleLabel]
+        )
+        let table = FakeRawSnapshot(elementType: .table, children: [offscreenLabel, visibleCell])
+        let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let offscreen = makeSnapshotElement(root.children[0])
+        let visible = makeSnapshotElement(root.children[1].children[0])
+        let cs = makeCleanedSnapshot([offscreen, visible])
+
+        switch rawFindInSnapshot("配置代理", cs: cs, visibility: .any) {
+        case .ambiguous(let matches):
+            XCTAssertEqual(matches.count, 2)
+            XCTAssertEqual(matches[0].node.frame.origin.y, 900)
+            XCTAssertEqual(matches[1].node.frame.origin.y, 600)
+        default:
+            XCTFail("expected rawFindInSnapshot to preserve all matches when visibility is .any")
         }
     }
 
