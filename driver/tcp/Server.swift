@@ -52,9 +52,19 @@ import Fory
                 Darwin.bind(socketFD, $0, UInt32(MemoryLayout<sockaddr_in>.size))
             }
         }
-        guard bindResult >= 0 else { throw DriverError.serverError("bind failed: \(errno)") }
+        guard bindResult >= 0 else {
+            let err = errno
+            Darwin.close(socketFD)
+            socketFD = -1
+            throw DriverError.serverError("bind failed: \(err)")
+        }
 
-        guard Darwin.listen(socketFD, DriverConstants.listenBacklog) >= 0 else { throw DriverError.serverError("listen failed: \(errno)") }
+        guard Darwin.listen(socketFD, DriverConstants.listenBacklog) >= 0 else {
+            let err = errno
+            Darwin.close(socketFD)
+            socketFD = -1
+            throw DriverError.serverError("listen failed: \(err)")
+        }
 
         running = true
         NSLog("[driver] listening on port \(port)")
