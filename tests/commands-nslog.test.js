@@ -1,5 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import tls from 'tls';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
 import { nslogStreamAction } from '../src/commands/nslog.js';
 import {
   NSLoggerServer,
@@ -12,6 +16,28 @@ import {
   LOGMSG_TYPE_LOG,
 } from '../src/nslogger.js';
 import { logger } from '../src/utils/logger.js';
+
+function createTestTLSCredentials() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ios-use-nslog-command-test-'));
+  const keyPath = path.join(dir, 'nslogger.key');
+  const certPath = path.join(dir, 'nslogger.crt');
+  execFileSync('openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-keyout',
+    keyPath,
+    '-out',
+    certPath,
+    '-nodes',
+    '-subj',
+    '/CN=ios-use NSLogger Command Test',
+    '-days',
+    '1',
+  ], { stdio: 'ignore' });
+  return { dir, keyPath, certPath };
+}
 
 function buildMessage(parts) {
   const partBuffers = [];
@@ -70,36 +96,42 @@ describe('nslog stream', () => {
   });
 
   test('streams matching NSLogger entries over TLS by default and stops on SIGINT', async () => {
-    const action = nslogStreamAction({ port: 0, grep: 'show_category', flags: '', setExitCode: false, skipLock: true });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    const tlsCreds = createTestTLSCredentials();
+    try {
+      const action = nslogStreamAction({ grep: 'show_category', flags: '', setExitCode: false, skipLock: true, keyPath: tlsCreds.keyPath, certPath: tlsCreds.certPath });
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
-    const output = infoSpy.mock.calls.flat().join(' ');
-    const portMatch = output.match(/port (\d+)/);
-    expect(portMatch).not.toBeNull();
-    expect(output).toContain('._nslogger-ssl._tcp.local:');
-    const port = Number(portMatch[1]);
+      const output = infoSpy.mock.calls.flat().join(' ');
+      const portMatch = output.match(/port (\d+)/);
+      expect(portMatch).not.toBeNull();
+      expect(output).toContain('._nslogger-ssl._tcp.local:');
+      const port = Number(portMatch[1]);
 
-    const client = tls.connect({ port, host: '127.0.0.1', rejectUnauthorized: false });
-    await new Promise((resolve, reject) => {
-      client.once('secureConnect', resolve);
-      client.once('error', reject);
-    });
+      const client = tls.connect({ port, host: '127.0.0.1', rejectUnauthorized: false });
+      await new Promise((resolve, reject) => {
+        client.once('secureConnect', resolve);
+        client.once('error', reject);
+      });
 
-    client.write(buildMessage([
-      [PART_KEY_MESSAGE_TYPE, PART_TYPE_INT16, LOGMSG_TYPE_LOG],
-      [PART_KEY_TIMESTAMP_S, PART_TYPE_INT32, 1700000000],
-      [PART_KEY_MESSAGE, PART_TYPE_STRING, 'show_category fired'],
-    ]));
+      client.write(buildMessage([
+        [PART_KEY_MESSAGE_TYPE, PART_TYPE_INT16, LOGMSG_TYPE_LOG],
+        [PART_KEY_TIMESTAMP_S, PART_TYPE_INT32, 1700000000],
+        [PART_KEY_MESSAGE, PART_TYPE_STRING, 'show_category fired'],
+      ]));
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(logSpy).toHaveBeenCalled();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(logSpy).toHaveBeenCalled();
 
-    process.emit('SIGINT');
-    client.end();
-    await action;
+      process.emit('SIGINT');
+      client.end();
+      await action;
+    } finally {
+      fs.rmSync(tlsCreds.dir, { recursive: true, force: true });
+    }
   });
 
   test('warns when bonjour publishing is unavailable', async () => {
+    const tlsCreds = createTestTLSCredentials();
     const original = NSLoggerServer.prototype.publishBonjourService;
     NSLoggerServer.prototype.publishBonjourService = function mockPublishFailure() {
       this.bonjourStatus.attempted = true;
@@ -108,7 +140,7 @@ describe('nslog stream', () => {
     };
 
     try {
-      const action = nslogStreamAction({ port: 0, setExitCode: false, skipLock: true });
+      const action = nslogStreamAction({ setExitCode: false, skipLock: true, keyPath: tlsCreds.keyPath, certPath: tlsCreds.certPath });
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const warnings = warnSpy.mock.calls.flat().join(' ');
@@ -121,6 +153,7 @@ describe('nslog stream', () => {
       await action;
     } finally {
       NSLoggerServer.prototype.publishBonjourService = original;
+      fs.rmSync(tlsCreds.dir, { recursive: true, force: true });
     }
   });
 });

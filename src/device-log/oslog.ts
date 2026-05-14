@@ -54,7 +54,10 @@ function filterByBundleId(lines: string[], bundleId: string): string[] {
 function filterByPattern(lines: string[], pattern: string, flags: string): string[] {
   if (!pattern) return lines;
   const re = new RegExp(pattern, flags);
-  return lines.filter(line => re.test(line));
+  return lines.filter(line => {
+    re.lastIndex = 0;
+    return re.test(line);
+  });
 }
 
 export async function fetchOslog(opts: {

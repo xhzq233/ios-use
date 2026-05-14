@@ -40,6 +40,8 @@ export async function nslogStreamAction(opts: {
   flags?: string;
   setExitCode?: boolean;
   skipLock?: boolean;
+  keyPath?: string;
+  certPath?: string;
 }): Promise<void> {
   const ownsLock = opts.skipLock !== true;
   if (ownsLock) acquireLock();
@@ -47,6 +49,8 @@ export async function nslogStreamAction(opts: {
   const server = new NSLoggerServer({
     port: 50000,
     useSSL: true,
+    keyPath: opts.keyPath,
+    certPath: opts.certPath,
     bonjourName: opts.name || '',
     publishBonjour: true,
   });

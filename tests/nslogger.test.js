@@ -2,13 +2,14 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import net from 'net';
 import tls from 'tls';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFileSync } from 'child_process';
 import {
   parseMessage,
   formatLogEntry,
   formatBonjourStatusMessages,
   NSLoggerServer,
-  DEFAULT_NSLOGGER_KEY_PATH,
-  DEFAULT_NSLOGGER_CERT_PATH,
   PART_KEY_MESSAGE_TYPE,
   PART_KEY_TIMESTAMP_S,
   PART_KEY_TIMESTAMP_MS,
@@ -35,6 +36,41 @@ import {
   LOGMSG_TYPE_BLOCKSTART,
   LOGMSG_TYPE_BLOCKEND,
 } from '../src/nslogger.js';
+
+let tlsDir;
+let tlsKeyPath;
+let tlsCertPath;
+
+function ensureTestTLSCredentials() {
+  if (tlsKeyPath && tlsCertPath) return;
+  tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ios-use-nslogger-test-'));
+  tlsKeyPath = path.join(tlsDir, 'nslogger.key');
+  tlsCertPath = path.join(tlsDir, 'nslogger.crt');
+  execFileSync('openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-keyout',
+    tlsKeyPath,
+    '-out',
+    tlsCertPath,
+    '-nodes',
+    '-subj',
+    '/CN=ios-use NSLogger Test',
+    '-days',
+    '1',
+  ], { stdio: 'ignore' });
+}
+
+function tlsServerOptions(opts = {}) {
+  ensureTestTLSCredentials();
+  return {
+    keyPath: tlsKeyPath,
+    certPath: tlsCertPath,
+    ...opts,
+  };
+}
 
 function buildMessage(parts) {
   const partBuffers = [];
@@ -248,12 +284,13 @@ describe('NSLoggerServer', () => {
   let server;
 
   beforeAll(async () => {
-    server = new NSLoggerServer({ port: 0, publishBonjour: false });
+    server = new NSLoggerServer(tlsServerOptions({ port: 0, publishBonjour: false }));
     await server.start();
   });
 
   afterAll(async () => {
     await server.stop();
+    if (tlsDir) fs.rmSync(tlsDir, { recursive: true, force: true });
   });
 
   test('starts on a random port', () => {
@@ -297,12 +334,12 @@ describe('NSLoggerServer', () => {
     expect(results[0]).toContain('tracking');
   });
 
-  test('uses auto-generated TLS credentials when SSL is enabled', async () => {
-    const secureServer = new NSLoggerServer({ port: 0, useSSL: true, publishBonjour: false });
-    expect(secureServer.keyPath).toBe(DEFAULT_NSLOGGER_KEY_PATH);
-    expect(secureServer.certPath).toBe(DEFAULT_NSLOGGER_CERT_PATH);
-    expect(fs.existsSync(DEFAULT_NSLOGGER_KEY_PATH)).toBe(true);
-    expect(fs.existsSync(DEFAULT_NSLOGGER_CERT_PATH)).toBe(true);
+  test('uses caller-provided TLS credentials when SSL is enabled', async () => {
+    const secureServer = new NSLoggerServer(tlsServerOptions({ port: 0, useSSL: true, publishBonjour: false }));
+    expect(secureServer.keyPath).toBe(tlsKeyPath);
+    expect(secureServer.certPath).toBe(tlsCertPath);
+    expect(fs.existsSync(tlsKeyPath)).toBe(true);
+    expect(fs.existsSync(tlsCertPath)).toBe(true);
 
     await secureServer.start();
     const msg = buildMessage([
@@ -343,7 +380,7 @@ describe('NSLoggerServer', () => {
   });
 
   test('buffer respects maxBufferSize', () => {
-    const smallServer = new NSLoggerServer({ port: 0, maxBufferSize: 3 });
+    const smallServer = new NSLoggerServer({ port: 0, maxBufferSize: 3, useSSL: false });
     for (let i = 0; i < 5; i++) {
       smallServer.push(`log-${i}`);
     }
@@ -355,25 +392,25 @@ describe('NSLoggerServer', () => {
   });
 
   test('negative maxBufferSize falls back to default', () => {
-    const fallbackServer = new NSLoggerServer({ port: 0, maxBufferSize: -1 });
+    const fallbackServer = new NSLoggerServer({ port: 0, maxBufferSize: -1, useSSL: false });
     expect(fallbackServer.getLogCount()).toBe(0);
     fallbackServer.push('test');
     expect(fallbackServer.getLogCount()).toBe(1);
   });
 
   test('bonjour status reflects disabled publishing', () => {
-    const disabledServer = new NSLoggerServer({ port: 1234, publishBonjour: false });
+    const disabledServer = new NSLoggerServer({ port: 1234, publishBonjour: false, useSSL: false });
     expect(disabledServer.getBonjourStatus()).toMatchObject({
       publishEnabled: false,
       active: false,
       port: 1234,
-      serviceType: '_nslogger-ssl._tcp',
+      serviceType: '_nslogger._tcp',
       domain: 'local',
     });
   });
 
   test('bonjour status reflects TLS service type when SSL is enabled', () => {
-    const secureServer = new NSLoggerServer({ port: 1234, publishBonjour: false, useSSL: true });
+    const secureServer = new NSLoggerServer(tlsServerOptions({ port: 1234, publishBonjour: false, useSSL: true }));
     expect(secureServer.getBonjourStatus()).toMatchObject({
       publishEnabled: false,
       active: false,
