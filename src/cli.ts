@@ -219,6 +219,9 @@ proxyCmd.command('stop')
   .action(handleAction(async (opts: { udid?: string }) => {
     const { withAutoSession } = await import('./session.js');
     const targetUdid = opts.udid || readProxyState()?.udid;
+    if (!targetUdid) {
+      throw new Error('No proxy session/device found. Pass --udid.');
+    }
     await withAutoSession({ udid: targetUdid }, async (client) => {
       await proxyStop(client, { ...opts, udid: targetUdid });
     });
@@ -231,4 +234,9 @@ proxyCmd.command('doctor')
     proxyDoctor();
   }));
 
-program.parse();
+try {
+  program.parse();
+} catch (error: unknown) {
+  logger.error(formatDriverError(error));
+  process.exitCode = 1;
+}
