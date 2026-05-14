@@ -14,10 +14,10 @@ enum FindResult {
 
 /// Unified label search against an explicit cleaned snapshot.
 /// This is the single source of truth for all label-based command semantics.
-/// Time complexity: O(n * s + m * h + c * q * t) in the worst case, where n is
+/// Time complexity: O(n * s + m * r + c * q * t) in the worst case, where n is
 /// the indexed element count, s is the number of precomputed searchable texts
-/// per element, m is the number of contains matches, h is ancestor depth for
-/// context filtering, c is candidate string count, q is query length, and t is
+/// per element, m is the number of contains matches, r is the number of
+/// requested traits, c is candidate string count, q is query length, and t is
 /// candidate length used by fuzzy fallback. Effective-visible preference adds
 /// O(m) only for contains matches.
 func rawFindInSnapshot(_ label: String, traits: String? = nil, cs: CleanedSnapshot, enableFuzzy: Bool = true) -> FindResult {
@@ -176,7 +176,7 @@ func fuzzySuggestions(forNormalizedQuery normalizedQuery: String, from candidate
     if threshold <= 0 { return [] }
 
     var best: [(SearchCandidate, Int)] = []
-    best.reserveCapacity(3)
+    best.reserveCapacity(FuzzySearchConstants.maxSuggestionCount)
 
     for candidate in candidates {
         guard !candidate.normalizedText.isEmpty else { continue }
@@ -184,11 +184,11 @@ func fuzzySuggestions(forNormalizedQuery normalizedQuery: String, from candidate
         let distance = levenshtein(normalizedQuery, candidate.normalizedText)
         guard distance <= threshold else { continue }
         let item = (candidate, distance)
-        if best.count < 3 {
+        if best.count < FuzzySearchConstants.maxSuggestionCount {
             best.append(item)
             best.sort(by: fuzzyRankedBefore)
-        } else if fuzzyRankedBefore(item, best[2]) {
-            best[2] = item
+        } else if fuzzyRankedBefore(item, best[FuzzySearchConstants.maxSuggestionCount - 1]) {
+            best[FuzzySearchConstants.maxSuggestionCount - 1] = item
             best.sort(by: fuzzyRankedBefore)
         }
     }
@@ -207,10 +207,14 @@ private func nodeIdentity(_ node: SafeSnapshot) -> ObjectIdentifier {
 
 private func fuzzyThreshold(for length: Int) -> Int {
     switch length {
-    case ...1: return 0
-    case 2...4: return 1
-    case 5...8: return 2
-    default: return 3
+    case ...FuzzySearchConstants.noSuggestionMaxLength:
+        return 0
+    case ...FuzzySearchConstants.nearTypoMaxLength:
+        return FuzzySearchConstants.nearTypoThreshold
+    case ...FuzzySearchConstants.mediumTypoMaxLength:
+        return FuzzySearchConstants.mediumTypoThreshold
+    default:
+        return FuzzySearchConstants.longTypoThreshold
     }
 }
 

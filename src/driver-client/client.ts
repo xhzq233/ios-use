@@ -1,5 +1,5 @@
 import { writeFileSync } from 'fs';
-import { DEFAULT_PORT } from '../constants.js';
+import { DEFAULT_DRIVER_HOST, DEFAULT_PORT } from '../constants.js';
 import { Connection, DriverError } from '../driver-protocol/connection.js';
 import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
 
@@ -42,7 +42,7 @@ export class DriverClient {
     bundleId?: string;
   } = {}) {
     this.conn = new Connection({
-      host: opts.host ?? '127.0.0.1',
+      host: opts.host ?? DEFAULT_DRIVER_HOST,
       port: opts.port ?? DEFAULT_PORT,
       udid: opts.udid,
       directTcp: opts.directTcp,

@@ -2,6 +2,11 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import { CONFIG_FILE } from './utils/paths.js';
 import { listUsbDeviceUdids } from './driver-protocol/usbmux.js';
+import {
+  DEVICE_DETECT_CACHE_TTL_MS,
+  SIMULATOR_DETECT_RETRY_COUNT,
+  SIMULATOR_DETECT_RETRY_SLEEP_SECONDS,
+} from './constants.js';
 
 export interface Device {
   name: string;
@@ -56,11 +61,10 @@ const SIMULATOR_UDID_RE = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9
 
 let _cachedDevices: Device[] | null = null;
 let _cachedDevicesAt = 0;
-const DETECT_CACHE_TTL = 5000; // 5 seconds
 
 export function detectDevices(): Device[] {
   const now = Date.now();
-  if (_cachedDevices && now - _cachedDevicesAt < DETECT_CACHE_TTL) return _cachedDevices;
+  if (_cachedDevices && now - _cachedDevicesAt < DEVICE_DETECT_CACHE_TTL_MS) return _cachedDevices;
   const output = execFileSync('xcrun', ['xctrace', 'list', 'devices'], { encoding: 'utf-8' });
   _cachedDevices = parseDeviceOutput(output);
   _cachedDevicesAt = now;
@@ -163,13 +167,12 @@ export function resolveDevice(udid: string | undefined, devices: Device[] = dete
       // May already be booting or booted; ignore and retry detection
     }
     invalidateDeviceCache();
-    // Retry detection up to 3s for the simulator to appear in xctrace
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < SIMULATOR_DETECT_RETRY_COUNT; i++) {
       invalidateDeviceCache();
       const redevices = detectDevices();
       const rede = redevices.find((item) => item.udid === udid);
       if (rede) return rede;
-      try { execFileSync('sleep', ['0.5'], { stdio: 'ignore' }); } catch { /* ignore sleep failure */ }
+      try { execFileSync('sleep', [SIMULATOR_DETECT_RETRY_SLEEP_SECONDS], { stdio: 'ignore' }); } catch { /* ignore sleep failure */ }
     }
   }
 

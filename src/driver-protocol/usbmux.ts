@@ -1,5 +1,6 @@
 import net from 'node:net';
 import plist from 'plist';
+import { USBMUX_REQUEST_TIMEOUT_MS } from '../constants.js';
 
 const USBMUXD_SOCKET = '/var/run/usbmuxd';
 const HEADER_SIZE = 16;
@@ -47,7 +48,7 @@ export async function connectUsbmux(udid: string, port: number): Promise<net.Soc
       const timer = setTimeout(() => {
         socket.removeListener('data', onData);
         reject(new Error(`usbmux request timed out (tag=${tag})`));
-      }, 5000);
+      }, USBMUX_REQUEST_TIMEOUT_MS);
 
       function onData(raw: Buffer) {
         buf = buf.length === 0 ? raw : Buffer.concat([buf, raw]);

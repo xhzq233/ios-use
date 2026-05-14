@@ -4,17 +4,16 @@ import { logger } from '../utils/logger';
 import { NSLoggerServer, formatBonjourStatusMessages, regexTest } from '../nslogger';
 import { NSLOG_LOCK_FILE } from '../utils/paths.js';
 import { isProcessAlive } from '../utils/process.js';
+import { NSLOGGER_DEFAULT_PORT, NSLOG_LOCK_STALE_MS } from '../constants.js';
 
 export const LOCK_FILE = NSLOG_LOCK_FILE;
-
-const LOCK_STALE_MS = 60 * 60 * 1000; // 1 hour
 
 function acquireLock(): void {
   try {
     const raw = fs.readFileSync(LOCK_FILE, 'utf8').trim().split(' ');
     const pid = parseInt(raw[0], 10);
     const startedAt = parseInt(raw[1] || '0', 10);
-    if (pid && isProcessAlive(pid) && Date.now() - startedAt < LOCK_STALE_MS) {
+    if (pid && isProcessAlive(pid) && Date.now() - startedAt < NSLOG_LOCK_STALE_MS) {
       throw new Error(`nslog already running (PID ${pid}). Only one nslog instance allowed at a time; cannot grep multiple patterns simultaneously.`);
     }
     fs.unlinkSync(LOCK_FILE);
@@ -47,7 +46,7 @@ export async function nslogStreamAction(opts: {
   if (ownsLock) acquireLock();
 
   const server = new NSLoggerServer({
-    port: 50000,
+    port: NSLOGGER_DEFAULT_PORT,
     useSSL: true,
     keyPath: opts.keyPath,
     certPath: opts.certPath,

@@ -9,7 +9,7 @@ enum FrameError: Error {
 }
 
 final class Codec {
-    static let maxFrameSize = 50 * 1024 * 1024 // 50MB (accommodates screenshots)
+    static let maxFrameSize = DriverConstants.maxFrameSizeBytes
     static let sharedFory: Fory = createFory()
 
     // MARK: - Read
@@ -20,7 +20,7 @@ final class Codec {
         try readExact(fd, into: &lenBuf, count: 4)
 
         let length = Int((UInt32(lenBuf[0]) << 24) | (UInt32(lenBuf[1]) << 16) | (UInt32(lenBuf[2]) << 8) | UInt32(lenBuf[3]))
-        guard length > 0, length <= maxFrameSize else { throw FrameError.invalidLength }
+        guard length > 0, length <= DriverConstants.maxFrameSizeBytes else { throw FrameError.invalidLength }
 
         var body = Data(count: length)
         try body.withUnsafeMutableBytes { buf in

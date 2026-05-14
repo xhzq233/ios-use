@@ -50,7 +50,7 @@ final class CodecTests: XCTestCase {
     // MARK: - maxFrameSize
 
     func testMaxFrameSize_Is50MB() {
-        XCTAssertEqual(Codec.maxFrameSize, 50 * 1024 * 1024)
+        XCTAssertEqual(Codec.maxFrameSize, DriverConstants.maxFrameSizeBytes)
     }
 
     // MARK: - writeLengthPrefixedData via pipe

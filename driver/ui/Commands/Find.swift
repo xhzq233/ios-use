@@ -6,7 +6,7 @@ import Fory
 enum FindCommands {
 
     /// doc 6.1 — unified label search. Always goes through `rawFind` which
-    /// performs exact + fuzzy + context filtering and returns one of four
+    /// performs exact + fuzzy + traits/visibility filtering and returns one of four
     /// outcomes.
     static func find(_ args: ForyFindArgs) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
