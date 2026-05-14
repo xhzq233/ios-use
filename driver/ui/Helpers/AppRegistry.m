@@ -14,7 +14,7 @@ BOOL OpenApplicationWithBundleId(NSString *bundleId) {
 
     Class workspaceClass = NSClassFromString(@"LSApplicationWorkspace");
     if (workspaceClass == Nil || ![workspaceClass respondsToSelector:@selector(defaultWorkspace)]) {
-        return YES;
+        return NO;
     }
 
     id workspace = ((id (*)(id, SEL))objc_msgSend)(workspaceClass, @selector(defaultWorkspace));
