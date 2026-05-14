@@ -37,9 +37,9 @@ XCTEST_WRAPPER_PATH="$BUILD_DIR/IOSUseDriver-Runner.app"
 if [ "$DEBUG_MODE" = true ]; then
   CONFIGURATION="Debug"
   DEBUG_INFO_FORMAT="dwarf-with-dsym"
-  IPA_OUTPUT="$ROOT_DIR/assets/driver.ipa"
-  SIM_IPA_OUTPUT="$ROOT_DIR/assets/driver-sim.ipa"
-  echo "[build] DEBUG mode: building with Debug configuration + dSYM"
+  IPA_OUTPUT="$BUILD_DIR/driver-debug.ipa"
+  SIM_IPA_OUTPUT="$BUILD_DIR/driver-sim-debug.ipa"
+  echo "[build] DEBUG mode: building with Debug configuration + dSYM (assets/ are not overwritten)"
 else
   CONFIGURATION="Release"
   DEBUG_INFO_FORMAT="dwarf"
@@ -97,6 +97,7 @@ package_ipa() {
 
   mkdir -p "$staging/Payload"
   cp -r "$src_app" "$staging/Payload/"
+  find "$staging/Payload" -name "*.dSYM" -type d -prune -exec rm -rf {} +
   rm -f "$dst_ipa"
 
   (cd "$staging" && zip -r -q "$dst_ipa" Payload/)

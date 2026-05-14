@@ -10,7 +10,6 @@ import { logger } from '../utils/logger.js';
 import { isProcessAlive } from '../utils/process.js';
 import { DriverClient } from '../driver-client/client.js';
 import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
-import { openURLArgsSer } from '../driver-protocol/fory.js';
 import { runFlowFile } from './flow.js';
 
 const MITMDUMP_PORT = 9080;
@@ -18,6 +17,15 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEV_FLOWS_DIR = path.join(MODULE_DIR, '../../flows');
 let proxyHome = IOS_USE_HOME;
 let flowRunner = runFlowFile;
+
+type ForyProtocol = typeof import('../driver-protocol/fory.js');
+
+let foryProtocolPromise: Promise<ForyProtocol> | null = null;
+
+function loadForyProtocol(): Promise<ForyProtocol> {
+  foryProtocolPromise ??= import('../driver-protocol/fory.js');
+  return foryProtocolPromise;
+}
 
 export interface ProxySessionState {
   sessionId: string;
@@ -195,6 +203,7 @@ async function verifyDeviceCanReachMac(client: DriverClient, macLanIp: string): 
   try {
     logger.info(`Verifying device can reach Mac LAN IP: ${macLanIp}`);
     const url = `http://${macLanIp}:${addr.port}/${token}`;
+    const { openURLArgsSer } = await loadForyProtocol();
     const payload = openURLArgsSer.serialize({ url });
     const resp = await client.sendRaw(DRIVER_COMMANDS.OPEN_URL, payload);
     if (!resp.ok) throw new Error(`openURL failed: ${resp.error}`);
