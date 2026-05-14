@@ -21,6 +21,7 @@ const APPIUM_BASE_URL = `http://${APPIUM_HOST}:${APPIUM_PORT}`;
 
 const WDA_DEVICE_UDID = process.env.WDA_INSTALLED_DEVICE || '';
 const WDA_BUNDLE_ID = process.env.WDA_BUNDLE_ID || '';
+const APPIUM_UPDATED_WDA_BUNDLE_ID = WDA_BUNDLE_ID.replace(/\.xctrunner$/, '');
 const WDA_LOCAL_PORT = String(process.env.WDA_LOCAL_PORT || '8100');
 const APPIUM_WDA_URL = process.env.APPIUM_WDA_URL || '';
 const WDA_LAUNCH_TIMEOUT_MS = Number(process.env.WDA_LAUNCH_TIMEOUT_MS || '120000');
@@ -48,10 +49,10 @@ function appendAppiumHint(message, { udid } = {}) {
     hints.push('Appium connected to a non-HTTP stream on the forwarded WDA port. This usually means WDA is not actually ready yet, or the iOS 18 tunnel prerequisite is missing.');
   }
   if (lower.includes('failed to start the preinstalled webdriveragent')) {
-    hints.push(`Confirm \`${WDA_BUNDLE_ID}.xctrunner\` is installed and launchable on device.`);
+    hints.push(`Confirm \`${WDA_BUNDLE_ID}\` is installed and launchable on device.`);
   }
   if (lower.includes('provide a valid bundle identifier') || lower.includes('is not installed')) {
-    hints.push(`Check that env \`WDA_BUNDLE_ID=${WDA_BUNDLE_ID}\` is the base bundle id without an extra \`.xctrunner\`.`);
+    hints.push(`Check that env \`WDA_BUNDLE_ID=${WDA_BUNDLE_ID}\` is the installed runner bundle id; Appium receives updatedWDABundleId=${APPIUM_UPDATED_WDA_BUNDLE_ID}.`);
   }
 
   if (hints.length === 0) {
@@ -367,7 +368,7 @@ function buildCapabilities({ udid, bundleId, webDriverAgentUrl }) {
     capabilities['appium:webDriverAgentUrl'] = webDriverAgentUrl;
   } else {
     capabilities['appium:usePreinstalledWDA'] = true;
-    capabilities['appium:updatedWDABundleId'] = WDA_BUNDLE_ID;
+    capabilities['appium:updatedWDABundleId'] = APPIUM_UPDATED_WDA_BUNDLE_ID;
     capabilities['appium:wdaLocalPort'] = WDA_LOCAL_PORT;
   }
 
@@ -702,7 +703,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['dom']); },
+      customRun: async () => { cli(['dom', '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.source(); },
     },
@@ -714,7 +715,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['find', ctx.label]); },
+      customRun: async () => { cli(['find', ctx.label, '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.findElement(ctx.label); },
     },
@@ -726,7 +727,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['waitFor', '--label', ctx.label, '--timeout', '8']); },
+      customRun: async () => { cli(['waitFor', '--label', ctx.label, '--timeout', '8', '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.waitForElement(ctx.label, 8000, 500); },
     },
@@ -738,7 +739,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['screenshot', '--name', 'benchmark-wda-custom']); },
+      customRun: async () => { cli(['screenshot', '--name', 'benchmark-wda-custom', '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.screenshotToFile('benchmark-wda-appium'); },
     },
@@ -750,7 +751,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['tap', `${centerX},${topTapY}`]); },
+      customRun: async () => { cli(['tap', `${centerX},${topTapY}`, '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.tap(centerX, topTapY); },
     },
@@ -762,7 +763,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['tap', ctx.label]); },
+      customRun: async () => { cli(['tap', ctx.label, '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => {
         const elementId = await ctx.appium.findElement(ctx.label);
@@ -777,7 +778,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['longpress', `${centerX},${topTapY}`, '--duration', '500']); },
+      customRun: async () => { cli(['longpress', `${centerX},${topTapY}`, '--duration', '500', '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.longPress(centerX, topTapY, 500); },
     },
@@ -789,7 +790,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['input', '--label', '搜索', '--content', '蓝牙', '--traits', 'SearchField']); },
+      customRun: async () => { cli(['input', '--label', '搜索', '--content', '蓝牙', '--traits', 'SearchField', '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => {
         const elementId = await ctx.appium.findElement('搜索');
@@ -805,7 +806,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['swipe', '--distance', String(swipeDistance), '--dir', 'forth']); },
+      customRun: async () => { cli(['swipe', '--distance', String(swipeDistance), '--dir', 'forth', '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => {
         const rect = await ctx.appium.getWindowRect();
@@ -825,7 +826,7 @@ function buildCases(ctx) {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
       customRun: async () => { 
-        cli(['swipe', '--to', scrollToLabel, '--from', ctx.label]); 
+        cli(['swipe', '--to', scrollToLabel, '--from', ctx.label, '--udid', ctx.customUdid]);
       },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => {
@@ -856,8 +857,8 @@ function buildCases(ctx) {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
       customRun: async () => {
-        cli(['terminateApp', ctx.appBundle], { allowFailure: true });
-        cli(['activateApp', ctx.appBundle]);
+        cli(['terminateApp', ctx.appBundle, '--udid', ctx.customUdid], { allowFailure: true });
+        cli(['activateApp', ctx.appBundle, '--udid', ctx.customUdid]);
       },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => {
@@ -877,7 +878,7 @@ function buildCases(ctx) {
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
-      customRun: async () => { cli(['terminateApp', ctx.appBundle]); },
+      customRun: async () => { cli(['terminateApp', ctx.appBundle, '--udid', ctx.customUdid]); },
       appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
       appiumRun: async () => { await ctx.appium.terminateApp(ctx.appBundle); },
     },
@@ -940,6 +941,7 @@ async function main() {
   lines.push('| 对照组 | `Appium Server -> WDA` |');
   lines.push(`| WDA 设备 | \`${WDA_DEVICE_UDID}\` |`);
   lines.push(`| WDA bundleId | \`${WDA_BUNDLE_ID}\` |`);
+  lines.push(`| Appium updatedWDABundleId | \`${APPIUM_UPDATED_WDA_BUNDLE_ID}\` |`);
   lines.push(`| WDA local port | \`${WDA_LOCAL_PORT}\` |`);
   lines.push(`| WDA launch timeout | \`${WDA_LAUNCH_TIMEOUT_MS} ms\` |`);
   lines.push(`| custom 设备 | \`${customUdid}\` |`);
