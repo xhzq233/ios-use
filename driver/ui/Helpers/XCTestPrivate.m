@@ -6,6 +6,9 @@ static const NSUInteger XCMaxTextAbbrLen = 12;
 static const NSUInteger XCMaxClearRetries = 3;
 static const double XCTapLiftUpDelay = 0.08;
 static const double XCDefaultLongPressDuration = 0.5;
+static const CGFloat XCDetectionPointScreenRatio = 0.2;
+static const int64_t XCSynthesizeEventTimeoutSeconds = 5;
+static const int64_t XCScreenshotTimeoutSeconds = 20;
 
 static id XCFirstNonEmptyValue(id primary, id fallback) {
     if ([primary isKindOfClass:[NSString class]] && [((NSString *)primary) length] > 0) {
@@ -132,7 +135,7 @@ static id AccessibilityClient(void)
 static id<FBXCAccessibilityElement> DetectionPointElement(void)
 {
     CGSize screenSize = [UIScreen mainScreen].bounds.size;
-    CGFloat pointDistance = MIN(screenSize.width, screenSize.height) * (CGFloat)0.2;
+    CGFloat pointDistance = MIN(screenSize.width, screenSize.height) * XCDetectionPointScreenRatio;
     CGPoint point = CGPointMake(pointDistance, pointDistance);
 
     __block id<FBXCAccessibilityElement> onScreenElement = nil;
@@ -318,7 +321,7 @@ static BOOL XCSynthesizeEventRecord(id record, NSError **error) {
     [inv retainArguments];
     [inv invoke];
 
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)));
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, XCSynthesizeEventTimeoutSeconds * NSEC_PER_SEC));
     if (innerError) {
         if (error) *error = innerError;
         return NO;
@@ -517,7 +520,7 @@ NSData *XCRequestScreenshotJPEG(double compressionQuality, NSError **error) {
     [requestInv retainArguments];
     [requestInv invoke];
 
-    if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC))) != 0) {
+    if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, XCScreenshotTimeoutSeconds * NSEC_PER_SEC)) != 0) {
         if (error) {
             *error = [NSError errorWithDomain:@"ios-use"
                                          code:18

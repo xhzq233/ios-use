@@ -12,19 +12,22 @@ import {
   ensureStateDir,
 } from './utils/paths.js';
 import {
+  DEFAULT_DRIVER_HOST,
   DEFAULT_PORT,
   DRIVER_LAUNCH_MAX_WAIT_MS,
   DRIVER_LAUNCH_POLL_INTERVAL_MS,
+  MAX_DRIVER_LOG_BYTES,
+  MILLISECONDS_PER_SECOND,
+  PROCESS_INFO_TIMEOUT_MS,
+  PROCESS_TERMINATE_TIMEOUT_MS,
 } from './constants.js';
 
-const DRIVER_HOST = '127.0.0.1';
 const DEVICECTL_LOG = DRIVER_LOG_FILE;
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const shellQuote = (value: string) => `'${value.replace(/'/g, `'\''`)}'`;
 const nextSessionId = () => `session-${Date.now()}`;
 const DRIVER_RUNNER_EXECUTABLE = 'IOSUseDriver-Runner';
-const MAX_DRIVER_LOG_BYTES = 10 * 1024 * 1024;
 
 export interface SessionInfo {
   sessionId: string;
@@ -82,7 +85,7 @@ function listDeviceProcesses(udid: string): Array<{ executable?: string; process
     const output = execFileSync(
       'xcrun',
       ['devicectl', 'device', 'info', 'processes', '--device', udid, '--quiet', '--json-output', '-'],
-      { encoding: 'utf8', stdio: 'pipe', timeout: 5000 },
+      { encoding: 'utf8', stdio: 'pipe', timeout: PROCESS_INFO_TIMEOUT_MS },
     );
     const parsed = JSON.parse(output);
     const processes = parsed?.result?.runningProcesses ?? parsed?.result?.processTokens ?? [];
@@ -103,7 +106,7 @@ function terminateDeviceProcessesByExecutable(udid: string, executableName: stri
       execFileSync(
         'xcrun',
         ['devicectl', 'device', 'process', 'terminate', '--device', udid, '--pid', String(pid), '--kill'],
-        { stdio: 'pipe', timeout: 5000 },
+        { stdio: 'pipe', timeout: PROCESS_TERMINATE_TIMEOUT_MS },
       );
       terminated = true;
     } catch {
@@ -193,7 +196,7 @@ async function launchAndConnectDriver(device: { udid: string; type: string }, ve
   }
 
   if (!client) {
-    throw new Error(`Driver did not start within ${maxWaitMs / 1000}s`);
+    throw new Error(`Driver did not start within ${maxWaitMs / MILLISECONDS_PER_SECOND}s`);
   }
 
   return client;
@@ -209,7 +212,7 @@ async function createClient({
   bundleId,
 }: CreateClientOpts = {}): Promise<DriverClient> {
   const client = new DriverClient({
-    host: DRIVER_HOST,
+    host: DEFAULT_DRIVER_HOST,
     port,
     udid,
     directTcp,

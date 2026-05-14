@@ -183,7 +183,7 @@ import Fory
                 let startedAt = CFAbsoluteTimeGetCurrent()
                 NSLog("[driver] dispatch start command=\(command.rawValue)")
                 let response = try self.dispatchFory(payload, command: command)
-                NSLog("[driver] dispatch finish command=\(command.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))ms")
+                NSLog("[driver] dispatch finish command=\(command.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * DriverConstants.millisecondsPerSecond))ms")
                 result = response
             } catch {
                 NSLog("[driver] dispatch error command=\(command.rawValue) error=\(error)")
@@ -200,7 +200,7 @@ import Fory
             }
             cancelLock.unlock()
             if !commandStarted {
-                return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after 45s (XCTest main thread may be blocked or crashed)")
+                return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after \(DriverConstants.commandTimeoutSeconds)s (XCTest main thread may be blocked or crashed)")
             }
 
             let completionWaitResult = sem.wait(timeout: .now() + .seconds(DriverConstants.commandCompletionTimeoutSeconds))

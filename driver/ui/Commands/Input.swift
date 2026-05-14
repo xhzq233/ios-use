@@ -105,7 +105,7 @@ private func prepareForInput(_ target: SafeSnapshot, fallback: SafeSnapshot, app
     let candidates = SnapshotMatchesElement(target.raw, fallback.raw) ? [target] : [target, fallback]
     for candidate in candidates {
         guard tapSnapshotCenter(candidate, app: app) else { continue }
-        Thread.sleep(forTimeInterval: 0.2)
+        Thread.sleep(forTimeInterval: InputConstants.postTapFocusSettleSeconds)
         invalidateSnapshot()
         if let refreshed = refreshedInputSnapshot(matching: target),
            canProceedWithTyping(refreshed, app: app, phase: .afterTapAttempt) {

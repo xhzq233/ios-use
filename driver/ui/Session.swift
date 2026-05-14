@@ -16,7 +16,7 @@ final class Session {
         // even when the user has switched to another app.
         if let app = _app, app.state == .runningForeground {
             let bid = app.value(forKey: "bundleID") as? String ?? ""
-            if bid != "com.apple.springboard" {
+            if bid != DriverBundleConstants.springboardBundleId {
                 return app
             }
         }

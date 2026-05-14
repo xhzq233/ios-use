@@ -22,6 +22,7 @@
 		3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DDB97D9F6B1FB7C45A9A1 /* Find.swift */; };
 		40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
 		4179D4DAE1445E343CAEF9C4 /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AA55C0A90C86228E35F4AF /* Constants.swift */; };
+		433E367985D7A6B443DAA411 /* UIConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 874AAB7E0A6B743C130ED80C /* UIConstants.swift */; };
 		47E166A3CA2BC186D06626FC /* SessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */; };
 		48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		4C1335951DE9BCB1ACEB1105 /* Touch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */; };
@@ -30,6 +31,7 @@
 		5C78D96B9AE1C0C47419D5E5 /* SnapshotWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A0FF7257FB4C92EC6C889D /* SnapshotWalker.swift */; };
 		6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
+		6F688DB3613A70BF6ADDEC7A /* UIConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 874AAB7E0A6B743C130ED80C /* UIConstants.swift */; };
 		71116604C00B45958024BAE0 /* RawPointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8EE69CD9E44A379094C75D /* RawPointer.swift */; };
 		72F06E899109E3420F9CAB5C /* Constants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59AA55C0A90C86228E35F4AF /* Constants.swift */; };
 		80253DFDB846500A5A7E2567 /* Types.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E085B6529EF5B086A5B7A15 /* Types.swift */; };
@@ -83,6 +85,7 @@
 		71A0AC56CC6B8335709D4A71 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		7C5B4B608C890EFE8841A177 /* Dom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dom.swift; sourceTree = "<group>"; };
 		7C773A75C11E5CE2360A4FB4 /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input.swift; sourceTree = "<group>"; };
+		874AAB7E0A6B743C130ED80C /* UIConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIConstants.swift; sourceTree = "<group>"; };
 		8A018728001BB6A88192EAFD /* ServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTests.swift; sourceTree = "<group>"; };
 		90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypesTests.swift; sourceTree = "<group>"; };
@@ -136,6 +139,7 @@
 				0AE99BB4D5AD93891B02F4CB /* Session.swift */,
 				15A0FF7257FB4C92EC6C889D /* SnapshotWalker.swift */,
 				6E085B6529EF5B086A5B7A15 /* Types.swift */,
+				874AAB7E0A6B743C130ED80C /* UIConstants.swift */,
 				97C712A94AEF5A9B87CA4C89 /* Commands */,
 				D29D89B5BB1B5BCB1A892BF7 /* Helpers */,
 			);
@@ -319,6 +323,7 @@
 				4C1335951DE9BCB1ACEB1105 /* Touch.swift in Sources */,
 				80253DFDB846500A5A7E2567 /* Types.swift in Sources */,
 				81CD91B7F77CDB0EB872969C /* TypesTests.swift in Sources */,
+				6F688DB3613A70BF6ADDEC7A /* UIConstants.swift in Sources */,
 				6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */,
 				F23939ACC634CC69D0D7C5E0 /* XCTestPrivate.m in Sources */,
 			);
@@ -349,6 +354,7 @@
 				2487738D2D1AF684316C1E46 /* Swipe.swift in Sources */,
 				0DEB372CF9D585EBEBA86A4A /* Touch.swift in Sources */,
 				1C3EBE5B9344D22F327464D4 /* Types.swift in Sources */,
+				433E367985D7A6B443DAA411 /* UIConstants.swift in Sources */,
 				6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */,
 				F84D2C040ACBA005CD67B912 /* XCTestPrivate.m in Sources */,
 			);

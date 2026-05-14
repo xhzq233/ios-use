@@ -1,7 +1,11 @@
 import { collectSyslog } from './syslog-relay.js';
 import { collectSimulatorLog } from './simulator-log.js';
-
-const MAX_BUFFER_SIZE = 5000;
+import {
+  OSLOG_BUFFER_MAX_LINES,
+  OSLOG_DEFAULT_COLLECT_TIMEOUT_MS,
+  OSLOG_DEFAULT_SIMULATOR_LAST_SEC,
+  MILLISECONDS_PER_SECOND,
+} from '../constants.js';
 
 const buffers = new Map<string, string[]>();
 let isSimulator = false;
@@ -68,13 +72,13 @@ export async function fetchOslog(opts: {
   timeout?: number;
   signal?: AbortSignal;
 }): Promise<{ matched: number; total: number; content: string }> {
-  const timeoutMs = (opts.timeout && opts.timeout > 0) ? opts.timeout * 1000 : 5000;
+  const timeoutMs = (opts.timeout && opts.timeout > 0) ? opts.timeout * MILLISECONDS_PER_SECOND : OSLOG_DEFAULT_COLLECT_TIMEOUT_MS;
 
   // Collect new log lines from the device
   let newLines: string[];
   if (isSimulator) {
     newLines = await collectSimulatorLog(simulatorUdid || opts.udid, {
-      lastSec: opts.timeout && opts.timeout > 0 ? opts.timeout : 10,
+      lastSec: opts.timeout && opts.timeout > 0 ? opts.timeout : OSLOG_DEFAULT_SIMULATOR_LAST_SEC,
       bundleId: opts.bundleId,
     });
   } else {
@@ -88,8 +92,8 @@ export async function fetchOslog(opts: {
 
   // Append to buffer
   buffer.push(...uniqueNew);
-  if (buffer.length > MAX_BUFFER_SIZE) {
-    buffer = buffer.slice(buffer.length - MAX_BUFFER_SIZE);
+  if (buffer.length > OSLOG_BUFFER_MAX_LINES) {
+    buffer = buffer.slice(buffer.length - OSLOG_BUFFER_MAX_LINES);
     setActiveBuffer(buffer);
   }
 

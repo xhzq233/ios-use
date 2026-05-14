@@ -18,7 +18,7 @@ enum ProxyCommands {
         lock.unlock()
 
         if serverFd < 0 {
-            let port: UInt16 = 9088
+            let port = ProxyConstants.caServerPort
             let fd = startListener(port: port) { connFd in handleConn(connFd) }
             guard fd >= 0 else {
                 return Codec.foryError("failed to bind CA server on port \(port)")
@@ -27,7 +27,7 @@ enum ProxyCommands {
             NSLog("[proxy] CA server listening on port %d", port)
         }
 
-        NSLog("[proxy] CA pushed (%d bytes), server on :9088/ca.cer", certData.count)
+        NSLog("[proxy] CA pushed (%d bytes), server on :%d%@", certData.count, ProxyConstants.caServerPort, ProxyConstants.caServerPath)
         let payload = ForyProxyPayload(status: "pushed")
         return try Codec.foryOK(payload)
     }

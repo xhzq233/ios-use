@@ -50,5 +50,9 @@ extension DriverError: CustomStringConvertible {
 // MARK: - Helpers
 
 extension Double {
-    var sanitized: Double { isFinite ? (self * 10).rounded(.toNearestOrEven) / 10 : 0 }
+    var sanitized: Double {
+        isFinite
+            ? (self * NumericConstants.sanitizedDecimalScale).rounded(.toNearestOrEven) / NumericConstants.sanitizedDecimalScale
+            : 0
+    }
 }

@@ -4,13 +4,11 @@ import Fory
 // MARK: - WaitFor (doc 6.5)
 
 enum WaitForCommands {
-    private static let pollIntervalMs = 100
-
     /// doc 6.5 — poll rawFind until target label is visible or timeout.
     static func waitFor(_ args: ForyWaitForArgs) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
 
-        let timeout = args.timeout > 0 ? args.timeout : 10.0
+        let timeout = args.timeout > 0 ? args.timeout : WaitForConstants.defaultTimeoutSeconds
         guard timeout > 0 else {
             return Codec.foryError("waitFor: timeout must be > 0")
         }
@@ -50,7 +48,7 @@ enum WaitForCommands {
                 return Codec.foryError("waitFor '\(args.label)' timed out after \(timeout)s")
             }
             shouldUseFreshSnapshot = true
-            usleep(UInt32(pollIntervalMs * 1000))
+            usleep(UInt32(WaitForConstants.pollIntervalMilliseconds * WaitForConstants.microsecondsPerMillisecond))
         }
     }
 }

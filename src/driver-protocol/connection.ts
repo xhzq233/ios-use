@@ -1,6 +1,15 @@
 import net from 'node:net';
 import { connectUsbmux } from './usbmux.js';
-import { CONNECT_TIMEOUT_MS, DEFAULT_PORT, READ_TIMEOUT_MS } from '../constants.js';
+import {
+  CONNECT_TIMEOUT_MS,
+  CONNECTION_MAX_BUFFER_SIZE_BYTES,
+  DEFAULT_DRIVER_HOST,
+  DEFAULT_PORT,
+  MAX_FRAME_SIZE_BYTES,
+  MILLISECONDS_PER_SECOND,
+  READ_TIMEOUT_MS,
+  SOCKET_KEEPALIVE_INITIAL_DELAY_MS,
+} from '../constants.js';
 
 export class DriverError extends Error {
   data?: unknown;
@@ -10,8 +19,6 @@ export class DriverError extends Error {
     this.data = data;
   }
 }
-
-const MAX_FRAME_SIZE = 50 * 1024 * 1024; // 50 MB
 
 export class Connection {
   private host: string;
@@ -30,7 +37,7 @@ export class Connection {
   private _disconnecting = false;
 
   constructor(opts: { host?: string; port?: number; udid?: string; directTcp?: boolean }) {
-    this.host = opts.host ?? '127.0.0.1';
+    this.host = opts.host ?? DEFAULT_DRIVER_HOST;
     this.port = opts.port ?? DEFAULT_PORT;
     this.udid = opts.udid;
     this.directTcp = opts.directTcp ?? false;
@@ -51,7 +58,7 @@ export class Connection {
       });
     }
 
-    this.socket.setKeepAlive(true, 5000);
+    this.socket.setKeepAlive(true, SOCKET_KEEPALIVE_INITIAL_DELAY_MS);
     this.socket.setNoDelay(true);
     this.socket.on('data', (data: Buffer) => this.onData(data));
     this.socket.on('end', () => {
@@ -117,21 +124,19 @@ export class Connection {
   private async readFrame(): Promise<Buffer> {
     const header = await this.readExact(4);
     const len = header.readUInt32BE(0);
-    if (len === 0 || len > MAX_FRAME_SIZE) {
+    if (len === 0 || len > MAX_FRAME_SIZE_BYTES) {
       throw new Error(`invalid frame length: ${len}`);
     }
     return await this.readExact(len);
   }
 
   private onData(data: Buffer): void {
-    const MAX_BUFFER_SIZE = 64 * 1024 * 1024;
-
     if (this.readResolve) {
       if (!this.readBuffer && this.readOffset === 0 && data.length >= this.readNeeded) {
         if (this.readTimer) { clearTimeout(this.readTimer); this.readTimer = null; }
         const result = data.subarray(0, this.readNeeded);
         this.buffer = data.subarray(this.readNeeded);
-        if (this.buffer.length > MAX_BUFFER_SIZE) {
+        if (this.buffer.length > CONNECTION_MAX_BUFFER_SIZE_BYTES) {
           this.disconnect();
           return;
         }
@@ -158,7 +163,7 @@ export class Connection {
         if (this.readTimer) { clearTimeout(this.readTimer); this.readTimer = null; }
         const result = this.readBuffer;
         this.buffer = data.subarray(take);
-        if (this.buffer.length > MAX_BUFFER_SIZE) {
+        if (this.buffer.length > CONNECTION_MAX_BUFFER_SIZE_BYTES) {
           this.disconnect();
           return;
         }
@@ -174,7 +179,7 @@ export class Connection {
     }
 
     const nextLength = this.buffer.length + data.length;
-    if (nextLength > MAX_BUFFER_SIZE) {
+    if (nextLength > CONNECTION_MAX_BUFFER_SIZE_BYTES) {
       this.disconnect();
       return;
     }
@@ -213,7 +218,7 @@ export class Connection {
           this.readOffset = 0;
           this.readTimer = null;
           this.buffer = Buffer.alloc(0);
-          rejectFn(new Error(`read timeout after 45s (got ${gotBytes}/${n} bytes)`));
+          rejectFn(new Error(`read timeout after ${READ_TIMEOUT_MS / MILLISECONDS_PER_SECOND}s (got ${gotBytes}/${n} bytes)`));
         }
         this.disconnect();
       }, READ_TIMEOUT_MS);

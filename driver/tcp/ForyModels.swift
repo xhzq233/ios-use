@@ -198,7 +198,7 @@ struct ForyTapArgs {
     var target: ForyTarget = ForyTarget()
     var traits: String = ""
     var offset: ForyPoint? = nil
-    var ratio: ForyPoint = ForyPoint(x: 0.5, y: 0.5)
+    var ratio: ForyPoint = ForyPoint(x: TouchConstants.defaultTargetRatio, y: TouchConstants.defaultTargetRatio)
 }
 
 @ForyStruct
