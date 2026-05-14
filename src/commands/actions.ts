@@ -7,16 +7,6 @@ import { ARTIFACT_DIR, ensureArtifactDir } from '../utils/paths.js';
 import { DriverClient, DriverError } from '../driver-client/client.js';
 import { DRIVER_COMMANDS } from '../driver-protocol/index.js';
 import type { RawResponse } from '../driver-client/client.js';
-import {
-  tapArgsSer, longPressArgsSer, swipeArgsSer, inputArgsSer,
-  waitForArgsSer, findArgsSer, domArgsSer,
-  dismissAlertArgsSer,
-  terminateAppArgsSer, activateAppArgsSer, openURLArgsSer,
-  toForyTarget,
-  deserializeElementPayload, deserializeDomPayload, deserializeFindPayload,
-  deserializeSwipePayload, deserializeWaitForPayload,
-  deserializeAlertPayload, deserializeSimpleStringPayload,
-} from '../driver-protocol/fory.js';
 import { clearBuffer, fetchOslog, configureOslog } from '../device-log/oslog.js';
 import { resolveDevice } from '../device.js';
 import type { FlowStep, FlowContext, NSLoggerServerLike } from './types.js';
@@ -26,6 +16,15 @@ import type {
   Rect,
 } from '../driver-protocol/index.js';
 import { getCliActions } from './registry.js';
+
+type ForyProtocol = typeof import('../driver-protocol/fory.js');
+
+let foryProtocolPromise: Promise<ForyProtocol> | null = null;
+
+function loadForyProtocol(): Promise<ForyProtocol> {
+  foryProtocolPromise ??= import('../driver-protocol/fory.js');
+  return foryProtocolPromise;
+}
 
 // ── Utilities ──
 
@@ -292,6 +291,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async dom(client, step) {
     requireClient(client, 'dom');
+    const { domArgsSer, deserializeDomPayload } = await loadForyProtocol();
     const payload = domArgsSer.serialize({ raw: !!step.raw, fresh: !!step.fresh });
     const resp = await send(client, DOM, payload);
     const result = deserializeDomPayload(resp.payloadBytes!);
@@ -325,6 +325,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async find(client, step) {
     requireClient(client, 'find');
+    const { findArgsSer, deserializeFindPayload } = await loadForyProtocol();
     const label = step.label;
     if (typeof label !== 'string') throw new Error('find requires string "label"');
     const payload = findArgsSer.serialize({ label, traits: step.traits ?? '' });
@@ -366,6 +367,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async tap(client, step) {
     requireClient(client, 'tap');
+    const { tapArgsSer, toForyTarget, deserializeElementPayload } = await loadForyProtocol();
     const target = step.label;
     if (target === undefined) throw new Error('tap requires "label" (string or "x,y" coordinate)');
     const foryTarget = toForyTarget(target);
@@ -388,6 +390,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async longpress(client, step) {
     requireClient(client, 'longpress');
+    const { longPressArgsSer, toForyTarget, deserializeElementPayload } = await loadForyProtocol();
     const target = step.label;
     if (target === undefined) throw new Error('longpress requires "label" (string or "x,y" coordinate)');
     const durationSec = step.duration !== undefined ? step.duration / 1000 : 0;
@@ -404,6 +407,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async input(client, step) {
     requireClient(client, 'input');
+    const { inputArgsSer } = await loadForyProtocol();
     const text = step.content;
     if (typeof text !== 'string') throw new Error('input requires "content"');
     const label = step.label;
@@ -415,6 +419,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async swipe(client, step) {
     requireClient(client, 'swipe');
+    const { swipeArgsSer, toForyTarget, deserializeSwipePayload } = await loadForyProtocol();
     const distance = step.distance === undefined ? 0 : requireNumber(step.distance, 'swipe.distance');
     const dir = normalizeSwipeDir(step.dir);
     const toTarget = toForyTarget(step.to);
@@ -434,6 +439,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async waitFor(client, step) {
     requireClient(client, 'waitFor');
+    const { waitForArgsSer, deserializeWaitForPayload } = await loadForyProtocol();
     const label = step.label;
     if (typeof label !== 'string') throw new Error('waitFor requires string "label"');
     logger.info(`  → WaitFor "${label}"${step.timeout ? ` timeout=${step.timeout}s` : ''}`);
@@ -453,6 +459,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async openURL(client, step) {
     requireClient(client, 'openURL');
+    const { openURLArgsSer, deserializeSimpleStringPayload } = await loadForyProtocol();
     const url = step.url || step.content;
     if (!url) throw new Error('openURL requires url');
     const payload = openURLArgsSer.serialize({ url });
@@ -469,6 +476,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async dismissAlert(client, step) {
     requireClient(client, 'dismissAlert');
+    const { dismissAlertArgsSer, deserializeAlertPayload } = await loadForyProtocol();
     const index = (step as any).index;
     const payload = dismissAlertArgsSer.serialize({ index: index != null ? index : -1 });
     const resp = await send(client, DISMISS_ALERT, payload);
@@ -482,6 +490,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async activateApp(client, step, ctx) {
     requireClient(client, 'activateApp');
+    const { activateAppArgsSer } = await loadForyProtocol();
     const bundleId = step.bundleId || ctx.flowApp;
     if (!bundleId) throw new Error('activateApp requires bundleId');
     const payload = activateAppArgsSer.serialize({ bundleId });
@@ -492,6 +501,7 @@ const HANDLERS: Record<string, ActionHandler> = {
 
   async terminateApp(client, step, ctx) {
     requireClient(client, 'terminateApp');
+    const { terminateAppArgsSer } = await loadForyProtocol();
     const bundleId = step.bundleId || ctx.flowApp;
     if (!bundleId) throw new Error('terminateApp requires bundleId');
     try {

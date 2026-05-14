@@ -129,6 +129,8 @@ Optional env:
   APPIUM_WDA_URL      existing WDA base URL for Appium attach mode
   WDA_LAUNCH_TIMEOUT_MS  default: 120000
   APPIUM_SHOW_XCODE_LOG  set 1 to let Appium print xcode log
+  IOS_USE_BENCHMARK_SKIP_DRIVER_BUILD  set 1 to skip release driver build
+  IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG set 1 to skip reinstalling custom driver
 `.trim());
 }
 
@@ -189,6 +191,14 @@ function cli(args, options = {}) {
   return runSync(iosUseExecutable, args, options);
 }
 
+function buildReleaseDriverArtifacts() {
+  if (process.env.IOS_USE_BENCHMARK_SKIP_DRIVER_BUILD === '1') {
+    return 'skipped';
+  }
+  runSync('bash', ['scripts/build_host_app.sh'], { capture: false });
+  return 'Release';
+}
+
 function installIosUseExecutable() {
   const { stdout } = runSync('bash', ['scripts/install.sh', '--print-path'], { capture: true });
   const installedPath = stdout
@@ -201,6 +211,14 @@ function installIosUseExecutable() {
   }
   iosUseExecutable = installedPath;
   return installedPath;
+}
+
+function configureCustomDriver(customUdid) {
+  if (process.env.IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG === '1') {
+    return 'skipped';
+  }
+  cli(['config', '--udid', customUdid], { capture: false });
+  return 'installed';
 }
 
 function listDeviceProcesses(udid) {
@@ -889,7 +907,9 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   ensureEnv();
   const customUdid = args.customUdid || WDA_DEVICE_UDID;
+  const driverBuild = buildReleaseDriverArtifacts();
   const installedCliPath = installIosUseExecutable();
+  const customDriverInstall = configureCustomDriver(customUdid);
 
   ensureDir(BENCHMARK_DIR);
   const output = args.output || path.join(BENCHMARK_DIR, `benchmark-wda-${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}.md`);
@@ -945,6 +965,8 @@ async function main() {
   lines.push(`| WDA local port | \`${WDA_LOCAL_PORT}\` |`);
   lines.push(`| WDA launch timeout | \`${WDA_LAUNCH_TIMEOUT_MS} ms\` |`);
   lines.push(`| custom 设备 | \`${customUdid}\` |`);
+  lines.push(`| custom driver build | \`${driverBuild}\` |`);
+  lines.push(`| custom driver install | \`${customDriverInstall}\` |`);
   lines.push(`| App | \`${args.bundleId}\` |`);
   lines.push(`| 锚点 label | \`${args.label}\` |`);
   lines.push(`| Appium URL | \`${APPIUM_BASE_URL}\` |`);
@@ -991,7 +1013,7 @@ async function main() {
   lines.push(`WDA_INSTALLED_DEVICE=${WDA_DEVICE_UDID} WDA_BUNDLE_ID=${WDA_BUNDLE_ID} \\\n  bun scripts/benchmark_wda.js --iterations 3`);
   lines.push('```');
   lines.push('');
-  lines.push('说明：脚本开始前会先执行 `scripts/install.sh`，并使用安装后的 `ios-use` 可执行文件进行 custom 侧 benchmark。');
+  lines.push('说明：脚本开始前会先执行 Release driver build、`scripts/install.sh` 和 `ios-use config --udid <customUdid>`，并使用安装后的 `ios-use` 可执行文件进行 custom 侧 benchmark。');
   lines.push('说明：本脚本对照组默认走完整 `Appium Server -> preinstalled WDA` 链路，不是直打 WDA。');
   lines.push('说明：如果真机是 iOS 18+ 且 Appium 报 `Tunnel registry port not found`，需先手动执行 `sudo appium driver run xcuitest tunnel-creation --udid <udid>`。');
 

@@ -156,39 +156,70 @@ const ForyProxyCAPushArgs = Type.struct('ForyProxyCAPushArgs', {
   caBase64: Type.string(),
 });
 
-// ── Serializer instances ──
-// Nested types must be registered before types that reference them as fields.
-fory.register(ForyRect);
-fory.register(ForyPoint);
-fory.register(ForyTarget);
-fory.register(ForyFindMatch);
-fory.register(ForyDomElement);
+// ── Lazy serializers ──
+// Registering every Fory struct on module import adds a fixed CLI cold-start tax.
+// Keep the public serializer shape, but register only the structs used by the
+// command that is actually being encoded/decoded.
+interface ForySerializer {
+  serialize(value: unknown): Uint8Array;
+  deserialize(data: Uint8Array): any;
+}
 
-const reqFrameSer = fory.register(ForyRequestFrame);
-const respFrameSer = fory.register(ForyResponseFrame);
-const errorPayloadSer = fory.register(ForyErrorPayload);
+const registeredSerializers = new Map<unknown, ForySerializer>();
 
-export const activateAppArgsSer = fory.register(ForyActivateAppArgs);
-export const terminateAppArgsSer = fory.register(ForyTerminateAppArgs);
-export const openURLArgsSer = fory.register(ForyOpenURLArgs);
-export const domArgsSer = fory.register(ForyDomArgs);
-export const findArgsSer = fory.register(ForyFindArgs);
-export const inputArgsSer = fory.register(ForyInputArgs);
-export const waitForArgsSer = fory.register(ForyWaitForArgs);
-export const tapArgsSer = fory.register(ForyTapArgs);
-export const longPressArgsSer = fory.register(ForyLongPressArgs);
-export const swipeArgsSer = fory.register(ForySwipeArgs);
-export const dismissAlertArgsSer = fory.register(ForyDismissAlertArgs);
-export const proxyCAPushArgsSer = fory.register(ForyProxyCAPushArgs);
-export const elementPayloadSer = fory.register(ForyElementPayload);
-export const domPayloadSer = fory.register(ForyDomPayload);
-export const screenshotPayloadSer = fory.register(ForyScreenshotPayload);
-export const findPayloadSer = fory.register(ForyFindPayload);
-export const swipePayloadSer = fory.register(ForySwipePayload);
-export const waitForPayloadSer = fory.register(ForyWaitForPayload);
-export const alertPayloadSer = fory.register(ForyAlertPayload);
-export const proxyPayloadSer = fory.register(ForyProxyPayload);
-export const simpleStringPayloadSer = fory.register(ForySimpleStringPayload);
+function serializerFor(structType: unknown): ForySerializer {
+  let serializer = registeredSerializers.get(structType);
+  if (!serializer) {
+    serializer = fory.register(structType as never) as ForySerializer;
+    registeredSerializers.set(structType, serializer);
+  }
+  return serializer;
+}
+
+function lazySerializer(structType: unknown, dependencies: unknown[] = []): ForySerializer {
+  let serializer: ForySerializer | null = null;
+  const get = () => {
+    if (!serializer) {
+      for (const dependency of dependencies) serializerFor(dependency);
+      serializer = serializerFor(structType);
+    }
+    return serializer;
+  };
+  return {
+    serialize(value: unknown): Uint8Array {
+      return get().serialize(value);
+    },
+    deserialize(data: Uint8Array): any {
+      return get().deserialize(data);
+    },
+  };
+}
+
+const reqFrameSer = lazySerializer(ForyRequestFrame);
+const respFrameSer = lazySerializer(ForyResponseFrame);
+const errorPayloadSer = lazySerializer(ForyErrorPayload, [ForyRect, ForyFindMatch]);
+
+export const activateAppArgsSer = lazySerializer(ForyActivateAppArgs);
+export const terminateAppArgsSer = lazySerializer(ForyTerminateAppArgs);
+export const openURLArgsSer = lazySerializer(ForyOpenURLArgs);
+export const domArgsSer = lazySerializer(ForyDomArgs);
+export const findArgsSer = lazySerializer(ForyFindArgs);
+export const inputArgsSer = lazySerializer(ForyInputArgs);
+export const waitForArgsSer = lazySerializer(ForyWaitForArgs);
+export const tapArgsSer = lazySerializer(ForyTapArgs, [ForyPoint, ForyTarget]);
+export const longPressArgsSer = lazySerializer(ForyLongPressArgs, [ForyPoint, ForyTarget]);
+export const swipeArgsSer = lazySerializer(ForySwipeArgs, [ForyPoint, ForyTarget]);
+export const dismissAlertArgsSer = lazySerializer(ForyDismissAlertArgs);
+export const proxyCAPushArgsSer = lazySerializer(ForyProxyCAPushArgs);
+export const elementPayloadSer = lazySerializer(ForyElementPayload, [ForyRect]);
+export const domPayloadSer = lazySerializer(ForyDomPayload, [ForyRect, ForyPoint, ForyDomElement]);
+export const screenshotPayloadSer = lazySerializer(ForyScreenshotPayload);
+export const findPayloadSer = lazySerializer(ForyFindPayload, [ForyRect, ForyFindMatch]);
+export const swipePayloadSer = lazySerializer(ForySwipePayload, [ForyRect]);
+export const waitForPayloadSer = lazySerializer(ForyWaitForPayload, [ForyRect]);
+export const alertPayloadSer = lazySerializer(ForyAlertPayload);
+export const proxyPayloadSer = lazySerializer(ForyProxyPayload);
+export const simpleStringPayloadSer = lazySerializer(ForySimpleStringPayload);
 
 // ── Request frame ──
 
