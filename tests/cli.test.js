@@ -1,10 +1,11 @@
-import { describe, test, expect } from 'bun:test';
+import { afterAll, describe, test, expect } from 'bun:test';
 import { spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 const CLI_PATH = new URL('../src/cli.ts', import.meta.url).pathname;
+const isolatedHomes = [];
 
 function runCli(args, envOverrides = {}) {
   return spawnSync('bun', [CLI_PATH, ...args], {
@@ -16,6 +17,7 @@ function runCli(args, envOverrides = {}) {
 function isolatedHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ios-use-cli-test-'));
   fs.mkdirSync(path.join(home, '.ios-use'), { recursive: true });
+  isolatedHomes.push(home);
   return home;
 }
 
@@ -24,18 +26,32 @@ function combinedOutput(result) {
 }
 
 describe('cli surface', () => {
-  test('current top-level commands expose help', () => {
-    for (const args of [['devices', '--help'], ['stop', '--help'], ['activateApp', '--help'], ['nslog', '--help']]) {
-      const result = runCli(args, { HOME: isolatedHome() });
-      expect(result.status).toBe(0);
-      expect(combinedOutput(result)).toContain(args[0]);
+  afterAll(() => {
+    for (const home of isolatedHomes) {
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
-  test('device alias remains accepted during migration', () => {
-    const result = runCli(['device', '--help'], { HOME: isolatedHome() });
-    expect(result.status).toBe(0);
-    expect(combinedOutput(result)).toContain('devices');
+  test('registered action commands reject missing args before session setup', () => {
+    const cases = [
+      { args: ['activateApp'], message: 'missing required argument' },
+      { args: ['terminateApp'], message: 'missing required argument' },
+      { args: ['find'], message: 'missing required argument' },
+      { args: ['openURL'], message: "required option '--url <url>' not specified" },
+    ];
+    for (const { args, message } of cases) {
+      const result = runCli(args, { HOME: isolatedHome() });
+      expect(result.status).toBe(1);
+      expect(combinedOutput(result)).toContain(message);
+      expect(combinedOutput(result)).not.toContain('No configured device');
+    }
+  });
+
+  test('device alias is registered but still rejects invalid options locally', () => {
+    const result = runCli(['device', '--not-a-real-option'], { HOME: isolatedHome() });
+    expect(result.status).toBe(1);
+    expect(combinedOutput(result)).toContain("unknown option '--not-a-real-option'");
+    expect(combinedOutput(result)).not.toContain('No connected real devices found');
   });
 
   test('rejects invalid numeric option values before session setup', () => {

@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import { fileURLToPath } from 'url';
-import { IOS_USE_HOME, ensureStateDir } from '../utils/paths.js';
+import { IOS_USE_HOME } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
 import { isProcessAlive } from '../utils/process.js';
 import { DriverClient } from '../driver-client/client.js';
@@ -14,13 +14,10 @@ import { openURLArgsSer } from '../driver-protocol/fory.js';
 import { runFlowFile } from './flow.js';
 
 const MITMDUMP_PORT = 9080;
-const STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-session.json');
-const CA_STATE_FILE = path.join(IOS_USE_HOME, 'state', 'proxy-ca.json');
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEV_FLOWS_DIR = path.join(MODULE_DIR, '../../flows');
-const FLOWS_DIR = fs.existsSync(path.join(IOS_USE_HOME, 'flows'))
-  ? path.join(IOS_USE_HOME, 'flows')
-  : DEV_FLOWS_DIR;
+let proxyHome = IOS_USE_HOME;
+let flowRunner = runFlowFile;
 
 export interface ProxySessionState {
   sessionId: string;
@@ -54,24 +51,47 @@ let mitmdumpProc: ChildProcess | null = null;
 
 // ── Utilities ──
 
+function stateFile(): string {
+  return path.join(proxyHome, 'state', 'proxy-session.json');
+}
+
+function caStateFile(): string {
+  return path.join(proxyHome, 'state', 'proxy-ca.json');
+}
+
+function flowsDir(): string {
+  const userFlows = path.join(proxyHome, 'flows');
+  return fs.existsSync(userFlows) ? userFlows : DEV_FLOWS_DIR;
+}
+
+export function setProxyTestOverrides(opts: {
+  iosUseHome?: string | null;
+  flowRunner?: typeof runFlowFile | null;
+}): void {
+  proxyHome = opts.iosUseHome ?? IOS_USE_HOME;
+  flowRunner = opts.flowRunner ?? runFlowFile;
+}
+
 export function readProxyState(): ProxySessionState | null {
-  if (!fs.existsSync(STATE_FILE)) return null;
-  try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8')); } catch { return null; }
+  const file = stateFile();
+  if (!fs.existsSync(file)) return null;
+  try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return null; }
 }
 
 function writeState(state: ProxySessionState): void {
-  ensureStateDir();
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2) + '\n');
+  fs.mkdirSync(path.dirname(stateFile()), { recursive: true });
+  fs.writeFileSync(stateFile(), JSON.stringify(state, null, 2) + '\n');
 }
 
 function readCAState(): ProxyCAState {
-  if (!fs.existsSync(CA_STATE_FILE)) return {};
-  try { return JSON.parse(fs.readFileSync(CA_STATE_FILE, 'utf-8')); } catch { return {}; }
+  const file = caStateFile();
+  if (!fs.existsSync(file)) return {};
+  try { return JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return {}; }
 }
 
 function writeCAState(state: ProxyCAState): void {
-  ensureStateDir();
-  fs.writeFileSync(CA_STATE_FILE, JSON.stringify(state, null, 2) + '\n');
+  fs.mkdirSync(path.dirname(caStateFile()), { recursive: true });
+  fs.writeFileSync(caStateFile(), JSON.stringify(state, null, 2) + '\n');
 }
 
 function fingerprintPem(pem: string): string {
@@ -252,7 +272,7 @@ async function startMitmdump(confdir: string, flowFile: string): Promise<ChildPr
 // ── Flow Helpers ──
 
 function flowPath(name: string): string {
-  return path.join(FLOWS_DIR, name);
+  return path.join(flowsDir(), name);
 }
 
 async function runFlow(client: DriverClient, name: string, opts?: { udid?: string; vars?: Record<string, unknown> }): Promise<void> {
@@ -263,7 +283,7 @@ async function runFlow(client: DriverClient, name: string, opts?: { udid?: strin
 
   await client.terminateApp('com.apple.Preferences');
   await client.activateApp('com.apple.Preferences');
-  await runFlowFile(client, file, { udid: opts?.udid, flowApp: 'com.apple.Preferences' }, opts?.vars);
+  await flowRunner(client, file, { udid: opts?.udid, flowApp: 'com.apple.Preferences' }, opts?.vars);
 }
 
 // ── Commands ──
@@ -347,7 +367,7 @@ export async function proxyStart(
     logger.info('CA trust record not found. HTTP capture can still work; HTTPS decryption requires the CA to be installed and trusted.');
   }
 
-  const artifactsDir = path.join(IOS_USE_HOME, 'artifacts');
+  const artifactsDir = path.join(proxyHome, 'artifacts');
   if (!fs.existsSync(artifactsDir)) fs.mkdirSync(artifactsDir, { recursive: true });
   const flowFile = path.join(artifactsDir, `proxy-${new Date().toISOString().replace(/[:.]/g, '-')}.flow`);
 
@@ -392,18 +412,18 @@ export async function proxyStart(
 
 export async function proxyStop(
   _client: DriverClient,
-  opts: { udid?: string; force?: boolean } = {},
+  opts: { udid?: string } = {},
 ): Promise<void> {
   const state = readProxyState();
 
   // First: clear the proxy on device (before stopping mitmdump!)
-  logger.info('Clearing device Wi-Fi proxy...');
   const targetUdid = opts.udid || state?.udid;
+  logger.info('Clearing device Wi-Fi proxy...');
   try {
     await runFlow(_client, 'proxy_clear_wifi_proxy.yaml', { udid: targetUdid });
   } catch (err) {
     logger.warn(`Failed to clear Wi-Fi proxy via flow: ${err}`);
-    logger.warn('Manually disable Wi-Fi proxy: Settings → Wi-Fi → current network (i) → Configure Proxy → Off');
+    throw new Error('Unable to clear device Wi-Fi proxy. Manually disable Wi-Fi proxy: Settings -> Wi-Fi -> current network (i) -> Configure Proxy -> Off, then retry `ios-use proxy stop`.');
   }
 
   // Then stop mitmdump
