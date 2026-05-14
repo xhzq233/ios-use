@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import os from 'os';
 
 const execSyncMock = mock();
 const execFileSyncMock = mock();
@@ -13,6 +14,9 @@ const loggerSuccessMock = mock();
 const loggerWarnMock = mock();
 const loggerErrorMock = mock();
 const loggerDebugMock = mock();
+const testHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ios-use-config-test-'));
+const mockIosUseHome = path.join(testHome, '.ios-use');
+const configPath = path.join(mockIosUseHome, 'config.json');
 
 mock.module('child_process', () => ({
   execSync: execSyncMock,
@@ -36,19 +40,11 @@ mock.module('../src/utils/logger.js', () => ({
   },
 }));
 
-import os from 'os';
-
-const configPath = path.resolve(os.homedir(), '.ios-use', 'config.json');
-
-function backupConfig() {
-  if (fs.existsSync(configPath)) return fs.readFileSync(configPath, 'utf-8');
-  return null;
-}
-
-function restoreConfig(saved) {
-  if (saved !== null) fs.writeFileSync(configPath, saved);
-  else if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
-}
+mock.module('../src/utils/paths.js', () => ({
+  IOS_USE_HOME: mockIosUseHome,
+  CONFIG_FILE: configPath,
+  ensureIosUseHome: () => fs.mkdirSync(mockIosUseHome, { recursive: true }),
+}));
 
 /** Create a mock driver IPA structure that rewriteIpaBundleIds expects. */
 function createMockIpaStructure(destDir) {
@@ -79,17 +75,11 @@ function createMockIpaStructure(destDir) {
 describe('config helpers', () => {
   let configModule;
   let originalHome;
-  let tempHome;
-  let savedConfig;
 
   beforeEach(async () => {
-    savedConfig = backupConfig();
-    if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
-
     originalHome = process.env.HOME;
-    tempHome = path.resolve(process.cwd(), `.tmp-home-${Date.now()}`);
-    fs.mkdirSync(tempHome, { recursive: true });
-    process.env.HOME = tempHome;
+    process.env.HOME = testHome;
+    fs.rmSync(mockIosUseHome, { recursive: true, force: true });
 
     execSyncMock.mockReset();
     execFileSyncMock.mockReset();
@@ -109,11 +99,11 @@ describe('config helpers', () => {
   });
 
   afterEach(() => {
-    restoreConfig(savedConfig);
-    if (tempHome && fs.existsSync(tempHome)) {
-      fs.rmSync(tempHome, { recursive: true, force: true });
-    }
     process.env.HOME = originalHome;
+  });
+
+  afterAll(() => {
+    fs.rmSync(testHome, { recursive: true, force: true });
   });
 
   test('saveDeviceSigningConfig persists per-device config', () => {
@@ -149,7 +139,7 @@ describe('config helpers', () => {
   });
 
   test('configureDeviceSigning works without apple-id when altsign-cli has cached session', async () => {
-    const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
+    const altsignDir = path.join(mockIosUseHome, 'altsign-cli');
     const altsignBin = path.join(altsignDir, 'altsign-cli');
     if (!fs.existsSync(altsignBin)) {
       fs.mkdirSync(altsignDir, { recursive: true });
@@ -192,7 +182,7 @@ describe('config helpers', () => {
   });
 
   test('configureDeviceSigning signs with apple-id and installs driver', async () => {
-    const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
+    const altsignDir = path.join(mockIosUseHome, 'altsign-cli');
     const altsignBin = path.join(altsignDir, 'altsign-cli');
     if (!fs.existsSync(altsignBin)) {
       fs.mkdirSync(altsignDir, { recursive: true });
@@ -246,7 +236,7 @@ describe('config helpers', () => {
   });
 
   test('configureDeviceSigning throws when altsign does not produce signed IPA', async () => {
-    const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
+    const altsignDir = path.join(mockIosUseHome, 'altsign-cli');
     const altsignBin = path.join(altsignDir, 'altsign-cli');
     if (!fs.existsSync(altsignBin)) {
       fs.mkdirSync(altsignDir, { recursive: true });
@@ -283,7 +273,7 @@ describe('config helpers', () => {
   });
 
   test('configureDeviceSigning uses dynamic bundle ID from cached apple id', async () => {
-    const altsignDir = path.join(tempHome, '.ios-use', 'altsign-cli');
+    const altsignDir = path.join(mockIosUseHome, 'altsign-cli');
     const altsignBin = path.join(altsignDir, 'altsign-cli');
     if (!fs.existsSync(altsignBin)) {
       fs.mkdirSync(altsignDir, { recursive: true });
@@ -332,5 +322,39 @@ describe('config helpers', () => {
     // IPA path should be the rewritten one
     const ipaIdx = signCall[1].indexOf('--ipa');
     expect(signCall[1][ipaIdx + 1]).toContain('-rewritten.ipa');
+  });
+
+  test('configureDeviceSigning installs and launches simulator runner bundle ID', async () => {
+    resolveDeviceMock.mockReturnValue({
+      udid: 'sim-udid',
+      name: 'iPhone Test',
+      version: '26.0',
+      type: 'simulator',
+    });
+
+    const execCalls = [];
+    execFileSyncMock.mockImplementation((file, args, opts) => {
+      execCalls.push([file, args, opts]);
+      if (file === 'unzip') {
+        const destIdx = args.indexOf('-d');
+        if (destIdx !== -1) createMockIpaStructure(args[destIdx + 1]);
+        return '';
+      }
+      if (file === 'xcrun' && args[0] === 'simctl' && args[1] === 'launch') {
+        return 'com.iosuse.xcuidriver.xctrunner: 123';
+      }
+      return '';
+    });
+
+    await configModule.configureDeviceSigning({ udid: 'sim-udid', simulator: true });
+
+    const terminateCall = execCalls.find(([, args]) => args[0] === 'simctl' && args[1] === 'terminate');
+    const launchCall = execCalls.find(([, args]) => args[0] === 'simctl' && args[1] === 'launch');
+    expect(terminateCall[1]).toContain('com.iosuse.xcuidriver.xctrunner');
+    expect(launchCall[1]).toContain('com.iosuse.xcuidriver.xctrunner');
+    expect(configModule.getDeviceSigningConfig('sim-udid')).toMatchObject({
+      bundleId: 'com.iosuse.xcuidriver.xctrunner',
+      port: '8100',
+    });
   });
 });
