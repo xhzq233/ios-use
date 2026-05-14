@@ -16,7 +16,7 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 - **Auto session reuse**: the first action command starts or reconnects the driver automatically; later commands reuse the saved session state. DOM queries hit `~74 ms`, find hits `~45 ms`.
 - **Real device and Simulator**: Real devices connect through usbmuxd; Simulators connect over `localhost:8100`.
 - **Smart DOM tree**: a unified cleaning pipeline trims the raw XCUI snapshot into a concise, readable tree while preserving visible hierarchy and useful traits.
-- **Normalized find with context disambiguation**: contains-match over label/value text with whitespace, punctuation, and case normalization, plus fuzzy fallback and `ancestorType`/`ancestorLabel` filtering.
+- **Normalized find with traits disambiguation**: contains-match over label/value text with whitespace, punctuation, and case normalization, plus fuzzy fallback and `--traits` filtering.
 - **4 scroll modes**: scroll-to-label, point swipe, anchor-based scroll, and fixed-distance swipe. Auto axis detection from visible cell layout.
 - **OSLog integration**: Fetch device-side `OSLogStore` entries with regex filtering, grouped by bundle ID.
 - **Built-in NSLogger receiver**: Capture device logs from the CLI, with optional TLS and Bonjour service discovery.
@@ -143,8 +143,8 @@ The public CLI mirrors the flow action set:
 ### Protocol And Runtime Notes
 
 - Transport: TCP on port `8100`
-- Framing: 4-byte big-endian length prefix plus JSON payload
-- Screenshot path: JSON header plus raw JPEG binary
+- Framing: 4-byte big-endian length prefix plus Fory binary payload
+- Screenshot path: single Fory response frame with `ForyScreenshotPayload.jpeg`
 - Coordinates and dimensions use integers
 - All XCTest UI work is dispatched onto the main thread inside the driver
 
