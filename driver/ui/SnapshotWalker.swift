@@ -533,7 +533,16 @@ func findCellAncestor(_ node: SafeSnapshot) -> SafeSnapshot {
 
 /// Time complexity: O(1).
 private func effectiveVisibleFrame(_ node: SafeSnapshot) -> CGRect {
-    node.visibleFrame
+    let visibleFrame = node.visibleFrame
+    if visibleFrame.width > 0, visibleFrame.height > 0 {
+        return visibleFrame
+    }
+    if node.elementType == XCUIElement.ElementType.icon.rawValue,
+       node.frame.width > 0,
+       node.frame.height > 0 {
+        return node.frame
+    }
+    return visibleFrame
 }
 
 /// Time complexity: O(1).
