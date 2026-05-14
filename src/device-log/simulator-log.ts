@@ -16,8 +16,7 @@ export async function collectSimulatorLog(
 
   return new Promise<string[]>((resolve) => {
     const proc = spawn('xcrun', args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const stdout: string[] = [];
-    const stderr: string[] = [];
+    const lines: string[] = [];
     let stdoutBuf = '';
     let stderrBuf = '';
 
@@ -26,7 +25,7 @@ export async function collectSimulatorLog(
       const parts = stdoutBuf.split('\n');
       stdoutBuf = parts.pop() ?? '';
       for (const line of parts) {
-        if (line.trim()) stdout.push(line.trim());
+        if (line.trim()) lines.push(line.trim());
       }
     });
 
@@ -35,16 +34,15 @@ export async function collectSimulatorLog(
       const parts = stderrBuf.split('\n');
       stderrBuf = parts.pop() ?? '';
       for (const line of parts) {
-        if (line.trim()) stderr.push(line.trim());
+        if (line.trim()) lines.push(line.trim());
       }
     });
 
-    proc.on('error', () => resolve(stdout));
+    proc.on('error', () => resolve(lines));
     proc.on('close', () => {
-      if (stdoutBuf.trim()) stdout.push(stdoutBuf.trim());
-      // log show outputs to stderr, not stdout
-      const allLines = [...stdout, ...stderr];
-      resolve(allLines);
+      if (stdoutBuf.trim()) lines.push(stdoutBuf.trim());
+      if (stderrBuf.trim()) lines.push(stderrBuf.trim());
+      resolve(lines);
     });
   });
 }
