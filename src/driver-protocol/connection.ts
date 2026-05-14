@@ -23,6 +23,8 @@ export class Connection {
   private readResolve: ((data: Buffer) => void) | null = null;
   private readReject: ((err: Error) => void) | null = null;
   private readNeeded = 0;
+  private readBuffer: Buffer | null = null;
+  private readOffset = 0;
   private readTimer: ReturnType<typeof setTimeout> | null = null;
   private sendQueue: Promise<void> = Promise.resolve();
   private _disconnecting = false;
@@ -58,6 +60,8 @@ export class Connection {
         this.readResolve = null;
         this.readReject = null;
         this.readNeeded = 0;
+        this.readBuffer = null;
+        this.readOffset = 0;
       }
       if (this.readTimer) { clearTimeout(this.readTimer); this.readTimer = null; }
       this.disconnect();
@@ -68,6 +72,8 @@ export class Connection {
         this.readResolve = null;
         this.readReject = null;
         this.readNeeded = 0;
+        this.readBuffer = null;
+        this.readOffset = 0;
       }
       if (this.readTimer) { clearTimeout(this.readTimer); this.readTimer = null; }
       this.disconnect();
@@ -75,6 +81,8 @@ export class Connection {
     this.socket.on('close', () => {
       this.socket = null;
       this.buffer = Buffer.alloc(0);
+      this.readBuffer = null;
+      this.readOffset = 0;
     });
   }
 
@@ -98,8 +106,11 @@ export class Connection {
     const header = Buffer.allocUnsafe(4);
     header.writeUInt32BE(data.length, 0);
     await new Promise<void>((resolve, reject) => {
-      this.socket!.write(header);
-      this.socket!.write(data, (err?: Error | null) => err ? reject(err) : resolve());
+      const sock = this.socket!;
+      sock.cork();
+      sock.write(header);
+      sock.write(data, (err?: Error | null) => err ? reject(err) : resolve());
+      process.nextTick(() => sock.uncork());
     });
   }
 
@@ -114,22 +125,60 @@ export class Connection {
 
   private onData(data: Buffer): void {
     const MAX_BUFFER_SIZE = 64 * 1024 * 1024;
-    this.buffer = this.buffer.length === 0 ? data : Buffer.concat([this.buffer, data]);
-    if (this.buffer.length > MAX_BUFFER_SIZE) {
-      this.disconnect();
+
+    if (this.readResolve) {
+      if (!this.readBuffer && this.readOffset === 0 && data.length >= this.readNeeded) {
+        if (this.readTimer) { clearTimeout(this.readTimer); this.readTimer = null; }
+        const result = data.subarray(0, this.readNeeded);
+        this.buffer = data.subarray(this.readNeeded);
+        if (this.buffer.length > MAX_BUFFER_SIZE) {
+          this.disconnect();
+          return;
+        }
+        const resolve = this.readResolve;
+        this.readResolve = null;
+        this.readReject = null;
+        this.readNeeded = 0;
+        this.readBuffer = null;
+        this.readOffset = 0;
+        resolve(result);
+        return;
+      }
+
+      if (!this.readBuffer) {
+        this.readBuffer = Buffer.allocUnsafe(this.readNeeded);
+      }
+      const remaining = this.readNeeded - this.readOffset;
+      const take = Math.min(remaining, data.length);
+      if (take > 0) {
+        data.copy(this.readBuffer, this.readOffset, 0, take);
+        this.readOffset += take;
+      }
+      if (this.readOffset >= this.readNeeded) {
+        if (this.readTimer) { clearTimeout(this.readTimer); this.readTimer = null; }
+        const result = this.readBuffer;
+        this.buffer = data.subarray(take);
+        if (this.buffer.length > MAX_BUFFER_SIZE) {
+          this.disconnect();
+          return;
+        }
+        const resolve = this.readResolve;
+        this.readResolve = null;
+        this.readReject = null;
+        this.readNeeded = 0;
+        this.readBuffer = null;
+        this.readOffset = 0;
+        resolve(result);
+      }
       return;
     }
 
-    if (this.readResolve && this.buffer.length >= this.readNeeded) {
-      if (this.readTimer) { clearTimeout(this.readTimer); this.readTimer = null; }
-      const result = this.buffer.subarray(0, this.readNeeded);
-      this.buffer = this.buffer.subarray(this.readNeeded);
-      const resolve = this.readResolve;
-      this.readResolve = null;
-      this.readReject = null;
-      this.readNeeded = 0;
-      resolve(result);
+    const nextLength = this.buffer.length + data.length;
+    if (nextLength > MAX_BUFFER_SIZE) {
+      this.disconnect();
+      return;
     }
+    this.buffer = this.buffer.length === 0 ? data : Buffer.concat([this.buffer, data], nextLength);
   }
 
   private readExact(n: number): Promise<Buffer> {
@@ -143,14 +192,25 @@ export class Connection {
       this.readNeeded = n;
       this.readResolve = resolve;
       this.readReject = reject;
+      this.readBuffer = null;
+      this.readOffset = 0;
+
+      if (this.buffer.length > 0) {
+        this.readBuffer = Buffer.allocUnsafe(n);
+        this.buffer.copy(this.readBuffer, 0);
+        this.readOffset = this.buffer.length;
+        this.buffer = Buffer.alloc(0);
+      }
 
       this.readTimer = setTimeout(() => {
         if (this.readReject) {
-          const gotBytes = this.buffer.length;
+          const gotBytes = this.readOffset + this.buffer.length;
           const rejectFn = this.readReject;
           this.readResolve = null;
           this.readReject = null;
           this.readNeeded = 0;
+          this.readBuffer = null;
+          this.readOffset = 0;
           this.readTimer = null;
           this.buffer = Buffer.alloc(0);
           rejectFn(new Error(`read timeout after 45s (got ${gotBytes}/${n} bytes)`));
@@ -169,6 +229,8 @@ export class Connection {
       this.readResolve = null;
       this.readReject = null;
       this.readNeeded = 0;
+      this.readBuffer = null;
+      this.readOffset = 0;
     }
     if (this.socket) {
       this.socket.removeAllListeners();
@@ -176,6 +238,8 @@ export class Connection {
       this.socket = null;
     }
     this.buffer = Buffer.alloc(0);
+    this.readBuffer = null;
+    this.readOffset = 0;
     this.sendQueue = Promise.resolve();
     this._disconnecting = false;
   }

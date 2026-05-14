@@ -62,7 +62,10 @@ export class DriverClient {
   async sendRaw(command: string, argsPayload: Uint8Array): Promise<RawResponse> {
     const t0 = this.verbose ? Date.now() : 0;
     const frameData = serializeRequestFrame(command, argsPayload);
-    const responseBytes = await this.conn.send(Buffer.from(frameData));
+    const frameBuffer = Buffer.isBuffer(frameData)
+      ? frameData
+      : Buffer.from(frameData.buffer, frameData.byteOffset, frameData.byteLength);
+    const responseBytes = await this.conn.send(frameBuffer);
     if (this.verbose) console.log(`[client] ${command} took ${Date.now() - t0}ms`);
     return deserializeResponse(responseBytes);
   }
