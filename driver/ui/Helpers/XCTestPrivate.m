@@ -556,6 +556,14 @@ BOOL XCFBTypeText(NSString *text, NSUInteger typingSpeed, NSError **error) {
     }
 
     SEL pathInitSel = NSSelectorFromString(@"initForTextInput");
+    if (![pathClass instancesRespondToSelector:pathInitSel]) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"ios-use"
+                                         code:4
+                                     userInfo:@{NSLocalizedDescriptionKey: @"initForTextInput is unavailable"}];
+        }
+        return NO;
+    }
     id path = ((id (*)(id, SEL))objc_msgSend)([pathClass alloc], pathInitSel);
     SEL typeSel = NSSelectorFromString(@"typeText:atOffset:typingSpeed:shouldRedact:");
     if (![path respondsToSelector:typeSel]) {
@@ -570,6 +578,14 @@ BOOL XCFBTypeText(NSString *text, NSUInteger typingSpeed, NSError **error) {
     double offset = 0.0;
     BOOL redact = NO;
     NSMethodSignature *typeSig = [path methodSignatureForSelector:typeSel];
+    if (!typeSig) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"ios-use"
+                                         code:4
+                                     userInfo:@{NSLocalizedDescriptionKey: @"typeText method signature is unavailable"}];
+        }
+        return NO;
+    }
     NSInvocation *typeInv = [NSInvocation invocationWithMethodSignature:typeSig];
     [typeInv setTarget:path];
     [typeInv setSelector:typeSel];

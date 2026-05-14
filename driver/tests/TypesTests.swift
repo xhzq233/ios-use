@@ -266,6 +266,31 @@ final class TypesTests: XCTestCase {
         XCTAssertTrue(suggestions.contains("Dark Mode"))
     }
 
+    func testFuzzySuggestions_ReturnsTopThreeByDistanceThenDisplayText() {
+        let candidates = [
+            SearchCandidate(displayText: "GeneralC", normalizedText: normalizeSearchText("GeneralC")),
+            SearchCandidate(displayText: "GeneralA", normalizedText: normalizeSearchText("GeneralA")),
+            SearchCandidate(displayText: "General", normalizedText: normalizeSearchText("General")),
+            SearchCandidate(displayText: "GeneralB", normalizedText: normalizeSearchText("GeneralB")),
+            SearchCandidate(displayText: "Genral", normalizedText: normalizeSearchText("Genral")),
+        ]
+
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("General"), from: candidates)
+
+        XCTAssertEqual(suggestions, ["General", "GeneralA", "GeneralB"])
+    }
+
+    func testFuzzySuggestions_LengthPruningSkipsImpossibleCandidates() {
+        let candidates = [
+            SearchCandidate(displayText: "Extremely Long General Settings Label", normalizedText: normalizeSearchText("Extremely Long General Settings Label")),
+            SearchCandidate(displayText: "Genral", normalizedText: normalizeSearchText("Genral")),
+        ]
+
+        let suggestions = fuzzySuggestions(forNormalizedQuery: normalizeSearchText("General"), from: candidates)
+
+        XCTAssertEqual(suggestions, ["Genral"])
+    }
+
     func testNormalizeSearchText_IgnoresWhitespaceCaseAndPunctuation() {
         XCTAssertEqual(normalizeSearchText(" 编 辑 "), "编辑")
         XCTAssertEqual(normalizeSearchText("FAcetime通话"), "facetime通话")

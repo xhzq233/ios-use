@@ -143,22 +143,27 @@ func buildCleanElements(from root: SafeSnapshot) -> [SnapshotElement] {
 }
 
 private func buildSearchEntries(from elements: [SnapshotElement]) -> [SearchEntry] {
-    elements.compactMap { element in
+    var entries: [SearchEntry] = []
+    entries.reserveCapacity(elements.count)
+    for element in elements {
         let rawTexts = searchableTexts(for: element.node)
-        guard !rawTexts.isEmpty else { return nil }
+        guard !rawTexts.isEmpty else { continue }
         let normalizedTexts = normalizedSearchableTexts(from: rawTexts)
-        guard !normalizedTexts.isEmpty else { return nil }
-        return SearchEntry(
+        guard !normalizedTexts.isEmpty else { continue }
+        entries.append(SearchEntry(
             element: element,
             rawTexts: rawTexts,
             normalizedTexts: normalizedTexts
-        )
+        ))
     }
+    return entries
 }
 
 private func buildSearchCandidates(from entries: [SearchEntry]) -> [SearchCandidate] {
     var seen: Set<String> = []
+    seen.reserveCapacity(entries.count * 2)
     var candidates: [SearchCandidate] = []
+    candidates.reserveCapacity(entries.count * 2)
     for entry in entries {
         for text in entry.rawTexts {
             let normalized = normalizeSearchText(text)
@@ -209,6 +214,7 @@ private func cleanTree(
     //  M7 fix: don't hide Other with <=1 child — always promote when label nil.
     if type == .window || (type == .other && displayName(for: node) == nil) {
         var promoted: [CleanSubtree] = []
+        promoted.reserveCapacity(node.children.count)
         for child in node.children {
             switch cleanTree(child, parentDisabled: disabled) {
             case .skip:
@@ -225,6 +231,7 @@ private func cleanTree(
     // Collect this node's kept descendants separately so we can apply
     // single-child merge (rule 4) locally.
     var childSubtrees: [CleanSubtree] = []
+    childSubtrees.reserveCapacity(node.children.count)
 
     for child in node.children {
         switch cleanTree(child, parentDisabled: disabled) {
@@ -255,15 +262,15 @@ private func cleanTree(
 
     // Build traits: [typeName, disabled?, invisible?, selected?, focused?]
     let traits = snapshotTraits(for: node, disabled: disabled, invisible: invisible)
-    var subtree: [SnapshotElement] = [
-        SnapshotElement(
-            node: node,
-            traits: traits,
-            disabled: disabled,
-            invisible: invisible,
-            childCount: 0
-        )
-    ]
+    var subtree: [SnapshotElement] = []
+    subtree.reserveCapacity(1 + childSubtrees.reduce(0) { $0 + $1.records.count })
+    subtree.append(SnapshotElement(
+        node: node,
+        traits: traits,
+        disabled: disabled,
+        invisible: invisible,
+        childCount: 0
+    ))
 
     // Rule 4: single-child same-type merge — if this node has exactly one kept
     // child and that child is same type + same rect + same label, keep only
@@ -281,7 +288,9 @@ private func cleanTree(
                 invisible: invisible,
                 childCount: childRoot.childCount
             )
-            var mergedRecords = [mergedRoot]
+            var mergedRecords: [SnapshotElement] = []
+            mergedRecords.reserveCapacity(childRecords.count)
+            mergedRecords.append(mergedRoot)
             if childRecords.count > 1 {
                 mergedRecords.append(contentsOf: childRecords.dropFirst())
             }
@@ -309,7 +318,9 @@ private func cleanTree(
             invisible: invisible,
             childCount: childRecords[0].childCount
         )
-        var mergedRecords = [mergedRoot]
+        var mergedRecords: [SnapshotElement] = []
+        mergedRecords.reserveCapacity(childRecords.count)
+        mergedRecords.append(mergedRoot)
         if childRecords.count > 1 {
             mergedRecords.append(contentsOf: childRecords.dropFirst())
         }
@@ -342,7 +353,12 @@ private func flattenCleanBuildResult(_ result: CleanBuildResult) -> [SnapshotEle
         // `records` already contains each subtree's full preorder encoding.
         // `flatMap(\.records)` only concatenates sibling subtrees into one
         // flat stream; it does not recurse or rebuild tree structure here.
-        return subtrees.flatMap(\.records)
+        var records: [SnapshotElement] = []
+        records.reserveCapacity(subtrees.reduce(0) { $0 + $1.records.count })
+        for subtree in subtrees {
+            records.append(contentsOf: subtree.records)
+        }
+        return records
     }
 }
 

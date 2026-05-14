@@ -605,8 +605,9 @@ async function customPrepareAppSession(customUdid, appBundle, label) {
   terminateCustomDriverProcesses(customUdid);
   terminateWdaProcesses(customUdid);
   await waitForProcessesGone(customUdid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
+  cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
   cli(['activateApp', appBundle, '--udid', customUdid]);
-  cli(['waitFor', '--label', label, '--timeout', '8']);
+  cli(['waitFor', '--label', label, '--timeout', '8', '--udid', customUdid]);
 }
 
 async function appiumPrepareNoSession(driver) {
@@ -625,6 +626,12 @@ async function appiumPrepareSettingsHome(driver, label) {
   await sleep(1000);
   await driver.createSession();
   await driver.updateSettings({ screenshotQuality: WDA_SCREENSHOT_QUALITY });
+  try {
+    await driver.terminateApp(driver.appBundle);
+  } catch {
+    // ignore; Settings may not be running yet
+  }
+  await driver.activateApp(driver.appBundle);
   await driver.waitForElement(label, 8000, 500);
 }
 

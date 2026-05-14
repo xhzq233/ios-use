@@ -167,23 +167,38 @@ func levenshtein(_ a: String, _ b: String) -> Int {
 
 /// Up to 3 closest suggestions within edit-distance threshold on normalized
 /// search text. Returned values preserve original display text.
-/// Time complexity: O(c * q * t + c log c), where c is candidate count,
-/// q is normalized query length, and t is normalized candidate length.
+/// Time complexity: O(c * q * t), with length pruning and constant-size
+/// top-3 ranking. c is candidate count, q is normalized query length, and t
+/// is normalized candidate length.
 func fuzzySuggestions(forNormalizedQuery normalizedQuery: String, from candidates: [SearchCandidate]) -> [String] {
-    let threshold = fuzzyThreshold(for: normalizedQuery.count)
+    let queryLength = normalizedQuery.count
+    let threshold = fuzzyThreshold(for: queryLength)
     if threshold <= 0 { return [] }
-    return candidates
-        .compactMap { candidate -> (SearchCandidate, Int)? in
-            guard !candidate.normalizedText.isEmpty else { return nil }
-            let d = levenshtein(normalizedQuery, candidate.normalizedText)
-            return d <= threshold ? (candidate, d) : nil
+
+    var best: [(SearchCandidate, Int)] = []
+    best.reserveCapacity(3)
+
+    for candidate in candidates {
+        guard !candidate.normalizedText.isEmpty else { continue }
+        guard abs(candidate.normalizedText.count - queryLength) <= threshold else { continue }
+        let distance = levenshtein(normalizedQuery, candidate.normalizedText)
+        guard distance <= threshold else { continue }
+        let item = (candidate, distance)
+        if best.count < 3 {
+            best.append(item)
+            best.sort(by: fuzzyRankedBefore)
+        } else if fuzzyRankedBefore(item, best[2]) {
+            best[2] = item
+            best.sort(by: fuzzyRankedBefore)
         }
-        .sorted { lhs, rhs in
-            if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
-            return lhs.0.displayText < rhs.0.displayText
-        }
-        .prefix(3)
-        .map { $0.0.displayText }
+    }
+
+    return best.map { $0.0.displayText }
+}
+
+private func fuzzyRankedBefore(_ lhs: (SearchCandidate, Int), _ rhs: (SearchCandidate, Int)) -> Bool {
+    if lhs.1 != rhs.1 { return lhs.1 < rhs.1 }
+    return lhs.0.displayText < rhs.0.displayText
 }
 
 private func nodeIdentity(_ node: SafeSnapshot) -> ObjectIdentifier {
