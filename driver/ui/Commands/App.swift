@@ -106,7 +106,9 @@ enum AppCommands {
             throw DriverError.invalidArgs("invalid url: \(args.url)")
         }
 
-        XCUIDevice.shared.system.open(url)
+        guard OpenURLViaLaunchServices(args.url) else {
+            throw DriverError.invalidArgs("no app registered for URL scheme: \(url.scheme ?? "unknown")")
+        }
         return try Codec.foryOK(ForySimpleStringPayload(value: args.url))
     }
 }
