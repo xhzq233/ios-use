@@ -85,6 +85,8 @@ const emptyHomeName = 'empty-home';
 let passed = 0;
 let failed = 0;
 let skipped = 0;
+const simulatorDriverBundleId = 'com.iosuse.xcuidriver.xctrunner';
+const driverReadyTimeoutMs = 180_000;
 
 function stamp(): string {
   return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -309,15 +311,44 @@ async function waitForDriver(): Promise<void> {
   const out = path.join(artifactDir, 'driver-warmup.out');
   const err = path.join(artifactDir, 'driver-warmup.err');
   console.log('[sim-test] Waiting for driver...');
-  for (let i = 0; i < 10; i++) {
+  const startedAt = performance.now();
+  let attempt = 0;
+  while (performance.now() - startedAt < driverReadyTimeoutMs) {
+    attempt++;
     const res = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], out, err);
     if (res.code === 0) {
       console.log('[sim-test] Driver ready');
       return;
     }
-    await sleep(1000);
+    if (attempt % 5 === 0) {
+      relaunchSimulatorDriver(attempt);
+    }
+    await sleep(2000);
   }
-  throw new Error(`Driver did not become ready\n${readFileIfExists(out)}${readFileIfExists(err)}`);
+  collectDriverWarmupDiagnostics();
+  throw new Error(`Driver did not become ready\n${readFileIfExists(out)}${readFileIfExists(err)}${readFileIfExists(path.join(artifactDir, 'driver-warmup-diagnostics.out'))}${readFileIfExists(path.join(artifactDir, 'driver-warmup-diagnostics.err'))}`);
+}
+
+function relaunchSimulatorDriver(attempt: number): void {
+  const res = execCmd(['xcrun', 'simctl', 'launch', sim.udid, simulatorDriverBundleId]);
+  writeFile(path.join(artifactDir, `driver-warmup-relaunch-${attempt}.out`), res.stdout);
+  writeFile(path.join(artifactDir, `driver-warmup-relaunch-${attempt}.err`), res.stderr);
+}
+
+function collectDriverWarmupDiagnostics(): void {
+  const diagnostics = [
+    ['xcrun', 'simctl', 'spawn', sim.udid, 'launchctl', 'print', `gui/501/${simulatorDriverBundleId}`],
+    ['xcrun', 'simctl', 'spawn', sim.udid, 'log', 'show', '--style', 'compact', '--last', '3m', '--predicate', 'process CONTAINS "IOSUseDriver" OR eventMessage CONTAINS "[driver]" OR eventMessage CONTAINS "iosuse"'],
+  ];
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  for (const cmd of diagnostics) {
+    const res = execCmd(cmd);
+    stdout.push(`$ ${cmd.join(' ')}\n${res.stdout}`);
+    stderr.push(`$ ${cmd.join(' ')}\n${res.stderr}`);
+  }
+  writeFile(path.join(artifactDir, 'driver-warmup-diagnostics.out'), stdout.join('\n'));
+  writeFile(path.join(artifactDir, 'driver-warmup-diagnostics.err'), stderr.join('\n'));
 }
 
 let recoveryCount = 0;
@@ -892,7 +923,7 @@ async function main(): Promise<void> {
   caseFilterIds = parsedArgs.caseFilterIds;
 
   if (!skipBuild) {
-    const build = execCmd(['bash', path.join(rootDir, 'scripts/build_driver.sh')], { cwd: rootDir });
+    const build = execCmd(['bash', path.join(rootDir, 'scripts/build_driver.sh'), '--simulator-only'], { cwd: rootDir });
     process.stdout.write(build.stdout);
     process.stderr.write(build.stderr);
     if (build.code !== 0) process.exit(build.code);
