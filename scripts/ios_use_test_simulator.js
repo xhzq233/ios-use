@@ -9,6 +9,16 @@ const STATE_FILE = path.join(IOS_USE_HOME, 'simulators', 'ios-use-test.json');
 const DEFAULT_NAME = process.env.IOS_USE_TEST_SIM_NAME || 'IOSUseTest';
 const DEFAULT_DEVICE_TYPE = process.env.IOS_USE_TEST_SIM_DEVICE_TYPE || 'iPhone 16';
 const DEFAULT_RUNTIME = process.env.IOS_USE_TEST_SIM_RUNTIME || '';
+const BOOT_TIMEOUT_MS = parsePositiveIntEnv('IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS', 300_000);
+
+function parsePositiveIntEnv(name, fallback) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+  }
+  return Number(raw);
+}
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, {
@@ -123,7 +133,7 @@ function bootDevice(udid) {
   } catch {
     // Already booted or booting.
   }
-  execFileSync('xcrun', ['simctl', 'bootstatus', udid, '-b'], { stdio: 'pipe', timeout: 120_000 });
+  execFileSync('xcrun', ['simctl', 'bootstatus', udid, '-b'], { stdio: 'pipe', timeout: BOOT_TIMEOUT_MS });
 }
 
 function ensure() {
