@@ -537,7 +537,8 @@ private func effectiveVisibleFrame(_ node: SafeSnapshot) -> CGRect {
     if visibleFrame.width > 0, visibleFrame.height > 0 {
         return visibleFrame
     }
-    if node.elementType == XCUIElement.ElementType.icon.rawValue,
+    let elementType = XCUIElement.ElementType(rawValue: node.elementType) ?? .other
+    if (elementType == .icon || elementType == .searchField),
        node.frame.width > 0,
        node.frame.height > 0 {
         return node.frame
