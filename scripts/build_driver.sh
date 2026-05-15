@@ -7,13 +7,24 @@ set -euo pipefail
 # Usage:
 #   ./scripts/build_driver.sh        # Release build (fastest, no dSYM)
 #   ./scripts/build_driver.sh --debug # Debug build with dSYM for troubleshooting
+#   ./scripts/build_driver.sh --simulator-only # Build only assets/driver-sim.ipa
 # =============================================================================
 
 DEBUG_MODE=false
+SIMULATOR_ONLY=false
 for arg in "$@"; do
-  if [ "$arg" = "--debug" ]; then
-    DEBUG_MODE=true
-  fi
+  case "$arg" in
+    --debug)
+      DEBUG_MODE=true
+      ;;
+    --simulator-only)
+      SIMULATOR_ONLY=true
+      ;;
+    *)
+      echo "[build] ERROR: unknown option $arg"
+      exit 1
+      ;;
+  esac
 done
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -87,46 +98,50 @@ package_ipa() {
 # Device build
 # =============================================================================
 
-echo "[build] Building IOSUseDriver for iOS (no signing)..."
-rm -rf "$XCTEST_WRAPPER_PATH"
+if [ "$SIMULATOR_ONLY" != true ]; then
+  echo "[build] Building IOSUseDriver for iOS (no signing)..."
+  rm -rf "$XCTEST_WRAPPER_PATH"
 
-xcodebuild build-for-testing \
-  "${XCODE_COMMON[@]}" \
-  -destination 'generic/platform=iOS' \
-  -skipMacroValidation \
-  | tail -5
+  xcodebuild build-for-testing \
+    "${XCODE_COMMON[@]}" \
+    -destination 'generic/platform=iOS' \
+    -skipMacroValidation \
+    | tail -5
 
-if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
-  echo "[build] ERROR: xctest wrapper app not found in $BUILD_DIR"
-  exit 1
-fi
-echo "[build] Built xctest wrapper: $XCTEST_WRAPPER_PATH"
-
-# Strip XC frameworks and libXCTestSwiftSupport.dylib for iOS 17+ compatibility.
-# On iOS 17+, device already has these frameworks / dylibs.
-echo "[build] Stripping XC frameworks..."
-STRIPPED=0
-if [ -d "$XCTEST_WRAPPER_PATH/Frameworks" ]; then
-  for fw in "$XCTEST_WRAPPER_PATH/Frameworks"/XC*.framework; do
-    [ -d "$fw" ] && rm -rf "$fw" && ((STRIPPED++)) || true
-  done
-  # libXCTestSwiftSupport.dylib from newer Xcode may reference symbols
-  # absent on older iOS versions (e.g. iOS 18.7.1). Strip it — system has it.
-  if [ -f "$XCTEST_WRAPPER_PATH/Frameworks/libXCTestSwiftSupport.dylib" ]; then
-    rm -f "$XCTEST_WRAPPER_PATH/Frameworks/libXCTestSwiftSupport.dylib"
-    ((STRIPPED++)) || true
+  if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
+    echo "[build] ERROR: xctest wrapper app not found in $BUILD_DIR"
+    exit 1
   fi
-  # Testing.framework from Xcode 16 may mismatch the system libXCTestSwiftSupport
-  # on iOS 18. Strip it so the system uses its own compatible version.
-  if [ -d "$XCTEST_WRAPPER_PATH/Frameworks/Testing.framework" ]; then
-    rm -rf "$XCTEST_WRAPPER_PATH/Frameworks/Testing.framework"
-    ((STRIPPED++)) || true
-  fi
-fi
-echo "[build] Stripped $STRIPPED XC framework(s) / dylib(s)"
+  echo "[build] Built xctest wrapper: $XCTEST_WRAPPER_PATH"
 
-echo "[build] Packaging device IPA..."
-package_ipa "$XCTEST_WRAPPER_PATH" "$IPA_OUTPUT"
+  # Strip XC frameworks and libXCTestSwiftSupport.dylib for iOS 17+ compatibility.
+  # On iOS 17+, device already has these frameworks / dylibs.
+  echo "[build] Stripping XC frameworks..."
+  STRIPPED=0
+  if [ -d "$XCTEST_WRAPPER_PATH/Frameworks" ]; then
+    for fw in "$XCTEST_WRAPPER_PATH/Frameworks"/XC*.framework; do
+      [ -d "$fw" ] && rm -rf "$fw" && ((STRIPPED++)) || true
+    done
+    # libXCTestSwiftSupport.dylib from newer Xcode may reference symbols
+    # absent on older iOS versions (e.g. iOS 18.7.1). Strip it — system has it.
+    if [ -f "$XCTEST_WRAPPER_PATH/Frameworks/libXCTestSwiftSupport.dylib" ]; then
+      rm -f "$XCTEST_WRAPPER_PATH/Frameworks/libXCTestSwiftSupport.dylib"
+      ((STRIPPED++)) || true
+    fi
+    # Testing.framework from Xcode 16 may mismatch the system libXCTestSwiftSupport
+    # on iOS 18. Strip it so the system uses its own compatible version.
+    if [ -d "$XCTEST_WRAPPER_PATH/Frameworks/Testing.framework" ]; then
+      rm -rf "$XCTEST_WRAPPER_PATH/Frameworks/Testing.framework"
+      ((STRIPPED++)) || true
+    fi
+  fi
+  echo "[build] Stripped $STRIPPED XC framework(s) / dylib(s)"
+
+  echo "[build] Packaging device IPA..."
+  package_ipa "$XCTEST_WRAPPER_PATH" "$IPA_OUTPUT"
+else
+  echo "[build] SIMULATOR ONLY mode: skipping iOS device IPA"
+fi
 
 # =============================================================================
 # Simulator build

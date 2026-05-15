@@ -10,7 +10,7 @@ echo "[all] Running Swift driver unit tests..."
 bash "$ROOT_DIR/scripts/test_driver_unit.sh"
 
 echo "[all] Building driver artifacts..."
-bash "$ROOT_DIR/scripts/build_driver.sh"
+bash "$ROOT_DIR/scripts/build_driver.sh" --simulator-only
 
 echo "[all] Running headless Simulator command tests..."
 bun "$ROOT_DIR/scripts/test_simulator_commands.ts" --skip-build
