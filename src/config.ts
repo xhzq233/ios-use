@@ -72,6 +72,7 @@ export function rewriteIpaBundleIds(
   runnerBundleId: string,
   xctestBundleId: string,
 ): string {
+  ensureDir();
   const tmpDir = fs.mkdtempSync(path.join(IOS_USE_HOME, 'ipa-rewrite-'));
   try {
     execFileSync('unzip', ['-q', '-o', ipaPath, '-d', tmpDir], { stdio: 'pipe' });
