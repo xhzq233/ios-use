@@ -21,7 +21,7 @@ ios-use devices               # 查看设备列表、udid 和配置状态
 ios-use config --udid <udid>  # 签名并安装 driver（显示 configured 后即可使用）
 ```
 
-- 首次若 altsign session 不存在，需要补 Apple ID：`--apple-id you@example.com --password 'app-password'`
+- 首次若 altsign session 不存在，需要补 Apple ID，可能触发 Apple 2FA 验证码输入，AI 无法代用户完成。此时应提示用户：「真机首次签名需要一个免费的 Apple Developer 账号。请在终端手动运行以下命令，按提示输入 Apple ID、App 专用密码，并完成两步验证（2FA）：`ios-use config --udid <udid> --apple-id <your-apple-id> --password '<app-specific-password>'`」
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
 - 真机首次使用必须先 `config`，不要跳过
 - 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
@@ -254,3 +254,5 @@ ios-use config --udid <udid>    # 重新签名安装（会自动清理旧 sessio
 - 改了 driver 代码但行为没变：设备上还是旧 IPA，重新 `bash scripts/build_host_app.sh` + `ios-use config`
 
 - 调试时可以加 `--verbose` 看完整输入输出。
+
+- altsign出现http 4xx，可能是，非免费开发者账号（需要在developer.apple.com/login先注册)；5xx 可能是网络问题，提示开VPN。
