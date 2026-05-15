@@ -13,6 +13,6 @@ echo "[all] Building driver artifacts..."
 bash "$ROOT_DIR/scripts/build_driver.sh"
 
 echo "[all] Running headless Simulator command tests..."
-bash "$ROOT_DIR/scripts/test_simulator_commands.sh" --skip-build
+bun "$ROOT_DIR/scripts/test_simulator_commands.ts" --skip-build
 
 echo "[all] All tests passed"
