@@ -80,6 +80,9 @@ describe('config helpers', () => {
     originalHome = process.env.HOME;
     process.env.HOME = testHome;
     fs.rmSync(mockIosUseHome, { recursive: true, force: true });
+    fs.mkdirSync(mockIosUseHome, { recursive: true });
+    fs.writeFileSync(path.join(mockIosUseHome, 'driver.ipa'), 'test-driver-ipa');
+    fs.writeFileSync(path.join(mockIosUseHome, 'driver-sim.ipa'), 'test-driver-sim-ipa');
 
     execSyncMock.mockReset();
     execFileSyncMock.mockReset();
