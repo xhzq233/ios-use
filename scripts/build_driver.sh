@@ -32,7 +32,7 @@ BUILD_DIR="$PROJECT_DIR/build"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 XCTEST_WRAPPER_PATH="$BUILD_DIR/IOSUseDriver-Runner.app"
 
-# Release artifacts go to assets/ (tracked by git).
+# Release artifacts go to assets/ (ignored local build outputs).
 # Debug artifacts go to build/ (not tracked) to avoid accidental commits.
 if [ "$DEBUG_MODE" = true ]; then
   CONFIGURATION="Debug"
@@ -66,6 +66,7 @@ package_ipa() {
   local staging
   staging="$(mktemp -d)"
 
+  mkdir -p "$(dirname "$dst_ipa")"
   mkdir -p "$staging/Payload"
   cp -r "$src_app" "$staging/Payload/"
   find "$staging/Payload" -name "*.dSYM" -type d -prune -exec rm -rf {} +
