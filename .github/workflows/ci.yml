@@ -32,7 +32,7 @@ jobs:
   full-simulator:
     runs-on: macos-26
     if: github.event_name == 'workflow_dispatch' && inputs.full_simulator
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 

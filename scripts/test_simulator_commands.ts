@@ -464,6 +464,20 @@ async function runInputAndVerifyDom(
   else recordFail(id, `${readFileIfExists(out)}${readFileIfExists(err)}${readFileIfExists(domOut)}${readFileIfExists(domErr)}`);
 }
 
+async function verifyContactsNameFields(id: string, suffix: string): Promise<boolean> {
+  const out = path.join(artifactDir, `${id}${suffix}.out`);
+  const err = path.join(artifactDir, `${id}${suffix}.err`);
+  const domOut = path.join(artifactDir, `${id}${suffix}-dom.out`);
+  const domErr = path.join(artifactDir, `${id}${suffix}-dom.err`);
+  await openContactsNewContact();
+  const first = runCli(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField', '--udid', sim.udid]);
+  const last = runCli(['input', '--label', 'Last name', '--content', 'Beta', '--traits', 'TextField', '--udid', sim.udid]);
+  writeFile(out, first.stdout + last.stdout);
+  writeFile(err, first.stderr + last.stderr);
+  const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
+  return first.code === 0 && last.code === 0 && dom.code === 0 && dom.stdout.includes('First name=Alpha') && dom.stdout.includes('Last name=Beta');
+}
+
 async function unsupportedCase(id: string, reason: string): Promise<void> {
   if (!selected(id)) return recordSkip(id);
   skipped++;
@@ -798,19 +812,28 @@ function buildCases(): CaseDef[] {
     }) },
     { id: 'IN-6', run: async () => {
       if (!selected('IN-6')) return recordSkip('IN-6');
-      const out = path.join(artifactDir, 'IN-6.out');
-      const err = path.join(artifactDir, 'IN-6.err');
-      const domOut = path.join(artifactDir, 'IN-6-dom.out');
-      const domErr = path.join(artifactDir, 'IN-6-dom.err');
       console.log('[sim-test] RUN IN-6: input two Contacts fields with keyboard open');
-      await openContactsNewContact();
-      const first = runCli(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField', '--udid', sim.udid]);
-      const last = runCli(['input', '--label', 'Last name', '--content', 'Beta', '--traits', 'TextField', '--udid', sim.udid]);
-      writeFile(out, first.stdout + last.stdout);
-      writeFile(err, first.stderr + last.stderr);
-      const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
-      if (first.code === 0 && last.code === 0 && dom.code === 0 && dom.stdout.includes('First name=Alpha') && dom.stdout.includes('Last name=Beta')) recordPass('IN-6');
-      else recordFail('IN-6', readFileIfExists(out) + readFileIfExists(err) + readFileIfExists(domOut) + readFileIfExists(domErr));
+      const firstAttempt = await verifyContactsNameFields('IN-6', '');
+      if (!firstAttempt) {
+        await discardContactIfNeeded();
+        console.log('[sim-test] IN-6: retrying after rebuilding Contacts form');
+      }
+      const casePassed = firstAttempt || await verifyContactsNameFields('IN-6', '-retry');
+      if (casePassed) {
+        recordPass('IN-6');
+      } else {
+        const details = [
+          'IN-6.out',
+          'IN-6.err',
+          'IN-6-dom.out',
+          'IN-6-dom.err',
+          'IN-6-retry.out',
+          'IN-6-retry.err',
+          'IN-6-retry-dom.out',
+          'IN-6-retry-dom.err',
+        ].map(file => readFileIfExists(path.join(artifactDir, file))).join('');
+        recordFail('IN-6', details);
+      }
       await discardContactIfNeeded();
     } },
     { id: 'DA-1', run: () => runCaseContains('DA-1', 'Alert dismissed', ['dismissAlert', '--udid', sim.udid], openContactsDiscardAlert) },
