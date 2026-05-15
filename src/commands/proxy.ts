@@ -28,6 +28,10 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEV_FLOWS_DIR = path.join(MODULE_DIR, '../../flows');
 let proxyHome = IOS_USE_HOME;
 let flowRunner = runFlowFile;
+let lanInfoDetector: ((interfaceName?: string) => WifiInfo) | null = null;
+let deviceReachVerifier: ((client: DriverClient, macLanIp: string) => Promise<void>) | null = null;
+let mitmdumpStarter: ((confdir: string, flowFile: string) => Promise<ChildProcess>) | null = null;
+let mitmproxyDirOverride: string | null = null;
 
 type ForyProtocol = typeof import('../driver-protocol/fory.js');
 
@@ -86,9 +90,17 @@ function flowsDir(): string {
 export function setProxyTestOverrides(opts: {
   iosUseHome?: string | null;
   flowRunner?: typeof runFlowFile | null;
+  lanInfoDetector?: ((interfaceName?: string) => WifiInfo) | null;
+  deviceReachVerifier?: ((client: DriverClient, macLanIp: string) => Promise<void>) | null;
+  mitmdumpStarter?: ((confdir: string, flowFile: string) => Promise<ChildProcess>) | null;
+  mitmproxyDir?: string | null;
 }): void {
   proxyHome = opts.iosUseHome ?? IOS_USE_HOME;
   flowRunner = opts.flowRunner ?? runFlowFile;
+  lanInfoDetector = opts.lanInfoDetector ?? null;
+  deviceReachVerifier = opts.deviceReachVerifier ?? null;
+  mitmdumpStarter = opts.mitmdumpStarter ?? null;
+  mitmproxyDirOverride = opts.mitmproxyDir ?? null;
 }
 
 export function readProxyState(): ProxySessionState | null {
@@ -111,6 +123,10 @@ function readCAState(): ProxyCAState {
 function writeCAState(state: ProxyCAState): void {
   fs.mkdirSync(path.dirname(caStateFile()), { recursive: true });
   fs.writeFileSync(caStateFile(), JSON.stringify(state, null, 2) + '\n');
+}
+
+function mitmproxyDir(): string {
+  return mitmproxyDirOverride ?? path.join(process.env.HOME || '', '.mitmproxy');
 }
 
 function fingerprintPem(pem: string): string {
@@ -312,12 +328,12 @@ export async function proxyConfigCA(
   _client: DriverClient,
   opts: { udid?: string },
 ): Promise<void> {
-  const mitmproxyDir = path.join(process.env.HOME || '', '.mitmproxy');
-  const caPath = path.join(mitmproxyDir, 'mitmproxy-ca-cert.pem');
+  const mitmproxyConfDir = mitmproxyDir();
+  const caPath = path.join(mitmproxyConfDir, 'mitmproxy-ca-cert.pem');
 
   if (!fs.existsSync(caPath)) {
     logger.info('Generating mitmproxy CA (first run)...');
-    await generateMitmproxyCA(mitmproxyDir);
+    await generateMitmproxyCA(mitmproxyConfDir);
   }
 
   if (!fs.existsSync(caPath)) {
@@ -369,11 +385,11 @@ export async function proxyStart(
     throw new Error('Proxy already running. Run `proxy stop` first.');
   }
 
-  const mitmproxyDir = path.join(process.env.HOME || '', '.mitmproxy');
-  const caPath = path.join(mitmproxyDir, 'mitmproxy-ca-cert.pem');
+  const mitmproxyConfDir = mitmproxyDir();
+  const caPath = path.join(mitmproxyConfDir, 'mitmproxy-ca-cert.pem');
   if (!fs.existsSync(caPath)) {
     logger.info('Generating mitmproxy CA...');
-    await generateMitmproxyCA(mitmproxyDir);
+    await generateMitmproxyCA(mitmproxyConfDir);
   }
   if (!fs.existsSync(caPath)) {
     throw new Error('CA_NOT_GENERATED: Failed to generate mitmproxy CA.');
@@ -391,13 +407,13 @@ export async function proxyStart(
   if (!fs.existsSync(artifactsDir)) fs.mkdirSync(artifactsDir, { recursive: true });
   const flowFile = path.join(artifactsDir, `proxy-${new Date().toISOString().replace(/[:.]/g, '-')}.flow`);
 
-  const wifi = detectLanInfo(opts.interfaceName);
+  const wifi = (lanInfoDetector ?? detectLanInfo)(opts.interfaceName);
   logger.info(`${opts.interfaceName ? 'Using requested interface' : 'Using Wi-Fi interface'}: ${wifi.interface}, ${wifi.macLanIp}`);
-  await verifyDeviceCanReachMac(_client, wifi.macLanIp);
+  await (deviceReachVerifier ?? verifyDeviceCanReachMac)(_client, wifi.macLanIp);
 
   logger.info('Starting mitmdump...');
   try {
-    mitmdumpProc = await startMitmdump(mitmproxyDir, flowFile);
+    mitmdumpProc = await (mitmdumpStarter ?? startMitmdump)(mitmproxyConfDir, flowFile);
 
     logger.info('Configuring device Wi-Fi proxy...');
     await runFlow(_client, 'proxy_set_wifi_proxy.yaml', {
@@ -483,7 +499,7 @@ export function proxyDoctor(): void {
     }
   }
 
-  const caPath = path.join(process.env.HOME || '', '.mitmproxy', 'mitmproxy-ca-cert.pem');
+  const caPath = path.join(mitmproxyDir(), 'mitmproxy-ca-cert.pem');
   const caGenerated = fs.existsSync(caPath);
   checks.push({ name: 'CA generated', status: caGenerated ? 'ok' : 'fail', fix: 'Run `proxy configca`' });
 
