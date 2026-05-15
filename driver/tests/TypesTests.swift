@@ -344,6 +344,36 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(dom[0].childCount, 0)
     }
 
+    func testCleanTree_Rule4SameTypeMergePreservesDescendants() {
+        let content = FakeRawSnapshot(
+            label: "content",
+            elementType: .staticText,
+            frame: CGRect(x: 20, y: 20, width: 100, height: 20),
+            isVisible: true
+        )
+        let childWebView = FakeRawSnapshot(
+            label: "NestedWeb",
+            elementType: .webView,
+            frame: CGRect(x: 10, y: 10, width: 300, height: 300),
+            isVisible: true,
+            children: [content]
+        )
+        let parentWebView = FakeRawSnapshot(
+            label: "NestedWeb",
+            elementType: .webView,
+            frame: CGRect(x: 10, y: 10, width: 300, height: 300),
+            isVisible: true,
+            children: [childWebView]
+        )
+
+        let elements = buildCleanElements(from: SafeSnapshot(raw: parentWebView, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+
+        XCTAssertEqual(elements.count, 2)
+        XCTAssertEqual(elements[0].node.label, "NestedWeb")
+        XCTAssertEqual(elements[0].childCount, 1)
+        XCTAssertEqual(elements[1].node.label, "content")
+    }
+
     // MARK: - elementTypeName
 
     func testElementTypeName_OtherReturnsDash() {
@@ -528,6 +558,25 @@ final class TypesTests: XCTestCase {
             XCTAssertEqual(found.node.frame.origin.y, 489)
         default:
             XCTFail("expected icon elements with empty visibleFrame to fallback to frame when frame is in bounds")
+        }
+    }
+
+    func testRawFindInSnapshot_OnlyFallsBackToFrameForSearchField() {
+        let search = FakeRawSnapshot(
+            label: "Search",
+            elementType: .searchField,
+            frame: CGRect(x: 33, y: 781, width: 327, height: 38),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: search, appFrame: CGRect(x: 0, y: 0, width: 393, height: 852)))])
+
+        switch rawFindInSnapshot("Search", traits: "SearchField", cs: cs, visibility: .only) {
+        case .found(let found):
+            XCTAssertEqual(found.node.frame.origin.x, 33)
+            XCTAssertEqual(found.node.frame.origin.y, 781)
+        default:
+            XCTFail("expected SearchField with empty visibleFrame to fallback to frame when frame is in bounds")
         }
     }
 
