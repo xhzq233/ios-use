@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full_simulator:
+        description: "Run full local regression via scripts/test_all.sh"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run Bun unit tests
+        run: bun test
+
+  full-simulator:
+    runs-on: macos-26
+    if: github.event_name == 'workflow_dispatch' && inputs.full_simulator
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Run full local regression
+        run: bash scripts/test_all.sh
