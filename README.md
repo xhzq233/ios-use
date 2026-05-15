@@ -198,7 +198,7 @@ Numbers vary by device, app state, and whether the target page is already warm, 
 | `altsign-cli` | copied by installer if bundled | required for real-device signing | not needed |
 | `openssl` | not needed | optional for `nslog --ssl` | optional for `nslog --ssl` |
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
-| `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_host_app.sh` |
+| `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_driver.sh` |
 | `appium`, `lsof` | not needed | not needed at runtime | benchmark only |
 
 ## Repository Layout
@@ -219,7 +219,7 @@ assets/               Prebuilt driver artifacts
 git clone https://github.com/xhzq233/ios-use.git
 cd ios-use
 bun install
-bash scripts/build_host_app.sh
+bash scripts/build_driver.sh
 bun run src/cli.ts --help
 ```
 
