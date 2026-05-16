@@ -63,6 +63,25 @@ final class NSLogServiceTests: XCTestCase {
         XCTAssertEqual(server.logCount, 0)
     }
 
+    func testServerGrepCursorSurvivesBufferEviction() throws {
+        let paths = IOSUsePaths.resolve(environment: [
+            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-nslog-\(UUID().uuidString)").path
+        ])
+        let server = try NSLoggerServer(options: NSLoggerServerOptions(publishBonjour: false, maxBufferSize: 2), paths: paths)
+        let regex = try NSRegularExpression(pattern: "new")
+
+        server.ingestForTesting(makeMessage(parts: [(7, 0, stringData("old one"))]))
+        server.ingestForTesting(makeMessage(parts: [(7, 0, stringData("old two"))]))
+        let first = server.grep(regex: regex, from: 0)
+        XCTAssertTrue(first.matches.isEmpty)
+
+        server.ingestForTesting(makeMessage(parts: [(7, 0, stringData("new three"))]))
+        let second = server.grep(regex: regex, from: first.nextIndex)
+
+        XCTAssertEqual(second.matches.count, 1)
+        XCTAssertTrue(second.matches[0].contains("new three"))
+    }
+
     func testServerAcceptsRealTLSClientFrameWithoutKeychain() throws {
         guard isPortAvailable(50_000) else {
             throw XCTSkip("NSLogger fixed port 50000 is already in use")

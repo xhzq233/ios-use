@@ -287,6 +287,11 @@ public enum SessionService {
         }
     }
 
+    static var simulatorDriverReachableForTesting: (() -> Bool)?
+    static var simulatorDriverLauncherForTesting: ((String) throws -> Void)?
+    static var realDriverReachableForTesting: ((String) -> Bool)?
+    static var realDriverLauncherForTesting: ((String, String) throws -> Void)?
+
     public static func clear(paths: IOSUsePaths) {
         try? FileManager.default.removeItem(atPath: paths.session)
     }
@@ -319,12 +324,31 @@ public enum SessionService {
     }
 
     public static func prepareDriverSession(_ session: SessionOptions, paths: IOSUsePaths) throws {
-        guard let udid = session.udid else { return }
+        let udid: String
+        if let requested = session.udid {
+            udid = requested
+        } else {
+            let devices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
+            guard let device = devices.first else {
+                throw CLIParseError.invalidValue("No --udid and no USB devices detected. Simulator requires explicit --udid.")
+            }
+            udid = device.udid
+        }
         let configured = DeviceService.configuredUdids(paths: paths)
         guard configured.contains(udid) else {
             throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
         }
+        if let current = read(paths: paths), current.udid == udid {
+            if current.deviceType == "simulator" {
+                try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: true)
+                return
+            }
+            if current.deviceType == "real", isDriverPortReachable(udid: udid) {
+                return
+            }
+        }
         if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
+            try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: false)
             try writeSession(
                 udid: udid,
                 deviceName: simulator.name,
@@ -335,6 +359,7 @@ public enum SessionService {
             return
         }
         if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first(where: { $0.udid == udid }) {
+            try ensureRealDriverRunning(udid: udid, paths: paths)
             try writeSession(
                 udid: udid,
                 deviceName: device.name,
@@ -342,7 +367,6 @@ public enum SessionService {
                 deviceType: "real",
                 paths: paths
             )
-            try ensureRealDriverRunning(udid: udid, paths: paths)
             return
         }
         throw CLIParseError.invalidValue("Device \(udid) not found.")
@@ -365,7 +389,13 @@ public enum SessionService {
     }
 
     private static func ensureRealDriverRunning(udid: String, paths: IOSUsePaths) throws {
-        if isDriverPortReachable(udid: udid) {
+        let isReachable = realDriverReachableForTesting ?? { targetUdid in
+            isDriverPortReachable(udid: targetUdid)
+        }
+        let launch = realDriverLauncherForTesting ?? { targetUdid, bundleId in
+            _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "process", "launch", "--device", targetUdid, bundleId])
+        }
+        if isReachable(udid) {
             return
         }
         guard let bundleId = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid })?.bundleId,
@@ -373,15 +403,36 @@ public enum SessionService {
               bundleId != "(missing)" else {
             throw CLIParseError.invalidValue("No driver bundle ID found for device \(udid). Run `ios-use config --udid \(udid)` first.")
         }
-        _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "process", "launch", "--device", udid, bundleId])
+        try launch(udid, bundleId)
         let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
-            if isDriverPortReachable(udid: udid) {
+            if isReachable(udid) {
                 return
             }
             usleep(250_000)
         }
         throw CLIParseError.invalidValue("Driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable on device \(udid)")
+    }
+
+    private static func ensureSimulatorDriverRunning(udid: String, allowExistingDriver: Bool) throws {
+        let isReachable = simulatorDriverReachableForTesting ?? {
+            (try? DriverClient().dom(raw: false, fresh: false)) != nil
+        }
+        let launch = simulatorDriverLauncherForTesting ?? { targetUdid in
+            _ = try Shell.run("xcrun", arguments: ["simctl", "launch", targetUdid, ConfigService.simulatorBundleId])
+        }
+        if allowExistingDriver, isReachable() {
+            return
+        }
+        try launch(udid)
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if isReachable() {
+                return
+            }
+            usleep(250_000)
+        }
+        throw CLIParseError.invalidValue("Simulator driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable for \(udid)")
     }
 
     private static func isDriverPortReachable(udid: String) -> Bool {
