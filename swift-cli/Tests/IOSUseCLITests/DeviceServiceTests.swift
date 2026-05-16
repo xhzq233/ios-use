@@ -1,5 +1,5 @@
 import XCTest
-import IOSUseCLI
+@testable import IOSUseCLI
 
 final class DeviceServiceTests: XCTestCase {
     func testParseDeviceOutputSeparatesRealDevicesAndSimulators() {
@@ -36,5 +36,14 @@ final class DeviceServiceTests: XCTestCase {
             DeviceService.format(device, configured: ["SIM-1"]),
             "IOSUseTest | iOS 26.0.1 | Simulator | UDID: SIM-1 | configured"
         )
+    }
+
+    func testShellRunHandlesLargeStdoutWithoutPipeDeadlock() throws {
+        let output = try Shell.run("/bin/sh", arguments: [
+            "-c",
+            "i=0; while [ $i -lt 10000 ]; do printf 'abcdefghijklmnopqrstuvwxyz0123456789\\n'; i=$((i + 1)); done"
+        ])
+
+        XCTAssertEqual(output.split(separator: "\n").count, 10000)
     }
 }
