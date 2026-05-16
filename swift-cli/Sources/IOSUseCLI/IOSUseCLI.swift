@@ -92,6 +92,11 @@ public struct IOSUseCLI: Sendable {
         switch parsed {
         case .devices(let options):
             return listDevices(options)
+        case .config(let options) where options.list:
+            return CLIResult(exitCode: 0, stdout: ConfigService.formatList(ConfigService.listEntries(paths: paths)))
+        case .stop:
+            SessionService.clear(paths: paths)
+            return CLIResult(exitCode: 0, stdout: "Session stopped\n")
         default:
             return parsedButNotImplemented(parsed)
         }
