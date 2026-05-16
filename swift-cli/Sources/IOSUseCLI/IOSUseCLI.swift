@@ -146,8 +146,8 @@ public struct IOSUseCLI: Sendable {
                 return CLIResult(exitCode: 0, stdout: "Opened URL: \(url)\n")
             case .dismissAlert(let index, _):
                 return CLIResult(exitCode: 0, stdout: try DriverOutput.formatAlert(client.dismissAlert(index: index)))
-            default:
-                return parsedButNotImplemented(.driver(action))
+            case .oslog(let pattern, let flags, let timeout, let name, let clear, let bundleId, let session):
+                return try oslog(pattern: pattern, flags: flags, timeout: timeout, name: name, clear: clear, bundleId: bundleId, session: session)
             }
         } catch {
             return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
@@ -160,6 +160,27 @@ public struct IOSUseCLI: Sendable {
         let path = "\(paths.artifacts)/\(prefix).jpg"
         try client.screenshot().write(to: URL(fileURLWithPath: path))
         return CLIResult(exitCode: 0, stdout: "Screenshot saved: \(path)\n")
+    }
+
+    private func oslog(pattern: String?, flags: String?, timeout: Double?, name: String?, clear: Bool, bundleId: String?, session: SessionOptions) throws -> CLIResult {
+        if clear {
+            return CLIResult(exitCode: 0, stdout: OSLogService.clear())
+        }
+        guard let udid = session.udid else {
+            throw CLIParseError.invalidValue("oslog requires --udid")
+        }
+        return CLIResult(
+            exitCode: 0,
+            stdout: try OSLogService.fetchSimulator(
+                udid: udid,
+                pattern: pattern,
+                flags: flags,
+                bundleId: bundleId,
+                timeout: timeout,
+                name: name,
+                paths: paths
+            )
+        )
     }
 
     private func tap(target: String, offset: String?, offsetRatio: String?, traits: String?, client: DriverClient) throws -> CLIResult {
