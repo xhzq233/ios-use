@@ -55,7 +55,7 @@ enum TouchCommands {
     /// optional duration (default 500ms).
     static func longPress(_ args: ForyLongPressArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
-        let duration = args.duration > 0 ? args.duration : TouchConstants.defaultLongPressDurationSeconds
+        let duration = args.duration > 0 ? args.duration : IOSUseProtocol.defaultLongPressDurationSeconds
         defer { invalidateSnapshot() }
 
         let target = args.target

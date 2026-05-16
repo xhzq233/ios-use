@@ -37,7 +37,7 @@ extension DriverError: CustomStringConvertible {
 extension Double {
     var sanitized: Double {
         isFinite
-            ? (self * NumericConstants.sanitizedDecimalScale).rounded(.toNearestOrEven) / NumericConstants.sanitizedDecimalScale
+            ? (self * IOSUseProtocol.sanitizedDecimalScale).rounded(.toNearestOrEven) / IOSUseProtocol.sanitizedDecimalScale
             : 0
     }
 }

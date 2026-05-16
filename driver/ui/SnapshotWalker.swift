@@ -90,7 +90,7 @@ func displayValue(for node: SafeSnapshot) -> String? {
 private var _cachedSnapshot: CleanedSnapshot?
 private var _cachedAt: TimeInterval = 0
 private let _snapshotLock = NSLock()
-private let _cacheTTL: TimeInterval = SnapshotConstants.cacheTTLSeconds
+private let _cacheTTL: TimeInterval = IOSUseProtocol.snapshotCacheTTLSeconds
 
 /// doc 4.3 — all commands share the same entry point.
 /// Returns a cached snapshot if available; otherwise builds a fresh one.
@@ -176,7 +176,7 @@ private func buildSearchCandidates(from entries: [SearchEntry]) -> [SearchCandid
 }
 
 func isSpringBoardApp(_ app: XCUIApplication) -> Bool {
-    (app.value(forKey: "bundleID") as? String) == DriverBundleConstants.springboardBundleId
+    (app.value(forKey: "bundleID") as? String) == IOSUseProtocol.springboardBundleId
 }
 
 /// doc 4.3 — mutations (tap/swipe/input/longPress) must invalidate the cache.
@@ -366,7 +366,7 @@ private func sameElementType(_ a: SafeSnapshot, _ b: SafeSnapshot) -> Bool {
     a.elementType == b.elementType
 }
 
-private func rectApproxEqual(_ a: CGRect, _ b: CGRect, epsilon: CGFloat = SnapshotConstants.rectApproxEqualEpsilon) -> Bool {
+private func rectApproxEqual(_ a: CGRect, _ b: CGRect, epsilon: CGFloat = CGFloat(IOSUseProtocol.rectApproxEqualEpsilon)) -> Bool {
     abs(a.origin.x - b.origin.x) <= epsilon
         && abs(a.origin.y - b.origin.y) <= epsilon
         && abs(a.size.width - b.size.width) <= epsilon
