@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';

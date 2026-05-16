@@ -4,7 +4,7 @@ import {
   parseCaseFilter,
   parseRunnerArgs,
   validateCaseFilter,
-} from '../scripts/test_simulator_commands.ts';
+} from '../scripts/test_simulator_commands.mjs';
 
 describe('test_simulator_commands runner args', () => {
   test('selects exact case ids only', () => {
