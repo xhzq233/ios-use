@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import IOSUseProtocol
 
@@ -268,23 +269,126 @@ private extension String {
 }
 
 public enum SessionService {
+    public struct Info: Equatable, Sendable {
+        public let sessionId: String
+        public let udid: String
+        public let port: Int
+        public let deviceName: String
+        public let deviceVersion: String
+        public let deviceType: String
+
+        public init(sessionId: String, udid: String, port: Int, deviceName: String, deviceVersion: String, deviceType: String) {
+            self.sessionId = sessionId
+            self.udid = udid
+            self.port = port
+            self.deviceName = deviceName
+            self.deviceVersion = deviceVersion
+            self.deviceType = deviceType
+        }
+    }
+
     public static func clear(paths: IOSUsePaths) {
         try? FileManager.default.removeItem(atPath: paths.session)
     }
 
+    public static func read(paths: IOSUsePaths) -> Info? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.session)),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessionId = raw["sessionId"] as? String,
+              let udid = raw["udid"] as? String else {
+            return nil
+        }
+        return Info(
+            sessionId: sessionId,
+            udid: udid,
+            port: raw["port"] as? Int ?? Int(IOSUseProtocol.defaultDriverPort),
+            deviceName: raw["deviceName"] as? String ?? "",
+            deviceVersion: raw["deviceVersion"] as? String ?? "",
+            deviceType: raw["deviceType"] as? String ?? ""
+        )
+    }
+
     public static func writeSimulatorSession(udid: String, deviceName: String, deviceVersion: String, paths: IOSUsePaths) throws {
+        try writeSession(
+            udid: udid,
+            deviceName: deviceName,
+            deviceVersion: deviceVersion,
+            deviceType: "simulator",
+            paths: paths
+        )
+    }
+
+    public static func prepareDriverSession(_ session: SessionOptions, paths: IOSUsePaths) throws {
+        guard let udid = session.udid else { return }
+        let configured = DeviceService.configuredUdids(paths: paths)
+        guard configured.contains(udid) else {
+            throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
+        }
+        if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
+            try writeSession(
+                udid: udid,
+                deviceName: simulator.name,
+                deviceVersion: simulator.version,
+                deviceType: "simulator",
+                paths: paths
+            )
+            return
+        }
+        if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first(where: { $0.udid == udid }) {
+            try writeSession(
+                udid: udid,
+                deviceName: device.name,
+                deviceVersion: device.version,
+                deviceType: "real",
+                paths: paths
+            )
+            try ensureRealDriverRunning(udid: udid, paths: paths)
+            return
+        }
+        throw CLIParseError.invalidValue("Device \(udid) not found.")
+    }
+
+    public static func writeSession(udid: String, deviceName: String, deviceVersion: String, deviceType: String, paths: IOSUsePaths) throws {
         let root: [String: Any] = [
             "sessionId": "session-\(Int(Date().timeIntervalSince1970 * 1000))",
             "udid": udid,
             "port": IOSUseProtocol.defaultDriverPort,
             "deviceName": deviceName,
             "deviceVersion": deviceVersion,
-            "deviceType": "simulator",
+            "deviceType": deviceType,
             "createdAt": Int(Date().timeIntervalSince1970 * 1000),
         ]
         let sessionDir = URL(fileURLWithPath: paths.session).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: sessionDir, withIntermediateDirectories: true, attributes: nil)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: URL(fileURLWithPath: paths.session), options: .atomic)
+    }
+
+    private static func ensureRealDriverRunning(udid: String, paths: IOSUsePaths) throws {
+        if isDriverPortReachable(udid: udid) {
+            return
+        }
+        guard let bundleId = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid })?.bundleId,
+              !bundleId.isEmpty,
+              bundleId != "(missing)" else {
+            throw CLIParseError.invalidValue("No driver bundle ID found for device \(udid). Run `ios-use config --udid \(udid)` first.")
+        }
+        _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "process", "launch", "--device", udid, bundleId])
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            if isDriverPortReachable(udid: udid) {
+                return
+            }
+            usleep(250_000)
+        }
+        throw CLIParseError.invalidValue("Driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable on device \(udid)")
+    }
+
+    private static func isDriverPortReachable(udid: String) -> Bool {
+        guard let fd = try? Usbmux.connect(udid: udid, port: Int(IOSUseProtocol.defaultDriverPort)) else {
+            return false
+        }
+        Darwin.close(fd)
+        return true
     }
 }

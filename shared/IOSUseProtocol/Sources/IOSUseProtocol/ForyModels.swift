@@ -63,6 +63,11 @@ public struct ForyResponseFrame {
 }
 
 @ForyStruct
+public struct ForyEmptyPayload {
+    public init() {}
+}
+
+@ForyStruct
 public struct ForyFindMatch {
     public var elemType: Int32 = 0
     public var label: String = ""
@@ -380,6 +385,7 @@ public enum ForyRegistry {
         try! fory.register(ForyTarget.self, name: "ForyTarget")
         try! fory.register(ForyRequestFrame.self, name: "ForyRequestFrame")
         try! fory.register(ForyResponseFrame.self, name: "ForyResponseFrame")
+        try! fory.register(ForyEmptyPayload.self, name: "ForyEmptyPayload")
         try! fory.register(ForyFindMatch.self, name: "ForyFindMatch")
         try! fory.register(ForyErrorPayload.self, name: "ForyErrorPayload")
         try! fory.register(ForyDomElement.self, name: "ForyDomElement")

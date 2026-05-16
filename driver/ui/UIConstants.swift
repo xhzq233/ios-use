@@ -2,65 +2,65 @@ import CoreGraphics
 import Foundation
 
 enum DriverBundleConstants {
-    static let springboardBundleId = "com.apple.springboard"
+    static let springboardBundleId = IOSUseProtocol.springboardBundleId
 }
 
 enum AppLifecycleConstants {
-    static let foregroundTimeoutSeconds: CFTimeInterval = 10
-    static let terminationTimeoutSeconds: CFTimeInterval = 5
-    static let statePollIntervalSeconds: TimeInterval = 0.05
+    static let foregroundTimeoutSeconds: CFTimeInterval = IOSUseProtocol.appForegroundTimeoutSeconds
+    static let terminationTimeoutSeconds: CFTimeInterval = IOSUseProtocol.appTerminationTimeoutSeconds
+    static let statePollIntervalSeconds: TimeInterval = IOSUseProtocol.appStatePollIntervalSeconds
 }
 
 enum WaitForConstants {
-    static let defaultTimeoutSeconds: Double = 10.0
-    static let pollIntervalMilliseconds = 100
-    static let microsecondsPerMillisecond = 1000
+    static let defaultTimeoutSeconds = IOSUseProtocol.waitForDefaultTimeoutSeconds
+    static let pollIntervalMilliseconds = IOSUseProtocol.waitForPollIntervalMilliseconds
+    static let microsecondsPerMillisecond = IOSUseProtocol.microsecondsPerMillisecond
 }
 
 enum InputConstants {
-    static let postTapFocusSettleSeconds: TimeInterval = 0.2
+    static let postTapFocusSettleSeconds: TimeInterval = IOSUseProtocol.inputPostTapFocusSettleSeconds
 }
 
 enum TouchConstants {
-    static let defaultLongPressDurationSeconds = 0.5
-    static let defaultTargetRatio = 0.5
+    static let defaultLongPressDurationSeconds = IOSUseProtocol.defaultLongPressDurationSeconds
+    static let defaultTargetRatio = IOSUseProtocol.defaultTargetRatio
 }
 
 enum ScrollConstants {
-    static let scrollTouchProportion: CGFloat = 0.75
-    static let touchPressDuration: Double = 0.03
-    static let touchHoldDuration: Double = 0.07
-    static let touchVelocity: Double = 350
-    static let settleInterval: Double = 0.1
-    static let fuzzyPointThreshold: CGFloat = 20
-    static let preciseScrollMaxSegments = 20
-    static let maxScrollCount = 25
+    static let scrollTouchProportion: CGFloat = IOSUseProtocol.scrollTouchProportion
+    static let touchPressDuration = IOSUseProtocol.touchPressDuration
+    static let touchHoldDuration = IOSUseProtocol.touchHoldDuration
+    static let touchVelocity = IOSUseProtocol.touchVelocity
+    static let settleInterval = IOSUseProtocol.scrollSettleInterval
+    static let fuzzyPointThreshold: CGFloat = IOSUseProtocol.fuzzyPointThreshold
+    static let preciseScrollMaxSegments = IOSUseProtocol.preciseScrollMaxSegments
+    static let maxScrollCount = IOSUseProtocol.maxScrollCount
 }
 
 enum ScreenConstants {
-    static let jpegQuality = 0.8
+    static let jpegQuality = IOSUseProtocol.screenshotJpegQuality
 }
 
 enum ProxyConstants {
-    static let caServerPort: UInt16 = 9088
-    static let caServerPath = "/ca.cer"
+    static let caServerPort = IOSUseProtocol.proxyCAPort
+    static let caServerPath = IOSUseProtocol.proxyCAPath
 }
 
 enum SnapshotConstants {
-    static let cacheTTLSeconds: TimeInterval = 1.0
-    static let rectApproxEqualEpsilon: CGFloat = 0.5
+    static let cacheTTLSeconds: TimeInterval = IOSUseProtocol.snapshotCacheTTLSeconds
+    static let rectApproxEqualEpsilon: CGFloat = IOSUseProtocol.rectApproxEqualEpsilon
 }
 
 enum FuzzySearchConstants {
-    static let maxSuggestionCount = 3
-    static let noSuggestionMaxLength = 1
-    static let nearTypoMaxLength = 4
-    static let mediumTypoMaxLength = 8
-    static let nearTypoThreshold = 1
-    static let mediumTypoThreshold = 2
-    static let longTypoThreshold = 3
+    static let maxSuggestionCount = IOSUseProtocol.fuzzyMaxSuggestionCount
+    static let noSuggestionMaxLength = IOSUseProtocol.fuzzyNoSuggestionMaxLength
+    static let nearTypoMaxLength = IOSUseProtocol.fuzzyNearTypoMaxLength
+    static let mediumTypoMaxLength = IOSUseProtocol.fuzzyMediumTypoMaxLength
+    static let nearTypoThreshold = IOSUseProtocol.fuzzyNearTypoThreshold
+    static let mediumTypoThreshold = IOSUseProtocol.fuzzyMediumTypoThreshold
+    static let longTypoThreshold = IOSUseProtocol.fuzzyLongTypoThreshold
 }
 
 enum NumericConstants {
-    static let sanitizedDecimalScale = 10.0
+    static let sanitizedDecimalScale = IOSUseProtocol.sanitizedDecimalScale
 }

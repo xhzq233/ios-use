@@ -151,9 +151,16 @@ public struct IOSUseCLI: Sendable {
     }
 
     private func executeDriver(_ action: DriverAction) -> CLIResult {
+        if case .oslog(let pattern, let flags, let timeout, let name, let clear, let bundleId, let session) = action {
+            do {
+                return try oslog(pattern: pattern, flags: flags, timeout: timeout, name: name, clear: clear, bundleId: bundleId, session: session)
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        }
         do {
             try prepareDriverSession(action.session)
-            let client = DriverClient()
+            let client = DriverClient(session: SessionService.read(paths: paths))
             switch action {
             case .dom(let raw, let fresh, _):
                 return CLIResult(exitCode: 0, stdout: try DriverOutput.formatDom(client.dom(raw: raw, fresh: fresh)))
@@ -178,7 +185,14 @@ public struct IOSUseCLI: Sendable {
                 try client.activateApp(bundleId: bundleId)
                 return CLIResult(exitCode: 0, stdout: "App \(bundleId) activated\n")
             case .terminateApp(let bundleId, _):
-                try client.terminateApp(bundleId: bundleId)
+                do {
+                    try client.terminateApp(bundleId: bundleId)
+                } catch {
+                    if Self.isAppNotRunningError(error) {
+                        return CLIResult(exitCode: 0, stdout: "App \(bundleId) not running, skipped terminate\n")
+                    }
+                    throw error
+                }
                 return CLIResult(exitCode: 0, stdout: "App \(bundleId) terminated\n")
             case .home:
                 try client.home()
@@ -188,8 +202,8 @@ public struct IOSUseCLI: Sendable {
                 return CLIResult(exitCode: 0, stdout: "Opened URL: \(url)\n")
             case .dismissAlert(let index, _):
                 return CLIResult(exitCode: 0, stdout: try DriverOutput.formatAlert(client.dismissAlert(index: index)))
-            case .oslog(let pattern, let flags, let timeout, let name, let clear, let bundleId, let session):
-                return try oslog(pattern: pattern, flags: flags, timeout: timeout, name: name, clear: clear, bundleId: bundleId, session: session)
+            case .oslog:
+                throw CLIParseError.invalidValue("internal error: oslog should not require driver session")
             }
         } catch {
             return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
@@ -208,12 +222,12 @@ public struct IOSUseCLI: Sendable {
         if clear {
             return CLIResult(exitCode: 0, stdout: OSLogService.clear())
         }
-        guard let udid = session.udid else {
-            throw CLIParseError.invalidValue("oslog requires --udid")
+        guard let udid = session.udid ?? SessionService.read(paths: paths)?.udid else {
+            throw CLIParseError.invalidValue("oslog requires --udid or an active session")
         }
         return CLIResult(
             exitCode: 0,
-            stdout: try OSLogService.fetchSimulator(
+            stdout: try OSLogService.fetch(
                 udid: udid,
                 pattern: pattern,
                 flags: flags,
@@ -227,47 +241,41 @@ public struct IOSUseCLI: Sendable {
 
     private func tap(target: String, offset: String?, offsetRatio: String?, traits: String?, client: DriverClient) throws -> CLIResult {
         let foryTarget = try Self.target(target)
-        if foryTarget.point != nil && offset != nil {
+        if foryTarget.point != nil && (offset != nil || offsetRatio != nil) {
             throw CLIParseError.invalidValue("offset requires element label, not absolute point")
         }
-        let offsetPoint = try offset.map(Self.pointPair)
-        let ratioPoint = try offsetPoint == nil ? (offsetRatio.map(Self.pointPair) ?? ForyPoint(x: 0.5, y: 0.5)) : ForyPoint(x: 0.5, y: 0.5)
+        let offsetPoint = try offset.map { try Self.pointPair($0, emptyDefault: 0) }
+        let ratioPoint = try offsetPoint == nil ? (offsetRatio.map { try Self.pointPair($0, emptyDefault: IOSUseProtocol.defaultTargetRatio) } ?? ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) : ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
         let result = try client.tap(target: foryTarget, traits: traits, offset: offsetPoint, ratio: ratioPoint)
         return CLIResult(exitCode: 0, stdout: "Tap\n\(DriverOutput.formatElement(result))")
     }
 
     private func prepareDriverSession(_ session: SessionOptions) throws {
-        guard let udid = session.udid else { return }
-        let configured = DeviceService.configuredUdids(paths: paths)
-        guard configured.contains(udid) else {
-            throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
-        }
-        let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first { $0.udid == udid }
-        try SessionService.writeSimulatorSession(
-            udid: udid,
-            deviceName: simulator?.name ?? "Simulator",
-            deviceVersion: simulator?.version ?? "",
-            paths: paths
-        )
+        try SessionService.prepareDriverSession(session, paths: paths)
+    }
+
+    private static func isAppNotRunningError(_ error: Error) -> Bool {
+        let message = String(describing: error)
+        return message.range(of: #"not running|already terminated|no such process|state=1|state=0"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private static func target(_ value: String?) throws -> ForyTarget {
         guard let value, !value.isEmpty else { return ForyTarget() }
-        if let point = try? pointPair(value) {
+        if let point = try? pointPair(value, emptyDefault: 0) {
             return ForyTarget(label: "", point: point)
         }
         return ForyTarget(label: value, point: nil)
     }
 
-    private static func pointPair(_ value: String) throws -> ForyPoint {
+    private static func pointPair(_ value: String, emptyDefault: Double) throws -> ForyPoint {
         let parts = value.split(separator: ",", omittingEmptySubsequences: false)
         guard parts.count == 2 else {
             throw CLIParseError.invalidValue("Invalid point pair: \"\(value)\"")
         }
         let rawX = parts[0].trimmingCharacters(in: .whitespaces)
         let rawY = parts[1].trimmingCharacters(in: .whitespaces)
-        let x = rawX.isEmpty ? 0 : Double(rawX)
-        let y = rawY.isEmpty ? 0 : Double(rawY)
+        let x = rawX.isEmpty ? emptyDefault : Double(rawX)
+        let y = rawY.isEmpty ? emptyDefault : Double(rawY)
         guard let x, let y, x.isFinite, y.isFinite else {
             throw CLIParseError.invalidValue("Invalid point pair: \"\(value)\"")
         }
