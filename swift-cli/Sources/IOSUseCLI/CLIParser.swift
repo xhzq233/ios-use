@@ -94,6 +94,26 @@ public enum DriverAction: Equatable, Sendable {
         case .oslog: return "oslog"
         }
     }
+
+    public var session: SessionOptions {
+        switch self {
+        case .tap(_, _, _, _, let session),
+             .longPress(_, _, _, let session),
+             .input(_, _, _, let session),
+             .swipe(_, _, _, _, _, let session),
+             .dom(_, _, let session),
+             .find(_, _, let session),
+             .screenshot(_, let session),
+             .waitFor(_, _, _, let session),
+             .activateApp(_, let session),
+             .terminateApp(_, let session),
+             .home(let session),
+             .openURL(_, let session),
+             .dismissAlert(_, let session),
+             .oslog(_, _, _, _, _, _, let session):
+            return session
+        }
+    }
 }
 
 public struct FlowOptions: Equatable, Sendable {

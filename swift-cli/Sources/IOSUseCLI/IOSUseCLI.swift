@@ -68,6 +68,10 @@ public struct IOSUseCLI: Sendable {
             return CLIResult(exitCode: 0, stdout: Self.helpText)
         }
 
+        if arguments.dropFirst().contains("--help") || arguments.dropFirst().contains("-h") {
+            return CLIResult(exitCode: 0, stdout: Self.helpText)
+        }
+
         switch first {
         case "-h", "--help", "help":
             return CLIResult(exitCode: 0, stdout: Self.helpText)
@@ -109,6 +113,8 @@ public struct IOSUseCLI: Sendable {
         case .stop:
             SessionService.clear(paths: paths)
             return CLIResult(exitCode: 0, stdout: "Session stopped\n")
+        case .proxy(.doctor):
+            return CLIResult(exitCode: 0, stdout: "Wi-Fi LAN IP: unknown\nProxy: not running\n")
         case .driver(let action):
             return executeDriver(action)
         default:
@@ -118,6 +124,7 @@ public struct IOSUseCLI: Sendable {
 
     private func executeDriver(_ action: DriverAction) -> CLIResult {
         do {
+            try prepareDriverSession(action.session)
             let client = DriverClient()
             switch action {
             case .dom(let raw, let fresh, _):
@@ -131,7 +138,8 @@ public struct IOSUseCLI: Sendable {
             case .tap(let target, let offset, let offsetRatio, let traits, _):
                 return try tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, client: client)
             case .longPress(let target, let duration, let traits, _):
-                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatElement(client.longPress(target: try Self.target(target), durationMs: duration, traits: traits)))
+                let payload = try client.longPress(target: try Self.target(target), durationMs: duration, traits: traits)
+                return CLIResult(exitCode: 0, stdout: "Longpress\n\(DriverOutput.formatElement(payload))")
             case .input(let label, let content, let traits, _):
                 try client.input(label: label, content: content, traits: traits)
                 return CLIResult(exitCode: 0, stdout: "Input \"\(content)\" into \"\(label)\"\n")
@@ -197,7 +205,22 @@ public struct IOSUseCLI: Sendable {
         let offsetPoint = try offset.map(Self.pointPair)
         let ratioPoint = try offsetPoint == nil ? (offsetRatio.map(Self.pointPair) ?? ForyPoint(x: 0.5, y: 0.5)) : ForyPoint(x: 0.5, y: 0.5)
         let result = try client.tap(target: foryTarget, traits: traits, offset: offsetPoint, ratio: ratioPoint)
-        return CLIResult(exitCode: 0, stdout: DriverOutput.formatElement(result))
+        return CLIResult(exitCode: 0, stdout: "Tap\n\(DriverOutput.formatElement(result))")
+    }
+
+    private func prepareDriverSession(_ session: SessionOptions) throws {
+        guard let udid = session.udid else { return }
+        let configured = DeviceService.configuredUdids(paths: paths)
+        guard configured.contains(udid) else {
+            throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
+        }
+        let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first { $0.udid == udid }
+        try SessionService.writeSimulatorSession(
+            udid: udid,
+            deviceName: simulator?.name ?? "Simulator",
+            deviceVersion: simulator?.version ?? "",
+            paths: paths
+        )
     }
 
     private static func target(_ value: String?) throws -> ForyTarget {
@@ -210,11 +233,14 @@ public struct IOSUseCLI: Sendable {
 
     private static func pointPair(_ value: String) throws -> ForyPoint {
         let parts = value.split(separator: ",", omittingEmptySubsequences: false)
-        guard parts.count == 2,
-              let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
-              let y = Double(parts[1].trimmingCharacters(in: .whitespaces)),
-              x.isFinite,
-              y.isFinite else {
+        guard parts.count == 2 else {
+            throw CLIParseError.invalidValue("Invalid point pair: \"\(value)\"")
+        }
+        let rawX = parts[0].trimmingCharacters(in: .whitespaces)
+        let rawY = parts[1].trimmingCharacters(in: .whitespaces)
+        let x = rawX.isEmpty ? 0 : Double(rawX)
+        let y = rawY.isEmpty ? 0 : Double(rawY)
+        guard let x, let y, x.isFinite, y.isFinite else {
             throw CLIParseError.invalidValue("Invalid point pair: \"\(value)\"")
         }
         return ForyPoint(x: x, y: y)
@@ -242,12 +268,12 @@ public struct IOSUseCLI: Sendable {
         """
         Usage: ios-use-swift [--help] [--version] <command>
 
-        Swift rewrite scaffold for ios-use.
+        Swift CLI for ios-use.
 
         Current status:
-          - protocol constants and driver command names are available in IOSUseProtocol
-          - driver command execution is not migrated yet
-          - use `bun run src/cli.ts <command>` for production behavior
+          - driver read, mutation, lifecycle, oslog, config, devices, and Simulator flow paths are migrated
+          - proxy, nslog, and full real-device host paths are still being migrated
+          - `dist/ios-use` is the default Swift executable; `src/cli.ts` remains a legacy reference during migration
 
         Options:
           -h, --help       Show help

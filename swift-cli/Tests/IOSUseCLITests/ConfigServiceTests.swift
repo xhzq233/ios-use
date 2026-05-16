@@ -59,6 +59,28 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("com.iosuse.xcuidriver.xctrunner"))
     }
 
+    func testWriteSimulatorSessionUsesTsCompatibleShape() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+
+        try SessionService.writeSimulatorSession(
+            udid: "SIM-1",
+            deviceName: "IOSUseTest",
+            deviceVersion: "26.0",
+            paths: paths
+        )
+
+        let data = try Data(contentsOf: URL(fileURLWithPath: "\(root)/state/session.json"))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertTrue((json["sessionId"] as? String)?.hasPrefix("session-") == true)
+        XCTAssertEqual(json["udid"] as? String, "SIM-1")
+        XCTAssertEqual(json["port"] as? Int, 8100)
+        XCTAssertEqual(json["deviceName"] as? String, "IOSUseTest")
+        XCTAssertEqual(json["deviceVersion"] as? String, "26.0")
+        XCTAssertEqual(json["deviceType"] as? String, "simulator")
+        XCTAssertNotNil(json["createdAt"])
+    }
+
     private func temporaryRoot() throws -> String {
         let root = NSTemporaryDirectory() + "ios-use-swift-config-\(UUID().uuidString)"
         addTeardownBlock {

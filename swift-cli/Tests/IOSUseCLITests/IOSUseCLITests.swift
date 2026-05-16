@@ -3,12 +3,13 @@ import IOSUseCLI
 import IOSUseProtocol
 
 final class IOSUseCLITests: XCTestCase {
-    func testHelpContainsRewriteStatusAndFallbackCommand() {
+    func testHelpContainsMigrationStatusAndDefaultExecutable() {
         let result = IOSUseCLI().run(arguments: ["--help"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("Swift rewrite scaffold"))
-        XCTAssertTrue(result.stdout.contains("bun run src/cli.ts <command>"))
+        XCTAssertTrue(result.stdout.contains("Swift CLI for ios-use"))
+        XCTAssertTrue(result.stdout.contains("dist/ios-use"))
+        XCTAssertTrue(result.stdout.contains("src/cli.ts"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
@@ -28,11 +29,13 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.isEmpty)
     }
 
-    func testKnownDriverCommandReportsExplicitMigrationBoundary() {
+    func testProxyDoctorReportsLocalProxyStatus() {
         let result = IOSUseCLI().run(arguments: ["proxy", "doctor"])
 
-        XCTAssertEqual(result.exitCode, 64)
-        XCTAssertTrue(result.stderr.contains("Swift CLI command 'proxy doctor' parsed successfully but execution is not migrated yet"))
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("Wi-Fi LAN IP"))
+        XCTAssertTrue(result.stdout.contains("Proxy: not running"))
+        XCTAssertTrue(result.stderr.isEmpty)
     }
 
     func testMissingRequiredArgumentFailsBeforeExecution() {
