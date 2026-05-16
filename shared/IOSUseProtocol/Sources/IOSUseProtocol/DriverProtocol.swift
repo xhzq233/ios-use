@@ -5,6 +5,7 @@ public enum IOSUseProtocol {
     public static let maxFrameSizeBytes = 50 * 1024 * 1024
     public static let commandTimeoutSeconds = 45
     public static let commandCompletionTimeoutSeconds = 120
+    public static let defaultTargetRatio = 0.5
 }
 
 public enum DriverCommand: String, CaseIterable, Sendable {

@@ -8,28 +8,18 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "IOSUseProtocol", targets: ["IOSUseProtocol"]),
         .library(name: "IOSUseCLI", targets: ["IOSUseCLI"]),
         .executable(name: "ios-use-swift", targets: ["IOSUseSwiftCLI"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apache/fory.git", branch: "main"),
+        .package(path: "../shared/IOSUseProtocol"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.3")
     ],
     targets: [
         .target(
-            name: "IOSUseProtocol",
-            dependencies: [
-                .product(name: "Fory", package: "fory")
-            ],
-            swiftSettings: [
-                .define("FORY_SWIFT_MACRO")
-            ]
-        ),
-        .target(
             name: "IOSUseCLI",
             dependencies: [
-                "IOSUseProtocol",
+                .product(name: "IOSUseProtocol", package: "IOSUseProtocol"),
                 .product(name: "Yams", package: "Yams")
             ]
         ),
