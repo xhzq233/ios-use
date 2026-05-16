@@ -33,4 +33,12 @@ final class SessionTests: XCTestCase {
 
         XCTAssertEqual(error.description, "app not found: app failed to terminate (state=4)")
     }
+
+    func testActivateAppLaunchesAnyNonForegroundStateViaLaunchServices() {
+        XCTAssertTrue(shouldLaunchViaLaunchServices(state: .unknown))
+        XCTAssertTrue(shouldLaunchViaLaunchServices(state: .notRunning))
+        XCTAssertTrue(shouldLaunchViaLaunchServices(state: .runningBackground))
+        XCTAssertTrue(shouldLaunchViaLaunchServices(state: .runningBackgroundSuspended))
+        XCTAssertFalse(shouldLaunchViaLaunchServices(state: .runningForeground))
+    }
 }
