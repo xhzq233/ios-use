@@ -94,6 +94,12 @@ public struct IOSUseCLI: Sendable {
             return listDevices(options)
         case .config(let options) where options.list:
             return CLIResult(exitCode: 0, stdout: ConfigService.formatList(ConfigService.listEntries(paths: paths)))
+        case .config(let options) where options.simulator:
+            do {
+                return CLIResult(exitCode: 0, stdout: try ConfigService.configureSimulator(udid: options.udid, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .stop:
             SessionService.clear(paths: paths)
             return CLIResult(exitCode: 0, stdout: "Session stopped\n")
