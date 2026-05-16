@@ -1,40 +1,20 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-
-type SimInfo = {
-  udid: string;
-  name: string;
-  runtime: string;
-  state: string;
-  iosUseHome: string;
-};
-
-type RunResult = {
-  code: number;
-  stdout: string;
-  stderr: string;
-};
-
-type CaseDef = {
-  id: string;
-  run: () => Promise<void>;
-};
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const decoder = new TextDecoder();
-const rootDir = path.resolve(import.meta.dir, '..');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const rootDir = path.resolve(__dirname, '..');
 let skipBuild = false;
-let caseFilterIds: Set<string> | undefined;
+let caseFilterIds;
 const testIosUseHome = process.env.IOS_USE_TEST_HOME ?? path.join(os.homedir(), '.ios-use/test-homes/simulator-commands');
 const iosUseCli = process.env.IOS_USE_TEST_CLI ?? path.join(rootDir, 'dist/ios-use');
 
-type RunnerArgs = {
-  skipBuild: boolean;
-  caseFilterIds?: Set<string>;
-};
 
-export function parseCaseFilter(value: string): Set<string> {
+export function parseCaseFilter(value) {
   const ids = value
     .split(',')
     .map(part => part.trim().toUpperCase())
@@ -43,14 +23,14 @@ export function parseCaseFilter(value: string): Set<string> {
   return new Set(ids);
 }
 
-export function isCaseSelected(id: string, filterIds?: ReadonlySet<string>): boolean {
+export function isCaseSelected(id, filterIds) {
   if (!filterIds) return true;
   return filterIds.has(id.toUpperCase());
 }
 
-export function parseRunnerArgs(argv: string[]): RunnerArgs {
+export function parseRunnerArgs(argv) {
   let parsedSkipBuild = false;
-  let parsedCaseFilterIds: Set<string> | undefined;
+  let parsedCaseFilterIds;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--skip-build') {
@@ -66,7 +46,7 @@ export function parseRunnerArgs(argv: string[]): RunnerArgs {
   return { skipBuild: parsedSkipBuild, caseFilterIds: parsedCaseFilterIds };
 }
 
-export function validateCaseFilter(caseIds: Iterable<string>, filterIds?: ReadonlySet<string>): void {
+export function validateCaseFilter(caseIds, filterIds) {
   if (!filterIds) return;
   const available = new Set([...caseIds].map(id => id.toUpperCase()));
   const unknown = [...filterIds].filter(id => !available.has(id));
@@ -75,13 +55,13 @@ export function validateCaseFilter(caseIds: Iterable<string>, filterIds?: Readon
   }
 }
 
-let sim: SimInfo;
+let sim;
 let iosHome = '';
 let artifactDir = '';
 let stateBackupDir = '';
 let flowDir = '';
 let runLockFile = '';
-let runLockFd: number | undefined;
+let runLockFd;
 const emptyHomeName = 'empty-home';
 let passed = 0;
 let failed = 0;
@@ -89,20 +69,20 @@ let skipped = 0;
 const simulatorDriverBundleId = 'com.iosuse.xcuidriver.xctrunner';
 const driverReadyTimeoutMs = 180_000;
 
-function stamp(): string {
+function stamp() {
   return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
 }
 
-function ensureDir(dir: string): void {
+function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
-function writeFile(file: string, content: string | Uint8Array): void {
+function writeFile(file, content) {
   ensureDir(path.dirname(file));
   fs.writeFileSync(file, content);
 }
 
-function processExists(pid: number): boolean {
+function processExists(pid) {
   try {
     process.kill(pid, 0);
     return true;
@@ -111,7 +91,7 @@ function processExists(pid: number): boolean {
   }
 }
 
-function acquireRunLock(): void {
+function acquireRunLock() {
   runLockFile = path.join(iosHome, 'state/simulator-command-tests.lock');
   ensureDir(path.dirname(runLockFile));
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -133,80 +113,79 @@ function acquireRunLock(): void {
   throw new Error(`failed to acquire simulator command test lock: ${runLockFile}`);
 }
 
-function releaseRunLock(): void {
+function releaseRunLock() {
   if (runLockFd === undefined) return;
   fs.closeSync(runLockFd);
   runLockFd = undefined;
   if (runLockFile) fs.rmSync(runLockFile, { force: true });
 }
 
-function readFileIfExists(file: string): string {
+function readFileIfExists(file) {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 }
 
-function execCmd(cmd: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): RunResult {
-  const proc = Bun.spawnSync({
-    cmd,
+function execCmd(cmd, opts = {}) {
+  const proc = spawnSync(cmd[0], cmd.slice(1), {
     cwd: opts.cwd ?? rootDir,
     env: { ...process.env, ...(opts.env ?? {}) },
-    stdout: 'pipe',
-    stderr: 'pipe',
+    encoding: null,
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
   return {
-    code: proc.exitCode,
-    stdout: decoder.decode(proc.stdout),
-    stderr: decoder.decode(proc.stderr),
+    code: proc.status ?? 1,
+    stdout: decoder.decode(proc.stdout ?? new Uint8Array()),
+    stderr: decoder.decode(proc.stderr ?? new Uint8Array()),
   };
 }
 
-async function sleep(ms: number): Promise<void> {
+async function sleep(ms) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function runCli(args: string[]): RunResult {
+function runCli(args) {
   return execCmd([iosUseCli, ...args], { env: { IOS_USE_HOME: iosHome } });
 }
 
-function runCliToFiles(args: string[], out: string, err: string): RunResult {
+function runCliToFiles(args, out, err) {
   const res = runCli(args);
   writeFile(out, res.stdout);
   writeFile(err, res.stderr);
   return res;
 }
 
-function runExternalToFiles(cmd: string[], out: string, err: string, env: NodeJS.ProcessEnv = {}): RunResult {
+function runExternalToFiles(cmd, out, err, env = {}) {
   const res = execCmd(cmd, { env: { IOS_USE_HOME: iosHome, ...env } });
   writeFile(out, res.stdout);
   writeFile(err, res.stderr);
   return res;
 }
 
-function selected(id: string): boolean {
+function selected(id) {
   return isCaseSelected(id, caseFilterIds);
 }
 
-function anySelected(ids: string[]): boolean {
+function anySelected(ids) {
   return ids.some(id => selected(id));
 }
 
-function recordPass(id: string): void {
+function recordPass(id) {
   passed++;
   console.log(`[sim-test] PASS ${id}`);
 }
 
-function recordFail(id: string, details?: string): void {
+function recordFail(id, details) {
   failed++;
   console.log(`[sim-test] FAIL ${id}`);
   if (details) process.stderr.write(details);
 }
 
-function recordSkip(id: string): void {
+function recordSkip(id) {
   skipped++;
   if (caseFilterIds) return;
   console.log(`[sim-test] SKIP ${id}`);
 }
 
-async function runCase(id: string, args: string[], setup?: () => Promise<void>): Promise<void> {
+async function runCase(id, args, setup) {
   if (!selected(id)) return recordSkip(id);
   await setup?.();
   const out = path.join(artifactDir, `${id}.out`);
@@ -217,7 +196,7 @@ async function runCase(id: string, args: string[], setup?: () => Promise<void>):
   else recordFail(id, res.stderr || res.stdout);
 }
 
-async function runCaseContains(id: string, expected: string, args: string[], setup?: () => Promise<void>): Promise<void> {
+async function runCaseContains(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
   await setup?.();
   const out = path.join(artifactDir, `${id}.out`);
@@ -228,7 +207,7 @@ async function runCaseContains(id: string, expected: string, args: string[], set
   else recordFail(id, res.stdout + res.stderr);
 }
 
-async function runCaseMatches(id: string, expected: RegExp, args: string[], setup?: () => Promise<void>): Promise<void> {
+async function runCaseMatches(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
   await setup?.();
   const out = path.join(artifactDir, `${id}.out`);
@@ -239,7 +218,7 @@ async function runCaseMatches(id: string, expected: RegExp, args: string[], setu
   else recordFail(id, res.stdout + res.stderr);
 }
 
-async function runCaseFailsContains(id: string, expected: string, args: string[], setup?: () => Promise<void>): Promise<void> {
+async function runCaseFailsContains(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
   await setup?.();
   const out = path.join(artifactDir, `${id}.out`);
@@ -251,7 +230,7 @@ async function runCaseFailsContains(id: string, expected: string, args: string[]
   else recordFail(id, res.stdout + res.stderr);
 }
 
-async function runCaseFailsMatches(id: string, expected: RegExp, args: string[], setup?: () => Promise<void>): Promise<void> {
+async function runCaseFailsMatches(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
   await setup?.();
   const out = path.join(artifactDir, `${id}.out`);
@@ -262,7 +241,7 @@ async function runCaseFailsMatches(id: string, expected: RegExp, args: string[],
   else recordFail(id, res.stdout + res.stderr);
 }
 
-async function runCaseFileExists(id: string, filePath: string, args: string[], setup?: () => Promise<void>): Promise<void> {
+async function runCaseFileExists(id, filePath, args, setup) {
   if (!selected(id)) return recordSkip(id);
   await setup?.();
   const out = path.join(artifactDir, `${id}.out`);
@@ -277,7 +256,7 @@ async function runCaseFileExists(id: string, filePath: string, args: string[], s
   }
 }
 
-function backupStateFile(rel: string): void {
+function backupStateFile(rel) {
   const src = path.join(iosHome, rel);
   const dst = path.join(stateBackupDir, rel);
   ensureDir(path.dirname(dst));
@@ -285,7 +264,7 @@ function backupStateFile(rel: string): void {
   else writeFile(`${dst}.missing`, '');
 }
 
-function restoreStateFile(rel: string): void {
+function restoreStateFile(rel) {
   const src = path.join(stateBackupDir, rel);
   const missing = `${src}.missing`;
   const dst = path.join(iosHome, rel);
@@ -297,18 +276,18 @@ function restoreStateFile(rel: string): void {
   }
 }
 
-function backupLocalState(): void {
+function backupLocalState() {
   ensureDir(stateBackupDir);
   backupStateFile('config.json');
   backupStateFile('state/session.json');
 }
 
-function restoreLocalState(): void {
+function restoreLocalState() {
   restoreStateFile('config.json');
   restoreStateFile('state/session.json');
 }
 
-async function waitForDriver(): Promise<void> {
+async function waitForDriver() {
   const out = path.join(artifactDir, 'driver-warmup.out');
   const err = path.join(artifactDir, 'driver-warmup.err');
   console.log('[sim-test] Waiting for driver...');
@@ -330,19 +309,19 @@ async function waitForDriver(): Promise<void> {
   throw new Error(`Driver did not become ready\n${readFileIfExists(out)}${readFileIfExists(err)}${readFileIfExists(path.join(artifactDir, 'driver-warmup-diagnostics.out'))}${readFileIfExists(path.join(artifactDir, 'driver-warmup-diagnostics.err'))}`);
 }
 
-function relaunchSimulatorDriver(attempt: number): void {
+function relaunchSimulatorDriver(attempt) {
   const res = execCmd(['xcrun', 'simctl', 'launch', sim.udid, simulatorDriverBundleId]);
   writeFile(path.join(artifactDir, `driver-warmup-relaunch-${attempt}.out`), res.stdout);
   writeFile(path.join(artifactDir, `driver-warmup-relaunch-${attempt}.err`), res.stderr);
 }
 
-function collectDriverWarmupDiagnostics(): void {
+function collectDriverWarmupDiagnostics() {
   const diagnostics = [
     ['xcrun', 'simctl', 'spawn', sim.udid, 'launchctl', 'print', `gui/501/${simulatorDriverBundleId}`],
     ['xcrun', 'simctl', 'spawn', sim.udid, 'log', 'show', '--style', 'compact', '--last', '3m', '--predicate', 'process CONTAINS "IOSUseDriver" OR eventMessage CONTAINS "[driver]" OR eventMessage CONTAINS "iosuse"'],
   ];
-  const stdout: string[] = [];
-  const stderr: string[] = [];
+  const stdout = [];
+  const stderr = [];
   for (const cmd of diagnostics) {
     const res = execCmd(cmd);
     stdout.push(`$ ${cmd.join(' ')}\n${res.stdout}`);
@@ -354,7 +333,7 @@ function collectDriverWarmupDiagnostics(): void {
 
 let recoveryCount = 0;
 
-async function ensureDriverReady(): Promise<void> {
+async function ensureDriverReady() {
   const probe = runCli(['dom', '--fresh', '--udid', sim.udid]);
   if (probe.code === 0) return;
   recoveryCount++;
@@ -367,21 +346,21 @@ async function ensureDriverReady(): Promise<void> {
   await waitForDriver();
 }
 
-async function prerequisiteConfig(): Promise<void> {
+async function prerequisiteConfig() {
   if (!caseFilterIds || selected('CFG-4')) return;
   console.log('[sim-test] Running prerequisite config');
   runCliToFiles(['config', '--simulator', '--udid', sim.udid], path.join(artifactDir, 'prereq-config.out'), path.join(artifactDir, 'prereq-config.err'));
   await waitForDriver();
 }
 
-async function resetSettingsHome(): Promise<void> {
+async function resetSettingsHome() {
   await ensureDriverReady();
   runCli(['terminateApp', 'com.apple.Preferences', '--udid', sim.udid]);
   runCli(['activateApp', 'com.apple.Preferences', '--udid', sim.udid]);
   await sleep(1000);
 }
 
-async function openGeneralPage(): Promise<void> {
+async function openGeneralPage() {
   await resetSettingsHome();
   runCli(['tap', 'BackButton', '--traits', 'Button', '--udid', sim.udid]);
   await sleep(500);
@@ -392,7 +371,7 @@ async function openGeneralPage(): Promise<void> {
   runCli(['swipe', '--distance', '900', '--dir', 'back', '--udid', sim.udid]);
 }
 
-async function openContactsNewContact(): Promise<void> {
+async function openContactsNewContact() {
   await ensureDriverReady();
   runCli(['terminateApp', 'com.apple.MobileAddressBook', '--udid', sim.udid]);
   runCli(['activateApp', 'com.apple.MobileAddressBook', '--udid', sim.udid]);
@@ -425,7 +404,7 @@ async function openContactsNewContact(): Promise<void> {
   }
 }
 
-async function openSpringboardIconMenu(id: string): Promise<void> {
+async function openSpringboardIconMenu(id) {
   await ensureDriverReady();
   runCli(['home', '--udid', sim.udid]);
   await sleep(1000);
@@ -437,13 +416,13 @@ async function openSpringboardIconMenu(id: string): Promise<void> {
   await sleep(1000);
 }
 
-async function discardContactIfNeeded(): Promise<void> {
+async function discardContactIfNeeded() {
   runCli(['tap', 'close', '--traits', 'Button', '--udid', sim.udid]);
   await sleep(500);
   runCli(['dismissAlert', '--udid', sim.udid]);
 }
 
-async function openContactsDiscardAlert(): Promise<void> {
+async function openContactsDiscardAlert() {
   await openContactsNewContact();
   runCli(['input', '--label', 'First name', '--content', 'AlertTest', '--traits', 'TextField', '--udid', sim.udid]);
   runCli(['tap', 'close', '--traits', 'Button', '--udid', sim.udid]);
@@ -451,13 +430,13 @@ async function openContactsDiscardAlert(): Promise<void> {
 }
 
 async function runInputAndVerifyDom(
-  id: string,
-  label: string,
-  content: string,
-  expected: string,
-  args: string[],
-  setup?: () => Promise<void>,
-): Promise<void> {
+  id,
+  label,
+  content,
+  expected,
+  args,
+  setup,
+) {
   if (!selected(id)) return recordSkip(id);
   await setup?.();
   const out = path.join(artifactDir, `${id}.out`);
@@ -478,7 +457,7 @@ async function runInputAndVerifyDom(
   else recordFail(id, `${readFileIfExists(out)}${readFileIfExists(err)}${readFileIfExists(domOut)}${readFileIfExists(domErr)}`);
 }
 
-async function verifyContactsNameFields(id: string, suffix: string): Promise<boolean> {
+async function verifyContactsNameFields(id, suffix) {
   const out = path.join(artifactDir, `${id}${suffix}.out`);
   const err = path.join(artifactDir, `${id}${suffix}.err`);
   const domOut = path.join(artifactDir, `${id}${suffix}-dom.out`);
@@ -492,13 +471,13 @@ async function verifyContactsNameFields(id: string, suffix: string): Promise<boo
   return first.code === 0 && last.code === 0 && dom.code === 0 && dom.stdout.includes('First name=Alpha') && dom.stdout.includes('Last name=Beta');
 }
 
-async function unsupportedCase(id: string, reason: string): Promise<void> {
+async function unsupportedCase(id, reason) {
   if (!selected(id)) return recordSkip(id);
   skipped++;
   console.log(`[sim-test] SKIP ${id}: ${reason}`);
 }
 
-function writeFlowFixtures(): void {
+function writeFlowFixtures() {
   flowDir = path.join(artifactDir, 'flows');
   ensureDir(flowDir);
   writeFile(path.join(flowDir, 'basic.yaml'), `name: simulator-basic-flow
@@ -590,7 +569,7 @@ steps:
   writeFile(path.join(flowDir, 'standard-smoke.yaml'), 'name: simulator-standard-smoke-flow\napp: com.apple.Preferences\nsteps:\n  - action: waitFor\n    label: General\n    traits: Button\n    timeout: 5\n  - action: dom\n    save: true\n    name: simulator-flow-smoke-dom\n    print: false\n  - action: screenshot\n    name: simulator-flow-smoke-screenshot\n  - action: oslog\n    clear: true\n    bundleId: com.apple.Preferences\n  - action: swipe\n    distance: 180\n    dir: forth\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-smoke-oslog\n    bundleId: com.apple.Preferences\n  - action: activateApp\n    bundleId: com.apple.Preferences\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-flow-smoke-raw\n    print: false\n');
 }
 
-async function runDomPerfCase(): Promise<void> {
+async function runDomPerfCase() {
   const id = 'DOM-7';
   if (!selected(id)) return recordSkip(id);
   await resetSettingsHome();
@@ -613,7 +592,7 @@ async function runDomPerfCase(): Promise<void> {
   }
 }
 
-async function runProxyDoctorCase(): Promise<void> {
+async function runProxyDoctorCase() {
   const id = 'PROXY-1';
   if (!selected(id)) return recordSkip(id);
   const out = path.join(artifactDir, `${id}.out`);
@@ -624,14 +603,14 @@ async function runProxyDoctorCase(): Promise<void> {
   else recordFail(id, res.stdout + res.stderr);
 }
 
-async function runProxyUnitCases(): Promise<void> {
+async function runProxyUnitCases() {
   const ids = ['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'];
   if (!anySelected(ids)) {
     ids.forEach(recordSkip);
     return;
   }
-  console.log('[sim-test] RUN PROXY unit coverage: bun test tests/proxy.test.js');
-  const res = runExternalToFiles(['bun', 'test', 'tests/proxy.test.js'], path.join(artifactDir, 'proxy-unit.out'), path.join(artifactDir, 'proxy-unit.err'), { IOS_USE_HOME: iosHome });
+  console.log('[sim-test] RUN PROXY unit coverage: bash scripts/test_swift_cli.sh');
+  const res = runExternalToFiles(['bash', 'scripts/test_swift_cli.sh'], path.join(artifactDir, 'proxy-unit.out'), path.join(artifactDir, 'proxy-unit.err'), { IOS_USE_HOME: iosHome });
   for (const id of ids) {
     if (!selected(id)) recordSkip(id);
     else if (res.code === 0) recordPass(id);
@@ -639,7 +618,7 @@ async function runProxyUnitCases(): Promise<void> {
   }
 }
 
-async function runDriverUnitCases(): Promise<void> {
+async function runDriverUnitCases() {
   const ids = ['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'];
   if (!anySelected(ids)) {
     ids.forEach(recordSkip);
@@ -654,12 +633,12 @@ async function runDriverUnitCases(): Promise<void> {
   }
 }
 
-function addCases(cases: CaseDef[], defs: CaseDef[]): void {
+function addCases(cases, defs) {
   cases.push(...defs);
 }
 
-function buildCases(): CaseDef[] {
-  const cases: CaseDef[] = [];
+function buildCases() {
+  const cases = [];
   const settingsHome = async () => { await resetSettingsHome(); };
   const generalPage = async () => { await openGeneralPage(); };
 
@@ -751,17 +730,18 @@ function buildCases(): CaseDef[] {
     { id: 'SC-1', run: async () => {
       if (!selected('SC-1')) return recordSkip('SC-1');
       await settingsHome();
-      console.log('[sim-test] RUN SC-1: direct DriverClient screenshot Fory payload');
+      console.log('[sim-test] RUN SC-1: ios-use screenshot smoke');
       const out = path.join(artifactDir, 'SC-1.out');
       const err = path.join(artifactDir, 'SC-1.err');
-      const script = 'const { createDriverFromSession } = await import("./src/session.ts"); const { DRIVER_COMMANDS } = await import("./src/driver-protocol/index.ts"); const { deserializeScreenshotPayload } = await import("./src/driver-protocol/fory.ts"); const client = await createDriverFromSession(); try { const resp = await client.sendRaw(DRIVER_COMMANDS.SCREENSHOT, new Uint8Array(0)); if (!resp.ok || !resp.payloadBytes?.length) throw new Error(resp.error || "empty screenshot payload"); const payload = deserializeScreenshotPayload(resp.payloadBytes); if (payload.jpeg[0] !== 0xff || payload.jpeg[1] !== 0xd8) throw new Error("screenshot payload is not JPEG"); console.log(`jpeg=${payload.jpeg.length}`); } finally { client.disconnect(); }';
-      const res = runExternalToFiles(['bun', '-e', script], out, err, { IOS_USE_HOME: iosHome });
-      if (res.code === 0) recordPass('SC-1');
+      const name = 'sim_command_protocol_screenshot';
+      const res = runCliToFiles(['screenshot', '--name', name, '--udid', sim.udid], out, err);
+      const screenshot = path.join(iosHome, 'artifacts', `${name}.jpg`);
+      if (res.code === 0 && fs.existsSync(screenshot) && fs.statSync(screenshot).size > 2) recordPass('SC-1');
       else recordFail('SC-1', res.stdout + res.stderr);
     } },
   ]);
 
-  const tapCases: CaseDef[] = [
+  const tapCases = [
     { id: 'TAP-1', run: () => runCaseContains('TAP-1', 'Tap', ['tap', 'General', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
     { id: 'TAP-5', run: () => runCaseContains('TAP-5', 'Tap', ['tap', 'General', '--offset', '10,10', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
     { id: 'TAP-6', run: () => runCaseContains('TAP-6', 'Tap', ['tap', 'General', '--offset-ratio', '0.5,0.5', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
@@ -775,7 +755,7 @@ function buildCases(): CaseDef[] {
   ];
   addCases(cases, tapCases);
 
-  const swipeCases: CaseDef[] = [
+  const swipeCases = [
     { id: 'SW-7B', run: () => runCaseContains('SW-7B', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], generalPage) },
     { id: 'SW-10', run: () => runCaseFailsContains('SW-10', 'boundary', ['swipe', '--distance', '200', '--dir', 'back', '--udid', sim.udid], async () => {
       await generalPage();
@@ -898,7 +878,7 @@ function buildCases(): CaseDef[] {
     { id: 'AS-8', run: () => runCaseContains('AS-8', 'App:', ['dom', '--fresh', '--udid', sim.udid]) },
   ]);
 
-  const flow = (name: string) => path.join(flowDir, name);
+  const flow = (name) => path.join(flowDir, name);
   addCases(cases, [
     { id: 'FLOW-1', run: () => runCaseContains('FLOW-1', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-2', run: () => runCaseFailsContains('FLOW-2', 'Flow file not found', ['flow', flow('missing-file.yaml'), '--udid', sim.udid]) },
@@ -948,7 +928,7 @@ function buildCases(): CaseDef[] {
   return cases;
 }
 
-async function cleanup(): Promise<void> {
+async function cleanup() {
   runCli(['stop']);
   const driverLog = path.join(iosHome, 'logs/driver.log');
   if (fs.existsSync(driverLog)) fs.copyFileSync(driverLog, path.join(artifactDir, 'driver.log'));
@@ -956,8 +936,8 @@ async function cleanup(): Promise<void> {
   releaseRunLock();
 }
 
-async function main(): Promise<void> {
-  const parsedArgs = parseRunnerArgs(Bun.argv.slice(2));
+async function main() {
+  const parsedArgs = parseRunnerArgs(process.argv.slice(2));
   skipBuild = parsedArgs.skipBuild;
   caseFilterIds = parsedArgs.caseFilterIds;
 
@@ -974,9 +954,9 @@ async function main(): Promise<void> {
   }
 
   console.log('[sim-test] Resolving IOSUseTest Simulator...');
-  const simRes = execCmd(['bun', path.join(rootDir, 'scripts/ios_use_test_simulator.js')], { env: { IOS_USE_HOME: testIosUseHome } });
+  const simRes = execCmd(['node', path.join(rootDir, 'scripts/ios_use_test_simulator.js')], { env: { IOS_USE_HOME: testIosUseHome } });
   if (simRes.code !== 0) throw new Error(simRes.stderr || simRes.stdout);
-  sim = JSON.parse(simRes.stdout) as SimInfo;
+  sim = JSON.parse(simRes.stdout);
   iosHome = sim.iosUseHome;
   acquireRunLock();
   artifactDir = path.join(iosHome, 'artifacts/simulator-command-tests', stamp());
@@ -1005,7 +985,7 @@ async function main(): Promise<void> {
     const cases = buildCases();
     validateCaseFilter(cases.map(testCase => testCase.id), caseFilterIds);
     await prerequisiteConfig();
-    const unitGroups = new Set<() => Promise<void>>();
+    const unitGroups = new Set();
     for (const testCase of cases) {
       if ((testCase.run === runDriverUnitCases || testCase.run === runProxyUnitCases) && unitGroups.has(testCase.run)) {
         continue;
