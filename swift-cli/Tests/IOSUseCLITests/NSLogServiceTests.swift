@@ -1,12 +1,16 @@
 import XCTest
 import Darwin
 import IOSUseCLI
+@preconcurrency import NIOCore
+import NIOPosix
+@preconcurrency import NIOSSL
 
 final class NSLogServiceTests: XCTestCase {
     func testServerOptionsKeepFixedPortAndPreserveAllowedFlowFields() {
         let options = NSLoggerServerOptions(name: "ios-use-test", publishBonjour: false, maxBufferSize: 3)
 
         XCTAssertEqual(options.port, 50_000)
+        XCTAssertTrue(options.useSSL)
         XCTAssertEqual(options.name, "ios-use-test")
         XCTAssertFalse(options.publishBonjour)
         XCTAssertEqual(options.maxBufferSize, 3)
@@ -59,20 +63,18 @@ final class NSLogServiceTests: XCTestCase {
         XCTAssertEqual(server.logCount, 0)
     }
 
-    func testServerAcceptsRealPlainTCPClientFrame() throws {
+    func testServerAcceptsRealTLSClientFrameWithoutKeychain() throws {
         guard isPortAvailable(50_000) else {
             throw XCTSkip("NSLogger fixed port 50000 is already in use")
         }
         let paths = IOSUsePaths.resolve(environment: [
-            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-nslog-tcp-\(UUID().uuidString)").path
+            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-nslog-tls-\(UUID().uuidString)").path
         ])
         let server = try NSLoggerServer(options: NSLoggerServerOptions(publishBonjour: false), paths: paths)
         try server.start()
         defer { server.stop() }
 
-        let fd = try connectLocalhost(port: 50_000)
-        defer { Darwin.close(fd) }
-        try writeAll(fd: fd, data: makeMessage(parts: [(7, 0, stringData("TCP ready"))]))
+        try sendTLSFrame(makeMessage(parts: [(7, 0, stringData("TLS ready"))]), port: 50_000)
 
         let deadline = Date().addingTimeInterval(5)
         while server.logCount == 0, Date() < deadline {
@@ -80,7 +82,9 @@ final class NSLogServiceTests: XCTestCase {
         }
 
         XCTAssertEqual(server.clientCount, 1)
-        XCTAssertEqual(try server.grep(pattern: "TCP ready").count, 1)
+        XCTAssertEqual(try server.grep(pattern: "TLS ready").count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(paths.root)/runtime/nslogger-selfsigned.key"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(paths.root)/runtime/nslogger-selfsigned.crt"))
     }
 
     private func makeMessage(parts: [(UInt8, UInt8, Data)]) -> Data {
@@ -134,39 +138,26 @@ final class NSLogServiceTests: XCTestCase {
         } == 0
     }
 
-    private func connectLocalhost(port: UInt16) throws -> Int32 {
-        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw NSError(domain: "socket", code: Int(errno)) }
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-        let result = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        guard result == 0 else {
-            let err = errno
-            Darwin.close(fd)
-            throw NSError(domain: "connect", code: Int(err))
-        }
-        return fd
-    }
-
-    private func writeAll(fd: Int32, data: Data) throws {
-        try data.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            var offset = 0
-            while offset < data.count {
-                let n = Darwin.write(fd, base.advanced(by: offset), data.count - offset)
-                if n > 0 {
-                    offset += n
-                } else if n < 0, errno != EINTR {
-                    throw NSError(domain: "write", code: Int(errno))
+    private func sendTLSFrame(_ data: Data, port: UInt16) throws {
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { try? group.syncShutdownGracefully() }
+        var configuration = TLSConfiguration.makeClientConfiguration()
+        configuration.certificateVerification = .none
+        let sslContext = try NIOSSLContext(configuration: configuration)
+        let bootstrap = ClientBootstrap(group: group)
+            .channelInitializer { channel in
+                do {
+                    let handler = try NIOSSLClientHandler(context: sslContext, serverHostname: "localhost")
+                    return channel.pipeline.addHandler(handler)
+                } catch {
+                    return channel.eventLoop.makeFailedFuture(error)
                 }
             }
-        }
+        let channel = try bootstrap.connect(host: "127.0.0.1", port: Int(port)).wait()
+        var buffer = channel.allocator.buffer(capacity: data.count)
+        buffer.writeBytes(data)
+        try channel.writeAndFlush(buffer).wait()
+        usleep(100_000)
+        try channel.close().wait()
     }
 }

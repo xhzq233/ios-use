@@ -1,7 +1,9 @@
 import Darwin
 import Foundation
 import IOSUseProtocol
-import Network
+@preconcurrency import NIOCore
+import NIOPosix
+@preconcurrency import NIOSSL
 
 public enum NSLogService {
     public static func stream(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
@@ -22,7 +24,7 @@ public enum NSLogService {
             }
         }
 
-        print("NSLogger listening on port \(server.port) (plain TCP)")
+        print("NSLogger listening on port \(server.port) (SSL)")
         print("Streaming logs... Press Ctrl+C to stop.")
 
         while server.isRunning {
@@ -180,12 +182,14 @@ public enum NSLogService {
 
 public struct NSLoggerServerOptions: Equatable, Sendable {
     public let port: Int
+    public let useSSL: Bool
     public var name: String?
     public var publishBonjour: Bool
     public var maxBufferSize: Int
 
     public init(name: String? = nil, publishBonjour: Bool = true, maxBufferSize: Int = IOSUseProtocol.nsloggerDefaultBufferSize) {
         self.port = IOSUseProtocol.nsloggerDefaultPort
+        self.useSSL = true
         self.name = name
         self.publishBonjour = publishBonjour
         self.maxBufferSize = maxBufferSize
@@ -199,9 +203,8 @@ public final class NSLoggerServer {
 
     private let options: NSLoggerServerOptions
     private let paths: IOSUsePaths
-    private var listener: NWListener?
-    private var connections: [NWConnection] = []
-    private let queue = DispatchQueue(label: "ios-use.nslogger.server")
+    private var eventLoopGroup: MultiThreadedEventLoopGroup?
+    private var serverChannel: Channel?
     private var bonjour: Process?
     private var receiveBuffer = Data()
     private var entries: [String] = []
@@ -216,39 +219,8 @@ public final class NSLoggerServer {
 
     public func start() throws {
         guard !isRunning else { return }
-        let parameters = NWParameters.tcp
-        parameters.allowLocalEndpointReuse = true
-        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
-            throw CLIParseError.invalidValue("invalid NSLogger port \(port)")
-        }
-        let listener = try NWListener(using: parameters, on: nwPort)
-        let ready = DispatchSemaphore(value: 0)
-        var startError: Error?
-
-        listener.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                ready.signal()
-            case .failed(let error):
-                startError = error
-                ready.signal()
-            default:
-                break
-            }
-        }
-        listener.newConnectionHandler = { [weak self] connection in
-            self?.accept(connection)
-        }
-        listener.start(queue: queue)
-        if ready.wait(timeout: .now() + 3) == .timedOut {
-            listener.cancel()
-            throw CLIParseError.invalidValue("NSLogger server did not become ready on port \(port)")
-        }
-        if let startError {
-            listener.cancel()
-            throw CLIParseError.invalidValue("NSLogger server failed to listen on port \(port): \(startError)")
-        }
-        self.listener = listener
+        let credentials = try ensureTLSCredentials()
+        try startNIOSSLServer(keyPath: credentials.keyPath, certPath: credentials.certPath)
         isRunning = true
 
         if options.publishBonjour {
@@ -257,12 +229,10 @@ public final class NSLoggerServer {
     }
 
     public func stop() {
-        listener?.cancel()
-        listener = nil
-        for connection in connections {
-            connection.cancel()
-        }
-        connections.removeAll(keepingCapacity: true)
+        try? serverChannel?.close().wait()
+        serverChannel = nil
+        try? eventLoopGroup?.syncShutdownGracefully()
+        eventLoopGroup = nil
         bonjour?.terminate()
         bonjour = nil
         isRunning = false
@@ -334,9 +304,12 @@ public final class NSLoggerServer {
     }
 
     private func startBonjour(name: String?, port: Int) -> Process? {
+        let serviceName = name?.isEmpty == false ? name! : Host.current().localizedName ?? "ios-use"
+        let serviceType = "_nslogger-ssl._tcp"
+        _ = terminateStaleBonjourPublishers(serviceName: serviceName, serviceType: serviceType, domain: "local")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["dns-sd", "-R", (name?.isEmpty == false ? name! : Host.current().localizedName ?? "ios-use"), "_nslogger._tcp", "local", String(port)]
+        process.arguments = ["dns-sd", "-R", serviceName, serviceType, "local", String(port)]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {
@@ -347,47 +320,156 @@ public final class NSLoggerServer {
         }
     }
 
-    private func accept(_ connection: NWConnection) {
-        lock.lock()
-        connections.append(connection)
-        lock.unlock()
-        connection.stateUpdateHandler = { [weak self, weak connection] state in
-            switch state {
-            case .ready:
-                self?.markClientConnected()
-            case .failed, .cancelled:
-                if let connection {
-                    self?.remove(connection)
+    private func ensureTLSCredentials() throws -> (keyPath: String, certPath: String) {
+        let runtime = "\(paths.root)/runtime"
+        let keyPath = "\(runtime)/nslogger-selfsigned.key"
+        let certPath = "\(runtime)/nslogger-selfsigned.crt"
+        try FileManager.default.createDirectory(atPath: runtime, withIntermediateDirectories: true, attributes: nil)
+        if !FileManager.default.fileExists(atPath: keyPath) {
+            try NSLoggerTLSMaterial.privateKeyPEM.write(toFile: keyPath, atomically: true, encoding: .utf8)
+        }
+        if !FileManager.default.fileExists(atPath: certPath) {
+            try NSLoggerTLSMaterial.certificatePEM.write(toFile: certPath, atomically: true, encoding: .utf8)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyPath)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: certPath)
+        return (keyPath, certPath)
+    }
+
+    private func startNIOSSLServer(keyPath: String, certPath: String) throws {
+        let certificates = try NIOSSLCertificate.fromPEMFile(certPath).map { NIOSSLCertificateSource.certificate($0) }
+        let privateKey = try NIOSSLPrivateKey(file: keyPath, format: .pem)
+        let configuration = TLSConfiguration.makeServerConfiguration(
+            certificateChain: certificates,
+            privateKey: .privateKey(privateKey)
+        )
+        let sslContext = try NIOSSLContext(configuration: configuration)
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        do {
+            let channel = try ServerBootstrap(group: group)
+                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                .childChannelInitializer { [weak self] channel in
+                    channel.pipeline.addHandler(NIOSSLServerHandler(context: sslContext)).flatMap {
+                        channel.pipeline.addHandler(NSLoggerTLSChannelHandler(
+                            onActive: { [weak self] in self?.markClientConnected() },
+                            onData: { [weak self] data in self?.ingest(data) }
+                        ))
+                    }
                 }
-            default:
-                break
-            }
-        }
-        connection.start(queue: queue)
-        receive(on: connection)
-    }
-
-    private func receive(on connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self, weak connection] data, _, isComplete, error in
-            guard let self, let connection else { return }
-            if let data, !data.isEmpty {
-                self.markClientConnected()
-                self.ingest(data)
-            }
-            if error == nil, !isComplete {
-                self.receive(on: connection)
-            } else {
-                self.remove(connection)
-            }
+                .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+                .bind(host: "0.0.0.0", port: port)
+                .wait()
+            eventLoopGroup = group
+            serverChannel = channel
+        } catch {
+            try? group.syncShutdownGracefully()
+            throw CLIParseError.invalidValue("NSLogger TLS server failed to listen on port \(port): \(error)")
         }
     }
 
-    private func remove(_ connection: NWConnection) {
-        lock.lock()
-        connections.removeAll { $0 === connection }
-        lock.unlock()
+    private func terminateStaleBonjourPublishers(serviceName: String, serviceType: String, domain: String) -> Int {
+        guard let output = try? Shell.run("ps", arguments: ["-axo", "pid=,command="]) else {
+            return 0
+        }
+        let needle = "dns-sd -R \(serviceName) \(serviceType) \(domain) "
+        var killed = 0
+        for line in output.split(separator: "\n") {
+            let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard text.contains(needle) else { continue }
+            let parts = text.split(separator: " ", maxSplits: 1)
+            guard let pid = parts.first.flatMap({ Int32($0) }), pid > 0, pid != getpid() else { continue }
+            if kill(pid, SIGTERM) == 0 {
+                killed += 1
+            }
+        }
+        return killed
     }
 
+}
+
+private enum NSLoggerTLSMaterial {
+    static let certificatePEM = """
+    -----BEGIN CERTIFICATE-----
+    MIIDFzCCAf+gAwIBAgIUFxaEdAiLg1028An4yy6J28acsJowDQYJKoZIhvcNAQEL
+    BQAwGzEZMBcGA1UEAwwQaW9zLXVzZSBOU0xvZ2dlcjAeFw0yNjA1MTYxNDIyNTRa
+    Fw0zNjA1MTMxNDIyNTRaMBsxGTAXBgNVBAMMEGlvcy11c2UgTlNMb2dnZXIwggEi
+    MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCijeVhfdYwR01fWjNInaoNucjb
+    z6Gz0tkCRzIOyEYefbkqW76NFA0v9ZY0pm+BzLRUmjLISfjssLjCKYs18kyBOVeI
+    pfdwW3xQreyHJcaAcYuxrLa8Oaa14EwBD9pgx4nFzYbP72FF9XxYdW1/8b2ClxoG
+    4Z8bq+T/oddssznjJ2rlGhYOxeE+wVSBDdGlzmnk/sWZFBk6JBfSSFaerOhGy+Kg
+    E06hh0Ns3tbUDPkxXt/irk8mgR08XXAcD/KXqNeHCq4sBO6JAVzdQlbaENdRaFsM
+    yFkgjXPIgP11HdgVDc+kcHonLMrZi2ocIIK0Dc6NIwrry4xCUg+8xf8OoXHZAgMB
+    AAGjUzBRMB0GA1UdDgQWBBRzR2b2zoLMwLwTFmafCQRZWNMT6DAfBgNVHSMEGDAW
+    gBRzR2b2zoLMwLwTFmafCQRZWNMT6DAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3
+    DQEBCwUAA4IBAQAxcAOdZYsvgX+lCGZTMN4aJanCN8Rc4syE48FlUoae62jy7AGz
+    kbdf8GPmIjUArspzZIQ91RJ9C+xFhf7E9bayfsPfB0hPAQpcTJ0Lz0cosMC/IZYi
+    J+6hMaqpNxAhZ2246xAQvgAuJJS9NVuGFjZ1ofCgg6pSodWV/yHIJ/w87GGTCT/U
+    8UsxeoctIafbGeRElxmQ4GcU46R1ym7wOCkKhMu1FuqRxxYTlaMHc4r5NbMr+p4h
+    rcLRmHWY748ju9Pn/JUtBY8O+k0woSB/VevgxjIRtDd1inrnIFz3Ddnk9fnkVXN6
+    2Go8I5ymCUCMBL/flPiKvAydygxkhj8i5FoY
+    -----END CERTIFICATE-----
+    """
+
+    // Public, intentionally non-secret compatibility key for local NSLogger TLS.
+    static let privateKeyPEM = """
+    -----BEGIN PRIVATE KEY-----
+    MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCijeVhfdYwR01f
+    WjNInaoNucjbz6Gz0tkCRzIOyEYefbkqW76NFA0v9ZY0pm+BzLRUmjLISfjssLjC
+    KYs18kyBOVeIpfdwW3xQreyHJcaAcYuxrLa8Oaa14EwBD9pgx4nFzYbP72FF9XxY
+    dW1/8b2ClxoG4Z8bq+T/oddssznjJ2rlGhYOxeE+wVSBDdGlzmnk/sWZFBk6JBfS
+    SFaerOhGy+KgE06hh0Ns3tbUDPkxXt/irk8mgR08XXAcD/KXqNeHCq4sBO6JAVzd
+    QlbaENdRaFsMyFkgjXPIgP11HdgVDc+kcHonLMrZi2ocIIK0Dc6NIwrry4xCUg+8
+    xf8OoXHZAgMBAAECggEAGC38O1rBBBBvIWpk633MYFtM1emWN437Crw1ZX6D86Am
+    7XaVKx4a8hHZZH6HYqrk/hqryCA8v1RwPy130C/5ElXJwAFUA6oQHV4pq1bCprN9
+    IJI84lW/BxnUpGnLxY6Y30v5rC+C7Cmec/gPsDLwyh6Y2AIyrSaOGzpjNX+ZckDb
+    d+PZwKfkW1KkuX8Eirwb261XRC46gHK26Sjbep3LUwDoIq644ZyYHj4KUiTiSt+i
+    DAKTdH+oRJ3Y9biUbW50zgIQtKD7ngDllsM0e8uL/7+AKSsz3IgbhdqS7CNV6h9S
+    wD6VNvt0QdADUICdnAvhVYMw6hH+Gp7hfmOQdGh5IwKBgQDY2tTUJ6s4UanLeEPQ
+    BQiSG7OZc5oVZDQEbJEQOcpvQcGJFUnbsKyNrUkmW16wqysr4idEyQcFSjvtJ8mw
+    JFaoHYJ9grBXqiF0OpRLYb+lB3adcoy423rS7p0isrYPpwqJm+ZFDmwJVbilUFwC
+    Mafa8ex1hrZ6c/tuP6+KAZBZuwKBgQC/5cKYRfChMy5auGmhJ1PRTjtg1mFaBJIX
+    5CPK6wrIubgp/sh2aV07QsO/nmzAg7xFzzhkL+LGGRJ2WO4B5ujSc4BRyK4yWJCx
+    EG19es+lWrmIVCW5WwOh1kAdBabR27xfqWpu7wHtlgp9dYRYQs8P6vqKfWpA/jmH
+    /ur5WhcvewKBgDsIr6Glvu3RBWk3rzZE+IVV9zmSB+NE6Qg/Seph4SMSgo4/9mBR
+    I1haUSyY+RkdL959bXVDSJ7/C3tPNo+2BMU1a12ho0HqNbs/azluPc6+TmMkWPzF
+    +xTLEonsnrV6Its9Tp2EBJMx+9c9Hh8Wx3xKGbYQ20JQqqTjv3TRYiubAoGAczYL
+    vgaHsRCcbQU5DfMhpJF2nu43JqeF2ugzARpasCaoxjXcvxMFUZYFFl+UZYTyHWuL
+    LMN/QHY/GmTMCMJM2EVWLkPxKfL4dAYr5mE8l8c/ivUSbRWSubB7b7E79dUaZMi/
+    SPkgTDd/9tD+c0sxLBpk747ao0i+28KV6r1HHE8CgYEAuLTzS+uYM2TmzoRyoeV4
+    Akvw/WZGaNm2+oQkEtHAud7D9VREQbx3ZrxP/BIipgcH+gnRGtRwJMwr6j15k1jh
+    M5/kp2aTxnixZLlNJwagosWGbmv9eQJqhbUf/HLXhJatJnJVkurCGq2m65IHxJuQ
+    lHUdeOOvSaBdXKihgfpVVwI=
+    -----END PRIVATE KEY-----
+    """
+}
+
+private final class NSLoggerTLSChannelHandler: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+
+    private let onActive: () -> Void
+    private let onData: (Data) -> Void
+
+    init(onActive: @escaping () -> Void, onData: @escaping (Data) -> Void) {
+        self.onActive = onActive
+        self.onData = onData
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        onActive()
+        context.fireChannelActive()
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var buffer = unwrapInboundIn(data)
+        guard let bytes = buffer.readBytes(length: buffer.readableBytes), !bytes.isEmpty else {
+            return
+        }
+        onData(Data(bytes))
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        context.close(promise: nil)
+    }
 }
 
 private extension String {

@@ -120,17 +120,29 @@ enum Shell {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         }
 
-        let stdout = Pipe()
-        let stderr = Pipe()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-shell-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let stdoutURL = tempDir.appendingPathComponent("stdout")
+        let stderrURL = tempDir.appendingPathComponent("stderr")
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+        let stdout = try FileHandle(forWritingTo: stdoutURL)
+        let stderr = try FileHandle(forWritingTo: stderrURL)
+        defer {
+            try? stdout.close()
+            try? stderr.close()
+        }
         process.standardOutput = stdout
         process.standardError = stderr
 
         try process.run()
         process.waitUntilExit()
 
-        let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let output = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
         if process.terminationStatus != 0 {
-            let error = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let error = (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
             throw CLIParseError.invalidValue(error.isEmpty ? "\(executable) failed with exit \(process.terminationStatus)" : error.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return output
