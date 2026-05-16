@@ -34,6 +34,9 @@ jobs:
       - name: Run Bun unit tests
         run: bun test
 
+      - name: Run Swift CLI unit tests
+        run: bash scripts/test_swift_cli.sh
+
   full-simulator:
     runs-on: macos-26
     if: github.event_name == 'workflow_dispatch' && (inputs.full_simulator || inputs.simulator_cases != '')
