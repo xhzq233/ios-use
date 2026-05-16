@@ -13,18 +13,18 @@ func terminationWaitFailureError(state: XCUIApplication.State) -> DriverError {
     DriverError.appNotFound("app failed to terminate (state=\(state.rawValue))")
 }
 
+func shouldLaunchViaLaunchServices(state: XCUIApplication.State) -> Bool {
+    state != .runningForeground
+}
+
 enum App {
     static func activateApp(bundleId: String) throws -> XCUIApplication {
         NSLog("[app] activate called with bundleId=\(bundleId)")
         let app = XCUIApplication(bundleIdentifier: bundleId)
         let state = app.state
         NSLog("[app] app state=\(state.rawValue) (0=unknown,1=notRunning,2=suspended,3=background,4=foreground)")
-        guard state != .unknown else {
-            NSLog("[app] ERROR: app not found, state=unknown bundleId=\(bundleId)")
-            throw DriverError.appNotFound(bundleId)
-        }
 
-        if state != .runningForeground {
+        if shouldLaunchViaLaunchServices(state: state) {
             NSLog("[app] launching app via LaunchServices...")
             guard OpenApplicationWithBundleId(bundleId) else {
                 NSLog("[app] ERROR: LaunchServices could not open bundleId=\(bundleId)")
