@@ -29,10 +29,10 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testKnownDriverCommandReportsExplicitMigrationBoundary() {
-        let result = IOSUseCLI().run(arguments: ["find", "General", "--traits", "Cell"])
+        let result = IOSUseCLI().run(arguments: ["tap", "General", "--traits", "Cell"])
 
         XCTAssertEqual(result.exitCode, 64)
-        XCTAssertTrue(result.stderr.contains("Swift CLI command 'find' parsed successfully but execution is not migrated yet"))
+        XCTAssertTrue(result.stderr.contains("Swift CLI command 'tap' parsed successfully but execution is not migrated yet"))
     }
 
     func testMissingRequiredArgumentFailsBeforeExecution() {
