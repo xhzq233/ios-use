@@ -52,4 +52,42 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(commands.contains("dismissAlert"))
         XCTAssertEqual(commands.count, 14)
     }
+
+    func testPathsRespectIOSUseHomeOverrideWithoutWritingFiles() {
+        let paths = IOSUsePaths.resolve(environment: [
+            "IOS_USE_HOME": "/tmp/ios-use-swift-test-home",
+            "HOME": "/tmp/real-home-should-not-be-used"
+        ])
+
+        XCTAssertEqual(paths.root, "/tmp/ios-use-swift-test-home")
+        XCTAssertEqual(paths.config, "/tmp/ios-use-swift-test-home/config.json")
+        XCTAssertEqual(paths.session, "/tmp/ios-use-swift-test-home/state/session.json")
+        XCTAssertEqual(paths.logs, "/tmp/ios-use-swift-test-home/logs")
+        XCTAssertEqual(paths.artifacts, "/tmp/ios-use-swift-test-home/artifacts")
+    }
+
+    func testPathsDefaultToHomeDotIOSUse() {
+        let paths = IOSUsePaths.resolve(environment: [
+            "HOME": "/tmp/ios-use-swift-home"
+        ])
+
+        XCTAssertEqual(paths.root, "/tmp/ios-use-swift-home/.ios-use")
+        XCTAssertEqual(paths.config, "/tmp/ios-use-swift-home/.ios-use/config.json")
+    }
+
+    func testCLIStoresResolvedPathsForFutureCommands() {
+        let cli = IOSUseCLI(environment: [
+            "IOS_USE_HOME": "/tmp/ios-use-swift-env"
+        ])
+
+        XCTAssertEqual(cli.paths.root, "/tmp/ios-use-swift-env")
+    }
+
+    func testErrorEnvelopeUsesStableExitCodeAndPrefix() {
+        let result = CLIErrorEnvelope(message: "example failure").render()
+
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertEqual(result.stderr, "error: example failure\n")
+        XCTAssertTrue(result.stdout.isEmpty)
+    }
 }
