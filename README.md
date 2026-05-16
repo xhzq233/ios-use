@@ -223,10 +223,11 @@ cd ios-use
 bash scripts/build_swift_cli.sh
 bash scripts/build_driver.sh
 ./dist/ios-use --help
+bash scripts/test_all.sh
 bash scripts/test_swift_stack.sh
 ```
 
-`scripts/test_swift_stack.sh` is the Swift-only validation path. Full legacy compatibility and Simulator command matrix tests still use Bun-based harnesses.
+`scripts/test_all.sh` and `scripts/test_swift_stack.sh` are Swift-only validation paths. Full legacy compatibility and Simulator command matrix tests still use Bun-based harnesses via `bash scripts/test_full_simulator.sh`.
 
 ## Acknowledgments
 
