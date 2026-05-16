@@ -1,65 +1,40 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
+import Network
 
 public enum NSLogService {
-    private static let defaultPort = 50_000
-    private static let staleLockMs = 60 * 60 * 1000
-    private static let maxBufferBytes = 1024 * 1024
-
     public static func stream(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
         try acquireLock(paths: paths)
         defer { releaseLock(paths: paths) }
 
-        let credentials = try ensureTLSCredentials(paths: paths)
-        let server = Process()
-        server.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        server.arguments = [
-            "openssl", "s_server",
-            "-accept", String(defaultPort),
-            "-cert", credentials.cert,
-            "-key", credentials.key,
-            "-quiet",
-        ]
-        let stdout = Pipe()
-        server.standardOutput = stdout
-        server.standardError = Pipe()
-        try server.run()
+        let server = try NSLoggerServer(options: NSLoggerServerOptions(name: options.name), paths: paths)
+        try server.start()
+        defer { server.stop() }
 
-        let bonjour = startBonjour(name: options.name, port: defaultPort)
-        defer {
-            server.terminate()
-            bonjour?.terminate()
-        }
-
-        print("NSLogger listening on port \(defaultPort) (SSL)")
-        print("Streaming logs... Press Ctrl+C to stop.")
-
-        let regex = try options.grep.map { try NSRegularExpression(pattern: $0, options: regexOptions(options.flags)) }
-        var buffer = Data()
-        while server.isRunning {
-            autoreleasepool {
-                let chunk = stdout.fileHandleForReading.readData(ofLength: 4096)
-                if chunk.isEmpty {
-                    usleep(100_000)
-                    return
-                }
-                buffer.append(chunk)
-                if buffer.count > maxBufferBytes {
-                    buffer.removeAll(keepingCapacity: false)
-                    return
-                }
-                while let parsed = parseMessage(buffer) {
-                    buffer.removeFirst(parsed.consumed)
-                    let entry = formatLogEntry(parsed.parts)
-                    if let regex {
-                        let range = NSRange(entry.startIndex..<entry.endIndex, in: entry)
-                        if regex.firstMatch(in: entry, range: range) == nil { continue }
-                    }
-                    print(entry)
-                }
+        server.onMessage = { entry in
+            guard let grep = options.grep, !grep.isEmpty else {
+                print(entry)
+                return
+            }
+            if (try? Self.matches(entry, pattern: grep, flags: options.flags)) == true {
+                print(entry)
             }
         }
+
+        print("NSLogger listening on port \(server.port) (plain TCP)")
+        print("Streaming logs... Press Ctrl+C to stop.")
+
+        while server.isRunning {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
         return ""
+    }
+
+    static func matches(_ entry: String, pattern: String, flags: String) throws -> Bool {
+        let regex = try NSRegularExpression(pattern: pattern, options: regexOptions(flags))
+        let range = NSRange(entry.startIndex..<entry.endIndex, in: entry)
+        return regex.firstMatch(in: entry, range: range) != nil
     }
 
     public struct ParsedMessage: Equatable {
@@ -68,50 +43,51 @@ public enum NSLogService {
     }
 
     public static func parseMessage(_ data: Data) -> ParsedMessage? {
-        guard data.count >= 6 else { return nil }
-        let totalSize = Int(readUInt32(data, 0))
-        guard data.count >= 4 + totalSize else { return nil }
-        let partCount = Int(readUInt16(data, 4))
+        let bytes = [UInt8](data)
+        guard bytes.count >= 6 else { return nil }
+        let totalSize = Int(readUInt32(bytes, 0))
+        guard bytes.count >= 4 + totalSize else { return nil }
+        let partCount = Int(readUInt16(bytes, 4))
         var offset = 6
         var parts: [UInt8: AnyHashable] = [:]
 
         for _ in 0..<partCount {
-            guard offset + 2 <= data.count else { break }
-            let key = data[offset]
-            let type = data[offset + 1]
+            guard offset + 2 <= bytes.count else { break }
+            let key = bytes[offset]
+            let type = bytes[offset + 1]
             offset += 2
             switch type {
             case 0:
-                guard offset + 4 <= data.count else { return nil }
-                let size = Int(readUInt32(data, offset))
+                guard offset + 4 <= bytes.count else { return nil }
+                let size = Int(readUInt32(bytes, offset))
                 offset += 4
-                guard offset + size <= data.count else { return nil }
-                parts[key] = String(data: data[offset..<offset + size], encoding: .utf8) ?? ""
+                guard offset + size <= bytes.count else { return nil }
+                parts[key] = String(decoding: bytes[offset..<offset + size], as: UTF8.self)
                 offset += size
             case 1:
-                guard offset + 4 <= data.count else { return nil }
-                let size = Int(readUInt32(data, offset))
+                guard offset + 4 <= bytes.count else { return nil }
+                let size = Int(readUInt32(bytes, offset))
                 offset += 4
-                guard offset + size <= data.count else { return nil }
-                parts[key] = Data(data[offset..<offset + size])
+                guard offset + size <= bytes.count else { return nil }
+                parts[key] = Data(bytes[offset..<offset + size])
                 offset += size
             case 2:
-                guard offset + 2 <= data.count else { return nil }
-                parts[key] = Int16(bitPattern: readUInt16(data, offset))
+                guard offset + 2 <= bytes.count else { return nil }
+                parts[key] = Int16(bitPattern: readUInt16(bytes, offset))
                 offset += 2
             case 3:
-                guard offset + 4 <= data.count else { return nil }
-                parts[key] = Int32(bitPattern: readUInt32(data, offset))
+                guard offset + 4 <= bytes.count else { return nil }
+                parts[key] = Int32(bitPattern: readUInt32(bytes, offset))
                 offset += 4
             case 4:
-                guard offset + 8 <= data.count else { return nil }
-                parts[key] = Int64(bitPattern: readUInt64(data, offset))
+                guard offset + 8 <= bytes.count else { return nil }
+                parts[key] = Int64(bitPattern: readUInt64(bytes, offset))
                 offset += 8
             case 5:
-                guard offset + 4 <= data.count else { return nil }
-                let size = Int(readUInt32(data, offset))
+                guard offset + 4 <= bytes.count else { return nil }
+                let size = Int(readUInt32(bytes, offset))
                 offset += 4
-                guard offset + size <= data.count else { return nil }
+                guard offset + size <= bytes.count else { return nil }
                 offset += size
             default:
                 return nil
@@ -157,7 +133,7 @@ public enum NSLogService {
             let parts = text.split(separator: " ")
             let pid = parts.first.flatMap { Int32($0) } ?? 0
             let startedAt = parts.dropFirst().first.flatMap { Int($0) } ?? 0
-            if pid > 0, kill(pid, 0) == 0, nowMs() - startedAt < staleLockMs {
+            if pid > 0, kill(pid, 0) == 0, nowMs() - startedAt < IOSUseProtocol.nslogLockStaleMilliseconds {
                 throw CLIParseError.invalidValue("nslog already running (PID \(pid)). Only one nslog instance allowed at a time; cannot grep multiple patterns simultaneously.")
             }
             try? FileManager.default.removeItem(atPath: lock)
@@ -175,30 +151,192 @@ public enum NSLogService {
         try? FileManager.default.removeItem(atPath: lock)
     }
 
-    private static func ensureTLSCredentials(paths: IOSUsePaths) throws -> (key: String, cert: String) {
-        let runtime = "\(paths.root)/runtime"
-        let key = "\(runtime)/nslogger-selfsigned.key"
-        let cert = "\(runtime)/nslogger-selfsigned.crt"
-        if FileManager.default.fileExists(atPath: key), FileManager.default.fileExists(atPath: cert) {
-            return (key, cert)
-        }
-        try FileManager.default.createDirectory(atPath: runtime, withIntermediateDirectories: true, attributes: nil)
-        _ = try Shell.run("openssl", arguments: [
-            "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", key,
-            "-out", cert,
-            "-nodes",
-            "-subj", "/CN=ios-use NSLogger",
-            "-days", "3650",
-        ])
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: key)
-        return (key, cert)
+    static func regexOptions(_ flags: String) -> NSRegularExpression.Options {
+        var options: NSRegularExpression.Options = []
+        if flags.contains("i") { options.insert(.caseInsensitive) }
+        return options
     }
 
-    private static func startBonjour(name: String?, port: Int) -> Process? {
+    private static func readUInt16(_ bytes: [UInt8], _ offset: Int) -> UInt16 {
+        (UInt16(bytes[offset]) << 8) | UInt16(bytes[offset + 1])
+    }
+
+    private static func readUInt32(_ bytes: [UInt8], _ offset: Int) -> UInt32 {
+        (UInt32(bytes[offset]) << 24) | (UInt32(bytes[offset + 1]) << 16) | (UInt32(bytes[offset + 2]) << 8) | UInt32(bytes[offset + 3])
+    }
+
+    private static func readUInt64(_ bytes: [UInt8], _ offset: Int) -> UInt64 {
+        var value: UInt64 = 0
+        for i in 0..<8 {
+            value = (value << 8) | UInt64(bytes[offset + i])
+        }
+        return value
+    }
+
+    private static func nowMs() -> Int {
+        Int(Date().timeIntervalSince1970 * 1000)
+    }
+}
+
+public struct NSLoggerServerOptions: Equatable, Sendable {
+    public let port: Int
+    public var name: String?
+    public var publishBonjour: Bool
+    public var maxBufferSize: Int
+
+    public init(name: String? = nil, publishBonjour: Bool = true, maxBufferSize: Int = IOSUseProtocol.nsloggerDefaultBufferSize) {
+        self.port = IOSUseProtocol.nsloggerDefaultPort
+        self.name = name
+        self.publishBonjour = publishBonjour
+        self.maxBufferSize = maxBufferSize
+    }
+}
+
+public final class NSLoggerServer {
+    public let port: Int
+    public private(set) var isRunning = false
+    public var onMessage: ((String) -> Void)?
+
+    private let options: NSLoggerServerOptions
+    private let paths: IOSUsePaths
+    private var listener: NWListener?
+    private var connections: [NWConnection] = []
+    private let queue = DispatchQueue(label: "ios-use.nslogger.server")
+    private var bonjour: Process?
+    private var receiveBuffer = Data()
+    private var entries: [String] = []
+    private var connectedClients = 0
+    private let lock = NSLock()
+
+    public init(options: NSLoggerServerOptions = NSLoggerServerOptions(), paths: IOSUsePaths) throws {
+        self.options = options
+        self.paths = paths
+        self.port = options.port
+    }
+
+    public func start() throws {
+        guard !isRunning else { return }
+        let parameters = NWParameters.tcp
+        parameters.allowLocalEndpointReuse = true
+        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+            throw CLIParseError.invalidValue("invalid NSLogger port \(port)")
+        }
+        let listener = try NWListener(using: parameters, on: nwPort)
+        let ready = DispatchSemaphore(value: 0)
+        var startError: Error?
+
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                ready.signal()
+            case .failed(let error):
+                startError = error
+                ready.signal()
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { [weak self] connection in
+            self?.accept(connection)
+        }
+        listener.start(queue: queue)
+        if ready.wait(timeout: .now() + 3) == .timedOut {
+            listener.cancel()
+            throw CLIParseError.invalidValue("NSLogger server did not become ready on port \(port)")
+        }
+        if let startError {
+            listener.cancel()
+            throw CLIParseError.invalidValue("NSLogger server failed to listen on port \(port): \(startError)")
+        }
+        self.listener = listener
+        isRunning = true
+
+        if options.publishBonjour {
+            bonjour = startBonjour(name: options.name, port: port)
+        }
+    }
+
+    public func stop() {
+        listener?.cancel()
+        listener = nil
+        for connection in connections {
+            connection.cancel()
+        }
+        connections.removeAll(keepingCapacity: true)
+        bonjour?.terminate()
+        bonjour = nil
+        isRunning = false
+    }
+
+    public func grep(pattern: String, flags: String = "") throws -> [String] {
+        lock.lock()
+        let snapshot = entries
+        lock.unlock()
+        return try snapshot.filter { try NSLogService.matches($0, pattern: pattern, flags: flags) }
+    }
+
+    public func clear() {
+        lock.lock()
+        entries.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
+
+    public var logCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.count
+    }
+
+    public var clientCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return connectedClients
+    }
+
+    public func ingestForTesting(_ data: Data) {
+        markClientConnected()
+        ingest(data)
+    }
+
+    public func markClientConnectedForTesting() {
+        markClientConnected()
+    }
+
+    private func markClientConnected() {
+        lock.lock()
+        connectedClients = max(connectedClients, 1)
+        lock.unlock()
+    }
+
+    private func ingest(_ data: Data) {
+        lock.lock()
+        receiveBuffer.append(data)
+        if receiveBuffer.count > IOSUseProtocol.nsloggerMaxReceiveBufferBytes {
+            receiveBuffer.removeAll(keepingCapacity: false)
+        }
+        while let parsed = NSLogService.parseMessage(receiveBuffer) {
+            receiveBuffer.removeFirst(parsed.consumed)
+            let entry = NSLogService.formatLogEntry(parsed.parts)
+            appendLocked(entry)
+            let callback = onMessage
+            lock.unlock()
+            callback?(entry)
+            lock.lock()
+        }
+        lock.unlock()
+    }
+
+    private func appendLocked(_ entry: String) {
+        entries.append(entry)
+        if entries.count > options.maxBufferSize {
+            entries.removeFirst(entries.count - options.maxBufferSize)
+        }
+    }
+
+    private func startBonjour(name: String?, port: Int) -> Process? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["dns-sd", "-R", (name?.isEmpty == false ? name! : Host.current().localizedName ?? "ios-use"), "_nslogger-ssl._tcp", "local", String(port)]
+        process.arguments = ["dns-sd", "-R", (name?.isEmpty == false ? name! : Host.current().localizedName ?? "ios-use"), "_nslogger._tcp", "local", String(port)]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {
@@ -209,31 +347,47 @@ public enum NSLogService {
         }
     }
 
-    private static func regexOptions(_ flags: String) -> NSRegularExpression.Options {
-        var options: NSRegularExpression.Options = []
-        if flags.contains("i") { options.insert(.caseInsensitive) }
-        return options
-    }
-
-    private static func readUInt16(_ data: Data, _ offset: Int) -> UInt16 {
-        (UInt16(data[offset]) << 8) | UInt16(data[offset + 1])
-    }
-
-    private static func readUInt32(_ data: Data, _ offset: Int) -> UInt32 {
-        (UInt32(data[offset]) << 24) | (UInt32(data[offset + 1]) << 16) | (UInt32(data[offset + 2]) << 8) | UInt32(data[offset + 3])
-    }
-
-    private static func readUInt64(_ data: Data, _ offset: Int) -> UInt64 {
-        var value: UInt64 = 0
-        for i in 0..<8 {
-            value = (value << 8) | UInt64(data[offset + i])
+    private func accept(_ connection: NWConnection) {
+        lock.lock()
+        connections.append(connection)
+        lock.unlock()
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
+            switch state {
+            case .ready:
+                self?.markClientConnected()
+            case .failed, .cancelled:
+                if let connection {
+                    self?.remove(connection)
+                }
+            default:
+                break
+            }
         }
-        return value
+        connection.start(queue: queue)
+        receive(on: connection)
     }
 
-    private static func nowMs() -> Int {
-        Int(Date().timeIntervalSince1970 * 1000)
+    private func receive(on connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self, weak connection] data, _, isComplete, error in
+            guard let self, let connection else { return }
+            if let data, !data.isEmpty {
+                self.markClientConnected()
+                self.ingest(data)
+            }
+            if error == nil, !isComplete {
+                self.receive(on: connection)
+            } else {
+                self.remove(connection)
+            }
+        }
     }
+
+    private func remove(_ connection: NWConnection) {
+        lock.lock()
+        connections.removeAll { $0 === connection }
+        lock.unlock()
+    }
+
 }
 
 private extension String {

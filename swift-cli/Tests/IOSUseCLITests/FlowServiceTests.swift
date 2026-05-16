@@ -169,6 +169,87 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(swipe.distance, 300)
         XCTAssertEqual(swipe.traits, "Cell")
     }
+
+    func testFlowNSLogStepUsesSharedServerAndClearsBuffer() throws {
+        let fixture = try FlowFixture()
+        let child = try fixture.write("child.yaml", """
+        name: child
+        steps:
+          - action: nslog
+            pattern: ready
+            flags: i
+            name: child-nslog
+            clearAfterRead: true
+        """)
+        let parent = try fixture.write("parent.yaml", """
+        name: parent
+        needNSLog: true
+        steps:
+          - action: runFlow
+            file: \(child.lastPathComponent)
+        """)
+        let server = try NSLoggerServer(paths: fixture.paths)
+        server.ingestForTesting(makeNSLogMessage(message: "Driver READY"))
+
+        let result = try FlowService.runForTesting(file: parent.path, paths: fixture.paths, driver: FakeFlowDriver(), nsloggerServer: server)
+
+        XCTAssertTrue(result.stdout.contains("Running flow: parent"))
+        XCTAssertTrue(result.stdout.contains("Running flow: child"))
+        XCTAssertTrue(result.stdout.contains("1 matched /ready/"))
+        XCTAssertTrue(result.stdout.contains("buffer cleared"))
+        XCTAssertEqual(server.logCount, 0)
+        let saved = "\(fixture.paths.artifacts)/child-nslog.log"
+        XCTAssertTrue(try String(contentsOfFile: saved).contains("Driver READY"))
+    }
+
+    func testNeedNSLogRejectsPortAndSSLConfiguration() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("nslog-invalid.yaml", """
+        name: invalid-nslog
+        needNSLog:
+          port: 0
+          ssl: false
+        steps:
+          - action: sleep
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("does not support port or ssl configuration"))
+        }
+    }
+}
+
+private func makeNSLogMessage(message: String) -> Data {
+    let parts: [(UInt8, UInt8, Data)] = [
+        (0, 3, uint32Data(0)),
+        (7, 0, stringData(message))
+    ]
+    var body = Data()
+    body.append(UInt8((parts.count >> 8) & 0xff))
+    body.append(UInt8(parts.count & 0xff))
+    for part in parts {
+        body.append(part.0)
+        body.append(part.1)
+        body.append(part.2)
+    }
+    var data = Data()
+    data.append(uint32Data(UInt32(body.count)))
+    data.append(body)
+    return data
+}
+
+private func stringData(_ value: String) -> Data {
+    let bytes = Data(value.utf8)
+    return uint32Data(UInt32(bytes.count)) + bytes
+}
+
+private func uint32Data(_ value: UInt32) -> Data {
+    Data([
+        UInt8((value >> 24) & 0xff),
+        UInt8((value >> 16) & 0xff),
+        UInt8((value >> 8) & 0xff),
+        UInt8(value & 0xff)
+    ])
 }
 
 private final class FlowFixture {

@@ -1,13 +1,13 @@
 import Foundation
 
 enum DriverConstants {
-    static let defaultPort: UInt16 = 8100
-    static let maxFrameSizeBytes = 50 * 1024 * 1024
-    static let maxConnections = 1
-    static let acceptPollIntervalMicroseconds: useconds_t = 50_000
-    static let commandTimeoutSeconds = 45
-    static let commandCompletionTimeoutSeconds = 120
-    static let serverStopTimeoutSeconds = 5
-    static let listenBacklog: Int32 = 5
-    static let millisecondsPerSecond = 1000.0
+    static let defaultPort = IOSUseProtocol.defaultDriverPort
+    static let maxFrameSizeBytes = IOSUseProtocol.maxFrameSizeBytes
+    static let maxConnections = IOSUseProtocol.maxDriverConnections
+    static let acceptPollIntervalMicroseconds = useconds_t(IOSUseProtocol.driverAcceptPollIntervalMicroseconds)
+    static let commandTimeoutSeconds = IOSUseProtocol.commandTimeoutSeconds
+    static let commandCompletionTimeoutSeconds = IOSUseProtocol.commandCompletionTimeoutSeconds
+    static let serverStopTimeoutSeconds = IOSUseProtocol.serverStopTimeoutSeconds
+    static let listenBacklog = IOSUseProtocol.listenBacklog
+    static let millisecondsPerSecond = IOSUseProtocol.millisecondsPerSecond
 }

@@ -123,11 +123,14 @@ final class TypesTests: XCTestCase {
         let cmds: [Command] = [
             .activateApp, .terminateApp, .screenshot,
             .home, .dom, .find, .tap, .longPress, .input, .swipe, .waitFor,
+            .openURL, .proxyCAPush, .dismissAlert,
         ]
         for cmd in cmds {
             XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")
         }
-        XCTAssertEqual(cmds.count, 11)
+        XCTAssertEqual(cmds.count, DriverCommand.allCases.count)
+        XCTAssertEqual(Command.find.metadata.argsTypeName, "ForyFindArgs")
+        XCTAssertEqual(Command.swipe.metadata.payloadTypeName, "ForySwipePayload")
     }
 
     // MARK: - resolveTapPoint
