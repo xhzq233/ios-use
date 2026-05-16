@@ -21,23 +21,25 @@ extension DriverClient: FlowDriver {}
 
 public enum FlowService {
     public static func run(file: String, options: FlowOptions, paths: IOSUsePaths) throws -> String {
-        if let udid = options.udid {
-            try SessionService.prepareDriverSession(SessionOptions(udid: udid, verbose: options.verbose), paths: paths)
+        let resolvedFile = URL(fileURLWithPath: file).standardized.path
+        guard FileManager.default.fileExists(atPath: resolvedFile) else {
+            throw CLIParseError.invalidValue("Flow file not found: \(file)")
         }
+        try SessionService.prepareDriverSession(SessionOptions(udid: options.udid, verbose: options.verbose), paths: paths)
         let session = SessionService.read(paths: paths)
-        var runner = FlowRunner(paths: paths, driver: DriverClient(session: session), udid: options.udid ?? session?.udid)
-        _ = try runner.run(file: file, inheritedVars: options.externalVars, stack: [])
+        var runner = FlowRunner(paths: paths, driver: DriverClient(session: session), udid: options.udid ?? session?.udid, deviceType: session?.deviceType, context: FlowRunContext())
+        _ = try runner.run(file: resolvedFile, inheritedVars: options.externalVars, stack: [])
         return runner.output
     }
 
     static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil) throws -> (stdout: String, outputs: [String: Any]) {
-        var runner = FlowRunner(paths: paths, driver: driver, udid: udid)
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext())
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
 
     static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, nsloggerServer: NSLoggerServer) throws -> (stdout: String, outputs: [String: Any]) {
-        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, nsloggerServer: nsloggerServer)
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext(), nsloggerServer: nsloggerServer)
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
@@ -52,10 +54,16 @@ private struct FlowFile {
     var steps: [[String: Any]]
 }
 
+private final class FlowRunContext {
+    var flowCache: [String: FlowFile] = [:]
+}
+
 private struct FlowRunner {
     let paths: IOSUsePaths
     let driver: FlowDriver
     let udid: String?
+    let deviceType: String?
+    let context: FlowRunContext
     var output = ""
     var nsloggerServer: NSLoggerServer?
 
@@ -68,7 +76,7 @@ private struct FlowRunner {
             throw CLIParseError.invalidValue("runFlow cycle detected: \((stack + [resolvedFile]).joined(separator: " -> "))")
         }
 
-        let flow = try loadFlowFile(resolvedFile)
+        let flow = try cachedFlowFile(resolvedFile)
         var flowVars = try resolveVars(rawVars: flow.vars, inheritedVars: inheritedVars)
         let flowApp = try flow.app.map { try resolveTemplates($0, vars: flowVars) } as? String
         let needNSLog = try flow.needNSLog.map { try resolveTemplates($0, vars: flowVars) }
@@ -112,7 +120,7 @@ private struct FlowRunner {
         switch action {
         case "waitFor":
             let label = try requiredString(step["label"], field: "waitFor.label")
-            _ = try driver.waitFor(label: label, timeout: number(step["timeout"]), traits: optionalString(step["traits"]))
+            _ = try driver.waitFor(label: label, timeout: optionalNumber(step["timeout"], field: "waitFor.timeout"), traits: optionalString(step["traits"]))
 
         case "find":
             let label = try requiredString(step["label"], field: "find.label")
@@ -121,8 +129,9 @@ private struct FlowRunner {
 
         case "dom":
             let payload = try driver.dom(raw: bool(step["raw"]), fresh: bool(step["fresh"]))
-            let candidates = (step["candidates"] as? [Any] ?? []).map { String(describing: $0) }
-            let derived = domOutput(payload, candidates: candidates)
+            let candidates = try optionalStringList(step["candidates"], field: "dom.candidates")
+            let needsDerived = hasOutputs(rawStep["outputs"]) || (bool(step["save"]) && !bool(step["raw"]))
+            let derived = needsDerived ? domOutput(payload, candidates: candidates) : [:]
             if bool(step["save"]) {
                 try saveDom(payload, derived: derived, raw: bool(step["raw"]), name: (step["name"] as? String) ?? "dom-\(flowTimestamp())")
             }
@@ -141,16 +150,17 @@ private struct FlowRunner {
             }
 
         case "sleep":
-            if step["ms"] != nil, number(step["ms"]) == nil {
-                throw CLIParseError.invalidValue("sleep.ms must be a number")
+            let ms = try optionalInt(step["ms"], field: "sleep.ms") ?? IOSUseProtocol.flowDefaultSleepMilliseconds
+            let maxSleepMilliseconds = Int(UInt32.max / UInt32(IOSUseProtocol.microsecondsPerMillisecond))
+            guard ms <= maxSleepMilliseconds else {
+                throw CLIParseError.invalidValue("sleep.ms is too large")
             }
-            let ms = Int(number(step["ms"]) ?? Double(IOSUseProtocol.flowDefaultSleepMilliseconds))
-            usleep(useconds_t(max(0, ms) * 1000))
+            usleep(useconds_t(ms * IOSUseProtocol.microsecondsPerMillisecond))
 
         case "runFlow":
             let childFileValue = try requiredString(step["file"], field: "runFlow.file")
             let childFile = resolveChildFile(childFileValue, baseFile: baseFile)
-            let childFlow = try loadFlowFile(childFile)
+            let childFlow = try cachedFlowFile(childFile)
             let requested = try outputNames(rawStep["outputs"], fieldName: "runFlow outputs", allowMultiple: true)
             let declared = try outputNames(childFlow.outputs, fieldName: "flow outputs", allowMultiple: true)
             for name in requested where !declared.contains(name) {
@@ -158,7 +168,7 @@ private struct FlowRunner {
             }
             let childVarsRaw = step["vars"] as? [String: Any] ?? [:]
             let childVars = try resolveTemplates(childVarsRaw, vars: flowVars) as? [String: Any] ?? childVarsRaw
-            var child = FlowRunner(paths: paths, driver: driver, udid: udid)
+            var child = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: deviceType, context: context)
             child.nsloggerServer = nsloggerServer
             let childOutputs = try child.run(file: childFile, inheritedVars: flowVars.merging(childVars) { _, new in new }, stack: stack)
             output += child.output
@@ -201,9 +211,10 @@ private struct FlowRunner {
                     pattern: optionalString(step["pattern"]),
                     flags: optionalString(step["flags"]),
                     bundleId: optionalString(step["bundleId"]),
-                    timeout: number(step["timeout"]),
+                    timeout: optionalPositiveNumber(step["timeout"], field: "oslog.timeout"),
                     name: optionalString(step["name"]),
-                    paths: paths
+                    paths: paths,
+                    deviceTypeHint: deviceType
                 )
             }
 
@@ -213,7 +224,7 @@ private struct FlowRunner {
             }
             let pattern = try requiredString(step["pattern"], field: "nslog.pattern")
             let flags = optionalString(step["flags"]) ?? ""
-            let timeout = number(step["timeout"]) ?? 0
+            let timeout = try optionalNumber(step["timeout"], field: "nslog.timeout") ?? 0
             let startedAt = Date()
             let matches = try waitForNSLogMatches(server: nsloggerServer, pattern: pattern, flags: flags, timeout: timeout)
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
@@ -225,11 +236,15 @@ private struct FlowRunner {
             }
 
         case "swipe":
+            let dir = optionalString(step["dir"])
+            if let dir, dir != "forth", dir != "back" {
+                throw CLIParseError.invalidValue("swipe.dir must be \"forth\" or \"back\"")
+            }
             _ = try driver.swipe(
                 to: try target(optionalString(step["to"])),
                 from: try target(optionalString(step["from"])),
-                distance: number(step["distance"]),
-                dir: optionalString(step["dir"]),
+                distance: optionalNumber(step["distance"], field: "swipe.distance"),
+                dir: dir,
                 traits: optionalString(step["traits"])
             )
 
@@ -255,7 +270,7 @@ private struct FlowRunner {
             _ = try driver.openURL(url: url)
 
         case "dismissAlert":
-            _ = try driver.dismissAlert(index: intValue(step["index"]))
+            _ = try driver.dismissAlert(index: optionalInt(step["index"], field: "dismissAlert.index"))
 
         default:
             throw CLIParseError.invalidValue("unsupported flow action: \(action)")
@@ -269,19 +284,26 @@ private struct FlowRunner {
         vars[name] = value ?? NSNull()
     }
 
+    private func hasOutputs(_ raw: Any?) -> Bool {
+        raw != nil && !(raw is NSNull)
+    }
+
     private func saveScreenshot(name: String) throws {
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        try driver.screenshot().write(to: URL(fileURLWithPath: "\(paths.artifacts)/\(name).jpg"))
+        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "flow-step-\(flowTimestamp())", extension: "jpg")
+        try driver.screenshot().write(to: URL(fileURLWithPath: path))
     }
 
     private func saveDom(_ payload: ForyDomPayload, derived: [String: Any], raw: Bool, name: String) throws {
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
         if raw {
-            try (payload.raw + "\n").write(toFile: "\(paths.artifacts)/\(name).txt", atomically: true, encoding: .utf8)
+            let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "dom-\(flowTimestamp())", extension: "txt")
+            try (payload.raw + "\n").write(toFile: path, atomically: true, encoding: .utf8)
             return
         }
         let data = try JSONSerialization.data(withJSONObject: derived, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: URL(fileURLWithPath: "\(paths.artifacts)/\(name).json"))
+        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "dom-\(flowTimestamp())", extension: "json")
+        try data.write(to: URL(fileURLWithPath: path))
     }
 
     private func resolveChildFile(_ file: String, baseFile: String) -> String {
@@ -291,10 +313,19 @@ private struct FlowRunner {
 
     private func saveLog(lines: [String], name: String) throws -> String {
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        let path = "\(paths.artifacts)/\(name).log"
+        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "nslog-\(flowTimestamp())", extension: "log")
         let content = lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")
         try content.write(toFile: path, atomically: true, encoding: .utf8)
         return path
+    }
+
+    private func cachedFlowFile(_ path: String) throws -> FlowFile {
+        if let cached = context.flowCache[path] {
+            return cached
+        }
+        let flow = try loadFlowFile(path)
+        context.flowCache[path] = flow
+        return flow
     }
 }
 
@@ -333,20 +364,24 @@ private func nsloggerOptions(_ raw: Any?) throws -> NSLoggerServerOptions? {
     return NSLoggerServerOptions(
         name: optionalString(dict["name"]),
         publishBonjour: dict.keys.contains("publishBonjour") ? bool(dict["publishBonjour"]) : true,
-        maxBufferSize: intValue(dict["maxBufferSize"]) ?? IOSUseProtocol.nsloggerDefaultBufferSize
+        maxBufferSize: try positiveInt(dict["maxBufferSize"], field: "needNSLog.maxBufferSize") ?? IOSUseProtocol.nsloggerDefaultBufferSize
     )
 }
 
 private func waitForNSLogMatches(server: NSLoggerServer, pattern: String, flags: String, timeout: Double) throws -> [String] {
     let deadline = Date().addingTimeInterval(max(0, timeout))
+    let regex = try NSRegularExpression(pattern: pattern, options: NSLogService.regexOptions(flags))
+    var cursor = 0
     repeat {
-        let matches = try server.grep(pattern: pattern, flags: flags)
+        let result = server.grep(regex: regex, from: cursor)
+        cursor = result.nextIndex
+        let matches = result.matches
         if !matches.isEmpty || timeout <= 0 {
             return matches
         }
         usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
     } while Date() < deadline
-    return try server.grep(pattern: pattern, flags: flags)
+    return server.grep(regex: regex, from: cursor).matches
 }
 
 private func waitForNSLoggerConnection(server: NSLoggerServer, timeoutMilliseconds: Int) -> String {
@@ -401,7 +436,8 @@ private func wholeTemplateExpression(_ string: String) -> String? {
 }
 
 private func replaceTemplateExpressions(in string: String, vars: [String: Any]) throws -> String {
-    let regex = try NSRegularExpression(pattern: #"\$\{([^}]+)\}"#)
+    guard string.contains("${") else { return string }
+    let regex = FlowRegex.template
     let nsRange = NSRange(string.startIndex..<string.endIndex, in: string)
     var result = string
     for match in regex.matches(in: string, range: nsRange).reversed() {
@@ -456,7 +492,7 @@ private func outputNames(_ value: Any?, fieldName: String, allowMultiple: Bool) 
     guard names.count == rawNames.count, names.allSatisfy({ !$0.isEmpty }) else {
         throw CLIParseError.invalidValue("\(fieldName) must contain non-empty variable names")
     }
-    let valid = try NSRegularExpression(pattern: #"^[A-Za-z_][A-Za-z0-9_-]*$"#)
+    let valid = FlowRegex.outputName
     for name in names where valid.firstMatch(in: name, range: NSRange(name.startIndex..<name.endIndex, in: name)) == nil {
         throw CLIParseError.invalidValue("\(fieldName) contains invalid variable name: \(name)")
     }
@@ -526,8 +562,11 @@ private func rectObject(_ rect: ForyRect?) -> Any {
 }
 
 private func normalizeSearchText(_ text: String) -> String {
-    text.replacingOccurrences(of: #"[\s\-_:\/()\[\]{}.,'"]"#, with: "", options: .regularExpression)
-        .lowercased()
+    FlowRegex.searchSeparator.stringByReplacingMatches(
+        in: text,
+        range: NSRange(text.startIndex..<text.endIndex, in: text),
+        withTemplate: ""
+    ).lowercased()
 }
 
 private func isAllowedReturnMatcher(_ value: Any?) -> Bool {
@@ -558,6 +597,21 @@ private func requiredString(_ value: Any?, field: String) throws -> String {
     return string
 }
 
+private func optionalStringList(_ value: Any?, field: String) throws -> [String] {
+    guard !isNull(value) else { return [] }
+    guard let list = value as? [Any] else {
+        throw CLIParseError.invalidValue("\(field) must be a string array")
+    }
+    var strings: [String] = []
+    for item in list {
+        guard let string = item as? String, !string.isEmpty else {
+            throw CLIParseError.invalidValue("\(field) must contain only non-empty strings")
+        }
+        strings.append(string)
+    }
+    return strings
+}
+
 private func optionalString(_ value: Any?) -> String? {
     guard !isNull(value) else { return nil }
     return value.map { String(describing: $0) }
@@ -570,22 +624,63 @@ private func bool(_ value: Any?) -> Bool {
 private func intValue(_ value: Any?) -> Int? {
     if let int = value as? Int { return int }
     if let int32 = value as? Int32 { return Int(int32) }
-    if let double = value as? Double { return Int(double) }
+    if let double = value as? Double, double.isFinite, double.rounded(.towardZero) == double {
+        return Int(exactly: double)
+    }
     if let string = value as? String { return Int(string) }
     return nil
 }
 
+private func optionalInt(_ value: Any?, field: String) throws -> Int? {
+    guard !isNull(value) else { return nil }
+    guard let parsed = intValue(value) else {
+        throw CLIParseError.invalidValue("\(field) must be an integer")
+    }
+    guard parsed >= 0 else {
+        throw CLIParseError.invalidValue("\(field) must be non-negative")
+    }
+    return parsed
+}
+
+private func positiveInt(_ value: Any?, field: String) throws -> Int? {
+    guard let parsed = try optionalInt(value, field: field) else { return nil }
+    guard parsed > 0 else {
+        throw CLIParseError.invalidValue("\(field) must be greater than 0")
+    }
+    return parsed
+}
+
 private func number(_ value: Any?) -> Double? {
-    if let double = value as? Double { return double }
+    if let double = value as? Double { return double.isFinite ? double : nil }
     if let int = value as? Int { return Double(int) }
     if let int32 = value as? Int32 { return Double(int32) }
-    if let string = value as? String { return Double(string) }
+    if let string = value as? String, let double = Double(string), double.isFinite { return double }
     return nil
+}
+
+private func optionalNumber(_ value: Any?, field: String) throws -> Double? {
+    guard !isNull(value) else { return nil }
+    guard let parsed = number(value) else {
+        throw CLIParseError.invalidValue("\(field) must be a finite number")
+    }
+    guard parsed >= 0 else {
+        throw CLIParseError.invalidValue("\(field) must be non-negative")
+    }
+    return parsed
+}
+
+private func optionalPositiveNumber(_ value: Any?, field: String) throws -> Double? {
+    guard let parsed = try optionalNumber(value, field: field) else { return nil }
+    guard parsed > 0 else {
+        throw CLIParseError.invalidValue("\(field) must be greater than 0")
+    }
+    return parsed
 }
 
 private func target(_ value: String?) throws -> ForyTarget {
     guard let value, !value.isEmpty else { return ForyTarget() }
-    if let point = try? pointPair(value) {
+    if value.contains(",") {
+        let point = try pointPair(value)
         return ForyTarget(label: "", point: point)
     }
     return ForyTarget(label: value, point: nil)
@@ -595,7 +690,9 @@ private func pointPair(_ value: String) throws -> ForyPoint {
     let parts = value.split(separator: ",", omittingEmptySubsequences: false).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
     guard parts.count == 2,
           let x = Double(parts[0]),
-          let y = Double(parts[1]) else {
+          let y = Double(parts[1]),
+          x.isFinite,
+          y.isFinite else {
         throw CLIParseError.invalidValue("Invalid point: \"\(value)\"")
     }
     return ForyPoint(x: x, y: y)
@@ -609,8 +706,18 @@ private func offsetPoint(_ offset: [String: Any]?) throws -> ForyPoint? {
     if offset["y"] != nil, offset["yRatio"] != nil {
         throw CLIParseError.invalidValue("tap offset cannot specify both y and yRatio")
     }
-    guard offset["x"] != nil || offset["y"] != nil else { return nil }
-    return ForyPoint(x: number(offset["x"]) ?? 0, y: number(offset["y"]) ?? 0)
+    let hasX = offset["x"] != nil
+    let hasY = offset["y"] != nil
+    if hasX || hasY {
+        guard hasX && hasY else {
+            throw CLIParseError.invalidValue("tap offset requires both x and y when using absolute offsets")
+        }
+        guard let x = number(offset["x"]), let y = number(offset["y"]) else {
+            throw CLIParseError.invalidValue("tap offset x and y must be finite numbers")
+        }
+        return ForyPoint(x: x, y: y)
+    }
+    return nil
 }
 
 private func ratioPoint(_ offset: [String: Any]?, hasAbsoluteOffset: Bool) throws -> ForyPoint {
@@ -621,5 +728,20 @@ private func ratioPoint(_ offset: [String: Any]?, hasAbsoluteOffset: Bool) throw
     if offset["y"] != nil, offset["yRatio"] != nil {
         throw CLIParseError.invalidValue("tap offset cannot specify both y and yRatio")
     }
-    return ForyPoint(x: number(offset["xRatio"]) ?? 0.5, y: number(offset["yRatio"]) ?? 0.5)
+    let hasXRatio = offset["xRatio"] != nil
+    let hasYRatio = offset["yRatio"] != nil
+    if hasXRatio || hasYRatio {
+        guard let x = hasXRatio ? number(offset["xRatio"]) : 0.5,
+              let y = hasYRatio ? number(offset["yRatio"]) : 0.5 else {
+            throw CLIParseError.invalidValue("tap offset xRatio and yRatio must be finite numbers")
+        }
+        return ForyPoint(x: x, y: y)
+    }
+    return ForyPoint(x: 0.5, y: 0.5)
+}
+
+private enum FlowRegex {
+    static let template = try! NSRegularExpression(pattern: #"\$\{([^}]+)\}"#)
+    static let outputName = try! NSRegularExpression(pattern: #"^[A-Za-z_][A-Za-z0-9_-]*$"#)
+    static let searchSeparator = try! NSRegularExpression(pattern: #"[\s\-_:\/()\[\]{}.,'"]"#)
 }

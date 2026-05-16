@@ -2,6 +2,12 @@ import XCTest
 @testable import IOSUseCLI
 
 final class DeviceServiceTests: XCTestCase {
+    override func tearDown() {
+        DeviceService.listDevicesOverrideForTesting = nil
+        DeviceService.resetCacheForTesting()
+        super.tearDown()
+    }
+
     func testParseDeviceOutputSeparatesRealDevicesAndSimulators() {
         let output = """
         == Devices ==
@@ -45,5 +51,18 @@ final class DeviceServiceTests: XCTestCase {
         ])
 
         XCTAssertEqual(output.split(separator: "\n").count, 10000)
+    }
+
+    func testListDevicesOverrideBypassesCacheForIsolatedTests() throws {
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": "/tmp/ios-use-device-cache-\(UUID().uuidString)"])
+        var calls = 0
+        DeviceService.listDevicesOverrideForTesting = { _, _ in
+            calls += 1
+            return [IOSDevice(name: "Phone \(calls)", version: "26.0", udid: "REAL-\(calls)", kind: .real)]
+        }
+
+        XCTAssertEqual(try DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid, "REAL-1")
+        XCTAssertEqual(try DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid, "REAL-2")
+        XCTAssertEqual(calls, 2)
     }
 }

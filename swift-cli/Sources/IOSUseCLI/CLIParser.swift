@@ -251,7 +251,10 @@ public enum CLIParser {
                 guard arg.hasPrefix("--") else { throw CLIParseError.unexpectedArgument(arg) }
                 let key = String(arg.dropFirst(2))
                 guard !key.isEmpty else { throw CLIParseError.unknownOption(arg) }
-                options.externalVars[key] = try parser.value(for: arg)
+                guard isFlowExternalVarName(key) else {
+                    throw CLIParseError.invalidValue("Invalid flow external variable name: \(key)")
+                }
+                options.externalVars[key] = try parser.valueAllowingLeadingDash(for: arg)
             }
         }
         return options
@@ -262,7 +265,7 @@ public enum CLIParser {
         while let arg = parser.consume() {
             switch arg {
             case "--name": options.name = try parser.value(for: arg)
-            case "--grep": options.grep = try parser.value(for: arg)
+            case "--grep": options.grep = try parser.valueAllowingLeadingDash(for: arg)
             case "--flags": options.flags = try parser.value(for: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
@@ -318,8 +321,8 @@ public enum CLIParser {
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
-            case "--offset": offset = try parser.value(for: arg)
-            case "--offset-ratio": offsetRatio = try parser.value(for: arg)
+            case "--offset": offset = try parser.valueAllowingLeadingDash(for: arg)
+            case "--offset-ratio": offsetRatio = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
@@ -334,7 +337,7 @@ public enum CLIParser {
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
-            case "--duration": duration = try parseIntStrict(parser.value(for: arg), label: arg)
+            case "--duration": duration = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
@@ -350,7 +353,7 @@ public enum CLIParser {
         while let arg = parser.consume() {
             switch arg {
             case "--label": label = try parser.value(for: arg)
-            case "--content": content = try parser.value(for: arg)
+            case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
@@ -373,7 +376,7 @@ public enum CLIParser {
                 let value = try parser.value(for: arg)
                 guard value == "forth" || value == "back" else { throw CLIParseError.invalidValue("Invalid swipe dir: \"\(value)\", expected \"forth\" or \"back\"") }
                 dir = value
-            case "--distance": distance = try parseDoubleStrict(parser.value(for: arg), label: arg)
+            case "--distance": distance = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
@@ -428,7 +431,7 @@ public enum CLIParser {
         while let arg = parser.consume() {
             switch arg {
             case "--label": label = try parser.value(for: arg)
-            case "--timeout": timeout = try parseDoubleStrict(parser.value(for: arg), label: arg)
+            case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
@@ -478,7 +481,7 @@ public enum CLIParser {
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
-            case "--index": index = try parseIntStrict(parser.value(for: arg), label: arg)
+            case "--index": index = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
@@ -495,9 +498,9 @@ public enum CLIParser {
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
-            case "--pattern": pattern = try parser.value(for: arg)
+            case "--pattern": pattern = try parser.valueAllowingLeadingDash(for: arg)
             case "--flags": flags = try parser.value(for: arg)
-            case "--timeout": timeout = try parseDoubleStrict(parser.value(for: arg), label: arg)
+            case "--timeout": timeout = try parsePositiveDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--name": name = try parser.value(for: arg)
             case "--clear": clear = true
             case "--bundle-id": bundleId = try parser.value(for: arg)
@@ -532,6 +535,34 @@ public enum CLIParser {
             throw CLIParseError.invalidValue("Invalid number: \"\(value)\"")
         }
         return doubleValue
+    }
+
+    private static func parseNonNegativeIntStrict(_ value: String, label: String) throws -> Int {
+        let parsed = try parseIntStrict(value, label: label)
+        guard parsed >= 0 else {
+            throw CLIParseError.invalidValue("\(label) must be non-negative")
+        }
+        return parsed
+    }
+
+    private static func parseNonNegativeDoubleStrict(_ value: String, label: String) throws -> Double {
+        let parsed = try parseDoubleStrict(value, label: label)
+        guard parsed >= 0 else {
+            throw CLIParseError.invalidValue("\(label) must be non-negative")
+        }
+        return parsed
+    }
+
+    private static func parsePositiveDoubleStrict(_ value: String, label: String) throws -> Double {
+        let parsed = try parseDoubleStrict(value, label: label)
+        guard parsed > 0 else {
+            throw CLIParseError.invalidValue("\(label) must be greater than 0")
+        }
+        return parsed
+    }
+
+    private static func isFlowExternalVarName(_ value: String) -> Bool {
+        value.range(of: #"^[A-Za-z_][A-Za-z0-9_-]*$"#, options: .regularExpression) != nil
     }
 }
 
@@ -591,6 +622,13 @@ private struct ArgumentParser {
 
     mutating func value(for option: String) throws -> String {
         guard let value = consume(), !value.hasPrefix("-") else {
+            throw CLIParseError.missingOptionValue(option)
+        }
+        return value
+    }
+
+    mutating func valueAllowingLeadingDash(for option: String) throws -> String {
+        guard let value = consume() else {
             throw CLIParseError.missingOptionValue(option)
         }
         return value
