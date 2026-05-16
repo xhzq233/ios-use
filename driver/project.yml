@@ -16,6 +16,7 @@ targets:
     type: bundle.ui-testing
     platform: iOS
     sources:
+      - path: ../shared/IOSUseProtocol/Sources/IOSUseProtocol
       - path: tcp
       - path: ui
       - path: runner
@@ -47,6 +48,7 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
+      - path: ../shared/IOSUseProtocol/Sources/IOSUseProtocol
       - path: tcp
       - path: ui
       - path: tests
