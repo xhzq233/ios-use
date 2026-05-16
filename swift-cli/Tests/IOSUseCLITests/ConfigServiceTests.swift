@@ -45,6 +45,20 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: "\(sessionDir)/session.json"))
     }
 
+    func testConfigListThroughCLIUsesIsolatedHome() throws {
+        let root = try temporaryRoot()
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"SIM-1":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["config", "--list"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("SIM-1"))
+        XCTAssertTrue(result.stdout.contains("com.iosuse.xcuidriver.xctrunner"))
+    }
+
     private func temporaryRoot() throws -> String {
         let root = NSTemporaryDirectory() + "ios-use-swift-config-\(UUID().uuidString)"
         addTeardownBlock {
