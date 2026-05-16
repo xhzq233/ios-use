@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 - **Smart DOM tree**: a unified cleaning pipeline trims the raw XCUI snapshot into a concise, readable tree while preserving visible hierarchy and useful traits.
 - **Normalized find with traits disambiguation**: contains-match over label/value text with whitespace, punctuation, and case normalization, plus fuzzy fallback and `--traits` filtering.
 - **4 scroll modes**: scroll-to-label, point swipe, anchor-based scroll, and fixed-distance swipe. Auto axis detection from visible cell layout.
-- **OSLog integration**: Fetch device-side `OSLogStore` entries with regex filtering, grouped by bundle ID.
+- **OSLog integration**: Fetch Simulator/device logs from the host side with regex filtering, grouped by bundle ID.
 - **Built-in NSLogger receiver**: Capture device logs from the CLI, with optional TLS and Bonjour service discovery.
 - **Flow runner**: Describe multi-step automations in YAML using the same command set as the CLI.
 
@@ -207,7 +207,6 @@ Numbers vary by device, app state, and whether the target page is already warm, 
 swift-cli/            Default Swift CLI, session orchestration, config, transport client
 shared/IOSUseProtocol/ Shared Swift RPC types and Fory frame models
 driver/               Swift XCTest driver
-src/                  Legacy TypeScript CLI reference and compatibility tests
 flows/                Example flows
 scripts/              Install, build, and benchmark utilities
 docs/                 Public documentation
