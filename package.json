@@ -12,7 +12,8 @@
   },
   "scripts": {
     "start": "./dist/ios-use",
-    "test": "bun test",
+    "test": "bash scripts/test_swift_stack.sh",
+    "test:legacy-bun": "bun test",
     "build": "bash scripts/build_swift_cli.sh",
     "build:swift-cli": "bash scripts/build_swift_cli.sh",
     "test:swift-cli": "bash scripts/test_swift_cli.sh"
