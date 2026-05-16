@@ -14,7 +14,38 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-cli:
+    name: Build CLI (${{ matrix.asset }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            asset: ios-use-darwin-arm64
+          - runner: macos-26-intel
+            asset: ios-use-darwin-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Swift CLI
+        run: bash scripts/build_swift_cli.sh
+
+      - name: Prepare CLI asset
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp dist/ios-use "release/${{ matrix.asset }}"
+          chmod +x "release/${{ matrix.asset }}"
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: release/${{ matrix.asset }}
+
+  build-driver:
+    name: Build driver IPAs
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -24,28 +55,38 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
-      - name: Build Swift CLI
-        run: bash scripts/build_swift_cli.sh
-
       - name: Build driver IPAs
         run: bash scripts/build_driver.sh
 
-      - name: Prepare release assets
+      - name: Prepare driver assets
         run: |
           set -euo pipefail
           mkdir -p release
-
-          ARCH="$(uname -m)"
-          case "$ARCH" in
-            arm64) CLI_ASSET="ios-use-darwin-arm64" ;;
-            x86_64) CLI_ASSET="ios-use-darwin-x86_64" ;;
-            *) echo "Unsupported macOS architecture: $ARCH" >&2; exit 1 ;;
-          esac
-
-          cp dist/ios-use "release/${CLI_ASSET}"
-          chmod +x "release/${CLI_ASSET}"
           cp assets/driver.ipa release/driver.ipa
           cp assets/driver-sim.ipa release/driver-sim.ipa
+
+      - name: Upload driver artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: driver-ipas
+          path: release/*
+
+  release:
+    name: Upload GitHub Release assets
+    runs-on: ubuntu-latest
+    needs: [build-cli, build-driver]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Prepare checksums
+        run: |
+          set -euo pipefail
           shasum -a 256 release/* > release/SHA256SUMS
 
       - name: Resolve release tag
