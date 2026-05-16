@@ -55,6 +55,54 @@ final class DriverClient {
         return decoded.jpeg
     }
 
+    func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+        let payload = try send(command: DriverCommand.tap.rawValue, args: ForyTapArgs(target: target, traits: traits ?? "", offset: offset, ratio: ratio))
+        return try fory.deserialize(payload, as: ForyElementPayload.self)
+    }
+
+    func longPress(target: ForyTarget, durationMs: Int?, traits: String?) throws -> ForyElementPayload {
+        let durationSeconds = durationMs.map { Double($0) / 1000.0 } ?? 0
+        let payload = try send(command: DriverCommand.longPress.rawValue, args: ForyLongPressArgs(target: target, duration: durationSeconds, traits: traits ?? ""))
+        return try fory.deserialize(payload, as: ForyElementPayload.self)
+    }
+
+    func input(label: String, content: String, traits: String?) throws {
+        _ = try send(command: DriverCommand.input.rawValue, args: ForyInputArgs(label: label, content: content, traits: traits ?? ""))
+    }
+
+    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?) throws -> ForySwipePayload {
+        let dirValue: Int32
+        switch dir {
+        case "forth": dirValue = 0
+        case "back": dirValue = 1
+        default: dirValue = -1
+        }
+        let payload = try send(command: DriverCommand.swipe.rawValue, args: ForySwipeArgs(toTarget: to, fromTarget: from, distance: distance ?? 0, dir: dirValue, traits: traits ?? ""))
+        return try fory.deserialize(payload, as: ForySwipePayload.self)
+    }
+
+    func activateApp(bundleId: String) throws {
+        _ = try send(command: DriverCommand.activateApp.rawValue, args: ForyActivateAppArgs(bundleId: bundleId))
+    }
+
+    func terminateApp(bundleId: String) throws {
+        _ = try send(command: DriverCommand.terminateApp.rawValue, args: ForyTerminateAppArgs(bundleId: bundleId))
+    }
+
+    func home() throws {
+        _ = try sendRawPayload(command: DriverCommand.home.rawValue, payload: Data())
+    }
+
+    func openURL(url: String) throws -> ForySimpleStringPayload {
+        let payload = try send(command: DriverCommand.openURL.rawValue, args: ForyOpenURLArgs(url: url))
+        return try fory.deserialize(payload, as: ForySimpleStringPayload.self)
+    }
+
+    func dismissAlert(index: Int?) throws -> ForyAlertPayload {
+        let payload = try send(command: DriverCommand.dismissAlert.rawValue, args: ForyDismissAlertArgs(index: Int32(index ?? -1)))
+        return try fory.deserialize(payload, as: ForyAlertPayload.self)
+    }
+
     private func send<Args>(command: String, args: Args) throws -> Data {
         let payload = try fory.serialize(args)
         return try sendRawPayload(command: command, payload: payload)

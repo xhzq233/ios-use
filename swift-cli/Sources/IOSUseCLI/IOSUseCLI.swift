@@ -116,6 +116,30 @@ public struct IOSUseCLI: Sendable {
                 return CLIResult(exitCode: 0, stdout: try DriverOutput.formatWaitFor(label: label, payload: client.waitFor(label: label, timeout: timeout, traits: traits)))
             case .screenshot(let name, _):
                 return try saveScreenshot(name: name, client: client)
+            case .tap(let target, let offset, let offsetRatio, let traits, _):
+                return try tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, client: client)
+            case .longPress(let target, let duration, let traits, _):
+                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatElement(client.longPress(target: try Self.target(target), durationMs: duration, traits: traits)))
+            case .input(let label, let content, let traits, _):
+                try client.input(label: label, content: content, traits: traits)
+                return CLIResult(exitCode: 0, stdout: "Input \"\(content)\" into \"\(label)\"\n")
+            case .swipe(let to, let from, let dir, let distance, let traits, _):
+                let result = try client.swipe(to: try Self.target(to), from: try Self.target(from), distance: distance, dir: dir, traits: traits)
+                return CLIResult(exitCode: 0, stdout: DriverOutput.formatSwipe(result))
+            case .activateApp(let bundleId, _):
+                try client.activateApp(bundleId: bundleId)
+                return CLIResult(exitCode: 0, stdout: "App \(bundleId) activated\n")
+            case .terminateApp(let bundleId, _):
+                try client.terminateApp(bundleId: bundleId)
+                return CLIResult(exitCode: 0, stdout: "App \(bundleId) terminated\n")
+            case .home:
+                try client.home()
+                return CLIResult(exitCode: 0, stdout: "Pressed Home\n")
+            case .openURL(let url, _):
+                _ = try client.openURL(url: url)
+                return CLIResult(exitCode: 0, stdout: "Opened URL: \(url)\n")
+            case .dismissAlert(let index, _):
+                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatAlert(client.dismissAlert(index: index)))
             default:
                 return parsedButNotImplemented(.driver(action))
             }
@@ -130,6 +154,37 @@ public struct IOSUseCLI: Sendable {
         let path = "\(paths.artifacts)/\(prefix).jpg"
         try client.screenshot().write(to: URL(fileURLWithPath: path))
         return CLIResult(exitCode: 0, stdout: "Screenshot saved: \(path)\n")
+    }
+
+    private func tap(target: String, offset: String?, offsetRatio: String?, traits: String?, client: DriverClient) throws -> CLIResult {
+        let foryTarget = try Self.target(target)
+        if foryTarget.point != nil && offset != nil {
+            throw CLIParseError.invalidValue("offset requires element label, not absolute point")
+        }
+        let offsetPoint = try offset.map(Self.pointPair)
+        let ratioPoint = try offsetPoint == nil ? (offsetRatio.map(Self.pointPair) ?? ForyPoint(x: 0.5, y: 0.5)) : ForyPoint(x: 0.5, y: 0.5)
+        let result = try client.tap(target: foryTarget, traits: traits, offset: offsetPoint, ratio: ratioPoint)
+        return CLIResult(exitCode: 0, stdout: DriverOutput.formatElement(result))
+    }
+
+    private static func target(_ value: String?) throws -> ForyTarget {
+        guard let value, !value.isEmpty else { return ForyTarget() }
+        if let point = try? pointPair(value) {
+            return ForyTarget(label: "", point: point)
+        }
+        return ForyTarget(label: value, point: nil)
+    }
+
+    private static func pointPair(_ value: String) throws -> ForyPoint {
+        let parts = value.split(separator: ",", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let x = Double(parts[0].trimmingCharacters(in: .whitespaces)),
+              let y = Double(parts[1].trimmingCharacters(in: .whitespaces)),
+              x.isFinite,
+              y.isFinite else {
+            throw CLIParseError.invalidValue("Invalid point pair: \"\(value)\"")
+        }
+        return ForyPoint(x: x, y: y)
     }
 
     private func listDevices(_ options: DeviceOptions) -> CLIResult {
