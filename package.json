@@ -13,7 +13,9 @@
   "scripts": {
     "start": "bun src/cli.ts",
     "test": "bun test",
-    "build": "bun build ./src/cli.ts --compile --outfile ./dist/ios-use"
+    "build": "bun build ./src/cli.ts --compile --outfile ./dist/ios-use",
+    "build:swift-cli": "bash scripts/build_swift_cli.sh",
+    "test:swift-cli": "bash scripts/test_swift_cli.sh"
   },
   "keywords": ["ios", "automation", "xctest", "uitest", "cli"],
   "author": "xhzq233",
