@@ -29,8 +29,9 @@
     "url": "https://github.com/xhzq233/ios-use/issues"
   },
   "homepage": "https://github.com/xhzq233/ios-use#readme",
-  "dependencies": {
+  "devDependencies": {
     "@apache-fory/core": "github:xhzq233/fory-js-core",
+    "@types/node": "^25.6.0",
     "bplist-creator": "^0.1.1",
     "bplist-parser": "^0.3.2",
     "chalk": "^5.6.2",
@@ -38,8 +39,5 @@
     "js-yaml": "^4.1.1",
     "ora": "^9.3.0",
     "plist": "^3.1.0"
-  },
-  "devDependencies": {
-    "@types/node": "^25.6.0"
   }
 }
