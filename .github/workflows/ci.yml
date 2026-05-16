@@ -21,6 +21,19 @@ permissions:
   contents: read
 
 jobs:
+  swift-stack:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Run Swift-only stack checks
+        env:
+          IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
+        run: bash scripts/test_swift_stack.sh
+
   unit:
     runs-on: macos-26
     steps:
