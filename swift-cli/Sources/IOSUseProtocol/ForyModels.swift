@@ -162,6 +162,76 @@ public struct ForyWaitForPayload {
 }
 
 @ForyStruct
+public struct ForyElementPayload {
+    public var elemType: Int32 = 0
+    public var label: String = ""
+    public var rect: ForyRect? = nil
+
+    public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil) {
+        self.elemType = elemType
+        self.label = label
+        self.rect = rect
+    }
+}
+
+@ForyStruct
+public struct ForySwipePayload {
+    public var ancestors: [String] = []
+    public var elemType: Int32 = 0
+    public var label: String = ""
+    public var rect: ForyRect? = nil
+    public var scrolls: Int32 = 0
+
+    public init(ancestors: [String] = [], elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, scrolls: Int32 = 0) {
+        self.ancestors = ancestors
+        self.elemType = elemType
+        self.label = label
+        self.rect = rect
+        self.scrolls = scrolls
+    }
+}
+
+@ForyStruct
+public struct ForyAlertPayload {
+    public var dismissed: Bool = false
+    public var text: String = ""
+    public var button: String = ""
+    public var reason: String = ""
+}
+
+@ForyStruct
+public struct ForySimpleStringPayload {
+    public var value: String = ""
+}
+
+@ForyStruct
+public struct ForyActivateAppArgs {
+    public var bundleId: String = ""
+
+    public init(bundleId: String = "") {
+        self.bundleId = bundleId
+    }
+}
+
+@ForyStruct
+public struct ForyTerminateAppArgs {
+    public var bundleId: String = ""
+
+    public init(bundleId: String = "") {
+        self.bundleId = bundleId
+    }
+}
+
+@ForyStruct
+public struct ForyOpenURLArgs {
+    public var url: String = ""
+
+    public init(url: String = "") {
+        self.url = url
+    }
+}
+
+@ForyStruct
 public struct ForyDomArgs {
     public var raw: Bool = false
     public var fresh: Bool = false
@@ -196,6 +266,73 @@ public struct ForyWaitForArgs {
     }
 }
 
+@ForyStruct
+public struct ForyInputArgs {
+    public var label: String = ""
+    public var content: String = ""
+    public var traits: String = ""
+
+    public init(label: String = "", content: String = "", traits: String = "") {
+        self.label = label
+        self.content = content
+        self.traits = traits
+    }
+}
+
+@ForyStruct
+public struct ForyTapArgs {
+    public var target: ForyTarget = ForyTarget()
+    public var traits: String = ""
+    public var offset: ForyPoint? = nil
+    public var ratio: ForyPoint = ForyPoint(x: 0.5, y: 0.5)
+
+    public init(target: ForyTarget = ForyTarget(), traits: String = "", offset: ForyPoint? = nil, ratio: ForyPoint = ForyPoint(x: 0.5, y: 0.5)) {
+        self.target = target
+        self.traits = traits
+        self.offset = offset
+        self.ratio = ratio
+    }
+}
+
+@ForyStruct
+public struct ForyLongPressArgs {
+    public var target: ForyTarget = ForyTarget()
+    public var duration: Double = 0
+    public var traits: String = ""
+
+    public init(target: ForyTarget = ForyTarget(), duration: Double = 0, traits: String = "") {
+        self.target = target
+        self.duration = duration
+        self.traits = traits
+    }
+}
+
+@ForyStruct
+public struct ForySwipeArgs {
+    public var toTarget: ForyTarget = ForyTarget()
+    public var fromTarget: ForyTarget = ForyTarget()
+    public var distance: Double = 0
+    public var dir: Int32 = -1
+    public var traits: String = ""
+
+    public init(toTarget: ForyTarget = ForyTarget(), fromTarget: ForyTarget = ForyTarget(), distance: Double = 0, dir: Int32 = -1, traits: String = "") {
+        self.toTarget = toTarget
+        self.fromTarget = fromTarget
+        self.distance = distance
+        self.dir = dir
+        self.traits = traits
+    }
+}
+
+@ForyStruct
+public struct ForyDismissAlertArgs {
+    public var index: Int32 = -1
+
+    public init(index: Int32 = -1) {
+        self.index = index
+    }
+}
+
 public enum ForyRegistry {
     public static func create() -> Fory {
         let fory = Fory()
@@ -211,9 +348,21 @@ public enum ForyRegistry {
         try! fory.register(ForyScreenshotPayload.self, name: "ForyScreenshotPayload")
         try! fory.register(ForyFindPayload.self, name: "ForyFindPayload")
         try! fory.register(ForyWaitForPayload.self, name: "ForyWaitForPayload")
+        try! fory.register(ForyElementPayload.self, name: "ForyElementPayload")
+        try! fory.register(ForySwipePayload.self, name: "ForySwipePayload")
+        try! fory.register(ForyAlertPayload.self, name: "ForyAlertPayload")
+        try! fory.register(ForySimpleStringPayload.self, name: "ForySimpleStringPayload")
+        try! fory.register(ForyActivateAppArgs.self, name: "ForyActivateAppArgs")
+        try! fory.register(ForyTerminateAppArgs.self, name: "ForyTerminateAppArgs")
+        try! fory.register(ForyOpenURLArgs.self, name: "ForyOpenURLArgs")
         try! fory.register(ForyDomArgs.self, name: "ForyDomArgs")
         try! fory.register(ForyFindArgs.self, name: "ForyFindArgs")
         try! fory.register(ForyWaitForArgs.self, name: "ForyWaitForArgs")
+        try! fory.register(ForyInputArgs.self, name: "ForyInputArgs")
+        try! fory.register(ForyTapArgs.self, name: "ForyTapArgs")
+        try! fory.register(ForyLongPressArgs.self, name: "ForyLongPressArgs")
+        try! fory.register(ForySwipeArgs.self, name: "ForySwipeArgs")
+        try! fory.register(ForyDismissAlertArgs.self, name: "ForyDismissAlertArgs")
         return fory
     }
 }
