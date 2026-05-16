@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       full_simulator:
-        description: "Run full local regression via scripts/test_all.sh"
+        description: "Run full Simulator regression via scripts/test_full_simulator.sh"
         required: false
         default: false
         type: boolean
@@ -72,7 +72,7 @@ jobs:
         if: inputs.full_simulator && inputs.simulator_cases == ''
         env:
           IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
-        run: bash scripts/test_all.sh
+        run: bash scripts/test_full_simulator.sh
 
       - name: Run selected Simulator command cases
         if: inputs.simulator_cases != ''
