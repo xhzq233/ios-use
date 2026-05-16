@@ -43,6 +43,24 @@ public enum DriverOutput {
         return "\(elementTypeName(payload.elemType)) \"\(payload.label)\" \(rect) waited=\(String(format: "%.2f", payload.waited))s\n"
     }
 
+    public static func formatElement(_ payload: ForyElementPayload) -> String {
+        let rect = payload.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"
+        let label = payload.label.isEmpty ? "" : " \"\(payload.label)\""
+        return "\(elementTypeName(payload.elemType))\(label) \(rect)\n"
+    }
+
+    public static func formatSwipe(_ payload: ForySwipePayload) -> String {
+        let label = payload.label.isEmpty ? "" : " \"\(payload.label)\""
+        return "\(elementTypeName(payload.elemType))\(label) scrolls=\(payload.scrolls)\n"
+    }
+
+    public static func formatAlert(_ payload: ForyAlertPayload) -> String {
+        if payload.dismissed {
+            return "Alert dismissed: tapped \"\(payload.button)\" (text: \(payload.text))\n"
+        }
+        return "No alert found: \(payload.reason)\n"
+    }
+
     public static func elementTypeName(_ raw: Int32) -> String {
         switch raw {
         case 7: return "Button"
