@@ -16,6 +16,11 @@ on:
         required: false
         default: ""
         type: string
+      legacy_bun_tests:
+        description: "Run legacy TypeScript/Bun compatibility unit tests"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -34,8 +39,9 @@ jobs:
           IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
         run: bash scripts/test_swift_stack.sh
 
-  unit:
+  legacy-bun-tests:
     runs-on: macos-26
+    if: github.event_name == 'workflow_dispatch' && inputs.legacy_bun_tests
     steps:
       - uses: actions/checkout@v4
 
@@ -46,9 +52,6 @@ jobs:
 
       - name: Run Bun unit tests
         run: bun test
-
-      - name: Run Swift CLI unit tests
-        run: bash scripts/test_swift_cli.sh
 
   full-simulator:
     runs-on: macos-26
