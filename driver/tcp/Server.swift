@@ -14,8 +14,8 @@ import Fory
         }
     }
 
-    private let defaultPort = DriverConstants.defaultPort
-    private let maxConnections = DriverConstants.maxConnections
+    private let defaultPort = IOSUseProtocol.defaultDriverPort
+    private let maxConnections = IOSUseProtocol.maxDriverConnections
     private var socketFD: Int32 = -1
     private var _running = false
     private var running: Bool {
@@ -59,7 +59,7 @@ import Fory
             throw DriverError.serverError("bind failed: \(err)")
         }
 
-        guard Darwin.listen(socketFD, DriverConstants.listenBacklog) >= 0 else {
+        guard Darwin.listen(socketFD, IOSUseProtocol.listenBacklog) >= 0 else {
             let err = errno
             Darwin.close(socketFD)
             socketFD = -1
@@ -86,7 +86,7 @@ import Fory
         if fd >= 0 {
             Darwin.close(fd)
         }
-        _ = acceptLoopSem?.wait(timeout: .now() + .seconds(DriverConstants.serverStopTimeoutSeconds))
+        _ = acceptLoopSem?.wait(timeout: .now() + .seconds(IOSUseProtocol.serverStopTimeoutSeconds))
         acceptLoopSem = nil
     }
 
@@ -183,7 +183,7 @@ import Fory
                 let startedAt = CFAbsoluteTimeGetCurrent()
                 NSLog("[driver] dispatch start command=\(command.rawValue)")
                 let response = try self.dispatchFory(payload, command: command)
-                NSLog("[driver] dispatch finish command=\(command.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * DriverConstants.millisecondsPerSecond))ms")
+                NSLog("[driver] dispatch finish command=\(command.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond))ms")
                 result = response
             } catch {
                 NSLog("[driver] dispatch error command=\(command.rawValue) error=\(error)")
@@ -191,7 +191,7 @@ import Fory
             }
             sem.signal()
         }
-        let waitResult = sem.wait(timeout: .now() + .seconds(DriverConstants.commandTimeoutSeconds))
+        let waitResult = sem.wait(timeout: .now() + .seconds(IOSUseProtocol.commandTimeoutSeconds))
         if waitResult == .timedOut {
             cancelLock.lock()
             let commandStarted = started
@@ -200,10 +200,10 @@ import Fory
             }
             cancelLock.unlock()
             if !commandStarted {
-                return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after \(DriverConstants.commandTimeoutSeconds)s (XCTest main thread may be blocked or crashed)")
+                return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after \(IOSUseProtocol.commandTimeoutSeconds)s (XCTest main thread may be blocked or crashed)")
             }
 
-            let completionWaitResult = sem.wait(timeout: .now() + .seconds(DriverConstants.commandCompletionTimeoutSeconds))
+            let completionWaitResult = sem.wait(timeout: .now() + .seconds(IOSUseProtocol.commandCompletionTimeoutSeconds))
             if completionWaitResult == .timedOut {
                 return ForyResponseFrame(ok: false, error: "[FATAL] Command started on the XCTest main thread but did not finish within 120s; driver state may be inconsistent")
             }

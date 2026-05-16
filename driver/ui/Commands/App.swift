@@ -50,10 +50,10 @@ enum App {
 
     private static func waitForForeground(_ app: XCUIApplication, bundleId: String?) throws {
         NSLog("[app] waiting for app to enter foreground...")
-        let deadline = CFAbsoluteTimeGetCurrent() + AppLifecycleConstants.foregroundTimeoutSeconds
+        let deadline = CFAbsoluteTimeGetCurrent() + IOSUseProtocol.appForegroundTimeoutSeconds
         var state = app.state
         while state != .runningForeground && CFAbsoluteTimeGetCurrent() < deadline {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: AppLifecycleConstants.statePollIntervalSeconds))
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: IOSUseProtocol.appStatePollIntervalSeconds))
             state = app.state
         }
         guard state == .runningForeground else {
@@ -65,10 +65,10 @@ enum App {
 
     private static func waitForTermination(_ app: XCUIApplication) throws {
         NSLog("[app] waiting for app to terminate...")
-        let deadline = CFAbsoluteTimeGetCurrent() + AppLifecycleConstants.terminationTimeoutSeconds
+        let deadline = CFAbsoluteTimeGetCurrent() + IOSUseProtocol.appTerminationTimeoutSeconds
         var state = app.state
         while state != .notRunning && state != .unknown && CFAbsoluteTimeGetCurrent() < deadline {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: AppLifecycleConstants.statePollIntervalSeconds))
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: IOSUseProtocol.appStatePollIntervalSeconds))
             state = app.state
         }
         guard state == .notRunning || state == .unknown else {
