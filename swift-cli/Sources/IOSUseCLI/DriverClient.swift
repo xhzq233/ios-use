@@ -103,6 +103,11 @@ final class DriverClient {
         return try fory.deserialize(payload, as: ForyAlertPayload.self)
     }
 
+    func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
+        let payload = try send(command: DriverCommand.proxyCAPush.rawValue, args: ForyProxyCAPushArgs(caBase64: caBase64))
+        return try fory.deserialize(payload, as: ForyProxyPayload.self)
+    }
+
     private func send<Args>(command: String, args: Args) throws -> Data {
         let payload = try fory.serialize(args)
         return try sendRawPayload(command: command, payload: payload)
