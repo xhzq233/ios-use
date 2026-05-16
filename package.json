@@ -14,7 +14,6 @@
     "start": "./dist/ios-use",
     "test": "bun test",
     "build": "bash scripts/build_swift_cli.sh",
-    "build:legacy-bun": "bun build ./src/cli.ts --compile --outfile ./dist/ios-use-bun",
     "build:swift-cli": "bash scripts/build_swift_cli.sh",
     "test:swift-cli": "bash scripts/test_swift_cli.sh"
   },
