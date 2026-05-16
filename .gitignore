@@ -20,6 +20,8 @@ driver/build/
 *.xcuserstate
 xcuserdata/
 DerivedData/
+swift-cli/.build/
+swift-cli/.swiftpm/
 .env
 .env.*
 *.log
