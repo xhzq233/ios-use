@@ -13,10 +13,55 @@ public struct CLIResult: Equatable, Sendable {
     }
 }
 
+public struct CLIErrorEnvelope: Equatable, Sendable {
+    public let message: String
+    public let exitCode: Int32
+
+    public init(message: String, exitCode: Int32 = 64) {
+        self.message = message
+        self.exitCode = exitCode
+    }
+
+    public func render() -> CLIResult {
+        CLIResult(exitCode: exitCode, stderr: "error: \(message)\n")
+    }
+}
+
+public struct IOSUsePaths: Equatable, Sendable {
+    public let root: String
+    public let config: String
+    public let session: String
+    public let logs: String
+    public let artifacts: String
+
+    public static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> IOSUsePaths {
+        let root = configuredRoot(environment: environment)
+        return IOSUsePaths(
+            root: root,
+            config: "\(root)/config.json",
+            session: "\(root)/state/session.json",
+            logs: "\(root)/logs",
+            artifacts: "\(root)/artifacts"
+        )
+    }
+
+    private static func configuredRoot(environment: [String: String]) -> String {
+        if let iosUseHome = environment["IOS_USE_HOME"], !iosUseHome.isEmpty {
+            return iosUseHome
+        }
+        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        return "\(home)/.ios-use"
+    }
+}
+
 public struct IOSUseCLI: Sendable {
     public static let version = "1.0.0"
 
-    public init() {}
+    public let paths: IOSUsePaths
+
+    public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        self.paths = IOSUsePaths.resolve(environment: environment)
+    }
 
     public func run(arguments: [String]) -> CLIResult {
         guard let first = arguments.first else {
@@ -30,7 +75,7 @@ public struct IOSUseCLI: Sendable {
             return CLIResult(exitCode: 0, stdout: "\(Self.version)\n")
         default:
             if first.hasPrefix("-") {
-                return CLIResult(exitCode: 64, stderr: "error: unknown option '\(first)'\n")
+                return CLIErrorEnvelope(message: "unknown option '\(first)'").render()
             }
             return unsupportedCommand(first)
         }
@@ -38,10 +83,7 @@ public struct IOSUseCLI: Sendable {
 
     private func unsupportedCommand(_ command: String) -> CLIResult {
         let known = DriverCommand(rawValue: command) != nil ? "driver command" : "command"
-        return CLIResult(
-            exitCode: 64,
-            stderr: "error: Swift CLI \(known) '\(command)' is not implemented yet; use the TypeScript CLI for now.\n"
-        )
+        return CLIErrorEnvelope(message: "Swift CLI \(known) '\(command)' is not implemented yet; use the TypeScript CLI for now.").render()
     }
 
     public static var helpText: String {
