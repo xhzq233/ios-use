@@ -1,7 +1,6 @@
 node_modules/
 .DS_Store
 output/
-bun.lock
 package-lock.json
 dist/
 log/
