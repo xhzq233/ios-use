@@ -12,18 +12,27 @@ if [[ -n "$SCRIPT_SOURCE" && "$SCRIPT_SOURCE" != "-" && -e "$SCRIPT_SOURCE" ]]; 
 else
   ROOT_DIR="$(pwd)"
 fi
-DIST_DIR="$ROOT_DIR/dist"
-OUTFILE="$DIST_DIR/ios-use"
+
 USER_TARGET_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 PRIMARY_TARGET_DIR="$USER_TARGET_DIR"
 SECONDARY_TARGET_DIR="$HOME/bin"
 GITHUB_REPO="${IOS_USE_GITHUB_REPO:-xhzq233/ios-use}"
-GITHUB_REF="${IOS_USE_REF:-main}"
+INSTALL_VERSION="${IOS_USE_VERSION:-${IOS_USE_DRIVER_VERSION:-latest}}"
+if [[ -n "${IOS_USE_REF:-}" ]]; then
+  GITHUB_REF="$IOS_USE_REF"
+elif [[ "$INSTALL_VERSION" == "latest" ]]; then
+  GITHUB_REF="main"
+else
+  GITHUB_REF="$INSTALL_VERSION"
+fi
+DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-$INSTALL_VERSION}"
 ALTSIGN_REPO="xhzq233/altsign-cli"
 ALTSIGN_VERSION="v0.1.1"
-DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-v1.0.0}"
 BOOTSTRAP_DIR=""
 PRINT_PATH_ONLY=0
+BUILD_FROM_SOURCE=0
+DIST_DIR=""
+OUTFILE=""
 
 cleanup() {
   if [[ -n "$BOOTSTRAP_DIR" && -d "$BOOTSTRAP_DIR" ]]; then
@@ -32,21 +41,81 @@ cleanup() {
 }
 trap cleanup EXIT
 
+usage() {
+  cat <<'USAGE'
+Usage: install.sh [--build-from-source] [--print-path]
+
+Options:
+  --build-from-source  Compile the Swift CLI locally instead of downloading the
+                       prebuilt macOS CLI from the GitHub Release.
+  --print-path         Print the installed binary path after installation.
+
+Environment:
+  IOS_USE_VERSION       Release tag to install. Defaults to latest.
+  IOS_USE_DRIVER_VERSION
+                        Driver release tag override. Defaults to IOS_USE_VERSION.
+  IOS_USE_REF           Source ref used when source files are needed.
+  IOS_USE_GITHUB_REPO   GitHub repository. Defaults to xhzq233/ios-use.
+USAGE
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --build-from-source)
+      BUILD_FROM_SOURCE=1
+      shift
+      ;;
     --print-path)
       PRINT_PATH_ONLY=1
       shift
       ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
     *)
       echo "Unknown arg: $1" >&2
+      usage >&2
       exit 1
       ;;
   esac
 done
 
+refresh_paths() {
+  DIST_DIR="$ROOT_DIR/dist"
+  OUTFILE="$DIST_DIR/ios-use"
+}
+
+release_asset_url() {
+  local version="$1"
+  local asset="$2"
+  if [[ "$version" == "latest" ]]; then
+    printf 'https://github.com/%s/releases/latest/download/%s\n' "$GITHUB_REPO" "$asset"
+  else
+    printf 'https://github.com/%s/releases/download/%s/%s\n' "$GITHUB_REPO" "$version" "$asset"
+  fi
+}
+
+mac_cli_asset_name() {
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    arm64|aarch64)
+      printf 'ios-use-darwin-arm64\n'
+      ;;
+    x86_64)
+      printf 'ios-use-darwin-x86_64\n'
+      ;;
+    *)
+      echo "Unsupported macOS architecture: $arch" >&2
+      exit 1
+      ;;
+  esac
+}
+
 bootstrap_remote_repo() {
-  if [[ -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
+  if [[ -d "$ROOT_DIR/ios-use-skill" && -d "$ROOT_DIR/flows" && -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
+    refresh_paths
     return
   fi
 
@@ -60,40 +129,59 @@ bootstrap_remote_repo() {
   echo "Downloading ios-use source from ${GITHUB_REPO}@${GITHUB_REF}..."
   curl -fsSL "$archive_url" | tar -xzf - -C "$BOOTSTRAP_DIR"
   ROOT_DIR="$(find "$BOOTSTRAP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  if [[ -z "$ROOT_DIR" || ! -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
+  if [[ -z "$ROOT_DIR" || ! -d "$ROOT_DIR/ios-use-skill" || ! -d "$ROOT_DIR/flows" ]]; then
     echo "Failed to bootstrap ios-use source tree." >&2
     exit 1
   fi
-  DIST_DIR="$ROOT_DIR/dist"
-  OUTFILE="$DIST_DIR/ios-use"
+  if [[ "$BUILD_FROM_SOURCE" -eq 1 && ! -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
+    echo "Swift CLI package not found in bootstrapped source tree." >&2
+    exit 1
+  fi
+  refresh_paths
 }
 
-bootstrap_remote_repo
+build_or_download_cli() {
+  mkdir -p "$DIST_DIR"
 
-mkdir -p "$DIST_DIR"
+  if [[ "$BUILD_FROM_SOURCE" -eq 1 ]]; then
+    if [[ ! -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
+      echo "Swift CLI package not found at $ROOT_DIR/swift-cli" >&2
+      exit 1
+    fi
+    echo "Compiling ios-use binary from source..."
+    bash "$ROOT_DIR/scripts/build_swift_cli.sh"
+    codesign --sign - --force "$OUTFILE" >/dev/null
+    return
+  fi
 
-echo "Compiling ios-use binary..."
-if [[ ! -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
-  echo "Swift CLI package not found at $ROOT_DIR/swift-cli" >&2
-  exit 1
-fi
-bash "$ROOT_DIR/scripts/build_swift_cli.sh"
-codesign --sign - --force "$OUTFILE"
+  local cli_asset
+  cli_asset="$(mac_cli_asset_name)"
+  echo "Downloading ios-use ${INSTALL_VERSION} (${cli_asset})..."
+  curl -fsSL "$(release_asset_url "$INSTALL_VERSION" "$cli_asset")" -o "$OUTFILE"
+  chmod +x "$OUTFILE"
+}
+
+install_driver_artifact() {
+  local asset="$1"
+  local destination="$2"
+  local local_asset="$ROOT_DIR/assets/$asset"
+  mkdir -p "$(dirname "$destination")"
+  if [[ -f "$local_asset" ]]; then
+    install -m 644 "$local_asset" "$destination"
+    return
+  fi
+
+  echo "Downloading ${asset} ${DRIVER_VERSION}..."
+  curl -fsSL "$(release_asset_url "$DRIVER_VERSION" "$asset")" -o "$destination"
+}
 
 install_binary() {
   local target_dir="$1"
   mkdir -p "$target_dir" "$HOME/.ios-use/runtime"
   install -m 755 "$OUTFILE" "$target_dir/ios-use"
 
-  # driver.ipa: local assets/ > GitHub Release
-  local driver_ipa="$HOME/.ios-use/driver.ipa"
-  if [[ -f "$ROOT_DIR/assets/driver.ipa" ]]; then
-    install -m 644 "$ROOT_DIR/assets/driver.ipa" "$driver_ipa"
-  else
-    echo "Downloading driver.ipa ${DRIVER_VERSION}..."
-    curl -fsSL "https://github.com/${GITHUB_REPO}/releases/download/${DRIVER_VERSION}/driver.ipa" \
-      -o "$driver_ipa"
-  fi
+  install_driver_artifact "driver.ipa" "$HOME/.ios-use/driver.ipa"
+  install_driver_artifact "driver-sim.ipa" "$HOME/.ios-use/driver-sim.ipa"
 
   # skill: install to ~/.ios-use/skill/, symlink to ~/.agents/skills/ios-use
   local skill_src="$ROOT_DIR/ios-use-skill"
@@ -153,6 +241,9 @@ resolve_target_dir() {
 
   printf '%s\n' "$PRIMARY_TARGET_DIR"
 }
+
+bootstrap_remote_repo
+build_or_download_cli
 
 TARGET_DIR="$(resolve_target_dir)"
 install_binary "$TARGET_DIR"
