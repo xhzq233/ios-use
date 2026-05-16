@@ -77,13 +77,42 @@ public struct IOSUseCLI: Sendable {
             if first.hasPrefix("-") {
                 return CLIErrorEnvelope(message: "unknown option '\(first)'").render()
             }
-            return unsupportedCommand(first)
+            do {
+                let parsed = try CLIParser.parse(arguments)
+                return execute(parsed)
+            } catch let error as CLIParseError {
+                return CLIErrorEnvelope(message: error.description).render()
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)").render()
+            }
         }
     }
 
-    private func unsupportedCommand(_ command: String) -> CLIResult {
-        let known = DriverCommand(rawValue: command) != nil ? "driver command" : "command"
-        return CLIErrorEnvelope(message: "Swift CLI \(known) '\(command)' is not implemented yet; use the TypeScript CLI for now.").render()
+    private func execute(_ parsed: ParsedCommand) -> CLIResult {
+        switch parsed {
+        case .devices(let options):
+            return listDevices(options)
+        default:
+            return parsedButNotImplemented(parsed)
+        }
+    }
+
+    private func listDevices(_ options: DeviceOptions) -> CLIResult {
+        do {
+            let devices = try DeviceService.listDevices(simulatorOnly: options.simulator, paths: paths)
+            if devices.isEmpty {
+                return CLIResult(exitCode: 0, stdout: options.simulator ? "No booted Simulators found\n" : "No connected real devices found\n")
+            }
+            let configured = DeviceService.configuredUdids(paths: paths)
+            let lines = devices.map { DeviceService.format($0, configured: configured) }.joined(separator: "\n")
+            return CLIResult(exitCode: 0, stdout: "\(lines)\n")
+        } catch {
+            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+        }
+    }
+
+    private func parsedButNotImplemented(_ parsed: ParsedCommand) -> CLIResult {
+        CLIErrorEnvelope(message: "Swift CLI command '\(parsed.commandName)' parsed successfully but execution is not migrated yet.").render()
     }
 
     public static var helpText: String {
