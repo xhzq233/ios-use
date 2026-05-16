@@ -8,7 +8,7 @@ enum WaitForCommands {
     static func waitFor(_ args: ForyWaitForArgs) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
 
-        let timeout = args.timeout > 0 ? args.timeout : WaitForConstants.defaultTimeoutSeconds
+        let timeout = args.timeout > 0 ? args.timeout : IOSUseProtocol.waitForDefaultTimeoutSeconds
         guard timeout > 0 else {
             return Codec.foryError("waitFor: timeout must be > 0")
         }
@@ -46,7 +46,7 @@ enum WaitForCommands {
                 return Codec.foryError("waitFor '\(args.label)' timed out after \(timeout)s")
             }
             shouldUseFreshSnapshot = true
-            usleep(UInt32(WaitForConstants.pollIntervalMilliseconds * WaitForConstants.microsecondsPerMillisecond))
+            usleep(UInt32(IOSUseProtocol.waitForPollIntervalMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
         }
     }
 }

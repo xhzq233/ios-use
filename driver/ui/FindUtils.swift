@@ -193,7 +193,7 @@ func fuzzySuggestions(forNormalizedQuery normalizedQuery: String, from candidate
     if threshold <= 0 { return [] }
 
     var best: [(SearchCandidate, Int)] = []
-    best.reserveCapacity(FuzzySearchConstants.maxSuggestionCount)
+    best.reserveCapacity(IOSUseProtocol.fuzzyMaxSuggestionCount)
 
     for candidate in candidates {
         guard !candidate.normalizedText.isEmpty else { continue }
@@ -201,11 +201,11 @@ func fuzzySuggestions(forNormalizedQuery normalizedQuery: String, from candidate
         let distance = levenshtein(normalizedQuery, candidate.normalizedText)
         guard distance <= threshold else { continue }
         let item = (candidate, distance)
-        if best.count < FuzzySearchConstants.maxSuggestionCount {
+        if best.count < IOSUseProtocol.fuzzyMaxSuggestionCount {
             best.append(item)
             best.sort(by: fuzzyRankedBefore)
-        } else if fuzzyRankedBefore(item, best[FuzzySearchConstants.maxSuggestionCount - 1]) {
-            best[FuzzySearchConstants.maxSuggestionCount - 1] = item
+        } else if fuzzyRankedBefore(item, best[IOSUseProtocol.fuzzyMaxSuggestionCount - 1]) {
+            best[IOSUseProtocol.fuzzyMaxSuggestionCount - 1] = item
             best.sort(by: fuzzyRankedBefore)
         }
     }
@@ -224,14 +224,14 @@ private func nodeIdentity(_ node: SafeSnapshot) -> ObjectIdentifier {
 
 private func fuzzyThreshold(for length: Int) -> Int {
     switch length {
-    case ...FuzzySearchConstants.noSuggestionMaxLength:
+    case ...IOSUseProtocol.fuzzyNoSuggestionMaxLength:
         return 0
-    case ...FuzzySearchConstants.nearTypoMaxLength:
-        return FuzzySearchConstants.nearTypoThreshold
-    case ...FuzzySearchConstants.mediumTypoMaxLength:
-        return FuzzySearchConstants.mediumTypoThreshold
+    case ...IOSUseProtocol.fuzzyNearTypoMaxLength:
+        return IOSUseProtocol.fuzzyNearTypoThreshold
+    case ...IOSUseProtocol.fuzzyMediumTypoMaxLength:
+        return IOSUseProtocol.fuzzyMediumTypoThreshold
     default:
-        return FuzzySearchConstants.longTypoThreshold
+        return IOSUseProtocol.fuzzyLongTypoThreshold
     }
 }
 

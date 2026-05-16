@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import CryptoKit
+import IOSUseProtocol
 
 public struct ProxySessionState: Codable, Equatable, Sendable {
     public struct NetworkInfo: Codable, Equatable, Sendable {
@@ -21,13 +22,6 @@ public struct ProxySessionState: Codable, Equatable, Sendable {
 }
 
 public enum ProxyService {
-    private static let mitmdumpPort = 9080
-    private static let caGenerationTimeoutMs = 10_000
-    private static let caGenerationPollMs = 200
-    private static let waitPortTimeoutMs = 5_000
-    private static let waitPortPollMs = 200
-    private static let processGraceMs = 3_000
-
     public static func doctor(paths: IOSUsePaths) -> String {
         var lines = ["", "Proxy Doctor:", ""]
         lines.append(commandExists("mitmdump") ? "  ✓ mitmdump installed" : "  ✗ mitmdump installed")
@@ -82,7 +76,7 @@ public enum ProxyService {
         do {
             _ = try FlowService.run(
                 file: flowPath("proxy_set_wifi_proxy.yaml", paths: paths),
-                options: FlowOptions(file: "", udid: udid, externalVars: ["server": wifi.macLanIp, "port": String(mitmdumpPort)]),
+                options: FlowOptions(file: "", udid: udid, externalVars: ["server": wifi.macLanIp, "port": String(IOSUseProtocol.proxyMitmdumpPort)]),
                 paths: paths
             )
         } catch {
@@ -99,10 +93,10 @@ public enum ProxyService {
             caInstalled: caReady,
             network: ProxySessionState.NetworkInfo(interface: wifi.interface, macLanIp: wifi.macLanIp),
             mitmdumpPid: pid,
-            mitmdumpPort: mitmdumpPort
+            mitmdumpPort: IOSUseProtocol.proxyMitmdumpPort
         )
         try writeState(state, paths: paths)
-        var output = "Proxy started. Traffic: device -> \(wifi.macLanIp):\(mitmdumpPort) -> mitmdump\nCapture: \(flowFile)\nView with: mitmweb -r \(flowFile)\n"
+        var output = "Proxy started. Traffic: device -> \(wifi.macLanIp):\(IOSUseProtocol.proxyMitmdumpPort) -> mitmdump\nCapture: \(flowFile)\nView with: mitmweb -r \(flowFile)\n"
         if !caReady {
             output = "CA trust record not found. HTTP capture can still work; HTTPS decryption requires the CA to be installed and trusted.\n" + output
         }
@@ -184,13 +178,13 @@ public enum ProxyService {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
-        let deadline = Date().addingTimeInterval(Double(caGenerationTimeoutMs) / 1000.0)
+        let deadline = Date().addingTimeInterval(Double(IOSUseProtocol.mitmproxyCAGenerationTimeoutMilliseconds) / 1000.0)
         while Date() < deadline {
             if FileManager.default.fileExists(atPath: caPath()) {
                 process.terminate()
                 return
             }
-            usleep(useconds_t(caGenerationPollMs * 1000))
+            usleep(useconds_t(IOSUseProtocol.mitmproxyCAGenerationPollMilliseconds * 1000))
         }
         process.terminate()
         throw CLIParseError.invalidValue("CA_NOT_GENERATED: Failed to generate mitmproxy CA.")
@@ -204,7 +198,7 @@ public enum ProxyService {
             "-q",
             "--mode", "regular",
             "--listen-host", "0.0.0.0",
-            "--listen-port", String(mitmdumpPort),
+            "--listen-port", String(IOSUseProtocol.proxyMitmdumpPort),
             "--set", "confdir=\(mitmproxyDir())",
             "--set", "ssl_insecure=true",
             "--set", "connection_strategy=lazy",
@@ -214,7 +208,7 @@ public enum ProxyService {
         process.standardError = FileHandle.nullDevice
         try process.run()
         do {
-            try waitForPort(mitmdumpPort)
+            try waitForPort(IOSUseProtocol.proxyMitmdumpPort)
             return process.processIdentifier
         } catch {
             process.terminate()
@@ -223,7 +217,7 @@ public enum ProxyService {
     }
 
     private static func waitForPort(_ port: Int) throws {
-        let deadline = Date().addingTimeInterval(Double(waitPortTimeoutMs) / 1000.0)
+        let deadline = Date().addingTimeInterval(Double(IOSUseProtocol.proxyWaitPortTimeoutMilliseconds) / 1000.0)
         while Date() < deadline {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
             if fd >= 0 {
@@ -239,9 +233,9 @@ public enum ProxyService {
                 close(fd)
                 if ok { return }
             }
-            usleep(useconds_t(waitPortPollMs * 1000))
+            usleep(useconds_t(IOSUseProtocol.proxyWaitPortPollMilliseconds * 1000))
         }
-        throw CLIParseError.invalidValue("Port \(port) not ready after \(waitPortTimeoutMs)ms")
+        throw CLIParseError.invalidValue("Port \(port) not ready after \(IOSUseProtocol.proxyWaitPortTimeoutMilliseconds)ms")
     }
 
     private static func detectLanInfo(interfaceName: String?) throws -> ProxySessionState.NetworkInfo {
@@ -307,7 +301,7 @@ public enum ProxyService {
     private static func killPid(_ pid: Int32?) {
         guard let pid, pid > 0 else { return }
         _ = kill(pid, SIGTERM)
-        let deadline = Date().addingTimeInterval(Double(processGraceMs) / 1000.0)
+        let deadline = Date().addingTimeInterval(Double(IOSUseProtocol.proxyProcessGraceMilliseconds) / 1000.0)
         while Date() < deadline {
             if !processAlive(pid) { return }
             usleep(100_000)

@@ -41,8 +41,8 @@ func scrollSegments(for vector: CGVector, scrollFrame: CGRect) -> [CGVector] {
     guard scrollFrame.width > 0, scrollFrame.height > 0 else { return [] }
 
     var boundingVector = CGVector(
-        dx: scrollFrame.width * ScrollConstants.scrollTouchProportion,
-        dy: scrollFrame.height * ScrollConstants.scrollTouchProportion
+        dx: scrollFrame.width * CGFloat(IOSUseProtocol.scrollTouchProportion),
+        dy: scrollFrame.height * CGFloat(IOSUseProtocol.scrollTouchProportion)
     )
     boundingVector.dx = floor(copysign(boundingVector.dx, vector.dx))
     boundingVector.dy = floor(copysign(boundingVector.dy, vector.dy))
@@ -51,7 +51,7 @@ func scrollSegments(for vector: CGVector, scrollFrame: CGRect) -> [CGVector] {
     if boundingVector.dx == 0 && boundingVector.dy == 0 { return [] }
 
     var remaining = vector
-    var attempts = ScrollConstants.preciseScrollMaxSegments
+    var attempts = IOSUseProtocol.preciseScrollMaxSegments
     var segments: [CGVector] = []
 
     while true {
@@ -64,8 +64,8 @@ func scrollSegments(for vector: CGVector, scrollFrame: CGRect) -> [CGVector] {
         // Tiny residual segments do not form a meaningful scroll. Drop them at
         // the planning stage so callers can distinguish "no effective drag"
         // from "real drag dispatched but content hit boundary".
-        if abs(segment.dx) >= ScrollConstants.fuzzyPointThreshold
-            || abs(segment.dy) >= ScrollConstants.fuzzyPointThreshold {
+        if abs(segment.dx) >= CGFloat(IOSUseProtocol.fuzzyPointThreshold)
+            || abs(segment.dy) >= CGFloat(IOSUseProtocol.fuzzyPointThreshold) {
             segments.append(segment)
         }
 
@@ -116,7 +116,7 @@ func dispatchScrollSegments(_ segments: [CGVector], scrollFrame: CGRect, app: XC
             // doc 5.8 — segment-level settle (multi-segment requires brief settle
             // for UIScrollView to flush; single-segment callers still get one sleep
             // before next outer iteration).
-            Thread.sleep(forTimeInterval: ScrollConstants.settleInterval)
+            Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
         }
     }
     return segments.count
@@ -151,7 +151,7 @@ func centerScrollAdjustment(targetFrame: CGRect, scrollFrame: CGRect) -> CGVecto
 ///   → starting point at (1 - scrollTouchProportion) edge, leaving 75% of frame for the drag
 /// Time complexity: O(1).
 func hitPointOffset(for vector: CGVector, scrollFrame: CGRect) -> CGVector {
-    let prop = ScrollConstants.scrollTouchProportion
+    let prop = CGFloat(IOSUseProtocol.scrollTouchProportion)
     let x = scrollFrame.minX + scrollFrame.width * (vector.dx < 0 ? prop : (1 - prop))
     let y = scrollFrame.minY + scrollFrame.height * (vector.dy < 0 ? prop : (1 - prop))
     return CGVector(dx: floor(x), dy: floor(y))
@@ -174,9 +174,9 @@ func scrollAncestorByVector(_ vector: CGVector, scrollFrame: CGRect, app: XCUIAp
         event: .drag(
             start: startCoord,
             end: endCoord,
-            pressDuration: ScrollConstants.touchPressDuration,
-            velocity: ScrollConstants.touchVelocity,
-            holdDuration: ScrollConstants.touchHoldDuration
+            pressDuration: IOSUseProtocol.touchPressDuration,
+            velocity: IOSUseProtocol.touchVelocity,
+            holdDuration: IOSUseProtocol.touchHoldDuration
         )
     )
 }

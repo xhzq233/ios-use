@@ -212,9 +212,9 @@ enum SwipeCommands {
             event: .drag(
                 start: start,
                 end: end,
-                pressDuration: ScrollConstants.touchPressDuration,
-                velocity: ScrollConstants.touchVelocity,
-                holdDuration: ScrollConstants.touchHoldDuration
+                pressDuration: IOSUseProtocol.touchPressDuration,
+                velocity: IOSUseProtocol.touchVelocity,
+                holdDuration: IOSUseProtocol.touchHoldDuration
             )
         )
         let payload = ForySwipePayload(
@@ -272,7 +272,7 @@ enum SwipeCommands {
         let isBack = args.dir == 1
         let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root), scrollFrame: scrollFrame)
         let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
-        let distance = args.distance > 0 ? args.distance : (ScrollConstants.scrollTouchProportion * Double(axisSize))
+        let distance = args.distance > 0 ? args.distance : (IOSUseProtocol.scrollTouchProportion * Double(axisSize))
 
         let vector: CGVector
         let vertical = axis == .vertical
@@ -313,19 +313,19 @@ enum SwipeCommands {
         var prevFrames = collectVisibleCellFrames(scrollView)
         let scrollFrame = scrollView.frame
 
-        for i in 0..<ScrollConstants.maxScrollCount {
+        for i in 0..<IOSUseProtocol.maxScrollCount {
             autoreleasepool {
                 if vertical {
                     scrollUpwards
-                        ? scrollUpByNormalizedDistance(ScrollConstants.scrollTouchProportion, scrollFrame: scrollFrame, app: app)
-                        : scrollDownByNormalizedDistance(ScrollConstants.scrollTouchProportion, scrollFrame: scrollFrame, app: app)
+                        ? scrollUpByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
+                        : scrollDownByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
                 } else {
                     scrollUpwards
-                        ? scrollLeftByNormalizedDistance(ScrollConstants.scrollTouchProportion, scrollFrame: scrollFrame, app: app)
-                        : scrollRightByNormalizedDistance(ScrollConstants.scrollTouchProportion, scrollFrame: scrollFrame, app: app)
+                        ? scrollLeftByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
+                        : scrollRightByNormalizedDistance(CGFloat(IOSUseProtocol.scrollTouchProportion), scrollFrame: scrollFrame, app: app)
                 }
             }
-            Thread.sleep(forTimeInterval: ScrollConstants.settleInterval)
+            Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
 
             invalidateSnapshot()
             guard let freshCS = rebuildCleanedSnapshot() else { return .snapshotFailed }
@@ -367,7 +367,7 @@ enum SwipeCommands {
         let prevFrames = collectVisibleCellFrames(scrollView)
         let segmentCount = dispatchScrollSegments(segments, scrollFrame: scrollView.frame, app: app)
 
-        Thread.sleep(forTimeInterval: ScrollConstants.settleInterval)
+        Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
 
         if !prevFrames.isEmpty,
            let freshCS = rebuildCleanedSnapshot(),
@@ -450,7 +450,7 @@ enum SwipeCommands {
         var payload = ForyErrorPayload()
         payload.tooSmallToScroll = true
         payload.direction = dir
-        payload.minDragDistance = Double(ScrollConstants.fuzzyPointThreshold)
+        payload.minDragDistance = IOSUseProtocol.fuzzyPointThreshold
         return try Codec.foryError("swipe displacement too small to scroll (\(axisName) \(dirStr))", payload: payload)
     }
 }
