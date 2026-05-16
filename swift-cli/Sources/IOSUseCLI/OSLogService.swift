@@ -3,19 +3,22 @@ import IOSUseProtocol
 
 public enum OSLogService {
     private static var buffers: [String: [String]] = [:]
+    private static var seenLines: [String: Set<String>] = [:]
     typealias SimulatorLogCollector = (_ udid: String, _ lastSec: Double, _ bundleId: String?) throws -> [String]
     static var simulatorLogCollector: SimulatorLogCollector = collectSimulatorLog
 
     public static func clear() -> String {
         let cleared = buffers.values.reduce(0) { $0 + $1.count }
         buffers.removeAll(keepingCapacity: true)
+        seenLines.removeAll(keepingCapacity: true)
         return "  → oslog: cleared=\(cleared)\n"
     }
 
     public static func clear(udid: String) -> String {
         let keys = ["real:\(udid)", "simulator:\(udid)"]
         let cleared = keys.reduce(0) { total, key in
-            total + (buffers.removeValue(forKey: key)?.count ?? 0)
+            seenLines.removeValue(forKey: key)
+            return total + (buffers.removeValue(forKey: key)?.count ?? 0)
         }
         return "  → oslog: cleared=\(cleared)\n"
     }
@@ -29,17 +32,26 @@ public enum OSLogService {
         name: String?,
         paths: IOSUsePaths
     ) throws -> String {
-        let lastSec = timeout.flatMap { $0 > 0 ? $0 : nil } ?? IOSUseProtocol.oslogDefaultSimulatorLastSeconds
-        let newLines = try simulatorLogCollector(udid, lastSec, bundleId)
         let bufferKey = "simulator:\(udid)"
-        let totalLines = appendUnique(newLines, key: bufferKey)
-        var lines = bundleId.map { filterByBundleId(totalLines, bundleId: $0) } ?? totalLines
-        lines = try filter(lines, pattern: pattern, flags: flags)
+        let lastSec = timeout ?? IOSUseProtocol.oslogDefaultSimulatorLastSeconds
+        let shouldPoll = timeout != nil && !(pattern ?? "").isEmpty
+        let deadline = Date().addingTimeInterval(timeout ?? 0)
+        var totalLines: [String] = []
+        var lines: [String] = []
+        repeat {
+            let newLines = try simulatorLogCollector(udid, lastSec, bundleId)
+            totalLines = appendUnique(newLines, key: bufferKey)
+            lines = bundleId.map { filterByBundleId(totalLines, bundleId: $0) } ?? totalLines
+            lines = try filter(lines, pattern: pattern, flags: flags)
+            if !shouldPoll || !lines.isEmpty {
+                break
+            }
+            usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
+        } while Date() < deadline
         let content = lines.joined(separator: "\n") + "\n"
 
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        let outputName = name?.isEmpty == false ? name! : "oslog-\(logTimestamp())"
-        let path = "\(paths.artifacts)/\(outputName).log"
+        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "oslog-\(logTimestamp())", extension: "log")
         try content.write(toFile: path, atomically: true, encoding: .utf8)
         return "  → oslog: matched=\(lines.count) total=\(totalLines.count) → \(path)\n"
     }
@@ -51,9 +63,17 @@ public enum OSLogService {
         bundleId: String?,
         timeout: Double?,
         name: String?,
-        paths: IOSUsePaths
+        paths: IOSUsePaths,
+        deviceTypeHint: String? = nil
     ) throws -> String {
-        let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).contains { $0.udid == udid }
+        let simulator: Bool
+        if deviceTypeHint == "simulator" {
+            simulator = true
+        } else if deviceTypeHint == "real" {
+            simulator = false
+        } else {
+            simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).contains { $0.udid == udid }
+        }
         if simulator {
             return try fetchSimulator(
                 udid: udid,
@@ -75,8 +95,7 @@ public enum OSLogService {
         let content = lines.joined(separator: "\n") + "\n"
 
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        let outputName = name?.isEmpty == false ? name! : "oslog-\(logTimestamp())"
-        let path = "\(paths.artifacts)/\(outputName).log"
+        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "oslog-\(logTimestamp())", extension: "log")
         try content.write(toFile: path, atomically: true, encoding: .utf8)
         return "  → oslog: matched=\(lines.count) total=\(totalLines.count) → \(path)\n"
     }
@@ -87,20 +106,28 @@ public enum OSLogService {
 
     private static func appendUnique(_ lines: [String], key: String) -> [String] {
         var buffer = buffers[key] ?? []
-        let existing = Set(buffer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
-        buffer.append(contentsOf: lines.filter { !existing.contains($0.trimmingCharacters(in: .whitespacesAndNewlines)) })
+        var seen = seenLines[key] ?? Set(buffer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+        for line in lines {
+            let normalized = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !seen.contains(normalized) else { continue }
+            seen.insert(normalized)
+            buffer.append(line)
+        }
         if buffer.count > IOSUseProtocol.oslogMaxBufferLines {
             buffer = Array(buffer.suffix(IOSUseProtocol.oslogMaxBufferLines))
+            seen = Set(buffer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
         }
         buffers[key] = buffer
+        seenLines[key] = seen
         return buffer
     }
 
     private static func filterByBundleId(_ lines: [String], bundleId: String) -> [String] {
         guard !bundleId.isEmpty else { return lines }
+        let processRegex = try? NSRegularExpression(pattern: #"^\w+\s+\d+\s+\d+:\d+:\d+\s+\S+\s+([\w-]+)"#)
         return lines.filter { line in
-            if let match = try? NSRegularExpression(pattern: #"^\w+\s+\d+\s+\d+:\d+:\d+\s+\S+\s+([\w-]+)"#),
-               let found = match.firstMatch(in: line, range: NSRange(line.startIndex..<line.endIndex, in: line)),
+            if let processRegex,
+               let found = processRegex.firstMatch(in: line, range: NSRange(line.startIndex..<line.endIndex, in: line)),
                found.numberOfRanges > 1,
                let range = Range(found.range(at: 1), in: line) {
                 let process = String(line[range])
@@ -142,10 +169,8 @@ public enum OSLogService {
     }
 
     private static func collectSimulatorLog(udid: String, lastSec: Double, bundleId: String?) throws -> [String] {
-        var args = ["simctl", "spawn", udid, "log", "show", "--style", "compact", "--last", "\(lastSec)s"]
-        if let bundleId, !bundleId.isEmpty {
-            args.append(contentsOf: ["--predicate", "process CONTAINS \"\(bundleId)\""])
-        }
+        _ = bundleId
+        let args = ["simctl", "spawn", udid, "log", "show", "--style", "compact", "--last", "\(lastSec)s"]
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")

@@ -212,18 +212,24 @@ public struct IOSUseCLI: Sendable {
 
     private func saveScreenshot(name: String?, client: DriverClient) throws -> CLIResult {
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        let prefix = name ?? "screenshot"
-        let path = "\(paths.artifacts)/\(prefix).jpg"
+        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "screenshot", extension: "jpg")
         try client.screenshot().write(to: URL(fileURLWithPath: path))
         return CLIResult(exitCode: 0, stdout: "Screenshot saved: \(path)\n")
     }
 
     private func oslog(pattern: String?, flags: String?, timeout: Double?, name: String?, clear: Bool, bundleId: String?, session: SessionOptions) throws -> CLIResult {
         if clear {
+            if let udid = session.udid ?? SessionService.read(paths: paths)?.udid {
+                return CLIResult(exitCode: 0, stdout: OSLogService.clear(udid: udid))
+            }
             return CLIResult(exitCode: 0, stdout: OSLogService.clear())
         }
-        guard let udid = session.udid ?? SessionService.read(paths: paths)?.udid else {
-            throw CLIParseError.invalidValue("oslog requires --udid or an active session")
+        let activeSession = SessionService.read(paths: paths)
+        let defaultUsbUdid = try session.udid == nil && activeSession?.udid == nil
+            ? DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
+            : nil
+        guard let udid = session.udid ?? activeSession?.udid ?? defaultUsbUdid else {
+            throw CLIParseError.invalidValue("oslog requires --udid, an active session, or a connected USB device")
         }
         return CLIResult(
             exitCode: 0,
@@ -234,7 +240,8 @@ public struct IOSUseCLI: Sendable {
                 bundleId: bundleId,
                 timeout: timeout,
                 name: name,
-                paths: paths
+                paths: paths,
+                deviceTypeHint: activeSession?.udid == udid ? activeSession?.deviceType : (defaultUsbUdid == udid ? "real" : nil)
             )
         )
     }

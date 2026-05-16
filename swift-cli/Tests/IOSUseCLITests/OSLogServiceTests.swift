@@ -22,10 +22,13 @@ final class OSLogServiceTests: XCTestCase {
     }
 
     func testOslogRejectsMissingUdidBeforeTouchingEnvironment() {
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": "/tmp/ios-use-swift-oslog"]).run(arguments: ["oslog", "--name", "logs"])
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        addTeardownBlock { DeviceService.listDevicesOverrideForTesting = nil }
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog", "--name", "logs"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("oslog requires --udid or an active session"))
+        XCTAssertTrue(result.stderr.contains("connected USB device"))
     }
 
     func testSimulatorFetchUsesTimestampDefaultNameAndRegexFlags() throws {
@@ -78,6 +81,79 @@ final class OSLogServiceTests: XCTestCase {
         }
     }
 
+    func testFetchUsesSimulatorDeviceTypeHintWithoutDiscovery() throws {
+        let paths = IOSUsePaths.resolve(environment: [
+            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
+        ])
+        OSLogService.simulatorLogCollector = { udid, _, _ in
+            XCTAssertEqual(udid, "SIM-HINT")
+            return ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: hinted"]
+        }
+
+        let output = try OSLogService.fetch(
+            udid: "SIM-HINT",
+            pattern: "hinted",
+            flags: nil,
+            bundleId: nil,
+            timeout: 1,
+            name: "hinted",
+            paths: paths,
+            deviceTypeHint: "simulator"
+        )
+
+        XCTAssertTrue(output.contains("matched=1 total=1"))
+    }
+
+    func testSimulatorFetchPollsUntilTimeoutForPattern() throws {
+        let paths = IOSUsePaths.resolve(environment: [
+            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
+        ])
+        var calls = 0
+        OSLogService.simulatorLogCollector = { _, _, _ in
+            calls += 1
+            if calls == 1 {
+                return ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: booting"]
+            }
+            return ["May 16 10:00:01 iPhone Demo(Demo)[1] <Notice>: ready"]
+        }
+
+        let output = try OSLogService.fetchSimulator(
+            udid: "SIM-POLL",
+            pattern: "ready",
+            flags: nil,
+            bundleId: nil,
+            timeout: 1,
+            name: "poll",
+            paths: paths
+        )
+
+        XCTAssertGreaterThanOrEqual(calls, 2)
+        XCTAssertTrue(output.contains("matched=1 total=2"))
+    }
+
+    func testSimulatorFetchWithoutPatternDoesNotPoll() throws {
+        let paths = IOSUsePaths.resolve(environment: [
+            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
+        ])
+        var calls = 0
+        OSLogService.simulatorLogCollector = { _, _, _ in
+            calls += 1
+            return ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: line"]
+        }
+
+        _ = try OSLogService.fetchSimulator(
+            udid: "SIM-NO-POLL",
+            pattern: nil,
+            flags: nil,
+            bundleId: nil,
+            timeout: 1,
+            name: "single",
+            paths: paths
+        )
+
+        XCTAssertEqual(calls, 1)
+    }
+
     func testClearWithUdidOnlyClearsMatchingDeviceBuffer() throws {
         let paths = IOSUsePaths.resolve(environment: [
             "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
@@ -98,5 +174,43 @@ final class OSLogServiceTests: XCTestCase {
         XCTAssertEqual(OSLogService.clear(udid: "SIM-1"), "  → oslog: cleared=1\n")
         let output = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "two-again", paths: paths)
         XCTAssertTrue(output.contains("matched=1 total=1"))
+    }
+
+    func testCLIClearWithUdidOnlyClearsThatDevice() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        OSLogService.simulatorLogCollector = { udid, _, _ in
+            ["May 16 10:00:00 iPhone \(udid)(Demo)[1] <Notice>: \(udid)"]
+        }
+
+        _ = try OSLogService.fetchSimulator(udid: "SIM-1", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "one", paths: paths)
+        _ = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "two", paths: paths)
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--clear", "--udid", "SIM-1"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "  → oslog: cleared=1\n")
+        let output = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "two-again", paths: paths)
+        XCTAssertTrue(output.contains("total=1"))
+    }
+
+    func testOutputNameCannotEscapeArtifactsDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        OSLogService.simulatorLogCollector = { _, _, _ in ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: ready"] }
+
+        let output = try OSLogService.fetchSimulator(
+            udid: "SIM-1",
+            pattern: nil,
+            flags: nil,
+            bundleId: nil,
+            timeout: 1,
+            name: "../outside",
+            paths: paths
+        )
+
+        XCTAssertTrue(output.contains("\(paths.artifacts)/outside.log"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(paths.artifacts)/outside.log"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(root)/outside.log"))
     }
 }

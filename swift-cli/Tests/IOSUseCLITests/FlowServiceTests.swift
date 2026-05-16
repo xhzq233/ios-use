@@ -217,6 +217,207 @@ final class FlowServiceTests: XCTestCase {
             XCTAssertTrue(String(describing: error).contains("does not support port or ssl configuration"))
         }
     }
+
+    func testNeedNSLogRejectsInvalidMaxBufferSize() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("nslog-invalid-buffer.yaml", """
+        name: invalid-nslog-buffer
+        needNSLog:
+          maxBufferSize: 0
+        steps:
+          - action: sleep
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("needNSLog.maxBufferSize must be greater than 0"))
+        }
+    }
+
+    func testArtifactNamesStayInsideArtifactsDirectory() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("artifact-name.yaml", """
+        name: artifact-name
+        steps:
+          - action: screenshot
+            name: ../outside
+        """)
+
+        _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(fixture.paths.artifacts)/outside.jpg"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(fixture.paths.root)/outside.jpg"))
+    }
+
+    func testSleepRejectsNonFiniteNumbersInsteadOfCrashing() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("non-finite-sleep.yaml", """
+        name: non-finite-sleep
+        steps:
+          - action: sleep
+            ms: .inf
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("sleep.ms must be an integer"))
+        }
+    }
+
+    func testTapSupportsPartialRatioOffsetAndRejectsPartialAbsoluteOffset() throws {
+        let fixture = try FlowFixture()
+        let absolute = try fixture.write("partial-absolute.yaml", """
+        name: partial-absolute
+        steps:
+          - action: tap
+            label: General
+            offset:
+              x: 12
+        """)
+        let ratio = try fixture.write("partial-ratio.yaml", """
+        name: partial-ratio
+        steps:
+          - action: tap
+            label: General
+            offset:
+              xRatio: 0.2
+        """)
+        let driver = FakeFlowDriver()
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: absolute.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("requires both x and y"))
+        }
+        _ = try FlowService.runForTesting(file: ratio.path, paths: fixture.paths, driver: driver)
+        let tap = try XCTUnwrap(driver.taps.first)
+        XCTAssertNil(tap.offset)
+        XCTAssertEqual(tap.ratio.x, 0.2)
+        XCTAssertEqual(tap.ratio.y, 0.5)
+    }
+
+    func testInvalidFlowNumericFieldsFailInsteadOfDefaulting() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("invalid-numbers.yaml", """
+        name: invalid-numbers
+        steps:
+          - action: waitFor
+            label: General
+            timeout: soon
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("waitFor.timeout must be a finite number"))
+        }
+    }
+
+    func testFlowRejectsInvalidSwipeDirAndFractionalAlertIndex() throws {
+        let fixture = try FlowFixture()
+        let invalidDir = try fixture.write("invalid-dir.yaml", """
+        name: invalid-dir
+        steps:
+          - action: swipe
+            dir: backwards
+        """)
+        let fractionalIndex = try fixture.write("fractional-index.yaml", """
+        name: fractional-index
+        steps:
+          - action: dismissAlert
+            index: 1.9
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: invalidDir.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("swipe.dir must be"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: fractionalIndex.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("dismissAlert.index must be an integer"))
+        }
+    }
+
+    func testFlowRejectsHugeSleepAndNonFinitePointTargets() throws {
+        let fixture = try FlowFixture()
+        let hugeSleep = try fixture.write("huge-sleep.yaml", """
+        name: huge-sleep
+        steps:
+          - action: sleep
+            ms: 1e100
+        """)
+        let overflowingSleep = try fixture.write("overflowing-sleep.yaml", """
+        name: overflowing-sleep
+        steps:
+          - action: sleep
+            ms: 4294968
+        """)
+        let invalidPoint = try fixture.write("invalid-point.yaml", """
+        name: invalid-point
+        steps:
+          - action: tap
+            label: inf,0
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: hugeSleep.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("sleep.ms must be an integer"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: overflowingSleep.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("sleep.ms is too large"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: invalidPoint.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("Invalid point"))
+        }
+    }
+
+    func testFlowRejectsInvalidDomCandidatesAndZeroOslogTimeout() throws {
+        let fixture = try FlowFixture()
+        let nonArrayCandidates = try fixture.write("dom-candidates-object.yaml", """
+        name: dom-candidates-object
+        steps:
+          - action: dom
+            candidates: Close
+            outputs: page
+        """)
+        let nonStringCandidate = try fixture.write("dom-candidates-number.yaml", """
+        name: dom-candidates-number
+        steps:
+          - action: dom
+            candidates:
+              - 1
+            outputs: page
+        """)
+        let zeroOslogTimeout = try fixture.write("oslog-zero-timeout.yaml", """
+        name: oslog-zero-timeout
+        steps:
+          - action: oslog
+            pattern: ready
+            timeout: 0
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: nonArrayCandidates.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("dom.candidates must be a string array"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: nonStringCandidate.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("dom.candidates must contain only non-empty strings"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: zeroOslogTimeout.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
+            XCTAssertTrue(String(describing: error).contains("oslog.timeout must be greater than 0"))
+        }
+    }
+
+    func testDomWithoutOutputsOrJsonSaveDoesNotMaterializeDerivedDom() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("dom-no-output.yaml", """
+        name: dom-no-output
+        steps:
+          - action: dom
+            candidates:
+              - Match
+        """)
+        let driver = FakeFlowDriver()
+        driver.domPayload = ForyDomPayload(
+            app: "com.example",
+            elements: [ForyDomElement(label: "Match")]
+        )
+
+        let result = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+
+        XCTAssertTrue(result.outputs.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.paths.artifacts))
+    }
 }
 
 private func makeNSLogMessage(message: String) -> Data {
@@ -263,6 +464,10 @@ private final class FlowFixture {
         paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root.path])
     }
 
+    deinit {
+        try? FileManager.default.removeItem(at: root)
+    }
+
     func write(_ name: String, _ content: String) throws -> URL {
         let url = root.appendingPathComponent(name)
         try content.write(to: url, atomically: true, encoding: .utf8)
@@ -275,6 +480,7 @@ private final class FakeFlowDriver: FlowDriver {
     var domPayload = ForyDomPayload()
     var findLabels: [String] = []
     var swipes: [(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?)] = []
+    var taps: [(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint)] = []
 
     func activateApp(bundleId: String) throws {}
     func terminateApp(bundleId: String) throws {}
@@ -287,7 +493,10 @@ private final class FakeFlowDriver: FlowDriver {
         return findPayload
     }
     func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload { domPayload }
-    func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload { ForyElementPayload(label: target.label) }
+    func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+        taps.append((target, traits, offset, ratio))
+        return ForyElementPayload(label: target.label)
+    }
     func input(label: String, content: String, traits: String?) throws {}
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?) throws -> ForySwipePayload {
         swipes.append((to, from, distance, dir, traits))

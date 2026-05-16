@@ -91,6 +91,59 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNotNil(json["createdAt"])
     }
 
+    func testPrepareDriverSessionFastPathsMatchingSimulatorSession() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        SessionService.simulatorDriverReachableForTesting = { true }
+        addTeardownBlock {
+            SessionService.simulatorDriverReachableForTesting = nil
+            SessionService.simulatorDriverLauncherForTesting = nil
+        }
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"SIM-FAST":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try SessionService.writeSimulatorSession(
+            udid: "SIM-FAST",
+            deviceName: "IOSUseTest",
+            deviceVersion: "26.0",
+            paths: paths
+        )
+
+        XCTAssertNoThrow(try SessionService.prepareDriverSession(SessionOptions(udid: "SIM-FAST"), paths: paths))
+    }
+
+    func testPrepareDriverSessionLaunchesRequestedSimulatorWhenSessionDoesNotMatch() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"SIM-A":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100"},"SIM-B":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try SessionService.writeSimulatorSession(
+            udid: "SIM-A",
+            deviceName: "Other",
+            deviceVersion: "26.0",
+            paths: paths
+        )
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [IOSDevice(name: "Requested", version: "26.0", udid: "SIM-B", kind: .simulator)] : []
+        }
+        var launched: [String] = []
+        SessionService.simulatorDriverReachableForTesting = { true }
+        SessionService.simulatorDriverLauncherForTesting = { launched.append($0) }
+        addTeardownBlock {
+            DeviceService.listDevicesOverrideForTesting = nil
+            SessionService.simulatorDriverReachableForTesting = nil
+            SessionService.simulatorDriverLauncherForTesting = nil
+        }
+
+        try SessionService.prepareDriverSession(SessionOptions(udid: "SIM-B"), paths: paths)
+
+        XCTAssertEqual(launched, ["SIM-B"])
+        XCTAssertEqual(SessionService.read(paths: paths)?.udid, "SIM-B")
+    }
+
     private func temporaryRoot() throws -> String {
         let root = NSTemporaryDirectory() + "ios-use-swift-config-\(UUID().uuidString)"
         addTeardownBlock {

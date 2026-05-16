@@ -130,4 +130,42 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--ipa"))
         }
     }
+
+    func testParsesDashPrefixedOptionValuesWhereSemanticallyValid() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["input", "--label", "First name", "--content", "-Alpha"]),
+            .driver(.input(label: "First name", content: "-Alpha", traits: nil, session: SessionOptions()))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["tap", "General", "--offset", "-1,2", "--offset-ratio", "-.5,.25"]),
+            .driver(.tap(target: "General", offset: "-1,2", offsetRatio: "-.5,.25", traits: nil, session: SessionOptions()))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["flow", "flows/test_flow.yaml", "--flag", "-value"]),
+            .flow(FlowOptions(file: "flows/test_flow.yaml", externalVars: ["flag": "-value"]))
+        )
+    }
+
+    func testRejectsNegativeNumericOptionsThatMeanDefaultsInDriver() {
+        XCTAssertThrowsError(try CLIParser.parse(["longpress", "General", "--duration", "-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--duration must be non-negative"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["waitFor", "--label", "General", "--timeout", "-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be non-negative"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["oslog", "--timeout", "0", "--udid", "DEVICE-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be greater than 0"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--index", "-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--index must be non-negative"))
+        }
+    }
+
+    func testRejectsInvalidFlowExternalVariableNames() {
+        XCTAssertThrowsError(try CLIParser.parse(["flow", "flows/test_flow.yaml", "--foo.bar", "value"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid flow external variable name: foo.bar"))
+        }
+    }
 }

@@ -20,13 +20,31 @@ public struct IOSDevice: Equatable, Sendable {
 }
 
 public enum DeviceService {
+    static var listDevicesOverrideForTesting: ((Bool, IOSUsePaths) throws -> [IOSDevice])?
+    private static var listDevicesCache: [String: [IOSDevice]] = [:]
+
     public static func listDevices(simulatorOnly: Bool, paths: IOSUsePaths) throws -> [IOSDevice] {
+        if let listDevicesOverrideForTesting {
+            return try listDevicesOverrideForTesting(simulatorOnly, paths)
+        }
+        let cacheKey = "\(paths.root)|\(simulatorOnly)"
+        if let cached = listDevicesCache[cacheKey] {
+            return cached
+        }
+        let devices: [IOSDevice]
         if simulatorOnly {
             let output = try Shell.run("xcrun", arguments: ["simctl", "list", "devices", "booted"])
-            return parseBootedSimulators(output)
+            devices = parseBootedSimulators(output)
+        } else {
+            let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
+            devices = parseDeviceOutput(output).filter { $0.kind == .real }
         }
-        let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
-        return parseDeviceOutput(output).filter { $0.kind == .real }
+        listDevicesCache[cacheKey] = devices
+        return devices
+    }
+
+    static func resetCacheForTesting() {
+        listDevicesCache.removeAll(keepingCapacity: true)
     }
 
     public static func parseDeviceOutput(_ output: String) -> [IOSDevice] {

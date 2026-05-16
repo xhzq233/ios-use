@@ -13,13 +13,17 @@ public enum NSLogService {
         let server = try NSLoggerServer(options: NSLoggerServerOptions(name: options.name), paths: paths)
         try server.start()
         defer { server.stop() }
+        let grepRegex = try options.grep.flatMap { grep -> NSRegularExpression? in
+            guard !grep.isEmpty else { return nil }
+            return try NSRegularExpression(pattern: grep, options: regexOptions(options.flags))
+        }
 
         server.onMessage = { entry in
-            guard let grep = options.grep, !grep.isEmpty else {
+            guard let grepRegex else {
                 print(entry)
                 return
             }
-            if (try? Self.matches(entry, pattern: grep, flags: options.flags)) == true {
+            if Self.matches(entry, regex: grepRegex) {
                 print(entry)
             }
         }
@@ -35,6 +39,10 @@ public enum NSLogService {
 
     static func matches(_ entry: String, pattern: String, flags: String) throws -> Bool {
         let regex = try NSRegularExpression(pattern: pattern, options: regexOptions(flags))
+        return matches(entry, regex: regex)
+    }
+
+    static func matches(_ entry: String, regex: NSRegularExpression) -> Bool {
         let range = NSRange(entry.startIndex..<entry.endIndex, in: entry)
         return regex.firstMatch(in: entry, range: range) != nil
     }
@@ -208,6 +216,8 @@ public final class NSLoggerServer {
     private var bonjour: Process?
     private var receiveBuffer = Data()
     private var entries: [String] = []
+    private var entryBaseIndex = 0
+    private var totalEntriesSeen = 0
     private var connectedClients = 0
     private let lock = NSLock()
 
@@ -239,15 +249,24 @@ public final class NSLoggerServer {
     }
 
     public func grep(pattern: String, flags: String = "") throws -> [String] {
+        let regex = try NSRegularExpression(pattern: pattern, options: NSLogService.regexOptions(flags))
+        return grep(regex: regex, from: 0).matches
+    }
+
+    public func grep(regex: NSRegularExpression, from index: Int) -> (matches: [String], nextIndex: Int) {
         lock.lock()
-        let snapshot = entries
+        let absoluteStart = max(index, entryBaseIndex)
+        let relativeStart = max(0, min(absoluteStart - entryBaseIndex, entries.count))
+        let snapshot = Array(entries[relativeStart..<entries.count])
+        let nextIndex = totalEntriesSeen
         lock.unlock()
-        return try snapshot.filter { try NSLogService.matches($0, pattern: pattern, flags: flags) }
+        return (snapshot.filter { NSLogService.matches($0, regex: regex) }, nextIndex)
     }
 
     public func clear() {
         lock.lock()
         entries.removeAll(keepingCapacity: true)
+        entryBaseIndex = totalEntriesSeen
         lock.unlock()
     }
 
@@ -298,8 +317,11 @@ public final class NSLoggerServer {
 
     private func appendLocked(_ entry: String) {
         entries.append(entry)
+        totalEntriesSeen += 1
         if entries.count > options.maxBufferSize {
-            entries.removeFirst(entries.count - options.maxBufferSize)
+            let removed = entries.count - options.maxBufferSize
+            entries.removeFirst(removed)
+            entryBaseIndex += removed
         }
     }
 
