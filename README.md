@@ -200,7 +200,7 @@ Numbers vary by device, app state, and whether the target page is already warm, 
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
 | `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_driver.sh` |
 | `appium`, `lsof` | not needed | not needed at runtime | benchmark only |
-| `bun` | not needed for installed CLI runtime | not needed for action commands | legacy TS tests and benchmark scripts |
+| `bun` | not needed for installed CLI runtime | not needed for action commands | legacy TypeScript compatibility tests |
 
 ## Repository Layout
 

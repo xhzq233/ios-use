@@ -1,9 +1,9 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -115,7 +115,7 @@ function parseArgs(argv) {
 function printHelp() {
   console.log(`
 Usage:
-  WDA_INSTALLED_DEVICE=<udid> WDA_BUNDLE_ID=<bundleId> bun scripts/benchmark_wda.js [options]
+  WDA_INSTALLED_DEVICE=<udid> WDA_BUNDLE_ID=<bundleId> node scripts/benchmark_wda.js [options]
 
 Options:
   --iterations <n>    default: 3
@@ -173,18 +173,19 @@ function speedup(appiumMs, customMs) {
 }
 
 function runSync(command, args, options = {}) {
-  const result = Bun.spawnSync([command, ...args], {
+  const result = spawnSync(command, args, {
     cwd: ROOT,
     env: { ...process.env, ...(options.env || {}) },
-    stdout: options.capture === false ? 'inherit' : 'pipe',
-    stderr: options.capture === false ? 'inherit' : 'pipe',
+    stdio: options.capture === false ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
   });
-  const stdout = result.stdout ? Buffer.from(result.stdout).toString('utf8') : '';
-  const stderr = result.stderr ? Buffer.from(result.stderr).toString('utf8') : '';
-  if (result.exitCode !== 0 && !options.allowFailure) {
-    throw new Error(`${command} ${args.join(' ')} failed (${result.exitCode})\n${stderr || stdout}`.trim());
+  const stdout = typeof result.stdout === 'string' ? result.stdout : '';
+  const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+  const exitCode = result.status ?? 1;
+  if (exitCode !== 0 && !options.allowFailure) {
+    throw new Error(`${command} ${args.join(' ')} failed (${exitCode})\n${stderr || stdout}`.trim());
   }
-  return { stdout, stderr, exitCode: result.exitCode };
+  return { stdout, stderr, exitCode };
 }
 
 function cli(args, options = {}) {
@@ -1010,7 +1011,7 @@ async function main() {
   lines.push('## 使用方式');
   lines.push('');
   lines.push('```bash');
-  lines.push(`WDA_INSTALLED_DEVICE=${WDA_DEVICE_UDID} WDA_BUNDLE_ID=${WDA_BUNDLE_ID} \\\n  bun scripts/benchmark_wda.js --iterations 3`);
+  lines.push(`WDA_INSTALLED_DEVICE=${WDA_DEVICE_UDID} WDA_BUNDLE_ID=${WDA_BUNDLE_ID} \\\n  node scripts/benchmark_wda.js --iterations 3`);
   lines.push('```');
   lines.push('');
   lines.push('说明：脚本开始前会先执行 Release driver build、`scripts/install.sh` 和 `ios-use config --udid <customUdid>`，并使用安装后的 `ios-use` 可执行文件进行 custom 侧 benchmark。');
