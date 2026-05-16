@@ -200,7 +200,7 @@ Numbers vary by device, app state, and whether the target page is already warm, 
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
 | `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_driver.sh` |
 | `appium`, `lsof` | not needed | not needed at runtime | benchmark only |
-| `bun` | not needed for installed CLI runtime | not needed for action commands | legacy TS tests, Simulator test harness, and benchmark scripts |
+| `bun` | not needed for installed CLI runtime | not needed for action commands | legacy TS tests and benchmark scripts |
 
 ## Repository Layout
 
@@ -227,7 +227,7 @@ bash scripts/test_all.sh
 bash scripts/test_swift_stack.sh
 ```
 
-`scripts/test_all.sh` and `scripts/test_swift_stack.sh` are Swift-only validation paths. Full legacy compatibility and Simulator command matrix tests still use Bun-based harnesses via `bash scripts/test_full_simulator.sh`.
+`scripts/test_all.sh` and `scripts/test_swift_stack.sh` are Swift-only validation paths. Full Simulator command matrix tests use the Node-based runner via `bash scripts/test_full_simulator.sh`; legacy TypeScript compatibility tests remain explicit via `bun run test:legacy-bun`.
 
 ## Acknowledgments
 

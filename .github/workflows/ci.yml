@@ -60,11 +60,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
       - name: Install xcodegen
         run: brew install xcodegen
 
@@ -82,4 +77,4 @@ jobs:
         run: |
           bash scripts/build_swift_cli.sh
           bash scripts/build_driver.sh --simulator-only
-          bun scripts/test_simulator_commands.ts --skip-build --case "$IOS_USE_SIMULATOR_CASES"
+          node scripts/test_simulator_commands.mjs --skip-build --case "$IOS_USE_SIMULATOR_CASES"
