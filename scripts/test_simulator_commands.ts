@@ -27,6 +27,7 @@ const rootDir = path.resolve(import.meta.dir, '..');
 let skipBuild = false;
 let caseFilterIds: Set<string> | undefined;
 const testIosUseHome = process.env.IOS_USE_TEST_HOME ?? path.join(os.homedir(), '.ios-use/test-homes/simulator-commands');
+const iosUseCli = process.env.IOS_USE_TEST_CLI ?? path.join(rootDir, 'dist/ios-use');
 
 type RunnerArgs = {
   skipBuild: boolean;
@@ -163,7 +164,7 @@ async function sleep(ms: number): Promise<void> {
 }
 
 function runCli(args: string[]): RunResult {
-  return execCmd(['bun', 'run', 'src/cli.ts', ...args], { env: { IOS_USE_HOME: iosHome } });
+  return execCmd([iosUseCli, ...args], { env: { IOS_USE_HOME: iosHome } });
 }
 
 function runCliToFiles(args: string[], out: string, err: string): RunResult {
@@ -671,7 +672,7 @@ function buildCases(): CaseDef[] {
       const out = path.join(artifactDir, 'DEV-5.out');
       const err = path.join(artifactDir, 'DEV-5.err');
       console.log('[sim-test] RUN DEV-5: ios-use devices --simulator (empty IOS_USE_HOME)');
-      const res = runExternalToFiles(['bun', 'run', 'src/cli.ts', 'devices', '--simulator'], out, err, { IOS_USE_HOME: path.join(artifactDir, emptyHomeName) });
+      const res = runExternalToFiles([iosUseCli, 'devices', '--simulator'], out, err, { IOS_USE_HOME: path.join(artifactDir, emptyHomeName) });
       if (res.code === 0 && !res.stdout.includes('configured')) recordPass('DEV-5');
       else recordFail('DEV-5', res.stdout + res.stderr);
     } },
@@ -887,7 +888,7 @@ function buildCases(): CaseDef[] {
       const out = path.join(artifactDir, 'AS-6.out');
       const err = path.join(artifactDir, 'AS-6.err');
       console.log('[sim-test] RUN AS-6: ios-use dom --fresh (empty IOS_USE_HOME)');
-      const res = runExternalToFiles(['bun', 'run', 'src/cli.ts', 'dom', '--fresh'], out, err, { IOS_USE_HOME: path.join(artifactDir, emptyHomeName) });
+      const res = runExternalToFiles([iosUseCli, 'dom', '--fresh'], out, err, { IOS_USE_HOME: path.join(artifactDir, emptyHomeName) });
       if (res.code === 0 || /Using default device:|Device \| UDID:|Session created/i.test(`${res.stdout}\n${res.stderr}`)) {
         console.log('[sim-test] SKIP AS-6: USB real device is available, no-USB precondition is not met');
         recordSkip('AS-6');
@@ -961,6 +962,11 @@ async function main(): Promise<void> {
   caseFilterIds = parsedArgs.caseFilterIds;
 
   if (!skipBuild) {
+    const swiftCliBuild = execCmd(['bash', path.join(rootDir, 'scripts/build_swift_cli.sh')], { cwd: rootDir });
+    process.stdout.write(swiftCliBuild.stdout);
+    process.stderr.write(swiftCliBuild.stderr);
+    if (swiftCliBuild.code !== 0) process.exit(swiftCliBuild.code);
+
     const build = execCmd(['bash', path.join(rootDir, 'scripts/build_driver.sh'), '--simulator-only'], { cwd: rootDir });
     process.stdout.write(build.stdout);
     process.stderr.write(build.stderr);
@@ -980,6 +986,7 @@ async function main(): Promise<void> {
 
   console.log(`[sim-test] IOS_USE_HOME: ${iosHome}`);
   console.log(`[sim-test] Simulator: ${sim.name} | ${sim.runtime} | ${sim.state} | UDID: ${sim.udid}`);
+  console.log(`[sim-test] CLI: ${iosUseCli}`);
   console.log(`[sim-test] driver-sim IPA: ${path.join(rootDir, 'assets/driver-sim.ipa')}`);
   console.log(`[sim-test] Artifacts: ${artifactDir}`);
 

@@ -12,6 +12,9 @@ bash "$ROOT_DIR/scripts/test_swift_cli.sh"
 echo "[all] Running Swift driver unit tests..."
 bash "$ROOT_DIR/scripts/test_driver_unit.sh"
 
+echo "[all] Building Swift CLI..."
+bash "$ROOT_DIR/scripts/build_swift_cli.sh"
+
 echo "[all] Building driver artifacts..."
 bash "$ROOT_DIR/scripts/build_driver.sh" --simulator-only
 

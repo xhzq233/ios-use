@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 bootstrap_remote_repo() {
-  if [[ -f "$ROOT_DIR/src/cli.ts" ]]; then
+  if [[ -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
     return
   fi
 
@@ -60,7 +60,7 @@ bootstrap_remote_repo() {
   echo "Downloading ios-use source from ${GITHUB_REPO}@${GITHUB_REF}..."
   curl -fsSL "$archive_url" | tar -xzf - -C "$BOOTSTRAP_DIR"
   ROOT_DIR="$(find "$BOOTSTRAP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  if [[ -z "$ROOT_DIR" || ! -f "$ROOT_DIR/src/cli.ts" ]]; then
+  if [[ -z "$ROOT_DIR" || ! -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
     echo "Failed to bootstrap ios-use source tree." >&2
     exit 1
   fi
@@ -70,19 +70,14 @@ bootstrap_remote_repo() {
 
 bootstrap_remote_repo
 
-if ! command -v bun >/dev/null 2>&1; then
-  echo "bun is required but was not found in PATH." >&2
-  exit 1
-fi
-
-bun install --cwd "$ROOT_DIR"
-
 mkdir -p "$DIST_DIR"
 
 echo "Compiling ios-use binary..."
-# Workaround Bun 1.3.12 regression: built-in code signature is truncated on macOS,
-# causing immediate SIGKILL (exit 137). Skip Bun's signing and manually ad-hoc sign.
-BUN_NO_CODESIGN_MACHO_BINARY=1 bun build "$ROOT_DIR/src/cli.ts" --compile --outfile "$OUTFILE"
+if [[ ! -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
+  echo "Swift CLI package not found at $ROOT_DIR/swift-cli" >&2
+  exit 1
+fi
+bash "$ROOT_DIR/scripts/build_swift_cli.sh"
 codesign --sign - --force "$OUTFILE"
 
 install_binary() {
