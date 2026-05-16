@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash
 ```
 
-The installer compiles the current CLI locally with Bun and installs `ios-use` into a user-writable bin directory.
+The installer compiles the current Swift CLI locally with SwiftPM and installs `ios-use` into a user-writable bin directory.
 
 ### 2. First-Time Setup
 
@@ -96,14 +96,14 @@ ios-use flow flows/test_flow.yaml
 ### Architecture
 
 ```text
-CLI (Bun)
-  -> session orchestration
+Swift CLI
+  -> shared Swift protocol / Fory frame model
   -> driver client
   -> Custom XCTest Driver
   -> XCUITest API
 ```
 
-The host side is implemented in TypeScript and Bun. The device side is a Swift XCTest runner that exposes a compact RPC protocol over TCP. For real devices the CLI reaches the driver through usbmuxd; for Simulators it connects to `localhost`.
+The default host side is a Swift executable. The device side is a Swift XCTest runner that exposes a compact RPC protocol over TCP. Both sides compile the shared protocol model from `shared/IOSUseProtocol`, so command args, payloads, and frame types stay in one source of truth. For real devices the CLI reaches the driver through usbmuxd; for Simulators it connects to `localhost`.
 
 ### Why TCP Instead Of HTTP
 
@@ -150,7 +150,7 @@ The public CLI mirrors the flow action set:
 
 ## Benchmark
 
-Latest benchmark compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same app scenario.
+The historical benchmark below compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same app scenario.
 
 Setup summary:
 
@@ -190,7 +190,7 @@ Numbers vary by device, app state, and whether the target page is already warm, 
 
 | Dependency | Install CLI | Real Device | Simulator / Dev |
 | --- | --- | --- | --- |
-| `bash`, `curl`, `tar`, `bun` | required | not needed after install | dev also uses `bun` |
+| `bash`, `curl`, `tar`, `swift` | required | not needed after install | dev also uses SwiftPM |
 | `xcrun xctrace` | not needed | required for device discovery | not needed |
 | `xcrun devicectl` | not needed | required for install and launch | not needed |
 | `xcrun simctl` | not needed | not needed | required for Simulator config; dev build also uses it |
@@ -200,13 +200,15 @@ Numbers vary by device, app state, and whether the target page is already warm, 
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
 | `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_driver.sh` |
 | `appium`, `lsof` | not needed | not needed at runtime | benchmark only |
+| `bun` | not needed for installed CLI runtime | not needed for action commands | legacy TS tests, Simulator test harness, and benchmark scripts |
 
 ## Repository Layout
 
 ```text
-src/                  CLI, session orchestration, config, transport client
-src/driver-protocol/  Shared RPC types and frames
+swift-cli/            Default Swift CLI, session orchestration, config, transport client
+shared/IOSUseProtocol/ Shared Swift RPC types and Fory frame models
 driver/               Swift XCTest driver
+src/                  Legacy TypeScript CLI reference and compatibility tests
 flows/                Example flows
 scripts/              Install, build, and benchmark utilities
 docs/                 Public documentation
@@ -218,9 +220,9 @@ assets/               Prebuilt driver artifacts
 ```bash
 git clone https://github.com/xhzq233/ios-use.git
 cd ios-use
-bun install
+bash scripts/build_swift_cli.sh
 bash scripts/build_driver.sh
-bun run src/cli.ts --help
+./dist/ios-use --help
 ```
 
 ## Acknowledgments
