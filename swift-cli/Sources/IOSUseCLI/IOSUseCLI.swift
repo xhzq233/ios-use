@@ -97,9 +97,39 @@ public struct IOSUseCLI: Sendable {
         case .stop:
             SessionService.clear(paths: paths)
             return CLIResult(exitCode: 0, stdout: "Session stopped\n")
+        case .driver(let action):
+            return executeDriver(action)
         default:
             return parsedButNotImplemented(parsed)
         }
+    }
+
+    private func executeDriver(_ action: DriverAction) -> CLIResult {
+        do {
+            let client = DriverClient()
+            switch action {
+            case .dom(let raw, let fresh, _):
+                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatDom(client.dom(raw: raw, fresh: fresh)))
+            case .find(let label, let traits, _):
+                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatFind(label: label, payload: client.find(label: label, traits: traits)))
+            case .waitFor(let label, let timeout, let traits, _):
+                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatWaitFor(label: label, payload: client.waitFor(label: label, timeout: timeout, traits: traits)))
+            case .screenshot(let name, _):
+                return try saveScreenshot(name: name, client: client)
+            default:
+                return parsedButNotImplemented(.driver(action))
+            }
+        } catch {
+            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+        }
+    }
+
+    private func saveScreenshot(name: String?, client: DriverClient) throws -> CLIResult {
+        try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
+        let prefix = name ?? "screenshot"
+        let path = "\(paths.artifacts)/\(prefix).jpg"
+        try client.screenshot().write(to: URL(fileURLWithPath: path))
+        return CLIResult(exitCode: 0, stdout: "Screenshot saved: \(path)\n")
     }
 
     private func listDevices(_ options: DeviceOptions) -> CLIResult {
