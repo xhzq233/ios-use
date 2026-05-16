@@ -328,7 +328,7 @@ private func nsloggerOptions(_ raw: Any?) throws -> NSLoggerServerOptions? {
         return nil
     }
     if dict["port"] != nil || dict["ssl"] != nil {
-        throw CLIParseError.invalidValue("needNSLog does not support port or ssl configuration; NSLogger is fixed to plain TCP on port \(IOSUseProtocol.nsloggerDefaultPort) in the current Swift CLI")
+        throw CLIParseError.invalidValue("needNSLog does not support port or ssl configuration; NSLogger is fixed to SSL on port \(IOSUseProtocol.nsloggerDefaultPort)")
     }
     return NSLoggerServerOptions(
         name: optionalString(dict["name"]),
