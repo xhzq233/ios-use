@@ -100,6 +100,12 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .flow(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try FlowService.run(file: options.file, options: options, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .stop:
             SessionService.clear(paths: paths)
             return CLIResult(exitCode: 0, stdout: "Session stopped\n")

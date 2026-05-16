@@ -13,7 +13,8 @@ let package = Package(
         .executable(name: "ios-use-swift", targets: ["IOSUseSwiftCLI"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apache/fory.git", branch: "main")
+        .package(url: "https://github.com/apache/fory.git", branch: "main"),
+        .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.3")
     ],
     targets: [
         .target(
@@ -27,7 +28,10 @@ let package = Package(
         ),
         .target(
             name: "IOSUseCLI",
-            dependencies: ["IOSUseProtocol"]
+            dependencies: [
+                "IOSUseProtocol",
+                .product(name: "Yams", package: "Yams")
+            ]
         ),
         .executableTarget(
             name: "IOSUseSwiftCLI",
