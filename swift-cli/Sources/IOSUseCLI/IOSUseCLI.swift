@@ -299,7 +299,6 @@ public struct IOSUseCLI: Sendable {
           - Swift CLI and driver compile the same shared IOSUseProtocol/Fory model source
           - driver read, mutation, lifecycle, oslog, nslog, proxy, config, devices, and Simulator flow paths are migrated
           - real-device host paths are implemented but still require physical-device validation
-          - `src/cli.ts` remains a legacy reference, not the default runtime path
 
         Options:
           -h, --help       Show help

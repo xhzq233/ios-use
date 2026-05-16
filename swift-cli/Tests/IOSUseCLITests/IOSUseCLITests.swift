@@ -9,7 +9,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Swift CLI for ios-use"))
         XCTAssertTrue(result.stdout.contains("dist/ios-use"))
-        XCTAssertTrue(result.stdout.contains("src/cli.ts"))
+        XCTAssertTrue(result.stdout.contains("shared IOSUseProtocol/Fory model source"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
 

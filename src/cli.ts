@@ -1,5 +1,3 @@
-#!/usr/bin/env bun
-
 import { Command } from 'commander';
 import { logger } from './utils/logger';
 import { configureDeviceSigning, readProjectConfig } from './config';
