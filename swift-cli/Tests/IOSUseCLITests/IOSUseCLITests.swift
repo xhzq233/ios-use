@@ -50,6 +50,9 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.maxFrameSizeBytes, 50 * 1024 * 1024)
         XCTAssertEqual(IOSUseProtocol.commandTimeoutSeconds, 45)
         XCTAssertEqual(IOSUseProtocol.commandCompletionTimeoutSeconds, 120)
+        XCTAssertEqual(IOSUseProtocol.nsloggerDefaultPort, 50_000)
+        XCTAssertEqual(IOSUseProtocol.proxyMitmdumpPort, 9080)
+        XCTAssertEqual(IOSUseProtocol.springboardBundleId, "com.apple.springboard")
     }
 
     func testDriverCommandNamesMatchWireCommands() {
@@ -60,6 +63,19 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(commands.contains("waitFor"))
         XCTAssertTrue(commands.contains("dismissAlert"))
         XCTAssertEqual(commands.count, 14)
+    }
+
+    func testDriverCommandMetadataBindsArgsAndPayloadTypes() {
+        XCTAssertEqual(DriverCommand.find.metadata.argsTypeName, "ForyFindArgs")
+        XCTAssertEqual(DriverCommand.find.metadata.payloadTypeName, "ForyFindPayload")
+        XCTAssertEqual(FindCommand.command, .find)
+
+        XCTAssertEqual(DriverCommand.tap.metadata.argsTypeName, "ForyTapArgs")
+        XCTAssertEqual(DriverCommand.tap.metadata.payloadTypeName, "ForyElementPayload")
+        XCTAssertTrue(DriverCommand.tap.metadata.mutatesUI)
+
+        XCTAssertNil(DriverCommand.home.metadata.argsTypeName)
+        XCTAssertNil(DriverCommand.home.metadata.payloadTypeName)
     }
 
     func testPathsRespectIOSUseHomeOverrideWithoutWritingFiles() {

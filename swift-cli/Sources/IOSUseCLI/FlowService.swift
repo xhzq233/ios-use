@@ -21,7 +21,11 @@ extension DriverClient: FlowDriver {}
 
 public enum FlowService {
     public static func run(file: String, options: FlowOptions, paths: IOSUsePaths) throws -> String {
-        var runner = FlowRunner(paths: paths, driver: DriverClient(), udid: options.udid)
+        if let udid = options.udid {
+            try SessionService.prepareDriverSession(SessionOptions(udid: udid, verbose: options.verbose), paths: paths)
+        }
+        let session = SessionService.read(paths: paths)
+        var runner = FlowRunner(paths: paths, driver: DriverClient(session: session), udid: options.udid ?? session?.udid)
         _ = try runner.run(file: file, inheritedVars: options.externalVars, stack: [])
         return runner.output
     }
@@ -31,11 +35,18 @@ public enum FlowService {
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
+
+    static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, nsloggerServer: NSLoggerServer) throws -> (stdout: String, outputs: [String: Any]) {
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, nsloggerServer: nsloggerServer)
+        let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
+        return (runner.output, outputs)
+    }
 }
 
 private struct FlowFile {
     var name: String
     var app: Any?
+    var needNSLog: Any?
     var vars: [String: Any]
     var outputs: Any?
     var steps: [[String: Any]]
@@ -46,6 +57,7 @@ private struct FlowRunner {
     let driver: FlowDriver
     let udid: String?
     var output = ""
+    var nsloggerServer: NSLoggerServer?
 
     mutating func run(file: String, inheritedVars: [String: Any], stack: [String]) throws -> [String: Any] {
         let resolvedFile = URL(fileURLWithPath: file).standardized.path
@@ -59,10 +71,29 @@ private struct FlowRunner {
         let flow = try loadFlowFile(resolvedFile)
         var flowVars = try resolveVars(rawVars: flow.vars, inheritedVars: inheritedVars)
         let flowApp = try flow.app.map { try resolveTemplates($0, vars: flowVars) } as? String
+        let needNSLog = try flow.needNSLog.map { try resolveTemplates($0, vars: flowVars) }
+        var ownsNSLogger = false
+        defer {
+            if ownsNSLogger {
+                nsloggerServer?.stop()
+                nsloggerServer = nil
+            }
+        }
 
         output += "Running flow: \(flow.name)\n"
+        if let options = try nsloggerOptions(needNSLog), nsloggerServer == nil {
+            let server = try NSLoggerServer(options: options, paths: paths)
+            try server.start()
+            nsloggerServer = server
+            ownsNSLogger = true
+            output += "  → nslog: listening on port \(server.port)\n"
+        }
         if let flowApp {
             try driver.activateApp(bundleId: flowApp)
+        }
+        if let server = nsloggerServer, ownsNSLogger {
+            output += "Waiting for app to connect to NSLogger...\n"
+            output += waitForNSLoggerConnection(server: server, timeoutMilliseconds: IOSUseProtocol.flowNSLogConnectTimeoutMilliseconds)
         }
 
         let nextStack = stack + [resolvedFile]
@@ -93,7 +124,7 @@ private struct FlowRunner {
             let candidates = (step["candidates"] as? [Any] ?? []).map { String(describing: $0) }
             let derived = domOutput(payload, candidates: candidates)
             if bool(step["save"]) {
-                try saveDom(payload, derived: derived, raw: bool(step["raw"]), name: (step["name"] as? String) ?? "dom")
+                try saveDom(payload, derived: derived, raw: bool(step["raw"]), name: (step["name"] as? String) ?? "dom-\(flowTimestamp())")
             }
             try bindSingleOutput(rawStep["outputs"], action: action, vars: &flowVars, value: derived)
 
@@ -110,7 +141,10 @@ private struct FlowRunner {
             }
 
         case "sleep":
-            let ms = Int(number(step["ms"]) ?? 1000)
+            if step["ms"] != nil, number(step["ms"]) == nil {
+                throw CLIParseError.invalidValue("sleep.ms must be a number")
+            }
+            let ms = Int(number(step["ms"]) ?? Double(IOSUseProtocol.flowDefaultSleepMilliseconds))
             usleep(useconds_t(max(0, ms) * 1000))
 
         case "runFlow":
@@ -125,6 +159,7 @@ private struct FlowRunner {
             let childVarsRaw = step["vars"] as? [String: Any] ?? [:]
             let childVars = try resolveTemplates(childVarsRaw, vars: flowVars) as? [String: Any] ?? childVarsRaw
             var child = FlowRunner(paths: paths, driver: driver, udid: udid)
+            child.nsloggerServer = nsloggerServer
             let childOutputs = try child.run(file: childFile, inheritedVars: flowVars.merging(childVars) { _, new in new }, stack: stack)
             output += child.output
             for name in requested {
@@ -149,15 +184,19 @@ private struct FlowRunner {
             output += "Input \"\(content)\" into \"\(label)\"\n"
 
         case "screenshot":
-            let name = step["name"] as? String ?? "screenshot"
+            let name = step["name"] as? String ?? "flow-step-\(flowTimestamp())"
             try saveScreenshot(name: name)
 
         case "oslog":
             if bool(step["clear"]) {
-                output += OSLogService.clear()
+                if let udid {
+                    output += OSLogService.clear(udid: udid)
+                } else {
+                    output += OSLogService.clear()
+                }
             } else {
                 guard let udid else { throw CLIParseError.invalidValue("oslog requires --udid") }
-                output += try OSLogService.fetchSimulator(
+                output += try OSLogService.fetch(
                     udid: udid,
                     pattern: optionalString(step["pattern"]),
                     flags: optionalString(step["flags"]),
@@ -166,6 +205,23 @@ private struct FlowRunner {
                     name: optionalString(step["name"]),
                     paths: paths
                 )
+            }
+
+        case "nslog":
+            guard let nsloggerServer else {
+                throw CLIParseError.invalidValue("nslog requires needNSLog in flow config")
+            }
+            let pattern = try requiredString(step["pattern"], field: "nslog.pattern")
+            let flags = optionalString(step["flags"]) ?? ""
+            let timeout = number(step["timeout"]) ?? 0
+            let startedAt = Date()
+            let matches = try waitForNSLogMatches(server: nsloggerServer, pattern: pattern, flags: flags, timeout: timeout)
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            let path = try saveLog(lines: matches, name: optionalString(step["name"]) ?? "nslog-\(flowTimestamp())")
+            output += "  → nslog: \(matches.count) matched /\(pattern)/ in \(elapsedMs)ms → \(path)\n"
+            if bool(step["clearAfterRead"]) {
+                nsloggerServer.clear()
+                output += "  → nslog: buffer cleared\n"
             }
 
         case "swipe":
@@ -232,6 +288,14 @@ private struct FlowRunner {
         let base = URL(fileURLWithPath: baseFile).deletingLastPathComponent()
         return URL(fileURLWithPath: file, relativeTo: base).standardized.path
     }
+
+    private func saveLog(lines: [String], name: String) throws -> String {
+        try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
+        let path = "\(paths.artifacts)/\(name).log"
+        let content = lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")
+        try content.write(toFile: path, atomically: true, encoding: .utf8)
+        return path
+    }
 }
 
 private func loadFlowFile(_ path: String) throws -> FlowFile {
@@ -245,10 +309,62 @@ private func loadFlowFile(_ path: String) throws -> FlowFile {
     return FlowFile(
         name: raw["name"] as? String ?? URL(fileURLWithPath: path).lastPathComponent,
         app: raw["app"],
+        needNSLog: raw["needNSLog"],
         vars: raw["vars"] as? [String: Any] ?? [:],
         outputs: raw["outputs"],
         steps: steps
     )
+}
+
+private func nsloggerOptions(_ raw: Any?) throws -> NSLoggerServerOptions? {
+    guard !isNull(raw) else { return nil }
+    if let enabled = raw as? Bool {
+        return enabled ? NSLoggerServerOptions() : nil
+    }
+    guard let dict = raw as? [String: Any] else {
+        throw CLIParseError.invalidValue("needNSLog must be a boolean or object")
+    }
+    if bool(dict["enabled"]) == false, dict.keys.contains("enabled") {
+        return nil
+    }
+    if dict["port"] != nil || dict["ssl"] != nil {
+        throw CLIParseError.invalidValue("needNSLog does not support port or ssl configuration; NSLogger is fixed to plain TCP on port \(IOSUseProtocol.nsloggerDefaultPort) in the current Swift CLI")
+    }
+    return NSLoggerServerOptions(
+        name: optionalString(dict["name"]),
+        publishBonjour: dict.keys.contains("publishBonjour") ? bool(dict["publishBonjour"]) : true,
+        maxBufferSize: intValue(dict["maxBufferSize"]) ?? IOSUseProtocol.nsloggerDefaultBufferSize
+    )
+}
+
+private func waitForNSLogMatches(server: NSLoggerServer, pattern: String, flags: String, timeout: Double) throws -> [String] {
+    let deadline = Date().addingTimeInterval(max(0, timeout))
+    repeat {
+        let matches = try server.grep(pattern: pattern, flags: flags)
+        if !matches.isEmpty || timeout <= 0 {
+            return matches
+        }
+        usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
+    } while Date() < deadline
+    return try server.grep(pattern: pattern, flags: flags)
+}
+
+private func waitForNSLoggerConnection(server: NSLoggerServer, timeoutMilliseconds: Int) -> String {
+    let startedAt = Date()
+    let timeoutSeconds = Double(max(0, timeoutMilliseconds)) / 1000.0
+    while Date().timeIntervalSince(startedAt) < timeoutSeconds {
+        if server.clientCount > 0 {
+            let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+            return "App connected to NSLogger (\(elapsedMs)ms)\n"
+        }
+        usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
+    }
+    let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+    return "Timeout waiting for app to connect to NSLogger after \(elapsedMs)ms, continuing...\n"
+}
+
+private func flowTimestamp() -> String {
+    ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: #"[:.]"#, with: "-", options: .regularExpression)
 }
 
 private func resolveVars(rawVars: [String: Any], inheritedVars: [String: Any]) throws -> [String: Any] {

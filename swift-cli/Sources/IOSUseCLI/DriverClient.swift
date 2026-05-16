@@ -27,26 +27,35 @@ enum DriverClientError: Error, CustomStringConvertible {
 final class DriverClient {
     private let host: String
     private let port: UInt16
+    private let udid: String?
+    private let deviceType: String?
     private let fory = ForyRegistry.create()
 
-    init(host: String = "127.0.0.1", port: UInt16 = IOSUseProtocol.defaultDriverPort) {
+    init(host: String = "127.0.0.1", port: UInt16 = IOSUseProtocol.defaultDriverPort, udid: String? = nil, deviceType: String? = nil) {
         self.host = host
         self.port = port
+        self.udid = udid
+        self.deviceType = deviceType
+    }
+
+    convenience init(session: SessionService.Info?) {
+        self.init(
+            port: UInt16(session?.port ?? Int(IOSUseProtocol.defaultDriverPort)),
+            udid: session?.udid,
+            deviceType: session?.deviceType
+        )
     }
 
     func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload {
-        let payload = try send(command: DriverCommand.dom.rawValue, args: ForyDomArgs(raw: raw, fresh: fresh))
-        return try fory.deserialize(payload, as: ForyDomPayload.self)
+        try send(DomCommand.self, args: ForyDomArgs(raw: raw, fresh: fresh))
     }
 
     func find(label: String, traits: String?) throws -> ForyFindPayload {
-        let payload = try send(command: DriverCommand.find.rawValue, args: ForyFindArgs(label: label, traits: traits ?? ""))
-        return try fory.deserialize(payload, as: ForyFindPayload.self)
+        try send(FindCommand.self, args: ForyFindArgs(label: label, traits: traits ?? ""))
     }
 
     func waitFor(label: String, timeout: Double?, traits: String?) throws -> ForyWaitForPayload {
-        let payload = try send(command: DriverCommand.waitFor.rawValue, args: ForyWaitForArgs(label: label, timeout: timeout ?? 0, traits: traits ?? ""))
-        return try fory.deserialize(payload, as: ForyWaitForPayload.self)
+        try send(WaitForCommand.self, args: ForyWaitForArgs(label: label, timeout: timeout ?? 0, traits: traits ?? ""))
     }
 
     func screenshot() throws -> Data {
@@ -56,18 +65,16 @@ final class DriverClient {
     }
 
     func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
-        let payload = try send(command: DriverCommand.tap.rawValue, args: ForyTapArgs(target: target, traits: traits ?? "", offset: offset, ratio: ratio))
-        return try fory.deserialize(payload, as: ForyElementPayload.self)
+        try send(TapCommand.self, args: ForyTapArgs(target: target, traits: traits ?? "", offset: offset, ratio: ratio))
     }
 
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?) throws -> ForyElementPayload {
         let durationSeconds = durationMs.map { Double($0) / 1000.0 } ?? 0
-        let payload = try send(command: DriverCommand.longPress.rawValue, args: ForyLongPressArgs(target: target, duration: durationSeconds, traits: traits ?? ""))
-        return try fory.deserialize(payload, as: ForyElementPayload.self)
+        return try send(LongPressCommand.self, args: ForyLongPressArgs(target: target, duration: durationSeconds, traits: traits ?? ""))
     }
 
     func input(label: String, content: String, traits: String?) throws {
-        _ = try send(command: DriverCommand.input.rawValue, args: ForyInputArgs(label: label, content: content, traits: traits ?? ""))
+        _ = try sendRaw(InputCommand.self, args: ForyInputArgs(label: label, content: content, traits: traits ?? ""))
     }
 
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?) throws -> ForySwipePayload {
@@ -77,16 +84,15 @@ final class DriverClient {
         case "back": dirValue = 1
         default: dirValue = -1
         }
-        let payload = try send(command: DriverCommand.swipe.rawValue, args: ForySwipeArgs(toTarget: to, fromTarget: from, distance: distance ?? 0, dir: dirValue, traits: traits ?? ""))
-        return try fory.deserialize(payload, as: ForySwipePayload.self)
+        return try send(SwipeCommand.self, args: ForySwipeArgs(toTarget: to, fromTarget: from, distance: distance ?? 0, dir: dirValue, traits: traits ?? ""))
     }
 
     func activateApp(bundleId: String) throws {
-        _ = try send(command: DriverCommand.activateApp.rawValue, args: ForyActivateAppArgs(bundleId: bundleId))
+        _ = try sendRaw(ActivateAppCommand.self, args: ForyActivateAppArgs(bundleId: bundleId))
     }
 
     func terminateApp(bundleId: String) throws {
-        _ = try send(command: DriverCommand.terminateApp.rawValue, args: ForyTerminateAppArgs(bundleId: bundleId))
+        _ = try sendRaw(TerminateAppCommand.self, args: ForyTerminateAppArgs(bundleId: bundleId))
     }
 
     func home() throws {
@@ -94,23 +100,25 @@ final class DriverClient {
     }
 
     func openURL(url: String) throws -> ForySimpleStringPayload {
-        let payload = try send(command: DriverCommand.openURL.rawValue, args: ForyOpenURLArgs(url: url))
-        return try fory.deserialize(payload, as: ForySimpleStringPayload.self)
+        try send(OpenURLCommand.self, args: ForyOpenURLArgs(url: url))
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
-        let payload = try send(command: DriverCommand.dismissAlert.rawValue, args: ForyDismissAlertArgs(index: Int32(index ?? -1)))
-        return try fory.deserialize(payload, as: ForyAlertPayload.self)
+        try send(DismissAlertCommand.self, args: ForyDismissAlertArgs(index: Int32(index ?? -1)))
     }
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
-        let payload = try send(command: DriverCommand.proxyCAPush.rawValue, args: ForyProxyCAPushArgs(caBase64: caBase64))
-        return try fory.deserialize(payload, as: ForyProxyPayload.self)
+        try send(ProxyCAPushCommand.self, args: ForyProxyCAPushArgs(caBase64: caBase64))
     }
 
-    private func send<Args>(command: String, args: Args) throws -> Data {
+    private func send<B: DriverCommandBinding>(_ binding: B.Type, args: B.Args) throws -> B.Payload {
+        let payload = try sendRaw(binding, args: args)
+        return try fory.deserialize(payload, as: B.Payload.self)
+    }
+
+    private func sendRaw<B: DriverCommandBinding>(_ binding: B.Type, args: B.Args) throws -> Data {
         let payload = try fory.serialize(args)
-        return try sendRawPayload(command: command, payload: payload)
+        return try sendRawPayload(command: binding.command.rawValue, payload: payload)
     }
 
     private func sendRawPayload(command: String, payload: Data) throws -> Data {
@@ -128,6 +136,10 @@ final class DriverClient {
     }
 
     private func connect() throws -> Int32 {
+        if deviceType == "real", let udid {
+            return try Usbmux.connect(udid: udid, port: Int(port))
+        }
+
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw DriverClientError.socketCreateFailed(errno) }
 
