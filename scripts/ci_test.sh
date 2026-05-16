@@ -3,16 +3,16 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "[swift-stack] Running Swift CLI unit tests..."
+echo "[ci-test] Running Swift CLI unit tests..."
 bash "$ROOT_DIR/scripts/test_swift_cli.sh"
 
-echo "[swift-stack] Running Swift driver unit tests..."
+echo "[ci-test] Running Swift driver unit tests..."
 bash "$ROOT_DIR/scripts/test_driver_unit.sh"
 
-echo "[swift-stack] Building Swift CLI..."
+echo "[ci-test] Building Swift CLI..."
 bash "$ROOT_DIR/scripts/build_swift_cli.sh"
 
-echo "[swift-stack] Building Simulator driver artifact..."
+echo "[ci-test] Building Simulator driver artifact..."
 bash "$ROOT_DIR/scripts/build_driver.sh" --simulator-only
 
-echo "[swift-stack] Swift-only stack checks passed"
+echo "[ci-test] CI test gate passed"
