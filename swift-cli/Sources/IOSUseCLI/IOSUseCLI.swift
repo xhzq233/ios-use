@@ -104,9 +104,21 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .config(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try ConfigService.configureDevice(options: options, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .flow(let options):
             do {
                 return CLIResult(exitCode: 0, stdout: try FlowService.run(file: options.file, options: options, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        case .nslog(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: paths))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
@@ -114,11 +126,27 @@ public struct IOSUseCLI: Sendable {
             SessionService.clear(paths: paths)
             return CLIResult(exitCode: 0, stdout: "Session stopped\n")
         case .proxy(.doctor):
-            return CLIResult(exitCode: 0, stdout: "Wi-Fi LAN IP: unknown\nProxy: not running\n")
+            return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
+        case .proxy(.configca(let udid)):
+            do {
+                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(udid: udid, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        case .proxy(.start(let udid, let interfaceName)):
+            do {
+                return CLIResult(exitCode: 0, stdout: try ProxyService.start(udid: udid, interfaceName: interfaceName, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        case .proxy(.stop(let udid)):
+            do {
+                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(udid: udid, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .driver(let action):
             return executeDriver(action)
-        default:
-            return parsedButNotImplemented(parsed)
         }
     }
 
@@ -260,10 +288,6 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func parsedButNotImplemented(_ parsed: ParsedCommand) -> CLIResult {
-        CLIErrorEnvelope(message: "Swift CLI command '\(parsed.commandName)' parsed successfully but execution is not migrated yet.").render()
-    }
-
     public static var helpText: String {
         """
         Usage: ios-use-swift [--help] [--version] <command>
@@ -271,16 +295,18 @@ public struct IOSUseCLI: Sendable {
         Swift CLI for ios-use.
 
         Current status:
-          - driver read, mutation, lifecycle, oslog, config, devices, and Simulator flow paths are migrated
-          - proxy, nslog, and full real-device host paths are still being migrated
-          - `dist/ios-use` is the default Swift executable; `src/cli.ts` remains a legacy reference during migration
+          - `dist/ios-use` is the default Swift executable
+          - Swift CLI and driver compile the same shared IOSUseProtocol/Fory model source
+          - driver read, mutation, lifecycle, oslog, nslog, proxy, config, devices, and Simulator flow paths are migrated
+          - real-device host paths are implemented but still require physical-device validation
+          - `src/cli.ts` remains a legacy reference, not the default runtime path
 
         Options:
           -h, --help       Show help
           -V, --version    Show version
 
-        Planned command groups:
-          devices, config, dom, find, waitFor, screenshot, tap, longPress, input, swipe
+        Commands:
+          devices, config, dom, find, waitFor, screenshot, tap, longpress, input, swipe
           activateApp, terminateApp, home, openURL, dismissAlert, flow, proxy, oslog, nslog
 
         """

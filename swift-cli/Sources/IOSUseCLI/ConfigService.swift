@@ -15,6 +15,77 @@ public struct DeviceConfigEntry: Equatable, Sendable {
 
 public enum ConfigService {
     public static let simulatorBundleId = "com.iosuse.xcuidriver.xctrunner"
+    private static let devRunnerBundleId = "com.iosuse.xcuidriver.xctrunner"
+    private static let devXCTestBundleId = "com.iosuse.xcuidriver"
+    private static let defaultDriverBundlePrefix = "com.ios-use.driver"
+    private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
+
+    public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
+        let udid: String
+        if let requested = options.udid {
+            udid = requested
+        } else if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first {
+            udid = device.udid
+        } else {
+            throw CLIParseError.invalidValue("No --udid and no USB devices detected.")
+        }
+
+        guard let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first(where: { $0.udid == udid }) else {
+            throw CLIParseError.invalidValue("Device \(udid) not found.")
+        }
+
+        let altsign = "\(paths.root)/altsign-cli/altsign-cli"
+        guard FileManager.default.isExecutableFile(atPath: altsign) else {
+            throw CLIParseError.invalidValue("altsign-cli not found at \(altsign). Run: cd altsign-cli && ./build.sh")
+        }
+
+        let saved = listEntries(paths: paths).first { $0.udid == udid }
+        let bundleId = try reusableBundleId(from: saved) ?? dynamicBundleId(options: options, altsign: altsign)
+        let xctestBundleId = bundleId.replacingOccurrences(of: #"\.xctrunner$"#, with: "", options: .regularExpression)
+        let ipaPath = deviceIPAPath(paths: paths)
+        guard FileManager.default.fileExists(atPath: ipaPath) else {
+            throw CLIParseError.invalidValue("Prebuilt driver IPA not found at \(ipaPath)\nBuild it first: ./scripts/build_driver.sh")
+        }
+
+        let rewritten = try rewriteIpaBundleIds(ipaPath: ipaPath, runnerBundleId: bundleId, xctestBundleId: xctestBundleId, paths: paths)
+        defer { if rewritten != ipaPath { try? FileManager.default.removeItem(atPath: rewritten) } }
+
+        let signedIpa = "\(paths.root)/driver-signed-\(udid).ipa"
+        try? FileManager.default.removeItem(atPath: signedIpa)
+        var signArgs = ["sign", "--udid", udid, "--ipa", rewritten, "--output", signedIpa]
+        if let appleId = options.appleId { signArgs += ["--apple-id", appleId] }
+        if let password = options.password { signArgs += ["--password", password] }
+        if options.verbose { signArgs.append("--verbose") }
+        _ = try Shell.run(altsign, arguments: signArgs)
+
+        guard FileManager.default.fileExists(atPath: signedIpa) else {
+            throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
+        }
+
+        let extractDir = "\(paths.root)/driver-install-\(udid)"
+        try? FileManager.default.removeItem(atPath: extractDir)
+        try FileManager.default.createDirectory(atPath: extractDir, withIntermediateDirectories: true, attributes: nil)
+        defer { try? FileManager.default.removeItem(atPath: extractDir) }
+        _ = try Shell.run("unzip", arguments: ["-q", "-o", signedIpa, "-d", extractDir])
+        let payloadDir = "\(extractDir)/Payload"
+        let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
+        guard let appEntry = appEntries.first else {
+            throw CLIParseError.invalidValue("No .app found in signed IPA at \(payloadDir)")
+        }
+
+        _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "install", "app", "--device", udid, "\(payloadDir)/\(appEntry)"])
+        try saveConfig(udid: udid, bundleId: bundleId, port: String(IOSUseProtocol.defaultDriverPort), paths: paths)
+
+        return """
+        Using device: \(DeviceService.format(device, configured: DeviceService.configuredUdids(paths: paths)))
+        Driver Bundle ID: \(bundleId)
+        XCTest Bundle ID: \(xctestBundleId)
+        Using prebuilt driver: \(ipaPath)
+        Driver signed
+        Driver installed to device
+        Device config complete! Run `ios-use activateApp <bundleId>` to start, or just use any action command.
+        """ + "\n"
+    }
 
     public static func listEntries(paths: IOSUsePaths) -> [DeviceConfigEntry] {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.config)),
@@ -94,6 +165,76 @@ public enum ConfigService {
         return "\(paths.root)/driver-sim.ipa"
     }
 
+    private static func deviceIPAPath(paths: IOSUsePaths) -> String {
+        let localAsset = "\(FileManager.default.currentDirectoryPath)/assets/driver.ipa"
+        if FileManager.default.fileExists(atPath: localAsset) {
+            return localAsset
+        }
+        return "\(paths.root)/driver.ipa"
+    }
+
+    private static func dynamicBundleId(options: ConfigOptions, altsign: String) throws -> String {
+        let appleId = try options.appleId ?? cachedAppleId(altsign: altsign)
+        guard let appleId, !appleId.isEmpty else {
+            throw CLIParseError.invalidValue("No signing config found for this device and no cached altsign session. Please run with --apple-id <email> --password <pwd> to log in.")
+        }
+        return "\(defaultDriverBundlePrefix).\(sanitizeForBundleId(appleId)).xctrunner"
+    }
+
+    static func reusableBundleId(from entry: DeviceConfigEntry?) -> String? {
+        guard let bundleId = entry?.bundleId.nonEmpty, bundleId != "(missing)" else {
+            return nil
+        }
+        return bundleId
+    }
+
+    private static func cachedAppleId(altsign: String) throws -> String? {
+        guard let output = try? Shell.run(altsign, arguments: ["list"]) else { return nil }
+        guard let regex = try? NSRegularExpression(pattern: cachedAppleIdPattern),
+              let match = regex.firstMatch(in: output, range: NSRange(output.startIndex..<output.endIndex, in: output)),
+              let range = Range(match.range(at: 1), in: output) else {
+            return nil
+        }
+        return String(output[range])
+    }
+
+    private static func sanitizeForBundleId(_ value: String) -> String {
+        value.lowercased().replacingOccurrences(of: #"[^a-z0-9]"#, with: "-", options: .regularExpression)
+    }
+
+    private static func rewriteIpaBundleIds(ipaPath: String, runnerBundleId: String, xctestBundleId: String, paths: IOSUsePaths) throws -> String {
+        let tmpDir = "\(paths.root)/ipa-rewrite-\(UUID().uuidString)"
+        try? FileManager.default.removeItem(atPath: tmpDir)
+        try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true, attributes: nil)
+        defer { try? FileManager.default.removeItem(atPath: tmpDir) }
+
+        _ = try Shell.run("unzip", arguments: ["-q", "-o", ipaPath, "-d", tmpDir])
+        let payloadDir = "\(tmpDir)/Payload"
+        let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
+        guard let appEntry = appEntries.first else {
+            throw CLIParseError.invalidValue("No .app found in IPA")
+        }
+        let appPath = "\(payloadDir)/\(appEntry)"
+        try rewritePlistBundleId(plistPath: "\(appPath)/Info.plist", oldId: devRunnerBundleId, newId: runnerBundleId)
+        let pluginsDir = "\(appPath)/PlugIns"
+        if let plugins = try? FileManager.default.contentsOfDirectory(atPath: pluginsDir) {
+            for plugin in plugins where plugin.hasSuffix(".xctest") {
+                try rewritePlistBundleId(plistPath: "\(pluginsDir)/\(plugin)/Info.plist", oldId: devXCTestBundleId, newId: xctestBundleId)
+            }
+        }
+        let outPath = ipaPath.replacingOccurrences(of: #"\.ipa$"#, with: "-rewritten.ipa", options: .regularExpression)
+        try? FileManager.default.removeItem(atPath: outPath)
+        _ = try Shell.run("zip", arguments: ["-r", "-q", outPath, "Payload"], cwd: tmpDir)
+        return outPath
+    }
+
+    private static func rewritePlistBundleId(plistPath: String, oldId: String, newId: String) throws {
+        guard FileManager.default.fileExists(atPath: plistPath) else { return }
+        let current = try Shell.run("plutil", arguments: ["-extract", "CFBundleIdentifier", "raw", "-o", "-", plistPath]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard current == oldId, current != newId else { return }
+        _ = try Shell.run("plutil", arguments: ["-replace", "CFBundleIdentifier", "-string", newId, plistPath])
+    }
+
     private static func saveConfig(udid: String, bundleId: String, port: String, paths: IOSUsePaths) throws {
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: URL(fileURLWithPath: paths.config)),
@@ -117,6 +258,12 @@ public enum ConfigService {
             }
             usleep(200_000)
         }
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 

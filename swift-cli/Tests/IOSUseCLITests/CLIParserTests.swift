@@ -12,6 +12,11 @@ final class CLIParserTests: XCTestCase {
             try CLIParser.parse(["config", "--simulator", "--udid", "SIM-1", "--apple-id", "user@example.com", "--password", "secret", "--verbose"]),
             .config(ConfigOptions(udid: "SIM-1", list: false, simulator: true, appleId: "user@example.com", password: "secret", verbose: true))
         )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["config", "--list"]),
+            .config(ConfigOptions(list: true))
+        )
     }
 
     func testParsesDriverReadCommands() throws {
@@ -89,6 +94,26 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["proxy", "start", "--udid", "DEVICE-1", "--interface", "en0"]),
             .proxy(.start(udid: "DEVICE-1", interfaceName: "en0"))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["proxy", "start", "--udid", "DEVICE-1", "-i", "en1"]),
+            .proxy(.start(udid: "DEVICE-1", interfaceName: "en1"))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["proxy", "configca", "--udid", "DEVICE-1"]),
+            .proxy(.configca(udid: "DEVICE-1"))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["proxy", "stop", "--udid", "DEVICE-1"]),
+            .proxy(.stop(udid: "DEVICE-1"))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["proxy", "doctor"]),
+            .proxy(.doctor)
         )
     }
 

@@ -103,6 +103,11 @@ private struct FlowRunner {
             let traits = resolveOptionalString(step["traits"], vars: vars, context: context)
             let ratio = ratioPoint(step["offset"] as? [String: Any])
             _ = try client.tap(target: ForyTarget(label: label), traits: traits, offset: nil, ratio: ratio)
+        case "input":
+            let label = resolveString(step["label"], vars: vars, context: context)
+            let content = resolveString(step["content"], vars: vars, context: context)
+            try client.input(label: label, content: content, traits: resolveOptionalString(step["traits"], vars: vars, context: context))
+            output += "Input \"\(content)\" into \"\(label)\"\n"
         case "screenshot":
             let name = step["name"] as? String ?? "screenshot"
             try saveScreenshot(name: name)
@@ -135,6 +140,10 @@ private struct FlowRunner {
             try client.terminateApp(bundleId: resolveString(step["bundleId"], vars: vars, context: context))
         case "home":
             try client.home()
+        case "openURL":
+            _ = try client.openURL(url: resolveString(step["url"], vars: vars, context: context))
+        case "dismissAlert":
+            _ = try client.dismissAlert(index: step["index"] as? Int)
         default:
             throw CLIParseError.invalidValue("unsupported flow action: \(action)")
         }

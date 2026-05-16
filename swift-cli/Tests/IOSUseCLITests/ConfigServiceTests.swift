@@ -1,5 +1,5 @@
 import XCTest
-import IOSUseCLI
+@testable import IOSUseCLI
 
 final class ConfigServiceTests: XCTestCase {
     func testConfigListFormatsEntriesInStableOrder() throws {
@@ -28,6 +28,16 @@ final class ConfigServiceTests: XCTestCase {
               A-UDID → bundleId: com.example.a, port: (missing)
               B-UDID → bundleId: com.example.b, port: 8100
             """ + "\n"
+        )
+    }
+
+    func testReusableBundleIdIgnoresMissingSentinel() {
+        XCTAssertNil(ConfigService.reusableBundleId(from: nil))
+        XCTAssertNil(ConfigService.reusableBundleId(from: DeviceConfigEntry(udid: "A-UDID", bundleId: "", port: "8100")))
+        XCTAssertNil(ConfigService.reusableBundleId(from: DeviceConfigEntry(udid: "A-UDID", bundleId: "(missing)", port: "8100")))
+        XCTAssertEqual(
+            ConfigService.reusableBundleId(from: DeviceConfigEntry(udid: "A-UDID", bundleId: "com.example.runner", port: "8100")),
+            "com.example.runner"
         )
     }
 
