@@ -67,6 +67,7 @@ public enum ConfigService {
         }
 
         let launchOutput = try Shell.run("xcrun", arguments: ["simctl", "launch", udid, simulatorBundleId]).trimmingCharacters(in: .whitespacesAndNewlines)
+        waitForSimulatorDriver()
         try saveConfig(udid: udid, bundleId: simulatorBundleId, port: String(IOSUseProtocol.defaultDriverPort), paths: paths)
         return "Using prebuilt driver: \(ipaPath)\nDriver installed to Simulator\nDriver launched on Simulator (PID: \(launchOutput))\nSimulator config complete!\n"
     }
@@ -100,6 +101,15 @@ public enum ConfigService {
         let configDir = URL(fileURLWithPath: paths.config).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true, attributes: nil)
         try data.write(to: URL(fileURLWithPath: paths.config), options: .atomic)
+    }
+
+    private static func waitForSimulatorDriver() {
+        for _ in 0..<50 {
+            if (try? DriverClient().dom(raw: false, fresh: false)) != nil {
+                return
+            }
+            usleep(200_000)
+        }
     }
 }
 
