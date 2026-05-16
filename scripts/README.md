@@ -35,7 +35,7 @@ The GitHub release workflow builds and uploads:
 
 | Asset | Purpose |
 | --- | --- |
-| `ios-use-darwin-arm64` / `ios-use-darwin-x86_64` | Prebuilt macOS CLI binary for the runner architecture. |
+| `ios-use-darwin-arm64` | Prebuilt Apple Silicon macOS CLI binary. Intel Macs use `scripts/install.sh --build-from-source`. |
 | `driver.ipa` | Real-device XCTest driver IPA. |
 | `driver-sim.ipa` | Simulator XCTest driver IPA. |
 | `SHA256SUMS` | Checksums for uploaded release assets. |

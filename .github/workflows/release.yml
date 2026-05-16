@@ -15,16 +15,8 @@ permissions:
 
 jobs:
   build-cli:
-    name: Build CLI (${{ matrix.asset }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-26
-            asset: ios-use-darwin-arm64
-          - runner: macos-26-intel
-            asset: ios-use-darwin-x86_64
+    name: Build CLI (ios-use-darwin-arm64)
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
@@ -35,14 +27,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp dist/ios-use "release/${{ matrix.asset }}"
-          chmod +x "release/${{ matrix.asset }}"
+          cp dist/ios-use release/ios-use-darwin-arm64
+          chmod +x release/ios-use-darwin-arm64
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
-          path: release/${{ matrix.asset }}
+          name: ios-use-darwin-arm64
+          path: release/ios-use-darwin-arm64
 
   build-driver:
     name: Build driver IPAs

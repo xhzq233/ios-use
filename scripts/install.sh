@@ -104,7 +104,8 @@ mac_cli_asset_name() {
       printf 'ios-use-darwin-arm64\n'
       ;;
     x86_64)
-      printf 'ios-use-darwin-x86_64\n'
+      echo "Prebuilt x86_64 macOS CLI is not published. Re-run with --build-from-source." >&2
+      exit 1
       ;;
     *)
       echo "Unsupported macOS architecture: $arch" >&2
