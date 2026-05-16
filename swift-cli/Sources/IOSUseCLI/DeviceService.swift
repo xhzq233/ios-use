@@ -112,10 +112,13 @@ public enum DeviceService {
 }
 
 enum Shell {
-    static func run(_ executable: String, arguments: [String]) throws -> String {
+    static func run(_ executable: String, arguments: [String], cwd: String? = nil) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [executable] + arguments
+        if let cwd {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        }
 
         let stdout = Pipe()
         let stderr = Pipe()
