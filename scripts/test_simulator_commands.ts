@@ -723,12 +723,14 @@ function buildCases(): CaseDef[] {
       runCli(['activateApp', 'com.apple.mobilesafari', '--udid', sim.udid]);
     }) },
     { id: 'FIND-1B', run: async () => {
-      await runCaseContains('FIND-1B', 'URL=iosuse-find', ['find', 'iosuse-find', '--traits', 'TextField', '--udid', sim.udid], async () => {
-        execCmd(['xcrun', 'simctl', 'openurl', sim.udid, 'https://example.com']);
-        await sleep(1000);
-        runCli(['activateApp', 'com.apple.mobilesafari', '--udid', sim.udid]);
-        runCliToFiles(['input', '--label', 'example.com', '--content', 'iosuse-find', '--traits', 'TextField', '--udid', sim.udid], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
+      await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'TextField', '--udid', sim.udid], async () => {
+        await openContactsNewContact();
+        const input = runCliToFiles(['input', '--label', 'First name', '--content', 'iosuse-find', '--traits', 'TextField', '--udid', sim.udid], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
+        if (input.code !== 0) {
+          throw new Error(`FIND-1B setup input failed\n${input.stdout}${input.stderr}`);
+        }
       });
+      if (selected('FIND-1B')) await discardContactIfNeeded();
     } },
     { id: 'FIND-5B', run: () => runCaseFailsContains('FIND-5B', 'not found', ['find', '__ios_use_missing_label__', '--udid', sim.udid], settingsHome) },
     { id: 'WF-1', run: () => runCaseContains('WF-1', 'waited=', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--timeout', '2', '--udid', sim.udid], settingsHome) },
