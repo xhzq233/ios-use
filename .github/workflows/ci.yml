@@ -64,5 +64,6 @@ jobs:
           IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
           IOS_USE_SIMULATOR_CASES: ${{ inputs.simulator_cases }}
         run: |
+          bash scripts/build_swift_cli.sh
           bash scripts/build_driver.sh --simulator-only
           bun scripts/test_simulator_commands.ts --skip-build --case "$IOS_USE_SIMULATOR_CASES"

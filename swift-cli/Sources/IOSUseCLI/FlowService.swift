@@ -70,7 +70,7 @@ private struct FlowRunner {
             }
         case "returnIf":
             let value = resolveValue(step["value"], vars: vars, context: context)
-            guard let matcher = step["is"] as? String, matcher == "null" else {
+            guard isNullMatcher(step["is"]) else {
                 throw CLIParseError.invalidValue("returnIf requires \"is\" to be true, false, or null")
             }
             if isNullLike(value) {
@@ -260,4 +260,8 @@ private func resolveExpression(_ expr: String, vars: [String: String], context: 
 
 private func isNullLike(_ value: Any?) -> Bool {
     value == nil || value is NSNull
+}
+
+private func isNullMatcher(_ value: Any?) -> Bool {
+    value == nil || value is NSNull || (value as? String) == "null"
 }

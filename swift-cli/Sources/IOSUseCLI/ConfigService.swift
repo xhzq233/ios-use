@@ -69,6 +69,13 @@ public enum ConfigService {
         let launchOutput = try Shell.run("xcrun", arguments: ["simctl", "launch", udid, simulatorBundleId]).trimmingCharacters(in: .whitespacesAndNewlines)
         waitForSimulatorDriver()
         try saveConfig(udid: udid, bundleId: simulatorBundleId, port: String(IOSUseProtocol.defaultDriverPort), paths: paths)
+        let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first { $0.udid == udid }
+        try SessionService.writeSimulatorSession(
+            udid: udid,
+            deviceName: simulator?.name ?? "Simulator",
+            deviceVersion: simulator?.version ?? "",
+            paths: paths
+        )
         return "Using prebuilt driver: \(ipaPath)\nDriver installed to Simulator\nDriver launched on Simulator (PID: \(launchOutput))\nSimulator config complete!\n"
     }
 
@@ -116,5 +123,21 @@ public enum ConfigService {
 public enum SessionService {
     public static func clear(paths: IOSUsePaths) {
         try? FileManager.default.removeItem(atPath: paths.session)
+    }
+
+    public static func writeSimulatorSession(udid: String, deviceName: String, deviceVersion: String, paths: IOSUsePaths) throws {
+        let root: [String: Any] = [
+            "sessionId": "session-\(Int(Date().timeIntervalSince1970 * 1000))",
+            "udid": udid,
+            "port": IOSUseProtocol.defaultDriverPort,
+            "deviceName": deviceName,
+            "deviceVersion": deviceVersion,
+            "deviceType": "simulator",
+            "createdAt": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        let sessionDir = URL(fileURLWithPath: paths.session).deletingLastPathComponent().path
+        try FileManager.default.createDirectory(atPath: sessionDir, withIntermediateDirectories: true, attributes: nil)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: URL(fileURLWithPath: paths.session), options: .atomic)
     }
 }

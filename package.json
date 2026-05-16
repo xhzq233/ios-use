@@ -3,17 +3,18 @@
   "version": "1.0.0",
   "type": "module",
   "description": "CLI tool to automate iOS devices via custom TCP XCTest driver",
-  "main": "src/cli.ts",
+  "main": "dist/ios-use",
   "bin": {
-    "ios-use": "./src/cli.ts"
+    "ios-use": "./dist/ios-use"
   },
   "directories": {
     "doc": "docs"
   },
   "scripts": {
-    "start": "bun src/cli.ts",
+    "start": "./dist/ios-use",
     "test": "bun test",
-    "build": "bun build ./src/cli.ts --compile --outfile ./dist/ios-use",
+    "build": "bash scripts/build_swift_cli.sh",
+    "build:legacy-bun": "bun build ./src/cli.ts --compile --outfile ./dist/ios-use-bun",
     "build:swift-cli": "bash scripts/build_swift_cli.sh",
     "test:swift-cli": "bash scripts/test_swift_cli.sh"
   },

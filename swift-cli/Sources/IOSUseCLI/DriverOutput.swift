@@ -12,7 +12,14 @@ public enum DriverOutput {
         lines.append("App: \(payload.app), Window: \(Int(payload.windowSize.x))x\(Int(payload.windowSize.y))")
         lines.append("Elements:")
         for element in payload.elements {
-            let label = element.label.isEmpty ? "(no label)" : element.label
+            let label: String
+            if element.label.isEmpty {
+                label = element.value.isEmpty ? "(no label)" : element.value
+            } else if !element.value.isEmpty, element.value != element.label {
+                label = "\(element.label)=\(element.value)"
+            } else {
+                label = element.label
+            }
             let traits = element.traits.joined(separator: ",")
             let rect = element.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"
             lines.append("  - \(label) [\(traits)] \(rect)")
@@ -21,9 +28,8 @@ public enum DriverOutput {
     }
 
     public static func formatFind(label: String, payload: ForyFindPayload) -> String {
-        var lines: [String] = ["", "Find \"\(label)\":"]
+        var lines: [String] = ["", "Find \"\(label)\":", "  matches=\(payload.matches.count)"]
         if payload.matches.isEmpty {
-            lines.append("  no matches")
             if !payload.hint.isEmpty { lines.append("  hint: \(payload.hint)") }
             if !payload.suggestions.isEmpty { lines.append("  suggestions: \(payload.suggestions.joined(separator: ", "))") }
             return lines.joined(separator: "\n") + "\n"
