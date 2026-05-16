@@ -348,7 +348,8 @@ public enum SessionService {
             }
         }
         if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
-            try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: false)
+            let shouldReuseReachableDriver = read(paths: paths) == nil
+            try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: shouldReuseReachableDriver)
             try writeSession(
                 udid: udid,
                 deviceName: simulator.name,
