@@ -29,11 +29,17 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testKnownDriverCommandReportsExplicitMigrationBoundary() {
+        let result = IOSUseCLI().run(arguments: ["find", "General", "--traits", "Cell"])
+
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stderr.contains("Swift CLI command 'find' parsed successfully but execution is not migrated yet"))
+    }
+
+    func testMissingRequiredArgumentFailsBeforeExecution() {
         let result = IOSUseCLI().run(arguments: ["find"])
 
         XCTAssertEqual(result.exitCode, 64)
-        XCTAssertTrue(result.stderr.contains("Swift CLI driver command 'find' is not implemented yet"))
-        XCTAssertTrue(result.stderr.contains("TypeScript CLI"))
+        XCTAssertTrue(result.stderr.contains("missing required argument 'label'"))
     }
 
     func testProtocolConstantsMatchDriverDefaults() {
