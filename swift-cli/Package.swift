@@ -12,8 +12,19 @@ let package = Package(
         .library(name: "IOSUseCLI", targets: ["IOSUseCLI"]),
         .executable(name: "ios-use-swift", targets: ["IOSUseSwiftCLI"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/apache/fory.git", branch: "main")
+    ],
     targets: [
-        .target(name: "IOSUseProtocol"),
+        .target(
+            name: "IOSUseProtocol",
+            dependencies: [
+                .product(name: "Fory", package: "fory")
+            ],
+            swiftSettings: [
+                .define("FORY_SWIFT_MACRO")
+            ]
+        ),
         .target(
             name: "IOSUseCLI",
             dependencies: ["IOSUseProtocol"]
