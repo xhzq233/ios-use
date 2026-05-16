@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       full_simulator:
-        description: "Run full Simulator regression via scripts/test_full_simulator.sh"
+        description: "Run full Simulator regression via scripts/ci_full_simulator.sh"
         required: false
         default: false
         type: boolean
@@ -32,7 +32,7 @@ jobs:
       - name: Run Swift-only stack checks
         env:
           IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
-        run: bash scripts/test_swift_stack.sh
+        run: bash scripts/ci_test.sh
 
   full-simulator:
     runs-on: macos-26
@@ -48,14 +48,11 @@ jobs:
         if: inputs.full_simulator && inputs.simulator_cases == ''
         env:
           IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
-        run: bash scripts/test_full_simulator.sh
+        run: bash scripts/ci_full_simulator.sh
 
       - name: Run selected Simulator command cases
         if: inputs.simulator_cases != ''
         env:
           IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
           IOS_USE_SIMULATOR_CASES: ${{ inputs.simulator_cases }}
-        run: |
-          bash scripts/build_swift_cli.sh
-          bash scripts/build_driver.sh --simulator-only
-          node scripts/test_simulator_commands.mjs --skip-build --case "$IOS_USE_SIMULATOR_CASES"
+        run: bash scripts/ci_full_simulator.sh --case "$IOS_USE_SIMULATOR_CASES"

@@ -227,11 +227,10 @@ scripts/runcli.sh --help
 bash scripts/build_swift_cli.sh
 bash scripts/build_driver.sh
 ./dist/ios-use --help
-bash scripts/test_all.sh
-bash scripts/test_swift_stack.sh
+bash scripts/ci_test.sh
 ```
 
-`scripts/runcli.sh` is the fastest debug loop: it builds the Swift CLI in place and runs it without copying into `dist/`. `scripts/test_all.sh` and `scripts/test_swift_stack.sh` are Swift-only validation paths. Full Simulator command matrix tests use the Node-based runner via `bash scripts/test_full_simulator.sh`. See `scripts/README.md` for the script index.
+`scripts/runcli.sh` is the fastest debug loop: it builds the Swift CLI in place and runs it without copying into `dist/`. `scripts/ci_test.sh` is the default CI/local Swift-only validation path. Full Simulator command matrix tests use `bash scripts/ci_full_simulator.sh`. See `scripts/README.md` for the script index.
 
 ## Acknowledgments
 

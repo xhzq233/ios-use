@@ -3,6 +3,7 @@ node_modules/
 output/
 package-lock.json
 dist/
+release/
 log/
 worktrees/
 altsign-cli/altsign-cli
