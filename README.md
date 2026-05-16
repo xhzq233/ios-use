@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 - **Normalized find with traits disambiguation**: contains-match over label/value text with whitespace, punctuation, and case normalization, plus fuzzy fallback and `--traits` filtering.
 - **4 scroll modes**: scroll-to-label, point swipe, anchor-based scroll, and fixed-distance swipe. Auto axis detection from visible cell layout.
 - **OSLog integration**: Fetch Simulator/device logs from the host side with regex filtering, grouped by bundle ID.
-- **Built-in NSLogger receiver**: Capture device logs from the CLI, with optional TLS and Bonjour service discovery.
+- **Built-in NSLogger receiver**: Capture plain TCP NSLogger logs from the CLI with Bonjour service discovery.
 - **Flow runner**: Describe multi-step automations in YAML using the same command set as the CLI.
 
 ## Installation
@@ -30,7 +30,11 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash
 ```
 
-The installer compiles the current Swift CLI locally with SwiftPM and installs `ios-use` into a user-writable bin directory.
+The installer downloads the prebuilt macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To compile locally instead:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
+```
 
 ### 2. First-Time Setup
 
@@ -190,13 +194,14 @@ Numbers vary by device, app state, and whether the target page is already warm, 
 
 | Dependency | Install CLI | Real Device | Simulator / Dev |
 | --- | --- | --- | --- |
-| `bash`, `curl`, `tar`, `swift` | required | not needed after install | dev also uses SwiftPM |
+| `bash`, `curl`, `tar` | required | not needed after install | dev also uses them |
+| `swift` | only for `--build-from-source` | not needed after install | required for SwiftPM development |
 | `xcrun xctrace` | not needed | required for device discovery | not needed |
 | `xcrun devicectl` | not needed | required for install and launch | not needed |
 | `xcrun simctl` | not needed | not needed | required for Simulator config; dev build also uses it |
 | `unzip` | not needed | required during `config` | required during Simulator `config` |
 | `altsign-cli` | copied by installer if bundled | required for real-device signing | not needed |
-| `openssl` | not needed | optional for `nslog --ssl` | optional for `nslog --ssl` |
+| `openssl` | not needed | required for real-device `oslog` TLS relay | not needed |
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
 | `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_driver.sh` |
 | `appium`, `lsof` | not needed | not needed at runtime | benchmark only |
@@ -218,6 +223,7 @@ assets/               Prebuilt driver artifacts
 ```bash
 git clone https://github.com/xhzq233/ios-use.git
 cd ios-use
+scripts/runcli.sh --help
 bash scripts/build_swift_cli.sh
 bash scripts/build_driver.sh
 ./dist/ios-use --help
@@ -225,7 +231,7 @@ bash scripts/test_all.sh
 bash scripts/test_swift_stack.sh
 ```
 
-`scripts/test_all.sh` and `scripts/test_swift_stack.sh` are Swift-only validation paths. Full Simulator command matrix tests use the Node-based runner via `bash scripts/test_full_simulator.sh`.
+`scripts/runcli.sh` is the fastest debug loop: it builds the Swift CLI in place and runs it without copying into `dist/`. `scripts/test_all.sh` and `scripts/test_swift_stack.sh` are Swift-only validation paths. Full Simulator command matrix tests use the Node-based runner via `bash scripts/test_full_simulator.sh`. See `scripts/README.md` for the script index.
 
 ## Acknowledgments
 

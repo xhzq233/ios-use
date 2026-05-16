@@ -3,8 +3,12 @@ name: Build & Release
 on:
   push:
     tags: ["v*"]
-    branches: [main]
-    paths: ["driver/**"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload assets to, for example v1.0.0"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -20,26 +24,44 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
-      - name: Build driver IPA
-        run: mkdir -p assets && bash scripts/build_driver.sh
+      - name: Build Swift CLI
+        run: bash scripts/build_swift_cli.sh
+
+      - name: Build driver IPAs
+        run: bash scripts/build_driver.sh
+
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            arm64) CLI_ASSET="ios-use-darwin-arm64" ;;
+            x86_64) CLI_ASSET="ios-use-darwin-x86_64" ;;
+            *) echo "Unsupported macOS architecture: $ARCH" >&2; exit 1 ;;
+          esac
+
+          cp dist/ios-use "release/${CLI_ASSET}"
+          chmod +x "release/${CLI_ASSET}"
+          cp assets/driver.ipa release/driver.ipa
+          cp assets/driver-sim.ipa release/driver-sim.ipa
+          shasum -a 256 release/* > release/SHA256SUMS
 
       - name: Resolve release tag
         id: resolve_tag
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
-            LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-            if [ -z "$LATEST" ]; then
-              echo "No existing tag found, skipping release upload."
-              exit 0
-            fi
-            echo "tag=$LATEST" >> "$GITHUB_OUTPUT"
+            echo "Release workflow must run from a tag push or workflow_dispatch tag input." >&2
+            exit 1
           fi
 
       - name: Upload to Release
-        if: steps.resolve_tag.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.resolve_tag.outputs.tag }}
-          files: assets/driver.ipa
+          files: release/*
