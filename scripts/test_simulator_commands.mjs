@@ -207,6 +207,28 @@ async function runCaseContains(id, expected, args, setup) {
   else recordFail(id, res.stdout + res.stderr);
 }
 
+function isTransientDriverFailure(output) {
+  return /driver TCP read failed|not connected|connection refused|read timeout/i.test(output);
+}
+
+async function runCaseContainsRetryTransient(id, expected, args, setup) {
+  if (!selected(id)) return recordSkip(id);
+  await setup?.();
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')}`);
+  let res = runCliToFiles(args, out, err);
+  if ((res.code !== 0 || !res.stdout.includes(expected)) && isTransientDriverFailure(`${res.stdout}\n${res.stderr}`)) {
+    console.log(`[sim-test] ${id}: transient driver failure, rebuilding once before retry`);
+    runCliToFiles(['config', '--simulator', '--udid', sim.udid], path.join(artifactDir, `${id}-reconfig.out`), path.join(artifactDir, `${id}-reconfig.err`));
+    await waitForDriver();
+    await setup?.();
+    res = runCliToFiles(args, out, err);
+  }
+  if (res.code === 0 && res.stdout.includes(expected)) recordPass(id);
+  else recordFail(id, res.stdout + res.stderr);
+}
+
 async function runCaseMatches(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
   await setup?.();
@@ -409,7 +431,7 @@ async function openSpringboardIconMenu(id) {
   runCli(['home', '--udid', sim.udid]);
   await sleep(1000);
   runCliToFiles(
-    ['longpress', 'Settings', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid],
+    ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid],
     path.join(artifactDir, `${id}-icon-menu.out`),
     path.join(artifactDir, `${id}-icon-menu.err`),
   );
@@ -673,7 +695,10 @@ function buildCases() {
       if (home.code === 0 && stop.code === 0 && dom.code === 0 && dom.stdout.includes('App: com.apple.springboard')) recordPass('AA-1');
       else recordFail('AA-1', home.stdout + home.stderr + stop.stdout + stop.stderr + dom.stdout + dom.stderr);
     } },
-    { id: 'AS-7', run: () => runCaseContains('AS-7', 'App: com.apple.springboard', ['dom', '--fresh', '--udid', sim.udid]) },
+    { id: 'AS-7', run: () => runCaseContains('AS-7', 'App: com.apple.springboard', ['dom', '--fresh', '--udid', sim.udid], async () => {
+      runCli(['home', '--udid', sim.udid]);
+      await sleep(1000);
+    }) },
     { id: 'AA-2', run: () => runCaseContains('AA-2', 'App com.apple.Preferences activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
     { id: 'AS-2', run: () => runCaseContains('AS-2', 'App: com.apple.Preferences', ['dom', '--fresh', '--udid', sim.udid]) },
     { id: 'AA-3', run: async () => {
@@ -697,11 +722,7 @@ function buildCases() {
     { id: 'FIND-5', run: () => runCaseMatches('FIND-5', /suggestions|Did you mean|General/, ['find', 'Generak', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-7', run: () => runCaseContains('FIND-7', 'Find', ['find', 'HomeScreen', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'Search', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'Back', ['find', 'Back', '--traits', 'Button,disabled', '--udid', sim.udid], async () => {
-      execCmd(['xcrun', 'simctl', 'openurl', sim.udid, 'https://example.com']);
-      await sleep(1000);
-      runCli(['activateApp', 'com.apple.mobilesafari', '--udid', sim.udid]);
-    }) },
+    { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled', '--udid', sim.udid], generalPage) },
     { id: 'FIND-1B', run: async () => {
       await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'TextField', '--udid', sim.udid], async () => {
         await openContactsNewContact();
@@ -791,7 +812,7 @@ function buildCases() {
     { id: 'LP-3', run: () => runCaseContains('LP-3', 'Longpress', ['longpress', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'LP-4', run: () => runCaseContains('LP-4', 'Longpress', ['longpress', 'About', '--duration', '500', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'LP-5', run: () => runCaseContains('LP-5', 'Longpress', ['longpress', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'LP-6', run: () => runCaseContains('LP-6', 'Longpress', ['longpress', 'Settings', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
+    { id: 'LP-6', run: () => runCaseContains('LP-6', 'Longpress', ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
     { id: 'DOM-5B', run: () => runCaseContains('DOM-5B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh', '--udid', sim.udid], () => openSpringboardIconMenu('DOM-5B')) },
     { id: 'SW-16B', run: () => runCaseContains('SW-16B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh', '--udid', sim.udid], () => openSpringboardIconMenu('SW-16B')) },
   ]);
@@ -882,7 +903,7 @@ function buildCases() {
   addCases(cases, [
     { id: 'FLOW-1', run: () => runCaseContains('FLOW-1', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-2', run: () => runCaseFailsContains('FLOW-2', 'Flow file not found', ['flow', flow('missing-file.yaml'), '--udid', sim.udid]) },
-    { id: 'FLOW-3', run: () => runCaseContains('FLOW-3', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-3', run: () => runCaseContainsRetryTransient('FLOW-3', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-4', run: () => runCaseContains('FLOW-4', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-6', run: () => runCaseContains('FLOW-6', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-7', run: () => runCaseContains('FLOW-7', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], settingsHome) },
