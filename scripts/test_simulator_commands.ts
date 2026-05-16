@@ -397,18 +397,31 @@ async function openContactsNewContact(): Promise<void> {
   runCli(['activateApp', 'com.apple.MobileAddressBook', '--udid', sim.udid]);
   await sleep(1000);
   runCli(['dismissAlert', '--udid', sim.udid]);
+
+  const formVisible = () => runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '0.5', '--udid', sim.udid]).code === 0;
+  if (formVisible()) return;
+
   for (let i = 0; i < 3; i++) {
     const addVisible = runCli(['waitFor', '--label', 'Add', '--traits', 'Button', '--timeout', '1', '--udid', sim.udid]);
-    if (addVisible.code === 0) break;
+    if (addVisible.code === 0) {
+      const add = runCli(['tap', 'Add', '--traits', 'Button', '--udid', sim.udid]);
+      if (add.code !== 0) runCli(['tap', '340,800', '--udid', sim.udid]);
+    } else {
+      runCli(['tap', '340,800', '--udid', sim.udid]);
+    }
+    await sleep(1000);
+    if (formVisible()) return;
+
     runCli(['tap', 'close', '--traits', 'Button', '--udid', sim.udid]);
-    runCli(['tap', '340,800', '--udid', sim.udid]);
     await sleep(500);
     runCli(['dismissAlert', '--udid', sim.udid]);
+    if (formVisible()) return;
   }
-  const add = runCli(['tap', 'Add', '--traits', 'Button', '--udid', sim.udid]);
-  if (add.code !== 0) runCli(['tap', '340,800', '--udid', sim.udid]);
-  await sleep(1000);
-  runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '3', '--udid', sim.udid]);
+
+  const finalWait = runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '3', '--udid', sim.udid]);
+  if (finalWait.code !== 0) {
+    throw new Error(`failed to open Contacts New Contact form\n${finalWait.stdout}${finalWait.stderr}`);
+  }
 }
 
 async function openSpringboardIconMenu(id: string): Promise<void> {
