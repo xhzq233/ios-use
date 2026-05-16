@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 - **Normalized find with traits disambiguation**: contains-match over label/value text with whitespace, punctuation, and case normalization, plus fuzzy fallback and `--traits` filtering.
 - **4 scroll modes**: scroll-to-label, point swipe, anchor-based scroll, and fixed-distance swipe. Auto axis detection from visible cell layout.
 - **OSLog integration**: Fetch Simulator/device logs from the host side with regex filtering, grouped by bundle ID.
-- **Built-in NSLogger receiver**: Capture plain TCP NSLogger logs from the CLI with Bonjour service discovery.
+- **Built-in NSLogger receiver**: Capture NSLogger TLS logs from the CLI with Bonjour service discovery.
 - **Flow runner**: Describe multi-step automations in YAML using the same command set as the CLI.
 
 ## Installation
@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash
 ```
 
-The installer downloads the prebuilt macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To compile locally instead:
+The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. Intel Macs should compile locally instead:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
