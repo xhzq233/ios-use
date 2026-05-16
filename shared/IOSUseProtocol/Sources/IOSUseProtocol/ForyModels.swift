@@ -90,6 +90,16 @@ public struct ForyErrorPayload {
     public var tooSmallToScroll: Bool = false
     public var direction: Int32 = -1
     public var minDragDistance: Double = 0
+
+    public init(hint: String = "", suggestions: [String] = [], matches: [ForyFindMatch] = [], atBoundary: Bool = false, tooSmallToScroll: Bool = false, direction: Int32 = -1, minDragDistance: Double = 0) {
+        self.hint = hint
+        self.suggestions = suggestions
+        self.matches = matches
+        self.atBoundary = atBoundary
+        self.tooSmallToScroll = tooSmallToScroll
+        self.direction = direction
+        self.minDragDistance = minDragDistance
+    }
 }
 
 @ForyStruct
@@ -197,11 +207,31 @@ public struct ForyAlertPayload {
     public var text: String = ""
     public var button: String = ""
     public var reason: String = ""
+
+    public init(dismissed: Bool = false, text: String = "", button: String = "", reason: String = "") {
+        self.dismissed = dismissed
+        self.text = text
+        self.button = button
+        self.reason = reason
+    }
 }
 
 @ForyStruct
 public struct ForySimpleStringPayload {
     public var value: String = ""
+
+    public init(value: String = "") {
+        self.value = value
+    }
+}
+
+@ForyStruct
+public struct ForyProxyPayload {
+    public var status: String = ""
+
+    public init(status: String = "") {
+        self.status = status
+    }
 }
 
 @ForyStruct
@@ -284,9 +314,9 @@ public struct ForyTapArgs {
     public var target: ForyTarget = ForyTarget()
     public var traits: String = ""
     public var offset: ForyPoint? = nil
-    public var ratio: ForyPoint = ForyPoint(x: 0.5, y: 0.5)
+    public var ratio: ForyPoint = ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
 
-    public init(target: ForyTarget = ForyTarget(), traits: String = "", offset: ForyPoint? = nil, ratio: ForyPoint = ForyPoint(x: 0.5, y: 0.5)) {
+    public init(target: ForyTarget = ForyTarget(), traits: String = "", offset: ForyPoint? = nil, ratio: ForyPoint = ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) {
         self.target = target
         self.traits = traits
         self.offset = offset
@@ -333,6 +363,15 @@ public struct ForyDismissAlertArgs {
     }
 }
 
+@ForyStruct
+public struct ForyProxyCAPushArgs {
+    public var caBase64: String = ""
+
+    public init(caBase64: String = "") {
+        self.caBase64 = caBase64
+    }
+}
+
 public enum ForyRegistry {
     public static func create() -> Fory {
         let fory = Fory()
@@ -352,6 +391,7 @@ public enum ForyRegistry {
         try! fory.register(ForySwipePayload.self, name: "ForySwipePayload")
         try! fory.register(ForyAlertPayload.self, name: "ForyAlertPayload")
         try! fory.register(ForySimpleStringPayload.self, name: "ForySimpleStringPayload")
+        try! fory.register(ForyProxyPayload.self, name: "ForyProxyPayload")
         try! fory.register(ForyActivateAppArgs.self, name: "ForyActivateAppArgs")
         try! fory.register(ForyTerminateAppArgs.self, name: "ForyTerminateAppArgs")
         try! fory.register(ForyOpenURLArgs.self, name: "ForyOpenURLArgs")
@@ -363,6 +403,11 @@ public enum ForyRegistry {
         try! fory.register(ForyLongPressArgs.self, name: "ForyLongPressArgs")
         try! fory.register(ForySwipeArgs.self, name: "ForySwipeArgs")
         try! fory.register(ForyDismissAlertArgs.self, name: "ForyDismissAlertArgs")
+        try! fory.register(ForyProxyCAPushArgs.self, name: "ForyProxyCAPushArgs")
         return fory
     }
+}
+
+public func createFory() -> Fory {
+    ForyRegistry.create()
 }

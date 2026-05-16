@@ -14,4 +14,12 @@ final class ForyModelTests: XCTestCase {
         XCTAssertEqual(args.label, "General")
         XCTAssertEqual(args.traits, "Cell")
     }
+
+    func testForyRegistryCanSerializeProxyCAPushArgs() throws {
+        let fory = ForyRegistry.create()
+        let encoded = try fory.serialize(ForyProxyCAPushArgs(caBase64: "abc123"))
+        let decoded = try fory.deserialize(encoded, as: ForyProxyCAPushArgs.self)
+
+        XCTAssertEqual(decoded.caBase64, "abc123")
+    }
 }

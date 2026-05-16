@@ -14,6 +14,7 @@
 		1B726C3B9607D5E0FD84652B /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0AC56CC6B8335709D4A71 /* App.swift */; };
 		1C3EBE5B9344D22F327464D4 /* Types.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E085B6529EF5B086A5B7A15 /* Types.swift */; };
 		1C91F8F5B711B3F109EAA537 /* ScrollMechanics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65984823BF87C6EFC8233743 /* ScrollMechanics.swift */; };
+		22FF865268ADCC2D9D816FA3 /* DriverProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5673E8F5A73863E5BFC1145 /* DriverProtocol.swift */; };
 		2487738D2D1AF684316C1E46 /* Swipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688FE3DE301B8593639EAB9B /* Swipe.swift */; };
 		25DE35CCD54476506D2B33E1 /* Swipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688FE3DE301B8593639EAB9B /* Swipe.swift */; };
 		2A99D7083199D3C052817376 /* Proxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F60F451C114B1CD47F9A702 /* Proxy.swift */; };
@@ -27,7 +28,6 @@
 		48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		4C1335951DE9BCB1ACEB1105 /* Touch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */; };
 		563B2CE6B340E53A14814EFB /* Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = D394439301E45CC69DD7CB41 /* Server.swift */; };
-		5746879AB22CCA470C5D92D9 /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */; };
 		5C78D96B9AE1C0C47419D5E5 /* SnapshotWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A0FF7257FB4C92EC6C889D /* SnapshotWalker.swift */; };
 		6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
@@ -51,11 +51,13 @@
 		B03079F36E017EE33C677A3F /* ServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A018728001BB6A88192EAFD /* ServerTests.swift */; };
 		B4E55F7E5EE6BCDF2396AC5C /* ScrollMechanicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF2988F5EECDDB665288D5D /* ScrollMechanicsTests.swift */; };
 		BA991741F7A5B2A8CAD9DEF6 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AE99BB4D5AD93891B02F4CB /* Session.swift */; };
+		BB6FC10754570033C9A83E5B /* DriverProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5673E8F5A73863E5BFC1145 /* DriverProtocol.swift */; };
 		C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
 		C17AD8E6E19EB9DF22D2E31E /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
 		CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C773A75C11E5CE2360A4FB4 /* Input.swift */; };
+		D285AAC468646BCF5AE7FD77 /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */; };
+		D4BEF7290917234083FDE8F7 /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */; };
 		DBC049498CB7F7EC52F82C1E /* Fory in Frameworks */ = {isa = PBXBuildFile; productRef = A7A16F95F6EFE334D2178CD8 /* Fory */; };
-		DD15992A4F33EFC47AFC3D2B /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */; };
 		E1690C6B99691CCDC27F4FD6 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0AC56CC6B8335709D4A71 /* App.swift */; };
 		EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		F23939ACC634CC69D0D7C5E0 /* XCTestPrivate.m in Sources */ = {isa = PBXBuildFile; fileRef = 20C7C30497334B1AEE198AC3 /* XCTestPrivate.m */; };
@@ -75,6 +77,7 @@
 		35DDA5A7967522B295F5AEDB /* FindUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindUtils.swift; sourceTree = "<group>"; };
 		3FAD42B95F7C35F08F218C45 /* IOSUseDriverUnitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IOSUseDriverUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500F078718C032D73B2E9EDA /* AppRegistry.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppRegistry.h; sourceTree = "<group>"; };
+		52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForyModels.swift; sourceTree = "<group>"; };
 		561DD9A295FA2CA856529D37 /* XCTestPrivate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = XCTestPrivate.h; sourceTree = "<group>"; };
 		577DDB97D9F6B1FB7C45A9A1 /* Find.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Find.swift; sourceTree = "<group>"; };
 		58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Touch.swift; sourceTree = "<group>"; };
@@ -90,13 +93,13 @@
 		90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypesTests.swift; sourceTree = "<group>"; };
 		9DE69CDBA7F414F7325EFBD0 /* Codec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Codec.swift; sourceTree = "<group>"; };
-		A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForyModels.swift; sourceTree = "<group>"; };
 		A7314D09B4E47FB05DDAAF58 /* Screen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screen.swift; sourceTree = "<group>"; };
 		AABACD4A116F231BF1D16712 /* CodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecTests.swift; sourceTree = "<group>"; };
 		B82A6D94A3BC809E2C68F694 /* WaitFor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitFor.swift; sourceTree = "<group>"; };
 		C4770592925B5EBF43640011 /* IOSUseDriver-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "IOSUseDriver-Bridging-Header.h"; sourceTree = "<group>"; };
 		D394439301E45CC69DD7CB41 /* Server.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Server.swift; sourceTree = "<group>"; };
 		E3E262BB01AF4133E6AF8C75 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
+		F5673E8F5A73863E5BFC1145 /* DriverProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverProtocol.swift; sourceTree = "<group>"; };
 		F9FD7632270F764367EC208B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		FA8EE69CD9E44A379094C75D /* RawPointer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawPointer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -124,12 +127,23 @@
 		4C5BAC22ADE6167CB3E155D7 = {
 			isa = PBXGroup;
 			children = (
+				80A37C30667CE850B6447AB7 /* IOSUseProtocol */,
 				F42F3EE744127D54BBE82917 /* runner */,
 				DDA8A0B84F22815337CE661B /* tcp */,
 				CD62A22C301661E8ADC32078 /* tests */,
 				8803E5B92E81995DE73A3C9B /* ui */,
 				E930FDF47DAA8E83B49679EE /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		80A37C30667CE850B6447AB7 /* IOSUseProtocol */ = {
+			isa = PBXGroup;
+			children = (
+				F5673E8F5A73863E5BFC1145 /* DriverProtocol.swift */,
+				52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */,
+			);
+			name = IOSUseProtocol;
+			path = ../shared/IOSUseProtocol/Sources/IOSUseProtocol;
 			sourceTree = "<group>";
 		};
 		8803E5B92E81995DE73A3C9B /* ui */ = {
@@ -194,7 +208,6 @@
 			children = (
 				9DE69CDBA7F414F7325EFBD0 /* Codec.swift */,
 				59AA55C0A90C86228E35F4AF /* Constants.swift */,
-				A1DAE402CA9F57A9BCCCA9AB /* ForyModels.swift */,
 				D394439301E45CC69DD7CB41 /* Server.swift */,
 			);
 			path = tcp;
@@ -305,9 +318,10 @@
 				9B9DC8661A47D7EB2FF33C44 /* CodecTests.swift in Sources */,
 				72F06E899109E3420F9CAB5C /* Constants.swift in Sources */,
 				48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */,
+				22FF865268ADCC2D9D816FA3 /* DriverProtocol.swift in Sources */,
 				3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */,
 				17A60E236F1D12E058214F25 /* FindUtils.swift in Sources */,
-				DD15992A4F33EFC47AFC3D2B /* ForyModels.swift in Sources */,
+				D4BEF7290917234083FDE8F7 /* ForyModels.swift in Sources */,
 				CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */,
 				2A99D7083199D3C052817376 /* Proxy.swift in Sources */,
 				71116604C00B45958024BAE0 /* RawPointer.swift in Sources */,
@@ -339,9 +353,10 @@
 				C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */,
 				4179D4DAE1445E343CAEF9C4 /* Constants.swift in Sources */,
 				EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */,
+				BB6FC10754570033C9A83E5B /* DriverProtocol.swift in Sources */,
 				AF07412EEE37705E162B6743 /* Find.swift in Sources */,
 				3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */,
-				5746879AB22CCA470C5D92D9 /* ForyModels.swift in Sources */,
+				D285AAC468646BCF5AE7FD77 /* ForyModels.swift in Sources */,
 				9B2D14D04A8484C749189950 /* Input.swift in Sources */,
 				2D30D40139893E650198A77E /* Proxy.swift in Sources */,
 				816428CB1210BC8502D0CC55 /* RawPointer.swift in Sources */,
