@@ -20,20 +20,27 @@ public enum NSLogService {
 
         server.onMessage = { entry in
             guard let grepRegex else {
-                print(entry)
+                writeStdout("\(entry)\n")
                 return
             }
             if Self.matches(entry, regex: grepRegex) {
-                print(entry)
+                writeStdout("\(entry)\n")
             }
         }
 
-        print("NSLogger listening on port \(server.port) (SSL)")
-        print("Streaming logs... Press Ctrl+C to stop.")
+        writeStdout("NSLogger listening on port \(server.port) (SSL)\n")
+        writeStdout("Streaming logs... Press Ctrl+C to stop.\n")
 
-        while server.isRunning {
+        let interruptMonitor = InterruptMonitor(onInterrupt: {
+            writeStderr("NSLogger interrupted, cleaning up...\n")
+        })
+        interruptMonitor.start()
+        defer { interruptMonitor.stop() }
+
+        while server.isRunning && !interruptMonitor.interrupted {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
         }
+        try interruptMonitor.throwIfInterrupted()
         return ""
     }
 
@@ -138,13 +145,23 @@ public enum NSLogService {
     }
 
     private static func acquireLock(paths: IOSUsePaths) throws {
+        try acquireLock(paths: paths, terminateExisting: false)
+    }
+
+    static func acquireLock(paths: IOSUsePaths, terminateExisting: Bool) throws {
         let lock = "\(paths.root)/state/nslog.lock"
         if let text = try? String(contentsOfFile: lock, encoding: .utf8) {
             let parts = text.split(separator: " ")
             let pid = parts.first.flatMap { Int32($0) } ?? 0
             let startedAt = parts.dropFirst().first.flatMap { Int($0) } ?? 0
             if pid > 0, kill(pid, 0) == 0, nowMs() - startedAt < IOSUseProtocol.nslogLockStaleMilliseconds {
-                throw CLIParseError.invalidValue("nslog already running (PID \(pid)). Only one nslog instance allowed at a time; cannot grep multiple patterns simultaneously.")
+                if terminateExisting {
+                    kill(pid, SIGTERM)
+                    try? waitForProcessExit(pid: pid, timeoutSeconds: 1)
+                    try? FileManager.default.removeItem(atPath: lock)
+                } else {
+                    throw CLIParseError.invalidValue("nslog already running (PID \(pid)). Only one nslog instance allowed at a time; cannot grep multiple patterns simultaneously.")
+                }
             }
             try? FileManager.default.removeItem(atPath: lock)
         }
@@ -152,7 +169,7 @@ public enum NSLogService {
         try "\(getpid()) \(nowMs())".write(toFile: lock, atomically: true, encoding: .utf8)
     }
 
-    private static func releaseLock(paths: IOSUsePaths) {
+    static func releaseLock(paths: IOSUsePaths) {
         let lock = "\(paths.root)/state/nslog.lock"
         guard let text = try? String(contentsOfFile: lock, encoding: .utf8),
               text.split(separator: " ").first.flatMap({ Int32($0) }) == getpid() else {
@@ -185,6 +202,16 @@ public enum NSLogService {
 
     private static func nowMs() -> Int {
         Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private static func waitForProcessExit(pid: Int32, timeoutSeconds: Double) throws {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if kill(pid, 0) != 0 {
+                return
+            }
+            usleep(50_000)
+        }
     }
 }
 
@@ -219,6 +246,7 @@ public final class NSLoggerServer {
     private var entryBaseIndex = 0
     private var totalEntriesSeen = 0
     private var connectedClients = 0
+    private var activeClients = 0
     private let lock = NSLock()
 
     public init(options: NSLoggerServerOptions = NSLoggerServerOptions(), paths: IOSUsePaths) throws {
@@ -282,8 +310,16 @@ public final class NSLoggerServer {
         return connectedClients
     }
 
+    public var activeClientCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return activeClients
+    }
+
     public func ingestForTesting(_ data: Data) {
-        markClientConnected()
+        if clientCount == 0 {
+            markClientConnected()
+        }
         ingest(data)
     }
 
@@ -293,7 +329,14 @@ public final class NSLoggerServer {
 
     private func markClientConnected() {
         lock.lock()
-        connectedClients = max(connectedClients, 1)
+        connectedClients += 1
+        activeClients += 1
+        lock.unlock()
+    }
+
+    private func markClientDisconnected() {
+        lock.lock()
+        activeClients = max(0, activeClients - 1)
         lock.unlock()
     }
 
@@ -326,7 +369,7 @@ public final class NSLoggerServer {
     }
 
     private func startBonjour(name: String?, port: Int) -> Process? {
-        let serviceName = name?.isEmpty == false ? name! : Host.current().localizedName ?? "ios-use"
+        let serviceName = name?.isEmpty == false ? name! : defaultBonjourName()
         let serviceType = "_nslogger-ssl._tcp"
         _ = terminateStaleBonjourPublishers(serviceName: serviceName, serviceType: serviceType, domain: "local")
         let process = Process()
@@ -374,6 +417,7 @@ public final class NSLoggerServer {
                     channel.pipeline.addHandler(NIOSSLServerHandler(context: sslContext)).flatMap {
                         channel.pipeline.addHandler(NSLoggerTLSChannelHandler(
                             onActive: { [weak self] in self?.markClientConnected() },
+                            onInactive: { [weak self] in self?.markClientDisconnected() },
                             onData: { [weak self] data in self?.ingest(data) }
                         ))
                     }
@@ -405,6 +449,14 @@ public final class NSLoggerServer {
             }
         }
         return killed
+    }
+
+    private func defaultBonjourName() -> String {
+        let hostName = ProcessInfo.processInfo.hostName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !hostName.isEmpty {
+            return hostName
+        }
+        return Host.current().name ?? Host.current().localizedName ?? "ios-use"
     }
 
 }
@@ -469,10 +521,12 @@ private final class NSLoggerTLSChannelHandler: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
 
     private let onActive: () -> Void
+    private let onInactive: () -> Void
     private let onData: (Data) -> Void
 
-    init(onActive: @escaping () -> Void, onData: @escaping (Data) -> Void) {
+    init(onActive: @escaping () -> Void, onInactive: @escaping () -> Void, onData: @escaping (Data) -> Void) {
         self.onActive = onActive
+        self.onInactive = onInactive
         self.onData = onData
     }
 
@@ -489,9 +543,22 @@ private final class NSLoggerTLSChannelHandler: ChannelInboundHandler {
         onData(Data(bytes))
     }
 
+    func channelInactive(context: ChannelHandlerContext) {
+        onInactive()
+        context.fireChannelInactive()
+    }
+
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         context.close(promise: nil)
     }
+}
+
+private func writeStdout(_ text: String) {
+    FileHandle.standardOutput.write(Data(text.utf8))
+}
+
+private func writeStderr(_ text: String) {
+    FileHandle.standardError.write(Data(text.utf8))
 }
 
 private extension String {

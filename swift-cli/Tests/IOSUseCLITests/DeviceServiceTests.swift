@@ -4,6 +4,7 @@ import XCTest
 final class DeviceServiceTests: XCTestCase {
     override func tearDown() {
         DeviceService.listDevicesOverrideForTesting = nil
+        DeviceService.usbDeviceUdidsOverrideForTesting = nil
         DeviceService.resetCacheForTesting()
         super.tearDown()
     }
@@ -42,6 +43,21 @@ final class DeviceServiceTests: XCTestCase {
             DeviceService.format(device, configured: ["SIM-1"]),
             "IOSUseTest | iOS 26.0.1 | Simulator | UDID: SIM-1 | configured"
         )
+    }
+
+    func testUsbOnlyDevicesFiltersAndPreservesUsbmuxOrder() throws {
+        DeviceService.usbDeviceUdidsOverrideForTesting = {
+            ["00008150-0015309E2EE3401C", "CE83141B-D0FB-5983-B0DB-4C301BB773F6"]
+        }
+        let devices = [
+            IOSDevice(name: "WiFiOnly", version: "26.0", udid: "FFFFFFFF-FFFFFFFFFFFFFFFF", kind: .real),
+            IOSDevice(name: "SecondUSB", version: "26.2", udid: "00008150-0015309E2EE3401C", kind: .real),
+            IOSDevice(name: "FirstUSB", version: "26.1", udid: "CE83141B-D0FB-5983-B0DB-4C301BB773F6", kind: .real),
+        ]
+
+        let usbOnly = try DeviceService.usbOnlyDevices(from: devices)
+
+        XCTAssertEqual(usbOnly.map(\.name), ["SecondUSB", "FirstUSB"])
     }
 
     func testShellRunHandlesLargeStdoutWithoutPipeDeadlock() throws {

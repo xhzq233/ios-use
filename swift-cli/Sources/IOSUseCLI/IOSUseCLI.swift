@@ -55,12 +55,16 @@ public struct IOSUsePaths: Equatable, Sendable {
 }
 
 public struct IOSUseCLI: Sendable {
+    public typealias CLIOutputSink = @Sendable (String) -> Void
+
     public static let version = "1.0.0"
 
     public let paths: IOSUsePaths
+    public let outputSink: CLIOutputSink?
 
-    public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+    public init(environment: [String: String] = ProcessInfo.processInfo.environment, outputSink: CLIOutputSink? = nil) {
         self.paths = IOSUsePaths.resolve(environment: environment)
+        self.outputSink = outputSink
     }
 
     public func run(arguments: [String]) -> CLIResult {
@@ -112,13 +116,18 @@ public struct IOSUseCLI: Sendable {
             }
         case .flow(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try FlowService.run(file: options.file, options: options, paths: paths))
+                let stdout = try FlowService.run(file: options.file, options: options, paths: paths, outputSink: outputSink)
+                return CLIResult(exitCode: 0, stdout: outputSink == nil ? stdout : "")
+            } catch let signal as CLIExitSignal {
+                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .nslog(let options):
             do {
                 return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: paths))
+            } catch let signal as CLIExitSignal {
+                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
@@ -129,19 +138,19 @@ public struct IOSUseCLI: Sendable {
             return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
         case .proxy(.configca(let udid)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(udid: udid, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(udid: udid, paths: paths, outputSink: outputSink))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .proxy(.start(let udid, let interfaceName)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.start(udid: udid, interfaceName: interfaceName, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.start(udid: udid, interfaceName: interfaceName, paths: paths, outputSink: outputSink))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .proxy(.stop(let udid)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(udid: udid, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(udid: udid, paths: paths, outputSink: outputSink))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
@@ -261,7 +270,7 @@ public struct IOSUseCLI: Sendable {
         try SessionService.prepareDriverSession(session, paths: paths)
     }
 
-    private static func isAppNotRunningError(_ error: Error) -> Bool {
+    static func isAppNotRunningError(_ error: Error) -> Bool {
         let message = String(describing: error)
         return message.range(of: #"not running|already terminated|no such process|state=1|state=0"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
