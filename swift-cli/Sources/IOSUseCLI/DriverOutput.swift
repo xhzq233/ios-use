@@ -11,20 +11,51 @@ public enum DriverOutput {
         lines.append("")
         lines.append("App: \(payload.app), Window: \(Int(payload.windowSize.x))x\(Int(payload.windowSize.y))")
         lines.append("Elements:")
-        for element in payload.elements {
-            let label: String
-            if element.label.isEmpty {
-                label = element.value.isEmpty ? "(no label)" : element.value
-            } else if !element.value.isEmpty, element.value != element.label {
-                label = "\(element.label)=\(element.value)"
-            } else {
-                label = element.label
-            }
-            let traits = element.traits.joined(separator: ",")
-            let rect = element.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"
-            lines.append("  - \(label) [\(traits)] \(rect)")
+
+        var index = 0
+        while index < payload.elements.count {
+            index = collectDomFlatSubtreeLines(payload.elements, index: index, baseIndent: "  ", depth: 0, lines: &lines)
         }
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func collectDomFlatSubtreeLines(_ elements: [ForyDomElement], index: Int, baseIndent: String, depth: Int, lines: inout [String]) -> Int {
+        guard index < elements.count else { return index }
+        let element = elements[index]
+        let padding = baseIndent + String(repeating: "  ", count: depth)
+        let line = formatDomLine(element)
+        let childCount = max(0, Int(element.childCount))
+
+        if childCount > 0 {
+            lines.append("\(padding)\(line):")
+            var childIndex = index + 1
+            for _ in 0..<childCount {
+                guard childIndex < elements.count else { break }
+                childIndex = collectDomFlatSubtreeLines(elements, index: childIndex, baseIndent: baseIndent, depth: depth + 1, lines: &lines)
+            }
+            return childIndex
+        }
+
+        let rect = element.rect.map { " (\($0.x),\($0.y),\($0.w),\($0.h))" } ?? ""
+        lines.append("\(padding)- \(line)\(rect)")
+        return index + 1
+    }
+
+    private static func formatDomLine(_ element: ForyDomElement) -> String {
+        let type = element.traits.first ?? "?"
+        let flags = element.traits.dropFirst().joined(separator: ",")
+        let allTraits = flags.isEmpty ? type : "\(type),\(flags)"
+        let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = element.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title: String
+        if !label.isEmpty {
+            title = value.isEmpty ? label : "\(label)=\(value)"
+        } else if !value.isEmpty {
+            title = "=\(value)"
+        } else {
+            title = type
+        }
+        return "\(title) [\(allTraits)]"
     }
 
     public static func formatFind(label: String, payload: ForyFindPayload) -> String {
