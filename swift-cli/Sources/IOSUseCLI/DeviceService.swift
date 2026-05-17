@@ -21,6 +21,7 @@ public struct IOSDevice: Equatable, Sendable {
 
 public enum DeviceService {
     static var listDevicesOverrideForTesting: ((Bool, IOSUsePaths) throws -> [IOSDevice])?
+    static var usbDeviceUdidsOverrideForTesting: (() throws -> [String])?
     private static var listDevicesCache: [String: [IOSDevice]] = [:]
 
     public static func listDevices(simulatorOnly: Bool, paths: IOSUsePaths) throws -> [IOSDevice] {
@@ -37,7 +38,8 @@ public enum DeviceService {
             devices = parseBootedSimulators(output)
         } else {
             let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
-            devices = parseDeviceOutput(output).filter { $0.kind == .real }
+            let realDevices = parseDeviceOutput(output).filter { $0.kind == .real }
+            devices = try usbOnlyDevices(from: realDevices)
         }
         listDevicesCache[cacheKey] = devices
         return devices
@@ -45,6 +47,16 @@ public enum DeviceService {
 
     static func resetCacheForTesting() {
         listDevicesCache.removeAll(keepingCapacity: true)
+    }
+
+    static func usbOnlyDevices(from devices: [IOSDevice]) throws -> [IOSDevice] {
+        guard !devices.isEmpty else { return [] }
+        let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
+        var byNormalizedUdid: [String: IOSDevice] = [:]
+        for device in devices {
+            byNormalizedUdid[normalizeUdid(device.udid)] = device
+        }
+        return usbUdids.compactMap { byNormalizedUdid[normalizeUdid($0)] }
     }
 
     public static func parseDeviceOutput(_ output: String) -> [IOSDevice] {
@@ -126,6 +138,10 @@ public enum DeviceService {
             guard range.location != NSNotFound, let swiftRange = Range(range, in: text) else { return "" }
             return String(text[swiftRange])
         }
+    }
+
+    private static func normalizeUdid(_ udid: String) -> String {
+        udid.replacingOccurrences(of: "-", with: "").lowercased()
     }
 }
 
