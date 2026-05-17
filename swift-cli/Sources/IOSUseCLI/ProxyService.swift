@@ -39,13 +39,13 @@ public enum ProxyService {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    public static func configCA(udid requestedUdid: String?, paths: IOSUsePaths) throws -> String {
+    public static func configCA(udid requestedUdid: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         try ensureMitmproxyCA(paths: paths)
         let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
         try SessionService.prepareDriverSession(SessionOptions(udid: udid), paths: paths)
         _ = try DriverClient(session: SessionService.read(paths: paths)).proxyCAPush(caBase64: base64Body(fromPEM: pem))
-        _ = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths)
+        _ = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
 
         let existingState = readState(paths: paths)
         var state = existingState ?? ProxySessionState(
@@ -64,7 +64,7 @@ public enum ProxyService {
         return "CA installed and trusted on device.\n"
     }
 
-    public static func start(udid requestedUdid: String?, interfaceName: String?, paths: IOSUsePaths) throws -> String {
+    public static func start(udid requestedUdid: String?, interfaceName: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         if let state = readState(paths: paths), state.status == "running", isMitmdumpProcess(pid: state.mitmdumpPid ?? 0, expectedFlowFile: state.flowFile) {
             throw CLIParseError.invalidValue("Proxy already running. Run `proxy stop` first.")
@@ -83,7 +83,8 @@ public enum ProxyService {
             _ = try FlowService.run(
                 file: flowPath("proxy_set_wifi_proxy.yaml", paths: paths),
                 options: FlowOptions(file: "", udid: udid, externalVars: ["server": wifi.macLanIp, "port": String(IOSUseProtocol.proxyMitmdumpPort)]),
-                paths: paths
+                paths: paths,
+                outputSink: outputSink
             )
         } catch {
             killMitmdump(pid: pid, expectedFlowFile: flowFile)
@@ -109,13 +110,13 @@ public enum ProxyService {
         return output
     }
 
-    public static func stop(udid requestedUdid: String?, paths: IOSUsePaths) throws -> String {
+    public static func stop(udid requestedUdid: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
         guard let state = readState(paths: paths), state.status == "running" else {
             throw CLIParseError.invalidValue("PROXY_NOT_RUNNING: no running proxy session")
         }
         let udid = try resolveStopUdid(requestedUdid, state: state)
         do {
-            _ = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths)
+            _ = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
         } catch {
             throw CLIParseError.invalidValue("Unable to clear device Wi-Fi proxy. Manually disable Wi-Fi proxy: Settings -> Wi-Fi -> current network (i) -> Configure Proxy -> Off, then retry `ios-use proxy stop`.")
         }

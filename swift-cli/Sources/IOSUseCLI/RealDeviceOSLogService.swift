@@ -526,6 +526,27 @@ private final class LocalFDProxy {
 }
 
 enum Usbmux {
+    static func listUsbDeviceUdids() throws -> [String] {
+        let fd = try openSocket()
+        defer { Darwin.close(fd) }
+        let list = try request(fd: fd, payload: [
+            "MessageType": "ListDevices",
+            "ProgName": "ios-use",
+            "ClientVersionString": "1.0",
+        ], tag: 0)
+        guard let devices = list["DeviceList"] as? [[String: Any]] else {
+            return []
+        }
+        return devices.compactMap { device in
+            guard let props = device["Properties"] as? [String: Any],
+                  let serial = props["SerialNumber"] as? String else { return nil }
+            if let connectionType = props["ConnectionType"] as? String, connectionType != "USB" {
+                return nil
+            }
+            return serial
+        }
+    }
+
     static func openSocket() throws -> Int32 {
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw CLIParseError.invalidValue("failed to open usbmux socket") }

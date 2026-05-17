@@ -202,6 +202,45 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertTrue(try String(contentsOfFile: saved).contains("Driver READY"))
     }
 
+    func testRunFlowInheritsParentAppForLifecycleSteps() throws {
+        let fixture = try FlowFixture()
+        let child = try fixture.write("child.yaml", """
+        name: child
+        steps:
+          - action: terminateApp
+          - action: activateApp
+        """)
+        let parent = try fixture.write("parent.yaml", """
+        name: parent
+        app: com.example.Target
+        steps:
+          - action: runFlow
+            file: \(child.lastPathComponent)
+        """)
+        let driver = FakeFlowDriver()
+
+        _ = try FlowService.runForTesting(file: parent.path, paths: fixture.paths, driver: driver)
+
+        XCTAssertEqual(driver.terminatedApps, ["com.example.Target"])
+        XCTAssertEqual(driver.activatedApps, ["com.example.Target"])
+    }
+
+    func testFlowTerminateAppIgnoresAlreadyNotRunningError() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("terminate-not-running.yaml", """
+        name: terminate-not-running
+        app: com.example.Target
+        steps:
+          - action: terminateApp
+        """)
+        let driver = FakeFlowDriver()
+        driver.terminateError = CLIParseError.invalidValue("Application is not running")
+
+        _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+
+        XCTAssertEqual(driver.terminatedApps, ["com.example.Target"])
+    }
+
     func testNeedNSLogRejectsPortAndSSLConfiguration() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("nslog-invalid.yaml", """
@@ -479,11 +518,21 @@ private final class FakeFlowDriver: FlowDriver {
     var findPayload = ForyFindPayload()
     var domPayload = ForyDomPayload()
     var findLabels: [String] = []
+    var activatedApps: [String] = []
+    var terminatedApps: [String] = []
+    var terminateError: Error?
     var swipes: [(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?)] = []
     var taps: [(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint)] = []
 
-    func activateApp(bundleId: String) throws {}
-    func terminateApp(bundleId: String) throws {}
+    func activateApp(bundleId: String) throws {
+        activatedApps.append(bundleId)
+    }
+    func terminateApp(bundleId: String) throws {
+        terminatedApps.append(bundleId)
+        if let terminateError {
+            throw terminateError
+        }
+    }
     func home() throws {}
     func openURL(url: String) throws -> ForySimpleStringPayload { ForySimpleStringPayload(value: url) }
     func dismissAlert(index: Int?) throws -> ForyAlertPayload { ForyAlertPayload(dismissed: true) }
