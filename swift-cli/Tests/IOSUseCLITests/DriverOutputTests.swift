@@ -1,18 +1,52 @@
 import XCTest
-import IOSUseCLI
+@testable import IOSUseCLI
 import IOSUseProtocol
 
 final class DriverOutputTests: XCTestCase {
     func testFormatFindIncludesValueText() {
         let payload = ForyFindPayload(matches: [
-            ForyFindMatch(elemType: 10, label: "First name", rect: ForyRect(x: 1, y: 2, w: 3, h: 4), traits: ["TextField"], value: "Alpha")
+            ForyFindMatch(
+                elemType: 10,
+                label: "First name",
+                rect: ForyRect(x: 1, y: 2, w: 3, h: 4),
+                traits: ["TextField"],
+                value: "Alpha",
+                ancestors: ["Application", "Table", "Cell[Name]"]
+            )
         ])
 
         let output = DriverOutput.formatFind(label: "Alpha", payload: payload)
 
         XCTAssertTrue(output.contains("Find \"Alpha\""))
-        XCTAssertTrue(output.contains("matches=1"))
-        XCTAssertTrue(output.contains("TextField \"First name=Alpha\""))
+        XCTAssertTrue(output.contains("[Application > Table > Cell[Name]] TextField \"First name=Alpha\" (1,2,3,4)"))
+        XCTAssertFalse(output.contains("matches=1"))
+    }
+
+    func testDriverErrorIncludesErrorPayloadDetails() {
+        let error = DriverClientError.driverError(
+            "label '关闭' is ambiguous (2 matches)",
+            ForyErrorPayload(
+                hint: "Try adding --traits to disambiguate",
+                suggestions: ["关闭"],
+                matches: [
+                    ForyFindMatch(
+                        elemType: 7,
+                        label: "关闭",
+                        rect: ForyRect(x: 10, y: 20, w: 30, h: 40),
+                        traits: ["Button", "disabled"],
+                        ancestors: ["Application", "Table", "Cell[蓝牙]"]
+                    )
+                ]
+            )
+        )
+
+        let output = String(describing: error)
+
+        XCTAssertTrue(output.contains("label '关闭' is ambiguous"))
+        XCTAssertTrue(output.contains("matches:"))
+        XCTAssertTrue(output.contains("[Application > Table > Cell[蓝牙]] Button [disabled] \"关闭\" (10,20,30,40)"))
+        XCTAssertTrue(output.contains("suggestions: 关闭"))
+        XCTAssertTrue(output.contains("hint: Try adding --traits to disambiguate"))
     }
 
     func testFormatDomIncludesInputValues() {
