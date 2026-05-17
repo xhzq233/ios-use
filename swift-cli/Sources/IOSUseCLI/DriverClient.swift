@@ -9,7 +9,7 @@ enum DriverClientError: Error, CustomStringConvertible {
     case writeFailed
     case invalidFrameLength
     case maxFrameSizeExceeded
-    case driverError(String)
+    case driverError(String, ForyErrorPayload?)
 
     var description: String {
         switch self {
@@ -19,8 +19,37 @@ enum DriverClientError: Error, CustomStringConvertible {
         case .writeFailed: return "driver TCP write failed"
         case .invalidFrameLength: return "invalid driver frame length"
         case .maxFrameSizeExceeded: return "driver frame exceeds max size"
-        case .driverError(let message): return message
+        case .driverError(let message, let payload):
+            return Self.formatDriverError(message: message, payload: payload)
         }
+    }
+
+    private static func formatDriverError(message: String, payload: ForyErrorPayload?) -> String {
+        guard let payload else { return message }
+        var lines = [message]
+        if !payload.matches.isEmpty {
+            lines.append("matches:")
+            for match in payload.matches {
+                lines.append(formatMatch(match))
+            }
+        }
+        if !payload.suggestions.isEmpty {
+            lines.append("suggestions: \(payload.suggestions.joined(separator: ", "))")
+        }
+        if !payload.hint.isEmpty {
+            lines.append("hint: \(payload.hint)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func formatMatch(_ match: ForyFindMatch) -> String {
+        let ancestors = match.ancestors.joined(separator: " > ")
+        let type = DriverOutput.elementTypeName(match.elemType)
+        let flags = match.traits.dropFirst().joined(separator: ",")
+        let flagSuffix = flags.isEmpty ? "" : " [\(flags)]"
+        let display = match.value.isEmpty ? match.label : "\(match.label)=\(match.value)"
+        let rect = match.rect.map { "\($0.x),\($0.y),\($0.w),\($0.h)" } ?? ""
+        return "  [\(ancestors)] \(type)\(flagSuffix) \"\(display)\" (\(rect))"
     }
 }
 
@@ -130,7 +159,8 @@ final class DriverClient {
         let responseData = try readLengthPrefixed(fd)
         let response = try fory.deserialize(responseData, as: ForyResponseFrame.self)
         guard response.ok else {
-            throw DriverClientError.driverError(response.error)
+            let errorPayload = response.payload.isEmpty ? nil : try? fory.deserialize(response.payload, as: ForyErrorPayload.self)
+            throw DriverClientError.driverError(response.error, errorPayload)
         }
         return response.payload
     }
