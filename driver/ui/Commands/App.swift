@@ -17,6 +17,13 @@ func shouldLaunchViaLaunchServices(state: XCUIApplication.State) -> Bool {
     state != .runningForeground
 }
 
+func shouldOpenURLViaSystem(_ url: URL) -> Bool {
+    guard let scheme = url.scheme?.lowercased() else {
+        return false
+    }
+    return scheme == "http" || scheme == "https"
+}
+
 enum App {
     static func activateApp(bundleId: String) throws -> XCUIApplication {
         NSLog("[app] activate called with bundleId=\(bundleId)")
@@ -104,6 +111,11 @@ enum AppCommands {
     static func openURL(_ args: ForyOpenURLArgs) throws -> ForyResponseFrame {
         guard let url = URL(string: args.url) else {
             throw DriverError.invalidArgs("invalid url: \(args.url)")
+        }
+
+        if shouldOpenURLViaSystem(url) {
+            XCUIDevice.shared.system.open(url)
+            return try Codec.foryOK(ForySimpleStringPayload(value: args.url))
         }
 
         guard OpenURLViaLaunchServices(args.url) else {

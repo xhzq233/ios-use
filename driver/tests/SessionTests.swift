@@ -41,4 +41,14 @@ final class SessionTests: XCTestCase {
         XCTAssertTrue(shouldLaunchViaLaunchServices(state: .runningBackgroundSuspended))
         XCTAssertFalse(shouldLaunchViaLaunchServices(state: .runningForeground))
     }
+
+    func testOpenURLUsesSystemOnlyForHTTPAndHTTPS() throws {
+        XCTAssertTrue(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "http://127.0.0.1:9088/ca.cer"))))
+        XCTAssertTrue(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "https://example.com"))))
+        XCTAssertTrue(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "HTTPS://example.com"))))
+
+        XCTAssertFalse(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "xtretouch://open"))))
+        XCTAssertFalse(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "itms-services://?action=download-manifest"))))
+        XCTAssertFalse(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "prefs:root=WIFI"))))
+    }
 }
