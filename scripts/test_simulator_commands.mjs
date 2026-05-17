@@ -11,7 +11,7 @@ const rootDir = path.resolve(__dirname, '..');
 let skipBuild = false;
 let caseFilterIds;
 const testIosUseHome = process.env.IOS_USE_TEST_HOME ?? path.join(os.homedir(), '.ios-use/test-homes/simulator-commands');
-const iosUseCli = process.env.IOS_USE_TEST_CLI ?? path.join(rootDir, 'dist/ios-use');
+const iosUseCli = process.env.IOS_USE_TEST_CLI ?? path.join(rootDir, 'ios-use');
 
 
 export function parseCaseFilter(value) {
