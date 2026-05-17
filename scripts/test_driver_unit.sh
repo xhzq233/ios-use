@@ -5,9 +5,6 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_DIR="$ROOT_DIR/driver"
 RUNTIME=""
 IOS_USE_HOME_RESOLVED="${IOS_USE_HOME:-$HOME/.ios-use}"
-SIM_STATE_FILE="$IOS_USE_HOME_RESOLVED/simulators/ios-use-test.json"
-SIM_NAME="${IOS_USE_TEST_SIM_NAME:-IOSUseTest}"
-SIM_DEVICE_TYPE="${IOS_USE_TEST_SIM_DEVICE_TYPE:-iPhone 16}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -35,113 +32,17 @@ else
 fi
 
 echo "[unit] Resolving IOSUseTest Simulator..."
-sim_list_line() {
-  xcrun simctl list devices available | awk -v name="$SIM_NAME" '
-    /^-- / {
-      runtime=$0
-      gsub(/^-- /, "", runtime)
-      gsub(/ --$/, "", runtime)
-      next
-    }
-    index($0, name " (") {
-      print runtime "\t" $0
-      exit
-    }
-  '
-}
-
-sim_udid_from_line() {
-  sed -E 's/.* \(([0-9A-Fa-f-]{36})\).*/\1/'
-}
-
-sim_state_from_line() {
-  sed -E 's/[[:space:]]*$//' | sed -E 's/.*\(([A-Za-z ]+)\)$/\1/'
-}
-
-choose_runtime_identifier() {
-  local requested="${RUNTIME:-${IOS_USE_TEST_SIM_RUNTIME:-}}"
-  xcrun simctl list runtimes available | awk -v requested="$requested" '
-    /^iOS / {
-      line=$0
-      identifier=$NF
-      version=$2
-      if (requested == "" || line ~ requested || version == requested || identifier == requested) {
-        chosen=identifier
-      }
-    }
-    END {
-      if (chosen != "") print chosen
-    }
-  '
-}
-
-choose_device_type_identifier() {
-  local requested="$SIM_DEVICE_TYPE"
-  local exact
-  exact="$(xcrun simctl list devicetypes | awk -v requested="$requested" '
-    index($0, requested " (") {
-      match($0, /\(([^)]+)\)/)
-      print substr($0, RSTART + 1, RLENGTH - 2)
-      exit
-    }
-  ')"
-  if [ -n "$exact" ]; then
-    printf '%s\n' "$exact"
-    return
-  fi
-  xcrun simctl list devicetypes | awk '
-    /^iPhone / {
-      match($0, /\(([^)]+)\)/)
-      print substr($0, RSTART + 1, RLENGTH - 2)
-      exit
-    }
-  '
-}
-
-ensure_simulator() {
-  local line runtime_line device_line runtime_id device_type udid
-  line="$(sim_list_line || true)"
-  if [ -z "$line" ]; then
-    runtime_id="$(choose_runtime_identifier)"
-    if [ -z "$runtime_id" ]; then
-      echo "[unit] ERROR: No available iOS Simulator runtime found" >&2
-      exit 1
-    fi
-    device_type="$(choose_device_type_identifier)"
-    if [ -z "$device_type" ]; then
-      echo "[unit] ERROR: No usable iPhone Simulator device type found" >&2
-      exit 1
-    fi
-    udid="$(xcrun simctl create "$SIM_NAME" "$device_type" "$runtime_id")"
-  else
-    device_line="${line#*$'\t'}"
-    udid="$(printf '%s\n' "$device_line" | sim_udid_from_line)"
-  fi
-
-  xcrun simctl boot "$udid" >/dev/null 2>&1 || true
-  xcrun simctl bootstatus "$udid" -b >/dev/null
-
-  line="$(sim_list_line)"
-  runtime_line="${line%%$'\t'*}"
-  device_line="${line#*$'\t'}"
-  SIM_UDID="$(printf '%s\n' "$device_line" | sim_udid_from_line)"
-  SIM_RUNTIME="$runtime_line"
-  SIM_STATE="$(printf '%s\n' "$device_line" | sim_state_from_line)"
-}
-
-ensure_simulator
-mkdir -p "$(dirname "$SIM_STATE_FILE")"
-cat > "$SIM_STATE_FILE" <<JSON
-{
-  "iosUseHome": "$IOS_USE_HOME_RESOLVED",
-  "stateFile": "$SIM_STATE_FILE",
-  "name": "$SIM_NAME",
-  "udid": "$SIM_UDID",
-  "runtime": "$SIM_RUNTIME",
-  "state": "$SIM_STATE",
-  "updatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-}
-JSON
+SIM_INFO_FILE="$(mktemp)"
+if [ -n "$RUNTIME" ]; then
+  IOS_USE_HOME="$IOS_USE_HOME_RESOLVED" IOS_USE_TEST_SIM_RUNTIME="$RUNTIME" node "$ROOT_DIR/scripts/ios_use_test_simulator.js" > "$SIM_INFO_FILE"
+else
+  IOS_USE_HOME="$IOS_USE_HOME_RESOLVED" node "$ROOT_DIR/scripts/ios_use_test_simulator.js" > "$SIM_INFO_FILE"
+fi
+SIM_UDID="$(node -e "const fs=require('fs'); const info=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(info.udid);" "$SIM_INFO_FILE")"
+SIM_NAME="$(node -e "const fs=require('fs'); const info=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(info.name);" "$SIM_INFO_FILE")"
+SIM_RUNTIME="$(node -e "const fs=require('fs'); const info=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(info.runtime);" "$SIM_INFO_FILE")"
+SIM_STATE="$(node -e "const fs=require('fs'); const info=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); console.log(info.state);" "$SIM_INFO_FILE")"
+rm -f "$SIM_INFO_FILE"
 
 echo "[unit] IOS_USE_HOME: $IOS_USE_HOME_RESOLVED"
 echo "[unit] Simulator: $SIM_NAME | $SIM_RUNTIME | $SIM_STATE | UDID: $SIM_UDID"
