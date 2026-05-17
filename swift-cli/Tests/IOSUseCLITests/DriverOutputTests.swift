@@ -31,6 +31,33 @@ final class DriverOutputTests: XCTestCase {
         XCTAssertTrue(output.contains("Last name=Beta"))
     }
 
+    func testFormatDomRebuildsFlatPreorderTree() {
+        let payload = ForyDomPayload(
+            app: "com.apple.Preferences",
+            windowSize: ForyPoint(x: 402, y: 874),
+            elements: [
+                ForyDomElement(traits: ["NavigationBar"], childCount: 2),
+                ForyDomElement(traits: ["Button"], label: "Back", rect: ForyRect(x: 16, y: 54, w: 44, h: 44)),
+                ForyDomElement(traits: ["StaticText"], label: "Settings", rect: ForyRect(x: 156, y: 54, w: 132, h: 44)),
+                ForyDomElement(traits: ["Table"], childCount: 1),
+                ForyDomElement(traits: ["Cell"], childCount: 1, label: "Wi-Fi"),
+                ForyDomElement(traits: ["Switch"], value: "1", rect: ForyRect(x: 340, y: 10, w: 50, h: 30))
+            ]
+        )
+
+        let output = DriverOutput.formatDom(payload)
+
+        XCTAssertTrue(output.contains("""
+Elements:
+  NavigationBar [NavigationBar]:
+    - Back [Button] (16,54,44,44)
+    - Settings [StaticText] (156,54,132,44)
+  Table [Table]:
+    Wi-Fi [Cell]:
+      - =1 [Switch] (340,10,50,30)
+"""))
+    }
+
     func testFormatElementAndSwipe() {
         XCTAssertEqual(
             DriverOutput.formatElement(ForyElementPayload(elemType: 7, label: "Add", rect: ForyRect(x: 1, y: 2, w: 3, h: 4))),
