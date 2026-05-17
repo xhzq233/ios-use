@@ -314,12 +314,12 @@ public struct IOSUseCLI: Sendable {
 
     public static var helpText: String {
         """
-        Usage: ios-use-swift [--help] [--version] <command>
+        Usage: ios-use [--help] [--version] <command>
 
         Swift CLI for ios-use.
 
         Current status:
-          - `dist/ios-use` is the default Swift executable
+          - `./ios-use` is the local workspace Swift executable
           - Swift CLI and driver compile the same shared IOSUseProtocol/Fory model source
           - driver read, mutation, lifecycle, oslog, nslog, proxy, config, devices, and Simulator flow paths are migrated
           - real-device host paths are implemented but still require physical-device validation

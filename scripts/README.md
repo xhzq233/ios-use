@@ -6,9 +6,17 @@ Run scripts from the repository root unless noted otherwise.
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/runcli.sh ...` | Build the Swift CLI in Debug mode and run it in place. It does not copy anything to `dist/`. |
-| `scripts/build_swift_cli.sh [--debug]` | Build the Swift CLI and copy it to `dist/ios-use` and `dist/ios-use-swift`. Release is the default. |
+| `scripts/build_swift_cli.sh [--debug]` | Build the Swift CLI and copy the single local binary to repo-root `./ios-use`. Release is the default. |
 | `scripts/build_driver.sh [--debug] [--simulator-only]` | Generate the Xcode project and build driver IPA artifacts under `assets/`. |
+
+Local dev run standard:
+
+```bash
+bash scripts/build_swift_cli.sh --debug
+./ios-use --help
+```
+
+Use `./ios-use`, not global `ios-use`, when validating current workspace changes.
 
 ## Validation
 
@@ -19,7 +27,20 @@ Run scripts from the repository root unless noted otherwise.
 | `scripts/test_swift_cli.sh` | Run Swift CLI unit tests. |
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests. |
 | `scripts/test_simulator_commands.mjs` | Node-based Simulator command case runner used by full Simulator validation. |
-| `scripts/ios_use_test_simulator.js` | Helper used by `test_simulator_commands.mjs` to create/boot the fixed `IOSUseTest` Simulator. |
+| `scripts/ios_use_test_simulator.js` | Shared helper used by driver unit tests and Simulator command tests to create/boot the fixed `IOSUseTest` Simulator. |
+
+Test standard:
+
+```bash
+bash scripts/ci_test.sh
+```
+
+Run the full UI replay only when needed:
+
+```bash
+bash scripts/ci_full_simulator.sh
+bash scripts/ci_full_simulator.sh --case FIND-1B
+```
 
 ## Install And Benchmark
 

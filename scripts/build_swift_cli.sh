@@ -19,8 +19,6 @@ done
 echo "[swift-cli] Building ios-use ($CONFIGURATION)..."
 swift build --package-path "$ROOT_DIR/swift-cli" -c "$CONFIGURATION"
 
-mkdir -p "$ROOT_DIR/dist"
-cp "$ROOT_DIR/swift-cli/.build/$CONFIGURATION/ios-use-swift" "$ROOT_DIR/dist/ios-use-swift"
-cp "$ROOT_DIR/swift-cli/.build/$CONFIGURATION/ios-use-swift" "$ROOT_DIR/dist/ios-use"
-echo "[swift-cli] Built $ROOT_DIR/dist/ios-use"
-echo "[swift-cli] Built $ROOT_DIR/dist/ios-use-swift"
+cp "$ROOT_DIR/swift-cli/.build/$CONFIGURATION/ios-use-swift" "$ROOT_DIR/ios-use"
+chmod +x "$ROOT_DIR/ios-use"
+echo "[swift-cli] Built $ROOT_DIR/ios-use"

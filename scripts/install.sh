@@ -151,6 +151,7 @@ build_or_download_cli() {
     fi
     echo "Compiling ios-use binary from source..."
     bash "$ROOT_DIR/scripts/build_swift_cli.sh"
+    install -m 755 "$ROOT_DIR/ios-use" "$OUTFILE"
     codesign --sign - --force "$OUTFILE" >/dev/null
     return
   fi
