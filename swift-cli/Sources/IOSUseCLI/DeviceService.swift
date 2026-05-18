@@ -37,9 +37,13 @@ public enum DeviceService {
             let output = try Shell.run("xcrun", arguments: ["simctl", "list", "devices", "booted"])
             devices = parseBootedSimulators(output)
         } else {
+            let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
+            guard !usbUdids.isEmpty else {
+                return []
+            }
             let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
             let realDevices = parseDeviceOutput(output).filter { $0.kind == .real }
-            devices = try usbOnlyDevices(from: realDevices)
+            devices = usbOnlyDevices(from: realDevices, usbUdids: usbUdids)
         }
         listDevicesCache[cacheKey] = devices
         return devices
@@ -52,6 +56,16 @@ public enum DeviceService {
     static func usbOnlyDevices(from devices: [IOSDevice]) throws -> [IOSDevice] {
         guard !devices.isEmpty else { return [] }
         let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
+        return usbOnlyDevices(from: devices, usbUdids: usbUdids)
+    }
+
+    static func isUsbDeviceConnected(udid: String) throws -> Bool {
+        let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
+        return usbUdids.contains { normalizeUdid($0) == normalizeUdid(udid) }
+    }
+
+    private static func usbOnlyDevices(from devices: [IOSDevice], usbUdids: [String]) -> [IOSDevice] {
+        guard !devices.isEmpty else { return [] }
         var byNormalizedUdid: [String: IOSDevice] = [:]
         for device in devices {
             byNormalizedUdid[normalizeUdid(device.udid)] = device
@@ -79,7 +93,7 @@ public enum DeviceService {
             guard let kind = section, !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 continue
             }
-            guard let match = firstMatch(line, pattern: #"^\s*(.+?)\s+(?:\((\d+\.\d+(?:\.\d+)?)\)\s+)?\(([0-9A-Fa-f-]+)\)\s*$"#) else {
+            guard let match = firstMatch(line, regex: Regexes.deviceLine) else {
                 continue
             }
             devices.append(IOSDevice(
@@ -99,12 +113,12 @@ public enum DeviceService {
 
         for line in output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
             if line.hasPrefix("-- ") {
-                if let match = firstMatch(line, pattern: #"^--\s+(.+?)\s+--"#) {
+                if let match = firstMatch(line, regex: Regexes.runtimeHeader) {
                     currentVersion = match[1].replacingOccurrences(of: #"^iOS\s+"#, with: "", options: .regularExpression)
                 }
                 continue
             }
-            guard let match = firstMatch(line, pattern: #"^\s*(.+?)\s+\(([0-9A-Fa-f-]+)\)\s+\(Booted\)"#) else {
+            guard let match = firstMatch(line, regex: Regexes.bootedSimulator) else {
                 continue
             }
             devices.append(IOSDevice(name: match[1].trimmingCharacters(in: .whitespacesAndNewlines), version: currentVersion, udid: match[2], kind: .simulator))
@@ -129,8 +143,13 @@ public enum DeviceService {
         return "\(device.name.isEmpty ? "Unknown" : device.name) | iOS \(version) | \(typeLabel) | UDID: \(device.udid)\(tag)"
     }
 
-    private static func firstMatch(_ text: String, pattern: String) -> [String]? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+    private enum Regexes {
+        static let deviceLine = try! NSRegularExpression(pattern: #"^\s*(.+?)\s+(?:\((\d+\.\d+(?:\.\d+)?)\)\s+)?\(([0-9A-Fa-f-]+)\)\s*$"#)
+        static let runtimeHeader = try! NSRegularExpression(pattern: #"^--\s+(.+?)\s+--"#)
+        static let bootedSimulator = try! NSRegularExpression(pattern: #"^\s*(.+?)\s+\(([0-9A-Fa-f-]+)\)\s+\(Booted\)"#)
+    }
+
+    private static func firstMatch(_ text: String, regex: NSRegularExpression) -> [String]? {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         guard let match = regex.firstMatch(in: text, range: range) else { return nil }
         return (0..<match.numberOfRanges).map { index in
@@ -147,6 +166,31 @@ public enum DeviceService {
 
 enum Shell {
     static func run(_ executable: String, arguments: [String], cwd: String? = nil) throws -> String {
+        try runCaptured(executable, arguments: arguments, cwd: cwd, combineStderr: false)
+    }
+
+    static func runCombined(_ executable: String, arguments: [String], cwd: String? = nil) throws -> String {
+        try runCaptured(executable, arguments: arguments, cwd: cwd, combineStderr: true)
+    }
+
+    static func runInheriting(_ executable: String, arguments: [String], cwd: String? = nil) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if let cwd {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        }
+        process.standardInput = FileHandle.standardInput
+        process.standardOutput = FileHandle.standardOutput
+        process.standardError = FileHandle.standardError
+        try process.run()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            throw CLIParseError.invalidValue("\(executable) failed with exit \(process.terminationStatus)")
+        }
+    }
+
+    private static func runCaptured(_ executable: String, arguments: [String], cwd: String?, combineStderr: Bool) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [executable] + arguments
@@ -174,9 +218,12 @@ enum Shell {
         try process.run()
         process.waitUntilExit()
 
-        let output = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
+        var output = (try? String(contentsOf: stdoutURL, encoding: .utf8)) ?? ""
+        let error = (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
+        if combineStderr {
+            output += error
+        }
         if process.terminationStatus != 0 {
-            let error = (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
             throw CLIParseError.invalidValue(error.isEmpty ? "\(executable) failed with exit \(process.terminationStatus)" : error.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return output

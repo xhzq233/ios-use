@@ -96,6 +96,22 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertEqual(ProxyService.caPathForTesting(paths: paths), "\(root)/mitmproxy/mitmproxy-ca-cert.pem")
     }
 
+    func testProxyDoctorReportsCATrustRecordStatus() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/mitmproxy", withIntermediateDirectories: true)
+        try "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n".write(
+            toFile: "\(root)/mitmproxy/mitmproxy-ca-cert.pem",
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let output = ProxyService.doctor(paths: paths)
+
+        XCTAssertTrue(output.contains("CA generated"))
+        XCTAssertTrue(output.contains("CA trust record: not recorded"))
+    }
+
     func testProbeServerIdleSocketDoesNotBlockValidProbe() throws {
         let server = try ProxyProbeServer(token: "TOKEN")
         defer { server.stop() }

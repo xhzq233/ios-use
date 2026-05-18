@@ -254,7 +254,7 @@ public enum CLIParser {
                 guard isFlowExternalVarName(key) else {
                     throw CLIParseError.invalidValue("Invalid flow external variable name: \(key)")
                 }
-                options.externalVars[key] = try parser.valueAllowingLeadingDash(for: arg)
+                options.externalVars[key] = try parser.flowVariableValue(for: arg)
             }
         }
         return options
@@ -500,7 +500,7 @@ public enum CLIParser {
             switch arg {
             case "--pattern": pattern = try parser.valueAllowingLeadingDash(for: arg)
             case "--flags": flags = try parser.value(for: arg)
-            case "--timeout": timeout = try parsePositiveDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--name": name = try parser.value(for: arg)
             case "--clear": clear = true
             case "--bundle-id": bundleId = try parser.value(for: arg)
@@ -599,11 +599,12 @@ public enum CLIParseError: Error, Equatable, CustomStringConvertible, Sendable {
 }
 
 private struct ArgumentParser {
+    private static let inlineValuePrefix = "\u{0}inline:"
     private let arguments: [String]
     private var index = 0
 
     init(_ arguments: [String]) {
-        self.arguments = arguments
+        self.arguments = Self.expandInlineLongOptions(arguments)
     }
 
     mutating func consume() -> String? {
@@ -624,14 +625,21 @@ private struct ArgumentParser {
         guard let value = consume(), !value.hasPrefix("-") else {
             throw CLIParseError.missingOptionValue(option)
         }
-        return value
+        return Self.stripInlinePrefix(value)
     }
 
     mutating func valueAllowingLeadingDash(for option: String) throws -> String {
         guard let value = consume() else {
             throw CLIParseError.missingOptionValue(option)
         }
-        return value
+        return Self.stripInlinePrefix(value)
+    }
+
+    mutating func flowVariableValue(for option: String) throws -> String {
+        guard let value = consume(), value.hasPrefix(Self.inlineValuePrefix) || !value.hasPrefix("--") else {
+            throw CLIParseError.missingOptionValue(option)
+        }
+        return Self.stripInlinePrefix(value)
     }
 
     mutating func requireEnd() throws {
@@ -641,5 +649,30 @@ private struct ArgumentParser {
             }
             throw CLIParseError.unexpectedArgument(arg)
         }
+    }
+
+    private static func expandInlineLongOptions(_ arguments: [String]) -> [String] {
+        var expanded: [String] = []
+        for argument in arguments {
+            guard argument.hasPrefix("--"),
+                  argument != "--",
+                  let equals = argument.firstIndex(of: "=") else {
+                expanded.append(argument)
+                continue
+            }
+            let option = String(argument[..<equals])
+            let value = String(argument[argument.index(after: equals)...])
+            guard option.count > 2 else {
+                expanded.append(argument)
+                continue
+            }
+            expanded.append(option)
+            expanded.append(inlineValuePrefix + value)
+        }
+        return expanded
+    }
+
+    private static func stripInlinePrefix(_ value: String) -> String {
+        value.hasPrefix(inlineValuePrefix) ? String(value.dropFirst(inlineValuePrefix.count)) : value
     }
 }

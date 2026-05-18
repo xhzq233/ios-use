@@ -132,25 +132,34 @@ public struct IOSUseCLI: Sendable {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .stop:
-            SessionService.clear(paths: paths)
-            return CLIResult(exitCode: 0, stdout: "Session stopped\n")
+            do {
+                return CLIResult(exitCode: 0, stdout: try SessionService.stop(paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .proxy(.doctor):
             return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
         case .proxy(.configca(let udid)):
             do {
                 return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(udid: udid, paths: paths, outputSink: outputSink))
+            } catch let signal as CLIExitSignal {
+                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .proxy(.start(let udid, let interfaceName)):
             do {
                 return CLIResult(exitCode: 0, stdout: try ProxyService.start(udid: udid, interfaceName: interfaceName, paths: paths, outputSink: outputSink))
+            } catch let signal as CLIExitSignal {
+                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .proxy(.stop(let udid)):
             do {
                 return CLIResult(exitCode: 0, stdout: try ProxyService.stop(udid: udid, paths: paths, outputSink: outputSink))
+            } catch let signal as CLIExitSignal {
+                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }

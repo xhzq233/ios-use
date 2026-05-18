@@ -46,13 +46,44 @@ final class ConfigServiceTests: XCTestCase {
         let sessionDir = "\(root)/state"
         try FileManager.default.createDirectory(atPath: sessionDir, withIntermediateDirectories: true)
         try "{}".write(toFile: "\(sessionDir)/session.json", atomically: true, encoding: .utf8)
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        addTeardownBlock {
+            DeviceService.listDevicesOverrideForTesting = nil
+        }
 
         let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
         let result = cli.run(arguments: ["stop"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "Session stopped\n")
+        XCTAssertEqual(result.stdout, "No active session and no device found\nSession stopped\n")
         XCTAssertFalse(FileManager.default.fileExists(atPath: "\(sessionDir)/session.json"))
+    }
+
+    func testStopTerminatesRealDeviceDriverBeforeClearingSession() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try SessionService.writeSession(
+            udid: "REAL-1",
+            deviceName: "Phone",
+            deviceVersion: "26.0",
+            deviceType: "real",
+            paths: paths
+        )
+        var terminated: [String] = []
+        SessionService.realDriverTerminatorForTesting = { udid in
+            terminated.append(udid)
+            return true
+        }
+        addTeardownBlock {
+            SessionService.realDriverTerminatorForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(terminated, ["REAL-1"])
+        XCTAssertEqual(result.stdout, "Driver app terminated on device\nSession stopped\n")
+        XCTAssertNil(SessionService.read(paths: paths))
     }
 
     func testConfigListThroughCLIUsesIsolatedHome() throws {
@@ -113,6 +144,36 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNoThrow(try SessionService.prepareDriverSession(SessionOptions(udid: "SIM-FAST"), paths: paths))
     }
 
+    func testPrepareDriverSessionReusesActiveSimulatorSessionWithoutUdid() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"SIM-ACTIVE":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try SessionService.writeSimulatorSession(
+            udid: "SIM-ACTIVE",
+            deviceName: "IOSUseTest",
+            deviceVersion: "26.0",
+            paths: paths
+        )
+        var deviceListCalls = 0
+        DeviceService.listDevicesOverrideForTesting = { _, _ in
+            deviceListCalls += 1
+            return []
+        }
+        SessionService.simulatorDriverReachableForTesting = { true }
+        addTeardownBlock {
+            DeviceService.listDevicesOverrideForTesting = nil
+            SessionService.simulatorDriverReachableForTesting = nil
+        }
+
+        try SessionService.prepareDriverSession(SessionOptions(), paths: paths)
+
+        XCTAssertEqual(deviceListCalls, 0)
+        XCTAssertEqual(SessionService.read(paths: paths)?.udid, "SIM-ACTIVE")
+    }
+
     func testPrepareDriverSessionReusesReachableSimulatorWhenSessionWasStopped() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -167,6 +228,42 @@ final class ConfigServiceTests: XCTestCase {
 
         XCTAssertEqual(launched, ["SIM-B"])
         XCTAssertEqual(SessionService.read(paths: paths)?.udid, "SIM-B")
+    }
+
+    func testPrepareDriverSessionUsesUsbFastPathForExplicitRealDevice() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-FAST":{"bundleId":"com.example.driver","port":"8100"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-FAST"] }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            XCTAssertTrue(simulatorOnly, "explicit USB real-device path should not call xctrace real-device listing")
+            return []
+        }
+        var launched: [String] = []
+        SessionService.realDriverReachableForTesting = { udid in
+            launched.contains(udid)
+        }
+        SessionService.realDriverLauncherForTesting = { udid, bundleId in
+            launched.append(udid)
+            XCTAssertEqual(bundleId, "com.example.driver")
+        }
+        addTeardownBlock {
+            DeviceService.usbDeviceUdidsOverrideForTesting = nil
+            DeviceService.listDevicesOverrideForTesting = nil
+            SessionService.realDriverReachableForTesting = nil
+            SessionService.realDriverLauncherForTesting = nil
+        }
+
+        try SessionService.prepareDriverSession(SessionOptions(udid: "REAL-FAST"), paths: paths)
+
+        XCTAssertEqual(launched, ["REAL-FAST"])
+        let session = try XCTUnwrap(SessionService.read(paths: paths))
+        XCTAssertEqual(session.udid, "REAL-FAST")
+        XCTAssertEqual(session.deviceType, "real")
     }
 
     private func temporaryRoot() throws -> String {

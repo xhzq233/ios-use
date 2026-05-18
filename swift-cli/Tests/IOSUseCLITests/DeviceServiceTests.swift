@@ -60,6 +60,13 @@ final class DeviceServiceTests: XCTestCase {
         XCTAssertEqual(usbOnly.map(\.name), ["SecondUSB", "FirstUSB"])
     }
 
+    func testListRealDevicesReturnsBeforeXctraceWhenNoUsbDevices() throws {
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": "/tmp/ios-use-device-no-usb-\(UUID().uuidString)"])
+        DeviceService.usbDeviceUdidsOverrideForTesting = { [] }
+
+        XCTAssertEqual(try DeviceService.listDevices(simulatorOnly: false, paths: paths), [])
+    }
+
     func testShellRunHandlesLargeStdoutWithoutPipeDeadlock() throws {
         let output = try Shell.run("/bin/sh", arguments: [
             "-c",
@@ -67,6 +74,15 @@ final class DeviceServiceTests: XCTestCase {
         ])
 
         XCTAssertEqual(output.split(separator: "\n").count, 10000)
+    }
+
+    func testShellRunCombinedIncludesStderrOnSuccess() throws {
+        let output = try Shell.runCombined("/bin/sh", arguments: [
+            "-c",
+            "printf out; printf err >&2"
+        ])
+
+        XCTAssertEqual(output, "outerr")
     }
 
     func testListDevicesOverrideBypassesCacheForIsolatedTests() throws {
