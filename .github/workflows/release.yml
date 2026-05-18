@@ -10,6 +10,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -18,16 +22,6 @@ jobs:
     name: Build and upload release assets
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install xcodegen
-        run: brew install xcodegen
-
-      - name: Build release assets
-        run: bash scripts/release_build.sh
-
       - name: Resolve release tag
         id: resolve_tag
         run: |
@@ -38,6 +32,35 @@ jobs:
           else
             echo "Release workflow must run from a tag push or workflow_dispatch tag input." >&2
             exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.resolve_tag.outputs.tag }}
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Run release gate
+        env:
+          IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
+        run: bash scripts/ci_test.sh
+
+      - name: Build release assets
+        env:
+          IOS_USE_RELEASE_VERSION: ${{ steps.resolve_tag.outputs.tag }}
+        run: bash scripts/release_build.sh
+
+      - name: Remove stale release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.resolve_tag.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            for asset in ios-use-darwin-arm64 driver.ipa driver-sim.ipa SHA256SUMS; do
+              gh release delete-asset "$RELEASE_TAG" "$asset" --yes 2>/dev/null || true
+            done
           fi
 
       - name: Upload to Release

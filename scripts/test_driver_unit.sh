@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_DIR="$ROOT_DIR/driver"
 RUNTIME=""
-IOS_USE_HOME_RESOLVED="${IOS_USE_HOME:-$HOME/.ios-use}"
+IOS_USE_HOME_RESOLVED="${IOS_USE_HOME:-$HOME/.ios-use/test-homes/driver-unit}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
