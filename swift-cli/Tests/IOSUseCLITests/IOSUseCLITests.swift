@@ -17,7 +17,7 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI().run(arguments: ["--version"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "1.0.0\n")
+        XCTAssertEqual(result.stdout, "1.0.1\n")
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
