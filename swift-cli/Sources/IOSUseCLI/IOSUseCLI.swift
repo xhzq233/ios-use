@@ -321,8 +321,8 @@ public struct IOSUseCLI: Sendable {
             if devices.isEmpty {
                 return CLIResult(exitCode: 0, stdout: options.simulator ? "No booted Simulators found\n" : "No connected real devices found\n")
             }
-            let configured = DeviceService.configuredUdids(paths: paths)
-            let lines = devices.map { DeviceService.format($0, configured: configured) }.joined(separator: "\n")
+            let configured = DeviceService.configuredDevices(paths: paths)
+            let lines = devices.map { DeviceService.format($0, configuredDevices: configured) }.joined(separator: "\n")
             return CLIResult(exitCode: 0, stdout: "\(lines)\n")
         } catch {
             return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()

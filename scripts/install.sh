@@ -168,7 +168,7 @@ install_driver_artifact() {
   local destination="$2"
   local local_asset="$ROOT_DIR/assets/$asset"
   mkdir -p "$(dirname "$destination")"
-  if [[ -f "$local_asset" ]]; then
+  if [[ "$BUILD_FROM_SOURCE" -eq 1 && -f "$local_asset" ]]; then
     install -m 644 "$local_asset" "$destination"
     return
   fi

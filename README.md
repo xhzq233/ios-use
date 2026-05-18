@@ -65,6 +65,8 @@ ios-use config --simulator --udid <simulator-udid>
 
 `config` signs and installs the driver onto the target. CLI installation alone does not require Xcode, but **driving any real device or Simulator currently depends on a full Xcode installation**.
 
+When upgrading `ios-use`, run `ios-use devices` after installation. If a device line says `driver update required`, run `ios-use config --udid <device-udid>` again so the on-device driver matches the newly installed CLI.
+
 ### 3. Select An App
 
 ```bash

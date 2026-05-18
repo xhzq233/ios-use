@@ -6,11 +6,13 @@ public struct DeviceConfigEntry: Equatable, Sendable {
     public let udid: String
     public let bundleId: String
     public let port: String
+    public let driverVersion: String
 
-    public init(udid: String, bundleId: String, port: String) {
+    public init(udid: String, bundleId: String, port: String, driverVersion: String = "(missing)") {
         self.udid = udid
         self.bundleId = bundleId
         self.port = port
+        self.driverVersion = driverVersion
     }
 }
 
@@ -103,13 +105,14 @@ public enum ConfigService {
             let value = devices[udid] as? [String: Any] ?? [:]
             let bundleId = value["bundleId"] as? String ?? "(missing)"
             let portValue = value["port"].map { String(describing: $0) } ?? "(missing)"
-            return DeviceConfigEntry(udid: udid, bundleId: bundleId, port: portValue)
+            let driverVersion = value["driverVersion"] as? String ?? "(missing)"
+            return DeviceConfigEntry(udid: udid, bundleId: bundleId, port: portValue, driverVersion: driverVersion)
         }
     }
 
     public static func formatList(_ entries: [DeviceConfigEntry]) -> String {
         guard !entries.isEmpty else { return "No configured devices.\n" }
-        let lines = entries.map { "  \($0.udid) → bundleId: \($0.bundleId), port: \($0.port)" }.joined(separator: "\n")
+        let lines = entries.map { "  \($0.udid) → bundleId: \($0.bundleId), port: \($0.port), driverVersion: \($0.driverVersion)" }.joined(separator: "\n")
         return "Configured devices:\n\(lines)\n"
     }
 
@@ -162,20 +165,24 @@ public enum ConfigService {
         return simulator.udid
     }
 
-    private static func simulatorIPAPath(paths: IOSUsePaths) -> String {
-        let localAsset = "\(FileManager.default.currentDirectoryPath)/assets/driver-sim.ipa"
-        if FileManager.default.fileExists(atPath: localAsset) {
-            return localAsset
-        }
-        return "\(paths.root)/driver-sim.ipa"
+    static func simulatorIPAPath(paths: IOSUsePaths) -> String {
+        ipaPath(assetName: "driver-sim.ipa", paths: paths)
     }
 
-    private static func deviceIPAPath(paths: IOSUsePaths) -> String {
-        let localAsset = "\(FileManager.default.currentDirectoryPath)/assets/driver.ipa"
+    static func deviceIPAPath(paths: IOSUsePaths) -> String {
+        ipaPath(assetName: "driver.ipa", paths: paths)
+    }
+
+    private static func ipaPath(assetName: String, paths: IOSUsePaths) -> String {
+        let installedAsset = "\(paths.root)/\(assetName)"
+        #if DEBUG
+        let cwd = FileManager.default.currentDirectoryPath
+        let localAsset = "\(cwd)/assets/\(assetName)"
         if FileManager.default.fileExists(atPath: localAsset) {
             return localAsset
         }
-        return "\(paths.root)/driver.ipa"
+        #endif
+        return installedAsset
     }
 
     private static func dynamicBundleId(options: ConfigOptions, altsign: String) throws -> String {
@@ -191,6 +198,14 @@ public enum ConfigService {
             return nil
         }
         return bundleId
+    }
+
+    static func assertDriverVersionCurrent(udid: String, paths: IOSUsePaths) throws {
+        guard let config = DeviceService.configuredDevices(paths: paths)[udid], config.needsDriverUpdate else {
+            return
+        }
+        let installed = config.driverVersion ?? "unknown"
+        throw CLIParseError.invalidValue("Driver for device \(udid) was installed by ios-use \(installed), but current CLI is \(IOSUseCLI.version). Run `ios-use config --udid \(udid)` to update the driver.")
     }
 
     private static func cachedAppleId(altsign: String) throws -> String? {
@@ -247,7 +262,7 @@ public enum ConfigService {
             root = parsed
         }
         var devices = root["devices"] as? [String: Any] ?? [:]
-        devices[udid] = ["bundleId": bundleId, "port": port]
+        devices[udid] = ["bundleId": bundleId, "port": port, "driverVersion": IOSUseCLI.version]
         root["devices"] = devices
 
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
@@ -356,6 +371,7 @@ public enum SessionService {
 
     public static func prepareDriverSession(_ session: SessionOptions, paths: IOSUsePaths) throws {
         if session.udid == nil, let current = read(paths: paths) {
+            try ConfigService.assertDriverVersionCurrent(udid: current.udid, paths: paths)
             if current.deviceType == "simulator" {
                 try ensureSimulatorDriverRunning(udid: current.udid, allowExistingDriver: true)
                 return
@@ -379,6 +395,7 @@ public enum SessionService {
         guard configured.contains(udid) else {
             throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
         }
+        try ConfigService.assertDriverVersionCurrent(udid: udid, paths: paths)
         if let current = read(paths: paths), current.udid == udid {
             if current.deviceType == "simulator" {
                 try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: true)
