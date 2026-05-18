@@ -31,10 +31,14 @@ public struct ForyPoint {
 public struct ForyTarget {
     public var label: String = ""
     public var point: ForyPoint? = nil
+    public var traits: String = ""
+    public var cindex: Int32? = nil
 
-    public init(label: String = "", point: ForyPoint? = nil) {
+    public init(label: String = "", point: ForyPoint? = nil, traits: String = "", cindex: Int32? = nil) {
         self.label = label
         self.point = point
+        self.traits = traits
+        self.cindex = cindex
     }
 }
 
@@ -279,51 +283,43 @@ public struct ForyDomArgs {
 
 @ForyStruct
 public struct ForyFindArgs {
-    public var label: String = ""
-    public var traits: String = ""
+    public var target: ForyTarget = ForyTarget()
 
-    public init(label: String = "", traits: String = "") {
-        self.label = label
-        self.traits = traits
+    public init(target: ForyTarget = ForyTarget()) {
+        self.target = target
     }
 }
 
 @ForyStruct
 public struct ForyWaitForArgs {
-    public var label: String = ""
+    public var target: ForyTarget = ForyTarget()
     public var timeout: Double = 0
-    public var traits: String = ""
 
-    public init(label: String = "", timeout: Double = 0, traits: String = "") {
-        self.label = label
+    public init(target: ForyTarget = ForyTarget(), timeout: Double = 0) {
+        self.target = target
         self.timeout = timeout
-        self.traits = traits
     }
 }
 
 @ForyStruct
 public struct ForyInputArgs {
-    public var label: String = ""
+    public var target: ForyTarget = ForyTarget()
     public var content: String = ""
-    public var traits: String = ""
 
-    public init(label: String = "", content: String = "", traits: String = "") {
-        self.label = label
+    public init(target: ForyTarget = ForyTarget(), content: String = "") {
+        self.target = target
         self.content = content
-        self.traits = traits
     }
 }
 
 @ForyStruct
 public struct ForyTapArgs {
     public var target: ForyTarget = ForyTarget()
-    public var traits: String = ""
     public var offset: ForyPoint? = nil
     public var ratio: ForyPoint = ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
 
-    public init(target: ForyTarget = ForyTarget(), traits: String = "", offset: ForyPoint? = nil, ratio: ForyPoint = ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) {
+    public init(target: ForyTarget = ForyTarget(), offset: ForyPoint? = nil, ratio: ForyPoint = ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) {
         self.target = target
-        self.traits = traits
         self.offset = offset
         self.ratio = ratio
     }
@@ -333,12 +329,10 @@ public struct ForyTapArgs {
 public struct ForyLongPressArgs {
     public var target: ForyTarget = ForyTarget()
     public var duration: Double = 0
-    public var traits: String = ""
 
-    public init(target: ForyTarget = ForyTarget(), duration: Double = 0, traits: String = "") {
+    public init(target: ForyTarget = ForyTarget(), duration: Double = 0) {
         self.target = target
         self.duration = duration
-        self.traits = traits
     }
 }
 
@@ -348,14 +342,12 @@ public struct ForySwipeArgs {
     public var fromTarget: ForyTarget = ForyTarget()
     public var distance: Double = 0
     public var dir: Int32 = -1
-    public var traits: String = ""
 
-    public init(toTarget: ForyTarget = ForyTarget(), fromTarget: ForyTarget = ForyTarget(), distance: Double = 0, dir: Int32 = -1, traits: String = "") {
+    public init(toTarget: ForyTarget = ForyTarget(), fromTarget: ForyTarget = ForyTarget(), distance: Double = 0, dir: Int32 = -1) {
         self.toTarget = toTarget
         self.fromTarget = fromTarget
         self.distance = distance
         self.dir = dir
-        self.traits = traits
     }
 }
 

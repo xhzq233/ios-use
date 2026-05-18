@@ -12,7 +12,6 @@ enum WaitForCommands {
         guard timeout > 0 else {
             return Codec.foryError("waitFor: timeout must be > 0")
         }
-        let traits = args.traits.isEmpty ? nil : args.traits
         let t0 = CFAbsoluteTimeGetCurrent()
 
         var shouldUseFreshSnapshot = false
@@ -23,7 +22,7 @@ enum WaitForCommands {
             guard let cs = getCleanedSnapshot() else {
                 return Codec.foryError("waitFor: failed to take snapshot")
             }
-            let result = rawFindInSnapshot(args.label, traits: traits, cs: cs, enableFuzzy: false, visibility: .only)
+            let result = rawFindInSnapshot(args.target, cs: cs, enableFuzzy: false, visibility: .only)
 
             switch result {
             case .found(let elem):
@@ -36,14 +35,14 @@ enum WaitForCommands {
                 )
                 return try Codec.foryOK(payload)
             case .ambiguous(let matches):
-                return try ambiguityResponse(args.label, matches: matches)
+                return try ambiguityResponse(args.target.label, matches: matches)
             case .fuzzy, .notFound:
                 break
             }
 
             let elapsed = CFAbsoluteTimeGetCurrent() - t0
             if elapsed >= timeout {
-                return Codec.foryError("waitFor '\(args.label)' timed out after \(timeout)s")
+                return Codec.foryError("waitFor '\(args.target.label)' timed out after \(timeout)s")
             }
             shouldUseFreshSnapshot = true
             usleep(UInt32(IOSUseProtocol.waitForPollIntervalMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))

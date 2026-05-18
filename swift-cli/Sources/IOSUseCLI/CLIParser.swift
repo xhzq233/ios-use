@@ -61,14 +61,14 @@ public struct SessionOptions: Equatable, Sendable {
 }
 
 public enum DriverAction: Equatable, Sendable {
-    case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, session: SessionOptions)
-    case longPress(target: String, duration: Int?, traits: String?, session: SessionOptions)
-    case input(label: String, content: String, traits: String?, session: SessionOptions)
-    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, session: SessionOptions)
+    case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, session: SessionOptions)
+    case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, session: SessionOptions)
+    case input(label: String, content: String, traits: String?, cindex: Int32?, session: SessionOptions)
+    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, session: SessionOptions)
     case dom(raw: Bool, fresh: Bool, session: SessionOptions)
-    case find(label: String, traits: String?, session: SessionOptions)
+    case find(label: String, traits: String?, cindex: Int32?, session: SessionOptions)
     case screenshot(name: String?, session: SessionOptions)
-    case waitFor(label: String, timeout: Double?, traits: String?, session: SessionOptions)
+    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, session: SessionOptions)
     case activateApp(bundleId: String, session: SessionOptions)
     case terminateApp(bundleId: String, session: SessionOptions)
     case home(session: SessionOptions)
@@ -97,14 +97,14 @@ public enum DriverAction: Equatable, Sendable {
 
     public var session: SessionOptions {
         switch self {
-        case .tap(_, _, _, _, let session),
-             .longPress(_, _, _, let session),
-             .input(_, _, _, let session),
-             .swipe(_, _, _, _, _, let session),
+        case .tap(_, _, _, _, _, let session),
+             .longPress(_, _, _, _, let session),
+             .input(_, _, _, _, let session),
+             .swipe(_, _, _, _, _, _, let session),
              .dom(_, _, let session),
-             .find(_, _, let session),
+             .find(_, _, _, let session),
              .screenshot(_, let session),
-             .waitFor(_, _, _, let session),
+             .waitFor(_, _, _, _, let session),
              .activateApp(_, let session),
              .terminateApp(_, let session),
              .home(let session),
@@ -318,47 +318,53 @@ public enum CLIParser {
         var offset: String?
         var offsetRatio: String?
         var traits: String?
+        var cindex: Int32?
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--offset": offset = try parser.valueAllowingLeadingDash(for: arg)
             case "--offset-ratio": offsetRatio = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
+            case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, session: session)
+        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, session: session)
     }
 
     private static func parseLongPress(_ parser: inout ArgumentParser) throws -> DriverAction {
         let target = try parser.requiredPositional("target")
         var duration: Int?
         var traits: String?
+        var cindex: Int32?
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--duration": duration = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
+            case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return .longPress(target: target, duration: duration, traits: traits, session: session)
+        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex, session: session)
     }
 
     private static func parseInput(_ parser: inout ArgumentParser) throws -> DriverAction {
         var label: String?
         var content: String?
         var traits: String?
+        var cindex: Int32?
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--label": label = try parser.value(for: arg)
             case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
+            case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return .input(label: try require(label, option: "--label"), content: try require(content, option: "--content"), traits: traits, session: session)
+        return .input(label: try require(label, option: "--label"), content: try require(content, option: "--content"), traits: traits, cindex: cindex, session: session)
     }
 
     private static func parseSwipe(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -367,6 +373,7 @@ public enum CLIParser {
         var dir: String?
         var distance: Double?
         var traits: String?
+        var cindex: Int32?
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
@@ -378,10 +385,11 @@ public enum CLIParser {
                 dir = value
             case "--distance": distance = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
+            case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, session: session)
+        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex, session: session)
     }
 
     private static func parseDom(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -401,14 +409,16 @@ public enum CLIParser {
     private static func parseFind(_ parser: inout ArgumentParser) throws -> DriverAction {
         let label = try parser.requiredPositional("label")
         var traits: String?
+        var cindex: Int32?
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--traits": traits = try parser.value(for: arg)
+            case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return .find(label: label, traits: traits, session: session)
+        return .find(label: label, traits: traits, cindex: cindex, session: session)
     }
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -427,16 +437,18 @@ public enum CLIParser {
         var label: String?
         var timeout: Double?
         var traits: String?
+        var cindex: Int32?
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--label": label = try parser.value(for: arg)
             case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
+            case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return .waitFor(label: try require(label, option: "--label"), timeout: timeout, traits: traits, session: session)
+        return .waitFor(label: try require(label, option: "--label"), timeout: timeout, traits: traits, cindex: cindex, session: session)
     }
 
     private enum BundleActionKind {
@@ -528,6 +540,14 @@ public enum CLIParser {
             throw CLIParseError.invalidValue("Invalid integer: \"\(value)\"")
         }
         return intValue
+    }
+
+    private static func parseInt32Strict(_ value: String, label: String) throws -> Int32 {
+        let parsed = try parseIntStrict(value, label: label)
+        guard parsed >= Int(Int32.min), parsed <= Int(Int32.max) else {
+            throw CLIParseError.invalidValue("\(label) is out of Int32 range")
+        }
+        return Int32(parsed)
     }
 
     private static func parseDoubleStrict(_ value: String, label: String) throws -> Double {

@@ -11,7 +11,7 @@ enum FindCommands {
     static func find(_ args: ForyFindArgs) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
 
-        switch rawFind(args.label, traits: args.traits.isEmpty ? nil : args.traits, visibility: .any) {
+        switch rawFind(args.target, visibility: .any) {
         case .found(let elem):
             let match = makeForyFindMatch(elem, includeAncestors: true)
             var payload = ForyFindPayload()
@@ -33,7 +33,7 @@ enum FindCommands {
         case .notFound:
             var errPayload = ForyErrorPayload()
             errPayload.hint = "Verify the active app or check the label spelling"
-            return try Codec.foryError("label '\(args.label)' not found", payload: errPayload)
+            return try Codec.foryError("label '\(args.target.label)' not found", payload: errPayload)
         }
     }
 }
