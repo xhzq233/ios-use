@@ -37,6 +37,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache Swift CLI build
+        uses: actions/cache@v4
+        with:
+          path: swift-cli/.build
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swift-cli-
+
       - name: Run Swift CLI unit tests
         run: bash scripts/test_swift_cli.sh
 
@@ -48,6 +56,20 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
+      - name: Resolve Xcode cache key
+        id: xcode-cache
+        run: |
+          xcodebuild -version
+          echo "version=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache driver DerivedData
+        uses: actions/cache@v4
+        with:
+          path: driver/build/DerivedData
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-${{ hashFiles('driver/project.yml', 'driver/**/*.swift', 'driver/**/*.m', 'driver/**/*.h', 'shared/IOSUseProtocol/**/*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-
+
       - name: Run Swift driver unit tests
         run: bash scripts/test_driver_unit.sh
 
@@ -58,6 +80,28 @@ jobs:
 
       - name: Install xcodegen
         run: brew install xcodegen
+
+      - name: Resolve Xcode cache key
+        id: xcode-cache
+        run: |
+          xcodebuild -version
+          echo "version=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Swift CLI build
+        uses: actions/cache@v4
+        with:
+          path: swift-cli/.build
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-swift-cli-
+
+      - name: Cache driver DerivedData
+        uses: actions/cache@v4
+        with:
+          path: driver/build/DerivedData
+          key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-${{ hashFiles('driver/project.yml', 'driver/**/*.swift', 'driver/**/*.m', 'driver/**/*.h', 'shared/IOSUseProtocol/**/*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-
 
       - name: Build Swift CLI
         run: bash scripts/build_swift_cli.sh
