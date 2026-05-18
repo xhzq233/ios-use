@@ -129,6 +129,7 @@ Optional env:
   APPIUM_WDA_URL      existing WDA base URL for Appium attach mode
   WDA_LAUNCH_TIMEOUT_MS  default: 120000
   APPIUM_SHOW_XCODE_LOG  set 1 to let Appium print xcode log
+  IOS_USE_BENCHMARK_BUILD_CLI_FROM_SOURCE  set 1 to install the local Swift CLI
   IOS_USE_BENCHMARK_SKIP_DRIVER_BUILD  set 1 to skip release driver build
   IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG set 1 to skip reinstalling custom driver
 `.trim());
@@ -201,7 +202,12 @@ function buildReleaseDriverArtifacts() {
 }
 
 function installIosUseExecutable() {
-  const { stdout } = runSync('bash', ['scripts/install.sh', '--print-path'], { capture: true });
+  const installArgs = ['scripts/install.sh'];
+  if (shouldBuildCliFromSource()) {
+    installArgs.push('--build-from-source');
+  }
+  installArgs.push('--print-path');
+  const { stdout } = runSync('bash', installArgs, { capture: true });
   const installedPath = stdout
     .split('\n')
     .map(line => line.trim())
@@ -212,6 +218,10 @@ function installIosUseExecutable() {
   }
   iosUseExecutable = installedPath;
   return installedPath;
+}
+
+function shouldBuildCliFromSource() {
+  return process.env.IOS_USE_BENCHMARK_BUILD_CLI_FROM_SOURCE === '1';
 }
 
 function configureCustomDriver(customUdid) {
@@ -973,6 +983,7 @@ async function main() {
   lines.push(`| Appium URL | \`${APPIUM_BASE_URL}\` |`);
   lines.push(`| WDA attach URL | \`${APPIUM_WDA_URL || 'auto(preinstalled WDA)'}\` |`);
   lines.push(`| ios-use 可执行文件 | \`${installedCliPath}\` |`);
+  lines.push(`| ios-use install mode | \`${shouldBuildCliFromSource() ? 'build-from-source' : 'release-download'}\` |`);
   lines.push(`| 迭代次数 | \`${args.iterations}\` |`);
   lines.push(`| 总耗时 | \`${fmtMs(suiteElapsedMs)} ms\` |`);
   lines.push('');
