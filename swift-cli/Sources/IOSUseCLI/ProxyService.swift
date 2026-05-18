@@ -45,6 +45,10 @@ public enum ProxyService {
         let udid = try resolveUdid(requestedUdid, paths: paths)
         try ensureMitmproxyCA(paths: paths)
         let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
+        let fingerprint = fingerprintPEM(pem)
+        if caStateMatches(udid: udid, fingerprint: fingerprint, paths: paths) {
+            return "CA already installed and trusted on device.\n"
+        }
         try SessionService.prepareDriverSession(SessionOptions(udid: udid), paths: paths)
         _ = try DriverClient(session: SessionService.read(paths: paths)).proxyCAPush(caBase64: base64Body(fromPEM: pem))
         let flowOutput = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
@@ -62,7 +66,7 @@ public enum ProxyService {
             state.caInstalled = true
             try writeState(state, paths: paths)
         }
-        try writeCAState(udid: udid, fingerprint: fingerprintPEM(pem), paths: paths)
+        try writeCAState(udid: udid, fingerprint: fingerprint, paths: paths)
         return (outputSink == nil ? flowOutput : "") + "CA installed and trusted on device.\n"
     }
 
@@ -227,6 +231,7 @@ public enum ProxyService {
     private static func statePath(paths: IOSUsePaths) -> String { "\(paths.root)/state/proxy-session.json" }
     private static func caStatePath(paths: IOSUsePaths) -> String { "\(paths.root)/state/proxy-ca.json" }
     static func caPathForTesting(paths: IOSUsePaths) -> String { caPath(paths: paths) }
+    static func fingerprintPEMForTesting(_ pem: String) -> String { fingerprintPEM(pem) }
     private static func caPath(paths: IOSUsePaths) -> String { "\(mitmproxyDir(paths: paths))/mitmproxy-ca-cert.pem" }
     private static func mitmproxyDir(paths: IOSUsePaths) -> String { "\(paths.root)/mitmproxy" }
 

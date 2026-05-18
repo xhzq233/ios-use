@@ -99,7 +99,7 @@ mitmdump -r file.flow --set hardump=output.har
 
 | 命令 | 说明 |
 |------|------|
-| `proxy configca` | 安装并信任 mitmproxy CA（一次性） |
+| `proxy configca` | 安装并信任 mitmproxy CA；若本地记录显示当前 CA 已安装并信任，会直接跳过安装 flow |
 | `proxy start [-i <interface>]` | 启动抓包 + 配置设备 Wi-Fi 代理 |
 | `proxy stop` | 清除设备 Wi-Fi 代理 + 停止抓包 |
 | `proxy doctor` | 诊断 proxy 环境 |

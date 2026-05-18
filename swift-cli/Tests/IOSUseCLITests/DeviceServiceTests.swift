@@ -45,6 +45,15 @@ final class DeviceServiceTests: XCTestCase {
         )
     }
 
+    func testFormatDeviceLabelIncludesDriverUpdateHint() {
+        let device = IOSDevice(name: "Phone", version: "26.2", udid: "REAL-1", kind: .real)
+
+        XCTAssertEqual(
+            DeviceService.format(device, configuredDevices: ["REAL-1": DeviceService.ConfiguredDevice(driverVersion: "0.9.0")]),
+            "Phone | iOS 26.2 | Device | UDID: REAL-1 | configured | driver update required: run ios-use config --udid REAL-1"
+        )
+    }
+
     func testUsbOnlyDevicesFiltersAndPreservesUsbmuxOrder() throws {
         DeviceService.usbDeviceUdidsOverrideForTesting = {
             ["00008150-0015309E2EE3401C", "CE83141B-D0FB-5983-B0DB-4C301BB773F6"]

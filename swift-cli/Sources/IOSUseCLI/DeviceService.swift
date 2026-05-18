@@ -20,6 +20,14 @@ public struct IOSDevice: Equatable, Sendable {
 }
 
 public enum DeviceService {
+    public struct ConfiguredDevice: Equatable, Sendable {
+        public let driverVersion: String?
+
+        public var needsDriverUpdate: Bool {
+            driverVersion != IOSUseCLI.version
+        }
+    }
+
     static var listDevicesOverrideForTesting: ((Bool, IOSUsePaths) throws -> [IOSDevice])?
     static var usbDeviceUdidsOverrideForTesting: (() throws -> [String])?
     private static var listDevicesCache: [String: [IOSDevice]] = [:]
@@ -128,18 +136,35 @@ public enum DeviceService {
     }
 
     public static func configuredUdids(paths: IOSUsePaths) -> Set<String> {
+        Set(configuredDevices(paths: paths).keys)
+    }
+
+    public static func configuredDevices(paths: IOSUsePaths) -> [String: ConfiguredDevice] {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.config)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let devices = json["devices"] as? [String: Any] else {
-            return []
+            return [:]
         }
-        return Set(devices.keys)
+        return devices.reduce(into: [:]) { result, item in
+            let value = item.value as? [String: Any] ?? [:]
+            result[item.key] = ConfiguredDevice(driverVersion: value["driverVersion"] as? String)
+        }
     }
 
     public static func format(_ device: IOSDevice, configured: Set<String>) -> String {
+        format(device, configuredDevices: configured.reduce(into: [:]) { result, udid in
+            result[udid] = ConfiguredDevice(driverVersion: IOSUseCLI.version)
+        })
+    }
+
+    public static func format(_ device: IOSDevice, configuredDevices: [String: ConfiguredDevice]) -> String {
         let typeLabel = device.kind == .simulator ? "Simulator" : "Device"
         let version = device.version.isEmpty ? "unknown" : device.version
-        let tag = configured.contains(device.udid) ? " | configured" : ""
+        let config = configuredDevices[device.udid]
+        var tag = config == nil ? "" : " | configured"
+        if let config, config.needsDriverUpdate {
+            tag += " | driver update required: run ios-use config --udid \(device.udid)"
+        }
         return "\(device.name.isEmpty ? "Unknown" : device.name) | iOS \(version) | \(typeLabel) | UDID: \(device.udid)\(tag)"
     }
 

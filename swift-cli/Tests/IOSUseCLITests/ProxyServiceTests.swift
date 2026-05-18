@@ -58,7 +58,7 @@ final class ProxyServiceTests: XCTestCase {
         SessionService.realDriverReachableForTesting = { _ in true }
         SessionService.realDriverLauncherForTesting = { _, _ in }
         try """
-        {"devices":{"USB-DEVICE":{"bundleId":"com.example.driver","port":"8100"}}}
+        {"devices":{"USB-DEVICE":{"bundleId":"com.example.driver","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
 
         XCTAssertEqual(try ProxyService.resolveStartUdidForTesting(nil, paths: paths), "USB-DEVICE")
@@ -110,6 +110,25 @@ final class ProxyServiceTests: XCTestCase {
 
         XCTAssertTrue(output.contains("CA generated"))
         XCTAssertTrue(output.contains("CA trust record: not recorded"))
+    }
+
+    func testConfigCASkipsInstallFlowWhenTrustRecordMatches() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let pem = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n"
+        try FileManager.default.createDirectory(atPath: "\(root)/mitmproxy", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try pem.write(toFile: "\(root)/mitmproxy/mitmproxy-ca-cert.pem", atomically: true, encoding: .utf8)
+        let fingerprint = ProxyService.fingerprintPEMForTesting(pem)
+        let record: [String: Any] = [
+            "DEVICE-1": ["fingerprint": fingerprint, "installedAt": 1]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: record)
+        try data.write(to: URL(fileURLWithPath: "\(root)/state/proxy-ca.json"))
+
+        let output = try ProxyService.configCA(udid: "DEVICE-1", paths: paths)
+
+        XCTAssertEqual(output, "CA already installed and trusted on device.\n")
     }
 
     func testProbeServerIdleSocketDoesNotBlockValidProbe() throws {
