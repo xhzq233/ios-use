@@ -21,4 +21,10 @@ swift build --package-path "$ROOT_DIR/swift-cli" -c "$CONFIGURATION"
 
 cp "$ROOT_DIR/swift-cli/.build/$CONFIGURATION/ios-use-swift" "$ROOT_DIR/ios-use"
 chmod +x "$ROOT_DIR/ios-use"
+
+if [ "$CONFIGURATION" = "release" ]; then
+  echo "[swift-cli] Stripping release binary..."
+  strip "$ROOT_DIR/ios-use"
+fi
+
 echo "[swift-cli] Built $ROOT_DIR/ios-use"
