@@ -22,10 +22,10 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/ci_test.sh` | Main CI/local Swift-only gate: Swift CLI tests, driver tests, Swift CLI Release build, and Simulator driver build. |
+| `scripts/ci_test.sh` | Main CI/local Swift-only gate: script syntax checks, Swift CLI tests, driver tests, Swift CLI Release build, and Simulator driver build. |
 | `scripts/ci_full_simulator.sh [--case CASES]` | Main full Simulator regression entry. Builds the required artifacts and runs the Node Simulator command matrix. |
 | `scripts/test_swift_cli.sh` | Run Swift CLI unit tests. |
-| `scripts/test_driver_unit.sh` | Run Swift driver unit tests. |
+| `scripts/test_driver_unit.sh` | Run Swift driver unit tests with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
 | `scripts/test_simulator_commands.mjs` | Node-based Simulator command case runner used by full Simulator validation. |
 | `scripts/ios_use_test_simulator.js` | Shared helper used by driver unit tests and Simulator command tests to create/boot the fixed `IOSUseTest` Simulator. |
 
@@ -42,13 +42,15 @@ bash scripts/ci_full_simulator.sh
 bash scripts/ci_full_simulator.sh --case FIND-1B
 ```
 
+GitHub CI uses `.github/workflows/ci.yml` for the default Swift-only gate. The full UI replay lives in `.github/workflows/simulator.yml` and is manual-only.
+
 ## Install And Benchmark
 
 | Script | Purpose |
 | --- | --- |
 | `scripts/install.sh` | Install the release CLI, driver IPAs, skill, flows, and altsign helper. Use `--build-from-source` to compile locally. |
-| `scripts/release_build.sh` | Build and stage GitHub Release assets under `release/`. |
-| `scripts/benchmark_wda.js` | Compare ios-use against Appium/WebDriverAgent on a real device. |
+| `scripts/release_build.sh` | Build and stage GitHub Release assets under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. |
+| `scripts/benchmark_wda.js` | Compare ios-use against Appium/WebDriverAgent on a real device; automatically picks a free WDA local port when `WDA_LOCAL_PORT` is not set. |
 
 ## Release Artifacts
 
