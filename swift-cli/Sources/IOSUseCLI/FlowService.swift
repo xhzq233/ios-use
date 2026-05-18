@@ -8,13 +8,13 @@ protocol FlowDriver {
     func home() throws
     func openURL(url: String) throws -> ForySimpleStringPayload
     func dismissAlert(index: Int?) throws -> ForyAlertPayload
-    func waitFor(label: String, timeout: Double?, traits: String?) throws -> ForyWaitForPayload
-    func find(label: String, traits: String?) throws -> ForyFindPayload
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload
+    func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload
     func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload
-    func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
-    func longPress(target: ForyTarget, durationMs: Int?, traits: String?) throws -> ForyElementPayload
-    func input(label: String, content: String, traits: String?) throws
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?) throws -> ForySwipePayload
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
+    func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
+    func input(label: String, content: String, traits: String?, cindex: Int32?) throws
+    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
     func screenshot() throws -> Data
 }
 
@@ -199,11 +199,11 @@ private struct FlowRunner {
         switch action {
         case "waitFor":
             let label = try requiredString(step["label"], field: "waitFor.label")
-            _ = try driver.waitFor(label: label, timeout: optionalNumber(step["timeout"], field: "waitFor.timeout"), traits: optionalString(step["traits"]))
+            _ = try driver.waitFor(label: label, timeout: optionalNumber(step["timeout"], field: "waitFor.timeout"), traits: optionalString(step["traits"]), cindex: optionalInt32(step["cindex"], field: "waitFor.cindex"))
 
         case "find":
             let label = try requiredString(step["label"], field: "find.label")
-            let payload = try driver.find(label: label, traits: optionalString(step["traits"]))
+            let payload = try driver.find(label: label, traits: optionalString(step["traits"]), cindex: optionalInt32(step["cindex"], field: "find.cindex"))
             if printEnabled(step["print"]) {
                 emit(DriverOutput.formatFind(label: label, payload: payload))
             }
@@ -280,21 +280,28 @@ private struct FlowRunner {
             if tapTarget.point != nil, offset != nil {
                 throw CLIParseError.invalidValue("offset requires element label, not absolute point")
             }
+            let traits = optionalString(step["traits"])
+            let cindex = try optionalInt32(step["cindex"], field: "tap.cindex")
+            try validateLookupOptions(target: tapTarget, traits: traits, cindex: cindex, field: "tap.label")
             let ratio = try ratioPoint(step["offset"] as? [String: Any], hasAbsoluteOffset: offset != nil)
-            _ = try driver.tap(target: tapTarget, traits: optionalString(step["traits"]), offset: offset, ratio: ratio)
+            _ = try driver.tap(target: tapTarget, traits: traits, cindex: cindex, offset: offset, ratio: ratio)
 
         case "longpress":
             let pressTarget = try requiredTarget(step["label"], field: "longpress.label")
+            let traits = optionalString(step["traits"])
+            let cindex = try optionalInt32(step["cindex"], field: "longpress.cindex")
+            try validateLookupOptions(target: pressTarget, traits: traits, cindex: cindex, field: "longpress.label")
             _ = try driver.longPress(
                 target: pressTarget,
                 durationMs: optionalInt(step["duration"], field: "longpress.duration"),
-                traits: optionalString(step["traits"])
+                traits: traits,
+                cindex: cindex
             )
 
         case "input":
             let label = try requiredString(step["label"], field: "input.label")
             let content = try requiredString(step["content"], field: "input.content")
-            try driver.input(label: label, content: content, traits: optionalString(step["traits"]))
+            try driver.input(label: label, content: content, traits: optionalString(step["traits"]), cindex: optionalInt32(step["cindex"], field: "input.cindex"))
             emit("Input \"\(content)\" into \"\(label)\"\n")
 
         case "screenshot":
@@ -344,12 +351,18 @@ private struct FlowRunner {
             if let dir, dir != "forth", dir != "back" {
                 throw CLIParseError.invalidValue("swipe.dir must be \"forth\" or \"back\"")
             }
+            let toTarget = try target(step["to"])
+            let fromTarget = try target(step["from"])
+            let traits = optionalString(step["traits"])
+            let cindex = try optionalInt32(step["cindex"], field: "swipe.cindex")
+            try validateLookupOptions(target: toTarget, traits: traits, cindex: cindex, field: "swipe.to")
             _ = try driver.swipe(
-                to: try target(step["to"]),
-                from: try target(step["from"]),
+                to: toTarget,
+                from: fromTarget,
                 distance: optionalNumber(step["distance"], field: "swipe.distance"),
                 dir: dir,
-                traits: optionalString(step["traits"])
+                traits: traits,
+                cindex: cindex
             )
 
         case "activateApp":
@@ -804,6 +817,17 @@ private func optionalInt(_ value: Any?, field: String) throws -> Int? {
     return parsed
 }
 
+private func optionalInt32(_ value: Any?, field: String) throws -> Int32? {
+    guard !isNull(value) else { return nil }
+    guard let parsed = intValue(value) else {
+        throw CLIParseError.invalidValue("\(field) must be an integer")
+    }
+    guard parsed >= Int(Int32.min), parsed <= Int(Int32.max) else {
+        throw CLIParseError.invalidValue("\(field) is out of Int32 range")
+    }
+    return Int32(parsed)
+}
+
 private func positiveInt(_ value: Any?, field: String) throws -> Int? {
     guard let parsed = try optionalInt(value, field: field) else { return nil }
     guard parsed > 0 else {
@@ -845,6 +869,16 @@ private func requiredTarget(_ value: Any?, field: String) throws -> ForyTarget {
         throw CLIParseError.invalidValue("\(field) must be a non-empty string or [x, y] point")
     }
     return target
+}
+
+private func validateLookupOptions(target: ForyTarget, traits: String?, cindex: Int32?, field: String) throws {
+    guard traits != nil || cindex != nil else { return }
+    if target.label.isEmpty, target.point == nil {
+        throw CLIParseError.invalidValue("\(field) requires a label target when using traits or cindex")
+    }
+    if target.point != nil {
+        throw CLIParseError.invalidValue("\(field) point target does not support traits or cindex")
+    }
 }
 
 private func target(_ value: Any?) throws -> ForyTarget {

@@ -163,6 +163,7 @@ final class FlowServiceTests: XCTestCase {
             dir: forth
             distance: 300
             traits: Cell
+            cindex: -1
         """)
         let driver = FakeFlowDriver()
 
@@ -175,6 +176,7 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(swipe.dir, "forth")
         XCTAssertEqual(swipe.distance, 300)
         XCTAssertEqual(swipe.traits, "Cell")
+        XCTAssertEqual(swipe.cindex, -1)
     }
 
     func testFlowTargetsSupportCommaLabelsAndArrayPoints() throws {
@@ -211,6 +213,7 @@ final class FlowServiceTests: XCTestCase {
             label: General
             duration: 750
             traits: Cell
+            cindex: 2
         """)
         let driver = FakeFlowDriver()
 
@@ -220,6 +223,60 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(press.target.label, "General")
         XCTAssertEqual(press.durationMs, 750)
         XCTAssertEqual(press.traits, "Cell")
+        XCTAssertEqual(press.cindex, 2)
+    }
+
+    func testFlowPassesCindexForFindTapInputAndWaitFor() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("cindex.yaml", """
+        name: cindex-flow
+        steps:
+          - action: find
+            label: General
+            traits: Cell
+            cindex: -1
+          - action: waitFor
+            label: Ready
+            traits: StaticText
+            cindex: 0
+          - action: tap
+            label: Settings
+            traits: Cell
+            cindex: 1
+          - action: input
+            label: Name
+            content: Alpha
+            traits: TextField
+            cindex: 0
+        """)
+        let driver = FakeFlowDriver()
+
+        _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+
+        XCTAssertEqual(driver.finds.first?.label, "General")
+        XCTAssertEqual(driver.finds.first?.traits, "Cell")
+        XCTAssertEqual(driver.finds.first?.cindex, -1)
+        XCTAssertEqual(driver.waits.first?.label, "Ready")
+        XCTAssertEqual(driver.waits.first?.cindex, 0)
+        XCTAssertEqual(driver.taps.first?.target.label, "Settings")
+        XCTAssertEqual(driver.taps.first?.cindex, 1)
+        XCTAssertEqual(driver.inputs.first?.label, "Name")
+        XCTAssertEqual(driver.inputs.first?.cindex, 0)
+    }
+
+    func testFlowRejectsCindexOnPointTarget() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("bad-cindex.yaml", """
+        name: bad-cindex
+        steps:
+          - action: tap
+            label: [100, 200]
+            cindex: 0
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("point target does not support traits or cindex"))
+        }
     }
 
     func testFlowNSLogStepUsesSharedServerAndClearsBuffer() throws {
@@ -624,12 +681,15 @@ private final class FakeFlowDriver: FlowDriver {
     var domPayload = ForyDomPayload()
     var findError: Error?
     var findLabels: [String] = []
+    var finds: [(label: String, traits: String?, cindex: Int32?)] = []
+    var waits: [(label: String, timeout: Double?, traits: String?, cindex: Int32?)] = []
+    var inputs: [(label: String, content: String, traits: String?, cindex: Int32?)] = []
     var activatedApps: [String] = []
     var terminatedApps: [String] = []
     var terminateError: Error?
-    var swipes: [(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?)] = []
-    var taps: [(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint)] = []
-    var longPresses: [(target: ForyTarget, durationMs: Int?, traits: String?)] = []
+    var swipes: [(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?)] = []
+    var taps: [(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint)] = []
+    var longPresses: [(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?)] = []
 
     func activateApp(bundleId: String) throws {
         activatedApps.append(bundleId)
@@ -643,26 +703,32 @@ private final class FakeFlowDriver: FlowDriver {
     func home() throws {}
     func openURL(url: String) throws -> ForySimpleStringPayload { ForySimpleStringPayload(value: url) }
     func dismissAlert(index: Int?) throws -> ForyAlertPayload { ForyAlertPayload(dismissed: true) }
-    func waitFor(label: String, timeout: Double?, traits: String?) throws -> ForyWaitForPayload { ForyWaitForPayload(label: label) }
-    func find(label: String, traits: String?) throws -> ForyFindPayload {
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload {
+        waits.append((label, timeout, traits, cindex))
+        return ForyWaitForPayload(label: label)
+    }
+    func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload {
         findLabels.append(label)
+        finds.append((label, traits, cindex))
         if let findError {
             throw findError
         }
         return findPayload
     }
     func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload { domPayload }
-    func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
-        taps.append((target, traits, offset, ratio))
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+        taps.append((target, traits, cindex, offset, ratio))
         return ForyElementPayload(label: target.label)
     }
-    func longPress(target: ForyTarget, durationMs: Int?, traits: String?) throws -> ForyElementPayload {
-        longPresses.append((target, durationMs, traits))
+    func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload {
+        longPresses.append((target, durationMs, traits, cindex))
         return ForyElementPayload(label: target.label)
     }
-    func input(label: String, content: String, traits: String?) throws {}
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?) throws -> ForySwipePayload {
-        swipes.append((to, from, distance, dir, traits))
+    func input(label: String, content: String, traits: String?, cindex: Int32?) throws {
+        inputs.append((label, content, traits, cindex))
+    }
+    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
+        swipes.append((to, from, distance, dir, traits, cindex))
         return ForySwipePayload(label: to.label, scrolls: 1)
     }
     func screenshot() throws -> Data { Data([0xff, 0xd8, 0xff]) }

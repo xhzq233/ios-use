@@ -11,19 +11,18 @@ enum InputCommands {
     static func input(_ args: ForyInputArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
-        let traits = args.traits.isEmpty ? nil : args.traits
 
         // Locate the target via rawFind.
         let elem: SnapshotElement
-        switch rawFind(args.label, traits: traits, visibility: .only) {
+        switch rawFind(args.target, visibility: .only) {
         case .found(let e): elem = e
-        case .ambiguous(let matches): return try ambiguityResponse(args.label, matches: matches)
+        case .ambiguous(let matches): return try ambiguityResponse(args.target.label, matches: matches)
         case .fuzzy(let s):
-            return try notFoundResponse(args.label,
+            return try notFoundResponse(args.target.label,
                                         suggestions: s,
                                         hint: "Try adding --traits, or verify the active app before typing")
         case .notFound(let s):
-            return try notFoundResponse(args.label,
+            return try notFoundResponse(args.target.label,
                                         suggestions: s,
                                         hint: "Try adding --traits, or verify the active app before typing")
         }
@@ -34,12 +33,12 @@ enum InputCommands {
         // STEP 1 — prepare: prefer an editable ancestor, but allow keyboard-visible
         // cases where XCTest doesn't expose hasKeyboardFocus reliably.
         guard prepareForInput(editableSnapshot, fallback: elem.node, app: app) else {
-            return Codec.foryError("input: failed to focus '\(args.label)' for typing")
+            return Codec.foryError("input: failed to focus '\(args.target.label)' for typing")
         }
 
         // STEP 2 — type text.
         guard typeText(args.content) else {
-            return Codec.foryError("input: failed to type text into '\(args.label)'")
+            return Codec.foryError("input: failed to type text into '\(args.target.label)'")
         }
         let payload = ForyElementPayload(
             elemType: Int32(truncatingIfNeeded: elem.node.elementType),

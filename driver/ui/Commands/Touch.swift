@@ -13,6 +13,9 @@ enum TouchCommands {
 
         // Path A: absolute coordinate.
         if let pt = target.point {
+            guard target.traits.isEmpty, target.cindex == nil else {
+                return Codec.foryError("tap: traits/cindex require label target")
+            }
             let point = CGPoint(x: pt.x, y: pt.y)
             try tapAtPoint(point, app: app)
             let payload = ForyElementPayload(
@@ -27,8 +30,7 @@ enum TouchCommands {
         guard !target.label.isEmpty else {
             return Codec.foryError("tap: invalid label/point")
         }
-        let traits = args.traits.isEmpty ? nil : args.traits
-        switch rawFind(target.label, traits: traits, visibility: .only) {
+        switch rawFind(target, visibility: .only) {
         case .found(let elem):
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
@@ -61,6 +63,9 @@ enum TouchCommands {
         let target = args.target
 
         if let pt = target.point {
+            guard target.traits.isEmpty, target.cindex == nil else {
+                return Codec.foryError("longPress: traits/cindex require label target")
+            }
             let point = CGPoint(x: pt.x, y: pt.y)
             try pressAtPoint(point, duration: duration, app: app)
             let payload = ForyElementPayload(
@@ -74,8 +79,7 @@ enum TouchCommands {
         guard !target.label.isEmpty else {
             return Codec.foryError("longPress: invalid label/point")
         }
-        let traits = args.traits.isEmpty ? nil : args.traits
-        switch rawFind(target.label, traits: traits, visibility: .only) {
+        switch rawFind(target, visibility: .only) {
         case .found(let elem):
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {

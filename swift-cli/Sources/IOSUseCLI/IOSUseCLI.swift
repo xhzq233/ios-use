@@ -182,22 +182,22 @@ public struct IOSUseCLI: Sendable {
             switch action {
             case .dom(let raw, let fresh, _):
                 return CLIResult(exitCode: 0, stdout: try DriverOutput.formatDom(client.dom(raw: raw, fresh: fresh)))
-            case .find(let label, let traits, _):
-                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatFind(label: label, payload: client.find(label: label, traits: traits)))
-            case .waitFor(let label, let timeout, let traits, _):
-                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatWaitFor(label: label, payload: client.waitFor(label: label, timeout: timeout, traits: traits)))
+            case .find(let label, let traits, let cindex, _):
+                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatFind(label: label, payload: client.find(label: label, traits: traits, cindex: cindex)))
+            case .waitFor(let label, let timeout, let traits, let cindex, _):
+                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatWaitFor(label: label, payload: client.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)))
             case .screenshot(let name, _):
                 return try saveScreenshot(name: name, client: client)
-            case .tap(let target, let offset, let offsetRatio, let traits, _):
-                return try tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, client: client)
-            case .longPress(let target, let duration, let traits, _):
-                let payload = try client.longPress(target: try Self.target(target), durationMs: duration, traits: traits)
+            case .tap(let target, let offset, let offsetRatio, let traits, let cindex, _):
+                return try tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, client: client)
+            case .longPress(let target, let duration, let traits, let cindex, _):
+                let payload = try client.longPress(target: try Self.target(target, traits: traits, cindex: cindex), durationMs: duration, traits: traits, cindex: cindex)
                 return CLIResult(exitCode: 0, stdout: "Longpress\n\(DriverOutput.formatElement(payload))")
-            case .input(let label, let content, let traits, _):
-                try client.input(label: label, content: content, traits: traits)
+            case .input(let label, let content, let traits, let cindex, _):
+                try client.input(label: label, content: content, traits: traits, cindex: cindex)
                 return CLIResult(exitCode: 0, stdout: "Input \"\(content)\" into \"\(label)\"\n")
-            case .swipe(let to, let from, let dir, let distance, let traits, _):
-                let result = try client.swipe(to: try Self.target(to), from: try Self.target(from), distance: distance, dir: dir, traits: traits)
+            case .swipe(let to, let from, let dir, let distance, let traits, let cindex, _):
+                let result = try client.swipe(to: try Self.target(to, traits: traits, cindex: cindex), from: try Self.target(from), distance: distance, dir: dir, traits: traits, cindex: cindex)
                 return CLIResult(exitCode: 0, stdout: DriverOutput.formatSwipe(result))
             case .activateApp(let bundleId, _):
                 try client.activateApp(bundleId: bundleId)
@@ -264,14 +264,14 @@ public struct IOSUseCLI: Sendable {
         )
     }
 
-    private func tap(target: String, offset: String?, offsetRatio: String?, traits: String?, client: DriverClient) throws -> CLIResult {
-        let foryTarget = try Self.target(target)
+    private func tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, client: DriverClient) throws -> CLIResult {
+        let foryTarget = try Self.target(target, traits: traits, cindex: cindex)
         if foryTarget.point != nil && (offset != nil || offsetRatio != nil) {
             throw CLIParseError.invalidValue("offset requires element label, not absolute point")
         }
         let offsetPoint = try offset.map { try Self.pointPair($0, emptyDefault: 0) }
         let ratioPoint = try offsetPoint == nil ? (offsetRatio.map { try Self.pointPair($0, emptyDefault: IOSUseProtocol.defaultTargetRatio) } ?? ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) : ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
-        let result = try client.tap(target: foryTarget, traits: traits, offset: offsetPoint, ratio: ratioPoint)
+        let result = try client.tap(target: foryTarget, traits: traits, cindex: cindex, offset: offsetPoint, ratio: ratioPoint)
         return CLIResult(exitCode: 0, stdout: "Tap\n\(DriverOutput.formatElement(result))")
     }
 
@@ -284,12 +284,20 @@ public struct IOSUseCLI: Sendable {
         return message.range(of: #"not running|already terminated|no such process|state=1|state=0"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    private static func target(_ value: String?) throws -> ForyTarget {
-        guard let value, !value.isEmpty else { return ForyTarget() }
+    private static func target(_ value: String?, traits: String? = nil, cindex: Int32? = nil) throws -> ForyTarget {
+        guard let value, !value.isEmpty else {
+            if traits != nil || cindex != nil {
+                throw CLIParseError.invalidValue("traits or cindex require label target")
+            }
+            return ForyTarget()
+        }
         if let point = try? pointPair(value, emptyDefault: 0) {
+            if traits != nil || cindex != nil {
+                throw CLIParseError.invalidValue("point target does not support traits or cindex")
+            }
             return ForyTarget(label: "", point: point)
         }
-        return ForyTarget(label: value, point: nil)
+        return ForyTarget(label: value, point: nil, traits: traits ?? "", cindex: cindex)
     }
 
     private static func pointPair(_ value: String, emptyDefault: Double) throws -> ForyPoint {

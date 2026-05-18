@@ -111,6 +111,7 @@ ios-use stop                        # 停止 driver 进程并清理 session
 - `tap` / `longpress`
   - `<target>` — 元素 label 或 `"x,y"` 坐标（positional，不是 option）
   - 支持 `--traits <traits>` 按 traits 过滤（逗号分隔，AND 语义）
+  - 支持 `--cindex <int>` 选择匹配父元素的第 N 个 cleaned child；坐标 target 不支持 traits/cindex
   - `tap` 支持 `--offset "x,y"`（像素偏移）和 `--offset-ratio "x,y"`（比例偏移）
   - offset 原点固定为目标元素左上角 `(0,0)`
   - 缺失单轴时默认补 `0.5` ratio
@@ -133,6 +134,7 @@ ios-use tap "亮度" --offset-ratio 0.8,
   - `forth` 通常表示继续往前浏览当前列表，`back` 表示反方向回拉
   - 自动检测竖直/水平方向，不需要额外传方向轴
   - 支持 `--traits <traits>`
+  - 支持 `--cindex <int>`，只作用于 `--to` 目标，不作用于 `--from`
   - 页面没变化或没找到目标时，先 `dom` 再决定是否继续滑
 
 ```bash
@@ -151,6 +153,7 @@ ios-use swipe --dir back --distance 300
   - 不需要先 `tap` 输入框，命令会自动切换焦点再输入
   - 不隐式 clear
   - 支持 `--traits <traits>`
+  - 支持 `--cindex <int>`
 
 - `screenshot`
   - 保存为 JPEG 到 `~/.ios-use/artifacts/<name>.jpg`
@@ -162,12 +165,14 @@ ios-use swipe --dir back --distance 300
 - `find`
   - `find <label>` 查找元素。歧义和模糊建议不报错，返回所有匹配；只有真正未找到才报错
   - `--traits <traits>` 按 traits 过滤，逗号分隔多值，AND 语义（如 `Switch`、`disabled`、`Cell,Switch`，大小写不敏感）
+  - `--cindex <int>` 先找父元素再选第 N 个 cleaned child，`-1` 表示最后一个
 
 - `waitFor`
   - 轮询等待元素出现，超时返回 not-found
   - `--label <text> --timeout <seconds>`
   - 轮询间隔是内部固定值 `100ms`，不对外暴露 `interval`
   - 支持 `--traits <traits>`
+  - 支持 `--cindex <int>`
 
 - `openURL`
   - `--url <url>` 在设备上打开 URL

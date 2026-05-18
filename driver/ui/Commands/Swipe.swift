@@ -12,7 +12,16 @@ enum SwipeCommands {
 
         let toTarget = args.toTarget
         let fromTarget = args.fromTarget
-        let traits = args.traits.isEmpty ? nil : args.traits
+
+        if toTarget.point != nil, (!toTarget.traits.isEmpty || toTarget.cindex != nil) {
+            return Codec.foryError("swipe: traits/cindex require label to target")
+        }
+        if fromTarget.point != nil, (!fromTarget.traits.isEmpty || fromTarget.cindex != nil) {
+            return Codec.foryError("swipe: traits/cindex require label from target")
+        }
+        if !fromTarget.traits.isEmpty || fromTarget.cindex != nil {
+            return Codec.foryError("swipe: traits/cindex are only supported for to target")
+        }
 
         // Path A0: from/to are both absolute points -> direct drag.
         if let from = fromTarget.point, let to = toTarget.point {
@@ -34,33 +43,33 @@ enum SwipeCommands {
         // Path A: `to` is a label → STEP 2+
         let label = toTarget.label
 
-        return try handleLabelSwipe(label: label, args: args, fromTarget: fromTarget, traits: traits, cs: cs, app: app)
+        return try handleLabelSwipe(target: toTarget, args: args, fromTarget: fromTarget, cs: cs, app: app)
     }
 
     // MARK: - STEP 2-8 (label path)
 
-    private static func handleLabelSwipe(label: String,
+    private static func handleLabelSwipe(target toTarget: ForyTarget,
                                          args: ForySwipeArgs,
                                          fromTarget: ForyTarget,
-                                         traits: String?,
                                          cs: CleanedSnapshot,
                                          app: XCUIApplication) throws -> ForyResponseFrame {
+        let label = toTarget.label
         let target: SnapshotElement
-        switch rawFindInSnapshot(label, traits: traits, cs: cs, visibility: .any) {
+        switch rawFindInSnapshot(toTarget, cs: cs, visibility: .any) {
         case .found(let elem):
             target = elem
         case .ambiguous(let matches):
             return try ambiguityResponse(label, matches: matches)
         case .fuzzy(let suggestions):
             if !fromTarget.label.isEmpty || fromTarget.point != nil {
-                return try handleAnchorScroll(label: label, args: args, fromTarget: fromTarget, traits: traits, cs: cs, app: app)
+                return try handleAnchorScroll(target: toTarget, args: args, fromTarget: fromTarget, cs: cs, app: app)
             }
             return try notFoundResponse(label,
                                         suggestions: suggestions,
                                         hint: "Try passing --from (anchor) to scroll from a known element")
         case .notFound(let suggestions):
             if !fromTarget.label.isEmpty || fromTarget.point != nil {
-                return try handleAnchorScroll(label: label, args: args, fromTarget: fromTarget, traits: traits, cs: cs, app: app)
+                return try handleAnchorScroll(target: toTarget, args: args, fromTarget: fromTarget, cs: cs, app: app)
             }
             return try notFoundResponse(label,
                                         suggestions: suggestions,
@@ -114,11 +123,10 @@ enum SwipeCommands {
 
         // STEP 6: scroll loop.
         let scrolls = scrollUntilVisible(scrollView: scrollView,
-                                 label: label,
-                                 traits: traits,
-                                 vertical: vertical,
-                                 scrollUpwards: scrollUpwards,
-                                 app: app)
+                                            target: toTarget,
+                                            vertical: vertical,
+                                            scrollUpwards: scrollUpwards,
+                                            app: app)
 
         switch scrolls {
         case .reachedMax:
@@ -136,12 +144,12 @@ enum SwipeCommands {
 
     // MARK: - Anchor scroll (doc 5.3)
 
-    private static func handleAnchorScroll(label: String,
+    private static func handleAnchorScroll(target toTarget: ForyTarget,
                                            args: ForySwipeArgs,
                                            fromTarget: ForyTarget,
-                                           traits: String?,
                                            cs: CleanedSnapshot,
                                            app: XCUIApplication) throws -> ForyResponseFrame {
+        let label = toTarget.label
         let anchorScrollView: SafeSnapshot
         if let pt = fromTarget.point {
             guard let scrollView = findScrollableAtPoint(CGPoint(x: pt.x, y: pt.y), cs.root) else {
@@ -150,7 +158,7 @@ enum SwipeCommands {
             anchorScrollView = scrollView
         } else if !fromTarget.label.isEmpty {
             let anchor: SnapshotElement
-            switch rawFindInSnapshot(fromTarget.label, traits: nil, cs: cs, visibility: .only) {
+            switch rawFindInSnapshot(ForyTarget(label: fromTarget.label), cs: cs, visibility: .only) {
             case .found(let elem):
                 anchor = elem
             case .ambiguous(let matches):
@@ -182,8 +190,7 @@ enum SwipeCommands {
         let scrollUpwards = (args.dir == 1) // back
 
         let result = scrollUntilVisible(scrollView: anchorScrollView,
-                                        label: label,
-                                        traits: traits,
+                                        target: toTarget,
                                         vertical: vertical,
                                         scrollUpwards: scrollUpwards,
                                         app: app)
@@ -305,8 +312,7 @@ enum SwipeCommands {
     }
 
     private static func scrollUntilVisible(scrollView: SafeSnapshot,
-                                   label: String,
-                                   traits: String?,
+                                   target: ForyTarget,
                                    vertical: Bool,
                                    scrollUpwards: Bool,
                                    app: XCUIApplication) -> ScrollOutcome {
@@ -334,11 +340,11 @@ enum SwipeCommands {
                 return .hitBoundary
             }
 
-            switch rawFindInSnapshot(label, traits: traits, cs: freshCS, enableFuzzy: false, visibility: .only) {
+            switch rawFindInSnapshot(target, cs: freshCS, enableFuzzy: false, visibility: .only) {
             case .found(let elem):
                 return .found(count: i + 1, target: elem.node, freshScrollView: freshScrollView)
             case .ambiguous(let matches):
-                return .ambiguous(label: label, matches: matches)
+                return .ambiguous(label: target.label, matches: matches)
             default:
                 break
             }

@@ -53,6 +53,12 @@ enum DriverClientError: Error, CustomStringConvertible {
     }
 }
 
+private extension ForyTarget {
+    func withLookup(traits: String?, cindex: Int32?) -> ForyTarget {
+        ForyTarget(label: label, point: point, traits: traits ?? self.traits, cindex: cindex ?? self.cindex)
+    }
+}
+
 final class DriverClient {
     private let host: String
     private let port: UInt16
@@ -91,12 +97,12 @@ final class DriverClient {
         try send(DomCommand.self, args: ForyDomArgs(raw: raw, fresh: fresh))
     }
 
-    func find(label: String, traits: String?) throws -> ForyFindPayload {
-        try send(FindCommand.self, args: ForyFindArgs(label: label, traits: traits ?? ""))
+    func find(label: String, traits: String?, cindex: Int32? = nil) throws -> ForyFindPayload {
+        try send(FindCommand.self, args: ForyFindArgs(target: ForyTarget(label: label, traits: traits ?? "", cindex: cindex)))
     }
 
-    func waitFor(label: String, timeout: Double?, traits: String?) throws -> ForyWaitForPayload {
-        try send(WaitForCommand.self, args: ForyWaitForArgs(label: label, timeout: timeout ?? 0, traits: traits ?? ""))
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32? = nil) throws -> ForyWaitForPayload {
+        try send(WaitForCommand.self, args: ForyWaitForArgs(target: ForyTarget(label: label, traits: traits ?? "", cindex: cindex), timeout: timeout ?? 0))
     }
 
     func screenshot() throws -> Data {
@@ -105,27 +111,27 @@ final class DriverClient {
         return decoded.jpeg
     }
 
-    func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
-        try send(TapCommand.self, args: ForyTapArgs(target: target, traits: traits ?? "", offset: offset, ratio: ratio))
+    func tap(target: ForyTarget, traits: String?, cindex: Int32? = nil, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+        try send(TapCommand.self, args: ForyTapArgs(target: target.withLookup(traits: traits, cindex: cindex), offset: offset, ratio: ratio))
     }
 
-    func longPress(target: ForyTarget, durationMs: Int?, traits: String?) throws -> ForyElementPayload {
+    func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32? = nil) throws -> ForyElementPayload {
         let durationSeconds = durationMs.map { Double($0) / 1000.0 } ?? 0
-        return try send(LongPressCommand.self, args: ForyLongPressArgs(target: target, duration: durationSeconds, traits: traits ?? ""))
+        return try send(LongPressCommand.self, args: ForyLongPressArgs(target: target.withLookup(traits: traits, cindex: cindex), duration: durationSeconds))
     }
 
-    func input(label: String, content: String, traits: String?) throws {
-        _ = try sendRaw(InputCommand.self, args: ForyInputArgs(label: label, content: content, traits: traits ?? ""))
+    func input(label: String, content: String, traits: String?, cindex: Int32? = nil) throws {
+        _ = try sendRaw(InputCommand.self, args: ForyInputArgs(target: ForyTarget(label: label, traits: traits ?? "", cindex: cindex), content: content))
     }
 
-    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?) throws -> ForySwipePayload {
+    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {
         let dirValue: Int32
         switch dir {
         case "forth": dirValue = 0
         case "back": dirValue = 1
         default: dirValue = -1
         }
-        return try send(SwipeCommand.self, args: ForySwipeArgs(toTarget: to, fromTarget: from, distance: distance ?? 0, dir: dirValue, traits: traits ?? ""))
+        return try send(SwipeCommand.self, args: ForySwipeArgs(toTarget: to.withLookup(traits: traits, cindex: cindex), fromTarget: from, distance: distance ?? 0, dir: dirValue))
     }
 
     func activateApp(bundleId: String) throws {

@@ -723,6 +723,9 @@ function buildCases() {
     { id: 'FIND-7', run: () => runCaseContains('FIND-7', 'Find', ['find', 'HomeScreen', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'Search', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled', '--udid', sim.udid], generalPage) },
+    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Other "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], settingsHome) },
+    { id: 'FIND-10B', run: () => runCaseContains('FIND-10B', 'chevron.forward', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '-1', '--udid', sim.udid], settingsHome) },
+    { id: 'FIND-11A', run: () => runCaseFailsContains('FIND-11A', 'not found', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '99', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-1B', run: async () => {
       await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'TextField', '--udid', sim.udid], async () => {
         await openContactsNewContact();
@@ -737,6 +740,7 @@ function buildCases() {
     { id: 'WF-1', run: () => runCaseContains('WF-1', 'waited=', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--timeout', '2', '--udid', sim.udid], settingsHome) },
     { id: 'WF-2', run: () => runCaseFailsMatches('WF-2', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.3', '--udid', sim.udid], settingsHome) },
     { id: 'WF-4', run: () => runCaseFailsMatches('WF-4', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.2', '--udid', sim.udid], settingsHome) },
+    { id: 'WF-5', run: () => runCaseContains('WF-5', 'General', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--timeout', '2', '--udid', sim.udid], settingsHome) },
   ]);
 
   addCases(cases, [
@@ -771,6 +775,18 @@ function buildCases() {
     { id: 'TAP-2', run: () => runCaseContains('TAP-2', 'Tap', ['tap', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'TAP-9', run: () => runCaseFailsContains('TAP-9', 'offset requires element label', ['tap', '200,400', '--offset', '1,1', '--udid', sim.udid], generalPage) },
     { id: 'TAP-10', run: () => runCaseContains('TAP-10', 'Tap', ['tap', 'About', '--offset', '500,500', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
+    { id: 'TAP-12', run: async () => {
+      if (!selected('TAP-12')) return recordSkip('TAP-12');
+      await settingsHome();
+      const out = path.join(artifactDir, 'TAP-12.out');
+      const err = path.join(artifactDir, 'TAP-12.err');
+      console.log('[sim-test] RUN TAP-12: tap cindex child and verify navigation');
+      const tap = runCliToFiles(['tap', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], out, err);
+      const verify = runCliToFiles(['find', 'About', '--traits', 'Cell', '--udid', sim.udid], path.join(artifactDir, 'TAP-12-verify.out'), path.join(artifactDir, 'TAP-12-verify.err'));
+      if (tap.code === 0 && verify.code === 0) recordPass('TAP-12');
+      else recordFail('TAP-12', tap.stdout + tap.stderr + verify.stdout + verify.stderr);
+    } },
+    { id: 'TAP-13', run: () => runCaseFailsContains('TAP-13', 'point target does not support traits or cindex', ['tap', '200,400', '--cindex', '0', '--udid', sim.udid], settingsHome) },
     { id: 'TAP-3', run: () => runCase('TAP-3', ['tap', '200,400', '--udid', sim.udid], generalPage) },
     { id: 'TAP-4', run: () => runCaseFailsContains('TAP-4', 'not found', ['tap', '__ios_use_missing_label__', '--udid', sim.udid], settingsHome) },
   ];
@@ -790,6 +806,7 @@ function buildCases() {
     { id: 'SW-1', run: () => runCaseContains('SW-1', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--to', 'Keyboard', '--dir', 'forth', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'SW-3', run: () => runCaseContains('SW-3', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
+    { id: 'SW-3B', run: () => runCaseContains('SW-3B', 'Other "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], settingsHome) },
     { id: 'SW-4', run: () => runCaseContains('SW-4', 'scrolls=', ['swipe', '--to', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell', '--udid', sim.udid], async () => {
       await generalPage();
       runCliToFiles(['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], path.join(artifactDir, 'SW-4-setup.out'), path.join(artifactDir, 'SW-4-setup.err'));

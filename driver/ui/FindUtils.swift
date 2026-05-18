@@ -25,12 +25,15 @@ enum RawFindVisibility {
 /// requested traits, c is candidate string count, q is query length, and t is
 /// candidate length used by fuzzy fallback. Effective-visible filtering adds
 /// O(n) before contains/fuzzy when `visibility == .only`.
-func rawFindInSnapshot(_ label: String,
-                       traits: String? = nil,
+func rawFindInSnapshot(_ target: ForyTarget,
                        cs: CleanedSnapshot,
                        enableFuzzy: Bool = true,
                        visibility: RawFindVisibility = .only) -> FindResult {
-    let query = label.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard target.point == nil else {
+        return .notFound(suggestions: [])
+    }
+
+    let query = target.label.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else {
         return .notFound(suggestions: [])
     }
@@ -58,7 +61,8 @@ func rawFindInSnapshot(_ label: String,
     }
 
     // 3. Trait filter (AND semantics — element must contain all specified traits).
-    if let traitsStr = traits, !traitsStr.isEmpty {
+    if !target.traits.isEmpty {
+        let traitsStr = target.traits
         let required = traitsStr.split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
             .filter { !$0.isEmpty }
@@ -71,6 +75,11 @@ func rawFindInSnapshot(_ label: String,
         }
     }
 
+    matches = applyChildIndex(target.cindex, to: matches, in: cs)
+    if visibility == .only {
+        matches = matches.filter { isVisibleWithEffectiveGeometry($0, in: cs.appFrame) }
+    }
+
     if matches.isEmpty { return .notFound(suggestions: []) }
     if matches.count > 1 { return .ambiguous(matches: matches) }
     return .found(matches[0])
@@ -78,11 +87,11 @@ func rawFindInSnapshot(_ label: String,
 
 /// Unified label search: contains(label/value) → fuzzy → trait filter.
 /// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
-func rawFind(_ label: String, traits: String? = nil, visibility: RawFindVisibility = .only) -> FindResult {
+func rawFind(_ target: ForyTarget, visibility: RawFindVisibility = .only) -> FindResult {
     guard let cs = getCleanedSnapshot() else {
         return .notFound(suggestions: [])
     }
-    return rawFindInSnapshot(label, traits: traits, cs: cs, visibility: visibility)
+    return rawFindInSnapshot(target, cs: cs, visibility: visibility)
 }
 
 private func searchCandidates(from entries: [SearchEntry]) -> [SearchCandidate] {
@@ -139,6 +148,42 @@ private func matchingElements(
     where predicate: (SearchEntry) -> Bool
 ) -> [SnapshotElement] {
     entries.compactMap { predicate($0) ? $0.element : nil }
+}
+
+private func applyChildIndex(_ cindex: Int32?, to matches: [SnapshotElement], in cs: CleanedSnapshot) -> [SnapshotElement] {
+    guard let cindex else { return matches }
+    return matches.compactMap { childElement(of: $0, cindex: Int(cindex), in: cs.elements) }
+}
+
+private func childElement(of parent: SnapshotElement, cindex: Int, in elements: [SnapshotElement]) -> SnapshotElement? {
+    guard parent.childCount > 0,
+          let parentIndex = elements.firstIndex(where: { nodeIdentity($0.node) == nodeIdentity(parent.node) }) else {
+        return nil
+    }
+
+    let resolvedIndex = cindex >= 0 ? cindex : parent.childCount + cindex
+    guard resolvedIndex >= 0, resolvedIndex < parent.childCount else { return nil }
+
+    var childRootIndex = parentIndex + 1
+    for childOrdinal in 0..<parent.childCount {
+        guard childRootIndex < elements.count else { return nil }
+        if childOrdinal == resolvedIndex {
+            return elements[childRootIndex]
+        }
+        childRootIndex = subtreeEndIndex(startingAt: childRootIndex, in: elements)
+    }
+    return nil
+}
+
+private func subtreeEndIndex(startingAt start: Int, in elements: [SnapshotElement]) -> Int {
+    guard start < elements.count else { return start }
+    var index = start + 1
+    var pending = elements[start].childCount
+    while pending > 0, index < elements.count {
+        pending += elements[index].childCount - 1
+        index += 1
+    }
+    return index
 }
 
 private func matchesQueryContent(

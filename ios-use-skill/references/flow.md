@@ -244,11 +244,13 @@ steps:
 - 用于拿到结构化节点，常和 `outputs` 配合
 - 找不到或命中歧义时会直接失败
 - `traits` 支持逗号分隔多值，AND 语义（元素必须同时包含所有指定 trait）
+- `cindex` 支持按 cleaned child 顺序选择父元素的直接 child，允许负数，`-1` 表示最后一个 child
 
 ```yaml
 - action: find
   label: 蓝牙
   traits: Cell
+  cindex: -1
   print: false
   outputs: bluetoothNode
 ```
@@ -282,12 +284,14 @@ steps:
   - 不传 `from` 时目标必须初始可见，否则返回 not found
   - 方向自动推断，无需手动指定
 - 固定距离：通过 `dir + distance` 做纯距离滚动
+- `traits` / `cindex` 只作用于 `to`，不作用于 `from`
 
 ```yaml
 # 推荐：自动循环滚动到目标可见
 - action: swipe
   to: 开发者
   from: 蓝牙
+  cindex: -1
 ```
 
 ```yaml
