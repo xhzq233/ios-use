@@ -165,7 +165,7 @@ final class TypesTests: XCTestCase {
         let element = makeElement(label: "Bluetooth")
         let cs = makeCleanedSnapshot([element])
 
-        switch rawFindInSnapshot("Bluetoth", cs: cs, enableFuzzy: false) {
+        switch rawFindInSnapshot(ForyTarget(label: "Bluetoth"), cs: cs, enableFuzzy: false) {
         case .notFound(let suggestions):
             XCTAssertTrue(suggestions.isEmpty)
         default:
@@ -177,7 +177,7 @@ final class TypesTests: XCTestCase {
         let element = makeElement(label: "Bluetooth")
         let cs = makeCleanedSnapshot([element])
 
-        switch rawFindInSnapshot("Bluetoth", cs: cs) {
+        switch rawFindInSnapshot(ForyTarget(label: "Bluetoth"), cs: cs) {
         case .fuzzy(let suggestions):
             XCTAssertEqual(suggestions, ["Bluetooth"])
         default:
@@ -417,7 +417,7 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([element])
 
-        switch rawFindInSnapshot("搜索", cs: cs) {
+        switch rawFindInSnapshot(ForyTarget(label: "搜索"), cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.value, "搜索或输入网站名称")
             XCTAssertEqual(displayValue(for: found.node), "搜索或输入网站名称")
@@ -430,7 +430,7 @@ final class TypesTests: XCTestCase {
         let element = makeElement(label: "天气", type: .staticText)
         let cs = makeCleanedSnapshot([element])
 
-        switch rawFindInSnapshot("天琪", cs: cs) {
+        switch rawFindInSnapshot(ForyTarget(label: "天琪"), cs: cs) {
         case .fuzzy(let suggestions):
             XCTAssertTrue(suggestions.contains("天气"))
         default:
@@ -442,7 +442,7 @@ final class TypesTests: XCTestCase {
         let element = makeElement(label: "FaceTime 通话", type: .button)
         let cs = makeCleanedSnapshot([element])
 
-        switch rawFindInSnapshot("facetime通话", cs: cs) {
+        switch rawFindInSnapshot(ForyTarget(label: "facetime通话"), cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.label, "FaceTime 通话")
         default:
@@ -457,7 +457,7 @@ final class TypesTests: XCTestCase {
         let text = makeElement(label: "开关文字", type: .staticText)
         let cs = makeCleanedSnapshot([button, text])
 
-        switch rawFindInSnapshot("开关", traits: "switch", cs: cs) {
+        switch rawFindInSnapshot(ForyTarget(label: "开关", traits: "switch"), cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.switch.rawValue)
         default:
@@ -469,11 +469,117 @@ final class TypesTests: XCTestCase {
         let elem = makeElement(label: "设置", type: .button)
         let cs = makeCleanedSnapshot([elem])
 
-        switch rawFindInSnapshot("设置", traits: "button,statictext", cs: cs) {
+        switch rawFindInSnapshot(ForyTarget(label: "设置", traits: "button,statictext"), cs: cs) {
         case .notFound:
             break // expected: Button does not have StaticText trait
         default:
             XCTFail("expected notFound when traits don't all match")
+        }
+    }
+
+    func testRawFindInSnapshot_CindexSelectsPositiveAndNegativeCleanedChildren() {
+        let title = FakeRawSnapshot(label: "标题", elementType: .staticText)
+        let value = FakeRawSnapshot(label: "值", elementType: .staticText)
+        let chevron = FakeRawSnapshot(label: "详情", elementType: .button)
+        let cell = FakeRawSnapshot(label: "蓝牙", elementType: .cell, children: [title, value, chevron])
+        let root = SafeSnapshot(raw: cell, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let cs = makeCleanedSnapshot(buildCleanElements(from: root))
+
+        switch rawFindInSnapshot(ForyTarget(label: "蓝牙", traits: "Cell", cindex: 0), cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "标题")
+        default:
+            XCTFail("expected cindex=0 to select first child")
+        }
+
+        switch rawFindInSnapshot(ForyTarget(label: "蓝牙", traits: "Cell", cindex: -1), cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "详情")
+        default:
+            XCTFail("expected cindex=-1 to select last child")
+        }
+
+        switch rawFindInSnapshot(ForyTarget(label: "蓝牙", traits: "Cell", cindex: -2), cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "值")
+        default:
+            XCTFail("expected cindex=-2 to select second-to-last child")
+        }
+    }
+
+    func testRawFindInSnapshot_CindexOutOfBoundsReturnsNotFound() {
+        let child = FakeRawSnapshot(label: "子项", elementType: .staticText)
+        let cell = FakeRawSnapshot(label: "蓝牙", elementType: .cell, children: [child])
+        let root = SafeSnapshot(raw: cell, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let cs = makeCleanedSnapshot(buildCleanElements(from: root))
+
+        switch rawFindInSnapshot(ForyTarget(label: "蓝牙", traits: "Cell", cindex: 2), cs: cs) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected positive out-of-bounds cindex to return notFound")
+        }
+
+        switch rawFindInSnapshot(ForyTarget(label: "蓝牙", traits: "Cell", cindex: -2), cs: cs) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected negative out-of-bounds cindex to return notFound")
+        }
+    }
+
+    func testRawFindInSnapshot_CindexShrinksAmbiguousMatches() {
+        let child = FakeRawSnapshot(label: "可点", elementType: .button)
+        let withChild = FakeRawSnapshot(label: "设置", elementType: .cell, children: [child])
+        let withoutChild = FakeRawSnapshot(label: "设置", elementType: .cell)
+        let table = FakeRawSnapshot(elementType: .table, children: [withChild, withoutChild])
+        let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let cs = makeCleanedSnapshot(buildCleanElements(from: root))
+
+        switch rawFindInSnapshot(ForyTarget(label: "设置", traits: "Cell", cindex: 0), cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "可点")
+        default:
+            XCTFail("expected cindex to drop ambiguous parents without selected child")
+        }
+    }
+
+    func testRawFindInSnapshot_CindexAppliesVisibilityToSelectedChild() {
+        let hiddenChild = FakeRawSnapshot(
+            label: "关闭",
+            elementType: .staticText,
+            frame: CGRect(x: 0, y: 116, width: 34, height: 20),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let cell = FakeRawSnapshot(label: "配置代理", elementType: .cell, children: [hiddenChild])
+        let root = SafeSnapshot(raw: cell, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let cs = makeCleanedSnapshot(buildCleanElements(from: root))
+
+        switch rawFindInSnapshot(ForyTarget(label: "配置代理", traits: "Cell", cindex: 0), cs: cs, visibility: .only) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected .only cindex result to filter invisible selected child")
+        }
+
+        switch rawFindInSnapshot(ForyTarget(label: "配置代理", traits: "Cell", cindex: 0), cs: cs, visibility: .any) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "关闭")
+        default:
+            XCTFail("expected .any cindex result to keep invisible selected child")
+        }
+    }
+
+    func testRawFindInSnapshot_CindexDoesNotAffectFuzzySuggestions() {
+        let element = makeElement(label: "天气", type: .staticText)
+        let cs = makeCleanedSnapshot([element])
+
+        switch rawFindInSnapshot(ForyTarget(label: "天琪", cindex: 0), cs: cs) {
+        case .fuzzy(let suggestions):
+            XCTAssertEqual(suggestions, ["天气"])
+        default:
+            XCTFail("expected cindex to be ignored for fuzzy suggestions")
         }
     }
 
@@ -502,7 +608,7 @@ final class TypesTests: XCTestCase {
         let visible = makeSnapshotElement(root.children[1].children[0])
         let cs = makeCleanedSnapshot([offscreen, visible])
 
-        switch rawFindInSnapshot("配置代理", cs: cs) {
+        switch rawFindInSnapshot(ForyTarget(label: "配置代理"), cs: cs) {
         case .found(let found):
             XCTAssertEqual(found.node.frame.origin.y, 600)
         default:
@@ -519,7 +625,7 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: offscreenLabel, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
 
-        switch rawFindInSnapshot("配置代理", cs: cs, visibility: .only) {
+        switch rawFindInSnapshot(ForyTarget(label: "配置代理"), cs: cs, visibility: .only) {
         case .notFound:
             break
         default:
@@ -537,7 +643,7 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: proxyLabel, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
 
-        switch rawFindInSnapshot("配置代理", cs: cs, visibility: .only) {
+        switch rawFindInSnapshot(ForyTarget(label: "配置代理"), cs: cs, visibility: .only) {
         case .notFound:
             break
         default:
@@ -555,7 +661,7 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: icon, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
 
-        switch rawFindInSnapshot("醒图开发版", cs: cs, visibility: .only) {
+        switch rawFindInSnapshot(ForyTarget(label: "醒图开发版"), cs: cs, visibility: .only) {
         case .found(let found):
             XCTAssertEqual(found.node.frame.origin.x, 22)
             XCTAssertEqual(found.node.frame.origin.y, 489)
@@ -574,7 +680,7 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: search, appFrame: CGRect(x: 0, y: 0, width: 393, height: 852)))])
 
-        switch rawFindInSnapshot("Search", traits: "SearchField", cs: cs, visibility: .only) {
+        switch rawFindInSnapshot(ForyTarget(label: "Search", traits: "SearchField"), cs: cs, visibility: .only) {
         case .found(let found):
             XCTAssertEqual(found.node.frame.origin.x, 33)
             XCTAssertEqual(found.node.frame.origin.y, 781)
@@ -602,7 +708,7 @@ final class TypesTests: XCTestCase {
         let visible = makeSnapshotElement(root.children[1])
         let cs = makeCleanedSnapshot([offscreen, visible])
 
-        switch rawFindInSnapshot("Bloo", cs: cs, visibility: .only) {
+        switch rawFindInSnapshot(ForyTarget(label: "Bloo"), cs: cs, visibility: .only) {
         case .fuzzy(let suggestions):
             XCTAssertEqual(suggestions, ["Bloc"])
         default:
@@ -635,7 +741,7 @@ final class TypesTests: XCTestCase {
         let visible = makeSnapshotElement(root.children[1].children[0])
         let cs = makeCleanedSnapshot([offscreen, visible])
 
-        switch rawFindInSnapshot("配置代理", cs: cs, visibility: .any) {
+        switch rawFindInSnapshot(ForyTarget(label: "配置代理"), cs: cs, visibility: .any) {
         case .ambiguous(let matches):
             XCTAssertEqual(matches.count, 2)
             XCTAssertEqual(matches[0].node.frame.origin.y, 900)

@@ -34,6 +34,23 @@ final class DriverClientTests: XCTestCase {
         XCTAssertEqual(server.acceptCount, 2)
         XCTAssertEqual(server.requestCommands, ["dom", "dom"])
     }
+
+    func testClientSerializesLookupTargetFields() throws {
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(ForyFindPayload())
+        let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: payload)])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+
+        _ = try client.find(label: "General", traits: "Cell", cindex: -1)
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        XCTAssertEqual(request.command, DriverCommand.find.rawValue)
+        let args = try fory.deserialize(request.payload, as: ForyFindArgs.self)
+        XCTAssertEqual(args.target.label, "General")
+        XCTAssertEqual(args.target.traits, "Cell")
+        XCTAssertEqual(args.target.cindex, -1)
+    }
 }
 
 private final class FakeDriverServer {
@@ -46,6 +63,7 @@ private final class FakeDriverServer {
     private var accepted = 0
     private var nextResponseIndex = 0
     private var commands: [String] = []
+    private var requests: [ForyRequestFrame] = []
     private let fory = ForyRegistry.create()
 
     init(responseCount: Int) throws {
@@ -120,6 +138,12 @@ private final class FakeDriverServer {
         return commands
     }
 
+    var requestFrames: [ForyRequestFrame] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requests
+    }
+
     func stop() {
         lock.lock()
         stopped = true
@@ -158,6 +182,7 @@ private final class FakeDriverServer {
             }
             lock.lock()
             commands.append(request.command)
+            requests.append(request)
             let response = responses[nextResponseIndex]
             nextResponseIndex += 1
             lock.unlock()
