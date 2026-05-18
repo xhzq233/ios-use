@@ -78,6 +78,11 @@ final class CLIParserTests: XCTestCase {
             try CLIParser.parse(["oslog", "--pattern", "ready", "--flags", "i", "--timeout", "3", "--name", "logs", "--clear", "--bundle-id", "com.demo"]),
             .driver(.oslog(pattern: "ready", flags: "i", timeout: 3, name: "logs", clear: true, bundleId: "com.demo", session: SessionOptions()))
         )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["oslog", "--timeout", "0", "--udid", "DEVICE-1"]),
+            .driver(.oslog(pattern: nil, flags: nil, timeout: 0, name: nil, clear: false, bundleId: nil, session: SessionOptions(udid: "DEVICE-1")))
+        )
     }
 
     func testParsesFlowNSLogAndProxyCommands() throws {
@@ -87,12 +92,22 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["nslog", "--name", "ios-use", "--grep", "ready", "--flags", "i"]),
+            try CLIParser.parse(["flow", "flows/test_flow.yaml", "--udid=SIM-1", "--server=192.168.1.10", "--flag=-value"]),
+            .flow(FlowOptions(file: "flows/test_flow.yaml", udid: "SIM-1", externalVars: ["server": "192.168.1.10", "flag": "-value"]))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["flow", "flows/test_flow.yaml", "--literal=--value"]),
+            .flow(FlowOptions(file: "flows/test_flow.yaml", externalVars: ["literal": "--value"]))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["nslog", "--name=ios-use", "--grep=ready", "--flags=i"]),
             .nslog(NSLogOptions(name: "ios-use", grep: "ready", flags: "i"))
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["proxy", "start", "--udid", "DEVICE-1", "--interface", "en0"]),
+            try CLIParser.parse(["proxy", "start", "--udid=DEVICE-1", "--interface=en0"]),
             .proxy(.start(udid: "DEVICE-1", interfaceName: "en0"))
         )
 
@@ -129,6 +144,10 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parse(["config", "--ipa", "driver.ipa"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--ipa"))
         }
+
+        XCTAssertThrowsError(try CLIParser.parse(["flow", "flows/test_flow.yaml", "--server", "--port", "9080"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .missingOptionValue("--server"))
+        }
     }
 
     func testParsesDashPrefixedOptionValuesWhereSemanticallyValid() throws {
@@ -154,9 +173,6 @@ final class CLIParserTests: XCTestCase {
         }
         XCTAssertThrowsError(try CLIParser.parse(["waitFor", "--label", "General", "--timeout", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be non-negative"))
-        }
-        XCTAssertThrowsError(try CLIParser.parse(["oslog", "--timeout", "0", "--udid", "DEVICE-1"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be greater than 0"))
         }
         XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--index", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--index must be non-negative"))

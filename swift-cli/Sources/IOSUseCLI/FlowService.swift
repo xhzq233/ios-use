@@ -12,6 +12,7 @@ protocol FlowDriver {
     func find(label: String, traits: String?) throws -> ForyFindPayload
     func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload
     func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
+    func longPress(target: ForyTarget, durationMs: Int?, traits: String?) throws -> ForyElementPayload
     func input(label: String, content: String, traits: String?) throws
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?) throws -> ForySwipePayload
     func screenshot() throws -> Data
@@ -45,11 +46,15 @@ public enum FlowService {
                 NSLogService.releaseLock(paths: paths)
             }
         }
+        let captureOutput = outputSink == nil
         var bootstrapOutput = ""
         let emit: (String) -> Void = { text in
-            bootstrapOutput += text
+            if captureOutput {
+                bootstrapOutput += text
+            }
             outputSink?(text)
         }
+        emit("Executing flow...\n")
         if let options = try nsloggerOptions(needNSLog) {
             try NSLogService.acquireLock(paths: paths, terminateExisting: true)
             ownsNSLogLock = true
@@ -79,6 +84,7 @@ public enum FlowService {
             context: context,
             inheritedFlowApp: flowApp,
             outputSink: outputSink,
+            captureOutput: captureOutput,
             interruptMonitor: interruptMonitor
         )
         runner.output = bootstrapOutput
@@ -125,12 +131,15 @@ private struct FlowRunner {
     let context: FlowRunContext
     var inheritedFlowApp: String? = nil
     var outputSink: FlowService.OutputSink? = nil
+    var captureOutput = true
     var interruptMonitor: InterruptMonitor? = nil
     var output = ""
     var nsloggerServer: NSLoggerServer?
 
     mutating func emit(_ text: String) {
-        output += text
+        if captureOutput {
+            output += text
+        }
         outputSink?(text)
     }
 
@@ -150,23 +159,43 @@ private struct FlowRunner {
         let flowApp = resolvedFlowApp?.isEmpty == false ? resolvedFlowApp : inheritedFlowApp
         let needNSLog = try flow.needNSLog.map { try resolveTemplates($0, vars: flowVars) }
         _ = try nsloggerOptions(needNSLog)
-        emit("Running flow: \(flow.name)\n")
+        let visibleStepCount = flow.steps.reduce(0) { count, step in
+            count + (isInvisibleFlowStep(step) ? 0 : 1)
+        }
+        emit("Running flow: \(flow.name) (\(visibleStepCount) steps)\n")
 
         let nextStack = stack + [resolvedFile]
+        var visibleStepIndex = 0
         for rawStep in flow.steps {
             try throwIfInterrupted()
             let resolved = try resolveTemplates(rawStep, vars: flowVars) as? [String: Any] ?? rawStep
-            if try runStep(resolved, rawStep: rawStep, baseFile: resolvedFile, flowApp: flowApp, flowVars: &flowVars, stack: nextStack) {
-                break
+            let isVisible = !isInvisibleFlowStep(resolved)
+            if isVisible {
+                visibleStepIndex += 1
+                emit("Step \(visibleStepIndex)/\(visibleStepCount): \(flowStepLabel(resolved))\n")
+            }
+            do {
+                if try runStep(resolved, rawStep: rawStep, baseFile: resolvedFile, flowApp: flowApp, flowVars: &flowVars, stack: nextStack) {
+                    break
+                }
+            } catch {
+                if isVisible {
+                    throw CLIParseError.invalidValue("Step \(visibleStepIndex) [action: \(resolved["action"] as? String ?? "")] failed: \(error)")
+                }
+                throw error
             }
         }
 
+        emit("Flow completed: \(visibleStepIndex) steps executed\n")
         return try collectFlowOutputs(flow.outputs, vars: flowVars)
     }
 
     private mutating func runStep(_ step: [String: Any], rawStep: [String: Any], baseFile: String, flowApp: String?, flowVars: inout [String: Any], stack: [String]) throws -> Bool {
         try throwIfInterrupted()
         let action = step["action"] as? String ?? ""
+        if !["find", "dom", "runFlow"].contains(action), hasOutputs(rawStep["outputs"]) {
+            throw CLIParseError.invalidValue("\(action) does not support outputs")
+        }
         switch action {
         case "waitFor":
             let label = try requiredString(step["label"], field: "waitFor.label")
@@ -175,6 +204,9 @@ private struct FlowRunner {
         case "find":
             let label = try requiredString(step["label"], field: "find.label")
             let payload = try driver.find(label: label, traits: optionalString(step["traits"]))
+            if printEnabled(step["print"]) {
+                emit(DriverOutput.formatFind(label: label, payload: payload))
+            }
             try bindSingleOutput(rawStep["outputs"], action: action, vars: &flowVars, value: findOutput(payload))
 
         case "dom":
@@ -184,6 +216,9 @@ private struct FlowRunner {
             let derived = needsDerived ? domOutput(payload, candidates: candidates) : [:]
             if bool(step["save"]) {
                 try saveDom(payload, derived: derived, raw: bool(step["raw"]), name: (step["name"] as? String) ?? "dom-\(flowTimestamp())")
+            }
+            if printEnabled(step["print"]) {
+                emit(DriverOutput.formatDom(payload))
             }
             try bindSingleOutput(rawStep["outputs"], action: action, vars: &flowVars, value: derived)
 
@@ -226,6 +261,7 @@ private struct FlowRunner {
                 context: context,
                 inheritedFlowApp: flowApp,
                 outputSink: outputSink,
+                captureOutput: outputSink == nil,
                 interruptMonitor: interruptMonitor
             )
             child.nsloggerServer = nsloggerServer
@@ -239,14 +275,21 @@ private struct FlowRunner {
 
         case "tap":
             emit("Tap\n")
-            let label = try requiredString(step["label"], field: "tap.label")
+            let tapTarget = try requiredTarget(step["label"], field: "tap.label")
             let offset = try offsetPoint(step["offset"] as? [String: Any])
-            let tapTarget = try target(label)
             if tapTarget.point != nil, offset != nil {
                 throw CLIParseError.invalidValue("offset requires element label, not absolute point")
             }
             let ratio = try ratioPoint(step["offset"] as? [String: Any], hasAbsoluteOffset: offset != nil)
             _ = try driver.tap(target: tapTarget, traits: optionalString(step["traits"]), offset: offset, ratio: ratio)
+
+        case "longpress":
+            let pressTarget = try requiredTarget(step["label"], field: "longpress.label")
+            _ = try driver.longPress(
+                target: pressTarget,
+                durationMs: optionalInt(step["duration"], field: "longpress.duration"),
+                traits: optionalString(step["traits"])
+            )
 
         case "input":
             let label = try requiredString(step["label"], field: "input.label")
@@ -272,7 +315,7 @@ private struct FlowRunner {
                     pattern: optionalString(step["pattern"]),
                     flags: optionalString(step["flags"]),
                     bundleId: optionalString(step["bundleId"]),
-                    timeout: optionalPositiveNumber(step["timeout"], field: "oslog.timeout"),
+                    timeout: try optionalNumber(step["timeout"], field: "oslog.timeout"),
                     name: optionalString(step["name"]),
                     paths: paths,
                     deviceTypeHint: deviceType
@@ -302,8 +345,8 @@ private struct FlowRunner {
                 throw CLIParseError.invalidValue("swipe.dir must be \"forth\" or \"back\"")
             }
             _ = try driver.swipe(
-                to: try target(optionalString(step["to"])),
-                from: try target(optionalString(step["from"])),
+                to: try target(step["to"]),
+                from: try target(step["from"]),
                 distance: optionalNumber(step["distance"], field: "swipe.distance"),
                 dir: dir,
                 traits: optionalString(step["traits"])
@@ -452,7 +495,7 @@ private func nsloggerOptions(_ raw: Any?) throws -> NSLoggerServerOptions? {
 
 private func waitForNSLogMatches(server: NSLoggerServer, pattern: String, flags: String, timeout: Double, interruptMonitor: InterruptMonitor? = nil) throws -> [String] {
     let deadline = Date().addingTimeInterval(max(0, timeout))
-    let regex = try NSRegularExpression(pattern: pattern, options: NSLogService.regexOptions(flags))
+    let regex = try NSRegularExpression(pattern: pattern, options: try NSLogService.regexOptions(flags))
     var cursor = 0
     repeat {
         try interruptMonitor?.throwIfInterrupted()
@@ -541,10 +584,12 @@ private func readTemplateValue(_ expr: String, vars: [String: Any]) throws -> An
         throw CLIParseError.invalidValue("Invalid template expression: \"${\(expr)}\"")
     }
 
-    var scope = vars
-    scope["vars"] = vars
-    var current: Any? = scope
-    for part in parts {
+    var current: Any? = vars
+    for (index, part) in parts.enumerated() {
+        if index == 0, part == "vars" {
+            current = vars
+            continue
+        }
         guard let dict = current as? [String: Any], let next = dict[part] else {
             throw CLIParseError.invalidValue("Missing template value: \"${\(expr)}\"")
         }
@@ -596,12 +641,16 @@ private func findOutput(_ payload: ForyFindPayload) -> [String: Any] {
 private func domOutput(_ payload: ForyDomPayload, candidates: [String]) -> [String: Any] {
     var matches: [[String: Any]] = []
     var matchedIndexes = Set<Int>()
+    let normalizedElements = payload.elements.map { element in
+        [element.label, element.value]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map(normalizeSearchText)
+    }
     for candidate in candidates.map(normalizeSearchText).filter({ !$0.isEmpty }) {
         for (idx, element) in payload.elements.enumerated() where !matchedIndexes.contains(idx) {
-            let texts = [element.label, element.value].map(normalizeSearchText)
-            if texts.contains(where: { $0.contains(candidate) }) {
+            if normalizedElements[idx].contains(where: { $0.contains(candidate) }) {
                 matchedIndexes.insert(idx)
-                matches.append(domElementObject(element))
+                matches.append(domCandidateObject(element))
             }
         }
     }
@@ -623,6 +672,7 @@ private func domObject(_ payload: ForyDomPayload) -> [String: Any] {
 
 private func domElementObject(_ element: ForyDomElement) -> [String: Any] {
     [
+        "type": element.traits.first ?? "Unknown",
         "traits": element.traits,
         "childCount": element.childCount,
         "label": element.label,
@@ -631,15 +681,36 @@ private func domElementObject(_ element: ForyDomElement) -> [String: Any] {
     ]
 }
 
-private func matchObject(_ match: ForyFindMatch) -> [String: Any] {
-    [
-        "type": match.elemType,
-        "label": match.label,
-        "value": match.value,
-        "traits": match.traits,
-        "ancestors": match.ancestors,
-        "rect": rectObject(match.rect) as Any,
+private func domCandidateObject(_ element: ForyDomElement) -> [String: Any] {
+    var out: [String: Any] = [
+        "type": element.traits.first ?? "Unknown",
+        "label": element.label.isEmpty ? element.value : element.label,
     ]
+    if let rect = element.rect {
+        out["rect"] = [rect.x, rect.y, rect.w, rect.h]
+    }
+    if !element.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        out["value"] = element.value
+    }
+    return out
+}
+
+private func matchObject(_ match: ForyFindMatch) -> [String: Any] {
+    var out: [String: Any] = [
+        "type": DriverOutput.elementTypeName(match.elemType),
+        "label": match.label,
+        "traits": match.traits,
+    ]
+    if !match.value.isEmpty {
+        out["value"] = match.value
+    }
+    if let rect = match.rect {
+        out["rect"] = [rect.x, rect.y, rect.w, rect.h]
+    }
+    if !match.ancestors.isEmpty {
+        out["ancestors"] = match.ancestors
+    }
+    return out
 }
 
 private func rectObject(_ rect: ForyRect?) -> Any {
@@ -707,6 +778,11 @@ private func bool(_ value: Any?) -> Bool {
     (value as? Bool) ?? false
 }
 
+private func printEnabled(_ value: Any?) -> Bool {
+    if isNull(value) { return true }
+    return bool(value)
+}
+
 private func intValue(_ value: Any?) -> Int? {
     if let int = value as? Int { return int }
     if let int32 = value as? Int32 { return Int(int32) }
@@ -763,13 +839,37 @@ private func optionalPositiveNumber(_ value: Any?, field: String) throws -> Doub
     return parsed
 }
 
-private func target(_ value: String?) throws -> ForyTarget {
-    guard let value, !value.isEmpty else { return ForyTarget() }
-    if value.contains(",") {
-        let point = try pointPair(value)
+private func requiredTarget(_ value: Any?, field: String) throws -> ForyTarget {
+    let target = try target(value)
+    if target.label.isEmpty, target.point == nil {
+        throw CLIParseError.invalidValue("\(field) must be a non-empty string or [x, y] point")
+    }
+    return target
+}
+
+private func target(_ value: Any?) throws -> ForyTarget {
+    guard let value, !isNull(value) else { return ForyTarget() }
+    if let string = value as? String {
+        guard !string.isEmpty else { return ForyTarget() }
+        if FlowRegex.pointPair.firstMatch(in: string, range: NSRange(string.startIndex..<string.endIndex, in: string)) != nil {
+            let point = try pointPair(string)
+            return ForyTarget(label: "", point: point)
+        }
+        if looksLikeInvalidPointPair(string) {
+            throw CLIParseError.invalidValue("Invalid point: \"\(string)\"")
+        }
+        return ForyTarget(label: string, point: nil)
+    }
+    if let list = value as? [Any] {
+        guard list.count == 2,
+              let x = number(list[0]),
+              let y = number(list[1]) else {
+            throw CLIParseError.invalidValue("Invalid point target: \(value)")
+        }
+        let point = ForyPoint(x: x, y: y)
         return ForyTarget(label: "", point: point)
     }
-    return ForyTarget(label: value, point: nil)
+    throw CLIParseError.invalidValue("Invalid target: \(value)")
 }
 
 private func pointPair(_ value: String) throws -> ForyPoint {
@@ -784,6 +884,15 @@ private func pointPair(_ value: String) throws -> ForyPoint {
     return ForyPoint(x: x, y: y)
 }
 
+private func looksLikeInvalidPointPair(_ value: String) -> Bool {
+    let parts = value.split(separator: ",", omittingEmptySubsequences: false).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    guard parts.count == 2 else { return false }
+    return parts.contains { part in
+        part == "inf" || part == "+inf" || part == "-inf" || part == "infinity" || part == "nan" ||
+            part.range(of: #"^[+-]?(?:\d|\.\d)"#, options: .regularExpression) != nil
+    }
+}
+
 private func offsetPoint(_ offset: [String: Any]?) throws -> ForyPoint? {
     guard let offset else { return nil }
     if offset["x"] != nil, offset["xRatio"] != nil {
@@ -795,10 +904,8 @@ private func offsetPoint(_ offset: [String: Any]?) throws -> ForyPoint? {
     let hasX = offset["x"] != nil
     let hasY = offset["y"] != nil
     if hasX || hasY {
-        guard hasX && hasY else {
-            throw CLIParseError.invalidValue("tap offset requires both x and y when using absolute offsets")
-        }
-        guard let x = number(offset["x"]), let y = number(offset["y"]) else {
+        guard let x = hasX ? number(offset["x"]) : 0,
+              let y = hasY ? number(offset["y"]) : 0 else {
             throw CLIParseError.invalidValue("tap offset x and y must be finite numbers")
         }
         return ForyPoint(x: x, y: y)
@@ -826,8 +933,22 @@ private func ratioPoint(_ offset: [String: Any]?, hasAbsoluteOffset: Bool) throw
     return ForyPoint(x: 0.5, y: 0.5)
 }
 
+private func isInvisibleFlowStep(_ step: [String: Any]) -> Bool {
+    (step["action"] as? String) == "sleep"
+}
+
+private func flowStepLabel(_ step: [String: Any]) -> String {
+    for key in ["comment", "text", "name", "label", "action"] {
+        if let value = step[key] as? String, !value.isEmpty {
+            return value
+        }
+    }
+    return "step"
+}
+
 private enum FlowRegex {
     static let template = try! NSRegularExpression(pattern: #"\$\{([^}]+)\}"#)
     static let outputName = try! NSRegularExpression(pattern: #"^[A-Za-z_][A-Za-z0-9_-]*$"#)
     static let searchSeparator = try! NSRegularExpression(pattern: #"[\s\-_:\/()\[\]{}.,'"]"#)
+    static let pointPair = try! NSRegularExpression(pattern: #"^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$"#)
 }

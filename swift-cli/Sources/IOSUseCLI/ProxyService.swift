@@ -26,7 +26,9 @@ public enum ProxyService {
     public static func doctor(paths: IOSUsePaths) -> String {
         var lines = ["", "Proxy Doctor:", ""]
         lines.append(commandExists("mitmdump") ? "  ✓ mitmdump installed" : "  ✗ mitmdump installed")
-        lines.append(FileManager.default.fileExists(atPath: caPath(paths: paths)) ? "  ✓ CA generated" : "  ✗ CA generated")
+        let caExists = FileManager.default.fileExists(atPath: caPath(paths: paths))
+        lines.append(caExists ? "  ✓ CA generated" : "  ✗ CA generated")
+        lines.append(caTrustRecordStatus(paths: paths))
         if let wifi = try? detectLanInfo(interfaceName: nil) {
             lines.append("  ✓ Wi-Fi LAN IP: \(wifi.macLanIp) (\(wifi.interface))")
         } else {
@@ -40,12 +42,12 @@ public enum ProxyService {
     }
 
     public static func configCA(udid requestedUdid: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
-        let udid = try resolveStartUdid(requestedUdid, paths: paths)
+        let udid = try resolveUdid(requestedUdid, paths: paths)
         try ensureMitmproxyCA(paths: paths)
         let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
         try SessionService.prepareDriverSession(SessionOptions(udid: udid), paths: paths)
         _ = try DriverClient(session: SessionService.read(paths: paths)).proxyCAPush(caBase64: base64Body(fromPEM: pem))
-        _ = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
+        let flowOutput = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
 
         let existingState = readState(paths: paths)
         var state = existingState ?? ProxySessionState(
@@ -61,10 +63,13 @@ public enum ProxyService {
             try writeState(state, paths: paths)
         }
         try writeCAState(udid: udid, fingerprint: fingerprintPEM(pem), paths: paths)
-        return "CA installed and trusted on device.\n"
+        return (outputSink == nil ? flowOutput : "") + "CA installed and trusted on device.\n"
     }
 
     public static func start(udid requestedUdid: String?, interfaceName: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+        let interruptMonitor = InterruptMonitor()
+        interruptMonitor.start()
+        defer { interruptMonitor.stop() }
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         if let state = readState(paths: paths), state.status == "running", isMitmdumpProcess(pid: state.mitmdumpPid ?? 0, expectedFlowFile: state.flowFile) {
             throw CLIParseError.invalidValue("Proxy already running. Run `proxy stop` first.")
@@ -76,18 +81,46 @@ public enum ProxyService {
         let wifi = try detectLanInfo(interfaceName: interfaceName)
         let flowFile = "\(paths.artifacts)/proxy-\(isoStamp()).flow"
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        try verifyDeviceCanReachMac(udid: udid, macLanIp: wifi.macLanIp, paths: paths)
 
         let pid = try startMitmdump(flowFile: flowFile, paths: paths)
+        let startingState = ProxySessionState(
+            sessionId: "proxy-\(nowMs())",
+            status: "starting",
+            startedAt: nowMs(),
+            udid: udid,
+            flowFile: flowFile,
+            caInstalled: caReady,
+            network: ProxySessionState.NetworkInfo(interface: wifi.interface, macLanIp: wifi.macLanIp),
+            mitmdumpPid: pid,
+            mitmdumpPort: IOSUseProtocol.proxyMitmdumpPort
+        )
+        try writeState(startingState, paths: paths)
+        var startupCompleted = false
+        defer {
+            if !startupCompleted {
+                killMitmdump(pid: pid, expectedFlowFile: flowFile)
+                var stoppedState = startingState
+                stoppedState.status = "stopped"
+                stoppedState.stoppedAt = nowMs()
+                stoppedState.mitmdumpPid = nil
+                try? writeState(stoppedState, paths: paths)
+            }
+        }
+        var pendingFlowOutput = ""
         do {
-            _ = try FlowService.run(
+            try interruptMonitor.throwIfInterrupted()
+            try verifyDeviceCanReachMac(udid: udid, macLanIp: wifi.macLanIp, paths: paths)
+            try interruptMonitor.throwIfInterrupted()
+            let flowOutput = try FlowService.run(
                 file: flowPath("proxy_set_wifi_proxy.yaml", paths: paths),
                 options: FlowOptions(file: "", udid: udid, externalVars: ["server": wifi.macLanIp, "port": String(IOSUseProtocol.proxyMitmdumpPort)]),
                 paths: paths,
                 outputSink: outputSink
             )
+            if outputSink == nil {
+                pendingFlowOutput = flowOutput
+            }
         } catch {
-            killMitmdump(pid: pid, expectedFlowFile: flowFile)
             throw error
         }
 
@@ -103,20 +136,29 @@ public enum ProxyService {
             mitmdumpPort: IOSUseProtocol.proxyMitmdumpPort
         )
         try writeState(state, paths: paths)
+        startupCompleted = true
         var output = "Proxy started. Traffic: device -> \(wifi.macLanIp):\(IOSUseProtocol.proxyMitmdumpPort) -> mitmdump\nCapture: \(flowFile)\nView with: mitmweb -r \(flowFile)\n"
         if !caReady {
             output = "CA trust record not found. HTTP capture can still work; HTTPS decryption requires the CA to be installed and trusted.\n" + output
         }
-        return output
+        return pendingFlowOutput + output
     }
 
     public static func stop(udid requestedUdid: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
-        guard let state = readState(paths: paths), state.status == "running" else {
+        guard let state = readState(paths: paths) else {
+            if let requestedUdid, !requestedUdid.isEmpty {
+                let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: requestedUdid), paths: paths, outputSink: outputSink)
+                return (outputSink == nil ? flowOutput : "") + "Proxy stopped.\n"
+            }
             throw CLIParseError.invalidValue("PROXY_NOT_RUNNING: no running proxy session")
         }
         let udid = try resolveStopUdid(requestedUdid, state: state)
+        var pendingFlowOutput = ""
         do {
-            _ = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
+            let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
+            if outputSink == nil {
+                pendingFlowOutput = flowOutput
+            }
         } catch {
             throw CLIParseError.invalidValue("Unable to clear device Wi-Fi proxy. Manually disable Wi-Fi proxy: Settings -> Wi-Fi -> current network (i) -> Configure Proxy -> Off, then retry `ios-use proxy stop`.")
         }
@@ -126,7 +168,7 @@ public enum ProxyService {
         stoppedState.stoppedAt = nowMs()
         stoppedState.mitmdumpPid = nil
         try writeState(stoppedState, paths: paths)
-        return "Proxy stopped.\n"
+        return pendingFlowOutput + "Proxy stopped.\n"
     }
 
     public static func readState(paths: IOSUsePaths) -> ProxySessionState? {
@@ -157,9 +199,9 @@ public enum ProxyService {
 
     private static func resolveStartUdid(_ requested: String?, paths: IOSUsePaths) throws -> String {
         if let requested, !requested.isEmpty { return requested }
-        try SessionService.prepareDriverSession(SessionOptions(), paths: paths)
-        if let session = readSession(paths: paths), let udid = session["udid"] as? String, !udid.isEmpty {
-            return udid
+        if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first {
+            try SessionService.prepareDriverSession(SessionOptions(udid: device.udid), paths: paths)
+            return device.udid
         }
         throw CLIParseError.invalidValue("No USB device UDID. Pass --udid or connect a configured USB device.")
     }
@@ -206,6 +248,19 @@ public enum ProxyService {
 
     private static func caStateMatches(udid: String, fingerprint: String, paths: IOSUsePaths) -> Bool {
         readCAState(paths: paths)[udid]?["fingerprint"] as? String == fingerprint
+    }
+
+    private static func caTrustRecordStatus(paths: IOSUsePaths) -> String {
+        guard FileManager.default.fileExists(atPath: caPath(paths: paths)),
+              let pem = try? String(contentsOfFile: caPath(paths: paths), encoding: .utf8) else {
+            return "  - CA trust record: unavailable"
+        }
+        let fingerprint = fingerprintPEM(pem)
+        let records = readCAState(paths: paths)
+        if records.values.contains(where: { $0["fingerprint"] as? String == fingerprint }) {
+            return "  ✓ CA trust record: current"
+        }
+        return records.isEmpty ? "  - CA trust record: not recorded" : "  ✗ CA trust record: mismatch"
     }
 
     private static func ensureMitmproxyCA(paths: IOSUsePaths) throws {
