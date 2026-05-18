@@ -57,7 +57,7 @@ public struct IOSUsePaths: Equatable, Sendable {
 public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
 
-    public static let version = "1.0.0"
+    public static let version = "1.0.1"
 
     public let paths: IOSUsePaths
     public let outputSink: CLIOutputSink?
