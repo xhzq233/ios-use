@@ -95,63 +95,6 @@ ios-use screenshot --name settings-home
 ios-use flow flows/test_flow.yaml
 ```
 
-## Design & Implementation
-
-### Architecture
-
-```text
-Swift CLI
-  -> shared Swift protocol / Fory frame model
-  -> driver client
-  -> Custom XCTest Driver
-  -> XCUITest API
-```
-
-The default host side is a Swift executable. The device side is a Swift XCTest runner that exposes a compact RPC protocol over TCP. Both sides compile the shared protocol model from `shared/IOSUseProtocol`, so command args, payloads, and frame types stay in one source of truth. For real devices the CLI reaches the driver through usbmuxd; for Simulators it connects to `localhost`.
-
-### Why TCP Instead Of HTTP
-
-- Fewer layers between CLI and XCTest
-- No local daemon to keep in sync
-- Lower per-command overhead
-- Simpler transport for binary payloads such as screenshots
-
-### Session Model
-
-- The first action command prepares the driver and stores local session state under `~/.ios-use/`
-- Later commands reuse that session metadata and reconnect directly to the driver
-- `ios-use stop` stops the driver process and clears local session state
-- Lifecycle mutations such as `activateApp`, `terminateApp`, and session creation invalidate stale snapshots before the next DOM-based command
-
-### Command Surface
-
-The public CLI mirrors the flow action set:
-
-- `devices`
-- `config`
-- `stop`
-- `activateApp`
-- `terminateApp`
-- `dom`
-- `find`
-- `tap`
-- `longpress`
-- `input`
-- `swipe`
-- `waitFor`
-- `screenshot`
-- `flow`
-- `oslog`
-- `nslog`
-
-### Protocol And Runtime Notes
-
-- Transport: TCP on port `8100`
-- Framing: 4-byte big-endian length prefix plus Fory binary payload
-- Screenshot path: single Fory response frame with `ForyScreenshotPayload.jpeg`
-- Coordinates and dimensions use integers
-- All XCTest UI work is dispatched onto the main thread inside the driver
-
 ## Benchmark
 
 The benchmark below compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same app scenario.
