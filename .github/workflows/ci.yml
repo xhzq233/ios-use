@@ -10,11 +10,37 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
+
 permissions:
   contents: read
 
 jobs:
-  swift-stack:
+  script-syntax:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check script syntax
+        run: |
+          for script in scripts/*.sh; do
+            bash -n "$script"
+          done
+          node --check scripts/benchmark_wda.js
+          node --check scripts/ios_use_test_simulator.js
+          node --check scripts/test_simulator_commands.mjs
+
+  swift-cli-tests:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Swift CLI unit tests
+        run: bash scripts/test_swift_cli.sh
+
+  driver-unit-tests:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +48,19 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
-      - name: Run Swift-only stack checks
-        env:
-          IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
-        run: bash scripts/ci_test.sh
+      - name: Run Swift driver unit tests
+        run: bash scripts/test_driver_unit.sh
+
+  build-artifacts:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build Swift CLI
+        run: bash scripts/build_swift_cli.sh
+
+      - name: Build Simulator driver artifact
+        run: bash scripts/build_driver.sh --simulator-only

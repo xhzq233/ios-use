@@ -18,6 +18,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
+
 permissions:
   contents: read
 
@@ -34,13 +38,10 @@ jobs:
 
       - name: Run full local regression
         if: inputs.full_simulator && inputs.simulator_cases == ''
-        env:
-          IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
         run: bash scripts/ci_full_simulator.sh
 
       - name: Run selected Simulator command cases
         if: inputs.simulator_cases != ''
         env:
-          IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
           IOS_USE_SIMULATOR_CASES: ${{ inputs.simulator_cases }}
         run: bash scripts/ci_full_simulator.sh --case "$IOS_USE_SIMULATOR_CASES"
