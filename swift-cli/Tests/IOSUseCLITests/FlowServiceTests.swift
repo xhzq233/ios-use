@@ -35,16 +35,21 @@ final class FlowServiceTests: XCTestCase {
             outputs: found
         """)
         let driver = FakeFlowDriver()
-        driver.findPayload = ForyFindPayload(matches: [ForyFindMatch(label: "InjectedLabel", value: "value")])
+        driver.findPayload = ForyFindPayload(matches: [ForyFindMatch(elemType: 7, label: "InjectedLabel", value: "value")])
 
         let result = try FlowService.runForTesting(file: parent.path, externalVars: ["label": "InjectedLabel"], paths: fixture.paths, driver: driver)
 
-        XCTAssertTrue(result.stdout.contains("Running flow: parent"))
-        XCTAssertTrue(result.stdout.contains("Running flow: child"))
+        XCTAssertTrue(result.stdout.contains("Running flow: parent (1 steps)"))
+        XCTAssertTrue(result.stdout.contains("Step 1/1: runFlow"))
+        XCTAssertTrue(result.stdout.contains("Running flow: child (1 steps)"))
+        XCTAssertTrue(result.stdout.contains("Step 1/1: InjectedLabel"))
+        XCTAssertTrue(result.stdout.contains("Flow completed: 1 steps executed"))
         XCTAssertEqual(driver.findLabels, ["InjectedLabel"])
         let found = try XCTUnwrap(result.outputs["found"] as? [String: Any])
         let first = try XCTUnwrap(found["firstMatch"] as? [String: Any])
         XCTAssertEqual(first["label"] as? String, "InjectedLabel")
+        XCTAssertEqual(first["type"] as? String, "Button")
+        XCTAssertTrue(result.stdout.contains("Find \"InjectedLabel\""))
     }
 
     func testReturnIfSupportsNullBooleanMatchAndNoOp() throws {
@@ -123,6 +128,8 @@ final class FlowServiceTests: XCTestCase {
         let page = try XCTUnwrap(result.outputs["page"] as? [String: Any])
         let first = try XCTUnwrap(page["firstMatch"] as? [String: Any])
         XCTAssertEqual(first["label"] as? String, "Close")
+        XCTAssertEqual(first["type"] as? String, "Button")
+        XCTAssertTrue(result.stdout.contains("App: com.example"))
 
         let saved = "\(fixture.paths.artifacts)/page.json"
         XCTAssertTrue(FileManager.default.fileExists(atPath: saved))
@@ -168,6 +175,51 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(swipe.dir, "forth")
         XCTAssertEqual(swipe.distance, 300)
         XCTAssertEqual(swipe.traits, "Cell")
+    }
+
+    func testFlowTargetsSupportCommaLabelsAndArrayPoints() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("targets.yaml", """
+        name: targets
+        steps:
+          - action: tap
+            label: A,B
+          - action: tap
+            label: [100, 200]
+          - action: swipe
+            to: [10, 20]
+            from: A,B
+        """)
+        let driver = FakeFlowDriver()
+
+        _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+
+        XCTAssertEqual(driver.taps[0].target.label, "A,B")
+        XCTAssertNil(driver.taps[0].target.point)
+        XCTAssertEqual(driver.taps[1].target.point?.x, 100)
+        XCTAssertEqual(driver.taps[1].target.point?.y, 200)
+        XCTAssertEqual(driver.swipes[0].to.point?.x, 10)
+        XCTAssertEqual(driver.swipes[0].from.label, "A,B")
+    }
+
+    func testFlowLongpressPassesDurationAndTraits() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("longpress.yaml", """
+        name: longpress-flow
+        steps:
+          - action: longpress
+            label: General
+            duration: 750
+            traits: Cell
+        """)
+        let driver = FakeFlowDriver()
+
+        _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+
+        let press = try XCTUnwrap(driver.longPresses.first)
+        XCTAssertEqual(press.target.label, "General")
+        XCTAssertEqual(press.durationMs, 750)
+        XCTAssertEqual(press.traits, "Cell")
     }
 
     func testFlowNSLogStepUsesSharedServerAndClearsBuffer() throws {
@@ -301,7 +353,7 @@ final class FlowServiceTests: XCTestCase {
         }
     }
 
-    func testTapSupportsPartialRatioOffsetAndRejectsPartialAbsoluteOffset() throws {
+    func testTapSupportsPartialAbsoluteAndRatioOffsets() throws {
         let fixture = try FlowFixture()
         let absolute = try fixture.write("partial-absolute.yaml", """
         name: partial-absolute
@@ -319,16 +371,21 @@ final class FlowServiceTests: XCTestCase {
             offset:
               xRatio: 0.2
         """)
-        let driver = FakeFlowDriver()
+        let absoluteDriver = FakeFlowDriver()
+        let ratioDriver = FakeFlowDriver()
 
-        XCTAssertThrowsError(try FlowService.runForTesting(file: absolute.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
-            XCTAssertTrue(String(describing: error).contains("requires both x and y"))
-        }
-        _ = try FlowService.runForTesting(file: ratio.path, paths: fixture.paths, driver: driver)
-        let tap = try XCTUnwrap(driver.taps.first)
-        XCTAssertNil(tap.offset)
-        XCTAssertEqual(tap.ratio.x, 0.2)
-        XCTAssertEqual(tap.ratio.y, 0.5)
+        _ = try FlowService.runForTesting(file: absolute.path, paths: fixture.paths, driver: absoluteDriver)
+        let absoluteTap = try XCTUnwrap(absoluteDriver.taps.first)
+        XCTAssertEqual(absoluteTap.offset?.x, 12)
+        XCTAssertEqual(absoluteTap.offset?.y, 0)
+        XCTAssertEqual(absoluteTap.ratio.x, 0.5)
+        XCTAssertEqual(absoluteTap.ratio.y, 0.5)
+
+        _ = try FlowService.runForTesting(file: ratio.path, paths: fixture.paths, driver: ratioDriver)
+        let ratioTap = try XCTUnwrap(ratioDriver.taps.first)
+        XCTAssertNil(ratioTap.offset)
+        XCTAssertEqual(ratioTap.ratio.x, 0.2)
+        XCTAssertEqual(ratioTap.ratio.y, 0.5)
     }
 
     func testInvalidFlowNumericFieldsFailInsteadOfDefaulting() throws {
@@ -401,7 +458,7 @@ final class FlowServiceTests: XCTestCase {
         }
     }
 
-    func testFlowRejectsInvalidDomCandidatesAndZeroOslogTimeout() throws {
+    func testFlowRejectsInvalidDomCandidatesAndNegativeOslogTimeout() throws {
         let fixture = try FlowFixture()
         let nonArrayCandidates = try fixture.write("dom-candidates-object.yaml", """
         name: dom-candidates-object
@@ -418,12 +475,12 @@ final class FlowServiceTests: XCTestCase {
               - 1
             outputs: page
         """)
-        let zeroOslogTimeout = try fixture.write("oslog-zero-timeout.yaml", """
-        name: oslog-zero-timeout
+        let negativeOslogTimeout = try fixture.write("oslog-negative-timeout.yaml", """
+        name: oslog-negative-timeout
         steps:
           - action: oslog
             pattern: ready
-            timeout: 0
+            timeout: -1
         """)
 
         XCTAssertThrowsError(try FlowService.runForTesting(file: nonArrayCandidates.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
@@ -432,8 +489,23 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertThrowsError(try FlowService.runForTesting(file: nonStringCandidate.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
             XCTAssertTrue(String(describing: error).contains("dom.candidates must contain only non-empty strings"))
         }
-        XCTAssertThrowsError(try FlowService.runForTesting(file: zeroOslogTimeout.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
-            XCTAssertTrue(String(describing: error).contains("oslog.timeout must be greater than 0"))
+        XCTAssertThrowsError(try FlowService.runForTesting(file: negativeOslogTimeout.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
+            XCTAssertTrue(String(describing: error).contains("oslog.timeout must be non-negative"))
+        }
+    }
+
+    func testUnsupportedFlowOutputsFail() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("unsupported-outputs.yaml", """
+        name: unsupported-outputs
+        steps:
+          - action: tap
+            label: General
+            outputs: tapped
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("tap does not support outputs"))
         }
     }
 
@@ -456,6 +528,39 @@ final class FlowServiceTests: XCTestCase {
 
         XCTAssertTrue(result.outputs.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.paths.artifacts))
+    }
+
+    func testFlowFailureIncludesStepContext() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("failure-context.yaml", """
+        name: failure-context
+        steps:
+          - action: find
+            label: Missing
+        """)
+        let driver = FakeFlowDriver()
+        driver.findError = CLIParseError.invalidValue("not found")
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("Step 1 [action: find] failed"))
+            XCTAssertTrue(message.contains("not found"))
+        }
+    }
+
+    func testFlowStepLogUsesTextFieldForLegacyComments() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("text-log.yaml", """
+        name: text-log
+        steps:
+          - action: find
+            text: Open Settings
+            label: General
+        """)
+
+        let result = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())
+
+        XCTAssertTrue(result.stdout.contains("Step 1/1: Open Settings"))
     }
 }
 
@@ -517,12 +622,14 @@ private final class FlowFixture {
 private final class FakeFlowDriver: FlowDriver {
     var findPayload = ForyFindPayload()
     var domPayload = ForyDomPayload()
+    var findError: Error?
     var findLabels: [String] = []
     var activatedApps: [String] = []
     var terminatedApps: [String] = []
     var terminateError: Error?
     var swipes: [(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?)] = []
     var taps: [(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint)] = []
+    var longPresses: [(target: ForyTarget, durationMs: Int?, traits: String?)] = []
 
     func activateApp(bundleId: String) throws {
         activatedApps.append(bundleId)
@@ -539,11 +646,18 @@ private final class FakeFlowDriver: FlowDriver {
     func waitFor(label: String, timeout: Double?, traits: String?) throws -> ForyWaitForPayload { ForyWaitForPayload(label: label) }
     func find(label: String, traits: String?) throws -> ForyFindPayload {
         findLabels.append(label)
+        if let findError {
+            throw findError
+        }
         return findPayload
     }
     func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload { domPayload }
     func tap(target: ForyTarget, traits: String?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
         taps.append((target, traits, offset, ratio))
+        return ForyElementPayload(label: target.label)
+    }
+    func longPress(target: ForyTarget, durationMs: Int?, traits: String?) throws -> ForyElementPayload {
+        longPresses.append((target, durationMs, traits))
         return ForyElementPayload(label: target.label)
     }
     func input(label: String, content: String, traits: String?) throws {}

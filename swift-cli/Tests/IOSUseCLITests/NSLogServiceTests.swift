@@ -1,6 +1,6 @@
 import XCTest
 import Darwin
-import IOSUseCLI
+@testable import IOSUseCLI
 @preconcurrency import NIOCore
 import NIOPosix
 @preconcurrency import NIOSSL
@@ -61,6 +61,16 @@ final class NSLogServiceTests: XCTestCase {
 
         server.clear()
         XCTAssertEqual(server.logCount, 0)
+    }
+
+    func testRegexFlagsMatchOSLogSemanticsAndRejectInvalidFlags() throws {
+        XCTAssertTrue(try NSLogService.matches("Alpha\nBeta", pattern: "alpha", flags: "i"))
+        XCTAssertTrue(try NSLogService.matches("Alpha\nBeta", pattern: "^Beta", flags: "m"))
+        XCTAssertTrue(try NSLogService.matches("Alpha\nBeta", pattern: "Alpha.*Beta", flags: "s"))
+
+        XCTAssertThrowsError(try NSLogService.matches("ready", pattern: "ready", flags: "z")) { error in
+            XCTAssertTrue(String(describing: error).contains("Invalid regex flag"))
+        }
     }
 
     func testServerGrepCursorSurvivesBufferEviction() throws {

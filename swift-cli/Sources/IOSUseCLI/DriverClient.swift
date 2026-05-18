@@ -59,6 +59,7 @@ final class DriverClient {
     private let udid: String?
     private let deviceType: String?
     private let fory = ForyRegistry.create()
+    private var fd: Int32?
 
     init(host: String = "127.0.0.1", port: UInt16 = IOSUseProtocol.defaultDriverPort, udid: String? = nil, deviceType: String? = nil) {
         self.host = host
@@ -73,6 +74,17 @@ final class DriverClient {
             udid: session?.udid,
             deviceType: session?.deviceType
         )
+    }
+
+    deinit {
+        close()
+    }
+
+    func close() {
+        if let fd {
+            Darwin.close(fd)
+            self.fd = nil
+        }
     }
 
     func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload {
@@ -151,30 +163,58 @@ final class DriverClient {
     }
 
     private func sendRawPayload(command: String, payload: Data) throws -> Data {
-        let fd = try connect()
-        defer { Darwin.close(fd) }
-
-        let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
-        try writeLengthPrefixed(fd, data: frameData)
-        let responseData = try readLengthPrefixed(fd)
-        let response = try fory.deserialize(responseData, as: ForyResponseFrame.self)
-        guard response.ok else {
-            let errorPayload = response.payload.isEmpty ? nil : try? fory.deserialize(response.payload, as: ForyErrorPayload.self)
-            throw DriverClientError.driverError(response.error, errorPayload)
+        do {
+            let fd = try connectedFD()
+            let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
+            try writeLengthPrefixed(fd, data: frameData)
+            let responseData = try readLengthPrefixed(fd)
+            let response = try fory.deserialize(responseData, as: ForyResponseFrame.self)
+            guard response.ok else {
+                let errorPayload = response.payload.isEmpty ? nil : try? fory.deserialize(response.payload, as: ForyErrorPayload.self)
+                close()
+                throw DriverClientError.driverError(response.error, errorPayload)
+            }
+            return response.payload
+        } catch {
+            if shouldCloseConnection(after: error) {
+                close()
+            }
+            throw error
         }
-        return response.payload
+    }
+
+    private func connectedFD() throws -> Int32 {
+        if let fd {
+            return fd
+        }
+        let newFD = try connect()
+        fd = newFD
+        return newFD
+    }
+
+    private func shouldCloseConnection(after error: Error) -> Bool {
+        switch error {
+        case DriverClientError.readFailed,
+             DriverClientError.writeFailed,
+             DriverClientError.invalidFrameLength,
+             DriverClientError.maxFrameSizeExceeded,
+             DriverClientError.driverError:
+            return true
+        default:
+            return false
+        }
     }
 
     private func connect() throws -> Int32 {
         if deviceType == "real", let udid {
-            return try Usbmux.connect(udid: udid, port: Int(port))
+            let fd = try Usbmux.connect(udid: udid, port: Int(port))
+            configureSocket(fd)
+            return fd
         }
 
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw DriverClientError.socketCreateFailed(errno) }
-
-        var noDelay: Int32 = 1
-        Darwin.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
+        configureSocket(fd)
 
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)
@@ -193,6 +233,13 @@ final class DriverClient {
             throw DriverClientError.connectFailed(err)
         }
         return fd
+    }
+
+    private func configureSocket(_ fd: Int32) {
+        var noDelay: Int32 = 1
+        Darwin.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
+        var noSigPipe: Int32 = 1
+        Darwin.setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
     }
 
     private func readLengthPrefixed(_ fd: Int32) throws -> Data {

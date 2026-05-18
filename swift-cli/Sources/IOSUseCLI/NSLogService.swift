@@ -7,16 +7,17 @@ import NIOPosix
 
 public enum NSLogService {
     public static func stream(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
+        let grepRegex = try options.grep.flatMap { grep -> NSRegularExpression? in
+            guard !grep.isEmpty else { return nil }
+            return try NSRegularExpression(pattern: grep, options: regexOptions(options.flags))
+        }
+
         try acquireLock(paths: paths)
         defer { releaseLock(paths: paths) }
 
         let server = try NSLoggerServer(options: NSLoggerServerOptions(name: options.name), paths: paths)
         try server.start()
         defer { server.stop() }
-        let grepRegex = try options.grep.flatMap { grep -> NSRegularExpression? in
-            guard !grep.isEmpty else { return nil }
-            return try NSRegularExpression(pattern: grep, options: regexOptions(options.flags))
-        }
 
         server.onMessage = { entry in
             guard let grepRegex else {
@@ -178,9 +179,22 @@ public enum NSLogService {
         try? FileManager.default.removeItem(atPath: lock)
     }
 
-    static func regexOptions(_ flags: String) -> NSRegularExpression.Options {
+    static func regexOptions(_ flags: String) throws -> NSRegularExpression.Options {
         var options: NSRegularExpression.Options = []
-        if flags.contains("i") { options.insert(.caseInsensitive) }
+        for flag in flags {
+            switch flag {
+            case "i":
+                options.insert(.caseInsensitive)
+            case "m":
+                options.insert(.anchorsMatchLines)
+            case "s":
+                options.insert(.dotMatchesLineSeparators)
+            case "g", "u", "y":
+                continue
+            default:
+                throw CLIParseError.invalidValue("Invalid regex flag: \(flag)")
+            }
+        }
         return options
     }
 
@@ -277,7 +291,7 @@ public final class NSLoggerServer {
     }
 
     public func grep(pattern: String, flags: String = "") throws -> [String] {
-        let regex = try NSRegularExpression(pattern: pattern, options: NSLogService.regexOptions(flags))
+        let regex = try NSRegularExpression(pattern: pattern, options: try NSLogService.regexOptions(flags))
         return grep(regex: regex, from: 0).matches
     }
 
@@ -347,7 +361,11 @@ public final class NSLoggerServer {
             receiveBuffer.removeAll(keepingCapacity: false)
         }
         while let parsed = NSLogService.parseMessage(receiveBuffer) {
-            receiveBuffer.removeFirst(parsed.consumed)
+            if parsed.consumed == receiveBuffer.count {
+                receiveBuffer.removeAll(keepingCapacity: true)
+            } else {
+                receiveBuffer.removeFirst(parsed.consumed)
+            }
             let entry = NSLogService.formatLogEntry(parsed.parts)
             appendLocked(entry)
             let callback = onMessage
@@ -563,7 +581,19 @@ private func writeStderr(_ text: String) {
 
 private extension String {
     func squashedWhitespace() -> String {
-        self.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = ""
+        var pendingSpace = false
+        for scalar in unicodeScalars {
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                pendingSpace = !result.isEmpty
+                continue
+            }
+            if pendingSpace {
+                result.append(" ")
+                pendingSpace = false
+            }
+            result.unicodeScalars.append(scalar)
+        }
+        return result
     }
 }
