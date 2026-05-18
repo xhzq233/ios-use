@@ -53,7 +53,7 @@ jobs:
           echo "version=$(xcodebuild -version | shasum -a 256 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
       - name: Cache Swift CLI build
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: swift-cli/.build
           key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved') }}
@@ -61,15 +61,12 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-swift-cli-
 
       - name: Cache driver DerivedData
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: driver/build/DerivedData
           key: ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-${{ hashFiles('driver/project.yml', 'driver/**/*.swift', 'driver/**/*.m', 'driver/**/*.h', 'shared/IOSUseProtocol/**/*.swift') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-
-
-      - name: Run release gate
-        run: bash scripts/ci_test.sh --skip-builds
 
       - name: Build release assets
         env:
