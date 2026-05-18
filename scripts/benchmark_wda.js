@@ -22,7 +22,7 @@ const APPIUM_BASE_URL = `http://${APPIUM_HOST}:${APPIUM_PORT}`;
 const WDA_DEVICE_UDID = process.env.WDA_INSTALLED_DEVICE || '';
 const WDA_BUNDLE_ID = process.env.WDA_BUNDLE_ID || '';
 const APPIUM_UPDATED_WDA_BUNDLE_ID = WDA_BUNDLE_ID.replace(/\.xctrunner$/, '');
-const WDA_LOCAL_PORT = String(process.env.WDA_LOCAL_PORT || '8100');
+const WDA_LOCAL_PORT = resolveWdaLocalPort();
 const APPIUM_WDA_URL = process.env.APPIUM_WDA_URL || '';
 const WDA_LAUNCH_TIMEOUT_MS = Number(process.env.WDA_LAUNCH_TIMEOUT_MS || '120000');
 const APPIUM_SHOW_XCODE_LOG = process.env.APPIUM_SHOW_XCODE_LOG === '1';
@@ -59,6 +59,25 @@ function appendAppiumHint(message, { udid } = {}) {
     return normalized;
   }
   return `${normalized} | hint=${hints.join(' ')}`;
+}
+
+function resolveWdaLocalPort() {
+  if (process.env.WDA_LOCAL_PORT) return String(process.env.WDA_LOCAL_PORT);
+  for (let port = 8100; port <= 8109; port += 1) {
+    if (!isTcpListenPortBusy(port)) return String(port);
+  }
+  throw new Error('No free WDA local port found in range 8100-8109. Set WDA_LOCAL_PORT to override.');
+}
+
+function isTcpListenPortBusy(port) {
+  try {
+    execFileSync('/bin/sh', ['-lc', `lsof -nP -iTCP:${port} -sTCP:LISTEN -t`], {
+      stdio: 'ignore',
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function ensureDir(dir) {

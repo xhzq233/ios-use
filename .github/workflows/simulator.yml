@@ -1,0 +1,46 @@
+name: Full Simulator
+
+on:
+  workflow_dispatch:
+    inputs:
+      full_simulator:
+        description: "Run the full Simulator regression matrix"
+        required: false
+        default: true
+        type: boolean
+      simulator_cases:
+        description: "Run selected Simulator command cases, e.g. IN-1,IN-6"
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  full-simulator:
+    runs-on: macos-26
+    if: inputs.full_simulator || inputs.simulator_cases != ''
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Run full local regression
+        if: inputs.full_simulator && inputs.simulator_cases == ''
+        env:
+          IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
+        run: bash scripts/ci_full_simulator.sh
+
+      - name: Run selected Simulator command cases
+        if: inputs.simulator_cases != ''
+        env:
+          IOS_USE_TEST_SIM_BOOT_TIMEOUT_MS: 600000
+          IOS_USE_SIMULATOR_CASES: ${{ inputs.simulator_cases }}
+        run: bash scripts/ci_full_simulator.sh --case "$IOS_USE_SIMULATOR_CASES"
