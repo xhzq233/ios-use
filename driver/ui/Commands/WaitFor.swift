@@ -28,9 +28,7 @@ enum WaitForCommands {
             case .found(let elem):
                 let elapsed = CFAbsoluteTimeGetCurrent() - t0
                 let payload = ForyWaitForPayload(
-                    elemType: Int32(truncatingIfNeeded: elem.node.elementType),
-                    label: elem.node.label ?? "",
-                    rect: makeForyRect(elem.node.frame),
+                    element: makeForyElementSummary(elem.node),
                     waited: Double(elapsed).sanitized
                 )
                 return try Codec.foryOK(payload)
