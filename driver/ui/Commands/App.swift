@@ -17,11 +17,8 @@ func shouldLaunchViaLaunchServices(state: XCUIApplication.State) -> Bool {
     state != .runningForeground
 }
 
-func shouldOpenURLViaSystem(_ url: URL) -> Bool {
-    guard let scheme = url.scheme?.lowercased() else {
-        return false
-    }
-    return scheme == "http" || scheme == "https"
+func shouldOpenURLViaSystem(_ url: URL, canOpen: (URL) -> Bool = { UIApplication.shared.canOpenURL($0) }) -> Bool {
+    canOpen(url)
 }
 
 enum App {
