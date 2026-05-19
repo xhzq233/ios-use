@@ -57,13 +57,7 @@ private let cellLikeElementTypes: Set<UInt> = [
 ]
 
 func displayName(for node: SafeSnapshot) -> String? {
-    if let identifier = node.identifier, !identifier.isEmpty {
-        return identifier
-    }
-    if let label = node.label, !label.isEmpty {
-        return label
-    }
-    return nil
+    node.displayLabel
 }
 
 func snapshotTraits(for node: SafeSnapshot, disabled: Bool, invisible: Bool) -> [String] {
@@ -121,6 +115,7 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
     guard let raw = SafeSnapshot(ofApp: app) else { return nil }
 
     let elements = buildCleanElements(from: raw)
+    assignAutoLabels(elements)
 
     let searchEntries = buildSearchEntries(from: elements)
     let searchCandidates = buildSearchCandidates(from: searchEntries)
@@ -140,6 +135,95 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
 // `CleanBuildResult`; this step only linearizes those already-built subtrees.
 func buildCleanElements(from root: SafeSnapshot) -> [SnapshotElement] {
     flattenCleanBuildResult(cleanTree(root, parentDisabled: false))
+}
+
+private struct AutoLabelParentState {
+    let element: SnapshotElement
+    var remainingChildren: Int
+    var nextChildIndex: Int
+    var nextSuffixByBaseLabel: [String: Int]
+    var emittedChildLabels: Set<String>
+}
+
+func assignAutoLabels(_ elements: [SnapshotElement]) {
+    var parentStack: [AutoLabelParentState] = []
+    parentStack.reserveCapacity(16)
+
+    for element in elements {
+        while parentStack.last?.remainingChildren == 0 {
+            parentStack.removeLast()
+        }
+
+        if !parentStack.isEmpty {
+            let parentIndex = parentStack.count - 1
+            let parent = parentStack[parentIndex].element
+            let childIndex = parentStack[parentIndex].nextChildIndex
+
+            if element.node.displayLabel == nil, shouldAutoLabel(element) {
+                let label = makeAutoLabel(parent: parent,
+                                          childIndex: childIndex,
+                                          parentChildCount: parent.childCount)
+                element.node.setAutoLabelIfDisplayLabelNil(label)
+            }
+
+            if let baseLabel = element.node.displayLabel {
+                let displayLabel = dedupeChildLabel(baseLabel, parentStack: &parentStack)
+                element.node.setDisplayLabelAliasIfNeeded(displayLabel)
+            }
+
+            parentStack[parentIndex].nextChildIndex += 1
+            parentStack[parentIndex].remainingChildren -= 1
+        }
+
+        if element.childCount > 0 {
+            parentStack.append(AutoLabelParentState(
+                element: element,
+                remainingChildren: element.childCount,
+                nextChildIndex: 1,
+                nextSuffixByBaseLabel: [:],
+                emittedChildLabels: []
+            ))
+        }
+    }
+}
+
+private func shouldAutoLabel(_ element: SnapshotElement) -> Bool {
+    if element.childCount > 0 { return true }
+    if displayValue(for: element.node) != nil { return true }
+
+    let type = XCUIElement.ElementType(rawValue: UInt(element.node.elementType)) ?? .other
+    switch type {
+    case .button, .cell, .table, .scrollView, .collectionView, .webView,
+         .textField, .searchField, .textView, .switch, .image, .icon,
+         .link, .slider, .segmentedControl, .picker, .pickerWheel,
+         .pageIndicator:
+        return true
+    default:
+        break
+    }
+
+    let frame = element.node.frame
+    return frame.width > 0 && frame.height > 0
+}
+
+private func makeAutoLabel(parent: SnapshotElement, childIndex: Int, parentChildCount: Int) -> String {
+    let parentPath = parent.node.displayLabel ?? ""
+    let parentType = parent.traits.first ?? "Element"
+    let suffix = parentChildCount > 1 ? "c\(childIndex)" : ""
+    return "\(parentPath)\(parentType)\(suffix)"
+}
+
+private func dedupeChildLabel(_ baseLabel: String, parentStack: inout [AutoLabelParentState]) -> String {
+    let parentIndex = parentStack.count - 1
+    var suffix = parentStack[parentIndex].nextSuffixByBaseLabel[baseLabel, default: 0]
+    var candidate = suffix == 0 ? baseLabel : "\(baseLabel)-\(suffix)"
+    while parentStack[parentIndex].emittedChildLabels.contains(candidate) {
+        suffix += 1
+        candidate = "\(baseLabel)-\(suffix)"
+    }
+    parentStack[parentIndex].nextSuffixByBaseLabel[baseLabel] = suffix + 1
+    parentStack[parentIndex].emittedChildLabels.insert(candidate)
+    return candidate
 }
 
 private func buildSearchEntries(from elements: [SnapshotElement]) -> [SearchEntry] {

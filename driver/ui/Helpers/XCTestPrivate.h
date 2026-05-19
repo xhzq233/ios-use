@@ -51,6 +51,8 @@ BOOL SnapshotMatchesElement(id _Nonnull a, id _Nonnull b);
 @property (nonatomic, readonly, nonnull) id raw;
 @property (nonatomic, readonly, nullable) NSString *label;
 @property (nonatomic, readonly, nullable) NSString *identifier;
+@property (nonatomic, readonly, nullable) NSString *baseDisplayLabel;
+@property (nonatomic, readonly, nullable) NSString *displayLabel;
 @property (nonatomic, readonly, nullable) NSString *value;
 @property (nonatomic, readonly, nullable) NSString *placeholderValue;
 @property (nonatomic, readonly) NSUInteger elementType;
@@ -66,5 +68,8 @@ BOOL SnapshotMatchesElement(id _Nonnull a, id _Nonnull b);
 @property (nonatomic, readonly, nullable) SafeSnapshot *parent;
 /// Flat list of every descendant (excluding self). Rooted traversal.
 @property (nonatomic, readonly, nonnull) NSArray<SafeSnapshot *> *allDescendants;
+
+- (void)setAutoLabelIfDisplayLabelNil:(NSString * _Nonnull)label;
+- (void)setDisplayLabelAliasIfNeeded:(NSString * _Nonnull)label;
 
 @end

@@ -400,6 +400,68 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(elements[1].node.label, "content")
     }
 
+    func testAutoLabelsUnnamedCleanedContainerAndRawFindCanLocateIt() {
+        let firstCell = FakeRawSnapshot(label: "Wi-Fi", elementType: .cell)
+        let secondCell = FakeRawSnapshot(label: "Bluetooth", elementType: .cell)
+        let table = FakeRawSnapshot(elementType: .table, children: [firstCell, secondCell])
+        let footer = FakeRawSnapshot(label: "Footer", elementType: .staticText)
+        let app = FakeRawSnapshot(label: "Settings", elementType: .application, children: [table, footer])
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+        assignAutoLabels(elements)
+        let cs = makeCleanedSnapshot(elements)
+
+        XCTAssertEqual(displayName(for: elements[1].node), "SettingsApplicationc1")
+        XCTAssertEqual(serializeDomFlat(from: elements)[1].label, "SettingsApplicationc1")
+
+        switch rawFindInSnapshot(ForyTarget(label: "SettingsApplicationc1", traits: "Table"), cs: cs, visibility: .any) {
+        case .found(let found):
+            XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.table.rawValue)
+        default:
+            XCTFail("expected auto-labeled table to be searchable")
+        }
+    }
+
+    func testAutoLabelCanBeUsedAsCindexParentAndAncestorLabel() {
+        let title = FakeRawSnapshot(label: "Title", elementType: .staticText)
+        let button = FakeRawSnapshot(label: "Open", elementType: .button)
+        let cell = FakeRawSnapshot(elementType: .cell, children: [title, button])
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [cell])
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+        assignAutoLabels(elements)
+        let cs = makeCleanedSnapshot(elements)
+
+        XCTAssertEqual(displayName(for: elements[1].node), "AppApplication")
+
+        switch rawFindInSnapshot(ForyTarget(label: "AppApplication", traits: "Cell", cindex: -1), cs: cs, visibility: .any) {
+        case .found(let found):
+            XCTAssertEqual(displayName(for: found.node), "Open")
+            XCTAssertEqual(ancestorChainNames(found.node), ["Application[App]", "Cell[AppApplication]"])
+        default:
+            XCTFail("expected auto-labeled cell to support cindex lookup")
+        }
+    }
+
+    func testAutoLabelDedupesDuplicateSiblingDisplayLabels() {
+        let first = FakeRawSnapshot(label: "Duplicate", elementType: .button)
+        let second = FakeRawSnapshot(label: "Duplicate", elementType: .button)
+        let third = FakeRawSnapshot(label: "Duplicate", elementType: .button)
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [first, second, third])
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+        assignAutoLabels(elements)
+        let cs = makeCleanedSnapshot(elements)
+
+        XCTAssertEqual(displayName(for: elements[1].node), "Duplicate")
+        XCTAssertEqual(displayName(for: elements[2].node), "Duplicate-1")
+        XCTAssertEqual(displayName(for: elements[3].node), "Duplicate-2")
+
+        switch rawFindInSnapshot(ForyTarget(label: "Duplicate-1", traits: "Button"), cs: cs, visibility: .any) {
+        case .found(let found):
+            XCTAssertEqual(displayName(for: found.node), "Duplicate-1")
+        default:
+            XCTFail("expected deduped sibling alias to be searchable")
+        }
+    }
+
     // MARK: - elementTypeName
 
     func testElementTypeName_OtherReturnsDash() {
