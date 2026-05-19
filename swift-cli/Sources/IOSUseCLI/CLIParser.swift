@@ -201,8 +201,8 @@ public enum CLIParser {
             return .driver(try parseBundleAction(&parser, kind: .terminateApp))
         case "home":
             return .driver(try parseHome(&parser))
-        case "openURL":
-            return .driver(try parseOpenURL(&parser))
+        case "open":
+            return .driver(try parseOpen(&parser))
         case "dismissAlert":
             return .driver(try parseDismissAlert(&parser))
         case "oslog":
@@ -476,16 +476,13 @@ public enum CLIParser {
         return .home(session: session)
     }
 
-    private static func parseOpenURL(_ parser: inout ArgumentParser) throws -> DriverAction {
-        var url: String?
+    private static func parseOpen(_ parser: inout ArgumentParser) throws -> DriverAction {
+        let url = try parser.requiredPositional("url")
         var session = SessionOptions()
         while let arg = parser.consume() {
-            switch arg {
-            case "--url": url = try parser.value(for: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
-            }
+            try parseSession(arg, parser: &parser, session: &session)
         }
-        return .openURL(url: try require(url, option: "--url"), session: session)
+        return .openURL(url: url, session: session)
     }
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
