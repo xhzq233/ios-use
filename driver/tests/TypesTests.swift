@@ -133,6 +133,29 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(Command.swipe.metadata.payloadTypeName, "ForySwipePayload")
     }
 
+    func testSwipePayload_UsesElementSummaryAndScrollDirection() throws {
+        let fory = ForyRegistry.create()
+        let payload = ForySwipePayload(
+            element: ForyElementSummary(
+                elemType: Int32(XCUIElement.ElementType.cell.rawValue),
+                label: "General",
+                rect: ForyRect(x: 1, y: 2, w: 3, h: 4),
+                ancestors: ["Application", "Table"]
+            ),
+            scrolls: 2,
+            scrollDirection: "down"
+        )
+
+        let decoded = try fory.deserialize(try fory.serialize(payload), as: ForySwipePayload.self)
+
+        XCTAssertEqual(decoded.element.elemType, Int32(XCUIElement.ElementType.cell.rawValue))
+        XCTAssertEqual(decoded.element.label, "General")
+        XCTAssertEqual(decoded.element.rect?.x, 1)
+        XCTAssertEqual(decoded.element.ancestors, ["Application", "Table"])
+        XCTAssertEqual(decoded.scrolls, 2)
+        XCTAssertEqual(decoded.scrollDirection, "down")
+    }
+
     // MARK: - resolveTapPoint
 
     func testResolveTapPoint_DefaultsToCenter() {

@@ -98,8 +98,8 @@ Elements:
             "Button \"Add\" (1,2,3,4)\n"
         )
         XCTAssertEqual(
-            DriverOutput.formatSwipe(ForySwipePayload(elemType: 8, label: "General", scrolls: 2)),
-            "Cell \"General\" scrolls=2\n"
+            DriverOutput.formatSwipe(ForySwipePayload(elemType: 8, label: "General", scrolls: 2, scrollDirection: "down")),
+            "Cell \"General\" scrolls=2 direction=down\n"
         )
     }
 }

@@ -28,7 +28,6 @@ enum InputCommands {
         }
 
         let editableSnapshot = preferredInputSnapshot(around: elem.node)
-        let frame = elem.node.frame
 
         // STEP 1 — prepare: prefer an editable ancestor, but allow keyboard-visible
         // cases where XCTest doesn't expose hasKeyboardFocus reliably.
@@ -41,9 +40,7 @@ enum InputCommands {
             return Codec.foryError("input: failed to type text into '\(args.target.label)'")
         }
         let payload = ForyElementPayload(
-            elemType: Int32(truncatingIfNeeded: elem.node.elementType),
-            label: elem.node.label ?? "",
-            rect: makeForyRect(frame)
+            element: makeForyElementSummary(elem.node)
         )
         return try Codec.foryOK(payload)
     }

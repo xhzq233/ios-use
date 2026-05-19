@@ -193,7 +193,7 @@ private struct FlowRunner {
     private mutating func runStep(_ step: [String: Any], rawStep: [String: Any], baseFile: String, flowApp: String?, flowVars: inout [String: Any], stack: [String]) throws -> Bool {
         try throwIfInterrupted()
         let action = step["action"] as? String ?? ""
-        if !["find", "dom", "runFlow"].contains(action), hasOutputs(rawStep["outputs"]) {
+        if !["find", "dom", "runFlow", "swipe"].contains(action), hasOutputs(rawStep["outputs"]) {
             throw CLIParseError.invalidValue("\(action) does not support outputs")
         }
         switch action {
@@ -356,7 +356,7 @@ private struct FlowRunner {
             let traits = optionalString(step["traits"])
             let cindex = try optionalInt32(step["cindex"], field: "swipe.cindex")
             try validateLookupOptions(target: toTarget, traits: traits, cindex: cindex, field: "swipe.to")
-            _ = try driver.swipe(
+            let payload = try driver.swipe(
                 to: toTarget,
                 from: fromTarget,
                 distance: optionalNumber(step["distance"], field: "swipe.distance"),
@@ -364,6 +364,7 @@ private struct FlowRunner {
                 traits: traits,
                 cindex: cindex
             )
+            try bindSingleOutput(rawStep["outputs"], action: action, vars: &flowVars, value: swipeOutput(payload))
 
         case "activateApp":
             guard let bundleId = optionalString(step["bundleId"]) ?? flowApp, !bundleId.isEmpty else {
@@ -651,6 +652,18 @@ private func findOutput(_ payload: ForyFindPayload) -> [String: Any] {
     ]
 }
 
+private func swipeOutput(_ payload: ForySwipePayload) -> [String: Any] {
+    var out: [String: Any] = [
+        "scrolls": payload.scrolls,
+        "scrollDirection": payload.scrollDirection,
+        "element": elementSummaryObject(payload.element),
+    ]
+    if !payload.element.ancestors.isEmpty {
+        out["ancestors"] = payload.element.ancestors
+    }
+    return out
+}
+
 private func domOutput(_ payload: ForyDomPayload, candidates: [String]) -> [String: Any] {
     var matches: [[String: Any]] = []
     var matchedIndexes = Set<Int>()
@@ -672,6 +685,18 @@ private func domOutput(_ payload: ForyDomPayload, candidates: [String]) -> [Stri
         "matches": matches,
         "firstMatch": matches.first ?? NSNull(),
     ]
+}
+
+private func elementSummaryObject(_ element: ForyElementSummary) -> [String: Any] {
+    var out: [String: Any] = [
+        "type": DriverOutput.elementTypeName(element.elemType),
+        "label": element.label,
+        "rect": rectObject(element.rect),
+    ]
+    if !element.ancestors.isEmpty {
+        out["ancestors"] = element.ancestors
+    }
+    return out
 }
 
 private func domObject(_ payload: ForyDomPayload) -> [String: Any] {

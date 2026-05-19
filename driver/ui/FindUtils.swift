@@ -304,6 +304,15 @@ func makeForyFindMatch(_ elem: SnapshotElement, includeAncestors: Bool = false) 
     return m
 }
 
+func makeForyElementSummary(_ node: SafeSnapshot, includeAncestors: Bool = false) -> ForyElementSummary {
+    ForyElementSummary(
+        elemType: Int32(truncatingIfNeeded: node.elementType),
+        label: displayName(for: node) ?? "",
+        rect: makeForyRect(node.frame),
+        ancestors: includeAncestors ? ancestorChainNames(node) : []
+    )
+}
+
 /// Build ["App", "Table", "Cell[Developer]"]-style ancestor chain (doc 3.3).
 func ancestorChainNames(_ node: SafeSnapshot) -> [String] {
     var chain: [String] = []

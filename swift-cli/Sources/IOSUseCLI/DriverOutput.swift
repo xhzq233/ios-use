@@ -88,19 +88,23 @@ public enum DriverOutput {
     }
 
     public static func formatWaitFor(label: String, payload: ForyWaitForPayload) -> String {
-        let rect = payload.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"
-        return "\(elementTypeName(payload.elemType)) \"\(payload.label)\" \(rect) waited=\(String(format: "%.2f", payload.waited))s\n"
+        let element = payload.element
+        let rect = element.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"
+        return "\(elementTypeName(element.elemType)) \"\(element.label)\" \(rect) waited=\(String(format: "%.2f", payload.waited))s\n"
     }
 
     public static func formatElement(_ payload: ForyElementPayload) -> String {
-        let rect = payload.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"
-        let label = payload.label.isEmpty ? "" : " \"\(payload.label)\""
-        return "\(elementTypeName(payload.elemType))\(label) \(rect)\n"
+        let element = payload.element
+        let rect = element.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"
+        let label = element.label.isEmpty ? "" : " \"\(element.label)\""
+        return "\(elementTypeName(element.elemType))\(label) \(rect)\n"
     }
 
     public static func formatSwipe(_ payload: ForySwipePayload) -> String {
-        let label = payload.label.isEmpty ? "" : " \"\(payload.label)\""
-        return "\(elementTypeName(payload.elemType))\(label) scrolls=\(payload.scrolls)\n"
+        let element = payload.element
+        let label = element.label.isEmpty ? "" : " \"\(element.label)\""
+        let direction = payload.scrollDirection.isEmpty ? "" : " direction=\(payload.scrollDirection)"
+        return "\(elementTypeName(element.elemType))\(label) scrolls=\(payload.scrolls)\(direction)\n"
     }
 
     public static func formatAlert(_ payload: ForyAlertPayload) -> String {

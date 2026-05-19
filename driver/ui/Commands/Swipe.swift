@@ -59,29 +59,29 @@ enum SwipeCommands {
         case .found(let elem):
             target = elem
         case .ambiguous(let matches):
-            return try ambiguityResponse(label, matches: matches)
+            return swipeAmbiguityResponse(label, matches: matches)
         case .fuzzy(let suggestions):
             if !fromTarget.label.isEmpty || fromTarget.point != nil {
                 return try handleAnchorScroll(target: toTarget, args: args, fromTarget: fromTarget, cs: cs, app: app)
             }
-            return try notFoundResponse(label,
-                                        suggestions: suggestions,
-                                        hint: "Try passing --from (anchor) to scroll from a known element")
+            return swipeNotFoundResponse(label,
+                                         suggestions: suggestions,
+                                         hint: "Try passing --from (anchor) to scroll from a known element")
         case .notFound(let suggestions):
             if !fromTarget.label.isEmpty || fromTarget.point != nil {
                 return try handleAnchorScroll(target: toTarget, args: args, fromTarget: fromTarget, cs: cs, app: app)
             }
-            return try notFoundResponse(label,
-                                        suggestions: suggestions,
-                                        hint: "Try passing --from (anchor) to scroll from a known element")
+            return swipeNotFoundResponse(label,
+                                         suggestions: suggestions,
+                                         hint: "Try passing --from (anchor) to scroll from a known element")
         }
 
         // STEP 3: find scrollable ancestor.
         guard let scrollView = findScrollableAncestor(target.node) else {
             if isVisibleWithEffectiveGeometry(target, in: app.frame) {
-                return okScroll(target: target, scrolls: 0)
+                return okScroll(target: target, scrolls: 0, scrollDirection: "")
             }
-            return okScroll(target: target, scrolls: 0)
+            return okScroll(target: target, scrolls: 0, scrollDirection: "")
         }
 
         // STEP 4: already visible in app frame. Still try centering the target
@@ -90,7 +90,7 @@ enum SwipeCommands {
             let adjusted = centerTargetInScrollFrame(targetCell: findCellAncestor(target.node),
                                                      scrollFrame: scrollView.frame,
                                                      app: app)
-            return okScroll(target: target, scrolls: adjusted)
+            return okScroll(target: target, scrolls: adjusted.count, scrollDirection: adjusted.scrollDirection)
         }
 
         // STEP 5: direction inference from visible cells.
@@ -136,9 +136,11 @@ enum SwipeCommands {
         case .snapshotFailed:
             return Codec.foryError("scroll: failed to rebuild snapshot (app may have exited)")
         case .ambiguous(let lbl, let matches):
-            return try ambiguityResponse(lbl, matches: matches)
+            return swipeAmbiguityResponse(lbl, matches: matches)
         case .found(let count, let finalTarget, _):
-            return okScrollWithAncestors(node: finalTarget, scrolls: count)
+            return okScrollWithAncestors(node: finalTarget,
+                                         scrolls: count,
+                                         scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
         }
     }
 
@@ -162,15 +164,15 @@ enum SwipeCommands {
             case .found(let elem):
                 anchor = elem
             case .ambiguous(let matches):
-                return try ambiguityResponse(fromTarget.label, matches: matches)
+                return swipeAmbiguityResponse(fromTarget.label, matches: matches)
             case .fuzzy(let suggestions):
-                return try notFoundResponse(fromTarget.label,
-                                            suggestions: suggestions,
-                                            hint: "Try a more specific --from label or a coordinate anchor")
+                return swipeNotFoundResponse(fromTarget.label,
+                                             suggestions: suggestions,
+                                             hint: "Try a more specific --from label or a coordinate anchor")
             case .notFound(let suggestions):
-                return try notFoundResponse(fromTarget.label,
-                                            suggestions: suggestions,
-                                            hint: "Try a more specific --from label or a coordinate anchor")
+                return swipeNotFoundResponse(fromTarget.label,
+                                             suggestions: suggestions,
+                                             hint: "Try a more specific --from label or a coordinate anchor")
             }
             guard let scrollView = findScrollableAncestor(anchor.node) else {
                 return Codec.foryError("anchor not inside a scrollable")
@@ -196,7 +198,9 @@ enum SwipeCommands {
                                         app: app)
         switch result {
         case .found(let count, let target, _):
-            return okScrollWithAncestors(node: target, scrolls: count)
+            return okScrollWithAncestors(node: target,
+                                         scrolls: count,
+                                         scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
         case .hitBoundary:
             return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         case .reachedMax:
@@ -204,7 +208,7 @@ enum SwipeCommands {
         case .snapshotFailed:
             return Codec.foryError("anchor scroll: failed to rebuild snapshot (app may have exited)")
         case .ambiguous(let lbl, let matches):
-            return try ambiguityResponse(lbl, matches: matches)
+            return swipeAmbiguityResponse(lbl, matches: matches)
         }
     }
 
@@ -234,7 +238,8 @@ enum SwipeCommands {
                 w: Int32(to.x.sanitized),
                 h: Int32(to.y.sanitized)
             ),
-            scrolls: 1
+            scrolls: 1,
+            scrollDirection: scrollDirectionName(vector: CGVector(dx: to.x - from.x, dy: to.y - from.y))
         )
         return try Codec.foryOK(payload)
     }
@@ -387,10 +392,14 @@ enum SwipeCommands {
             let freshResponseNode = SnapshotMatchesElement(responseNode.raw, scrollView.raw)
                 ? freshScrollView
                 : (findMatching(in: freshCS.rawRoot, against: responseNode) ?? freshScrollView)
-            return okNodeScroll(node: freshResponseNode, scrolls: segmentCount)
+            return okNodeScroll(node: freshResponseNode,
+                                scrolls: segmentCount,
+                                scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
         }
 
-        return okNodeScroll(node: responseNode, scrolls: segmentCount)
+        return okNodeScroll(node: responseNode,
+                            scrolls: segmentCount,
+                            scrollDirection: scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))
     }
 
     private static func findMatching(in root: SafeSnapshot, against target: SafeSnapshot) -> SafeSnapshot? {
@@ -403,60 +412,87 @@ enum SwipeCommands {
     }
 
     /// Time complexity: O(k), where k is the emitted center-scroll segment count.
-    private static func centerTargetInScrollFrame(targetCell: SafeSnapshot, scrollFrame: CGRect, app: XCUIApplication) -> Int {
+    private static func centerTargetInScrollFrame(targetCell: SafeSnapshot, scrollFrame: CGRect, app: XCUIApplication) -> (count: Int, scrollDirection: String) {
         let adjust = centerScrollAdjustment(targetFrame: targetCell.frame, scrollFrame: scrollFrame)
         if abs(adjust.dx) > 1 || abs(adjust.dy) > 1 {
-            return scrollByVector(adjust, scrollFrame: scrollFrame, app: app)
+            let count = scrollByVector(adjust, scrollFrame: scrollFrame, app: app)
+            return (count, count > 0 ? scrollDirectionName(vector: adjust) : "")
         }
-        return 0
+        return (0, "")
     }
 
     // MARK: - Responses
 
-    private static func okScroll(target: SnapshotElement, scrolls: Int) -> ForyResponseFrame {
+    private static func okScroll(target: SnapshotElement, scrolls: Int, scrollDirection: String) -> ForyResponseFrame {
         let payload = ForySwipePayload(
-            ancestors: ancestorChainNames(target.node),
-            elemType: Int32(truncatingIfNeeded: target.node.elementType),
-            label: target.node.label ?? "",
-            rect: makeForyRect(target.node.frame),
-            scrolls: Int32(scrolls)
+            element: makeForyElementSummary(target.node, includeAncestors: true),
+            scrolls: Int32(scrolls),
+            scrollDirection: scrollDirection
         )
         return (try? Codec.foryOK(payload)) ?? Codec.foryError("serialization failed")
     }
 
-    private static func okNodeScroll(node: SafeSnapshot, scrolls: Int) -> ForyResponseFrame {
+    private static func okNodeScroll(node: SafeSnapshot, scrolls: Int, scrollDirection: String) -> ForyResponseFrame {
         let payload = ForySwipePayload(
-            ancestors: ancestorChainNames(node),
-            elemType: Int32(truncatingIfNeeded: node.elementType),
-            label: node.label ?? "",
-            rect: makeForyRect(node.frame),
-            scrolls: Int32(scrolls)
+            element: makeForyElementSummary(node, includeAncestors: true),
+            scrolls: Int32(scrolls),
+            scrollDirection: scrollDirection
         )
         return (try? Codec.foryOK(payload)) ?? Codec.foryError("serialization failed")
     }
 
-    private static func okScrollWithAncestors(node: SafeSnapshot, scrolls: Int) -> ForyResponseFrame {
-        okNodeScroll(node: node, scrolls: scrolls)
+    private static func okScrollWithAncestors(node: SafeSnapshot, scrolls: Int, scrollDirection: String) -> ForyResponseFrame {
+        okNodeScroll(node: node, scrolls: scrolls, scrollDirection: scrollDirection)
     }
 
     private static func boundaryResponse(vertical: Bool, scrollUpwards: Bool) throws -> ForyResponseFrame {
-        let dir: Int32 = scrollUpwards ? 1 : 0 // 1=back, 0=forth
-        let axisName = vertical ? "vertical" : "horizontal"
-        let dirStr = scrollUpwards ? "back" : "forth"
-        var payload = ForyErrorPayload()
-        payload.atBoundary = true
-        payload.direction = dir
-        return try Codec.foryError("hit scroll boundary (\(axisName) \(dirStr))", payload: payload)
+        Codec.foryError("hit scroll boundary: direction=\(scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards))")
     }
 
     private static func tooSmallToScrollResponse(vertical: Bool, scrollUpwards: Bool) throws -> ForyResponseFrame {
-        let dir: Int32 = scrollUpwards ? 1 : 0
-        let axisName = vertical ? "vertical" : "horizontal"
-        let dirStr = scrollUpwards ? "back" : "forth"
-        var payload = ForyErrorPayload()
-        payload.tooSmallToScroll = true
-        payload.direction = dir
-        payload.minDragDistance = IOSUseProtocol.fuzzyPointThreshold
-        return try Codec.foryError("swipe displacement too small to scroll (\(axisName) \(dirStr))", payload: payload)
+        Codec.foryError("swipe displacement too small to scroll: direction=\(scrollDirectionName(vertical: vertical, scrollUpwards: scrollUpwards)), minDragDistance=\(IOSUseProtocol.fuzzyPointThreshold)")
     }
+
+    private static func swipeAmbiguityResponse(_ label: String, matches: [SnapshotElement]) -> ForyResponseFrame {
+        let rendered = matches.map { makeForyFindMatch($0, includeAncestors: true) }.map(renderSwipeMatch).joined(separator: "; ")
+        let suffix = rendered.isEmpty ? "" : "; matches: \(rendered)"
+        return Codec.foryError("label '\(label)' is ambiguous (\(matches.count) matches)\(suffix); hint: Try adding --traits to disambiguate")
+    }
+
+    private static func swipeNotFoundResponse(_ label: String, suggestions: [String], hint: String) -> ForyResponseFrame {
+        var parts = ["label '\(label)' not found"]
+        if !suggestions.isEmpty {
+            parts.append("suggestions: \(suggestions.joined(separator: ", "))")
+        }
+        if !hint.isEmpty {
+            parts.append("hint: \(hint)")
+        }
+        return Codec.foryError(parts.joined(separator: "; "))
+    }
+
+    private static func renderSwipeMatch(_ match: ForyFindMatch) -> String {
+        let type = elementTypeName(XCUIElement.ElementType(rawValue: UInt(match.elemType)) ?? .other)
+        let ancestors = match.ancestors.joined(separator: " > ")
+        let rect = match.rect.map { "\($0.x),\($0.y),\($0.w),\($0.h)" } ?? ""
+        let prefix = ancestors.isEmpty ? "" : "[\(ancestors)] "
+        return "\(prefix)\(type) \"\(match.label)\" (\(rect))"
+    }
+}
+
+func scrollDirectionName(vertical: Bool, scrollUpwards: Bool) -> String {
+    if vertical {
+        return scrollUpwards ? "up" : "down"
+    }
+    return scrollUpwards ? "left" : "right"
+}
+
+func scrollDirectionName(vector: CGVector) -> String {
+    if abs(vector.dy) >= abs(vector.dx) {
+        if vector.dy > 0 { return "up" }
+        if vector.dy < 0 { return "down" }
+    } else {
+        if vector.dx > 0 { return "left" }
+        if vector.dx < 0 { return "right" }
+    }
+    return ""
 }

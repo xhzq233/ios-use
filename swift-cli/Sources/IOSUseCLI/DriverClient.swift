@@ -176,7 +176,9 @@ final class DriverClient {
             let responseData = try readLengthPrefixed(fd)
             let response = try fory.deserialize(responseData, as: ForyResponseFrame.self)
             guard response.ok else {
-                let errorPayload = response.payload.isEmpty ? nil : try? fory.deserialize(response.payload, as: ForyErrorPayload.self)
+                let errorPayload = command == DriverCommand.swipe.rawValue || response.payload.isEmpty
+                    ? nil
+                    : try? fory.deserialize(response.payload, as: ForyErrorPayload.self)
                 close()
                 throw DriverClientError.driverError(response.error, errorPayload)
             }

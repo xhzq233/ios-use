@@ -179,6 +179,30 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(swipe.cindex, -1)
     }
 
+    func testSwipeCanBindStructuredOutput() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("swipe-output.yaml", """
+        name: swipe-output
+        outputs: result
+        steps:
+          - action: swipe
+            to: Developer
+            from: Bluetooth
+            dir: forth
+            outputs: result
+        """)
+        let driver = FakeFlowDriver()
+
+        let result = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+        let output = try XCTUnwrap(result.outputs["result"] as? [String: Any])
+        let element = try XCTUnwrap(output["element"] as? [String: Any])
+
+        XCTAssertEqual(output["scrolls"] as? Int32, 1)
+        XCTAssertEqual(output["scrollDirection"] as? String, "down")
+        XCTAssertEqual(element["label"] as? String, "Developer")
+        XCTAssertEqual(element["type"] as? String, "Cell")
+    }
+
     func testFlowTargetsSupportCommaLabelsAndArrayPoints() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("targets.yaml", """
@@ -729,7 +753,7 @@ private final class FakeFlowDriver: FlowDriver {
     }
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
         swipes.append((to, from, distance, dir, traits, cindex))
-        return ForySwipePayload(label: to.label, scrolls: 1)
+        return ForySwipePayload(elemType: 8, label: to.label, scrolls: 1, scrollDirection: "down")
     }
     func screenshot() throws -> Data { Data([0xff, 0xd8, 0xff]) }
 }
