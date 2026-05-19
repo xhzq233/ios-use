@@ -124,6 +124,16 @@ function readFileIfExists(file) {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 }
 
+function prepareSimulatorDriverAsset() {
+  const src = path.join(rootDir, 'assets/driver-sim.ipa');
+  const dst = path.join(iosHome, 'driver-sim.ipa');
+  if (!fs.existsSync(src)) {
+    throw new Error(`prebuilt Simulator driver IPA not found: ${src}`);
+  }
+  ensureDir(path.dirname(dst));
+  fs.copyFileSync(src, dst);
+}
+
 function execCmd(cmd, opts = {}) {
   const proc = spawnSync(cmd[0], cmd.slice(1), {
     cwd: opts.cwd ?? rootDir,
@@ -891,7 +901,7 @@ function buildCases() {
     { id: 'TA-1', run: () => runCaseContains('TA-1', 'terminated', ['terminateApp', 'com.apple.Preferences', '--udid', sim.udid], settingsHome) },
     { id: 'TA-2', run: () => runCaseContains('TA-2', 'terminated', ['terminateApp', 'com.apple.Preferences', '--udid', sim.udid], settingsHome) },
     { id: 'AA-6', run: () => runCaseContains('AA-6', 'activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
-    { id: 'OU-1', run: () => runCaseContains('OU-1', 'Opened URL: https://example.com', ['openURL', '--url', 'https://example.com', '--udid', sim.udid]) },
+    { id: 'OU-1', run: () => runCaseContains('OU-1', 'Opened URL: https://example.com', ['open', 'https://example.com', '--udid', sim.udid]) },
     { id: 'HOME-1', run: () => runCaseContains('HOME-1', 'Home', ['home', '--udid', sim.udid]) },
     { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--fresh', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
     { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--fresh', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
@@ -1008,6 +1018,7 @@ async function main() {
   console.log(`[sim-test] driver-sim IPA: ${path.join(rootDir, 'assets/driver-sim.ipa')}`);
   console.log(`[sim-test] Artifacts: ${artifactDir}`);
 
+  prepareSimulatorDriverAsset();
   backupLocalState();
   writeFlowFixtures();
   let cleanupDone = false;
