@@ -3,7 +3,7 @@
 ## 1. 目标
 
 - 这个文件只讲一件事：如何用 `ios-use flow` 编写可维护、可复用、可排查的自动化流程
-- 手动操作手机、单步排障、截图和日志导出，优先看 `SKILL.md`
+- 手动操作手机、单步排障、日志导出，优先看 `SKILL.md`
 - 写 flow 之前，先用 CLI 手动跑通每一步，再把它们组装成 YAML
 
 ## 2. 最小模板
@@ -20,7 +20,8 @@ steps:
   - action: tap
     label: 蓝牙
 
-  - action: screenshot
+  - action: dom
+    save: true
     name: settings-bluetooth
 ```
 
@@ -66,7 +67,7 @@ Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
 - 先确认页面，再做动作：切页后先 `waitFor` 或 `dom`
 - 能用 label 就不用坐标；坐标只作兜底
 - 需要滚动到目标时，优先 `swipe --to` 对应的 flow 写法
-- 关键节点保留 `dom` / `screenshot` / `oslog`，方便失败后定位
+- 关键节点保留 `dom` / `oslog`，方便失败后定位
 - 公共前置条件和公共收尾动作抽成 subflow，不要在多个 flow 里重复粘贴
 
 ## 5. 核心字段
@@ -393,7 +394,7 @@ steps:
 1. 先手动跑通目标页面上的每个动作
 2. 把稳定可复用的前置过程抽成 subflow
 3. 用 `vars` 传输入，用 `outputs` 传回结果
-4. 在关键节点保留 `dom` / `screenshot` / `oslog`
+4. 在关键节点保留 `dom` / `oslog`
 5. 运行 `ios-use flow your-flow.yaml`
 6. 如果失败，回到 `SKILL.md` 的 CLI 工作流逐步单步复现
 
