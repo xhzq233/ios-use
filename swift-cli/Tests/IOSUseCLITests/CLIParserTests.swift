@@ -65,7 +65,7 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["openURL", "--url", "https://example.com"]),
+            try CLIParser.parse(["open", "https://example.com"]),
             .driver(.openURL(url: "https://example.com", session: SessionOptions()))
         )
 
@@ -143,6 +143,11 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertThrowsError(try CLIParser.parse(["config", "--ipa", "driver.ipa"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--ipa"))
+        }
+
+        let legacyOpenCommand = "open" + "URL"
+        XCTAssertThrowsError(try CLIParser.parse([legacyOpenCommand, "--url", "https://example.com"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownCommand(legacyOpenCommand))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["flow", "flows/test_flow.yaml", "--server", "--port", "9080"])) { error in

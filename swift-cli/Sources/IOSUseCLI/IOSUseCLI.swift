@@ -347,7 +347,7 @@ public struct IOSUseCLI: Sendable {
 
         Commands:
           devices, config, dom, find, waitFor, screenshot, tap, longpress, input, swipe
-          activateApp, terminateApp, home, openURL, dismissAlert, flow, proxy, oslog, nslog
+          activateApp, terminateApp, home, open, dismissAlert, flow, proxy, oslog, nslog
 
         """
     }

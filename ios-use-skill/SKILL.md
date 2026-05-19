@@ -87,7 +87,7 @@ ios-use terminateApp com.apple.Preferences
 ### 3.5 打开 URL 和关闭弹窗
 
 ```bash
-ios-use openURL --url "https://example.com"
+ios-use open "https://example.com"
 ios-use dismissAlert                # 默认点最后一个按钮
 ios-use dismissAlert --index 0      # 点第一个按钮
 ```
@@ -175,8 +175,8 @@ ios-use swipe --dir back --distance 300
   - 支持 `--traits <traits>`
   - 支持 `--cindex <int>`
 
-- `openURL`
-  - `--url <url>` 在设备上打开 URL
+- `open`
+  - `<url>` 在设备上打开 URL
   - Safari 会处理该 URL
 
 - `dismissAlert`
