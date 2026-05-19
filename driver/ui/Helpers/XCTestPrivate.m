@@ -637,6 +637,8 @@ BOOL SnapshotMatchesElement(id a, id b) {
     CGRect _appFrame;
     NSString *_label;
     NSString *_identifier;
+    NSString *_autoLabel;
+    NSString *_displayLabelAlias;
     NSString *_value;
     NSString *_placeholderValue;
     CGRect _frame;
@@ -746,6 +748,35 @@ BOOL SnapshotMatchesElement(id a, id b) {
         if (_identifier.length == 0) _identifier = nil;
     }
     return _identifier;
+}
+
+- (NSString *)baseDisplayLabel {
+    if (self.identifier.length > 0) return self.identifier;
+    if (self.label.length > 0) return self.label;
+    return nil;
+}
+
+- (NSString *)displayLabel {
+    if (_displayLabelAlias.length > 0) return _displayLabelAlias;
+    NSString *base = self.baseDisplayLabel;
+    if (base.length > 0) return base;
+    if (_autoLabel.length > 0) return _autoLabel;
+    return nil;
+}
+
+- (void)setAutoLabelIfDisplayLabelNil:(NSString *)label {
+    if (self.displayLabel.length > 0) return;
+    NSString *sanitized = XCSanitizedSnapshotString(label);
+    if (sanitized.length == 0) return;
+    _autoLabel = [sanitized copy];
+}
+
+- (void)setDisplayLabelAliasIfNeeded:(NSString *)label {
+    NSString *sanitized = XCSanitizedSnapshotString(label);
+    if (sanitized.length == 0) return;
+    NSString *current = self.displayLabel;
+    if ([current isEqualToString:sanitized]) return;
+    _displayLabelAlias = [sanitized copy];
 }
 
 - (NSString *)value {
@@ -886,6 +917,8 @@ BOOL SnapshotMatchesElement(id a, id b) {
             for (id child in rawChildren) {
                 @autoreleasepool {
                     SafeSnapshot *wrap = [[SafeSnapshot alloc] initWithRaw:child appFrame:_appFrame];
+                    wrap->_parent = self;
+                    wrap->_parentResolved = YES;
                     [wrapped addObject:wrap];
                 }
             }

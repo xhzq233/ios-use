@@ -288,6 +288,29 @@ async function runCaseFileExists(id, filePath, args, setup) {
   }
 }
 
+async function runAutoLabelFindCase() {
+  const id = 'FIND-12';
+  if (!selected(id)) return recordSkip(id);
+  await resetSettingsHome();
+  const domOut = path.join(artifactDir, `${id}-dom.out`);
+  const domErr = path.join(artifactDir, `${id}-dom.err`);
+  const findOut = path.join(artifactDir, `${id}.out`);
+  const findErr = path.join(artifactDir, `${id}.err`);
+  console.log(`[sim-test] RUN ${id}: dom auto label then find generated label`);
+  const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
+  const match = dom.stdout.match(/^\s+([^\s]+Applicationc\d*) \[CollectionView\]:/m);
+  if (dom.code !== 0 || !match) {
+    return recordFail(id, dom.stdout + dom.stderr);
+  }
+  const autoLabel = match[1];
+  const found = runCliToFiles(['find', autoLabel, '--traits', 'CollectionView', '--udid', sim.udid], findOut, findErr);
+  if (found.code === 0 && found.stdout.includes(autoLabel)) {
+    recordPass(id);
+  } else {
+    recordFail(id, found.stdout + found.stderr);
+  }
+}
+
 function backupStateFile(rel) {
   const src = path.join(iosHome, rel);
   const dst = path.join(stateBackupDir, rel);
@@ -733,6 +756,7 @@ function buildCases() {
     { id: 'FIND-7', run: () => runCaseContains('FIND-7', 'Find', ['find', 'HomeScreen', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'Search', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled', '--udid', sim.udid], generalPage) },
+    { id: 'FIND-12', run: runAutoLabelFindCase },
     { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Other "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-10B', run: () => runCaseContains('FIND-10B', 'chevron.forward', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '-1', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-11A', run: () => runCaseFailsContains('FIND-11A', 'not found', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '99', '--udid', sim.udid], settingsHome) },
