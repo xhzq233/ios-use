@@ -4,6 +4,8 @@ vars:
   server: "192.168.1.1"
   port: "9080"
 steps:
+  - action: sleep
+
   - action: tap
     label: com.apple.settings.wifi
     comment: "进入无线局域网设置"
