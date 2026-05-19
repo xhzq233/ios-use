@@ -30,7 +30,10 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testProxyDoctorReportsLocalProxyStatus() {
-        let result = IOSUseCLI().run(arguments: ["proxy", "doctor"])
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-proxy-doctor-\(UUID().uuidString)")
+            .path
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["proxy", "doctor"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Wi-Fi LAN IP"))

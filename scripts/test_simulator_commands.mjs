@@ -803,8 +803,8 @@ function buildCases() {
   addCases(cases, tapCases);
 
   const swipeCases = [
-    { id: 'SW-7B', run: () => runCaseContains('SW-7B', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], generalPage) },
-    { id: 'SW-10', run: () => runCaseFailsContains('SW-10', 'boundary', ['swipe', '--distance', '200', '--dir', 'back', '--udid', sim.udid], async () => {
+    { id: 'SW-7B', run: () => runCaseMatches('SW-7B', /scrolls=\d+ direction=down/, ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], generalPage) },
+    { id: 'SW-10', run: () => runCaseFailsMatches('SW-10', /boundary.*direction=up/, ['swipe', '--distance', '200', '--dir', 'back', '--udid', sim.udid], async () => {
       await generalPage();
       runCli(['swipe', '--distance', '200', '--dir', 'back', '--udid', sim.udid]);
     }) },
@@ -817,7 +817,7 @@ function buildCases() {
     { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--to', 'Keyboard', '--dir', 'forth', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'SW-3', run: () => runCaseContains('SW-3', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'SW-3B', run: () => runCaseContains('SW-3B', 'Other "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], settingsHome) },
-    { id: 'SW-4', run: () => runCaseContains('SW-4', 'scrolls=', ['swipe', '--to', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell', '--udid', sim.udid], async () => {
+    { id: 'SW-4', run: () => runCaseMatches('SW-4', /scrolls=\d+ direction=up/, ['swipe', '--to', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell', '--udid', sim.udid], async () => {
       await generalPage();
       runCliToFiles(['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], path.join(artifactDir, 'SW-4-setup.out'), path.join(artifactDir, 'SW-4-setup.err'));
     }) },
@@ -825,8 +825,8 @@ function buildCases() {
     { id: 'SW-6', run: () => runCaseContains('SW-6', 'scrolls=', ['swipe', '--to', '100,700', '--udid', sim.udid], generalPage) },
     { id: 'SW-7', run: () => runCaseContains('SW-7', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], generalPage) },
     { id: 'SW-8', run: () => runCaseContains('SW-8', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], generalPage) },
-    { id: 'SW-9', run: () => runCaseContains('SW-9', 'scrolls=', ['swipe', '--distance', '900', '--dir', 'forth', '--udid', sim.udid], generalPage) },
-    { id: 'SW-11', run: () => runCaseFailsMatches('SW-11', /boundary|not connected/i, ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], async () => {
+    { id: 'SW-9', run: () => runCaseMatches('SW-9', /scrolls=\d+ direction=down/, ['swipe', '--distance', '900', '--dir', 'forth', '--udid', sim.udid], generalPage) },
+    { id: 'SW-11', run: () => runCaseFailsMatches('SW-11', /boundary.*direction=down|not connected/i, ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], async () => {
       await generalPage();
       for (let i = 0; i < 6; i++) runCli(['swipe', '--distance', '900', '--dir', 'forth', '--udid', sim.udid]);
     }) },

@@ -39,9 +39,7 @@ enum TouchCommands {
             let point = resolveTapPoint(frame: f, offset: args.offset, ratio: args.ratio)
             try tapAtPoint(point, app: app)
             let payload = ForyElementPayload(
-                elemType: Int32(truncatingIfNeeded: elem.node.elementType),
-                label: elem.node.label ?? "",
-                rect: makeForyRect(f)
+                element: makeForyElementSummary(elem.node)
             )
             return try Codec.foryOK(payload)
         case .ambiguous(let matches):
@@ -87,9 +85,7 @@ enum TouchCommands {
             }
             try pressAtPoint(CGPoint(x: f.midX, y: f.midY), duration: duration, app: app)
             let payload = ForyElementPayload(
-                elemType: Int32(truncatingIfNeeded: elem.node.elementType),
-                label: elem.node.label ?? "",
-                rect: makeForyRect(f)
+                element: makeForyElementSummary(elem.node)
             )
             return try Codec.foryOK(payload)
         case .ambiguous(let matches):

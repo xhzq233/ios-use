@@ -94,4 +94,19 @@ final class ScrollMechanicsTests: XCTestCase {
         XCTAssertEqual(adjust.dx, 0)
         XCTAssertEqual(adjust.dy, 347.5)
     }
+
+    func testScrollDirectionName_FromAxisAndSemanticDirection() {
+        XCTAssertEqual(scrollDirectionName(vertical: true, scrollUpwards: false), "down")
+        XCTAssertEqual(scrollDirectionName(vertical: true, scrollUpwards: true), "up")
+        XCTAssertEqual(scrollDirectionName(vertical: false, scrollUpwards: false), "right")
+        XCTAssertEqual(scrollDirectionName(vertical: false, scrollUpwards: true), "left")
+    }
+
+    func testScrollDirectionName_FromDragVectorReportsContentDirection() {
+        XCTAssertEqual(scrollDirectionName(vector: CGVector(dx: 0, dy: -120)), "down")
+        XCTAssertEqual(scrollDirectionName(vector: CGVector(dx: 0, dy: 120)), "up")
+        XCTAssertEqual(scrollDirectionName(vector: CGVector(dx: -120, dy: 0)), "right")
+        XCTAssertEqual(scrollDirectionName(vector: CGVector(dx: 120, dy: 0)), "left")
+        XCTAssertEqual(scrollDirectionName(vector: .zero), "")
+    }
 }

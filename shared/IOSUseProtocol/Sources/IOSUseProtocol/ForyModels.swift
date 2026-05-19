@@ -166,47 +166,65 @@ public struct ForyFindPayload {
 }
 
 @ForyStruct
-public struct ForyWaitForPayload {
+public struct ForyElementSummary {
     public var elemType: Int32 = 0
     public var label: String = ""
     public var rect: ForyRect? = nil
-    public var waited: Double = 0
+    public var ancestors: [String] = []
 
-    public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, waited: Double = 0) {
+    public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, ancestors: [String] = []) {
         self.elemType = elemType
         self.label = label
         self.rect = rect
+        self.ancestors = ancestors
+    }
+}
+
+@ForyStruct
+public struct ForyWaitForPayload {
+    public var element: ForyElementSummary = ForyElementSummary()
+    public var waited: Double = 0
+
+    public init(element: ForyElementSummary = ForyElementSummary(), waited: Double = 0) {
+        self.element = element
+        self.waited = waited
+    }
+
+    public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, waited: Double = 0) {
+        self.element = ForyElementSummary(elemType: elemType, label: label, rect: rect)
         self.waited = waited
     }
 }
 
 @ForyStruct
 public struct ForyElementPayload {
-    public var elemType: Int32 = 0
-    public var label: String = ""
-    public var rect: ForyRect? = nil
+    public var element: ForyElementSummary = ForyElementSummary()
 
-    public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil) {
-        self.elemType = elemType
-        self.label = label
-        self.rect = rect
+    public init(element: ForyElementSummary = ForyElementSummary()) {
+        self.element = element
+    }
+
+    public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, ancestors: [String] = []) {
+        self.element = ForyElementSummary(elemType: elemType, label: label, rect: rect, ancestors: ancestors)
     }
 }
 
 @ForyStruct
 public struct ForySwipePayload {
-    public var ancestors: [String] = []
-    public var elemType: Int32 = 0
-    public var label: String = ""
-    public var rect: ForyRect? = nil
+    public var element: ForyElementSummary = ForyElementSummary()
     public var scrolls: Int32 = 0
+    public var scrollDirection: String = ""
 
-    public init(ancestors: [String] = [], elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, scrolls: Int32 = 0) {
-        self.ancestors = ancestors
-        self.elemType = elemType
-        self.label = label
-        self.rect = rect
+    public init(element: ForyElementSummary = ForyElementSummary(), scrolls: Int32 = 0, scrollDirection: String = "") {
+        self.element = element
         self.scrolls = scrolls
+        self.scrollDirection = scrollDirection
+    }
+
+    public init(ancestors: [String] = [], elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, scrolls: Int32 = 0, scrollDirection: String = "") {
+        self.element = ForyElementSummary(elemType: elemType, label: label, rect: rect, ancestors: ancestors)
+        self.scrolls = scrolls
+        self.scrollDirection = scrollDirection
     }
 }
 
@@ -384,6 +402,7 @@ public enum ForyRegistry {
         try! fory.register(ForyDomPayload.self, name: "ForyDomPayload")
         try! fory.register(ForyScreenshotPayload.self, name: "ForyScreenshotPayload")
         try! fory.register(ForyFindPayload.self, name: "ForyFindPayload")
+        try! fory.register(ForyElementSummary.self, name: "ForyElementSummary")
         try! fory.register(ForyWaitForPayload.self, name: "ForyWaitForPayload")
         try! fory.register(ForyElementPayload.self, name: "ForyElementPayload")
         try! fory.register(ForySwipePayload.self, name: "ForySwipePayload")
