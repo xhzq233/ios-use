@@ -90,6 +90,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(paths.root, "/tmp/ios-use-swift-test-home")
         XCTAssertEqual(paths.config, "/tmp/ios-use-swift-test-home/config.json")
         XCTAssertEqual(paths.session, "/tmp/ios-use-swift-test-home/state/session.json")
+        XCTAssertEqual(paths.nslogLock, "/tmp/ios-use-swift-test-home/state/nslog.lock")
         XCTAssertEqual(paths.logs, "/tmp/ios-use-swift-test-home/logs")
         XCTAssertEqual(paths.artifacts, "/tmp/ios-use-swift-test-home/artifacts")
     }

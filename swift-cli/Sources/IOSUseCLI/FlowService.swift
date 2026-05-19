@@ -56,10 +56,17 @@ public enum FlowService {
         }
         emit("Executing flow...\n")
         if let options = try nsloggerOptions(needNSLog) {
-            try NSLogService.acquireLock(paths: paths, terminateExisting: true)
-            ownsNSLogLock = true
+            try NSLogService.acquireForegroundOwnership(paths: paths, mode: "flow")
             let server = try NSLoggerServer(options: options, paths: paths)
-            try server.start()
+            do {
+                try server.start()
+                try NSLogService.writeLock(paths: paths, server: server, mode: "flow")
+                ownsNSLogLock = true
+            } catch {
+                server.stop()
+                NSLogService.releaseLock(paths: paths)
+                throw error
+            }
             nsloggerServer = server
             emit("  → nslog: listening on port \(server.port)\n")
         }
@@ -498,7 +505,7 @@ private func nsloggerOptions(_ raw: Any?) throws -> NSLoggerServerOptions? {
         return nil
     }
     if dict["port"] != nil || dict["ssl"] != nil {
-        throw CLIParseError.invalidValue("needNSLog does not support port or ssl configuration; NSLogger is fixed to SSL on port \(IOSUseProtocol.nsloggerDefaultPort)")
+        throw CLIParseError.invalidValue("needNSLog does not support port or ssl configuration; NSLogger always uses TLS and an internal random port")
     }
     return NSLoggerServerOptions(
         name: optionalString(dict["name"]),

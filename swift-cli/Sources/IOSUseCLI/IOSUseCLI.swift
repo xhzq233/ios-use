@@ -31,6 +31,7 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let root: String
     public let config: String
     public let session: String
+    public let nslogLock: String
     public let logs: String
     public let artifacts: String
 
@@ -40,6 +41,7 @@ public struct IOSUsePaths: Equatable, Sendable {
             root: root,
             config: "\(root)/config.json",
             session: "\(root)/state/session.json",
+            nslogLock: "\(root)/state/nslog.lock",
             logs: "\(root)/logs",
             artifacts: "\(root)/artifacts"
         )
