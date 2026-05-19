@@ -12,12 +12,20 @@ public enum NSLogService {
             return try NSRegularExpression(pattern: grep, options: regexOptions(options.flags))
         }
 
-        try acquireLock(paths: paths)
-        defer { releaseLock(paths: paths) }
-
+        try acquireForegroundOwnership(paths: paths, mode: "cli")
         let server = try NSLoggerServer(options: NSLoggerServerOptions(name: options.name), paths: paths)
-        try server.start()
-        defer { server.stop() }
+        do {
+            try server.start()
+            try writeLock(paths: paths, server: server, mode: "cli")
+        } catch {
+            server.stop()
+            releaseLock(paths: paths)
+            throw error
+        }
+        defer {
+            server.stop()
+            releaseLock(paths: paths)
+        }
 
         server.onMessage = { entry in
             guard let grepRegex else {
@@ -145,38 +153,47 @@ public enum NSLogService {
         return "\(time) \(seq) \(tagText) \(level)\(loc)\(fn) \(message)".squashedWhitespace()
     }
 
-    private static func acquireLock(paths: IOSUsePaths) throws {
-        try acquireLock(paths: paths, terminateExisting: false)
-    }
+    static var processCommandOverrideForTesting: ((Int32) -> String?)?
+    static var processAliveOverrideForTesting: ((Int32) -> Bool)?
+    static var killOverrideForTesting: ((Int32, Int32) -> Int32)?
 
-    static func acquireLock(paths: IOSUsePaths, terminateExisting: Bool) throws {
-        let lock = "\(paths.root)/state/nslog.lock"
-        if let text = try? String(contentsOfFile: lock, encoding: .utf8) {
-            let parts = text.split(separator: " ")
-            let pid = parts.first.flatMap { Int32($0) } ?? 0
-            let startedAt = parts.dropFirst().first.flatMap { Int($0) } ?? 0
-            if pid > 0, kill(pid, 0) == 0, nowMs() - startedAt < IOSUseProtocol.nslogLockStaleMilliseconds {
-                if terminateExisting {
-                    kill(pid, SIGTERM)
-                    try? waitForProcessExit(pid: pid, timeoutSeconds: 1)
-                    try? FileManager.default.removeItem(atPath: lock)
-                } else {
-                    throw CLIParseError.invalidValue("nslog already running (PID \(pid)). Only one nslog instance allowed at a time; cannot grep multiple patterns simultaneously.")
+    static func acquireForegroundOwnership(paths: IOSUsePaths, mode: String) throws {
+        if let record = readLock(paths: paths) {
+            if processAlive(record.pid) {
+                guard record.iosUseHome == nil || standardizedPath(record.iosUseHome ?? "") == standardizedPath(paths.root),
+                      isIOSUseNSLogOwnerProcess(pid: record.pid) else {
+                    throw CLIParseError.invalidValue("nslog lock is owned by an unrelated live process (PID \(record.pid)); not terminating it. Remove stale lock manually if needed: \(paths.nslogLock)")
+                }
+                terminateProcess(pid: record.pid)
+                if let bonjourPid = record.bonjourPid {
+                    terminateBonjourPublisher(pid: bonjourPid)
                 }
             }
-            try? FileManager.default.removeItem(atPath: lock)
+            try? FileManager.default.removeItem(atPath: paths.nslogLock)
         }
-        try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true, attributes: nil)
-        try "\(getpid()) \(nowMs())".write(toFile: lock, atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(atPath: URL(fileURLWithPath: paths.nslogLock).deletingLastPathComponent().path, withIntermediateDirectories: true, attributes: nil)
+    }
+
+    static func writeLock(paths: IOSUsePaths, server: NSLoggerServer, mode: String) throws {
+        try FileManager.default.createDirectory(atPath: URL(fileURLWithPath: paths.nslogLock).deletingLastPathComponent().path, withIntermediateDirectories: true, attributes: nil)
+        let record = NSLogLockRecord(
+            pid: getpid(),
+            bonjourPid: server.bonjourPid,
+            port: server.port,
+            name: server.bonjourServiceName,
+            startedAt: ISO8601DateFormatter().string(from: Date()),
+            iosUseHome: paths.root,
+            mode: mode
+        )
+        let data = try JSONEncoder().encode(record)
+        try data.write(to: URL(fileURLWithPath: paths.nslogLock), options: [.atomic])
     }
 
     static func releaseLock(paths: IOSUsePaths) {
-        let lock = "\(paths.root)/state/nslog.lock"
-        guard let text = try? String(contentsOfFile: lock, encoding: .utf8),
-              text.split(separator: " ").first.flatMap({ Int32($0) }) == getpid() else {
+        guard let record = readLock(paths: paths), record.pid == getpid() else {
             return
         }
-        try? FileManager.default.removeItem(atPath: lock)
+        try? FileManager.default.removeItem(atPath: paths.nslogLock)
     }
 
     static func regexOptions(_ flags: String) throws -> NSRegularExpression.Options {
@@ -214,19 +231,99 @@ public enum NSLogService {
         return value
     }
 
-    private static func nowMs() -> Int {
-        Int(Date().timeIntervalSince1970 * 1000)
+    private static func readLock(paths: IOSUsePaths) -> NSLogLockRecord? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.nslogLock)) else { return nil }
+        if let record = try? JSONDecoder().decode(NSLogLockRecord.self, from: data) {
+            return record
+        }
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        let parts = text.split(separator: " ")
+        guard let pid = parts.first.flatMap({ Int32($0) }) else { return nil }
+        return NSLogLockRecord(
+            pid: pid,
+            bonjourPid: nil,
+            port: nil,
+            name: nil,
+            startedAt: parts.dropFirst().first.map(String.init) ?? "",
+            iosUseHome: nil,
+            mode: "legacy"
+        )
+    }
+
+    private static func terminateProcess(pid: Int32) {
+        _ = sendSignal(pid: pid, signal: SIGTERM)
+        try? waitForProcessExit(pid: pid, timeoutSeconds: 1)
+        if processAlive(pid) {
+            _ = sendSignal(pid: pid, signal: SIGKILL)
+            try? waitForProcessExit(pid: pid, timeoutSeconds: 1)
+        }
+    }
+
+    private static func terminateBonjourPublisher(pid: Int32) {
+        guard pid > 0, isBonjourPublisherProcess(pid: pid) else { return }
+        _ = sendSignal(pid: pid, signal: SIGTERM)
+        try? waitForProcessExit(pid: pid, timeoutSeconds: 1)
+        if processAlive(pid) {
+            _ = sendSignal(pid: pid, signal: SIGKILL)
+        }
+    }
+
+    private static func isIOSUseNSLogOwnerProcess(pid: Int32) -> Bool {
+        guard let command = processCommand(pid: pid)?.lowercased() else { return false }
+        return command.contains("ios-use") && (command.contains(" nslog") || command.contains(" flow"))
+    }
+
+    private static func isBonjourPublisherProcess(pid: Int32) -> Bool {
+        guard let command = processCommand(pid: pid) else { return false }
+        return command.contains("dns-sd -R") && command.contains("_nslogger-ssl._tcp")
+    }
+
+    private static func processAlive(_ pid: Int32) -> Bool {
+        guard pid > 0 else { return false }
+        if let override = processAliveOverrideForTesting {
+            return override(pid)
+        }
+        return Darwin.kill(pid, 0) == 0
+    }
+
+    private static func sendSignal(pid: Int32, signal: Int32) -> Int32 {
+        if let override = killOverrideForTesting {
+            return override(pid, signal)
+        }
+        return Darwin.kill(pid, signal)
+    }
+
+    private static func processCommand(pid: Int32) -> String? {
+        if let override = processCommandOverrideForTesting {
+            return override(pid)
+        }
+        return (try? Shell.run("ps", arguments: ["-p", String(pid), "-o", "command="]))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func standardizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardized.path
     }
 
     private static func waitForProcessExit(pid: Int32, timeoutSeconds: Double) throws {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
-            if kill(pid, 0) != 0 {
+            if !processAlive(pid) {
                 return
             }
             usleep(50_000)
         }
     }
+}
+
+private struct NSLogLockRecord: Codable, Equatable {
+    var pid: Int32
+    var bonjourPid: Int32?
+    var port: Int?
+    var name: String?
+    var startedAt: String
+    var iosUseHome: String?
+    var mode: String
 }
 
 public struct NSLoggerServerOptions: Equatable, Sendable {
@@ -236,8 +333,8 @@ public struct NSLoggerServerOptions: Equatable, Sendable {
     public var publishBonjour: Bool
     public var maxBufferSize: Int
 
-    public init(name: String? = nil, publishBonjour: Bool = true, maxBufferSize: Int = IOSUseProtocol.nsloggerDefaultBufferSize) {
-        self.port = IOSUseProtocol.nsloggerDefaultPort
+    public init(port: Int = 0, name: String? = nil, publishBonjour: Bool = true, maxBufferSize: Int = IOSUseProtocol.nsloggerDefaultBufferSize) {
+        self.port = port
         self.useSSL = true
         self.name = name
         self.publishBonjour = publishBonjour
@@ -246,9 +343,11 @@ public struct NSLoggerServerOptions: Equatable, Sendable {
 }
 
 public final class NSLoggerServer {
-    public let port: Int
+    public private(set) var port: Int
     public private(set) var isRunning = false
     public var onMessage: ((String) -> Void)?
+    public private(set) var bonjourPid: Int32?
+    public private(set) var bonjourServiceName: String?
 
     private let options: NSLoggerServerOptions
     private let paths: IOSUsePaths
@@ -276,7 +375,14 @@ public final class NSLoggerServer {
         isRunning = true
 
         if options.publishBonjour {
-            bonjour = startBonjour(name: options.name, port: port)
+            do {
+                let publisher = try startBonjour(name: options.name, port: port)
+                bonjour = publisher
+                bonjourPid = publisher.processIdentifier
+            } catch {
+                stop()
+                throw error
+            }
         }
     }
 
@@ -287,6 +393,7 @@ public final class NSLoggerServer {
         eventLoopGroup = nil
         bonjour?.terminate()
         bonjour = nil
+        bonjourPid = nil
         isRunning = false
     }
 
@@ -386,10 +493,10 @@ public final class NSLoggerServer {
         }
     }
 
-    private func startBonjour(name: String?, port: Int) -> Process? {
+    private func startBonjour(name: String?, port: Int) throws -> Process {
         let serviceName = name?.isEmpty == false ? name! : defaultBonjourName()
+        bonjourServiceName = serviceName
         let serviceType = "_nslogger-ssl._tcp"
-        _ = terminateStaleBonjourPublishers(serviceName: serviceName, serviceType: serviceType, domain: "local")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["dns-sd", "-R", serviceName, serviceType, "local", String(port)]
@@ -399,7 +506,7 @@ public final class NSLoggerServer {
             try process.run()
             return process
         } catch {
-            return nil
+            throw CLIParseError.invalidValue("NSLogger Bonjour publish failed for \(serviceName) on port \(port): \(error)")
         }
     }
 
@@ -443,30 +550,15 @@ public final class NSLoggerServer {
                 .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
                 .bind(host: "0.0.0.0", port: port)
                 .wait()
+            if let actualPort = channel.localAddress?.port {
+                port = actualPort
+            }
             eventLoopGroup = group
             serverChannel = channel
         } catch {
             try? group.syncShutdownGracefully()
             throw CLIParseError.invalidValue("NSLogger TLS server failed to listen on port \(port): \(error)")
         }
-    }
-
-    private func terminateStaleBonjourPublishers(serviceName: String, serviceType: String, domain: String) -> Int {
-        guard let output = try? Shell.run("ps", arguments: ["-axo", "pid=,command="]) else {
-            return 0
-        }
-        let needle = "dns-sd -R \(serviceName) \(serviceType) \(domain) "
-        var killed = 0
-        for line in output.split(separator: "\n") {
-            let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard text.contains(needle) else { continue }
-            let parts = text.split(separator: " ", maxSplits: 1)
-            guard let pid = parts.first.flatMap({ Int32($0) }), pid > 0, pid != getpid() else { continue }
-            if kill(pid, SIGTERM) == 0 {
-                killed += 1
-            }
-        }
-        return killed
     }
 
     private func defaultBonjourName() -> String {
