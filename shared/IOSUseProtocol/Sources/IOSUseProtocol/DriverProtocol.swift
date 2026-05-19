@@ -96,13 +96,13 @@ public enum IOSUseProtocol {
     public static let oslogDefaultSimulatorLastSeconds = 10.0
     /// Host-side oslog ring buffer cap.
     public static let oslogMaxBufferLines = 5_000
-    /// Fixed NSLogger TLS receiver port.
+    /// Legacy NSLogger TLS receiver port. Current host server binds an internal random port and publishes it via Bonjour.
     public static let nsloggerDefaultPort = 50_000
     /// Default NSLogger ring buffer capacity.
     public static let nsloggerDefaultBufferSize = 50_000
     /// Maximum unparsed NSLogger receive buffer before dropping old bytes.
     public static let nsloggerMaxReceiveBufferBytes = 1024 * 1024
-    /// Stale NSLogger lock age before a new process may take ownership.
+    /// Legacy stale-lock age retained for compatibility with older lock files.
     public static let nslogLockStaleMilliseconds = 60 * 60 * 1000
     /// Flow waits this long for app-side NSLogger client connection.
     public static let flowNSLogConnectTimeoutMilliseconds = 15_000

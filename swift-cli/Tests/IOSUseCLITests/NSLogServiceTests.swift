@@ -6,10 +6,17 @@ import NIOPosix
 @preconcurrency import NIOSSL
 
 final class NSLogServiceTests: XCTestCase {
-    func testServerOptionsKeepFixedPortAndPreserveAllowedFlowFields() {
+    override func tearDown() {
+        NSLogService.processCommandOverrideForTesting = nil
+        NSLogService.processAliveOverrideForTesting = nil
+        NSLogService.killOverrideForTesting = nil
+        super.tearDown()
+    }
+
+    func testServerOptionsUseRandomPortAndPreserveAllowedFlowFields() {
         let options = NSLoggerServerOptions(name: "ios-use-test", publishBonjour: false, maxBufferSize: 3)
 
-        XCTAssertEqual(options.port, 50_000)
+        XCTAssertEqual(options.port, 0)
         XCTAssertTrue(options.useSSL)
         XCTAssertEqual(options.name, "ios-use-test")
         XCTAssertFalse(options.publishBonjour)
@@ -93,9 +100,6 @@ final class NSLogServiceTests: XCTestCase {
     }
 
     func testServerAcceptsRealTLSClientFrameWithoutKeychain() throws {
-        guard isPortAvailable(50_000) else {
-            throw XCTSkip("NSLogger fixed port 50000 is already in use")
-        }
         let paths = IOSUsePaths.resolve(environment: [
             "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-nslog-tls-\(UUID().uuidString)").path
         ])
@@ -103,7 +107,10 @@ final class NSLogServiceTests: XCTestCase {
         try server.start()
         defer { server.stop() }
 
-        try sendTLSFrame(makeMessage(parts: [(7, 0, stringData("TLS ready"))]), port: 50_000)
+        XCTAssertNotEqual(server.port, 0)
+        XCTAssertNotEqual(server.port, 50_000)
+
+        try sendTLSFrame(makeMessage(parts: [(7, 0, stringData("TLS ready"))]), port: UInt16(server.port))
 
         let deadline = Date().addingTimeInterval(5)
         while server.logCount == 0, Date() < deadline {
@@ -114,6 +121,84 @@ final class NSLogServiceTests: XCTestCase {
         XCTAssertEqual(try server.grep(pattern: "TLS ready").count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(paths.root)/runtime/nslogger-selfsigned.key"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(paths.root)/runtime/nslogger-selfsigned.crt"))
+    }
+
+    func testLockRecordsActualRandomPortAndBonjourPid() throws {
+        let paths = makePaths()
+        let server = try NSLoggerServer(options: NSLoggerServerOptions(name: "unit-nslog", publishBonjour: false), paths: paths)
+        try server.start()
+        defer { server.stop() }
+
+        try NSLogService.writeLock(paths: paths, server: server, mode: "flow")
+        let data = try Data(contentsOf: URL(fileURLWithPath: paths.nslogLock))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(json["pid"] as? Int, Int(getpid()))
+        XCTAssertEqual(json["port"] as? Int, server.port)
+        XCTAssertEqual(json["iosUseHome"] as? String, paths.root)
+        XCTAssertEqual(json["mode"] as? String, "flow")
+        XCTAssertNil(json["bonjourPid"])
+    }
+
+    func testAcquireForegroundOwnershipRemovesStaleLock() throws {
+        let paths = makePaths()
+        try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
+        try #"{"pid":424242,"port":50000,"startedAt":"old","iosUseHome":"\#(paths.root)","mode":"cli"}"#
+            .write(toFile: paths.nslogLock, atomically: true, encoding: .utf8)
+        NSLogService.processAliveOverrideForTesting = { _ in false }
+
+        try NSLogService.acquireForegroundOwnership(paths: paths, mode: "cli")
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.nslogLock))
+    }
+
+    func testAcquireForegroundOwnershipTerminatesOldIOSUseAndBonjourProcesses() throws {
+        let paths = makePaths()
+        try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
+        try #"{"pid":1111,"bonjourPid":2222,"port":51723,"name":"unit","startedAt":"old","iosUseHome":"\#(paths.root)","mode":"cli"}"#
+            .write(toFile: paths.nslogLock, atomically: true, encoding: .utf8)
+        var alive: Set<Int32> = [1111, 2222]
+        var signals: [(Int32, Int32)] = []
+        NSLogService.processAliveOverrideForTesting = { alive.contains($0) }
+        NSLogService.processCommandOverrideForTesting = { pid in
+            switch pid {
+            case 1111: return "/usr/local/bin/ios-use nslog --name unit"
+            case 2222: return "dns-sd -R unit _nslogger-ssl._tcp local 51723"
+            default: return nil
+            }
+        }
+        NSLogService.killOverrideForTesting = { pid, signal in
+            signals.append((pid, signal))
+            alive.remove(pid)
+            return 0
+        }
+
+        try NSLogService.acquireForegroundOwnership(paths: paths, mode: "flow")
+
+        XCTAssertTrue(signals.contains { $0 == (1111, SIGTERM) })
+        XCTAssertTrue(signals.contains { $0 == (2222, SIGTERM) })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.nslogLock))
+    }
+
+    func testAcquireForegroundOwnershipDoesNotKillUnrelatedProcess() throws {
+        let paths = makePaths()
+        try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
+        try #"{"pid":3333,"port":51723,"startedAt":"old","iosUseHome":"\#(paths.root)","mode":"cli"}"#
+            .write(toFile: paths.nslogLock, atomically: true, encoding: .utf8)
+        var signals: [(Int32, Int32)] = []
+        NSLogService.processAliveOverrideForTesting = { $0 == 3333 }
+        NSLogService.processCommandOverrideForTesting = { _ in "/bin/sleep 60" }
+        NSLogService.killOverrideForTesting = { pid, signal in
+            signals.append((pid, signal))
+            return 0
+        }
+
+        XCTAssertThrowsError(try NSLogService.acquireForegroundOwnership(paths: paths, mode: "cli")) { error in
+            XCTAssertTrue(String(describing: error).contains("unrelated live process"))
+            XCTAssertTrue(String(describing: error).contains(paths.nslogLock))
+        }
+        XCTAssertTrue(signals.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.nslogLock))
     }
 
     private func makeMessage(parts: [(UInt8, UInt8, Data)]) -> Data {
@@ -149,22 +234,10 @@ final class NSLogServiceTests: XCTestCase {
         ])
     }
 
-    private func isPortAvailable(_ port: UInt16) -> Bool {
-        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
-        defer { Darwin.close(fd) }
-        var one: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-        return withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        } == 0
+    private func makePaths() -> IOSUsePaths {
+        IOSUsePaths.resolve(environment: [
+            "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-nslog-\(UUID().uuidString)").path
+        ])
     }
 
     private func sendTLSFrame(_ data: Data, port: UInt16) throws {
