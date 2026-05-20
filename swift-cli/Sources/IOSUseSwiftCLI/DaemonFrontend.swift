@@ -63,6 +63,10 @@ struct DaemonFrontend {
     private func startDaemon(executablePath: String) throws {
         try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(
+            atPath: URL(fileURLWithPath: paths.daemonPid).deletingLastPathComponent().path,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
             atPath: URL(fileURLWithPath: paths.daemonSocket).deletingLastPathComponent().path,
             withIntermediateDirectories: true
         )

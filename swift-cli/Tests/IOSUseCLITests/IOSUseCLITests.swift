@@ -7,26 +7,54 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(IOSUseCLI.version, "1.0.1")
     }
 
-    func testRuntimeRunRequiresACommand() {
-        let result = IOSUseCLI().run(arguments: [])
+    func testDaemonRunnerRequiresACommand() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-daemon-parse-\(UUID().uuidString)")
+            .path
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let runner = daemonCommandRunner(root: root)
+
+        guard case .result(let result) = runner.parse(DaemonRequest(id: "missing", argv: [], cwd: root)) else {
+            return XCTFail("expected parse result")
+        }
 
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.stderr.contains("missing command"))
     }
 
-    func testUnknownOptionFailsBeforeAnySessionWork() {
-        let result = IOSUseCLI().run(arguments: ["--not-a-real-option"])
+    func testDaemonRunnerRejectsLeadingUnknownOptionBeforeParser() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-daemon-parse-\(UUID().uuidString)")
+            .path
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let runner = daemonCommandRunner(root: root)
+
+        guard case .result(let result) = runner.parse(DaemonRequest(id: "unknown", argv: ["--not-a-real-option"], cwd: root)) else {
+            return XCTFail("expected parse result")
+        }
 
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.stderr.contains("unknown option '--not-a-real-option'"))
         XCTAssertTrue(result.stdout.isEmpty)
     }
 
+    private func daemonCommandRunner(root: String) -> DaemonCommandRunner {
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let logger = DaemonLogger(paths: paths)
+        return DaemonCommandRunner(
+            environment: ["IOS_USE_HOME": root],
+            paths: paths,
+            output: DaemonOutputHandles(stdout: nil, stderr: nil),
+            driverChannel: DaemonDriverChannel(paths: paths, logger: logger),
+            logger: logger
+        )
+    }
+
     func testProxyDoctorReportsLocalProxyStatus() {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-proxy-doctor-\(UUID().uuidString)")
             .path
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["proxy", "doctor"])
+        let result = executeTestCLI(environment: ["IOS_USE_HOME": home], arguments: ["proxy", "doctor"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Wi-Fi LAN IP"))
@@ -35,7 +63,7 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testMissingRequiredArgumentFailsBeforeExecution() {
-        let result = IOSUseCLI().run(arguments: ["find"])
+        let result = executeTestCLI(arguments: ["find"])
 
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.stderr.contains("missing required argument 'label'"))

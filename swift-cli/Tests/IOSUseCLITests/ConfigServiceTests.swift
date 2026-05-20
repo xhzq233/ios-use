@@ -69,7 +69,7 @@ final class ConfigServiceTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: state, withIntermediateDirectories: true)
         try "{}".write(toFile: "\(state)/session.json", atomically: true, encoding: .utf8)
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
+        let result = executeTestCLI(environment: ["IOS_USE_HOME": root], arguments: ["stop"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "Daemon stopped\n")

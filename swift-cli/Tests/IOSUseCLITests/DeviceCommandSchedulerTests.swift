@@ -27,43 +27,44 @@ final class DeviceCommandSchedulerTests: XCTestCase {
 
     func testDifferentDevicesCanRunConcurrently() async throws {
         let scheduler = DeviceCommandScheduler()
-        let recorder = SchedulerRecorder()
+        let firstStarted = expectation(description: "first started")
+        let secondStarted = expectation(description: "second started")
+        let releaseFirst = SchedulerTestGate()
 
         async let first: Void = scheduler.enqueue(udid: "SIM-1", kind: .ui) {
-            await recorder.append("first-start")
-            try await Task.sleep(nanoseconds: 150_000_000)
-            await recorder.append("first-end")
+            firstStarted.fulfill()
+            await releaseFirst.wait()
         }
+        await fulfillment(of: [firstStarted], timeout: 1)
+
         async let second: Void = scheduler.enqueue(udid: "SIM-2", kind: .ui) {
-            await recorder.append("second-start")
-            await recorder.append("second-end")
+            secondStarted.fulfill()
         }
+        await fulfillment(of: [secondStarted], timeout: 1)
+        await releaseFirst.open()
 
         _ = try await (first, second)
-
-        let events = await recorder.events
-        XCTAssertLessThan(try XCTUnwrap(events.firstIndex(of: "second-start")), try XCTUnwrap(events.firstIndex(of: "first-end")))
     }
 
     func testStreamingJobsDoNotOccupyDeviceQueue() async throws {
         let scheduler = DeviceCommandScheduler()
-        let recorder = SchedulerRecorder()
+        let streamStarted = expectation(description: "stream started")
+        let uiStarted = expectation(description: "ui started")
+        let releaseStream = SchedulerTestGate()
 
         async let streaming: Void = scheduler.enqueue(udid: "SIM-1", kind: .streaming) {
-            await recorder.append("stream-start")
-            try await Task.sleep(nanoseconds: 120_000_000)
-            await recorder.append("stream-end")
+            streamStarted.fulfill()
+            await releaseStream.wait()
         }
-        try await Task.sleep(nanoseconds: 20_000_000)
+        await fulfillment(of: [streamStarted], timeout: 1)
+
         async let ui: Void = scheduler.enqueue(udid: "SIM-1", kind: .ui) {
-            await recorder.append("ui-start")
-            await recorder.append("ui-end")
+            uiStarted.fulfill()
         }
+        await fulfillment(of: [uiStarted], timeout: 1)
+        await releaseStream.open()
 
         _ = try await (streaming, ui)
-
-        let events = await recorder.events
-        XCTAssertLessThan(try XCTUnwrap(events.firstIndex(of: "ui-start")), try XCTUnwrap(events.firstIndex(of: "stream-end")))
     }
 }
 
@@ -76,5 +77,31 @@ private actor SchedulerRecorder {
 
     func append(_ event: String) {
         storedEvents.append(event)
+    }
+}
+
+private actor SchedulerTestGate {
+    private var opened = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { continuation in
+            if opened {
+                continuation.resume()
+            } else {
+                continuations.append(continuation)
+            }
+        }
+    }
+
+    func open() {
+        guard !opened else { return }
+        opened = true
+        let pending = continuations
+        continuations.removeAll()
+        for continuation in pending {
+            continuation.resume()
+        }
     }
 }
