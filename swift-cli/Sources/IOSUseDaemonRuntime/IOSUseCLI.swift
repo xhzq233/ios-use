@@ -99,23 +99,6 @@ public struct IOSUseCLI: Sendable {
         self.cancellation = cancellation
     }
 
-    public func run(arguments: [String]) -> CLIResult {
-        guard let first = arguments.first else {
-            return CLIErrorEnvelope(message: CLIParseError.missingCommand.description).render()
-        }
-        if first.hasPrefix("-") {
-            return CLIErrorEnvelope(message: "unknown option '\(first)'").render()
-        }
-        do {
-            let parsed = try CLIParser.parse(arguments)
-            return executeParsed(parsed)
-        } catch let error as CLIParseError {
-            return CLIErrorEnvelope(message: error.description).render()
-        } catch {
-            return CLIErrorEnvelope(message: "\(error)").render()
-        }
-    }
-
     public func executeParsed(_ parsed: ParsedCommand) -> CLIResult {
         switch parsed {
         case .devices(let options):
