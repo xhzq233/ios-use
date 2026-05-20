@@ -26,7 +26,7 @@ steps:
 ```
 
 - `name`：flow 名称，建议能说明页面或目标
-- `app`：可选；指定目标 app，常用于主 flow；入口 flow 会自动建连并切到目标 app，不要再把 `terminateApp` / `activateApp` / `openURL` 当成通用前置步骤写进 flow
+- `app`：可选；指定目标 app，常用于主 flow；入口 flow 会切到目标 app，不要再把 `terminateApp` / `activateApp` / `openURL` 当成通用前置步骤写进 flow
 - `needNSLog`：设为 `true` 时自动启动 nslog 服务并等待 app 连接，flow 中的 `nslog` action 需要它
 - `steps`：按顺序执行的动作列表
 
@@ -197,7 +197,7 @@ steps:
 
 ### 5.6 `returnIf`
 
-- `returnIf` 是 Flow 编排 action，不走 driver
+- `returnIf` 是 Flow 编排 action，不会操作设备
 - 用途是“当前条件满足时，立即结束当前 flow”
 - 字段固定为：
   - `value`：模板解析后的任意值
@@ -281,7 +281,7 @@ steps:
 
 - **目标导向（推荐）**：通过 `to` / `from` 自动循环滚动，直到目标进入可见区域
   - 目标不需要初始可见，但必须已在 AX 树中（不确定时先 `dom` 确认）
-  - `from` 是锚点，传一个当前可见的元素，driver 从它所在的 scrollable 开始滚动；**目标不在当前屏幕时必须传 `from`**
+  - `from` 是锚点，传一个当前可见的元素，从它所在的可滚动区域开始滚动；**目标不在当前屏幕时必须传 `from`**
   - 不传 `from` 时目标必须初始可见，否则返回 not found
   - 方向自动推断，无需手动指定
 - 固定距离：通过 `dir + distance` 做纯距离滚动
@@ -411,5 +411,5 @@ steps:
 
 - 第一次 Ctrl+C：优雅中断，等待当前 step 完成后停止
 - 第二次 Ctrl+C：强制退出
-- 中断时自动清理：断开 driver 连接、停止 nslog 服务、移除信号处理器
+- 中断时自动清理临时资源、停止 nslog 服务
 - `needNSLog: true` 的 flow 结束时自动停止 nslog server（无论正常结束还是中断）
