@@ -183,9 +183,13 @@ public final class DaemonCommandRunner: @unchecked Sendable {
         case .stop:
             return (stop(), true)
         default:
-            return (IOSUseCLI(environment: environment, outputSink: { [output] text in
-                output.writeStdout(text)
-            }, driverChannel: driverChannel, cancellation: cancellation).executeParsed(parsed), false)
+            return (IOSUseCLI(
+                environment: environment,
+                outputSink: { [output] text in output.writeStdout(text) },
+                errorSink: { [output] text in output.writeStderr(text) },
+                driverChannel: driverChannel,
+                cancellation: cancellation
+            ).executeParsed(parsed), false)
         }
     }
 

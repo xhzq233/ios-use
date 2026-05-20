@@ -177,6 +177,8 @@ public enum DeviceService {
 }
 
 enum Shell {
+    typealias OutputSink = @Sendable (String) -> Void
+
     static func run(_ executable: String, arguments: [String], cwd: String? = nil) throws -> String {
         try runCaptured(executable, arguments: arguments, cwd: cwd, combineStderr: false)
     }
@@ -186,19 +188,53 @@ enum Shell {
     }
 
     static func runInheriting(_ executable: String, arguments: [String], cwd: String? = nil) throws {
+        try runStreaming(executable, arguments: arguments, cwd: cwd)
+    }
+
+    static func runStreaming(
+        _ executable: String,
+        arguments: [String],
+        cwd: String? = nil,
+        stdoutSink: OutputSink? = nil,
+        stderrSink: OutputSink? = nil
+    ) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [executable] + arguments
         if let cwd {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         }
-        process.standardInput = FileHandle.standardInput
-        process.standardOutput = FileHandle.standardOutput
-        process.standardError = FileHandle.standardError
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        let stdoutCapture = LockedString()
+        let stderrCapture = LockedString()
+        let readers = DispatchGroup()
+        readers.enter()
+        DispatchQueue.global().async {
+            readPipe(stdoutPipe, sink: stdoutSink, capture: stdoutCapture)
+            readers.leave()
+        }
+        readers.enter()
+        DispatchQueue.global().async {
+            readPipe(stderrPipe, sink: stderrSink, capture: stderrCapture)
+            readers.leave()
+        }
+
         try process.run()
         process.waitUntilExit()
+        readers.wait()
+
         if process.terminationStatus != 0 {
-            throw CLIParseError.invalidValue("\(executable) failed with exit \(process.terminationStatus)")
+            var message = "\(executable) failed with exit \(process.terminationStatus)"
+            let output = (stdoutCapture.value + stderrCapture.value).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !output.isEmpty {
+                message += ": \(output)"
+            }
+            throw CLIParseError.invalidValue(message)
         }
     }
 
@@ -239,5 +275,32 @@ enum Shell {
             throw CLIParseError.invalidValue(error.isEmpty ? "\(executable) failed with exit \(process.terminationStatus)" : error.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return output
+    }
+
+    private static func readPipe(_ pipe: Pipe, sink: OutputSink?, capture: LockedString) {
+        while true {
+            let data = pipe.fileHandleForReading.readData(ofLength: 4096)
+            if data.isEmpty { break }
+            let text = String(decoding: data, as: UTF8.self)
+            capture.append(text)
+            sink?(text)
+        }
+    }
+}
+
+private final class LockedString: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text = ""
+
+    func append(_ value: String) {
+        lock.lock()
+        text += value
+        lock.unlock()
+    }
+
+    var value: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return text
     }
 }

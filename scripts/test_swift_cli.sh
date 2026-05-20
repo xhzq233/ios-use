@@ -36,3 +36,33 @@ fi
   cd "$WORK_DIR"
   PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$IOS_USE_TEST_HOME" ios-use stop >/dev/null
 )
+
+echo "[swift-cli] Checking installed-style nslog streaming output..."
+NSLOG_OUT="$TMP_ROOT/nslog.out"
+NSLOG_ERR="$TMP_ROOT/nslog.err"
+pushd "$WORK_DIR" >/dev/null
+PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$IOS_USE_TEST_HOME-nslog" ios-use nslog --name ios-use-test-nslog >"$NSLOG_OUT" 2>"$NSLOG_ERR" &
+NSLOG_PID=$!
+popd >/dev/null
+for _ in {1..50}; do
+  if grep -q "NSLogger listening on port" "$NSLOG_OUT" && grep -q "Streaming logs" "$NSLOG_OUT"; then
+    break
+  fi
+  sleep 0.1
+done
+if ! grep -q "NSLogger listening on port" "$NSLOG_OUT" || ! grep -q "Streaming logs" "$NSLOG_OUT"; then
+  echo "[swift-cli] ERROR: nslog did not stream startup output" >&2
+  echo "[swift-cli] stdout:" >&2
+  cat "$NSLOG_OUT" >&2 || true
+  echo "[swift-cli] stderr:" >&2
+  cat "$NSLOG_ERR" >&2 || true
+  kill -INT "$NSLOG_PID" 2>/dev/null || true
+  wait "$NSLOG_PID" 2>/dev/null || true
+  exit 1
+fi
+kill -INT "$NSLOG_PID" 2>/dev/null || true
+wait "$NSLOG_PID" 2>/dev/null || true
+(
+  cd "$WORK_DIR"
+  PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$IOS_USE_TEST_HOME-nslog" ios-use stop >/dev/null
+)
