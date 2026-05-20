@@ -1,5 +1,5 @@
 import XCTest
-@testable import IOSUseCLI
+@testable import IOSUseDaemonRuntime
 
 final class OSLogServiceTests: XCTestCase {
     override func tearDown() {

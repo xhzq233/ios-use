@@ -30,18 +30,23 @@ public struct CLIErrorEnvelope: Equatable, Sendable {
 public struct IOSUsePaths: Equatable, Sendable {
     public let root: String
     public let config: String
-    public let session: String
     public let nslogLock: String
+    public let daemonSocket: String
+    public let daemonPid: String
+    public let daemonLog: String
     public let logs: String
     public let artifacts: String
 
     public static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> IOSUsePaths {
         let root = configuredRoot(environment: environment)
+        let socket = daemonSocketPath(root: root)
         return IOSUsePaths(
             root: root,
             config: "\(root)/config.json",
-            session: "\(root)/state/session.json",
             nslogLock: "\(root)/state/nslog.lock",
+            daemonSocket: socket,
+            daemonPid: "\(root)/state/daemon.pid",
+            daemonLog: "\(root)/logs/daemon.log",
             logs: "\(root)/logs",
             artifacts: "\(root)/artifacts"
         )
@@ -54,6 +59,22 @@ public struct IOSUsePaths: Equatable, Sendable {
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
         return "\(home)/.ios-use"
     }
+
+    private static func daemonSocketPath(root: String) -> String {
+        let preferred = "\(root)/state/daemon.sock"
+        if preferred.utf8.count < 100 {
+            return preferred
+        }
+        return "/tmp/iud-\(stableHash(root)).sock"
+    }
+
+    private static func stableHash(_ value: String) -> String {
+        var hash: UInt64 = 5381
+        for byte in value.utf8 {
+            hash = ((hash << 5) &+ hash) &+ UInt64(byte)
+        }
+        return String(hash, radix: 16)
+    }
 }
 
 public struct IOSUseCLI: Sendable {
@@ -63,10 +84,19 @@ public struct IOSUseCLI: Sendable {
 
     public let paths: IOSUsePaths
     public let outputSink: CLIOutputSink?
+    private let driverChannel: DaemonDriverChannel?
+    private let cancellation: DaemonCancellationToken?
 
-    public init(environment: [String: String] = ProcessInfo.processInfo.environment, outputSink: CLIOutputSink? = nil) {
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        outputSink: CLIOutputSink? = nil,
+        driverChannel: DaemonDriverChannel? = nil,
+        cancellation: DaemonCancellationToken? = nil
+    ) {
         self.paths = IOSUsePaths.resolve(environment: environment)
         self.outputSink = outputSink
+        self.driverChannel = driverChannel
+        self.cancellation = cancellation
     }
 
     public func run(arguments: [String]) -> CLIResult {
@@ -89,7 +119,7 @@ public struct IOSUseCLI: Sendable {
             }
             do {
                 let parsed = try CLIParser.parse(arguments)
-                return execute(parsed)
+                return executeParsed(parsed)
             } catch let error as CLIParseError {
                 return CLIErrorEnvelope(message: error.description).render()
             } catch {
@@ -98,7 +128,7 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func execute(_ parsed: ParsedCommand) -> CLIResult {
+    public func executeParsed(_ parsed: ParsedCommand) -> CLIResult {
         switch parsed {
         case .devices(let options):
             return listDevices(options)
@@ -118,7 +148,7 @@ public struct IOSUseCLI: Sendable {
             }
         case .flow(let options):
             do {
-                let stdout = try FlowService.run(file: options.file, options: options, paths: paths, outputSink: outputSink)
+                let stdout = try FlowService.run(file: options.file, options: options, paths: paths, outputSink: outputSink, driverChannel: driverChannel, cancellation: cancellation)
                 return CLIResult(exitCode: 0, stdout: outputSink == nil ? stdout : "")
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
@@ -127,23 +157,20 @@ public struct IOSUseCLI: Sendable {
             }
         case .nslog(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: paths))
+                return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: paths, cancellation: cancellation))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .stop:
-            do {
-                return CLIResult(exitCode: 0, stdout: try SessionService.stop(paths: paths))
-            } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
-            }
+            DriverBootstrap.deleteResidualSessionFile(paths: paths)
+            return CLIResult(exitCode: 0, stdout: "Daemon stopped\n")
         case .proxy(.doctor):
             return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
         case .proxy(.configca(let udid)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(udid: udid, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(udid: udid, paths: paths, outputSink: outputSink, driverChannel: driverChannel))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -151,7 +178,7 @@ public struct IOSUseCLI: Sendable {
             }
         case .proxy(.start(let udid, let interfaceName)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.start(udid: udid, interfaceName: interfaceName, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.start(udid: udid, interfaceName: interfaceName, paths: paths, outputSink: outputSink, driverChannel: driverChannel))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -159,7 +186,7 @@ public struct IOSUseCLI: Sendable {
             }
         case .proxy(.stop(let udid)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(udid: udid, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(udid: udid, paths: paths, outputSink: outputSink, driverChannel: driverChannel))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -179,54 +206,65 @@ public struct IOSUseCLI: Sendable {
             }
         }
         do {
-            try prepareDriverSession(action.session)
-            let client = DriverClient(session: SessionService.read(paths: paths))
-            switch action {
-            case .dom(let raw, let fresh, _):
-                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatDom(client.dom(raw: raw, fresh: fresh)))
-            case .find(let label, let traits, let cindex, _):
-                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatFind(label: label, payload: client.find(label: label, traits: traits, cindex: cindex)))
-            case .waitFor(let label, let timeout, let traits, let cindex, _):
-                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatWaitFor(label: label, payload: client.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)))
-            case .screenshot(let name, _):
-                return try saveScreenshot(name: name, client: client)
-            case .tap(let target, let offset, let offsetRatio, let traits, let cindex, _):
-                return try tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, client: client)
-            case .longPress(let target, let duration, let traits, let cindex, _):
-                let payload = try client.longPress(target: try Self.target(target, traits: traits, cindex: cindex), durationMs: duration, traits: traits, cindex: cindex)
-                return CLIResult(exitCode: 0, stdout: "Longpress\n\(DriverOutput.formatElement(payload))")
-            case .input(let label, let content, let traits, let cindex, _):
-                try client.input(label: label, content: content, traits: traits, cindex: cindex)
-                return CLIResult(exitCode: 0, stdout: "Input \"\(content)\" into \"\(label)\"\n")
-            case .swipe(let to, let from, let dir, let distance, let traits, let cindex, _):
-                let result = try client.swipe(to: try Self.target(to, traits: traits, cindex: cindex), from: try Self.target(from), distance: distance, dir: dir, traits: traits, cindex: cindex)
-                return CLIResult(exitCode: 0, stdout: DriverOutput.formatSwipe(result))
-            case .activateApp(let bundleId, _):
-                try client.activateApp(bundleId: bundleId)
-                return CLIResult(exitCode: 0, stdout: "App \(bundleId) activated\n")
-            case .terminateApp(let bundleId, _):
-                do {
-                    try client.terminateApp(bundleId: bundleId)
-                } catch {
-                    if Self.isAppNotRunningError(error) {
-                        return CLIResult(exitCode: 0, stdout: "App \(bundleId) not running, skipped terminate\n")
-                    }
-                    throw error
+            if let driverChannel {
+                return try driverChannel.withClient(session: action.session) { client, _ in
+                    try executeDriverAction(action, client: client)
                 }
-                return CLIResult(exitCode: 0, stdout: "App \(bundleId) terminated\n")
-            case .home:
-                try client.home()
-                return CLIResult(exitCode: 0, stdout: "Pressed Home\n")
-            case .openURL(let url, _):
-                _ = try client.openURL(url: url)
-                return CLIResult(exitCode: 0, stdout: "Opened URL: \(url)\n")
-            case .dismissAlert(let index, _):
-                return CLIResult(exitCode: 0, stdout: try DriverOutput.formatAlert(client.dismissAlert(index: index)))
-            case .oslog:
-                throw CLIParseError.invalidValue("internal error: oslog should not require driver session")
+            } else {
+                let endpoint = try DriverBootstrap.resolveEndpoint(session: action.session, current: nil, paths: paths)
+                let client = DriverClient(endpoint: endpoint)
+                defer { client.close() }
+                return try executeDriverAction(action, client: client)
             }
         } catch {
             return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+        }
+    }
+
+    private func executeDriverAction(_ action: DriverAction, client: DriverClient) throws -> CLIResult {
+        switch action {
+        case .dom(let raw, let fresh, _):
+            return CLIResult(exitCode: 0, stdout: try DriverOutput.formatDom(client.dom(raw: raw, fresh: fresh)))
+        case .find(let label, let traits, let cindex, _):
+            return CLIResult(exitCode: 0, stdout: try DriverOutput.formatFind(label: label, payload: client.find(label: label, traits: traits, cindex: cindex)))
+        case .waitFor(let label, let timeout, let traits, let cindex, _):
+            return CLIResult(exitCode: 0, stdout: try DriverOutput.formatWaitFor(label: label, payload: client.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)))
+        case .screenshot(let name, _):
+            return try saveScreenshot(name: name, client: client)
+        case .tap(let target, let offset, let offsetRatio, let traits, let cindex, _):
+            return try tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, client: client)
+        case .longPress(let target, let duration, let traits, let cindex, _):
+            let payload = try client.longPress(target: try Self.target(target, traits: traits, cindex: cindex), durationMs: duration, traits: traits, cindex: cindex)
+            return CLIResult(exitCode: 0, stdout: "Longpress\n\(DriverOutput.formatElement(payload))")
+        case .input(let label, let content, let traits, let cindex, _):
+            try client.input(label: label, content: content, traits: traits, cindex: cindex)
+            return CLIResult(exitCode: 0, stdout: "Input \"\(content)\" into \"\(label)\"\n")
+        case .swipe(let to, let from, let dir, let distance, let traits, let cindex, _):
+            let result = try client.swipe(to: try Self.target(to, traits: traits, cindex: cindex), from: try Self.target(from), distance: distance, dir: dir, traits: traits, cindex: cindex)
+            return CLIResult(exitCode: 0, stdout: DriverOutput.formatSwipe(result))
+        case .activateApp(let bundleId, _):
+            try client.activateApp(bundleId: bundleId)
+            return CLIResult(exitCode: 0, stdout: "App \(bundleId) activated\n")
+        case .terminateApp(let bundleId, _):
+            do {
+                try client.terminateApp(bundleId: bundleId)
+            } catch {
+                if Self.isAppNotRunningError(error) {
+                    return CLIResult(exitCode: 0, stdout: "App \(bundleId) not running, skipped terminate\n")
+                }
+                throw error
+            }
+            return CLIResult(exitCode: 0, stdout: "App \(bundleId) terminated\n")
+        case .home:
+            try client.home()
+            return CLIResult(exitCode: 0, stdout: "Pressed Home\n")
+        case .openURL(let url, _):
+            _ = try client.openURL(url: url)
+            return CLIResult(exitCode: 0, stdout: "Opened URL: \(url)\n")
+        case .dismissAlert(let index, _):
+            return CLIResult(exitCode: 0, stdout: try DriverOutput.formatAlert(client.dismissAlert(index: index)))
+        case .oslog:
+            throw CLIParseError.invalidValue("internal error: oslog should not require driver session")
         }
     }
 
@@ -238,17 +276,17 @@ public struct IOSUseCLI: Sendable {
     }
 
     private func oslog(pattern: String?, flags: String?, timeout: Double?, name: String?, clear: Bool, bundleId: String?, session: SessionOptions) throws -> CLIResult {
+        let activeEndpoint = driverChannel?.currentEndpoint
         if clear {
-            if let udid = session.udid ?? SessionService.read(paths: paths)?.udid {
+            if let udid = session.udid ?? activeEndpoint?.udid {
                 return CLIResult(exitCode: 0, stdout: OSLogService.clear(udid: udid))
             }
             return CLIResult(exitCode: 0, stdout: OSLogService.clear())
         }
-        let activeSession = SessionService.read(paths: paths)
-        let defaultUsbUdid = try session.udid == nil && activeSession?.udid == nil
+        let defaultUsbUdid = try session.udid == nil && activeEndpoint?.udid == nil
             ? DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
             : nil
-        guard let udid = session.udid ?? activeSession?.udid ?? defaultUsbUdid else {
+        guard let udid = session.udid ?? activeEndpoint?.udid ?? defaultUsbUdid else {
             throw CLIParseError.invalidValue("oslog requires --udid, an active session, or a connected USB device")
         }
         return CLIResult(
@@ -261,7 +299,7 @@ public struct IOSUseCLI: Sendable {
                 timeout: timeout,
                 name: name,
                 paths: paths,
-                deviceTypeHint: activeSession?.udid == udid ? activeSession?.deviceType : (defaultUsbUdid == udid ? "real" : nil)
+                deviceTypeHint: activeEndpoint?.udid == udid ? activeEndpoint?.deviceType : (defaultUsbUdid == udid ? "real" : nil)
             )
         )
     }
@@ -275,10 +313,6 @@ public struct IOSUseCLI: Sendable {
         let ratioPoint = try offsetPoint == nil ? (offsetRatio.map { try Self.pointPair($0, emptyDefault: IOSUseProtocol.defaultTargetRatio) } ?? ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) : ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
         let result = try client.tap(target: foryTarget, traits: traits, cindex: cindex, offset: offsetPoint, ratio: ratioPoint)
         return CLIResult(exitCode: 0, stdout: "Tap\n\(DriverOutput.formatElement(result))")
-    }
-
-    private func prepareDriverSession(_ session: SessionOptions) throws {
-        try SessionService.prepareDriverSession(session, paths: paths)
     }
 
     static func isAppNotRunningError(_ error: Error) -> Bool {

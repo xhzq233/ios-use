@@ -1,6 +1,6 @@
 import XCTest
 import Darwin
-@testable import IOSUseCLI
+@testable import IOSUseDaemonRuntime
 @preconcurrency import NIOCore
 import NIOPosix
 @preconcurrency import NIOSSL

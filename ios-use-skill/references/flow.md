@@ -26,7 +26,7 @@ steps:
 ```
 
 - `name`：flow 名称，建议能说明页面或目标
-- `app`：可选；指定目标 app，常用于主 flow；入口 flow 会自动按冷启动语义创建 session，不要再把 `terminateApp` / `activateApp` / `openURL` 当成通用前置步骤写进 flow
+- `app`：可选；指定目标 app，常用于主 flow；入口 flow 会自动建连并切到目标 app，不要再把 `terminateApp` / `activateApp` / `openURL` 当成通用前置步骤写进 flow
 - `needNSLog`：设为 `true` 时自动启动 nslog 服务并等待 app 连接，flow 中的 `nslog` action 需要它
 - `steps`：按顺序执行的动作列表
 

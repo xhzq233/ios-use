@@ -41,17 +41,23 @@ public enum ProxyService {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    public static func configCA(udid requestedUdid: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
-        let udid = try resolveUdid(requestedUdid, paths: paths)
+    public static func configCA(
+        udid requestedUdid: String?,
+        paths: IOSUsePaths,
+        outputSink: FlowService.OutputSink? = nil,
+        driverChannel: DaemonDriverChannel? = nil
+    ) throws -> String {
+        let udid = try resolveUdid(requestedUdid, paths: paths, driverChannel: driverChannel)
         try ensureMitmproxyCA(paths: paths)
         let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
         let fingerprint = fingerprintPEM(pem)
         if caStateMatches(udid: udid, fingerprint: fingerprint, paths: paths) {
             return "CA already installed and trusted on device.\n"
         }
-        try SessionService.prepareDriverSession(SessionOptions(udid: udid), paths: paths)
-        _ = try DriverClient(session: SessionService.read(paths: paths)).proxyCAPush(caBase64: base64Body(fromPEM: pem))
-        let flowOutput = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
+        try withDriverClient(udid: udid, paths: paths, driverChannel: driverChannel) { client in
+            _ = try client.proxyCAPush(caBase64: base64Body(fromPEM: pem))
+        }
+        let flowOutput = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink, driverChannel: driverChannel)
 
         let existingState = readState(paths: paths)
         var state = existingState ?? ProxySessionState(
@@ -70,11 +76,17 @@ public enum ProxyService {
         return (outputSink == nil ? flowOutput : "") + "CA installed and trusted on device.\n"
     }
 
-    public static func start(udid requestedUdid: String?, interfaceName: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+    public static func start(
+        udid requestedUdid: String?,
+        interfaceName: String?,
+        paths: IOSUsePaths,
+        outputSink: FlowService.OutputSink? = nil,
+        driverChannel: DaemonDriverChannel? = nil
+    ) throws -> String {
         let interruptMonitor = InterruptMonitor()
         interruptMonitor.start()
         defer { interruptMonitor.stop() }
-        let udid = try resolveStartUdid(requestedUdid, paths: paths)
+        let udid = try resolveStartUdid(requestedUdid, paths: paths, driverChannel: driverChannel)
         if let state = readState(paths: paths), state.status == "running", isMitmdumpProcess(pid: state.mitmdumpPid ?? 0, expectedFlowFile: state.flowFile) {
             throw CLIParseError.invalidValue("Proxy already running. Run `proxy stop` first.")
         }
@@ -113,13 +125,14 @@ public enum ProxyService {
         var pendingFlowOutput = ""
         do {
             try interruptMonitor.throwIfInterrupted()
-            try verifyDeviceCanReachMac(udid: udid, macLanIp: wifi.macLanIp, paths: paths)
+            try verifyDeviceCanReachMac(udid: udid, macLanIp: wifi.macLanIp, paths: paths, driverChannel: driverChannel)
             try interruptMonitor.throwIfInterrupted()
             let flowOutput = try FlowService.run(
                 file: flowPath("proxy_set_wifi_proxy.yaml", paths: paths),
                 options: FlowOptions(file: "", udid: udid, externalVars: ["server": wifi.macLanIp, "port": String(IOSUseProtocol.proxyMitmdumpPort)]),
                 paths: paths,
-                outputSink: outputSink
+                outputSink: outputSink,
+                driverChannel: driverChannel
             )
             if outputSink == nil {
                 pendingFlowOutput = flowOutput
@@ -148,10 +161,15 @@ public enum ProxyService {
         return pendingFlowOutput + output
     }
 
-    public static func stop(udid requestedUdid: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+    public static func stop(
+        udid requestedUdid: String?,
+        paths: IOSUsePaths,
+        outputSink: FlowService.OutputSink? = nil,
+        driverChannel: DaemonDriverChannel? = nil
+    ) throws -> String {
         guard let state = readState(paths: paths) else {
             if let requestedUdid, !requestedUdid.isEmpty {
-                let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: requestedUdid), paths: paths, outputSink: outputSink)
+                let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: requestedUdid), paths: paths, outputSink: outputSink, driverChannel: driverChannel)
                 return (outputSink == nil ? flowOutput : "") + "Proxy stopped.\n"
             }
             throw CLIParseError.invalidValue("PROXY_NOT_RUNNING: no running proxy session")
@@ -159,7 +177,7 @@ public enum ProxyService {
         let udid = try resolveStopUdid(requestedUdid, state: state)
         var pendingFlowOutput = ""
         do {
-            let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
+            let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink, driverChannel: driverChannel)
             if outputSink == nil {
                 pendingFlowOutput = flowOutput
             }
@@ -181,30 +199,35 @@ public enum ProxyService {
     }
 
     static func resolveUdidForTesting(_ requested: String?, paths: IOSUsePaths) throws -> String {
-        try resolveUdid(requested, paths: paths)
+        try resolveUdid(requested, paths: paths, driverChannel: nil)
     }
 
     static func resolveStartUdidForTesting(_ requested: String?, paths: IOSUsePaths) throws -> String {
-        try resolveStartUdid(requested, paths: paths)
+        try resolveStartUdid(requested, paths: paths, driverChannel: nil)
     }
 
     static func resolveStopUdidForTesting(_ requested: String?, state: ProxySessionState) throws -> String {
         try resolveStopUdid(requested, state: state)
     }
 
-    private static func resolveUdid(_ requested: String?, paths: IOSUsePaths) throws -> String {
+    private static func resolveUdid(_ requested: String?, paths: IOSUsePaths, driverChannel: DaemonDriverChannel?) throws -> String {
         if let requested, !requested.isEmpty { return requested }
-        if let session = readSession(paths: paths), let udid = session["udid"] as? String, !udid.isEmpty { return udid }
+        if let udid = driverChannel?.currentEndpoint?.udid, !udid.isEmpty { return udid }
         if let state = readState(paths: paths), !state.udid.isEmpty { return state.udid }
-        try SessionService.prepareDriverSession(SessionOptions(), paths: paths)
-        if let session = readSession(paths: paths), let udid = session["udid"] as? String, !udid.isEmpty { return udid }
-        throw CLIParseError.invalidValue("No device UDID. Pass --udid or run an action command first.")
+        let endpoint = try DriverBootstrap.resolveEndpoint(session: SessionOptions(), current: nil, paths: paths)
+        if let driverChannel {
+            _ = try driverChannel.withClient(session: SessionOptions(udid: endpoint.udid)) { _, _ in () }
+        }
+        return endpoint.udid
     }
 
-    private static func resolveStartUdid(_ requested: String?, paths: IOSUsePaths) throws -> String {
+    private static func resolveStartUdid(_ requested: String?, paths: IOSUsePaths, driverChannel: DaemonDriverChannel?) throws -> String {
         if let requested, !requested.isEmpty { return requested }
+        if let udid = driverChannel?.currentEndpoint?.udid, !udid.isEmpty { return udid }
         if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first {
-            try SessionService.prepareDriverSession(SessionOptions(udid: device.udid), paths: paths)
+            if let driverChannel {
+                _ = try driverChannel.withClient(session: SessionOptions(udid: device.udid)) { _, _ in () }
+            }
             return device.udid
         }
         throw CLIParseError.invalidValue("No USB device UDID. Pass --udid or connect a configured USB device.")
@@ -215,11 +238,6 @@ public enum ProxyService {
             throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not \(requested). Run `proxy stop --udid \(state.udid)` or manually disable Wi-Fi proxy.")
         }
         return state.udid
-    }
-
-    private static func readSession(paths: IOSUsePaths) -> [String: Any]? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.session)) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     private static func writeState(_ state: ProxySessionState, paths: IOSUsePaths) throws {
@@ -343,16 +361,35 @@ public enum ProxyService {
         throw CLIParseError.invalidValue("Port \(port) not ready after \(IOSUseProtocol.proxyWaitPortTimeoutMilliseconds)ms")
     }
 
-    private static func verifyDeviceCanReachMac(udid: String, macLanIp: String, paths: IOSUsePaths) throws {
-        try SessionService.prepareDriverSession(SessionOptions(udid: udid), paths: paths)
+    private static func verifyDeviceCanReachMac(udid: String, macLanIp: String, paths: IOSUsePaths, driverChannel: DaemonDriverChannel?) throws {
         let token = UUID().uuidString
         let server = try ProxyProbeServer(token: token)
         defer { server.stop() }
         let url = "http://\(macLanIp):\(server.port)/ios-use-probe?token=\(token)"
-        _ = try DriverClient(session: SessionService.read(paths: paths)).openURL(url: url)
+        try withDriverClient(udid: udid, paths: paths, driverChannel: driverChannel) { client in
+            _ = try client.openURL(url: url)
+        }
         guard server.wait(timeoutMilliseconds: IOSUseProtocol.proxyWaitPortTimeoutMilliseconds) else {
             throw CLIParseError.invalidValue("DEVICE_CANNOT_REACH_MAC: device \(udid) cannot reach \(macLanIp) before proxy configuration")
         }
+    }
+
+    private static func withDriverClient<T>(
+        udid: String,
+        paths: IOSUsePaths,
+        driverChannel: DaemonDriverChannel?,
+        body: (DriverClient) throws -> T
+    ) throws -> T {
+        let options = SessionOptions(udid: udid)
+        if let driverChannel {
+            return try driverChannel.withClient(session: options) { client, _ in
+                try body(client)
+            }
+        }
+        let endpoint = try DriverBootstrap.resolveEndpoint(session: options, current: nil, paths: paths)
+        let client = DriverClient(endpoint: endpoint)
+        defer { client.close() }
+        return try body(client)
     }
 
     private static func detectLanInfo(interfaceName: String?) throws -> ProxySessionState.NetworkInfo {

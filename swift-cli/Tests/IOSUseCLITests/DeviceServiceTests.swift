@@ -1,11 +1,10 @@
 import XCTest
-@testable import IOSUseCLI
+@testable import IOSUseDaemonRuntime
 
 final class DeviceServiceTests: XCTestCase {
     override func tearDown() {
         DeviceService.listDevicesOverrideForTesting = nil
         DeviceService.usbDeviceUdidsOverrideForTesting = nil
-        DeviceService.resetCacheForTesting()
         super.tearDown()
     }
 
@@ -94,7 +93,7 @@ final class DeviceServiceTests: XCTestCase {
         XCTAssertEqual(output, "outerr")
     }
 
-    func testListDevicesOverrideBypassesCacheForIsolatedTests() throws {
+    func testListDevicesDoesNotCacheDiscoveryAcrossCalls() throws {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": "/tmp/ios-use-device-cache-\(UUID().uuidString)"])
         var calls = 0
         DeviceService.listDevicesOverrideForTesting = { _, _ in

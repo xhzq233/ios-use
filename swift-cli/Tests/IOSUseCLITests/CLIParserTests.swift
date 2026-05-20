@@ -1,5 +1,5 @@
 import XCTest
-import IOSUseCLI
+import IOSUseDaemonRuntime
 
 final class CLIParserTests: XCTestCase {
     func testParsesDeviceAndConfigCommands() throws {

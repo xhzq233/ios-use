@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ParsedCommand: Equatable, Sendable {
+public enum ParsedCommand: Codable, Equatable, Sendable {
     case devices(DeviceOptions)
     case config(ConfigOptions)
     case stop
@@ -22,7 +22,7 @@ public enum ParsedCommand: Equatable, Sendable {
     }
 }
 
-public struct DeviceOptions: Equatable, Sendable {
+public struct DeviceOptions: Codable, Equatable, Sendable {
     public var simulator = false
     public var verbose = false
 
@@ -32,7 +32,7 @@ public struct DeviceOptions: Equatable, Sendable {
     }
 }
 
-public struct ConfigOptions: Equatable, Sendable {
+public struct ConfigOptions: Codable, Equatable, Sendable {
     public var udid: String?
     public var list = false
     public var simulator = false
@@ -50,7 +50,7 @@ public struct ConfigOptions: Equatable, Sendable {
     }
 }
 
-public struct SessionOptions: Equatable, Sendable {
+public struct SessionOptions: Codable, Equatable, Sendable {
     public var udid: String?
     public var verbose = false
 
@@ -60,7 +60,7 @@ public struct SessionOptions: Equatable, Sendable {
     }
 }
 
-public enum DriverAction: Equatable, Sendable {
+public enum DriverAction: Codable, Equatable, Sendable {
     case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, session: SessionOptions)
     case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, session: SessionOptions)
     case input(label: String, content: String, traits: String?, cindex: Int32?, session: SessionOptions)
@@ -116,7 +116,7 @@ public enum DriverAction: Equatable, Sendable {
     }
 }
 
-public struct FlowOptions: Equatable, Sendable {
+public struct FlowOptions: Codable, Equatable, Sendable {
     public var file: String
     public var udid: String?
     public var verbose = false
@@ -130,7 +130,7 @@ public struct FlowOptions: Equatable, Sendable {
     }
 }
 
-public struct NSLogOptions: Equatable, Sendable {
+public struct NSLogOptions: Codable, Equatable, Sendable {
     public var name: String?
     public var grep: String?
     public var flags = ""
@@ -142,7 +142,7 @@ public struct NSLogOptions: Equatable, Sendable {
     }
 }
 
-public enum ProxyCommand: Equatable, Sendable {
+public enum ProxyCommand: Codable, Equatable, Sendable {
     case configca(udid: String?)
     case start(udid: String?, interfaceName: String?)
     case stop(udid: String?)

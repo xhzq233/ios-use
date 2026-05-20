@@ -1,6 +1,6 @@
 import XCTest
 import IOSUseProtocol
-@testable import IOSUseCLI
+@testable import IOSUseDaemonRuntime
 
 final class FlowServiceTests: XCTestCase {
     func testMissingFlowFileFailsBeforeDriverWork() {
@@ -642,6 +642,41 @@ final class FlowServiceTests: XCTestCase {
         let result = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())
 
         XCTAssertTrue(result.stdout.contains("Step 1/1: Open Settings"))
+    }
+
+    func testFlowSleepStopsOnDaemonCancellation() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("cancel-sleep.yaml", """
+        name: cancel-sleep
+        steps:
+          - action: sleep
+            ms: 2000
+        """)
+        let token = DaemonCancellationToken()
+        let completed = DispatchSemaphore(value: 0)
+        let lock = NSLock()
+        var capturedError: Error?
+
+        DispatchQueue.global().async {
+            do {
+                _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver(), cancellation: token)
+            } catch {
+                lock.lock()
+                capturedError = error
+                lock.unlock()
+            }
+            completed.signal()
+        }
+
+        usleep(100_000)
+        token.cancel(signal: "SIGINT")
+
+        XCTAssertEqual(completed.wait(timeout: .now() + 1), .success)
+        lock.lock()
+        let error = capturedError
+        lock.unlock()
+        let signal = try XCTUnwrap(error as? CLIExitSignal)
+        XCTAssertEqual(signal.exitCode, 130)
     }
 }
 
