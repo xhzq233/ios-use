@@ -23,7 +23,14 @@ extension DriverClient: FlowDriver {}
 public enum FlowService {
     public typealias OutputSink = @Sendable (String) -> Void
 
-    public static func run(file: String, options: FlowOptions, paths: IOSUsePaths, outputSink: OutputSink? = nil) throws -> String {
+    public static func run(
+        file: String,
+        options: FlowOptions,
+        paths: IOSUsePaths,
+        outputSink: OutputSink? = nil,
+        driverChannel: DaemonDriverChannel? = nil,
+        cancellation: DaemonCancellationToken? = nil
+    ) throws -> String {
         let resolvedFile = URL(fileURLWithPath: file).standardized.path
         guard FileManager.default.fileExists(atPath: resolvedFile) else {
             throw CLIParseError.invalidValue("Flow file not found: \(file)")
@@ -70,9 +77,21 @@ public enum FlowService {
             nsloggerServer = server
             emit("  → nslog: listening on port \(server.port)\n")
         }
-        try SessionService.prepareDriverSession(SessionOptions(udid: options.udid, verbose: options.verbose), paths: paths)
-        let session = SessionService.read(paths: paths)
-        let driver = DriverClient(session: session)
+        let sessionOptions = SessionOptions(udid: options.udid, verbose: options.verbose)
+        let endpoint: DriverEndpoint
+        let driver: FlowDriver
+        if let driverChannel {
+            var resolvedEndpoint: DriverEndpoint?
+            let channelDriver = try driverChannel.withClient(session: sessionOptions) { client, endpoint in
+                resolvedEndpoint = endpoint
+                return client
+            }
+            endpoint = try resolvedEndpoint ?? DriverBootstrap.resolveEndpoint(session: sessionOptions, current: driverChannel.currentEndpoint, paths: paths)
+            driver = channelDriver
+        } else {
+            endpoint = try DriverBootstrap.resolveEndpoint(session: sessionOptions, current: nil, paths: paths)
+            driver = DriverClient(endpoint: endpoint)
+        }
         if let flowApp, !flowApp.isEmpty {
             do {
                 try driver.terminateApp(bundleId: flowApp)
@@ -86,26 +105,27 @@ public enum FlowService {
         var runner = FlowRunner(
             paths: paths,
             driver: driver,
-            udid: options.udid ?? session?.udid,
-            deviceType: session?.deviceType,
+            udid: options.udid ?? endpoint.udid,
+            deviceType: endpoint.deviceType,
             context: context,
             inheritedFlowApp: flowApp,
             outputSink: outputSink,
             captureOutput: captureOutput,
-            interruptMonitor: interruptMonitor
+            interruptMonitor: interruptMonitor,
+            daemonCancellation: cancellation
         )
         runner.output = bootstrapOutput
         runner.nsloggerServer = nsloggerServer
         if let server = nsloggerServer {
             runner.emit("Waiting for app to connect to NSLogger...\n")
-            runner.emit(try waitForNSLoggerConnection(server: server, timeoutMilliseconds: IOSUseProtocol.flowNSLogConnectTimeoutMilliseconds, interruptMonitor: interruptMonitor))
+            runner.emit(try waitForNSLoggerConnection(server: server, timeoutMilliseconds: IOSUseProtocol.flowNSLogConnectTimeoutMilliseconds, interruptMonitor: interruptMonitor, cancellation: cancellation))
         }
         _ = try runner.run(file: resolvedFile, inheritedVars: options.externalVars, stack: [])
         return runner.output
     }
 
-    static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil) throws -> (stdout: String, outputs: [String: Any]) {
-        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext())
+    static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, cancellation: DaemonCancellationToken? = nil) throws -> (stdout: String, outputs: [String: Any]) {
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext(), daemonCancellation: cancellation)
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
@@ -140,6 +160,7 @@ private struct FlowRunner {
     var outputSink: FlowService.OutputSink? = nil
     var captureOutput = true
     var interruptMonitor: InterruptMonitor? = nil
+    var daemonCancellation: DaemonCancellationToken? = nil
     var output = ""
     var nsloggerServer: NSLoggerServer?
 
@@ -269,7 +290,8 @@ private struct FlowRunner {
                 inheritedFlowApp: flowApp,
                 outputSink: outputSink,
                 captureOutput: outputSink == nil,
-                interruptMonitor: interruptMonitor
+                interruptMonitor: interruptMonitor,
+                daemonCancellation: daemonCancellation
             )
             child.nsloggerServer = nsloggerServer
             let childOutputs = try child.run(file: childFile, inheritedVars: flowVars.merging(childVars) { _, new in new }, stack: stack)
@@ -344,7 +366,7 @@ private struct FlowRunner {
             let flags = optionalString(step["flags"]) ?? ""
             let timeout = try optionalNumber(step["timeout"], field: "nslog.timeout") ?? 0
             let startedAt = Date()
-            let matches = try waitForNSLogMatches(server: nsloggerServer, pattern: pattern, flags: flags, timeout: timeout, interruptMonitor: interruptMonitor)
+            let matches = try waitForNSLogMatches(server: nsloggerServer, pattern: pattern, flags: flags, timeout: timeout, interruptMonitor: interruptMonitor, cancellation: daemonCancellation)
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             let path = try saveLog(lines: matches, name: optionalString(step["name"]) ?? "nslog-\(flowTimestamp())")
             emit("  → nslog: \(matches.count) matched /\(pattern)/ in \(elapsedMs)ms → \(path)\n")
@@ -411,6 +433,7 @@ private struct FlowRunner {
 
     private func throwIfInterrupted() throws {
         try interruptMonitor?.throwIfInterrupted()
+        try throwIfCancelled(daemonCancellation)
     }
 
     private func interruptibleSleep(milliseconds: Int) throws {
@@ -514,12 +537,13 @@ private func nsloggerOptions(_ raw: Any?) throws -> NSLoggerServerOptions? {
     )
 }
 
-private func waitForNSLogMatches(server: NSLoggerServer, pattern: String, flags: String, timeout: Double, interruptMonitor: InterruptMonitor? = nil) throws -> [String] {
+private func waitForNSLogMatches(server: NSLoggerServer, pattern: String, flags: String, timeout: Double, interruptMonitor: InterruptMonitor? = nil, cancellation: DaemonCancellationToken? = nil) throws -> [String] {
     let deadline = Date().addingTimeInterval(max(0, timeout))
     let regex = try NSRegularExpression(pattern: pattern, options: try NSLogService.regexOptions(flags))
     var cursor = 0
     repeat {
         try interruptMonitor?.throwIfInterrupted()
+        try throwIfCancelled(cancellation)
         let result = server.grep(regex: regex, from: cursor)
         cursor = result.nextIndex
         let matches = result.matches
@@ -529,14 +553,16 @@ private func waitForNSLogMatches(server: NSLoggerServer, pattern: String, flags:
         usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
     } while Date() < deadline
     try interruptMonitor?.throwIfInterrupted()
+    try throwIfCancelled(cancellation)
     return server.grep(regex: regex, from: cursor).matches
 }
 
-private func waitForNSLoggerConnection(server: NSLoggerServer, timeoutMilliseconds: Int, interruptMonitor: InterruptMonitor? = nil) throws -> String {
+private func waitForNSLoggerConnection(server: NSLoggerServer, timeoutMilliseconds: Int, interruptMonitor: InterruptMonitor? = nil, cancellation: DaemonCancellationToken? = nil) throws -> String {
     let startedAt = Date()
     let timeoutSeconds = Double(max(0, timeoutMilliseconds)) / 1000.0
     while Date().timeIntervalSince(startedAt) < timeoutSeconds {
         try interruptMonitor?.throwIfInterrupted()
+        try throwIfCancelled(cancellation)
         if server.activeClientCount > 0 {
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             return "App connected to NSLogger (\(elapsedMs)ms)\n"
@@ -544,8 +570,15 @@ private func waitForNSLoggerConnection(server: NSLoggerServer, timeoutMillisecon
         usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
     }
     try interruptMonitor?.throwIfInterrupted()
+    try throwIfCancelled(cancellation)
     let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
     return "Timeout waiting for app to connect to NSLogger after \(elapsedMs)ms, continuing...\n"
+}
+
+private func throwIfCancelled(_ cancellation: DaemonCancellationToken?) throws {
+    if cancellation?.isCancelled == true {
+        throw CLIExitSignal(exitCode: 130, message: "Interrupted by Ctrl+C")
+    }
 }
 
 private func flowTimestamp() -> String {

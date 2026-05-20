@@ -30,35 +30,22 @@ public enum DeviceService {
 
     static var listDevicesOverrideForTesting: ((Bool, IOSUsePaths) throws -> [IOSDevice])?
     static var usbDeviceUdidsOverrideForTesting: (() throws -> [String])?
-    private static var listDevicesCache: [String: [IOSDevice]] = [:]
 
     public static func listDevices(simulatorOnly: Bool, paths: IOSUsePaths) throws -> [IOSDevice] {
         if let listDevicesOverrideForTesting {
             return try listDevicesOverrideForTesting(simulatorOnly, paths)
         }
-        let cacheKey = "\(paths.root)|\(simulatorOnly)"
-        if let cached = listDevicesCache[cacheKey] {
-            return cached
-        }
-        let devices: [IOSDevice]
         if simulatorOnly {
             let output = try Shell.run("xcrun", arguments: ["simctl", "list", "devices", "booted"])
-            devices = parseBootedSimulators(output)
-        } else {
-            let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
-            guard !usbUdids.isEmpty else {
-                return []
-            }
-            let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
-            let realDevices = parseDeviceOutput(output).filter { $0.kind == .real }
-            devices = usbOnlyDevices(from: realDevices, usbUdids: usbUdids)
+            return parseBootedSimulators(output)
         }
-        listDevicesCache[cacheKey] = devices
-        return devices
-    }
-
-    static func resetCacheForTesting() {
-        listDevicesCache.removeAll(keepingCapacity: true)
+        let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
+        guard !usbUdids.isEmpty else {
+            return []
+        }
+        let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
+        let realDevices = parseDeviceOutput(output).filter { $0.kind == .real }
+        return usbOnlyDevices(from: realDevices, usbUdids: usbUdids)
     }
 
     static func usbOnlyDevices(from devices: [IOSDevice]) throws -> [IOSDevice] {

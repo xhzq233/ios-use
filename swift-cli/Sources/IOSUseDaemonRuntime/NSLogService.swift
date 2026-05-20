@@ -6,7 +6,7 @@ import NIOPosix
 @preconcurrency import NIOSSL
 
 public enum NSLogService {
-    public static func stream(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
+    public static func stream(options: NSLogOptions, paths: IOSUsePaths, cancellation: DaemonCancellationToken? = nil) throws -> String {
         let grepRegex = try options.grep.flatMap { grep -> NSRegularExpression? in
             guard !grep.isEmpty else { return nil }
             return try NSRegularExpression(pattern: grep, options: regexOptions(options.flags))
@@ -46,10 +46,13 @@ public enum NSLogService {
         interruptMonitor.start()
         defer { interruptMonitor.stop() }
 
-        while server.isRunning && !interruptMonitor.interrupted {
+        while server.isRunning && !interruptMonitor.interrupted && cancellation?.isCancelled != true {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
         }
         try interruptMonitor.throwIfInterrupted()
+        if cancellation?.isCancelled == true {
+            throw CLIExitSignal(exitCode: 130, message: "Interrupted by Ctrl+C")
+        }
         return ""
     }
 
