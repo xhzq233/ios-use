@@ -106,13 +106,7 @@ import Fory
                 break
             }
 
-            let shouldAccept = connectionLock.sync {
-                if activeConnections < maxConnections {
-                    activeConnections += 1
-                    return true
-                }
-                return false
-            }
+            let shouldAccept = reserveConnectionSlot()
             if shouldAccept {
                 DispatchQueue.global().async {
                     self.handleConnection(clientFD)
@@ -122,6 +116,27 @@ import Fory
                 Darwin.close(clientFD)
             }
         }
+    }
+
+    private func reserveConnectionSlot() -> Bool {
+        let deadline = CFAbsoluteTimeGetCurrent() + Double(IOSUseProtocol.driverConnectionHandoffTimeoutMilliseconds) / IOSUseProtocol.millisecondsPerSecond
+        while running {
+            let didReserve = connectionLock.sync {
+                if activeConnections < maxConnections {
+                    activeConnections += 1
+                    return true
+                }
+                return false
+            }
+            if didReserve {
+                return true
+            }
+            if CFAbsoluteTimeGetCurrent() >= deadline {
+                return false
+            }
+            usleep(useconds_t(IOSUseProtocol.driverConnectionHandoffPollMicroseconds))
+        }
+        return false
     }
 
     private func handleConnection(_ fd: Int32) {

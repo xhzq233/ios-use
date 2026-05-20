@@ -10,6 +10,10 @@ public enum IOSUseProtocol {
     public static let maxFrameSizeBytes = 50 * 1024 * 1024
     /// The driver is intentionally single-client to avoid concurrent XCTest state mutation.
     public static let maxDriverConnections = 1
+    /// Grace window for accepting the next direct-CLI connection while the previous handler observes EOF.
+    public static let driverConnectionHandoffTimeoutMilliseconds = 250
+    /// Poll interval used inside the short driver connection handoff grace window.
+    public static let driverConnectionHandoffPollMicroseconds = 1_000
     /// Accept-loop backoff for the driver TCP server.
     public static let driverAcceptPollIntervalMicroseconds = 50_000
     /// Time to wait for a command to start on XCTest main thread.

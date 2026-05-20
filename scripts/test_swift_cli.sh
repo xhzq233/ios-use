@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 echo "[swift-cli] Running Swift CLI unit tests..."
 swift test --package-path "$ROOT_DIR/swift-cli"
 
-echo "[swift-cli] Checking installed-style daemon startup..."
+echo "[swift-cli] Checking installed-style CLI invocation..."
 swift build --package-path "$ROOT_DIR/swift-cli"
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/ios-use-cli-invocation.XXXXXX")"

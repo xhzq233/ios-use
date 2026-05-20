@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const decoder = new TextDecoder();
@@ -148,34 +148,6 @@ function execCmd(cmd, opts = {}) {
   };
 }
 
-function execCmdAsync(cmd, opts = {}) {
-  return new Promise(resolve => {
-    const proc = spawn(cmd[0], cmd.slice(1), {
-      cwd: opts.cwd ?? rootDir,
-      env: { ...process.env, ...(opts.env ?? {}) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const stdout = [];
-    const stderr = [];
-    proc.stdout.on('data', chunk => stdout.push(chunk));
-    proc.stderr.on('data', chunk => stderr.push(chunk));
-    proc.on('error', error => {
-      resolve({
-        code: 1,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: `${Buffer.concat(stderr).toString('utf8')}${error.message}\n`,
-      });
-    });
-    proc.on('close', code => {
-      resolve({
-        code: code ?? 1,
-        stdout: Buffer.concat(stdout).toString('utf8'),
-        stderr: Buffer.concat(stderr).toString('utf8'),
-      });
-    });
-  });
-}
-
 async function sleep(ms) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -186,13 +158,6 @@ function runCli(args) {
 
 function runCliToFiles(args, out, err) {
   const res = runCli(args);
-  writeFile(out, res.stdout);
-  writeFile(err, res.stderr);
-  return res;
-}
-
-async function runCliAsyncToFiles(args, out, err) {
-  const res = await execCmdAsync([iosUseCli, ...args], { env: { IOS_USE_HOME: iosHome } });
   writeFile(out, res.stdout);
   writeFile(err, res.stderr);
   return res;
@@ -369,12 +334,12 @@ function restoreStateFile(rel) {
 function backupLocalState() {
   ensureDir(stateBackupDir);
   backupStateFile('config.json');
-  fs.rmSync(path.join(iosHome, 'state/session.json'), { force: true });
+  backupStateFile('state/session.json');
 }
 
 function restoreLocalState() {
   restoreStateFile('config.json');
-  fs.rmSync(path.join(iosHome, 'state/session.json'), { force: true });
+  restoreStateFile('state/session.json');
 }
 
 async function waitForDriver() {
@@ -708,169 +673,6 @@ async function runProxyUnitCases() {
   }
 }
 
-function daemonPidPath(home = iosHome) {
-  return path.join(home, 'state/daemon.pid');
-}
-
-function daemonSocketPath(home = iosHome) {
-  return path.join(home, 'state/daemon.sock');
-}
-
-function daemonLogPath(home = iosHome) {
-  return path.join(home, 'logs/daemon.log');
-}
-
-function removeDaemonLog() {
-  fs.rmSync(daemonLogPath(), { force: true });
-}
-
-function countOccurrences(text, needle) {
-  return text.split(needle).length - 1;
-}
-
-async function runDaemonLocalCommandCase() {
-  const id = 'DMN-1';
-  if (!selected(id)) return recordSkip(id);
-  const localHome = path.join(artifactDir, 'daemon-local-home');
-  ensureDir(localHome);
-  const versionOut = path.join(artifactDir, `${id}-version.out`);
-  const versionErr = path.join(artifactDir, `${id}-version.err`);
-  const helpOut = path.join(artifactDir, `${id}-help.out`);
-  const helpErr = path.join(artifactDir, `${id}-help.err`);
-  console.log('[sim-test] RUN DMN-1: --version/--help must not start daemon');
-  const version = runExternalToFiles([iosUseCli, '--version'], versionOut, versionErr, { IOS_USE_HOME: localHome });
-  const help = runExternalToFiles([iosUseCli, '--help'], helpOut, helpErr, { IOS_USE_HOME: localHome });
-  if (
-    version.code === 0 &&
-    help.code === 0 &&
-    !fs.existsSync(daemonPidPath(localHome)) &&
-    !fs.existsSync(daemonSocketPath(localHome))
-  ) recordPass(id);
-  else recordFail(id, version.stdout + version.stderr + help.stdout + help.stderr);
-}
-
-async function runDaemonChannelReuseCase() {
-  const id = 'DMN-2';
-  if (!selected(id)) return recordSkip(id);
-  await ensureDriverReady();
-  runCli(['stop']);
-  removeDaemonLog();
-  const oslogOut = path.join(artifactDir, `${id}-oslog.out`);
-  const oslogErr = path.join(artifactDir, `${id}-oslog.err`);
-  const dom1Out = path.join(artifactDir, `${id}-dom1.out`);
-  const dom1Err = path.join(artifactDir, `${id}-dom1.err`);
-  const dom2Out = path.join(artifactDir, `${id}-dom2.out`);
-  const dom2Err = path.join(artifactDir, `${id}-dom2.err`);
-  console.log('[sim-test] RUN DMN-2: daemon command + two dom commands reuse one driver channel');
-  const oslog = runCliToFiles(['oslog', '--clear', '--udid', sim.udid], oslogOut, oslogErr);
-  const dom1 = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], dom1Out, dom1Err);
-  const dom2 = runCliToFiles(['dom', '--udid', sim.udid], dom2Out, dom2Err);
-  const log = readFileIfExists(daemonLogPath());
-  writeFile(path.join(artifactDir, `${id}-daemon.log`), log);
-  if (
-    oslog.code === 0 &&
-    dom1.code === 0 &&
-    dom2.code === 0 &&
-    countOccurrences(log, 'opened driver channel') === 1 &&
-    log.includes('argv=oslog --clear') &&
-    log.includes('argv=dom --fresh') &&
-    log.includes('argv=dom --udid')
-  ) recordPass(id);
-  else recordFail(id, oslog.stdout + oslog.stderr + dom1.stdout + dom1.stderr + dom2.stdout + dom2.stderr + log);
-}
-
-async function runDaemonQueueCase() {
-  const id = 'DMN-3';
-  if (!selected(id)) return recordSkip(id);
-  await ensureDriverReady();
-  runCli(['stop']);
-  removeDaemonLog();
-  await resetSettingsHome();
-  const waitOut = path.join(artifactDir, `${id}-waitFor.out`);
-  const waitErr = path.join(artifactDir, `${id}-waitFor.err`);
-  const domOut = path.join(artifactDir, `${id}-dom.out`);
-  const domErr = path.join(artifactDir, `${id}-dom.err`);
-  console.log('[sim-test] RUN DMN-3: concurrent waitFor + dom must serialize through daemon driver queue');
-  const started = performance.now();
-  const waitFor = runCliAsyncToFiles(
-    ['waitFor', '--label', '__ios_use_missing_daemon_queue_probe__', '--timeout', '1', '--udid', sim.udid],
-    waitOut,
-    waitErr,
-  );
-  await sleep(100);
-  const dom = runCliAsyncToFiles(['dom', '--udid', sim.udid], domOut, domErr);
-  const [waitRes, domRes] = await Promise.all([waitFor, dom]);
-  const elapsedMs = Math.round(performance.now() - started);
-  const log = readFileIfExists(daemonLogPath());
-  writeFile(path.join(artifactDir, `${id}-daemon.log`), log);
-  const waitArgv = log.indexOf('argv=waitFor');
-  const waitExit = log.indexOf('exit=1', waitArgv);
-  const domArgv = log.indexOf('argv=dom --udid', waitArgv);
-  if (
-    waitRes.code !== 0 &&
-    /timed out|not found/i.test(`${waitRes.stdout}\n${waitRes.stderr}`) &&
-    domRes.code === 0 &&
-    elapsedMs >= 900 &&
-    waitArgv >= 0 &&
-    waitExit > waitArgv &&
-    domArgv > waitExit
-  ) recordPass(id);
-  else recordFail(id, `elapsedMs=${elapsedMs}\n${waitRes.stdout}${waitRes.stderr}${domRes.stdout}${domRes.stderr}${log}`);
-}
-
-async function runDaemonNSLogStreamingCase() {
-  const id = 'DMN-4';
-  if (!selected(id)) return recordSkip(id);
-  const localHome = path.join(artifactDir, 'daemon-nslog-home');
-  const workDir = path.join(artifactDir, 'daemon-nslog-work');
-  ensureDir(localHome);
-  ensureDir(workDir);
-  const out = path.join(artifactDir, `${id}.out`);
-  const err = path.join(artifactDir, `${id}.err`);
-  console.log('[sim-test] RUN DMN-4: installed-style nslog must stream startup output through daemon stdout fd');
-  const stdoutFd = fs.openSync(out, 'w');
-  const stderrFd = fs.openSync(err, 'w');
-  const proc = spawn(iosUseCli, ['nslog', '--name', 'ios-use-dmn-nslog'], {
-    cwd: workDir,
-    env: { ...process.env, IOS_USE_HOME: localHome },
-    stdio: ['ignore', stdoutFd, stderrFd],
-  });
-  const closed = new Promise(resolve => {
-    proc.on('close', code => resolve(code ?? 1));
-    proc.on('error', () => resolve(1));
-  });
-  let ready = false;
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const stdout = readFileIfExists(out);
-    if (stdout.includes('NSLogger listening on port') && stdout.includes('Streaming logs... Press Ctrl+C to stop.')) {
-      ready = true;
-      break;
-    }
-    await sleep(100);
-  }
-  proc.kill('SIGINT');
-  const code = await closed;
-  fs.closeSync(stdoutFd);
-  fs.closeSync(stderrFd);
-  runExternalToFiles([iosUseCli, 'stop'], path.join(artifactDir, `${id}-stop.out`), path.join(artifactDir, `${id}-stop.err`), { IOS_USE_HOME: localHome });
-  if (ready && code === 130) recordPass(id);
-  else recordFail(id, `exit=${code}\n${readFileIfExists(out)}${readFileIfExists(err)}`);
-}
-
-async function runDaemonInterruptOutputCase() {
-  const id = 'DMN-5';
-  if (!selected(id)) return recordSkip(id);
-  console.log('[sim-test] RUN DMN-5: Swift daemon unit coverage for interrupt output fd and early interrupt races');
-  const res = runExternalToFiles(
-    ['swift', 'test', '--package-path', 'swift-cli', '--filter', 'DaemonServerClientTests'],
-    path.join(artifactDir, `${id}.out`),
-    path.join(artifactDir, `${id}.err`),
-    { IOS_USE_HOME: iosHome }
-  );
-  if (res.code === 0) recordPass(id);
-  else recordFail(id, res.stdout + res.stderr);
-}
-
 async function runDriverUnitCases() {
   const ids = ['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'];
   if (!anySelected(ids)) {
@@ -1186,11 +988,6 @@ function buildCases() {
     { id: 'OL-7', run: () => runCaseFileExists('OL-7', path.join(iosHome, 'artifacts/oslog-global.log'), ['oslog', '--name', 'oslog-global', '--udid', sim.udid]) },
     { id: 'OL-8', run: () => runCaseContains('OL-8', 'cleared=', ['oslog', '--clear', '--bundle-id', 'com.apple.Preferences', '--udid', sim.udid]) },
     { id: 'OL-9', run: () => runCaseFileExists('OL-9', path.join(iosHome, 'artifacts/oslog-timeout.log'), ['oslog', '--name', 'oslog-timeout', '--pattern', '__ios_use_no_such_log_line__', '--timeout', '0.2', '--udid', sim.udid]) },
-    { id: 'DMN-1', run: runDaemonLocalCommandCase },
-    { id: 'DMN-2', run: runDaemonChannelReuseCase },
-    { id: 'DMN-3', run: runDaemonQueueCase },
-    { id: 'DMN-4', run: runDaemonNSLogStreamingCase },
-    { id: 'DMN-5', run: runDaemonInterruptOutputCase },
     { id: 'CFG-2', run: () => unsupportedCase('CFG-2', 'real-device signing/install path, not Simulator') },
     { id: 'CFG-3', run: () => unsupportedCase('CFG-3', 'Apple ID first-login signing path, not Simulator and must not touch local credentials') },
     ...['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'].map(id => ({ id, run: runDriverUnitCases })),

@@ -1,12 +1,18 @@
 import XCTest
 import Darwin
-@testable import IOSUseDaemonRuntime
+@testable import IOSUseCLI
 
 final class ProxyServiceTests: XCTestCase {
-    func testResolveUdidPrefersExplicitThenProxyState() throws {
+    func testResolveUdidPrefersExplicitThenActiveSessionThenProxyState() throws {
         let root = try temporaryRoot()
-        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try SessionService.writeSimulatorSession(
+            udid: "ACTIVE-DEVICE",
+            deviceName: "Active",
+            deviceVersion: "26.0",
+            paths: paths
+        )
         let stale = ProxySessionState(
             sessionId: "proxy-old",
             status: "stopped",
@@ -18,13 +24,19 @@ final class ProxyServiceTests: XCTestCase {
         try data.write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
 
         XCTAssertEqual(try ProxyService.resolveUdidForTesting("EXPLICIT", paths: paths), "EXPLICIT")
-        XCTAssertEqual(try ProxyService.resolveUdidForTesting(nil, paths: paths), "STALE-PROXY-DEVICE")
+        XCTAssertEqual(try ProxyService.resolveUdidForTesting(nil, paths: paths), "ACTIVE-DEVICE")
     }
 
-    func testProxyStartDefaultDoesNotUseStaleProxyState() throws {
+    func testProxyStartDefaultDoesNotUseActiveSessionOrStaleProxyState() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try SessionService.writeSimulatorSession(
+            udid: "ACTIVE-SIM",
+            deviceName: "Simulator",
+            deviceVersion: "26.0",
+            paths: paths
+        )
         try JSONEncoder().encode(ProxySessionState(
             sessionId: "proxy-old",
             status: "stopped",
@@ -35,15 +47,16 @@ final class ProxyServiceTests: XCTestCase {
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             simulatorOnly ? [] : [IOSDevice(name: "USB", version: "26.0", udid: "USB-DEVICE", kind: .real)]
         }
+        SessionService.simulatorDriverReachableForTesting = { true }
         addTeardownBlock {
             DeviceService.listDevicesOverrideForTesting = nil
-            DriverBootstrap.simulatorDriverReachableForTesting = nil
-            DriverBootstrap.simulatorDriverLauncherForTesting = nil
-            DriverBootstrap.realDriverReachableForTesting = nil
-            DriverBootstrap.realDriverLauncherForTesting = nil
+            SessionService.simulatorDriverReachableForTesting = nil
+            SessionService.simulatorDriverLauncherForTesting = nil
+            SessionService.realDriverReachableForTesting = nil
+            SessionService.realDriverLauncherForTesting = nil
         }
-        DriverBootstrap.realDriverReachableForTesting = { _ in true }
-        DriverBootstrap.realDriverLauncherForTesting = { _, _ in }
+        SessionService.realDriverReachableForTesting = { _ in true }
+        SessionService.realDriverLauncherForTesting = { _, _ in }
         try """
         {"devices":{"USB-DEVICE":{"bundleId":"com.example.driver","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)

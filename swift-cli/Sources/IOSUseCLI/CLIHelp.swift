@@ -1,5 +1,4 @@
 import Foundation
-import IOSUseDaemonRuntime
 
 enum CLIHelp {
     static var rootText: String {
@@ -78,7 +77,7 @@ enum CLIHelp {
             return """
             Usage: ios-use stop
 
-            Stop the ios-use background service for the current IOS_USE_HOME.
+            Stop the active driver session.
 
             """
         case "dom":

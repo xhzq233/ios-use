@@ -1,6 +1,6 @@
 import XCTest
 import Darwin
-@testable import IOSUseDaemonRuntime
+@testable import IOSUseCLI
 @preconcurrency import NIOCore
 import NIOPosix
 @preconcurrency import NIOSSL
@@ -10,7 +10,6 @@ final class NSLogServiceTests: XCTestCase {
         NSLogService.processCommandOverrideForTesting = nil
         NSLogService.processAliveOverrideForTesting = nil
         NSLogService.killOverrideForTesting = nil
-        NSLogService.serverOptionsOverrideForTesting = nil
         super.tearDown()
     }
 
