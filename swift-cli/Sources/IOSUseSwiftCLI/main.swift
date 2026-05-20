@@ -12,7 +12,7 @@ if let immediate = CLIHelp.immediateResult(arguments: rawArguments) {
 } else {
     result = DaemonFrontend().run(
         arguments: rawArguments,
-        executablePath: CommandLine.arguments[0]
+        executablePath: IOSUseExecutablePath.current()
     )
 }
 
