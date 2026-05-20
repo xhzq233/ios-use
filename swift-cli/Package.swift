@@ -8,7 +8,7 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "IOSUseDaemonRuntime", targets: ["IOSUseDaemonRuntime"]),
+        .library(name: "IOSUseCLI", targets: ["IOSUseCLI"]),
         .executable(name: "ios-use-swift", targets: ["IOSUseSwiftCLI"])
     ],
     dependencies: [
@@ -19,7 +19,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "IOSUseDaemonRuntime",
+            name: "IOSUseCLI",
             dependencies: [
                 .product(name: "IOSUseProtocol", package: "IOSUseProtocol"),
                 .product(name: "NIOCore", package: "swift-nio"),
@@ -30,12 +30,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "IOSUseSwiftCLI",
-            dependencies: ["IOSUseDaemonRuntime"]
+            dependencies: ["IOSUseCLI"]
         ),
         .testTarget(
             name: "IOSUseCLITests",
             dependencies: [
-                "IOSUseDaemonRuntime",
+                "IOSUseCLI",
                 "IOSUseProtocol",
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),

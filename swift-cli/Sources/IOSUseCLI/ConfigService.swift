@@ -23,12 +23,7 @@ public enum ConfigService {
     private static let defaultDriverBundlePrefix = "com.ios-use.driver"
     private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
 
-    public static func configureDevice(
-        options: ConfigOptions,
-        paths: IOSUsePaths,
-        outputSink: (@Sendable (String) -> Void)? = nil,
-        errorSink: (@Sendable (String) -> Void)? = nil
-    ) throws -> String {
+    public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
         let realDevices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
         let udid: String
         if let requested = options.udid {
@@ -68,7 +63,7 @@ public enum ConfigService {
         if let appleId = options.appleId { signArgs += ["--apple-id", appleId] }
         if let password = options.password { signArgs += ["--password", password] }
         if options.verbose { signArgs.append("--verbose") }
-        try Shell.runStreaming(altsign, arguments: signArgs, stdoutSink: outputSink, stderrSink: errorSink)
+        try Shell.runInheriting(altsign, arguments: signArgs)
 
         guard FileManager.default.fileExists(atPath: signedIpa) else {
             throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
@@ -153,6 +148,13 @@ public enum ConfigService {
         let launchOutput = try Shell.run("xcrun", arguments: ["simctl", "launch", udid, simulatorBundleId]).trimmingCharacters(in: .whitespacesAndNewlines)
         waitForSimulatorDriver()
         try saveConfig(udid: udid, bundleId: simulatorBundleId, port: String(IOSUseProtocol.defaultDriverPort), paths: paths)
+        let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first { $0.udid == udid }
+        try SessionService.writeSimulatorSession(
+            udid: udid,
+            deviceName: simulator?.name ?? "Simulator",
+            deviceVersion: simulator?.version ?? "",
+            paths: paths
+        )
         return "Using prebuilt driver: \(ipaPath)\nDriver installed to Simulator\nDriver launched on Simulator (PID: \(launchOutput))\nSimulator config complete!\n"
     }
 
@@ -271,7 +273,9 @@ public enum ConfigService {
 
     private static func waitForSimulatorDriver() {
         for _ in 0..<50 {
-            if (try? DriverClient().dom(raw: false, fresh: false)) != nil {
+            let driver = DriverClient()
+            defer { driver.close() }
+            if (try? driver.dom(raw: false, fresh: false)) != nil {
                 return
             }
             usleep(200_000)
@@ -285,48 +289,92 @@ private extension String {
     }
 }
 
-public struct DriverEndpoint: Equatable, Sendable {
-    public let udid: String
-    public let port: Int
-    public let deviceName: String
-    public let deviceVersion: String
-    public let deviceType: String
+public enum SessionService {
+    public struct Info: Equatable, Sendable {
+        public let sessionId: String
+        public let udid: String
+        public let port: Int
+        public let deviceName: String
+        public let deviceVersion: String
+        public let deviceType: String
 
-    public init(udid: String, port: Int = Int(IOSUseProtocol.defaultDriverPort), deviceName: String, deviceVersion: String, deviceType: String) {
-        self.udid = udid
-        self.port = port
-        self.deviceName = deviceName
-        self.deviceVersion = deviceVersion
-        self.deviceType = deviceType
+        public init(sessionId: String, udid: String, port: Int, deviceName: String, deviceVersion: String, deviceType: String) {
+            self.sessionId = sessionId
+            self.udid = udid
+            self.port = port
+            self.deviceName = deviceName
+            self.deviceVersion = deviceVersion
+            self.deviceType = deviceType
+        }
     }
 
-    public var isSimulator: Bool {
-        deviceType == "simulator"
-    }
-}
-
-public enum DriverBootstrap {
-    static var endpointResolverForTesting: ((SessionOptions, DriverEndpoint?, IOSUsePaths) throws -> DriverEndpoint)?
     static var simulatorDriverReachableForTesting: (() -> Bool)?
     static var simulatorDriverLauncherForTesting: ((String) throws -> Void)?
-    static var simulatorDriverTerminatorForTesting: ((String) throws -> Bool)?
     static var realDriverReachableForTesting: ((String) -> Bool)?
     static var realDriverLauncherForTesting: ((String, String) throws -> Void)?
     static var realDriverTerminatorForTesting: ((String) throws -> Bool)?
 
-    public static func resolveEndpoint(session: SessionOptions, current: DriverEndpoint?, paths: IOSUsePaths) throws -> DriverEndpoint {
-        if let endpointResolverForTesting {
-            return try endpointResolverForTesting(session, current, paths)
+    public static func clear(paths: IOSUsePaths) {
+        try? FileManager.default.removeItem(atPath: paths.session)
+    }
+
+    public static func stop(paths: IOSUsePaths) throws -> String {
+        let current = read(paths: paths)
+        var udid = current?.udid
+        var deviceType = current?.deviceType
+        if udid == nil {
+            if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first {
+                udid = device.udid
+                deviceType = device.kind.rawValue
+            }
         }
-        if let current, session.udid == nil {
+
+        var output = ""
+        if let udid, deviceType != "simulator" {
+            let terminate = realDriverTerminatorForTesting ?? terminateRealDriverProcesses
+            if (try? terminate(udid)) == true {
+                output += "Driver app terminated on device\n"
+            }
+        } else if udid == nil {
+            output += "No active session and no device found\n"
+        }
+
+        clear(paths: paths)
+        output += "Session stopped\n"
+        return output
+    }
+
+    public static func read(paths: IOSUsePaths) -> Info? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.session)),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessionId = raw["sessionId"] as? String,
+              let udid = raw["udid"] as? String else {
+            return nil
+        }
+        return Info(
+            sessionId: sessionId,
+            udid: udid,
+            port: raw["port"] as? Int ?? Int(IOSUseProtocol.defaultDriverPort),
+            deviceName: raw["deviceName"] as? String ?? "",
+            deviceVersion: raw["deviceVersion"] as? String ?? "",
+            deviceType: raw["deviceType"] as? String ?? ""
+        )
+    }
+
+    public static func writeSimulatorSession(udid: String, deviceName: String, deviceVersion: String, paths: IOSUsePaths) throws {
+        try writeSession(
+            udid: udid,
+            deviceName: deviceName,
+            deviceVersion: deviceVersion,
+            deviceType: "simulator",
+            paths: paths
+        )
+    }
+
+    public static func prepareDriverSession(_ session: SessionOptions, paths: IOSUsePaths) throws {
+        if session.udid == nil, let current = read(paths: paths) {
             try ConfigService.assertDriverVersionCurrent(udid: current.udid, paths: paths)
-            if current.isSimulator {
-                try ensureSimulatorDriverRunning(udid: current.udid, allowExistingDriver: true, paths: paths)
-                return current
-            }
-            if isDriverPortReachable(udid: current.udid) {
-                return current
-            }
+            return
         }
 
         let udid: String
@@ -339,75 +387,87 @@ public enum DriverBootstrap {
             }
             udid = device.udid
         }
-
         let configured = DeviceService.configuredUdids(paths: paths)
         guard configured.contains(udid) else {
             throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
         }
         try ConfigService.assertDriverVersionCurrent(udid: udid, paths: paths)
-
-        if let current, current.udid == udid {
-            if current.isSimulator {
-                try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: true, paths: paths)
-                return current
-            }
-            if isDriverPortReachable(udid: udid) {
-                return current
-            }
+        if let current = read(paths: paths), current.udid == udid {
+            return
         }
-
         if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
-            try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: false, paths: paths)
-            return DriverEndpoint(
+            try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: false)
+            try writeSession(
                 udid: udid,
                 deviceName: simulator.name,
                 deviceVersion: simulator.version,
-                deviceType: "simulator"
+                deviceType: "simulator",
+                paths: paths
             )
+            return
         }
         if session.udid != nil, try DeviceService.isUsbDeviceConnected(udid: udid) {
-            try ensureRealDriverRunning(udid: udid, paths: paths, verbose: session.verbose)
-            return DriverEndpoint(
+            try writeSession(
                 udid: udid,
                 deviceName: "Unknown",
                 deviceVersion: "",
-                deviceType: "real"
+                deviceType: "real",
+                paths: paths
             )
+            return
         }
         if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first(where: { $0.udid == udid }) {
-            try ensureRealDriverRunning(udid: udid, paths: paths, verbose: session.verbose)
-            return DriverEndpoint(
+            try writeSession(
                 udid: udid,
                 deviceName: device.name,
                 deviceVersion: device.version,
-                deviceType: "real"
+                deviceType: "real",
+                paths: paths
             )
+            return
         }
         throw CLIParseError.invalidValue("Device \(udid) not found.")
     }
 
-    public static func terminateDriverIfNeeded(endpoint: DriverEndpoint?) throws -> Bool {
-        guard let endpoint else { return false }
-        if endpoint.isSimulator {
-            let terminate = simulatorDriverTerminatorForTesting ?? terminateSimulatorDriver
-            return try terminate(endpoint.udid)
+    public static func launchPreparedDriverSession(paths: IOSUsePaths, verbose: Bool) throws {
+        guard let current = read(paths: paths) else {
+            throw CLIParseError.invalidValue("No active driver session. Run `ios-use config --udid <udid>` first.")
         }
-        let terminate = realDriverTerminatorForTesting ?? terminateRealDriverProcesses
-        return try terminate(endpoint.udid)
+        try ConfigService.assertDriverVersionCurrent(udid: current.udid, paths: paths)
+        switch current.deviceType {
+        case "simulator":
+            try ensureSimulatorDriverRunning(udid: current.udid, allowExistingDriver: false)
+        case "real":
+            try ensureRealDriverRunning(udid: current.udid, paths: paths, verbose: verbose, checkFirst: false)
+        default:
+            throw CLIParseError.invalidValue("Unknown session device type: \(current.deviceType)")
+        }
     }
 
-    public static func deleteResidualSessionFile(paths: IOSUsePaths) {
-        try? FileManager.default.removeItem(atPath: "\(paths.root)/state/session.json")
+    public static func writeSession(udid: String, deviceName: String, deviceVersion: String, deviceType: String, paths: IOSUsePaths) throws {
+        let root: [String: Any] = [
+            "sessionId": "session-\(Int(Date().timeIntervalSince1970 * 1000))",
+            "udid": udid,
+            "port": IOSUseProtocol.defaultDriverPort,
+            "deviceName": deviceName,
+            "deviceVersion": deviceVersion,
+            "deviceType": deviceType,
+            "createdAt": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        let sessionDir = URL(fileURLWithPath: paths.session).deletingLastPathComponent().path
+        try FileManager.default.createDirectory(atPath: sessionDir, withIntermediateDirectories: true, attributes: nil)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: URL(fileURLWithPath: paths.session), options: .atomic)
     }
 
-    private static func ensureRealDriverRunning(udid: String, paths: IOSUsePaths, verbose: Bool) throws {
+    private static func ensureRealDriverRunning(udid: String, paths: IOSUsePaths, verbose: Bool, checkFirst: Bool = true) throws {
         let isReachable = realDriverReachableForTesting ?? { targetUdid in
             isDriverPortReachable(udid: targetUdid)
         }
         let launch = realDriverLauncherForTesting ?? { targetUdid, bundleId in
             try launchRealDriverDetached(udid: targetUdid, bundleId: bundleId, paths: paths, verbose: verbose)
         }
-        if isReachable(udid) {
+        if checkFirst && isReachable(udid) {
             return
         }
         guard let bundleId = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid })?.bundleId,
@@ -451,7 +511,7 @@ public enum DriverBootstrap {
         ]
         let command = "exec \(args.map(shellQuote).joined(separator: " ")) >> \(shellQuote(logPath)) 2>&1"
         if verbose {
-            DaemonLogger(paths: paths).info("driver console log: \(logPath)")
+            FileHandle.standardError.write(Data("Driver console log: \(logPath)\n".utf8))
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -479,7 +539,7 @@ public enum DriverBootstrap {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    private static func ensureSimulatorDriverRunning(udid: String, allowExistingDriver: Bool, paths: IOSUsePaths) throws {
+    private static func ensureSimulatorDriverRunning(udid: String, allowExistingDriver: Bool) throws {
         let isReachable = simulatorDriverReachableForTesting ?? {
             isLocalDriverPortReachable()
         }
@@ -488,9 +548,6 @@ public enum DriverBootstrap {
         }
         if allowExistingDriver, isReachable() {
             return
-        }
-        if !allowExistingDriver {
-            terminateBootedSimulatorDrivers(paths: paths)
         }
         try launch(udid)
         let deadline = Date().addingTimeInterval(10)
@@ -501,15 +558,6 @@ public enum DriverBootstrap {
             usleep(250_000)
         }
         throw CLIParseError.invalidValue("Simulator driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable for \(udid)")
-    }
-
-    private static func terminateBootedSimulatorDrivers(paths: IOSUsePaths) {
-        let terminate = simulatorDriverTerminatorForTesting ?? terminateSimulatorDriver
-        let simulators = (try? DeviceService.listDevices(simulatorOnly: true, paths: paths)) ?? []
-        var seen = Set<String>()
-        for simulator in simulators where seen.insert(simulator.udid).inserted {
-            _ = try? terminate(simulator.udid)
-        }
     }
 
     private static func isDriverPortReachable(udid: String) -> Bool {
@@ -535,15 +583,6 @@ public enum DriverBootstrap {
                 Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         } == 0
-    }
-
-    private static func terminateSimulatorDriver(udid: String) throws -> Bool {
-        do {
-            _ = try Shell.run("xcrun", arguments: ["simctl", "terminate", udid, ConfigService.simulatorBundleId])
-            return true
-        } catch {
-            return false
-        }
     }
 
     private static func terminateRealDriverProcesses(udid: String) throws -> Bool {
