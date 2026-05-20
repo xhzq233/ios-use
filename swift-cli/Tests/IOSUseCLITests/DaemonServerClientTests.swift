@@ -17,7 +17,7 @@ final class DaemonServerClientTests: XCTestCase {
 
         try server.start()
 
-        let exit = try DaemonClient(paths: paths).send(request)
+        let exit = try DaemonTestClient(paths: paths).send(request)
 
         XCTAssertEqual(exit, DaemonExit(id: "round-trip-1", exitCode: 0))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.daemonSocket))
@@ -54,7 +54,7 @@ final class DaemonServerClientTests: XCTestCase {
         }
 
         try server.start()
-        let exit = try DaemonClient(paths: paths).send(DaemonRequest(id: "stop-1", argv: ["stop"], cwd: root))
+        let exit = try DaemonTestClient(paths: paths).send(DaemonRequest(id: "stop-1", argv: ["stop"], cwd: root))
 
         XCTAssertEqual(exit, DaemonExit(id: "stop-1", exitCode: 0))
         XCTAssertTrue(waitUntilMissing(paths.daemonSocket))
@@ -79,7 +79,7 @@ final class DaemonServerClientTests: XCTestCase {
             XCTAssertTrue(String(describing: error).contains("already running"))
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.daemonSocket))
-        let exit = try DaemonClient(paths: paths).send(DaemonRequest(id: "still-live", argv: ["devices"], cwd: root))
+        let exit = try DaemonTestClient(paths: paths).send(DaemonRequest(id: "still-live", argv: ["devices"], cwd: root))
         XCTAssertEqual(exit, DaemonExit(id: "still-live", exitCode: 0))
     }
 
@@ -98,7 +98,7 @@ final class DaemonServerClientTests: XCTestCase {
 
         try server.start()
         let request = DaemonRequest(id: "fd-pass-1", argv: ["devices", "--simulator"], cwd: root)
-        let exit = try DaemonClient(paths: paths).send(
+        let exit = try DaemonTestClient(paths: paths).send(
             request,
             stdoutFileDescriptor: stdoutPipe.fileHandleForWriting.fileDescriptor,
             stderrFileDescriptor: stderrPipe.fileHandleForWriting.fileDescriptor
@@ -125,7 +125,7 @@ final class DaemonServerClientTests: XCTestCase {
 
         try server.start()
         let request = DaemonRequest(id: "execute-1", argv: ["config", "--list"], cwd: root)
-        let exit = try DaemonClient(paths: paths).send(
+        let exit = try DaemonTestClient(paths: paths).send(
             request,
             stdoutFileDescriptor: stdoutPipe.fileHandleForWriting.fileDescriptor,
             stderrFileDescriptor: stderrPipe.fileHandleForWriting.fileDescriptor
@@ -192,7 +192,7 @@ final class DaemonServerClientTests: XCTestCase {
         try server.start()
         DispatchQueue.global().async {
             do {
-                resultBox.set(.success(try DaemonClient(paths: paths).send(request)))
+                resultBox.set(.success(try DaemonTestClient(paths: paths).send(request)))
             } catch {
                 resultBox.set(.failure(error))
             }
@@ -200,7 +200,7 @@ final class DaemonServerClientTests: XCTestCase {
         }
 
         XCTAssertEqual(started.wait(timeout: .now() + 2), .success)
-        let interruptExit = try DaemonClient(paths: paths).send(.interrupt(DaemonInterrupt(id: request.id, signal: "SIGINT")))
+        let interruptExit = try DaemonTestClient(paths: paths).send(.interrupt(DaemonInterrupt(id: request.id, signal: "SIGINT")))
 
         XCTAssertEqual(interruptExit, DaemonExit(id: request.id, exitCode: 130))
         XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
@@ -642,6 +642,100 @@ private final class DaemonExecutorFakeDriverServer {
     }
 }
 
+private final class DaemonTestClient {
+    private let paths: IOSUsePaths
+
+    init(paths: IOSUsePaths) {
+        self.paths = paths
+    }
+
+    func send(
+        _ request: DaemonRequest,
+        stdoutFileDescriptor: Int32? = nil,
+        stderrFileDescriptor: Int32? = nil
+    ) throws -> DaemonExit {
+        try send(.request(request), fileDescriptors: [stdoutFileDescriptor, stderrFileDescriptor].compactMap { $0 })
+    }
+
+    func send(_ message: DaemonControlMessage, fileDescriptors: [Int32] = []) throws -> DaemonExit {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw DaemonSocketError.socketFailure(daemonErrnoMessage("socket")) }
+        defer { close(fd) }
+
+        var address = try daemonUnixAddress(path: paths.daemonSocket)
+        let length = socklen_t(MemoryLayout<sa_family_t>.size + paths.daemonSocket.utf8.count + 1)
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
+                Darwin.connect(fd, sockaddrPointer, length)
+            }
+        }
+        guard result == 0 else { throw DaemonSocketError.socketFailure(daemonErrnoMessage("connect")) }
+        try sendFrame(message, fileDescriptors: fileDescriptors, fd: fd)
+        let response = try readFrame(fd: fd)
+        guard case .exit(let exit) = try DaemonControlProtocol.decode(response) else {
+            throw DaemonSocketError.socketFailure("daemon returned an unexpected control message")
+        }
+        return exit
+    }
+
+    private func sendFrame(_ message: DaemonControlMessage, fileDescriptors: [Int32], fd: Int32) throws {
+        let data = try DaemonControlProtocol.encode(message)
+        try data.withUnsafeBytes { dataPointer in
+            var iov = iovec(
+                iov_base: UnsafeMutableRawPointer(mutating: dataPointer.baseAddress),
+                iov_len: data.count
+            )
+            try withUnsafeMutablePointer(to: &iov) { iovPointer in
+                var header = msghdr()
+                header.msg_iov = iovPointer
+                header.msg_iovlen = 1
+
+                var control = [UInt8]()
+                if !fileDescriptors.isEmpty {
+                    control = [UInt8](repeating: 0, count: daemonCmsgSpace(fileDescriptors.count))
+                    try control.withUnsafeMutableBytes { controlPointer in
+                        header.msg_control = controlPointer.baseAddress
+                        header.msg_controllen = socklen_t(controlPointer.count)
+                        guard let first = daemonFirstCmsg(&header) else {
+                            throw DaemonSocketError.socketFailure("failed to create daemon fd control header")
+                        }
+                        first.pointee.cmsg_len = socklen_t(daemonCmsgLength(fileDescriptors.count))
+                        first.pointee.cmsg_level = SOL_SOCKET
+                        first.pointee.cmsg_type = SCM_RIGHTS
+                        let fdPointer = daemonCmsgData(first).assumingMemoryBound(to: Int32.self)
+                        for (index, descriptor) in fileDescriptors.enumerated() {
+                            fdPointer[index] = descriptor
+                        }
+                        guard sendmsg(fd, &header, 0) == data.count else {
+                            throw DaemonSocketError.socketFailure(daemonErrnoMessage("sendmsg"))
+                        }
+                    }
+                } else {
+                    guard sendmsg(fd, &header, 0) == data.count else {
+                        throw DaemonSocketError.socketFailure(daemonErrnoMessage("sendmsg"))
+                    }
+                }
+            }
+        }
+    }
+
+    private func readFrame(fd: Int32) throws -> Data {
+        var data = Data()
+        var byte = UInt8(0)
+        while true {
+            let count = Darwin.read(fd, &byte, 1)
+            if count == 1 {
+                data.append(byte)
+                if byte == 0x0a { return data }
+            } else if count == 0 {
+                throw DaemonSocketError.connectionClosedBeforeExit
+            } else if errno != EINTR {
+                throw DaemonSocketError.socketFailure(daemonErrnoMessage("read"))
+            }
+        }
+    }
+}
+
 private final class AsyncDaemonExitBox: @unchecked Sendable {
     private let lock = NSLock()
     private var result: Result<DaemonExit, Error>?
@@ -662,7 +756,7 @@ private final class AsyncDaemonExitBox: @unchecked Sendable {
         case .failure(let error):
             throw error
         case nil:
-            throw DaemonClientError.connectionClosedBeforeExit
+            throw DaemonSocketError.connectionClosedBeforeExit
         }
     }
 }

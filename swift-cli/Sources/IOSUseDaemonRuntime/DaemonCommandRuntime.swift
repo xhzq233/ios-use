@@ -141,27 +141,17 @@ public final class DaemonCommandRunner: @unchecked Sendable {
     public func parse(_ request: DaemonRequest) -> ParseOutcome {
         let arguments = request.argv
         guard let first = arguments.first else {
-            return .command(nil)
+            return .result(CLIErrorEnvelope(message: CLIParseError.missingCommand.description).render())
         }
-        if arguments.dropFirst().contains("--help") || arguments.dropFirst().contains("-h") {
-            return .command(nil)
+        if first.hasPrefix("-") {
+            return .result(CLIErrorEnvelope(message: "unknown option '\(first)'").render())
         }
-        switch first {
-        case "-h", "--help", "help":
-            return .command(nil)
-        case "-V", "--version":
-            return .result(CLIResult(exitCode: 0, stdout: "\(IOSUseCLI.version)\n"))
-        default:
-            if first.hasPrefix("-") {
-                return .result(CLIErrorEnvelope(message: "unknown option '\(first)'").render())
-            }
-            do {
-                return .command(try CLIParser.parse(arguments))
-            } catch let error as CLIParseError {
-                return .result(CLIErrorEnvelope(message: error.description).render())
-            } catch {
-                return .result(CLIErrorEnvelope(message: "\(error)").render())
-            }
+        do {
+            return .command(try CLIParser.parse(arguments))
+        } catch let error as CLIParseError {
+            return .result(CLIErrorEnvelope(message: error.description).render())
+        } catch {
+            return .result(CLIErrorEnvelope(message: "\(error)").render())
         }
     }
 
@@ -174,7 +164,7 @@ public final class DaemonCommandRunner: @unchecked Sendable {
             result = commandResult.result
             shouldStop = commandResult.shouldStopDaemon
         } else {
-            result = CLIResult(exitCode: 0, stdout: IOSUseCLI.helpText)
+            result = CLIErrorEnvelope(message: CLIParseError.missingCommand.description).render()
             shouldStop = false
         }
         output.writeStdout(result.stdout)

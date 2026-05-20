@@ -159,14 +159,14 @@ public final class DaemonServer: @unchecked Sendable {
         let startupLockFD = try acquireStartupLock()
         defer { releaseStartupLock(startupLockFD) }
         if FileManager.default.fileExists(atPath: paths.daemonSocket) {
-            if DaemonClient(paths: paths).canConnect() {
-                throw DaemonClientError.socketFailure("daemon already running for \(paths.root)")
+            if daemonSocketCanConnect(path: paths.daemonSocket) {
+                throw DaemonSocketError.socketFailure("daemon already running for \(paths.root)")
             }
             try? FileManager.default.removeItem(atPath: paths.daemonSocket)
         }
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw DaemonClientError.socketFailure(errnoMessage("socket")) }
+        guard fd >= 0 else { throw DaemonSocketError.socketFailure(daemonErrnoMessage("socket")) }
 
         do {
             try bindAndListen(fd)
@@ -197,27 +197,27 @@ public final class DaemonServer: @unchecked Sendable {
     }
 
     private func bindAndListen(_ fd: Int32) throws {
-        var address = try unixAddress(path: paths.daemonSocket)
+        var address = try daemonUnixAddress(path: paths.daemonSocket)
         let length = socklen_t(MemoryLayout<sa_family_t>.size + paths.daemonSocket.utf8.count + 1)
         let bindResult = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
                 Darwin.bind(fd, sockaddrPointer, length)
             }
         }
-        guard bindResult == 0 else { throw DaemonClientError.socketFailure(errnoMessage("bind")) }
+        guard bindResult == 0 else { throw DaemonSocketError.socketFailure(daemonErrnoMessage("bind")) }
         chmod(paths.daemonSocket, S_IRUSR | S_IWUSR)
-        guard listen(fd, SOMAXCONN) == 0 else { throw DaemonClientError.socketFailure(errnoMessage("listen")) }
+        guard listen(fd, SOMAXCONN) == 0 else { throw DaemonSocketError.socketFailure(daemonErrnoMessage("listen")) }
     }
 
     private func acquireStartupLock() throws -> Int32 {
         let lockPath = "\(paths.daemonPid).lock"
         let fd = Darwin.open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-        guard fd >= 0 else { throw DaemonClientError.socketFailure(errnoMessage("open \(lockPath)")) }
+        guard fd >= 0 else { throw DaemonSocketError.socketFailure(daemonErrnoMessage("open \(lockPath)")) }
         while flock(fd, LOCK_EX) != 0 {
             if errno != EINTR {
-                let message = errnoMessage("flock \(lockPath)")
+                let message = daemonErrnoMessage("flock \(lockPath)")
                 Darwin.close(fd)
-                throw DaemonClientError.socketFailure(message)
+                throw DaemonSocketError.socketFailure(message)
             }
         }
         return fd
@@ -284,7 +284,7 @@ public final class DaemonServer: @unchecked Sendable {
                 }
             }
         } catch {
-            if case DaemonClientError.connectionClosedBeforeExit = error {
+            if case DaemonSocketError.connectionClosedBeforeExit = error {
                 return
             }
             let response = DaemonControlMessage.exit(DaemonExit(id: "decode-error", exitCode: 64))
@@ -299,7 +299,7 @@ public final class DaemonServer: @unchecked Sendable {
 
         while !data.contains(0x0a) {
             var bytes = [UInt8](repeating: 0, count: 64 * 1024)
-            var control = [UInt8](repeating: 0, count: cmsgSpace(2))
+            var control = [UInt8](repeating: 0, count: daemonCmsgSpace(2))
             let byteCapacity = bytes.count
             let readCount: Int = try bytes.withUnsafeMutableBytes { bytesPointer in
                 var iov = iovec(iov_base: bytesPointer.baseAddress, iov_len: byteCapacity)
@@ -311,7 +311,7 @@ public final class DaemonServer: @unchecked Sendable {
                         header.msg_control = needsFirstRead ? controlPointer.baseAddress : nil
                         header.msg_controllen = needsFirstRead ? socklen_t(controlPointer.count) : 0
                         let count = recvmsg(clientFD, &header, 0)
-                        guard count >= 0 else { throw DaemonClientError.socketFailure(errnoMessage("recvmsg")) }
+                        guard count >= 0 else { throw DaemonSocketError.socketFailure(daemonErrnoMessage("recvmsg")) }
                         if needsFirstRead {
                             descriptors.append(contentsOf: fileDescriptors(from: &header))
                             needsFirstRead = false
@@ -320,26 +320,26 @@ public final class DaemonServer: @unchecked Sendable {
                     }
                 }
             }
-            guard readCount > 0 else { throw DaemonClientError.connectionClosedBeforeExit }
+            guard readCount > 0 else { throw DaemonSocketError.connectionClosedBeforeExit }
             data.append(contentsOf: bytes.prefix(readCount))
         }
 
         guard let newline = data.firstIndex(of: 0x0a) else {
-            throw DaemonClientError.connectionClosedBeforeExit
+            throw DaemonSocketError.connectionClosedBeforeExit
         }
         return (Data(data[...newline]), descriptors)
     }
 
     private static func fileDescriptors(from header: inout msghdr) -> [Int32] {
-        guard let first = firstCmsg(&header),
+        guard let first = daemonFirstCmsg(&header),
               first.pointee.cmsg_level == SOL_SOCKET,
               first.pointee.cmsg_type == SCM_RIGHTS else {
             return []
         }
-        let payloadLength = Int(first.pointee.cmsg_len) - cmsgAlign(MemoryLayout<cmsghdr>.size)
+        let payloadLength = Int(first.pointee.cmsg_len) - daemonCmsgAlign(MemoryLayout<cmsghdr>.size)
         guard payloadLength > 0 else { return [] }
         let count = payloadLength / MemoryLayout<Int32>.stride
-        let pointer = cmsgData(first).assumingMemoryBound(to: Int32.self)
+        let pointer = daemonCmsgData(first).assumingMemoryBound(to: Int32.self)
         return (0..<count).map { pointer[$0] }
     }
 
@@ -354,7 +354,7 @@ public final class DaemonServer: @unchecked Sendable {
                     remaining -= count
                     offset += count
                 } else if errno != EINTR {
-                    throw DaemonClientError.socketFailure(errnoMessage("write"))
+                    throw DaemonSocketError.socketFailure(daemonErrnoMessage("write"))
                 }
             }
         }

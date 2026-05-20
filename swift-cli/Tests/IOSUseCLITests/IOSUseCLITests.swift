@@ -3,22 +3,15 @@ import IOSUseDaemonRuntime
 import IOSUseProtocol
 
 final class IOSUseCLITests: XCTestCase {
-    func testHelpContainsMigrationStatusAndDefaultExecutable() {
-        let result = IOSUseCLI().run(arguments: ["--help"])
-
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("Swift CLI for ios-use"))
-        XCTAssertTrue(result.stdout.contains("./ios-use"))
-        XCTAssertTrue(result.stdout.contains("shared IOSUseProtocol/Fory model source"))
-        XCTAssertTrue(result.stderr.isEmpty)
+    func testVersionMatchesCurrentPackageVersion() {
+        XCTAssertEqual(IOSUseCLI.version, "1.0.1")
     }
 
-    func testVersionMatchesCurrentPackageVersion() {
-        let result = IOSUseCLI().run(arguments: ["--version"])
+    func testRuntimeRunRequiresACommand() {
+        let result = IOSUseCLI().run(arguments: [])
 
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "1.0.1\n")
-        XCTAssertTrue(result.stderr.isEmpty)
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stderr.contains("missing command"))
     }
 
     func testUnknownOptionFailsBeforeAnySessionWork() {
