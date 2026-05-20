@@ -83,7 +83,7 @@ enum RealDeviceOSLogService {
 
     private static func debug(_ message: String) {
         guard ProcessInfo.processInfo.environment["IOS_USE_DEBUG_OSLOG"] == "1" else { return }
-        DaemonLogger(paths: IOSUsePaths.resolve()).info("[real-oslog] \(message)")
+        FileHandle.standardError.write(Data("[real-oslog] \(message)\n".utf8))
     }
 }
 
@@ -403,7 +403,7 @@ private final class OpenSSLDeviceStream: DeviceStream {
 
     private static func debug(_ message: String) {
         guard ProcessInfo.processInfo.environment["IOS_USE_DEBUG_OSLOG"] == "1" else { return }
-        DaemonLogger(paths: IOSUsePaths.resolve()).info("[real-oslog] \(message)")
+        FileHandle.standardError.write(Data("[real-oslog] \(message)\n".utf8))
     }
 }
 
@@ -699,10 +699,10 @@ private func setNonBlocking(_ fd: Int32) {
     if flags >= 0 {
         let result = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
         if ProcessInfo.processInfo.environment["IOS_USE_DEBUG_OSLOG"] == "1" {
-            DaemonLogger(paths: IOSUsePaths.resolve()).info("[real-oslog] fcntl flags=\(flags) setNonBlocking=\(result) errno=\(errno)")
+            FileHandle.standardError.write(Data("[real-oslog] fcntl flags=\(flags) setNonBlocking=\(result) errno=\(errno)\n".utf8))
         }
     } else if ProcessInfo.processInfo.environment["IOS_USE_DEBUG_OSLOG"] == "1" {
-        DaemonLogger(paths: IOSUsePaths.resolve()).info("[real-oslog] fcntl get failed errno=\(errno)")
+        FileHandle.standardError.write(Data("[real-oslog] fcntl get failed errno=\(errno)\n".utf8))
     }
 }
 

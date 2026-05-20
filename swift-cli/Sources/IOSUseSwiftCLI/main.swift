@@ -1,20 +1,9 @@
 import Foundation
-import IOSUseDaemonRuntime
+import IOSUseCLI
 
-let rawArguments = Array(CommandLine.arguments.dropFirst())
-if rawArguments.first == "__daemon" {
-    Foundation.exit(DaemonProcess().run())
-}
-
-let result: CLIResult
-if let immediate = CLIHelp.immediateResult(arguments: rawArguments) {
-    result = immediate
-} else {
-    result = DaemonFrontend().run(
-        arguments: rawArguments,
-        executablePath: IOSUseExecutablePath.current()
-    )
-}
+let result = IOSUseCLI(outputSink: { text in
+    FileHandle.standardOutput.write(Data(text.utf8))
+}).run(arguments: Array(CommandLine.arguments.dropFirst()))
 
 if !result.stdout.isEmpty {
     FileHandle.standardOutput.write(Data(result.stdout.utf8))

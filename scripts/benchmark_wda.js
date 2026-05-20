@@ -31,6 +31,7 @@ const DEFAULT_APP_BUNDLE = 'com.apple.Preferences';
 const DEFAULT_LABEL = '蓝牙';
 const DEFAULT_ITERATIONS = 3;
 const DEFAULT_TIMEOUT_MS = 60000;
+const DEVICECTL_TIMEOUT_MS = Number(process.env.IOS_USE_BENCHMARK_DEVICECTL_TIMEOUT_MS || '30000');
 const WDA_SCREENSHOT_QUALITY = 1;
 
 let appiumProcess = null;
@@ -92,6 +93,7 @@ function parseArgs(argv) {
     label: DEFAULT_LABEL,
     customUdid: '',
     cases: '',
+    customOnly: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -114,6 +116,9 @@ function parseArgs(argv) {
         break;
       case '--cases':
         args.cases = argv[++i] || '';
+        break;
+      case '--custom-only':
+        args.customOnly = true;
         break;
       case '--help':
       case '-h':
@@ -143,14 +148,18 @@ Options:
   --label <text>      anchor label for find/waitFor, default: ${DEFAULT_LABEL}
   --custom-udid <id>  custom-driver device UDID, default: WDA_INSTALLED_DEVICE
   --cases <list>      comma-separated subset, e.g. auto_session_activate_app,dom_vs_source,find
+  --custom-only       measure only ios-use custom driver; do not start Appium/WDA
 
 Optional env:
   APPIUM_WDA_URL      existing WDA base URL for Appium attach mode
   WDA_LAUNCH_TIMEOUT_MS  default: 120000
   APPIUM_SHOW_XCODE_LOG  set 1 to let Appium print xcode log
   IOS_USE_BENCHMARK_BUILD_CLI_FROM_SOURCE  set 1 to install the local Swift CLI
+  IOS_USE_BENCHMARK_IOS_USE_BIN  use an existing ios-use binary instead of running install.sh;
+                                  if this points to repo ./ios-use, Release build runs first
   IOS_USE_BENCHMARK_SKIP_DRIVER_BUILD  set 1 to skip release driver build
   IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG set 1 to skip reinstalling custom driver
+  IOS_USE_BENCHMARK_DEVICECTL_TIMEOUT_MS default: 30000
 `.trim());
 }
 
@@ -198,6 +207,7 @@ function runSync(command, args, options = {}) {
     env: { ...process.env, ...(options.env || {}) },
     stdio: options.capture === false ? 'inherit' : ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
+    timeout: options.timeoutMs,
   });
   const stdout = typeof result.stdout === 'string' ? result.stdout : '';
   const stderr = typeof result.stderr === 'string' ? result.stderr : '';
@@ -220,11 +230,41 @@ function buildReleaseDriverArtifacts() {
   return 'Release';
 }
 
-function installIosUseExecutable() {
-  const installArgs = ['scripts/install.sh'];
-  if (shouldBuildCliFromSource()) {
-    installArgs.push('--build-from-source');
+function repoIosUsePath() {
+  return path.join(ROOT, 'ios-use');
+}
+
+function isRepoIosUseBinary(bin) {
+  return path.resolve(bin) === repoIosUsePath();
+}
+
+function buildReleaseCliExecutable() {
+  runSync('bash', ['scripts/build_swift_cli.sh'], { capture: false });
+  const bin = repoIosUsePath();
+  if (!fs.existsSync(bin)) {
+    throw new Error(`Release CLI build did not produce ${bin}`);
   }
+  return bin;
+}
+
+function installIosUseExecutable() {
+  if (process.env.IOS_USE_BENCHMARK_IOS_USE_BIN) {
+    const bin = path.resolve(process.env.IOS_USE_BENCHMARK_IOS_USE_BIN);
+    if (isRepoIosUseBinary(bin)) {
+      iosUseExecutable = buildReleaseCliExecutable();
+      return iosUseExecutable;
+    }
+    if (!fs.existsSync(bin)) {
+      throw new Error(`IOS_USE_BENCHMARK_IOS_USE_BIN does not exist: ${bin}`);
+    }
+    iosUseExecutable = bin;
+    return bin;
+  }
+  if (shouldBuildCliFromSource()) {
+    iosUseExecutable = buildReleaseCliExecutable();
+    return iosUseExecutable;
+  }
+  const installArgs = ['scripts/install.sh'];
   installArgs.push('--print-path');
   const { stdout } = runSync('bash', installArgs, { capture: true });
   const installedPath = stdout
@@ -243,6 +283,16 @@ function shouldBuildCliFromSource() {
   return process.env.IOS_USE_BENCHMARK_BUILD_CLI_FROM_SOURCE === '1';
 }
 
+function iosUseInstallMode() {
+  if (process.env.IOS_USE_BENCHMARK_IOS_USE_BIN) {
+    if (isRepoIosUseBinary(process.env.IOS_USE_BENCHMARK_IOS_USE_BIN)) {
+      return 'repo-release-build';
+    }
+    return 'provided-binary';
+  }
+  return shouldBuildCliFromSource() ? 'repo-release-build' : 'release-download';
+}
+
 function configureCustomDriver(customUdid) {
   if (process.env.IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG === '1') {
     return 'skipped';
@@ -257,7 +307,7 @@ function listDeviceProcesses(udid) {
     '--device', udid,
     '--quiet',
     '--json-output', '-',
-  ]);
+  ], { timeoutMs: DEVICECTL_TIMEOUT_MS });
   const parsed = JSON.parse(stdout);
   const processes = parsed?.result?.runningProcesses ?? parsed?.result?.processTokens ?? [];
   return Array.isArray(processes) ? processes : [];
@@ -269,7 +319,7 @@ function terminateProcessByPid(udid, pid) {
     '--device', udid,
     '--pid', String(pid),
     '--kill',
-  ], { allowFailure: true });
+  ], { allowFailure: true, timeoutMs: DEVICECTL_TIMEOUT_MS });
 }
 
 function terminateProcessesByExecutableName(udid, executableNames) {
@@ -641,19 +691,15 @@ function customStopSessionQuiet() {
   }
 }
 
-async function customPrepareNoSession(customUdid = WDA_DEVICE_UDID) {
-  customStopSessionQuiet();
-  terminateCustomDriverProcesses(customUdid);
+async function customPrepareNoSession(customUdid = WDA_DEVICE_UDID, appBundle = DEFAULT_APP_BUNDLE) {
   terminateWdaProcesses(customUdid);
-  await waitForProcessesGone(customUdid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
-  await sleep(3000);
+  await waitForProcessesGone(customUdid, ['WebDriverAgentRunner-Runner']);
+  cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
 }
 
 async function customPrepareAppSession(customUdid, appBundle, label) {
-  customStopSessionQuiet();
-  terminateCustomDriverProcesses(customUdid);
   terminateWdaProcesses(customUdid);
-  await waitForProcessesGone(customUdid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
+  await waitForProcessesGone(customUdid, ['WebDriverAgentRunner-Runner']);
   cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
   cli(['activateApp', appBundle, '--udid', customUdid]);
   cli(['waitFor', '--label', label, '--timeout', '8', '--udid', customUdid]);
@@ -721,6 +767,18 @@ async function measureSide(sideName, runs, prepareFn, runFn) {
   };
 }
 
+function emptyMeasureResult() {
+  return {
+    samples: [],
+    errors: [],
+    fails: 0,
+    avg: NaN,
+    min: NaN,
+    max: NaN,
+    median: NaN,
+  };
+}
+
 function buildCases(ctx) {
   const centerX = 187;
   const topTapY = 80;
@@ -733,7 +791,7 @@ function buildCases(ctx) {
       kind: 'lifecycle',
       runs: 1,
       mapping: '`activateApp` auto-session ↔ `POST /session` + activate app',
-      customPrepare: async () => { await customPrepareNoSession(ctx.customUdid); },
+      customPrepare: async () => { await customPrepareNoSession(ctx.customUdid, ctx.appBundle); },
       customRun: async () => {
         cli(['activateApp', ctx.appBundle, '--udid', ctx.customUdid]);
       },
@@ -952,7 +1010,7 @@ async function main() {
     appBundle: args.bundleId,
     label: args.label,
     customUdid,
-    appium: new AppiumDriver({ udid: WDA_DEVICE_UDID, appBundle: args.bundleId }),
+    appium: args.customOnly ? null : new AppiumDriver({ udid: WDA_DEVICE_UDID, appBundle: args.bundleId }),
   };
 
   const cases = buildCases(ctx).filter(item => !selectedCases || selectedCases.has(item.name));
@@ -967,12 +1025,16 @@ async function main() {
     for (const testCase of cases) {
       console.error(`\n[case] ${testCase.name} :: ${testCase.mapping}`);
       const customResult = await measureSide('custom', testCase.runs, testCase.customPrepare, testCase.customRun);
-      const appiumResult = await measureSide('appium', testCase.runs, testCase.appiumPrepare, testCase.appiumRun);
+      const appiumResult = args.customOnly
+        ? emptyMeasureResult()
+        : await measureSide('appium', testCase.runs, testCase.appiumPrepare, testCase.appiumRun);
       rows.push({ ...testCase, customResult, appiumResult });
     }
   } finally {
     customStopSessionQuiet();
-    await ctx.appium.close();
+    if (ctx.appium) {
+      await ctx.appium.close();
+    }
     stopAppiumServer();
   }
 
@@ -980,7 +1042,7 @@ async function main() {
   const generatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
 
   const lines = [];
-  lines.push('# ios-use vs Appium+WDA Benchmark');
+  lines.push(args.customOnly ? '# ios-use Custom Driver Benchmark' : '# ios-use vs Appium+WDA Benchmark');
   lines.push('');
   lines.push('## 测试环境');
   lines.push('');
@@ -988,65 +1050,102 @@ async function main() {
   lines.push('|------|-----|');
   lines.push(`| 时间 | \`${generatedAt}\` |`);
   lines.push('| 实验组 | `ios-use custom driver` |');
-  lines.push('| 对照组 | `Appium Server -> WDA` |');
-  lines.push(`| WDA 设备 | \`${WDA_DEVICE_UDID}\` |`);
-  lines.push(`| WDA bundleId | \`${WDA_BUNDLE_ID}\` |`);
-  lines.push(`| Appium updatedWDABundleId | \`${APPIUM_UPDATED_WDA_BUNDLE_ID}\` |`);
-  lines.push(`| WDA local port | \`${WDA_LOCAL_PORT}\` |`);
-  lines.push(`| WDA launch timeout | \`${WDA_LAUNCH_TIMEOUT_MS} ms\` |`);
-  lines.push(`| custom 设备 | \`${customUdid}\` |`);
+  lines.push(`| 对照组 | \`${args.customOnly ? 'skipped (--custom-only)' : 'Appium Server -> WDA'}\` |`);
+  if (args.customOnly) {
+    lines.push(`| 设备 | \`${customUdid}\` |`);
+  } else {
+    lines.push(`| WDA 设备 | \`${WDA_DEVICE_UDID}\` |`);
+    lines.push(`| WDA bundleId | \`${WDA_BUNDLE_ID}\` |`);
+    lines.push(`| Appium updatedWDABundleId | \`${APPIUM_UPDATED_WDA_BUNDLE_ID}\` |`);
+    lines.push(`| WDA local port | \`${WDA_LOCAL_PORT}\` |`);
+    lines.push(`| WDA launch timeout | \`${WDA_LAUNCH_TIMEOUT_MS} ms\` |`);
+    lines.push(`| custom 设备 | \`${customUdid}\` |`);
+  }
   lines.push(`| custom driver build | \`${driverBuild}\` |`);
   lines.push(`| custom driver install | \`${customDriverInstall}\` |`);
   lines.push(`| App | \`${args.bundleId}\` |`);
   lines.push(`| 锚点 label | \`${args.label}\` |`);
-  lines.push(`| Appium URL | \`${APPIUM_BASE_URL}\` |`);
-  lines.push(`| WDA attach URL | \`${APPIUM_WDA_URL || 'auto(preinstalled WDA)'}\` |`);
+  if (!args.customOnly) {
+    lines.push(`| Appium URL | \`${APPIUM_BASE_URL}\` |`);
+    lines.push(`| WDA attach URL | \`${APPIUM_WDA_URL || 'auto(preinstalled WDA)'}\` |`);
+  }
   lines.push(`| ios-use 可执行文件 | \`${installedCliPath}\` |`);
-  lines.push(`| ios-use install mode | \`${shouldBuildCliFromSource() ? 'build-from-source' : 'release-download'}\` |`);
+  lines.push(`| ios-use install mode | \`${iosUseInstallMode()}\` |`);
   lines.push(`| 迭代次数 | \`${args.iterations}\` |`);
   lines.push(`| 总耗时 | \`${fmtMs(suiteElapsedMs)} ms\` |`);
   lines.push('');
-  lines.push('## 对照映射');
+  lines.push(args.customOnly ? '## ios-use 命令' : '## 对照映射');
   lines.push('');
-  lines.push('| Case | 映射 |');
+  lines.push(args.customOnly ? '| Case | 命令 |' : '| Case | 映射 |');
   lines.push('|------|------|');
   for (const row of rows) {
-    lines.push(`| ${row.name} | ${row.mapping} |`);
+    const mapping = args.customOnly ? row.mapping.split('↔')[0].trim() : row.mapping;
+    lines.push(`| ${row.name} | ${mapping} |`);
   }
   lines.push('');
   lines.push('## 结果');
   lines.push('');
-  lines.push('| Case | 类型 | Custom Avg | Appium+WDA Avg | Speedup | Custom Median | Appium Median | Custom Fails | Appium Fails |');
-  lines.push('|------|------|-----------:|----------------:|--------:|--------------:|---------------:|-------------:|-------------:|');
-  for (const row of rows) {
-    lines.push(`| ${row.name} | ${row.kind} | ${fmtMs(row.customResult.avg)} | ${fmtMs(row.appiumResult.avg)} | ${speedup(row.appiumResult.avg, row.customResult.avg)} | ${fmtMs(row.customResult.median)} | ${fmtMs(row.appiumResult.median)} | ${row.customResult.fails} | ${row.appiumResult.fails} |`);
+  if (args.customOnly) {
+    lines.push('| Case | 类型 | Custom Avg | Custom Median | Custom Min | Custom Max | Custom Fails |');
+    lines.push('|------|------|-----------:|--------------:|-----------:|-----------:|-------------:|');
+    for (const row of rows) {
+      lines.push(`| ${row.name} | ${row.kind} | ${fmtMs(row.customResult.avg)} | ${fmtMs(row.customResult.median)} | ${fmtMs(row.customResult.min)} | ${fmtMs(row.customResult.max)} | ${row.customResult.fails} |`);
+    }
+  } else {
+    lines.push('| Case | 类型 | Custom Avg | Appium+WDA Avg | Speedup | Custom Median | Appium Median | Custom Fails | Appium Fails |');
+    lines.push('|------|------|-----------:|----------------:|--------:|--------------:|---------------:|-------------:|-------------:|');
+    for (const row of rows) {
+      lines.push(`| ${row.name} | ${row.kind} | ${fmtMs(row.customResult.avg)} | ${fmtMs(row.appiumResult.avg)} | ${speedup(row.appiumResult.avg, row.customResult.avg)} | ${fmtMs(row.customResult.median)} | ${fmtMs(row.appiumResult.median)} | ${row.customResult.fails} | ${row.appiumResult.fails} |`);
+    }
   }
   lines.push('');
-  lines.push('## 明细');
-  lines.push('');
-  lines.push('| Case | Custom Min | Custom Max | Appium Min | Appium Max |');
-  lines.push('|------|-----------:|-----------:|-----------:|-----------:|');
-  for (const row of rows) {
-    lines.push(`| ${row.name} | ${fmtMs(row.customResult.min)} | ${fmtMs(row.customResult.max)} | ${fmtMs(row.appiumResult.min)} | ${fmtMs(row.appiumResult.max)} |`);
+  if (!args.customOnly) {
+    lines.push('## 明细');
+    lines.push('');
+    lines.push('| Case | Custom Min | Custom Max | Appium Min | Appium Max |');
+    lines.push('|------|-----------:|-----------:|-----------:|-----------:|');
+    for (const row of rows) {
+      lines.push(`| ${row.name} | ${fmtMs(row.customResult.min)} | ${fmtMs(row.customResult.max)} | ${fmtMs(row.appiumResult.min)} | ${fmtMs(row.appiumResult.max)} |`);
+    }
+    lines.push('');
   }
-  lines.push('');
   lines.push('## 失败原因');
   lines.push('');
-  lines.push('| Case | Custom Error | Appium Error |');
-  lines.push('|------|--------------|--------------|');
-  for (const row of rows) {
-    lines.push(`| ${row.name} | ${row.customResult.errors[0] || '-'} | ${row.appiumResult.errors[0] || '-'} |`);
+  if (args.customOnly) {
+    lines.push('| Case | Custom Error |');
+    lines.push('|------|--------------|');
+    for (const row of rows) {
+      lines.push(`| ${row.name} | ${row.customResult.errors[0] || '-'} |`);
+    }
+  } else {
+    lines.push('| Case | Custom Error | Appium Error |');
+    lines.push('|------|--------------|--------------|');
+    for (const row of rows) {
+      lines.push(`| ${row.name} | ${row.customResult.errors[0] || '-'} | ${row.appiumResult.errors[0] || '-'} |`);
+    }
   }
   lines.push('');
   lines.push('## 使用方式');
   lines.push('');
   lines.push('```bash');
-  lines.push(`WDA_INSTALLED_DEVICE=${WDA_DEVICE_UDID} WDA_BUNDLE_ID=${WDA_BUNDLE_ID} \\\n  node scripts/benchmark_wda.js --iterations 3`);
+  if (process.env.IOS_USE_BENCHMARK_IOS_USE_BIN) {
+    lines.push(`IOS_USE_BENCHMARK_IOS_USE_BIN=${installedCliPath} \\\n  WDA_INSTALLED_DEVICE=${WDA_DEVICE_UDID} WDA_BUNDLE_ID=${WDA_BUNDLE_ID} \\\n  node scripts/benchmark_wda.js --iterations 3${args.customOnly ? ' --custom-only' : ''}`);
+  } else {
+    lines.push(`WDA_INSTALLED_DEVICE=${WDA_DEVICE_UDID} WDA_BUNDLE_ID=${WDA_BUNDLE_ID} \\\n  node scripts/benchmark_wda.js --iterations 3${args.customOnly ? ' --custom-only' : ''}`);
+  }
   lines.push('```');
   lines.push('');
-  lines.push('说明：脚本开始前会先执行 Release driver build、`scripts/install.sh` 和 `ios-use config --udid <customUdid>`，并使用安装后的 `ios-use` 可执行文件进行 custom 侧 benchmark。');
-  lines.push('说明：本脚本对照组默认走完整 `Appium Server -> preinstalled WDA` 链路，不是直打 WDA。');
-  lines.push('说明：如果真机是 iOS 18+ 且 Appium 报 `Tunnel registry port not found`，需先手动执行 `sudo appium driver run xcuitest tunnel-creation --udid <udid>`。');
+  if (process.env.IOS_USE_BENCHMARK_IOS_USE_BIN) {
+    lines.push('说明：本次通过 `IOS_USE_BENCHMARK_IOS_USE_BIN` 使用已有 `ios-use` 可执行文件，不执行 `scripts/install.sh`。');
+  } else {
+    lines.push('说明：脚本开始前会先执行 Release driver build、`scripts/install.sh` 和 `ios-use config --udid <customUdid>`，并使用安装后的 `ios-use` 可执行文件进行 custom 侧 benchmark。');
+  }
+  if (args.customOnly) {
+    lines.push('说明：本次只测 ios-use custom driver，不启动 Appium/WDA 对照组。');
+  } else {
+    lines.push('说明：本脚本对照组默认走完整 `Appium Server -> preinstalled WDA` 链路，不是直打 WDA。');
+    lines.push('说明：如果真机是 iOS 18+ 且 Appium 报 `Tunnel registry port not found`，需先手动执行 `sudo appium driver run xcuitest tunnel-creation --udid <udid>`。');
+  }
 
   fs.writeFileSync(output, `${lines.join('\n')}\n`);
   console.log(`Benchmark written to ${output}`);

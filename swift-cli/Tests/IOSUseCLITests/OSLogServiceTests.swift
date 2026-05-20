@@ -1,5 +1,5 @@
 import XCTest
-@testable import IOSUseDaemonRuntime
+@testable import IOSUseCLI
 
 final class OSLogServiceTests: XCTestCase {
     override func tearDown() {
@@ -14,7 +14,7 @@ final class OSLogServiceTests: XCTestCase {
 
     func testOslogClearDoesNotRequireDriverSession() {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
-        let result = executeTestCLI(environment: ["IOS_USE_HOME": home], arguments: ["oslog", "--clear"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog", "--clear"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "  → oslog: cleared=0\n")
@@ -25,7 +25,7 @@ final class OSLogServiceTests: XCTestCase {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
         DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
         addTeardownBlock { DeviceService.listDevicesOverrideForTesting = nil }
-        let result = executeTestCLI(environment: ["IOS_USE_HOME": home], arguments: ["oslog", "--name", "logs"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog", "--name", "logs"])
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stderr.contains("connected USB device"))
@@ -186,7 +186,7 @@ final class OSLogServiceTests: XCTestCase {
         _ = try OSLogService.fetchSimulator(udid: "SIM-1", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "one", paths: paths)
         _ = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "two", paths: paths)
 
-        let result = executeTestCLI(environment: ["IOS_USE_HOME": root], arguments: ["oslog", "--clear", "--udid", "SIM-1"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--clear", "--udid", "SIM-1"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "  → oslog: cleared=1\n")

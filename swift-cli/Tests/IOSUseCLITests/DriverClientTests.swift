@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import XCTest
 import IOSUseProtocol
-@testable import IOSUseDaemonRuntime
+@testable import IOSUseCLI
 
 final class DriverClientTests: XCTestCase {
     func testClientReusesConnectionWithinInstance() throws {
@@ -51,6 +51,17 @@ final class DriverClientTests: XCTestCase {
         XCTAssertEqual(args.target.traits, "Cell")
         XCTAssertEqual(args.target.cindex, -1)
     }
+
+    func testCloseSignalsEOFToServerPromptly() throws {
+        let server = try FakeDriverServer(responseCount: 2)
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+
+        _ = try client.dom(raw: false, fresh: false)
+        client.close()
+
+        XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
+    }
 }
 
 private final class FakeDriverServer {
@@ -65,6 +76,7 @@ private final class FakeDriverServer {
     private var commands: [String] = []
     private var requests: [ForyRequestFrame] = []
     private let fory = ForyRegistry.create()
+    private let disconnectSem = DispatchSemaphore(value: 0)
 
     init(responseCount: Int) throws {
         let payload = (try? ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))) ?? Data()
@@ -152,6 +164,10 @@ private final class FakeDriverServer {
         Darwin.close(listenFD)
     }
 
+    func waitForDisconnect(timeout: TimeInterval) -> Bool {
+        disconnectSem.wait(timeout: .now() + timeout) == .success
+    }
+
     private func serve() {
         while true {
             lock.lock()
@@ -169,7 +185,10 @@ private final class FakeDriverServer {
     }
 
     private func handle(clientFD: Int32) {
-        defer { Darwin.close(clientFD) }
+        defer {
+            Darwin.close(clientFD)
+            disconnectSem.signal()
+        }
         while true {
             lock.lock()
             let shouldStop = stopped || nextResponseIndex >= responses.count

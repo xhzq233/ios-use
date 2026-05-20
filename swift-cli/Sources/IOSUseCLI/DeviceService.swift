@@ -30,22 +30,35 @@ public enum DeviceService {
 
     static var listDevicesOverrideForTesting: ((Bool, IOSUsePaths) throws -> [IOSDevice])?
     static var usbDeviceUdidsOverrideForTesting: (() throws -> [String])?
+    private static var listDevicesCache: [String: [IOSDevice]] = [:]
 
     public static func listDevices(simulatorOnly: Bool, paths: IOSUsePaths) throws -> [IOSDevice] {
         if let listDevicesOverrideForTesting {
             return try listDevicesOverrideForTesting(simulatorOnly, paths)
         }
+        let cacheKey = "\(paths.root)|\(simulatorOnly)"
+        if let cached = listDevicesCache[cacheKey] {
+            return cached
+        }
+        let devices: [IOSDevice]
         if simulatorOnly {
             let output = try Shell.run("xcrun", arguments: ["simctl", "list", "devices", "booted"])
-            return parseBootedSimulators(output)
+            devices = parseBootedSimulators(output)
+        } else {
+            let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
+            guard !usbUdids.isEmpty else {
+                return []
+            }
+            let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
+            let realDevices = parseDeviceOutput(output).filter { $0.kind == .real }
+            devices = usbOnlyDevices(from: realDevices, usbUdids: usbUdids)
         }
-        let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
-        guard !usbUdids.isEmpty else {
-            return []
-        }
-        let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
-        let realDevices = parseDeviceOutput(output).filter { $0.kind == .real }
-        return usbOnlyDevices(from: realDevices, usbUdids: usbUdids)
+        listDevicesCache[cacheKey] = devices
+        return devices
+    }
+
+    static func resetCacheForTesting() {
+        listDevicesCache.removeAll(keepingCapacity: true)
     }
 
     static func usbOnlyDevices(from devices: [IOSDevice]) throws -> [IOSDevice] {
@@ -177,8 +190,6 @@ public enum DeviceService {
 }
 
 enum Shell {
-    typealias OutputSink = @Sendable (String) -> Void
-
     static func run(_ executable: String, arguments: [String], cwd: String? = nil) throws -> String {
         try runCaptured(executable, arguments: arguments, cwd: cwd, combineStderr: false)
     }
@@ -188,53 +199,19 @@ enum Shell {
     }
 
     static func runInheriting(_ executable: String, arguments: [String], cwd: String? = nil) throws {
-        try runStreaming(executable, arguments: arguments, cwd: cwd)
-    }
-
-    static func runStreaming(
-        _ executable: String,
-        arguments: [String],
-        cwd: String? = nil,
-        stdoutSink: OutputSink? = nil,
-        stderrSink: OutputSink? = nil
-    ) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [executable] + arguments
         if let cwd {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         }
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        let stdoutCapture = LockedString()
-        let stderrCapture = LockedString()
-        let readers = DispatchGroup()
-        readers.enter()
-        DispatchQueue.global().async {
-            readPipe(stdoutPipe, sink: stdoutSink, capture: stdoutCapture)
-            readers.leave()
-        }
-        readers.enter()
-        DispatchQueue.global().async {
-            readPipe(stderrPipe, sink: stderrSink, capture: stderrCapture)
-            readers.leave()
-        }
-
+        process.standardInput = FileHandle.standardInput
+        process.standardOutput = FileHandle.standardOutput
+        process.standardError = FileHandle.standardError
         try process.run()
         process.waitUntilExit()
-        readers.wait()
-
         if process.terminationStatus != 0 {
-            var message = "\(executable) failed with exit \(process.terminationStatus)"
-            let output = (stdoutCapture.value + stderrCapture.value).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !output.isEmpty {
-                message += ": \(output)"
-            }
-            throw CLIParseError.invalidValue(message)
+            throw CLIParseError.invalidValue("\(executable) failed with exit \(process.terminationStatus)")
         }
     }
 
@@ -275,32 +252,5 @@ enum Shell {
             throw CLIParseError.invalidValue(error.isEmpty ? "\(executable) failed with exit \(process.terminationStatus)" : error.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return output
-    }
-
-    private static func readPipe(_ pipe: Pipe, sink: OutputSink?, capture: LockedString) {
-        while true {
-            let data = pipe.fileHandleForReading.readData(ofLength: 4096)
-            if data.isEmpty { break }
-            let text = String(decoding: data, as: UTF8.self)
-            capture.append(text)
-            sink?(text)
-        }
-    }
-}
-
-private final class LockedString: @unchecked Sendable {
-    private let lock = NSLock()
-    private var text = ""
-
-    func append(_ value: String) {
-        lock.lock()
-        text += value
-        lock.unlock()
-    }
-
-    var value: String {
-        lock.lock()
-        defer { lock.unlock() }
-        return text
     }
 }

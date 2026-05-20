@@ -100,12 +100,6 @@ ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 
 Flow 的编写规范、字段语义、外部 `vars` 和 subflow 用法见 `references/flow.md`。
 
-### 3.7 停止 ios-use 后台服务
-
-```bash
-ios-use stop
-```
-
 ## 4. 当前命令语义
 
 - `tap` / `longpress`

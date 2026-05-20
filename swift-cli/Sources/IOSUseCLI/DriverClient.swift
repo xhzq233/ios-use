@@ -5,6 +5,7 @@ import IOSUseProtocol
 enum DriverClientError: Error, CustomStringConvertible {
     case socketCreateFailed(Int32)
     case connectFailed(Int32)
+    case connectFailedMessage(String, recoverable: Bool)
     case readFailed
     case writeFailed
     case invalidFrameLength
@@ -15,12 +16,24 @@ enum DriverClientError: Error, CustomStringConvertible {
         switch self {
         case .socketCreateFailed(let errno): return "socket create failed: \(errno)"
         case .connectFailed(let errno): return "driver TCP connect failed: \(errno). Is the Simulator driver running?"
+        case .connectFailedMessage(let message, _): return "driver TCP connect failed: \(message)"
         case .readFailed: return "driver TCP read failed"
         case .writeFailed: return "driver TCP write failed"
         case .invalidFrameLength: return "invalid driver frame length"
         case .maxFrameSizeExceeded: return "driver frame exceeds max size"
         case .driverError(let message, let payload):
             return Self.formatDriverError(message: message, payload: payload)
+        }
+    }
+
+    var isRecoverableConnectFailure: Bool {
+        switch self {
+        case .connectFailed:
+            return true
+        case .connectFailedMessage(_, let recoverable):
+            return recoverable
+        default:
+            return false
         }
     }
 
@@ -53,13 +66,33 @@ enum DriverClientError: Error, CustomStringConvertible {
     }
 }
 
+protocol DriverCommandClient: AnyObject {
+    func close()
+    func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload
+    func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload
+    func screenshot() throws -> Data
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
+    func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
+    func input(label: String, content: String, traits: String?, cindex: Int32?) throws
+    func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
+    func activateApp(bundleId: String) throws
+    func terminateApp(bundleId: String) throws
+    func home() throws
+    func openURL(url: String) throws -> ForySimpleStringPayload
+    func dismissAlert(index: Int?) throws -> ForyAlertPayload
+    func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
+}
+
 private extension ForyTarget {
     func withLookup(traits: String?, cindex: Int32?) -> ForyTarget {
         ForyTarget(label: label, point: point, traits: traits ?? self.traits, cindex: cindex ?? self.cindex)
     }
 }
 
-final class DriverClient {
+final class DriverClient: DriverCommandClient {
+    static var usbmuxConnectorForTesting: ((String, Int) throws -> Int32)?
+
     private let host: String
     private let port: UInt16
     private let udid: String?
@@ -74,11 +107,11 @@ final class DriverClient {
         self.deviceType = deviceType
     }
 
-    convenience init(endpoint: DriverEndpoint?) {
+    convenience init(session: SessionService.Info?) {
         self.init(
-            port: UInt16(endpoint?.port ?? Int(IOSUseProtocol.defaultDriverPort)),
-            udid: endpoint?.udid,
-            deviceType: endpoint?.deviceType
+            port: UInt16(session?.port ?? Int(IOSUseProtocol.defaultDriverPort)),
+            udid: session?.udid,
+            deviceType: session?.deviceType
         )
     }
 
@@ -88,7 +121,7 @@ final class DriverClient {
 
     func close() {
         if let fd {
-            Darwin.shutdown(fd, SHUT_RDWR)
+            _ = Darwin.shutdown(fd, SHUT_RDWR)
             Darwin.close(fd)
             self.fd = nil
         }
@@ -216,9 +249,20 @@ final class DriverClient {
 
     private func connect() throws -> Int32 {
         if deviceType == "real", let udid {
-            let fd = try Usbmux.connect(udid: udid, port: Int(port))
-            configureSocket(fd)
-            return fd
+            do {
+                let connector = Self.usbmuxConnectorForTesting ?? { try Usbmux.connect(udid: $0, port: $1) }
+                let fd = try connector(udid, Int(port))
+                configureSocket(fd)
+                return fd
+            } catch let error as DriverClientError {
+                throw error
+            } catch {
+                let message = String(describing: error)
+                throw DriverClientError.connectFailedMessage(
+                    message,
+                    recoverable: message.contains("usbmux Connect failed")
+                )
+            }
         }
 
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
