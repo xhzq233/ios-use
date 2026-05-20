@@ -4,7 +4,7 @@ import IOSUseProtocol
 
 final class IOSUseCLITests: XCTestCase {
     func testVersionMatchesCurrentPackageVersion() {
-        XCTAssertEqual(IOSUseCLI.version, "1.0.1")
+        XCTAssertEqual(IOSUseCLI.version, "1.0.2")
     }
 
     func testDaemonRunnerRequiresACommand() throws {
