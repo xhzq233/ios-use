@@ -1,13 +1,14 @@
 import Darwin
 import Foundation
+import IOSUseDaemonRuntime
 
-public enum DaemonClientError: Error, Equatable, CustomStringConvertible {
+enum DaemonClientError: Error, Equatable, CustomStringConvertible {
     case unexpectedMessage
     case connectionClosedBeforeExit
     case socketPathTooLong
     case socketFailure(String)
 
-    public var description: String {
+    var description: String {
         switch self {
         case .unexpectedMessage:
             return "daemon returned an unexpected control message"
@@ -21,14 +22,14 @@ public enum DaemonClientError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-public final class DaemonClient {
+final class DaemonClient {
     private let paths: IOSUsePaths
 
-    public init(paths: IOSUsePaths) {
+    init(paths: IOSUsePaths) {
         self.paths = paths
     }
 
-    public func canConnect() -> Bool {
+    func canConnect() -> Bool {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }
@@ -40,7 +41,7 @@ public final class DaemonClient {
         }
     }
 
-    public func send(
+    func send(
         _ request: DaemonRequest,
         stdoutFileDescriptor: Int32? = nil,
         stderrFileDescriptor: Int32? = nil
@@ -48,7 +49,7 @@ public final class DaemonClient {
         try send(.request(request), fileDescriptors: [stdoutFileDescriptor, stderrFileDescriptor].compactMap { $0 })
     }
 
-    public func send(_ message: DaemonControlMessage, fileDescriptors: [Int32] = []) throws -> DaemonExit {
+    func send(_ message: DaemonControlMessage, fileDescriptors: [Int32] = []) throws -> DaemonExit {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw DaemonClientError.socketFailure(errnoMessage("socket")) }
         defer { close(fd) }

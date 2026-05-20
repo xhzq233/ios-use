@@ -7,20 +7,13 @@ if rawArguments.first == "__daemon" {
 }
 
 let result: CLIResult
-switch rawArguments.first {
-case nil, "-h", "--help", "help":
-    result = CLIResult(exitCode: 0, stdout: IOSUseCLI.helpText)
-case "-V", "--version":
-    result = CLIResult(exitCode: 0, stdout: "\(IOSUseCLI.version)\n")
-default:
-    if rawArguments.dropFirst().contains("--help") || rawArguments.dropFirst().contains("-h") {
-        result = CLIResult(exitCode: 0, stdout: IOSUseCLI.helpText)
-    } else {
-        result = DaemonFrontend().run(
-            arguments: rawArguments,
-            executablePath: CommandLine.arguments[0]
-        )
-    }
+if let immediate = CLIHelp.immediateResult(arguments: rawArguments) {
+    result = immediate
+} else {
+    result = DaemonFrontend().run(
+        arguments: rawArguments,
+        executablePath: CommandLine.arguments[0]
+    )
 }
 
 if !result.stdout.isEmpty {

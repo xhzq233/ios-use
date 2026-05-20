@@ -101,30 +101,18 @@ public struct IOSUseCLI: Sendable {
 
     public func run(arguments: [String]) -> CLIResult {
         guard let first = arguments.first else {
-            return CLIResult(exitCode: 0, stdout: Self.helpText)
+            return CLIErrorEnvelope(message: CLIParseError.missingCommand.description).render()
         }
-
-        if arguments.dropFirst().contains("--help") || arguments.dropFirst().contains("-h") {
-            return CLIResult(exitCode: 0, stdout: Self.helpText)
+        if first.hasPrefix("-") {
+            return CLIErrorEnvelope(message: "unknown option '\(first)'").render()
         }
-
-        switch first {
-        case "-h", "--help", "help":
-            return CLIResult(exitCode: 0, stdout: Self.helpText)
-        case "-V", "--version":
-            return CLIResult(exitCode: 0, stdout: "\(Self.version)\n")
-        default:
-            if first.hasPrefix("-") {
-                return CLIErrorEnvelope(message: "unknown option '\(first)'").render()
-            }
-            do {
-                let parsed = try CLIParser.parse(arguments)
-                return executeParsed(parsed)
-            } catch let error as CLIParseError {
-                return CLIErrorEnvelope(message: error.description).render()
-            } catch {
-                return CLIErrorEnvelope(message: "\(error)").render()
-            }
+        do {
+            let parsed = try CLIParser.parse(arguments)
+            return executeParsed(parsed)
+        } catch let error as CLIParseError {
+            return CLIErrorEnvelope(message: error.description).render()
+        } catch {
+            return CLIErrorEnvelope(message: "\(error)").render()
         }
     }
 
@@ -365,26 +353,4 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    public static var helpText: String {
-        """
-        Usage: ios-use [--help] [--version] <command>
-
-        Swift CLI for ios-use.
-
-        Current status:
-          - `./ios-use` is the local workspace Swift executable
-          - Swift CLI and driver compile the same shared IOSUseProtocol/Fory model source
-          - driver read, mutation, lifecycle, oslog, nslog, proxy, config, devices, and Simulator flow paths are migrated
-          - real-device host paths are implemented but still require physical-device validation
-
-        Options:
-          -h, --help       Show help
-          -V, --version    Show version
-
-        Commands:
-          devices, config, dom, find, waitFor, screenshot, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, flow, proxy, oslog, nslog
-
-        """
-    }
 }
