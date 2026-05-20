@@ -6,13 +6,6 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-SCRIPT_SOURCE="${BASH_SOURCE[0]:-}"
-if [[ -n "$SCRIPT_SOURCE" && "$SCRIPT_SOURCE" != "-" && -e "$SCRIPT_SOURCE" ]]; then
-  ROOT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")/.." 2>/dev/null && pwd || pwd)"
-else
-  ROOT_DIR="$(pwd)"
-fi
-
 USER_TARGET_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 PRIMARY_TARGET_DIR="$USER_TARGET_DIR"
 SECONDARY_TARGET_DIR="$HOME/bin"
@@ -21,6 +14,7 @@ CLI_VERSION=""
 ALTSIGN_REPO="xhzq233/altsign-cli"
 ALTSIGN_VERSION="v0.1.1"
 BOOTSTRAP_DIR=""
+ROOT_DIR=""
 PRINT_PATH_ONLY=0
 BUILD_FROM_SOURCE=0
 DIST_DIR=""
@@ -39,8 +33,8 @@ Usage: install.sh [--version <tag>] [--build-from-source] [--print-path]
 
 Options:
   --version <tag>      Release tag to install (e.g. v1.2.0). Defaults to latest.
-  --build-from-source  Compile the Swift CLI locally instead of downloading the
-                       prebuilt macOS CLI from the GitHub Release.
+  --build-from-source  Compile the Swift CLI from the selected source ref instead
+                       of downloading the prebuilt macOS CLI from the GitHub Release.
   --print-path         Print the installed binary path after installation.
 
 Environment:
@@ -126,11 +120,6 @@ mac_cli_asset_name() {
 }
 
 bootstrap_remote_repo() {
-  if [[ -d "$ROOT_DIR/ios-use-skill" && -d "$ROOT_DIR/flows" && -f "$ROOT_DIR/swift-cli/Package.swift" ]]; then
-    refresh_paths
-    return
-  fi
-
   if ! command -v curl >/dev/null 2>&1; then
     echo "curl is required for remote installation." >&2
     exit 1
@@ -177,12 +166,7 @@ build_or_download_cli() {
 install_driver_artifact() {
   local asset="$1"
   local destination="$2"
-  local local_asset="$ROOT_DIR/assets/$asset"
   mkdir -p "$(dirname "$destination")"
-  if [[ "$BUILD_FROM_SOURCE" -eq 1 && -f "$local_asset" ]]; then
-    install -m 644 "$local_asset" "$destination"
-    return
-  fi
 
   echo "Downloading ${asset} ${DRIVER_VERSION}..."
   curl -fsSL "$(release_asset_url "$DRIVER_VERSION" "$asset")" -o "$destination"
@@ -215,12 +199,9 @@ install_binary() {
     cp -R "$flows_src" "$flows_dst"
   fi
 
-  # altsign-cli: local > GitHub Release
+  # altsign-cli: GitHub Release
   local alt_bin="$HOME/.ios-use/altsign-cli/altsign-cli"
-  if [[ -x "$ROOT_DIR/altsign-cli/altsign-cli" ]]; then
-    mkdir -p "$HOME/.ios-use/altsign-cli"
-    install -m 755 "$ROOT_DIR/altsign-cli/altsign-cli" "$alt_bin"
-  elif [[ ! -x "$alt_bin" ]]; then
+  if [[ ! -x "$alt_bin" ]]; then
     echo "Downloading altsign-cli ${ALTSIGN_VERSION}..."
     mkdir -p "$HOME/.ios-use/altsign-cli"
     curl -fsSL "https://github.com/${ALTSIGN_REPO}/releases/download/${ALTSIGN_VERSION}/altsign-cli" \

@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 import IOSUseDaemonRuntime
 import IOSUseProtocol
 
@@ -143,6 +144,38 @@ final class IOSUseCLITests: XCTestCase {
         ])
 
         XCTAssertEqual(cli.paths.root, "/tmp/ios-use-swift-env")
+    }
+
+    func testExecutablePathResolverSearchesPathForBareCommandName() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-executable-path-\(UUID().uuidString)", isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        let work = root.appendingPathComponent("work", isDirectory: true)
+        let executable = bin.appendingPathComponent("ios-use")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        XCTAssertTrue(FileManager.default.createFile(atPath: executable.path, contents: Data("#!/bin/sh\n".utf8)))
+        chmod(executable.path, 0o755)
+
+        let resolved = IOSUseExecutablePath.resolve(
+            "ios-use",
+            environment: ["PATH": bin.path],
+            currentDirectory: work.path
+        )
+
+        XCTAssertEqual(resolved, executable.path)
+    }
+
+    func testExecutablePathResolverKeepsSlashRelativePathsRelativeToCwd() {
+        let resolved = IOSUseExecutablePath.resolve(
+            "./ios-use",
+            environment: ["PATH": "/usr/bin"],
+            currentDirectory: "/tmp/ios-use-work"
+        )
+
+        XCTAssertEqual(resolved, "/tmp/ios-use-work/ios-use")
     }
 
     func testErrorEnvelopeUsesStableExitCodeAndPrefix() {

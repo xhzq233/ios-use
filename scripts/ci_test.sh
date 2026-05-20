@@ -25,6 +25,8 @@ echo "[ci-test] Checking script syntax..."
 for script in "$ROOT_DIR"/scripts/*.sh; do
   bash -n "$script"
 done
+echo "[ci-test] Running install smoke tests..."
+bash "$ROOT_DIR/scripts/test_install.sh"
 if command -v node >/dev/null 2>&1; then
   node --check "$ROOT_DIR/scripts/benchmark_wda.js"
   node --check "$ROOT_DIR/scripts/ios_use_test_simulator.js"
