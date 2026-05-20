@@ -27,10 +27,16 @@ https://github.com/user-attachments/assets/65155303-5774-4bcb-b68d-5e03f6a3e3ae
 ### 1. Install The CLI
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 ```
 
-The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. Intel Macs should compile locally instead:
+The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.0.0
+```
+
+Intel Macs should compile locally instead:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
