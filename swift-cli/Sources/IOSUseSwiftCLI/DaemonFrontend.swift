@@ -75,21 +75,19 @@ struct DaemonFrontend {
         try log.seekToEnd()
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: absoluteExecutablePath(executablePath))
+        process.executableURL = URL(
+            fileURLWithPath: IOSUseExecutablePath.resolve(
+                executablePath,
+                environment: environment,
+                currentDirectory: FileManager.default.currentDirectoryPath
+            )
+        )
         process.arguments = ["__daemon"]
         process.environment = environment
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = log
         process.standardError = log
         try process.run()
-    }
-
-    private func absoluteExecutablePath(_ path: String) -> String {
-        if path.hasPrefix("/") { return path }
-        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-            .appendingPathComponent(path)
-            .standardized
-            .path
     }
 
     private func deleteResidualSessionFile() {

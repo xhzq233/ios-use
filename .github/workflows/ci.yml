@@ -40,6 +40,7 @@ jobs:
           for script in scripts/*.sh; do
             bash -n "$script"
           done
+          bash scripts/test_install.sh
           node --check scripts/benchmark_wda.js
           node --check scripts/ios_use_test_simulator.js
           node --check scripts/test_simulator_commands.mjs
