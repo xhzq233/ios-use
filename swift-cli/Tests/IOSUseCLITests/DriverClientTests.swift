@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import XCTest
 import IOSUseProtocol
-@testable import IOSUseCLI
+@testable import IOSUseDaemonRuntime
 
 final class DriverClientTests: XCTestCase {
     func testClientReusesConnectionWithinInstance() throws {

@@ -1,5 +1,5 @@
 import XCTest
-import IOSUseCLI
+import IOSUseDaemonRuntime
 import IOSUseProtocol
 
 final class IOSUseCLITests: XCTestCase {
@@ -89,10 +89,22 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(paths.root, "/tmp/ios-use-swift-test-home")
         XCTAssertEqual(paths.config, "/tmp/ios-use-swift-test-home/config.json")
-        XCTAssertEqual(paths.session, "/tmp/ios-use-swift-test-home/state/session.json")
         XCTAssertEqual(paths.nslogLock, "/tmp/ios-use-swift-test-home/state/nslog.lock")
+        XCTAssertEqual(paths.daemonSocket, "/tmp/ios-use-swift-test-home/state/daemon.sock")
         XCTAssertEqual(paths.logs, "/tmp/ios-use-swift-test-home/logs")
         XCTAssertEqual(paths.artifacts, "/tmp/ios-use-swift-test-home/artifacts")
+    }
+
+    func testLongIOSUseHomeUsesShortDaemonSocketPath() {
+        let longHome = "/Users/example/.ios-use/test-homes/simulator-commands/artifacts/simulator-command-tests/20260519T184011Z/empty-home"
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": longHome])
+
+        XCTAssertEqual(paths.root, longHome)
+        XCTAssertTrue(paths.daemonSocket.hasPrefix("/tmp/iud-"))
+        XCTAssertTrue(paths.daemonSocket.hasSuffix(".sock"))
+        XCTAssertLessThan(paths.daemonSocket.utf8.count, 100)
+        XCTAssertEqual(paths.daemonPid, "\(longHome)/state/daemon.pid")
+        XCTAssertEqual(paths.daemonLog, "\(longHome)/logs/daemon.log")
     }
 
     func testPathsDefaultToHomeDotIOSUse() {

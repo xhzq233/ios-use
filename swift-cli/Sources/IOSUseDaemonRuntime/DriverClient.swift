@@ -74,11 +74,11 @@ final class DriverClient {
         self.deviceType = deviceType
     }
 
-    convenience init(session: SessionService.Info?) {
+    convenience init(endpoint: DriverEndpoint?) {
         self.init(
-            port: UInt16(session?.port ?? Int(IOSUseProtocol.defaultDriverPort)),
-            udid: session?.udid,
-            deviceType: session?.deviceType
+            port: UInt16(endpoint?.port ?? Int(IOSUseProtocol.defaultDriverPort)),
+            udid: endpoint?.udid,
+            deviceType: endpoint?.deviceType
         )
     }
 
@@ -88,6 +88,7 @@ final class DriverClient {
 
     func close() {
         if let fd {
+            Darwin.shutdown(fd, SHUT_RDWR)
             Darwin.close(fd)
             self.fd = nil
         }

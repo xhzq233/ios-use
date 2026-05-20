@@ -1,5 +1,5 @@
 import XCTest
-@testable import IOSUseCLI
+@testable import IOSUseDaemonRuntime
 import IOSUseProtocol
 
 final class DriverOutputTests: XCTestCase {
