@@ -5,6 +5,11 @@ import IOSUseProtocol
 @testable import IOSUseDaemonRuntime
 
 final class DaemonServerClientTests: XCTestCase {
+    override func tearDown() {
+        NSLogService.serverOptionsOverrideForTesting = nil
+        super.tearDown()
+    }
+
     func testClientRequestRoundTripsThroughUnixSocketServer() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(atPath: root) }
@@ -140,6 +145,106 @@ final class DaemonServerClientTests: XCTestCase {
         XCTAssertTrue(daemonLog.contains("[daemon] [INFO] request execute-1 argv=config --list"))
     }
 
+    func testDaemonNSLogStreamsStartupOutputThroughPassedStdout() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        NSLogService.serverOptionsOverrideForTesting = { options in
+            NSLoggerServerOptions(name: options.name, publishBonjour: false)
+        }
+        let executor = DaemonExecutor(environment: ["IOS_USE_HOME": root])
+        let server = DaemonServer(paths: paths) { request, output, cancellation in
+            executor.handle(request, output: output, cancellation: cancellation)
+        }
+        defer { server.stop() }
+
+        try server.start()
+        let stdoutURL = URL(fileURLWithPath: root).appendingPathComponent("nslog.stdout")
+        let stderrURL = URL(fileURLWithPath: root).appendingPathComponent("nslog.stderr")
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+        let stdout = try FileHandle(forWritingTo: stdoutURL)
+        let stderr = try FileHandle(forWritingTo: stderrURL)
+        let completed = DispatchSemaphore(value: 0)
+        let exitBox = AsyncDaemonExitBox()
+        let request = DaemonRequest(id: "nslog-stream-1", argv: ["nslog", "--name", "unit"], cwd: root)
+
+        DispatchQueue.global().async {
+            do {
+                exitBox.set(.success(try DaemonTestClient(paths: paths).send(
+                    request,
+                    stdoutFileDescriptor: stdout.fileDescriptor,
+                    stderrFileDescriptor: stderr.fileDescriptor
+                )))
+            } catch {
+                exitBox.set(.failure(error))
+            }
+            completed.signal()
+        }
+
+        XCTAssertTrue(waitForFile(stdoutURL.path, toContain: "NSLogger listening on port"))
+        XCTAssertTrue(waitForFile(stdoutURL.path, toContain: "Streaming logs... Press Ctrl+C to stop."))
+        let interruptExit = try DaemonTestClient(paths: paths).send(.interrupt(DaemonInterrupt(id: request.id, signal: "SIGINT")))
+
+        XCTAssertEqual(interruptExit, DaemonExit(id: request.id, exitCode: 130))
+        XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(try exitBox.get(), DaemonExit(id: request.id, exitCode: 130))
+        try stdout.close()
+        try stderr.close()
+    }
+
+    func testDaemonClosesRequestOutputOnInterruptBeforeLateWrites() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let started = DispatchSemaphore(value: 0)
+        let completed = DispatchSemaphore(value: 0)
+        let exitBox = AsyncDaemonExitBox()
+        let request = DaemonRequest(id: "late-output-1", argv: ["devices"], cwd: root)
+        let server = DaemonServer(paths: paths) { request, output, cancellation in
+            started.signal()
+            while !cancellation.isCancelled {
+                usleep(10_000)
+            }
+            output.writeStdout("late stdout after interrupt\n")
+            output.writeStderr("late stderr after interrupt\n")
+            return DaemonServer.Response(exit: cancellation.cancelledExit(id: request.id))
+        }
+        defer { server.stop() }
+
+        try server.start()
+        let stdoutURL = URL(fileURLWithPath: root).appendingPathComponent("late.stdout")
+        let stderrURL = URL(fileURLWithPath: root).appendingPathComponent("late.stderr")
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+        let stdout = try FileHandle(forWritingTo: stdoutURL)
+        let stderr = try FileHandle(forWritingTo: stderrURL)
+
+        DispatchQueue.global().async {
+            do {
+                exitBox.set(.success(try DaemonTestClient(paths: paths).send(
+                    request,
+                    stdoutFileDescriptor: stdout.fileDescriptor,
+                    stderrFileDescriptor: stderr.fileDescriptor
+                )))
+            } catch {
+                exitBox.set(.failure(error))
+            }
+            completed.signal()
+        }
+
+        XCTAssertEqual(started.wait(timeout: .now() + 2), .success)
+        let interruptExit = try DaemonTestClient(paths: paths).send(.interrupt(DaemonInterrupt(id: request.id, signal: "SIGINT")))
+
+        XCTAssertEqual(interruptExit, DaemonExit(id: request.id, exitCode: 130))
+        XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(try exitBox.get(), DaemonExit(id: request.id, exitCode: 130))
+        try stdout.close()
+        try stderr.close()
+        XCTAssertEqual(try String(contentsOf: stdoutURL), "")
+        XCTAssertEqual(try String(contentsOf: stderrURL), "")
+    }
+
     func testDaemonLoggerRedactsSensitiveRawArguments() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(atPath: root) }
@@ -205,6 +310,41 @@ final class DaemonServerClientTests: XCTestCase {
         XCTAssertEqual(interruptExit, DaemonExit(id: request.id, exitCode: 130))
         XCTAssertEqual(completed.wait(timeout: .now() + 2), .success)
         XCTAssertEqual(try resultBox.get(), DaemonExit(id: request.id, exitCode: 130))
+    }
+
+    func testInterruptBeforeRequestRegistrationCancelsLaterRequestAndClosesOutput() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let request = DaemonRequest(id: "early-interrupt-1", argv: ["devices"], cwd: root)
+        let server = DaemonServer(paths: paths) { request, output, _ in
+            output.writeStdout("stdout should not be forwarded\n")
+            output.writeStderr("stderr should not be forwarded\n")
+            return DaemonServer.Response(exit: DaemonExit(id: request.id, exitCode: 2))
+        }
+        defer { server.stop() }
+
+        try server.start()
+        let interruptExit = try DaemonTestClient(paths: paths).send(.interrupt(DaemonInterrupt(id: request.id, signal: "SIGINT")))
+
+        XCTAssertEqual(interruptExit, DaemonExit(id: request.id, exitCode: 130))
+        let stdoutURL = URL(fileURLWithPath: root).appendingPathComponent("early.stdout")
+        let stderrURL = URL(fileURLWithPath: root).appendingPathComponent("early.stderr")
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+        let stdout = try FileHandle(forWritingTo: stdoutURL)
+        let stderr = try FileHandle(forWritingTo: stderrURL)
+        let requestExit = try DaemonTestClient(paths: paths).send(
+            request,
+            stdoutFileDescriptor: stdout.fileDescriptor,
+            stderrFileDescriptor: stderr.fileDescriptor
+        )
+
+        XCTAssertEqual(requestExit, DaemonExit(id: request.id, exitCode: 130))
+        try stdout.close()
+        try stderr.close()
+        XCTAssertEqual(try String(contentsOf: stdoutURL), "")
+        XCTAssertEqual(try String(contentsOf: stderrURL), "")
     }
 
     func testDaemonExecutorCancelsRunningDriverCommandByClosingChannel() throws {
@@ -436,6 +576,17 @@ final class DaemonServerClientTests: XCTestCase {
             usleep(10_000)
         }
         return !FileManager.default.fileExists(atPath: path)
+    }
+
+    private func waitForFile(_ path: String, toContain expected: String) -> Bool {
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if ((try? String(contentsOfFile: path)) ?? "").contains(expected) {
+                return true
+            }
+            usleep(10_000)
+        }
+        return ((try? String(contentsOfFile: path)) ?? "").contains(expected)
     }
 }
 

@@ -1,9 +1,10 @@
 import Darwin
 import Foundation
 
-public struct DaemonOutputHandles: Sendable {
-    private let stdout: Int32?
-    private let stderr: Int32?
+public final class DaemonOutputHandles: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stdout: Int32?
+    private var stderr: Int32?
 
     public init(stdout: Int32?, stderr: Int32?) {
         self.stdout = stdout
@@ -11,14 +12,21 @@ public struct DaemonOutputHandles: Sendable {
     }
 
     public func writeStdout(_ text: String) {
-        write(text, to: stdout)
+        write(text, to: descriptor { $0.stdout })
     }
 
     public func writeStderr(_ text: String) {
-        write(text, to: stderr)
+        write(text, to: descriptor { $0.stderr })
     }
 
     public func close() {
+        lock.lock()
+        let stdout = self.stdout
+        let stderr = self.stderr
+        self.stdout = nil
+        self.stderr = nil
+        lock.unlock()
+
         if let stdout { Darwin.close(stdout) }
         if let stderr, stderr != stdout { Darwin.close(stderr) }
     }
@@ -37,6 +45,12 @@ public struct DaemonOutputHandles: Sendable {
                 return
             }
         }
+    }
+
+    private func descriptor(_ selector: (DaemonOutputHandles) -> Int32?) -> Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        return selector(self)
     }
 }
 
@@ -95,18 +109,30 @@ public final class DaemonCancellationToken: @unchecked Sendable {
 private final class DaemonRequestRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var tokens: [String: DaemonCancellationToken] = [:]
+    private var pendingInterrupts: [String: PendingInterrupt] = [:]
+    private let pendingInterruptTTL: TimeInterval = 30
 
     func register(id: String) -> DaemonCancellationToken {
         let token = DaemonCancellationToken()
+        let pending: PendingInterrupt?
         lock.lock()
+        prunePendingInterruptsLocked()
+        pending = pendingInterrupts.removeValue(forKey: id)
         tokens[id] = token
         lock.unlock()
+        if let pending {
+            token.cancel(signal: pending.signal)
+        }
         return token
     }
 
     func cancel(id: String, signal: String) -> Bool {
         lock.lock()
         let token = tokens[id]
+        if token == nil {
+            prunePendingInterruptsLocked()
+            pendingInterrupts[id] = PendingInterrupt(signal: signal, createdAt: Date())
+        }
         lock.unlock()
         token?.cancel(signal: signal)
         return token != nil
@@ -117,6 +143,15 @@ private final class DaemonRequestRegistry: @unchecked Sendable {
         tokens.removeValue(forKey: id)
         lock.unlock()
     }
+
+    private func prunePendingInterruptsLocked(now: Date = Date()) {
+        pendingInterrupts = pendingInterrupts.filter { now.timeIntervalSince($0.value.createdAt) <= pendingInterruptTTL }
+    }
+}
+
+private struct PendingInterrupt {
+    let signal: String
+    let createdAt: Date
 }
 
 public final class DaemonServer: @unchecked Sendable {
@@ -266,6 +301,9 @@ public final class DaemonServer: @unchecked Sendable {
             case .request(let request):
                 let token = registry?.register(id: request.id) ?? DaemonCancellationToken()
                 defer { registry?.unregister(id: request.id) }
+                token.onCancel {
+                    output.close()
+                }
                 let daemonResponse = token.isCancelled
                     ? Response(exit: token.cancelledExit(id: request.id))
                     : responder(request, output, token)

@@ -6,14 +6,25 @@ import NIOPosix
 @preconcurrency import NIOSSL
 
 public enum NSLogService {
-    public static func stream(options: NSLogOptions, paths: IOSUsePaths, cancellation: DaemonCancellationToken? = nil) throws -> String {
+    public typealias OutputSink = @Sendable (String) -> Void
+
+    static var serverOptionsOverrideForTesting: ((NSLogOptions) -> NSLoggerServerOptions)?
+
+    public static func stream(
+        options: NSLogOptions,
+        paths: IOSUsePaths,
+        outputSink: @escaping OutputSink,
+        errorSink: @escaping OutputSink = { _ in },
+        cancellation: DaemonCancellationToken? = nil
+    ) throws {
         let grepRegex = try options.grep.flatMap { grep -> NSRegularExpression? in
             guard !grep.isEmpty else { return nil }
             return try NSRegularExpression(pattern: grep, options: regexOptions(options.flags))
         }
 
         try acquireForegroundOwnership(paths: paths, mode: "cli")
-        let server = try NSLoggerServer(options: NSLoggerServerOptions(name: options.name), paths: paths)
+        let serverOptions = serverOptionsOverrideForTesting?(options) ?? NSLoggerServerOptions(name: options.name)
+        let server = try NSLoggerServer(options: serverOptions, paths: paths)
         do {
             try server.start()
             try writeLock(paths: paths, server: server, mode: "cli")
@@ -29,19 +40,19 @@ public enum NSLogService {
 
         server.onMessage = { entry in
             guard let grepRegex else {
-                writeStdout("\(entry)\n")
+                outputSink("\(entry)\n")
                 return
             }
             if Self.matches(entry, regex: grepRegex) {
-                writeStdout("\(entry)\n")
+                outputSink("\(entry)\n")
             }
         }
 
-        writeStdout("NSLogger listening on port \(server.port) (SSL)\n")
-        writeStdout("Streaming logs... Press Ctrl+C to stop.\n")
+        outputSink("NSLogger listening on port \(server.port) (SSL)\n")
+        outputSink("Streaming logs... Press Ctrl+C to stop.\n")
 
         let interruptMonitor = InterruptMonitor(onInterrupt: {
-            writeStderr("NSLogger interrupted, cleaning up...\n")
+            errorSink("NSLogger interrupted, cleaning up...\n")
         })
         interruptMonitor.start()
         defer { interruptMonitor.stop() }
@@ -53,7 +64,6 @@ public enum NSLogService {
         if cancellation?.isCancelled == true {
             throw CLIExitSignal(exitCode: 130, message: "Interrupted by Ctrl+C")
         }
-        return ""
     }
 
     static func matches(_ entry: String, pattern: String, flags: String) throws -> Bool {
@@ -664,14 +674,6 @@ private final class NSLoggerTLSChannelHandler: ChannelInboundHandler {
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         context.close(promise: nil)
     }
-}
-
-private func writeStdout(_ text: String) {
-    FileHandle.standardOutput.write(Data(text.utf8))
-}
-
-private func writeStderr(_ text: String) {
-    FileHandle.standardError.write(Data(text.utf8))
 }
 
 private extension String {

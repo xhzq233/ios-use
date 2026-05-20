@@ -103,6 +103,7 @@ public final class DaemonExecutor {
 
 public final class DaemonProcess {
     private let paths: IOSUsePaths
+    private let logger: DaemonLogger
     private let executor: DaemonExecutor
     private var server: DaemonServer?
     private var signalSources: [DispatchSourceSignal] = []
@@ -110,11 +111,13 @@ public final class DaemonProcess {
     public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.paths = IOSUsePaths.resolve(environment: environment)
         let logger = DaemonLogger(paths: paths)
+        self.logger = logger
         logger.info("daemon process initializing")
         self.executor = DaemonExecutor(environment: environment, logger: logger)
     }
 
     public func run() -> Int32 {
+        signal(SIGPIPE, SIG_IGN)
         let server = DaemonServer(paths: paths) { [executor] request, output, cancellation in
             executor.handle(request, output: output, cancellation: cancellation)
         }
@@ -125,7 +128,7 @@ public final class DaemonProcess {
             server.wait()
             return 0
         } catch {
-            FileHandle.standardError.write(Data("error: failed to start daemon: \(error)\n".utf8))
+            logger.error("failed to start daemon: \(error)")
             return 1
         }
     }
