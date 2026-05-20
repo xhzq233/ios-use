@@ -818,6 +818,59 @@ async function runDaemonQueueCase() {
   else recordFail(id, `elapsedMs=${elapsedMs}\n${waitRes.stdout}${waitRes.stderr}${domRes.stdout}${domRes.stderr}${log}`);
 }
 
+async function runDaemonNSLogStreamingCase() {
+  const id = 'DMN-4';
+  if (!selected(id)) return recordSkip(id);
+  const localHome = path.join(artifactDir, 'daemon-nslog-home');
+  const workDir = path.join(artifactDir, 'daemon-nslog-work');
+  ensureDir(localHome);
+  ensureDir(workDir);
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  console.log('[sim-test] RUN DMN-4: installed-style nslog must stream startup output through daemon stdout fd');
+  const stdoutFd = fs.openSync(out, 'w');
+  const stderrFd = fs.openSync(err, 'w');
+  const proc = spawn(iosUseCli, ['nslog', '--name', 'ios-use-dmn-nslog'], {
+    cwd: workDir,
+    env: { ...process.env, IOS_USE_HOME: localHome },
+    stdio: ['ignore', stdoutFd, stderrFd],
+  });
+  const closed = new Promise(resolve => {
+    proc.on('close', code => resolve(code ?? 1));
+    proc.on('error', () => resolve(1));
+  });
+  let ready = false;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const stdout = readFileIfExists(out);
+    if (stdout.includes('NSLogger listening on port') && stdout.includes('Streaming logs... Press Ctrl+C to stop.')) {
+      ready = true;
+      break;
+    }
+    await sleep(100);
+  }
+  proc.kill('SIGINT');
+  const code = await closed;
+  fs.closeSync(stdoutFd);
+  fs.closeSync(stderrFd);
+  runExternalToFiles([iosUseCli, 'stop'], path.join(artifactDir, `${id}-stop.out`), path.join(artifactDir, `${id}-stop.err`), { IOS_USE_HOME: localHome });
+  if (ready && code === 130) recordPass(id);
+  else recordFail(id, `exit=${code}\n${readFileIfExists(out)}${readFileIfExists(err)}`);
+}
+
+async function runDaemonInterruptOutputCase() {
+  const id = 'DMN-5';
+  if (!selected(id)) return recordSkip(id);
+  console.log('[sim-test] RUN DMN-5: Swift daemon unit coverage for interrupt output fd and early interrupt races');
+  const res = runExternalToFiles(
+    ['swift', 'test', '--package-path', 'swift-cli', '--filter', 'DaemonServerClientTests'],
+    path.join(artifactDir, `${id}.out`),
+    path.join(artifactDir, `${id}.err`),
+    { IOS_USE_HOME: iosHome }
+  );
+  if (res.code === 0) recordPass(id);
+  else recordFail(id, res.stdout + res.stderr);
+}
+
 async function runDriverUnitCases() {
   const ids = ['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'];
   if (!anySelected(ids)) {
@@ -1136,6 +1189,8 @@ function buildCases() {
     { id: 'DMN-1', run: runDaemonLocalCommandCase },
     { id: 'DMN-2', run: runDaemonChannelReuseCase },
     { id: 'DMN-3', run: runDaemonQueueCase },
+    { id: 'DMN-4', run: runDaemonNSLogStreamingCase },
+    { id: 'DMN-5', run: runDaemonInterruptOutputCase },
     { id: 'CFG-2', run: () => unsupportedCase('CFG-2', 'real-device signing/install path, not Simulator') },
     { id: 'CFG-3', run: () => unsupportedCase('CFG-3', 'Apple ID first-login signing path, not Simulator and must not touch local credentials') },
     ...['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'].map(id => ({ id, run: runDriverUnitCases })),

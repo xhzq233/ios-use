@@ -23,7 +23,12 @@ public enum ConfigService {
     private static let defaultDriverBundlePrefix = "com.ios-use.driver"
     private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
 
-    public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
+    public static func configureDevice(
+        options: ConfigOptions,
+        paths: IOSUsePaths,
+        outputSink: (@Sendable (String) -> Void)? = nil,
+        errorSink: (@Sendable (String) -> Void)? = nil
+    ) throws -> String {
         let realDevices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
         let udid: String
         if let requested = options.udid {
@@ -63,7 +68,7 @@ public enum ConfigService {
         if let appleId = options.appleId { signArgs += ["--apple-id", appleId] }
         if let password = options.password { signArgs += ["--password", password] }
         if options.verbose { signArgs.append("--verbose") }
-        try Shell.runInheriting(altsign, arguments: signArgs)
+        try Shell.runStreaming(altsign, arguments: signArgs, stdoutSink: outputSink, stderrSink: errorSink)
 
         guard FileManager.default.fileExists(atPath: signedIpa) else {
             throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
@@ -446,7 +451,7 @@ public enum DriverBootstrap {
         ]
         let command = "exec \(args.map(shellQuote).joined(separator: " ")) >> \(shellQuote(logPath)) 2>&1"
         if verbose {
-            FileHandle.standardError.write(Data("Driver console log: \(logPath)\n".utf8))
+            DaemonLogger(paths: paths).info("driver console log: \(logPath)")
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")

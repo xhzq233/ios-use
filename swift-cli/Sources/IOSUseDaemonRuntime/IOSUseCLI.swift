@@ -27,6 +27,23 @@ public struct CLIErrorEnvelope: Equatable, Sendable {
     }
 }
 
+private final class CapturedOutput: @unchecked Sendable {
+    private let lock = NSLock()
+    private var text = ""
+
+    func append(_ value: String) {
+        lock.lock()
+        text += value
+        lock.unlock()
+    }
+
+    var value: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return text
+    }
+}
+
 public struct IOSUsePaths: Equatable, Sendable {
     public let root: String
     public let config: String
@@ -84,17 +101,20 @@ public struct IOSUseCLI: Sendable {
 
     public let paths: IOSUsePaths
     public let outputSink: CLIOutputSink?
+    public let errorSink: CLIOutputSink?
     private let driverChannel: DaemonDriverChannel?
     private let cancellation: DaemonCancellationToken?
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         outputSink: CLIOutputSink? = nil,
+        errorSink: CLIOutputSink? = nil,
         driverChannel: DaemonDriverChannel? = nil,
         cancellation: DaemonCancellationToken? = nil
     ) {
         self.paths = IOSUsePaths.resolve(environment: environment)
         self.outputSink = outputSink
+        self.errorSink = errorSink
         self.driverChannel = driverChannel
         self.cancellation = cancellation
     }
@@ -113,7 +133,15 @@ public struct IOSUseCLI: Sendable {
             }
         case .config(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try ConfigService.configureDevice(options: options, paths: paths))
+                let stdout = CapturedOutput()
+                let stderr = CapturedOutput()
+                let result = try ConfigService.configureDevice(
+                    options: options,
+                    paths: paths,
+                    outputSink: outputSink ?? { stdout.append($0) },
+                    errorSink: errorSink ?? { stderr.append($0) }
+                )
+                return CLIResult(exitCode: 0, stdout: stdout.value + result, stderr: stderr.value)
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
@@ -128,7 +156,16 @@ public struct IOSUseCLI: Sendable {
             }
         case .nslog(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: paths, cancellation: cancellation))
+                let capturedStdout = CapturedOutput()
+                let capturedStderr = CapturedOutput()
+                try NSLogService.stream(
+                    options: options,
+                    paths: paths,
+                    outputSink: outputSink ?? { capturedStdout.append($0) },
+                    errorSink: errorSink ?? { capturedStderr.append($0) },
+                    cancellation: cancellation
+                )
+                return CLIResult(exitCode: 0, stdout: capturedStdout.value, stderr: capturedStderr.value)
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
