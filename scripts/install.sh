@@ -17,15 +17,7 @@ USER_TARGET_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 PRIMARY_TARGET_DIR="$USER_TARGET_DIR"
 SECONDARY_TARGET_DIR="$HOME/bin"
 GITHUB_REPO="${IOS_USE_GITHUB_REPO:-xhzq233/ios-use}"
-INSTALL_VERSION="${IOS_USE_VERSION:-${IOS_USE_DRIVER_VERSION:-latest}}"
-if [[ -n "${IOS_USE_REF:-}" ]]; then
-  GITHUB_REF="$IOS_USE_REF"
-elif [[ "$INSTALL_VERSION" == "latest" ]]; then
-  GITHUB_REF="main"
-else
-  GITHUB_REF="$INSTALL_VERSION"
-fi
-DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-$INSTALL_VERSION}"
+CLI_VERSION=""
 ALTSIGN_REPO="xhzq233/altsign-cli"
 ALTSIGN_VERSION="v0.1.1"
 BOOTSTRAP_DIR=""
@@ -43,15 +35,16 @@ trap cleanup EXIT
 
 usage() {
   cat <<'USAGE'
-Usage: install.sh [--build-from-source] [--print-path]
+Usage: install.sh [--version <tag>] [--build-from-source] [--print-path]
 
 Options:
+  --version <tag>      Release tag to install (e.g. v1.2.0). Defaults to latest.
   --build-from-source  Compile the Swift CLI locally instead of downloading the
                        prebuilt macOS CLI from the GitHub Release.
   --print-path         Print the installed binary path after installation.
 
 Environment:
-  IOS_USE_VERSION       Release tag to install. Defaults to latest.
+  IOS_USE_VERSION       Release tag to install. Overridden by --version.
   IOS_USE_DRIVER_VERSION
                         Driver release tag override. Defaults to IOS_USE_VERSION.
   IOS_USE_REF           Source ref used when source files are needed.
@@ -61,6 +54,14 @@ USAGE
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --version)
+      if [[ $# -lt 2 ]]; then
+        echo "--version requires a value." >&2
+        exit 1
+      fi
+      CLI_VERSION="$2"
+      shift 2
+      ;;
     --build-from-source)
       BUILD_FROM_SOURCE=1
       shift
@@ -80,6 +81,16 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+INSTALL_VERSION="${CLI_VERSION:-${IOS_USE_VERSION:-${IOS_USE_DRIVER_VERSION:-latest}}}"
+DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-$INSTALL_VERSION}"
+if [[ -n "${IOS_USE_REF:-}" ]]; then
+  GITHUB_REF="$IOS_USE_REF"
+elif [[ "$INSTALL_VERSION" == "latest" ]]; then
+  GITHUB_REF="main"
+else
+  GITHUB_REF="$INSTALL_VERSION"
+fi
 
 refresh_paths() {
   DIST_DIR="$ROOT_DIR/dist"
