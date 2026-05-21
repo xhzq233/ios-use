@@ -219,14 +219,23 @@ enum CLIHelp {
             """
         case "nslog":
             return """
-            Usage: ios-use nslog [--name <name>] [--grep <regex>] [--flags <flags>]
+            Usage: ios-use nslog [--name <name>]
 
-            Start an NSLogger listener and stream matching logs.
+            Forms:
+              ios-use nslog [--name <name>]
+              ios-use nslog start [--name <name>]
+              ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <sec>] [--clearAfterRead] [--last N]
+              ios-use nslog stop
+
+            Stream or capture NSLogger logs.
 
             Options:
-              --name <name>      Bonjour service name
-              --grep <regex>     Regex filter
-              --flags <flags>    Regex flags: i, m, s
+              --name <name>       Bonjour service name
+              --pattern <regex>   Regex filter for nslog read
+              --flags <flags>     Regex flags for nslog read: i, m, s
+              --timeout <sec>     Wait for a matching line while capture is running
+              --clearAfterRead    Truncate the capture log after reading
+              --last N            Print only the last N matching lines (N > 0)
 
             """
         default:
