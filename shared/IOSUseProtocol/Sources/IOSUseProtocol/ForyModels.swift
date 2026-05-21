@@ -91,27 +91,6 @@ public struct ForyFindMatch {
 }
 
 @ForyStruct
-public struct ForyErrorPayload {
-    public var hint: String = ""
-    public var suggestions: [String] = []
-    public var matches: [ForyFindMatch] = []
-    public var atBoundary: Bool = false
-    public var tooSmallToScroll: Bool = false
-    public var direction: Int32 = -1
-    public var minDragDistance: Double = 0
-
-    public init(hint: String = "", suggestions: [String] = [], matches: [ForyFindMatch] = [], atBoundary: Bool = false, tooSmallToScroll: Bool = false, direction: Int32 = -1, minDragDistance: Double = 0) {
-        self.hint = hint
-        self.suggestions = suggestions
-        self.matches = matches
-        self.atBoundary = atBoundary
-        self.tooSmallToScroll = tooSmallToScroll
-        self.direction = direction
-        self.minDragDistance = minDragDistance
-    }
-}
-
-@ForyStruct
 public struct ForyDomElement {
     public var traits: [String] = []
     public var childCount: Int32 = 0
@@ -397,7 +376,6 @@ public enum ForyRegistry {
         try! fory.register(ForyResponseFrame.self, name: "ForyResponseFrame")
         try! fory.register(ForyEmptyPayload.self, name: "ForyEmptyPayload")
         try! fory.register(ForyFindMatch.self, name: "ForyFindMatch")
-        try! fory.register(ForyErrorPayload.self, name: "ForyErrorPayload")
         try! fory.register(ForyDomElement.self, name: "ForyDomElement")
         try! fory.register(ForyDomPayload.self, name: "ForyDomPayload")
         try! fory.register(ForyScreenshotPayload.self, name: "ForyScreenshotPayload")

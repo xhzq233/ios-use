@@ -345,17 +345,37 @@ private func shouldSkipAncestorInCleanChain(_ node: SafeSnapshot) -> Bool {
 }
 
 /// Build the ambiguity response (doc 3.3).
-func ambiguityResponse(_ label: String, matches: [SnapshotElement]) throws -> ForyResponseFrame {
-    var payload = ForyErrorPayload()
-    payload.matches = matches.map { makeForyFindMatch($0, includeAncestors: true) }
-    payload.hint = "Try adding --traits to disambiguate"
-    return try Codec.foryError("label '\(label)' is ambiguous (\(matches.count) matches)", payload: payload)
+func ambiguityResponse(_ label: String, matches: [SnapshotElement]) -> ForyResponseFrame {
+    var lines = ["label '\(label)' is ambiguous (\(matches.count) matches)"]
+    if !matches.isEmpty {
+        lines.append("matches:")
+        for match in matches {
+            lines.append("  \(formatErrorMatch(makeForyFindMatch(match, includeAncestors: true)))")
+        }
+    }
+    lines.append("hint: Try adding --traits to disambiguate")
+    return Codec.foryError(lines.joined(separator: "\n"))
 }
 
 /// Build the fuzzy / notFound payload (doc 3.3).
-func notFoundResponse(_ label: String, suggestions: [String], hint: String? = nil) throws -> ForyResponseFrame {
-    var payload = ForyErrorPayload()
-    payload.suggestions = suggestions
-    if let hint, !hint.isEmpty { payload.hint = hint }
-    return try Codec.foryError("label '\(label)' not found", payload: payload)
+func notFoundResponse(_ label: String, suggestions: [String], hint: String? = nil) -> ForyResponseFrame {
+    var lines = ["label '\(label)' not found"]
+    if !suggestions.isEmpty {
+        lines.append("suggestions: \(suggestions.joined(separator: ", "))")
+    }
+    if let hint, !hint.isEmpty {
+        lines.append("hint: \(hint)")
+    }
+    return Codec.foryError(lines.joined(separator: "\n"))
+}
+
+private func formatErrorMatch(_ match: ForyFindMatch) -> String {
+    let ancestors = match.ancestors.joined(separator: " > ")
+    let type = elementTypeName(XCUIElement.ElementType(rawValue: UInt(match.elemType)) ?? .other)
+    let flags = match.traits.dropFirst().joined(separator: ",")
+    let flagSuffix = flags.isEmpty ? "" : " [\(flags)]"
+    let display = match.value.isEmpty ? match.label : "\(match.label)=\(match.value)"
+    let rect = match.rect.map { "\($0.x),\($0.y),\($0.w),\($0.h)" } ?? ""
+    let context = ancestors.isEmpty ? "" : "[\(ancestors)] "
+    return "\(context)\(type)\(flagSuffix) \"\(display)\" (\(rect))"
 }

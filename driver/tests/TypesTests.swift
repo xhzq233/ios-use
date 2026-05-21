@@ -156,6 +156,34 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(decoded.scrollDirection, "down")
     }
 
+    func testAmbiguityResponseUsesErrorStringWithoutPayload() {
+        let first = makeElement(label: "关闭", type: .button)
+        let second = makeElement(label: "关闭", type: .button)
+
+        let response = ambiguityResponse("关闭", matches: [first, second])
+
+        XCTAssertFalse(response.ok)
+        XCTAssertTrue(response.payload.isEmpty)
+        XCTAssertTrue(response.error.contains("label '关闭' is ambiguous (2 matches)"))
+        XCTAssertTrue(response.error.contains("matches:"))
+        XCTAssertTrue(response.error.contains("Button \"关闭\""))
+        XCTAssertTrue(response.error.contains("hint: Try adding --traits to disambiguate"))
+    }
+
+    func testNotFoundResponseUsesErrorStringWithoutPayload() {
+        let response = notFoundResponse(
+            "Bluetoth",
+            suggestions: ["Bluetooth"],
+            hint: "Try adding --traits, or verify the active app"
+        )
+
+        XCTAssertFalse(response.ok)
+        XCTAssertTrue(response.payload.isEmpty)
+        XCTAssertTrue(response.error.contains("label 'Bluetoth' not found"))
+        XCTAssertTrue(response.error.contains("suggestions: Bluetooth"))
+        XCTAssertTrue(response.error.contains("hint: Try adding --traits, or verify the active app"))
+    }
+
     // MARK: - resolveTapPoint
 
     func testResolveTapPoint_DefaultsToCenter() {
