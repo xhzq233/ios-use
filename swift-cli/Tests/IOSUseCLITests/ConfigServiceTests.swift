@@ -237,7 +237,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(SessionService.read(paths: paths)?.udid, "SIM-ACTIVE")
     }
 
-    func testPrepareDriverSessionLaunchesRequestedSimulatorWhenSessionWasStopped() throws {
+    func testPrepareDriverSessionReusesReachableStoppedSingleSimulator() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
@@ -258,8 +258,36 @@ final class ConfigServiceTests: XCTestCase {
 
         try SessionService.prepareDriverSession(SessionOptions(udid: "SIM-STOPPED"), paths: paths)
 
-        XCTAssertEqual(launched, ["SIM-STOPPED"])
+        XCTAssertEqual(launched, [])
         XCTAssertEqual(SessionService.read(paths: paths)?.udid, "SIM-STOPPED")
+    }
+
+    func testPrepareDriverSessionLaunchesStoppedSimulatorWhenMultipleBooted() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"SIM-A":{"bundleId":"com.iosuse.xcuidriver.xctrunner","driverVersion":"\(IOSUseCLI.version)"},"SIM-B":{"bundleId":"com.iosuse.xcuidriver.xctrunner","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [
+                IOSDevice(name: "First", version: "26.0", udid: "SIM-A", kind: .simulator),
+                IOSDevice(name: "Requested", version: "26.0", udid: "SIM-B", kind: .simulator),
+            ] : []
+        }
+        var launched: [String] = []
+        SessionService.simulatorDriverReachableForTesting = { true }
+        SessionService.simulatorDriverLauncherForTesting = { launched.append($0) }
+        addTeardownBlock {
+            DeviceService.listDevicesOverrideForTesting = nil
+            SessionService.simulatorDriverReachableForTesting = nil
+            SessionService.simulatorDriverLauncherForTesting = nil
+        }
+
+        try SessionService.prepareDriverSession(SessionOptions(udid: "SIM-B"), paths: paths)
+
+        XCTAssertEqual(launched, ["SIM-B"])
+        XCTAssertEqual(SessionService.read(paths: paths)?.udid, "SIM-B")
     }
 
     func testPrepareDriverSessionLaunchesRequestedSimulatorWhenSessionDoesNotMatch() throws {
