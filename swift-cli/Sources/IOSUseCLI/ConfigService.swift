@@ -320,23 +320,15 @@ public enum SessionService {
 
     public static func stop(paths: IOSUsePaths) throws -> String {
         let current = read(paths: paths)
-        var udid = current?.udid
-        var deviceType = current?.deviceType
-        if udid == nil {
-            if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first {
-                udid = device.udid
-                deviceType = device.kind.rawValue
-            }
-        }
 
         var output = ""
-        if let udid, deviceType != "simulator" {
+        if let current, current.deviceType != "simulator" {
             let terminate = realDriverTerminatorForTesting ?? terminateRealDriverProcesses
-            if (try? terminate(udid)) == true {
+            if (try? terminate(current.udid)) == true {
                 output += "Driver app terminated on device\n"
             }
-        } else if udid == nil {
-            output += "No active session and no device found\n"
+        } else if current == nil {
+            output += "No active session\n"
         }
 
         clear(paths: paths)
