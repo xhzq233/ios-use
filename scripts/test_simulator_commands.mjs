@@ -311,6 +311,20 @@ async function runAutoLabelFindCase() {
   }
 }
 
+async function runFindExactPreferredCase(id) {
+  if (!selected(id)) return recordSkip(id);
+  await resetSettingsHome();
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  console.log(`[sim-test] RUN ${id}: find exact label should not return contains ambiguity`);
+  const res = runCliToFiles(['find', 'General', '--udid', sim.udid], out, err);
+  if (res.code === 0 && res.stdout.includes('Find "General":') && !/Find "General" \(\d+ matches\):/.test(res.stdout)) {
+    recordPass(id);
+  } else {
+    recordFail(id, res.stdout + res.stderr);
+  }
+}
+
 function backupStateFile(rel) {
   const src = path.join(iosHome, rel);
   const dst = path.join(stateBackupDir, rel);
@@ -538,7 +552,7 @@ function writeFlowFixtures() {
   writeFile(path.join(flowDir, 'basic.yaml'), `name: simulator-basic-flow
 app: com.apple.Preferences
 vars:
-  targetLabel: General
+  targetLabel: com.apple.settings.general
 steps:
   - action: waitFor
     label: \${vars.targetLabel}
@@ -567,7 +581,7 @@ steps:
 `);
   writeFile(path.join(flowDir, 'child.yaml'), `name: simulator-child-flow
 vars:
-  targetLabel: General
+  targetLabel: com.apple.settings.general
 outputs: found
 steps:
   - action: waitFor
@@ -586,7 +600,7 @@ steps:
   - action: runFlow
     file: ./child.yaml
     vars:
-      targetLabel: General
+      targetLabel: com.apple.settings.general
     outputs: found
   - action: find
     label: \${found.firstMatch.label}
@@ -617,11 +631,11 @@ steps:
     label: __must_not_run__
 `);
   writeFile(path.join(flowDir, 'invalid-return.yaml'), 'name: simulator-invalid-return-flow\nsteps:\n  - action: returnIf\n    value: true\n    is: invalid\n');
-  writeFile(path.join(flowDir, 'tap-offset.yaml'), 'name: simulator-tap-offset-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: General\n    traits: Button\n    offset:\n      xRatio: 0.5\n');
+  writeFile(path.join(flowDir, 'tap-offset.yaml'), 'name: simulator-tap-offset-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    offset:\n      xRatio: 0.5\n');
   writeFile(path.join(flowDir, 'sleep-default.yaml'), 'name: simulator-sleep-default-flow\napp: com.apple.Preferences\nsteps:\n  - action: sleep\n  - action: dom\n    fresh: true\n    print: false\n');
   writeFile(path.join(flowDir, 'dom-save.yaml'), 'name: simulator-dom-save-flow\napp: com.apple.Preferences\nsteps:\n  - action: dom\n    save: true\n    name: simulator-dom-save\n    print: false\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-dom-raw-save\n    print: false\n');
   writeFile(path.join(flowDir, 'oslog-timeout.yaml'), 'name: simulator-oslog-timeout-flow\napp: com.apple.Preferences\nsteps:\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-oslog-timeout\n');
-  writeFile(path.join(flowDir, 'standard-smoke.yaml'), 'name: simulator-standard-smoke-flow\napp: com.apple.Preferences\nsteps:\n  - action: waitFor\n    label: General\n    traits: Button\n    timeout: 5\n  - action: dom\n    save: true\n    name: simulator-flow-smoke-dom\n    print: false\n  - action: screenshot\n    name: simulator-flow-smoke-screenshot\n  - action: oslog\n    clear: true\n    bundleId: com.apple.Preferences\n  - action: swipe\n    distance: 180\n    dir: forth\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-smoke-oslog\n    bundleId: com.apple.Preferences\n  - action: activateApp\n    bundleId: com.apple.Preferences\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-flow-smoke-raw\n    print: false\n');
+  writeFile(path.join(flowDir, 'standard-smoke.yaml'), 'name: simulator-standard-smoke-flow\napp: com.apple.Preferences\nsteps:\n  - action: waitFor\n    label: com.apple.settings.general\n    traits: Button\n    timeout: 5\n  - action: dom\n    save: true\n    name: simulator-flow-smoke-dom\n    print: false\n  - action: screenshot\n    name: simulator-flow-smoke-screenshot\n  - action: oslog\n    clear: true\n    bundleId: com.apple.Preferences\n  - action: swipe\n    distance: 180\n    dir: forth\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-smoke-oslog\n    bundleId: com.apple.Preferences\n  - action: activateApp\n    bundleId: com.apple.Preferences\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-flow-smoke-raw\n    print: false\n');
 }
 
 async function runDomPerfCase() {
@@ -750,12 +764,12 @@ function buildCases() {
     { id: 'DOM-7', run: runDomPerfCase },
     { id: 'DOM-8', run: () => runCaseContains('DOM-8', 'App: com.apple.Preferences', ['dom', '--fresh', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-1', run: () => runCaseContains('FIND-1', 'Find', ['find', 'General', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-2', run: () => runCaseContains('FIND-2', 'matches', ['find', 'General', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-3', run: () => runCaseContains('FIND-3', 'Find', ['find', 'General', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-4', run: () => runCaseContains('FIND-4', 'Find', ['find', 'Settings', '--traits', 'NavigationBar,StaticText', '--udid', sim.udid], settingsHome) },
+    { id: 'FIND-2', run: () => runFindExactPreferredCase('FIND-2') },
+    { id: 'FIND-3', run: () => runCaseContains('FIND-3', 'Find', ['find', 'com.apple.settings.general', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
+    { id: 'FIND-4', run: () => runCaseContains('FIND-4', 'Find', ['find', 'chevron', '--traits', 'Button,disabled', '--udid', sim.udid], generalPage) },
     { id: 'FIND-5', run: () => runCaseMatches('FIND-5', /suggestions|Did you mean|General/, ['find', 'Generak', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-7', run: () => runCaseContains('FIND-7', 'Find', ['find', 'HomeScreen', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'Search', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
+    { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'com.apple.settings.search', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
     { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled', '--udid', sim.udid], generalPage) },
     { id: 'FIND-12', run: runAutoLabelFindCase },
     { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Other "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], settingsHome) },
@@ -802,11 +816,11 @@ function buildCases() {
   ]);
 
   const tapCases = [
-    { id: 'TAP-1', run: () => runCaseContains('TAP-1', 'Tap', ['tap', 'General', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-5', run: () => runCaseContains('TAP-5', 'Tap', ['tap', 'General', '--offset', '10,10', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-6', run: () => runCaseContains('TAP-6', 'Tap', ['tap', 'General', '--offset-ratio', '0.5,0.5', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-7', run: () => runCaseContains('TAP-7', 'Tap', ['tap', 'General', '--offset-ratio', '0.5,', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-8', run: () => runCaseContains('TAP-8', 'Tap', ['tap', 'General', '--offset', ',10', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
+    { id: 'TAP-1', run: () => runCaseContains('TAP-1', 'Tap', ['tap', 'com.apple.settings.general', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
+    { id: 'TAP-5', run: () => runCaseContains('TAP-5', 'Tap', ['tap', 'com.apple.settings.general', '--offset', '10,10', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
+    { id: 'TAP-6', run: () => runCaseContains('TAP-6', 'Tap', ['tap', 'com.apple.settings.general', '--offset-ratio', '0.5,0.5', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
+    { id: 'TAP-7', run: () => runCaseContains('TAP-7', 'Tap', ['tap', 'com.apple.settings.general', '--offset-ratio', '0.5,', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
+    { id: 'TAP-8', run: () => runCaseContains('TAP-8', 'Tap', ['tap', 'com.apple.settings.general', '--offset', ',10', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
     { id: 'TAP-2', run: () => runCaseContains('TAP-2', 'Tap', ['tap', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'TAP-9', run: () => runCaseFailsContains('TAP-9', 'offset requires element label', ['tap', '200,400', '--offset', '1,1', '--udid', sim.udid], generalPage) },
     { id: 'TAP-10', run: () => runCaseContains('TAP-10', 'Tap', ['tap', 'About', '--offset', '500,500', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
@@ -834,9 +848,9 @@ function buildCases() {
       runCli(['swipe', '--distance', '200', '--dir', 'back', '--udid', sim.udid]);
     }) },
     { id: 'SW-12', run: () => runCaseFailsMatches('SW-12', /not found|suggestions/i, ['swipe', '--to', '__ios_use_missing_label__', '--udid', sim.udid], generalPage) },
-    { id: 'SW-13', run: () => runCaseFailsContains('SW-13', 'ambiguous', ['swipe', '--to', 'Settings', '--udid', sim.udid], settingsHome) },
-    { id: 'SW-14', run: () => runCaseFailsContains('SW-14', 'ambiguous', ['swipe', '--to', 'Settings', '--udid', sim.udid], settingsHome) },
-    { id: 'SW-15', run: () => runCaseFailsContains('SW-15', 'ambiguous', ['swipe', '--to', 'Settings', '--from', 'General', '--udid', sim.udid], settingsHome) },
+    { id: 'SW-13', run: () => runCaseContains('SW-13', 'scrolls=', ['swipe', '--to', 'Settings', '--udid', sim.udid], settingsHome) },
+    { id: 'SW-14', run: () => runCaseContains('SW-14', 'scrolls=', ['swipe', '--to', 'Settings', '--udid', sim.udid], settingsHome) },
+    { id: 'SW-15', run: () => runCaseContains('SW-15', 'scrolls=', ['swipe', '--to', 'Settings', '--from', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
     { id: 'SW-17', run: () => runCaseContains('SW-17', 'scrolls=', ['swipe', '--to', 'com.apple.settings.general', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
     { id: 'SW-1', run: () => runCaseContains('SW-1', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--to', 'Keyboard', '--dir', 'forth', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
@@ -957,25 +971,25 @@ function buildCases() {
     { id: 'FLOW-2', run: () => runCaseFailsContains('FLOW-2', 'Flow file not found', ['flow', flow('missing-file.yaml'), '--udid', sim.udid]) },
     { id: 'FLOW-3', run: () => runCaseContainsRetryTransient('FLOW-3', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-4', run: () => runCaseContains('FLOW-4', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-6', run: () => runCaseContains('FLOW-6', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-7', run: () => runCaseContains('FLOW-7', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-6', run: () => runCaseContains('FLOW-6', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-7', run: () => runCaseContains('FLOW-7', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-8', run: () => runCaseContains('FLOW-8', 'Running flow', ['flow', flow('parent.yaml'), '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-9', run: () => runCaseFailsContains('FLOW-9', 'requested undeclared output', ['flow', flow('missing-output.yaml'), '--udid', sim.udid]) },
     { id: 'FLOW-10', run: () => runCaseFailsContains('FLOW-10', 'cycle detected', ['flow', flow('cycle-a.yaml'), '--udid', sim.udid]) },
-    { id: 'FLOW-11', run: () => runCaseContains('FLOW-11', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-11', run: () => runCaseContains('FLOW-11', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-12', run: () => runCaseContains('FLOW-12', 'returnIf matched', ['flow', flow('return-null.yaml'), '--udid', sim.udid]) },
     { id: 'FLOW-13', run: () => runCaseFailsContains('FLOW-13', 'returnIf requires', ['flow', flow('invalid-return.yaml'), '--udid', sim.udid]) },
     { id: 'FLOW-14', run: () => runCaseContains('FLOW-14', 'Tap', ['flow', flow('tap-offset.yaml'), '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-15', run: () => runCaseContains('FLOW-15', 'oslog: matched=', ['flow', flow('oslog-timeout.yaml'), '--udid', sim.udid]) },
     { id: 'FLOW-16', run: () => unsupportedCase('FLOW-16', 'nslog flow timeout is intentionally excluded from Simulator command coverage') },
     { id: 'FLOW-5', run: () => runCaseFileExists('FLOW-5', path.join(iosHome, 'artifacts/simulator-flow-smoke-screenshot.jpg'), ['flow', flow('standard-smoke.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-17', run: () => runCaseContains('FLOW-17', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-17', run: () => runCaseContains('FLOW-17', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-18', run: () => runCaseContains('FLOW-18', 'Running flow', ['flow', flow('sleep-default.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-19', run: () => runCaseContains('FLOW-19', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], async () => { runCli(['config', '--simulator', '--udid', sim.udid]); await waitForDriver(); await settingsHome(); }) },
-    { id: 'FLOW-20', run: () => runCaseContains('FLOW-20', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-21', run: () => runCaseContains('FLOW-21', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'Search', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--verbose', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'General', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-19', run: () => runCaseContains('FLOW-19', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], async () => { runCli(['config', '--simulator', '--udid', sim.udid]); await waitForDriver(); await settingsHome(); }) },
+    { id: 'FLOW-20', run: () => runCaseContains('FLOW-20', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-21', run: () => runCaseContains('FLOW-21', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.search', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--verbose', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
     { id: 'DOM-4', run: () => runCaseFileExists('DOM-4', path.join(iosHome, 'artifacts/simulator-dom-save.json'), ['flow', flow('dom-save.yaml'), '--udid', sim.udid], settingsHome) },
   ]);
 

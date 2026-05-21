@@ -158,7 +158,7 @@ ios-use swipe --dir back --distance 300
   - `--fresh` 忽略缓存，重新构建 snapshot
 
 - `find`
-  - `find <label>` 查找元素。歧义和模糊建议不报错，返回所有匹配；只有真正未找到才报错
+  - `find <label>` 查找元素。完整 label 优先 exact；无 exact 时回退 contains；歧义和模糊建议不报错，只有真正未找到才报错
   - `--traits <traits>` 按 traits 过滤，逗号分隔多值，AND 语义（如 `Switch`、`disabled`、`Cell,Switch`，大小写不敏感）
   - `--cindex <int>` 先找父元素再选第 N 个 cleaned child，`-1` 表示最后一个
 
