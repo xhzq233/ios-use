@@ -362,10 +362,6 @@ function terminateCustomDriverProcesses(udid) {
   terminateProcessesByExecutableName(udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
 }
 
-function terminateWdaProcesses(udid) {
-  terminateProcessesByExecutableName(udid, ['WebDriverAgentRunner-Runner']);
-}
-
 async function waitForProcessesGone(udid, executableNames, timeoutMs = 8000) {
   const targets = new Set(executableNames.filter(Boolean));
   const startedAt = Date.now();
@@ -699,10 +695,6 @@ class AppiumDriver {
 
   async resetState() {
     await this.deleteSession();
-    if (APPIUM_WDA_URL) {
-      return;
-    }
-    terminateWdaProcesses(this.udid);
   }
 }
 
@@ -715,14 +707,10 @@ function customStopSessionQuiet() {
 }
 
 async function customPrepareNoSession(customUdid = WDA_DEVICE_UDID, appBundle = DEFAULT_APP_BUNDLE) {
-  terminateWdaProcesses(customUdid);
-  await waitForProcessesGone(customUdid, ['WebDriverAgentRunner-Runner']);
   cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
 }
 
 async function customPrepareAppSession(customUdid, appBundle, label) {
-  terminateWdaProcesses(customUdid);
-  await waitForProcessesGone(customUdid, ['WebDriverAgentRunner-Runner']);
   cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
   cli(['activateApp', appBundle, '--udid', customUdid]);
   cli(['waitFor', '--label', label, '--timeout', '8', '--udid', customUdid]);
@@ -732,7 +720,7 @@ async function appiumPrepareNoSession(driver) {
   customStopSessionQuiet();
   terminateCustomDriverProcesses(driver.udid);
   await driver.resetState();
-  await waitForProcessesGone(driver.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
+  await waitForProcessesGone(driver.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
   await sleep(2000);
 }
 
@@ -740,7 +728,7 @@ async function appiumPrepareSettingsHome(driver, label) {
   customStopSessionQuiet();
   terminateCustomDriverProcesses(driver.udid);
   await driver.resetState();
-  await waitForProcessesGone(driver.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner', 'WebDriverAgentRunner-Runner']);
+  await waitForProcessesGone(driver.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
   await sleep(1000);
   await driver.createSession();
   await driver.updateSettings({ screenshotQuality: WDA_SCREENSHOT_QUALITY });

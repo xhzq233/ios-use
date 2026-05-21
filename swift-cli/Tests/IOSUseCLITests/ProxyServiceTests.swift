@@ -58,7 +58,7 @@ final class ProxyServiceTests: XCTestCase {
         SessionService.realDriverReachableForTesting = { _ in true }
         SessionService.realDriverLauncherForTesting = { _, _ in }
         try """
-        {"devices":{"USB-DEVICE":{"bundleId":"com.example.driver","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"USB-DEVICE":{"bundleId":"com.example.driver","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
 
         XCTAssertEqual(try ProxyService.resolveStartUdidForTesting(nil, paths: paths), "USB-DEVICE")
