@@ -305,6 +305,7 @@ public enum SessionService {
 
     static var simulatorDriverReachableForTesting: (() -> Bool)?
     static var simulatorDriverLauncherForTesting: ((String) throws -> Void)?
+    static var simulatorDriverTerminatorForTesting: ((String) throws -> Bool)?
     static var realDriverReachableForTesting: ((String) -> Bool)?
     static var realDriverLauncherForTesting: ((String, String) throws -> Void)?
     static var realDriverTerminatorForTesting: ((String) throws -> Bool)?
@@ -317,7 +318,12 @@ public enum SessionService {
         let current = read(paths: paths)
 
         var output = ""
-        if let current, current.deviceType != "simulator" {
+        if let current, current.deviceType == "simulator" {
+            let terminate = simulatorDriverTerminatorForTesting ?? terminateSimulatorDriver
+            if (try? terminate(current.udid)) == true {
+                output += "Driver app terminated on simulator\n"
+            }
+        } else if let current {
             let terminate = realDriverTerminatorForTesting ?? terminateRealDriverProcesses
             if (try? terminate(current.udid)) == true {
                 output += "Driver app terminated on device\n"
@@ -568,6 +574,15 @@ public enum SessionService {
                 Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         } == 0
+    }
+
+    private static func terminateSimulatorDriver(udid: String) throws -> Bool {
+        do {
+            _ = try Shell.run("xcrun", arguments: ["simctl", "terminate", udid, ConfigService.simulatorBundleId])
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static func terminateRealDriverProcesses(udid: String) throws -> Bool {
