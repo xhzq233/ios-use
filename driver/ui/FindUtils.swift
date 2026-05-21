@@ -21,10 +21,10 @@ enum RawFindVisibility {
 /// This is the single source of truth for all label-based command semantics.
 /// Time complexity: O(n * s + m * r + c * q * t) in the worst case, where n is
 /// the indexed element count, s is the number of precomputed searchable texts
-/// per element, m is the number of contains matches, r is the number of
-/// requested traits, c is candidate string count, q is query length, and t is
-/// candidate length used by fuzzy fallback. Effective-visible filtering adds
-/// O(n) before contains/fuzzy when `visibility == .only`.
+/// per element, m is the number of text matches, r is the number of requested
+/// traits, c is candidate string count, q is query length, and t is candidate
+/// length used by fuzzy fallback. Effective-visible filtering adds O(n) before
+/// exact/contains/fuzzy when `visibility == .only`.
 func rawFindInSnapshot(_ target: ForyTarget,
                        cs: CleanedSnapshot,
                        enableFuzzy: Bool = true,
@@ -46,12 +46,22 @@ func rawFindInSnapshot(_ target: ForyTarget,
         ? cs.searchEntries.filter { isVisibleWithEffectiveGeometry($0.element, in: cs.appFrame) }
         : cs.searchEntries
 
-    // 1. Unified normalized contains match across label + value.
-    var matches = matchingElements(in: searchEntries) { entry in
-        entry.normalizedTexts.contains { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }
+    // 1. Exact match wins over contains across the same label + value texts.
+    var containsMatches: [SnapshotElement] = []
+    var exactMatch: SnapshotElement?
+    for entry in searchEntries {
+        if entry.normalizedTexts.contains(where: { $0 == normalizedQuery }) {
+            exactMatch = entry.element
+            break
+        }
+        if entry.normalizedTexts.contains(where: { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }) {
+            containsMatches.append(entry.element)
+        }
     }
 
-    // 2. Fuzzy fallback when contains-match is empty.
+    var matches = exactMatch.map { [$0] } ?? containsMatches
+
+    // 2. Fuzzy fallback when exact and contains both miss.
     if matches.isEmpty {
         guard enableFuzzy else { return .notFound(suggestions: []) }
         let candidates = visibility == .only ? searchCandidates(from: searchEntries) : cs.searchCandidates
@@ -85,7 +95,7 @@ func rawFindInSnapshot(_ target: ForyTarget,
     return .found(matches[0])
 }
 
-/// Unified label search: contains(label/value) → fuzzy → trait filter.
+/// Unified label search: exact(label/value) → contains(label/value) → fuzzy → trait filter.
 /// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
 func rawFind(_ target: ForyTarget, visibility: RawFindVisibility = .only) -> FindResult {
     guard let cs = getCleanedSnapshot() else {

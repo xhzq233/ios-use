@@ -563,6 +563,47 @@ final class TypesTests: XCTestCase {
         }
     }
 
+    func testRawFindInSnapshot_ExactMatchWinsOverLongerContainsMatches() {
+        let exact = makeElement(label: "ic album zoom simple-1", type: .button)
+        let longer = makeElement(label: "ic album zoom simple-10", type: .button)
+        let cs = makeCleanedSnapshot([exact, longer])
+
+        switch rawFindInSnapshot(ForyTarget(label: "ic album zoom simple-1"), cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "ic album zoom simple-1")
+        case .ambiguous(let matches):
+            XCTFail("expected exact match to avoid ambiguity, got \(matches.count) matches")
+        default:
+            XCTFail("expected rawFindInSnapshot to return the exact label")
+        }
+    }
+
+    func testRawFindInSnapshot_ContainsStillWorksWhenExactMisses() {
+        let first = makeElement(label: "ic album zoom simple-1", type: .button)
+        let second = makeElement(label: "ic album zoom simple-10", type: .button)
+        let cs = makeCleanedSnapshot([first, second])
+
+        switch rawFindInSnapshot(ForyTarget(label: "album zoom"), cs: cs) {
+        case .ambiguous(let matches):
+            XCTAssertEqual(matches.map { $0.node.label }, ["ic album zoom simple-1", "ic album zoom simple-10"])
+        default:
+            XCTFail("expected contains fallback to preserve multiple partial matches")
+        }
+    }
+
+    func testRawFindInSnapshot_DoesNotFallbackToContainsWhenExactFilteredByTraits() {
+        let exactStaticText = makeElement(label: "Settings", type: .staticText)
+        let containingButton = makeElement(label: "Settings Button", type: .button)
+        let cs = makeCleanedSnapshot([exactStaticText, containingButton])
+
+        switch rawFindInSnapshot(ForyTarget(label: "Settings", traits: "Button"), cs: cs) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected exact match filtered by traits to stay notFound without contains fallback")
+        }
+    }
+
     // MARK: - Trait filtering
 
     func testRawFindInSnapshot_TraitFilter_MatchesType() {
@@ -829,15 +870,15 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    func testRawFindInSnapshot_AnyPreservesAllMatches() {
+    func testRawFindInSnapshot_AnyPreservesAllContainsMatchesWhenExactMisses() {
         let offscreenLabel = FakeRawSnapshot(
-            label: "配置代理",
+            label: "配置代理屏外",
             elementType: .staticText,
             frame: CGRect(x: 0, y: 900, width: 80, height: 20),
             isVisible: true
         )
         let visibleLabel = FakeRawSnapshot(
-            label: "配置代理",
+            label: "配置代理屏内",
             elementType: .staticText,
             frame: CGRect(x: 32, y: 600, width: 80, height: 20),
             isVisible: true
@@ -860,7 +901,7 @@ final class TypesTests: XCTestCase {
             XCTAssertEqual(matches[0].node.frame.origin.y, 900)
             XCTAssertEqual(matches[1].node.frame.origin.y, 600)
         default:
-            XCTFail("expected rawFindInSnapshot to preserve all matches when visibility is .any")
+            XCTFail("expected rawFindInSnapshot to preserve all contains matches when visibility is .any and exact misses")
         }
     }
 
