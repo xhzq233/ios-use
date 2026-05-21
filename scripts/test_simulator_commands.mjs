@@ -325,6 +325,37 @@ async function runFindExactPreferredCase(id) {
   }
 }
 
+async function runConfigDriverIdentityCase() {
+  const id = 'CFG-7';
+  if (!selected(id)) return recordSkip(id);
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  console.log(`[sim-test] RUN ${id}: config writes driver identity`);
+  const devices = runCliToFiles(['devices', '--simulator'], out, err);
+  let entry;
+  try {
+    const config = JSON.parse(fs.readFileSync(path.join(iosHome, 'config.json'), 'utf8'));
+    entry = config.devices?.[sim.udid];
+  } catch (error) {
+    return recordFail(id, `${devices.stdout}${devices.stderr}${error}\n`);
+  }
+  const identity = entry?.driverIdentity;
+  if (
+    devices.code === 0 &&
+    !devices.stdout.includes('driver update required') &&
+    entry?.driverVersion === identity?.version &&
+    typeof identity?.version === 'string' &&
+    typeof identity?.build === 'string' &&
+    identity.build.length > 0 &&
+    typeof identity?.protocolID === 'string' &&
+    identity.protocolID.length > 0
+  ) {
+    recordPass(id);
+  } else {
+    recordFail(id, `${devices.stdout}${devices.stderr}${JSON.stringify(entry, null, 2)}\n`);
+  }
+}
+
 function backupStateFile(rel) {
   const src = path.join(iosHome, rel);
   const dst = path.join(stateBackupDir, rel);
@@ -729,6 +760,7 @@ function buildCases() {
       if (selected('CFG-4') || !caseFilterIds) await waitForDriver();
     } },
     { id: 'CFG-1', run: () => runCaseContains('CFG-1', sim.udid, ['config', '--list']) },
+    { id: 'CFG-7', run: runConfigDriverIdentityCase },
     { id: 'CFG-5', run: () => runCaseFailsContains('CFG-5', 'unknown option', ['config', '--ipa', path.join(rootDir, 'assets/driver-sim.ipa')]) },
     { id: 'CFG-6', run: () => runCaseFailsContains('CFG-6', 'unknown option', ['config', '--port', '8100']) },
     { id: 'DEV-4', run: () => runCaseContains('DEV-4', 'configured', ['devices', '--simulator']) },
