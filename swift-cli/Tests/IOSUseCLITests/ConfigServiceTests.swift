@@ -1,4 +1,5 @@
 import XCTest
+import IOSUseProtocol
 @testable import IOSUseCLI
 
 final class ConfigServiceTests: XCTestCase {
@@ -177,7 +178,7 @@ final class ConfigServiceTests: XCTestCase {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertTrue((json["sessionId"] as? String)?.hasPrefix("session-") == true)
         XCTAssertEqual(json["udid"] as? String, "SIM-1")
-        XCTAssertEqual(json["port"] as? Int, 8100)
+        XCTAssertEqual(json["port"] as? Int, 8102)
         XCTAssertEqual(json["deviceName"] as? String, "IOSUseTest")
         XCTAssertEqual(json["deviceVersion"] as? String, "26.0")
         XCTAssertEqual(json["deviceType"] as? String, "simulator")
@@ -194,7 +195,7 @@ final class ConfigServiceTests: XCTestCase {
         }
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try """
-        {"devices":{"SIM-FAST":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"SIM-FAST":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
         try SessionService.writeSimulatorSession(
             udid: "SIM-FAST",
@@ -211,7 +212,7 @@ final class ConfigServiceTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try """
-        {"devices":{"SIM-ACTIVE":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"SIM-ACTIVE":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
         try SessionService.writeSimulatorSession(
             udid: "SIM-ACTIVE",
@@ -241,7 +242,7 @@ final class ConfigServiceTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try """
-        {"devices":{"SIM-STOPPED":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"SIM-STOPPED":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             simulatorOnly ? [IOSDevice(name: "IOSUseTest", version: "26.0", udid: "SIM-STOPPED", kind: .simulator)] : []
@@ -266,7 +267,7 @@ final class ConfigServiceTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try """
-        {"devices":{"SIM-A":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100","driverVersion":"\(IOSUseCLI.version)"},"SIM-B":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"SIM-A":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8102","driverVersion":"\(IOSUseCLI.version)"},"SIM-B":{"bundleId":"com.iosuse.xcuidriver.xctrunner","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
         try SessionService.writeSimulatorSession(
             udid: "SIM-A",
@@ -297,7 +298,7 @@ final class ConfigServiceTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try """
-        {"devices":{"REAL-FAST":{"bundleId":"com.example.driver","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"REAL-FAST":{"bundleId":"com.example.driver","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
 
         DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-FAST"] }
@@ -333,7 +334,7 @@ final class ConfigServiceTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try """
-        {"devices":{"REAL-RETRY":{"bundleId":"com.example.driver","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"REAL-RETRY":{"bundleId":"com.example.driver","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
         try SessionService.writeSession(
             udid: "REAL-RETRY",
@@ -377,6 +378,46 @@ final class ConfigServiceTests: XCTestCase {
             XCTAssertTrue(String(describing: error).contains("current CLI is \(IOSUseCLI.version)"))
             XCTAssertTrue(String(describing: error).contains("ios-use config --udid REAL-OLD"))
         }
+    }
+
+    func testPrepareDriverSessionRejectsOutdatedDriverPort() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-OLD-PORT":{"bundleId":"com.example.driver","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try SessionService.prepareDriverSession(SessionOptions(udid: "REAL-OLD-PORT"), paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("expects port \(IOSUseProtocol.defaultDriverPort)"))
+            XCTAssertTrue(String(describing: error).contains("ios-use config --udid REAL-OLD-PORT"))
+        }
+    }
+
+    func testPrepareDriverSessionRefreshesStaleSessionPort() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-STALE":{"bundleId":"com.example.driver","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try """
+        {
+          "sessionId": "session-old",
+          "udid": "REAL-STALE",
+          "port": 8100,
+          "deviceName": "Phone",
+          "deviceVersion": "26.0",
+          "deviceType": "real",
+          "createdAt": 1
+        }
+        """.write(toFile: "\(root)/state/session.json", atomically: true, encoding: .utf8)
+
+        try SessionService.prepareDriverSession(SessionOptions(), paths: paths)
+
+        let session = try XCTUnwrap(SessionService.read(paths: paths))
+        XCTAssertEqual(session.udid, "REAL-STALE")
+        XCTAssertEqual(session.port, Int(IOSUseProtocol.defaultDriverPort))
     }
 
     private func temporaryRoot() throws -> String {
