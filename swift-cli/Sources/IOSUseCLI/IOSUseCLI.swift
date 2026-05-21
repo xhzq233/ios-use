@@ -152,6 +152,12 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .proxy(.read(let filter, let raw, let last)):
+            do {
+                return CLIResult(exitCode: 0, stdout: try ProxyService.read(filter: filter, raw: raw, last: last, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .proxy(.stop(let udid)):
             do {
                 return CLIResult(exitCode: 0, stdout: try ProxyService.stop(udid: udid, paths: paths, outputSink: outputSink))

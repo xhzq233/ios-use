@@ -122,6 +122,11 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["proxy", "read", "--filter", "~m POST", "--raw", "--last", "5"]),
+            .proxy(.read(filter: "~m POST", raw: true, last: 5))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["proxy", "stop", "--udid", "DEVICE-1"]),
             .proxy(.stop(udid: "DEVICE-1"))
         )
@@ -192,6 +197,9 @@ final class CLIParserTests: XCTestCase {
         }
         XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--index", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--index must be non-negative"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["proxy", "read", "--last", "0"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--last must be greater than 0"))
         }
     }
 

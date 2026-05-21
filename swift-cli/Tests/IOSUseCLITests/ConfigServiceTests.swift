@@ -100,6 +100,21 @@ final class ConfigServiceTests: XCTestCase {
         )
     }
 
+    func testExpectedDriverIdentityUsesSimulatorAssetForSimulatorBundle() throws {
+        ConfigService.expectedDriverIdentityOverrideForTesting = nil
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let deviceIdentity = DriverIdentity(version: "device", build: "1", gitSHA: "device-git", protocolID: "device-protocol")
+        let simulatorIdentity = DriverIdentity(version: "sim", build: "2", gitSHA: "sim-git", protocolID: "sim-protocol")
+        try writeDriverIPA(path: "\(root)/driver.ipa", identity: deviceIdentity)
+        try writeDriverIPA(path: "\(root)/driver-sim.ipa", identity: simulatorIdentity)
+
+        XCTAssertEqual(
+            ConfigService.expectedDriverIdentity(paths: paths, bundleId: ConfigService.simulatorBundleId),
+            simulatorIdentity
+        )
+    }
+
     func testPrepareDriverSessionRejectsMismatchedDriverIdentity() throws {
         ConfigService.expectedDriverIdentityOverrideForTesting = {
             DriverIdentity(version: IOSUseCLI.version, build: "new-build", gitSHA: "new-git", protocolID: "new-protocol")
@@ -496,5 +511,30 @@ final class ConfigServiceTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: root)
         }
         return root
+    }
+
+    private func writeDriverIPA(path: String, identity: DriverIdentity) throws {
+        let root = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        let payload = "\(root)/Payload/IOSUseDriver-Runner.app"
+        try FileManager.default.createDirectory(atPath: payload, withIntermediateDirectories: true)
+        try """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleShortVersionString</key>
+          <string>\(identity.version)</string>
+          <key>CFBundleVersion</key>
+          <string>\(identity.build)</string>
+          <key>IOSUseDriverGitSHA</key>
+          <string>\(identity.gitSHA ?? "")</string>
+          <key>IOSUseDriverProtocolID</key>
+          <string>\(identity.protocolID ?? "")</string>
+        </dict>
+        </plist>
+        """.write(toFile: "\(payload)/Info.plist", atomically: true, encoding: .utf8)
+        try? FileManager.default.removeItem(atPath: path)
+        _ = try Shell.run("zip", arguments: ["-r", "-q", path, "Payload"], cwd: root)
+        try FileManager.default.removeItem(atPath: "\(root)/Payload")
     }
 }

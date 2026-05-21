@@ -718,6 +718,10 @@ async function runProxyUnitCases() {
   }
 }
 
+async function runProxyReadMissingCaptureCase() {
+  await runCaseFailsContains('PROXY-7', 'ios-use proxy start', ['proxy', 'read']);
+}
+
 async function runDriverUnitCases() {
   const ids = ['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'];
   if (!anySelected(ids)) {
@@ -1040,6 +1044,7 @@ function buildCases() {
     ...['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'].map(id => ({ id, run: runDriverUnitCases })),
     { id: 'PROXY-1', run: runProxyDoctorCase },
     ...['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'].map(id => ({ id, run: runProxyUnitCases })),
+    { id: 'PROXY-7', run: runProxyReadMissingCaptureCase },
     { id: 'STOP-1', run: () => runCase('STOP-1', ['stop']) },
     { id: 'STOP-2', run: () => runCase('STOP-2', ['stop']) },
   ]);
