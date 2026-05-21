@@ -3,6 +3,16 @@ import IOSUseProtocol
 @testable import IOSUseCLI
 
 final class IOSUseCLITests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        ConfigService.expectedDriverIdentityOverrideForTesting = { nil }
+    }
+
+    override func tearDown() {
+        ConfigService.expectedDriverIdentityOverrideForTesting = nil
+        super.tearDown()
+    }
+
     func testHelpContainsRootUsageAndCommands() {
         let result = IOSUseCLI().run(arguments: ["--help"])
 

@@ -3,6 +3,16 @@ import Darwin
 @testable import IOSUseCLI
 
 final class ProxyServiceTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        ConfigService.expectedDriverIdentityOverrideForTesting = { nil }
+    }
+
+    override func tearDown() {
+        ConfigService.expectedDriverIdentityOverrideForTesting = nil
+        super.tearDown()
+    }
+
     func testResolveUdidPrefersExplicitThenActiveSessionThenProxyState() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])

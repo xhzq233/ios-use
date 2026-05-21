@@ -6,11 +6,13 @@ public struct DeviceConfigEntry: Equatable, Sendable {
     public let udid: String
     public let bundleId: String
     public let driverVersion: String
+    public let driverIdentity: DriverIdentity?
 
-    public init(udid: String, bundleId: String, driverVersion: String = "(missing)") {
+    public init(udid: String, bundleId: String, driverVersion: String = "(missing)", driverIdentity: DriverIdentity? = nil) {
         self.udid = udid
         self.bundleId = bundleId
         self.driverVersion = driverVersion
+        self.driverIdentity = driverIdentity
     }
 }
 
@@ -20,6 +22,7 @@ public enum ConfigService {
     private static let devXCTestBundleId = "com.iosuse.xcuidriver"
     private static let defaultDriverBundlePrefix = "com.ios-use.driver"
     private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
+    static var expectedDriverIdentityOverrideForTesting: (() -> DriverIdentity?)?
 
     public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
         let realDevices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
@@ -79,7 +82,8 @@ public enum ConfigService {
         }
 
         _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "install", "app", "--device", udid, "\(payloadDir)/\(appEntry)"])
-        try saveConfig(udid: udid, bundleId: bundleId, paths: paths)
+        let installedIdentity = readInstalledDriverIdentity(udid: udid, bundleId: bundleId, fallbackIPAPath: signedIpa)
+        try saveConfig(udid: udid, bundleId: bundleId, driverIdentity: installedIdentity, paths: paths)
 
         return """
         Using device: \(DeviceService.format(device, configured: DeviceService.configuredUdids(paths: paths)))
@@ -103,7 +107,8 @@ public enum ConfigService {
             let value = devices[udid] as? [String: Any] ?? [:]
             let bundleId = value["bundleId"] as? String ?? "(missing)"
             let driverVersion = value["driverVersion"] as? String ?? "(missing)"
-            return DeviceConfigEntry(udid: udid, bundleId: bundleId, driverVersion: driverVersion)
+            let identity = (value["driverIdentity"] as? [String: Any]).flatMap(DriverIdentity.init(json:))
+            return DeviceConfigEntry(udid: udid, bundleId: bundleId, driverVersion: driverVersion, driverIdentity: identity)
         }
     }
 
@@ -144,7 +149,8 @@ public enum ConfigService {
 
         let launchOutput = try Shell.run("xcrun", arguments: ["simctl", "launch", udid, simulatorBundleId]).trimmingCharacters(in: .whitespacesAndNewlines)
         waitForSimulatorDriver()
-        try saveConfig(udid: udid, bundleId: simulatorBundleId, paths: paths)
+        let installedIdentity = readSimulatorInstalledDriverIdentity(udid: udid, bundleId: simulatorBundleId, fallbackIPAPath: ipaPath)
+        try saveConfig(udid: udid, bundleId: simulatorBundleId, driverIdentity: installedIdentity, paths: paths)
         let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first { $0.udid == udid }
         try SessionService.writeSimulatorSession(
             udid: udid,
@@ -201,8 +207,9 @@ public enum ConfigService {
         guard let config = DeviceService.configuredDevices(paths: paths)[udid], config.needsDriverUpdate else {
             return
         }
-        let installed = config.driverVersion ?? "unknown"
-        throw CLIParseError.invalidValue("Driver for device \(udid) was installed by ios-use \(installed), but current CLI is \(IOSUseCLI.version). Run `ios-use config --udid \(udid)` to update the driver.")
+        let installed = config.driverIdentity?.description ?? "unknown"
+        let expected = config.expectedDriverIdentity?.description ?? DriverIdentity.legacyCurrent.description
+        throw CLIParseError.invalidValue("Driver for device \(udid) is out of date (installed: \(installed); expected: \(expected)). Run `ios-use config --udid \(udid)` to update the driver.")
     }
 
     private static func cachedAppleId(altsign: String) throws -> String? {
@@ -252,14 +259,99 @@ public enum ConfigService {
         _ = try Shell.run("plutil", arguments: ["-replace", "CFBundleIdentifier", "-string", newId, plistPath])
     }
 
-    private static func saveConfig(udid: String, bundleId: String, paths: IOSUsePaths) throws {
+    static func expectedDriverIdentity(paths: IOSUsePaths) -> DriverIdentity? {
+        if let expectedDriverIdentityOverrideForTesting {
+            return expectedDriverIdentityOverrideForTesting()
+        }
+        for path in [deviceIPAPath(paths: paths), simulatorIPAPath(paths: paths)] {
+            if let identity = try? readDriverIdentityFromIPA(path) {
+                return identity
+            }
+        }
+        return nil
+    }
+
+    static func readDriverIdentityFromIPA(_ ipaPath: String) throws -> DriverIdentity {
+        let tmpDir = "\(NSTemporaryDirectory())ios-use-driver-identity-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: tmpDir) }
+        _ = try Shell.run("unzip", arguments: ["-q", "-o", ipaPath, "-d", tmpDir])
+        return try readDriverIdentityFromExtractedPayload(payloadDir: "\(tmpDir)/Payload")
+    }
+
+    private static func readInstalledDriverIdentity(udid: String, bundleId: String, fallbackIPAPath: String) -> DriverIdentity {
+        if let output = try? Shell.run("xcrun", arguments: ["devicectl", "device", "info", "apps", "--device", udid]),
+           let identity = parseDriverIdentity(fromDeviceInfoAppsOutput: output, bundleId: bundleId) {
+            return identity
+        }
+        return (try? readDriverIdentityFromIPA(fallbackIPAPath)) ?? DriverIdentity.legacyCurrent
+    }
+
+    private static func readSimulatorInstalledDriverIdentity(udid: String, bundleId: String, fallbackIPAPath: String) -> DriverIdentity {
+        if let appContainer = try? Shell.run("xcrun", arguments: ["simctl", "get_app_container", udid, bundleId, "app"]).trimmingCharacters(in: .whitespacesAndNewlines),
+           !appContainer.isEmpty,
+           let identity = try? readDriverIdentityFromInfoPlist("\(appContainer)/Info.plist") {
+            return identity
+        }
+        return (try? readDriverIdentityFromIPA(fallbackIPAPath)) ?? DriverIdentity.legacyCurrent
+    }
+
+    private static func readDriverIdentityFromExtractedPayload(payloadDir: String) throws -> DriverIdentity {
+        let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
+        guard let appEntry = appEntries.first else {
+            throw CLIParseError.invalidValue("No .app found in IPA payload")
+        }
+        return try readDriverIdentityFromInfoPlist("\(payloadDir)/\(appEntry)/Info.plist")
+    }
+
+    static func readDriverIdentityFromInfoPlist(_ plistPath: String) throws -> DriverIdentity {
+        let data = try Data(contentsOf: URL(fileURLWithPath: plistPath))
+        guard let plist = try PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+            throw CLIParseError.invalidValue("Invalid driver Info.plist at \(plistPath)")
+        }
+        guard let version = plist["CFBundleShortVersionString"] as? String,
+              let build = plist["CFBundleVersion"] as? String else {
+            throw CLIParseError.invalidValue("Driver Info.plist missing version fields at \(plistPath)")
+        }
+        return DriverIdentity(
+            version: version,
+            build: build,
+            gitSHA: plist["IOSUseDriverGitSHA"] as? String,
+            protocolID: plist["IOSUseDriverProtocolID"] as? String
+        )
+    }
+
+    static func parseDriverIdentity(fromDeviceInfoAppsOutput output: String, bundleId: String) -> DriverIdentity? {
+        guard output.contains(bundleId) else { return nil }
+        func capture(_ key: String) -> String? {
+            guard let regex = try? NSRegularExpression(pattern: #"\b\#(key)\b\s*[:=]\s*"?([^",\n]+)"?"#) else { return nil }
+            let range = NSRange(output.startIndex..<output.endIndex, in: output)
+            guard let match = regex.firstMatch(in: output, range: range),
+                  let swiftRange = Range(match.range(at: 1), in: output) else { return nil }
+            return String(output[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let version = capture("CFBundleShortVersionString") ?? capture("version") else { return nil }
+        let build = capture("CFBundleVersion") ?? capture("build") ?? ""
+        return DriverIdentity(
+            version: version,
+            build: build,
+            gitSHA: capture("IOSUseDriverGitSHA"),
+            protocolID: capture("IOSUseDriverProtocolID")
+        )
+    }
+
+    private static func saveConfig(udid: String, bundleId: String, driverIdentity: DriverIdentity, paths: IOSUsePaths) throws {
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: URL(fileURLWithPath: paths.config)),
            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             root = parsed
         }
         var devices = root["devices"] as? [String: Any] ?? [:]
-        devices[udid] = ["bundleId": bundleId, "driverVersion": IOSUseCLI.version]
+        devices[udid] = [
+            "bundleId": bundleId,
+            "driverVersion": driverIdentity.version,
+            "driverIdentity": driverIdentity.json,
+        ]
         root["devices"] = devices
 
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])

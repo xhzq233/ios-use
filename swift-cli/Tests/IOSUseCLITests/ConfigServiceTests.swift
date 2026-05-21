@@ -2,6 +2,16 @@ import XCTest
 @testable import IOSUseCLI
 
 final class ConfigServiceTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        ConfigService.expectedDriverIdentityOverrideForTesting = { nil }
+    }
+
+    override func tearDown() {
+        ConfigService.expectedDriverIdentityOverrideForTesting = nil
+        super.tearDown()
+    }
+
     func testConfigListFormatsEntriesInStableOrder() throws {
         let root = try temporaryRoot()
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
@@ -61,6 +71,64 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(root)/driver.ipa")
         XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), "\(root)/driver-sim.ipa")
         #endif
+    }
+
+    func testReadDriverIdentityFromInfoPlistReadsStampedFields() throws {
+        let root = try temporaryRoot()
+        let plist = "\(root)/Info.plist"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleShortVersionString</key>
+          <string>1.2.3</string>
+          <key>CFBundleVersion</key>
+          <string>20260521000000</string>
+          <key>IOSUseDriverGitSHA</key>
+          <string>abcdef123456</string>
+          <key>IOSUseDriverProtocolID</key>
+          <string>protocol-hash</string>
+        </dict>
+        </plist>
+        """.write(toFile: plist, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(
+            try ConfigService.readDriverIdentityFromInfoPlist(plist),
+            DriverIdentity(version: "1.2.3", build: "20260521000000", gitSHA: "abcdef123456", protocolID: "protocol-hash")
+        )
+    }
+
+    func testPrepareDriverSessionRejectsMismatchedDriverIdentity() throws {
+        ConfigService.expectedDriverIdentityOverrideForTesting = {
+            DriverIdentity(version: IOSUseCLI.version, build: "new-build", gitSHA: "new-git", protocolID: "new-protocol")
+        }
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {
+          "devices": {
+            "REAL-OLD-BUILD": {
+              "bundleId": "com.example.driver",
+              "driverVersion": "\(IOSUseCLI.version)",
+              "driverIdentity": {
+                "version": "\(IOSUseCLI.version)",
+                "build": "old-build",
+                "gitSHA": "old-git",
+                "protocolID": "old-protocol"
+              }
+            }
+          }
+        }
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+
+        XCTAssertThrowsError(try SessionService.prepareDriverSession(SessionOptions(udid: "REAL-OLD-BUILD"), paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("installed: version=\(IOSUseCLI.version), build=old-build"))
+            XCTAssertTrue(String(describing: error).contains("expected: version=\(IOSUseCLI.version), build=new-build"))
+            XCTAssertTrue(String(describing: error).contains("ios-use config --udid REAL-OLD-BUILD"))
+        }
     }
 
     func testStopClearsOnlyIsolatedSessionFile() throws {
@@ -391,7 +459,8 @@ final class ConfigServiceTests: XCTestCase {
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
 
         XCTAssertThrowsError(try SessionService.prepareDriverSession(SessionOptions(udid: "REAL-OLD"), paths: paths)) { error in
-            XCTAssertTrue(String(describing: error).contains("current CLI is \(IOSUseCLI.version)"))
+            XCTAssertTrue(String(describing: error).contains("installed: version=0.9.0"))
+            XCTAssertTrue(String(describing: error).contains("expected: version=\(IOSUseCLI.version)"))
             XCTAssertTrue(String(describing: error).contains("ios-use config --udid REAL-OLD"))
         }
     }
