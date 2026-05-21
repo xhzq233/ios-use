@@ -4,8 +4,8 @@ import Fory
 public enum IOSUseProtocol {
     // MARK: Driver TCP / Fory frame limits
 
-    /// TCP port used by the XCTest driver loopback server.
-    public static let defaultDriverPort: UInt16 = 8100
+    /// TCP port used by the ios-use XCTest driver loopback server. Kept separate from WDA's common 8100.
+    public static let defaultDriverPort: UInt16 = 8102
     /// Maximum length of one length-prefixed Fory frame. Must fit screenshot payloads.
     public static let maxFrameSizeBytes = 50 * 1024 * 1024
     /// The driver is intentionally single-client to avoid concurrent XCTest state mutation.

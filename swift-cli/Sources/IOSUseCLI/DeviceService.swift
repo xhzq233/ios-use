@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 public struct IOSDevice: Equatable, Sendable {
     public enum Kind: String, Sendable {
@@ -22,9 +23,10 @@ public struct IOSDevice: Equatable, Sendable {
 public enum DeviceService {
     public struct ConfiguredDevice: Equatable, Sendable {
         public let driverVersion: String?
+        public let port: Int?
 
         public var needsDriverUpdate: Bool {
-            driverVersion != IOSUseCLI.version
+            driverVersion != IOSUseCLI.version || port != Int(IOSUseProtocol.defaultDriverPort)
         }
     }
 
@@ -147,13 +149,16 @@ public enum DeviceService {
         }
         return devices.reduce(into: [:]) { result, item in
             let value = item.value as? [String: Any] ?? [:]
-            result[item.key] = ConfiguredDevice(driverVersion: value["driverVersion"] as? String)
+            result[item.key] = ConfiguredDevice(
+                driverVersion: value["driverVersion"] as? String,
+                port: parseConfiguredPort(value["port"])
+            )
         }
     }
 
     public static func format(_ device: IOSDevice, configured: Set<String>) -> String {
         format(device, configuredDevices: configured.reduce(into: [:]) { result, udid in
-            result[udid] = ConfiguredDevice(driverVersion: IOSUseCLI.version)
+            result[udid] = ConfiguredDevice(driverVersion: IOSUseCLI.version, port: Int(IOSUseProtocol.defaultDriverPort))
         })
     }
 
@@ -172,6 +177,16 @@ public enum DeviceService {
         static let deviceLine = try! NSRegularExpression(pattern: #"^\s*(.+?)\s+(?:\((\d+\.\d+(?:\.\d+)?)\)\s+)?\(([0-9A-Fa-f-]+)\)\s*$"#)
         static let runtimeHeader = try! NSRegularExpression(pattern: #"^--\s+(.+?)\s+--"#)
         static let bootedSimulator = try! NSRegularExpression(pattern: #"^\s*(.+?)\s+\(([0-9A-Fa-f-]+)\)\s+\(Booted\)"#)
+    }
+
+    private static func parseConfiguredPort(_ raw: Any?) -> Int? {
+        if let port = raw as? Int {
+            return port
+        }
+        if let port = raw as? String {
+            return Int(port)
+        }
+        return nil
     }
 
     private static func firstMatch(_ text: String, regex: NSRegularExpression) -> [String]? {

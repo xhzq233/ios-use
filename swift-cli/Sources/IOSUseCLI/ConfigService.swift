@@ -200,12 +200,13 @@ public enum ConfigService {
         return bundleId
     }
 
-    static func assertDriverVersionCurrent(udid: String, paths: IOSUsePaths) throws {
+    static func assertDriverInstallCurrent(udid: String, paths: IOSUsePaths) throws {
         guard let config = DeviceService.configuredDevices(paths: paths)[udid], config.needsDriverUpdate else {
             return
         }
         let installed = config.driverVersion ?? "unknown"
-        throw CLIParseError.invalidValue("Driver for device \(udid) was installed by ios-use \(installed), but current CLI is \(IOSUseCLI.version). Run `ios-use config --udid \(udid)` to update the driver.")
+        let installedPort = config.port.map(String.init) ?? "unknown"
+        throw CLIParseError.invalidValue("Driver for device \(udid) was installed by ios-use \(installed) on port \(installedPort), but current CLI is \(IOSUseCLI.version) and expects port \(IOSUseProtocol.defaultDriverPort). Run `ios-use config --udid \(udid)` to update the driver.")
     }
 
     private static func cachedAppleId(altsign: String) throws -> String? {
@@ -365,7 +366,8 @@ public enum SessionService {
 
     public static func prepareDriverSession(_ session: SessionOptions, paths: IOSUsePaths) throws {
         if session.udid == nil, let current = read(paths: paths) {
-            try ConfigService.assertDriverVersionCurrent(udid: current.udid, paths: paths)
+            try ConfigService.assertDriverInstallCurrent(udid: current.udid, paths: paths)
+            _ = try refreshSessionPortIfNeeded(current, paths: paths)
             return
         }
 
@@ -383,8 +385,9 @@ public enum SessionService {
         guard configured.contains(udid) else {
             throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
         }
-        try ConfigService.assertDriverVersionCurrent(udid: udid, paths: paths)
+        try ConfigService.assertDriverInstallCurrent(udid: udid, paths: paths)
         if let current = read(paths: paths), current.udid == udid {
+            _ = try refreshSessionPortIfNeeded(current, paths: paths)
             return
         }
         if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
@@ -425,14 +428,15 @@ public enum SessionService {
         guard let current = read(paths: paths) else {
             throw CLIParseError.invalidValue("No active driver session. Run `ios-use config --udid <udid>` first.")
         }
-        try ConfigService.assertDriverVersionCurrent(udid: current.udid, paths: paths)
-        switch current.deviceType {
+        try ConfigService.assertDriverInstallCurrent(udid: current.udid, paths: paths)
+        let refreshed = try refreshSessionPortIfNeeded(current, paths: paths)
+        switch refreshed.deviceType {
         case "simulator":
-            try ensureSimulatorDriverRunning(udid: current.udid, allowExistingDriver: false)
+            try ensureSimulatorDriverRunning(udid: refreshed.udid, allowExistingDriver: false)
         case "real":
-            try ensureRealDriverRunning(udid: current.udid, paths: paths, verbose: verbose, checkFirst: false)
+            try ensureRealDriverRunning(udid: refreshed.udid, paths: paths, verbose: verbose, checkFirst: false)
         default:
-            throw CLIParseError.invalidValue("Unknown session device type: \(current.deviceType)")
+            throw CLIParseError.invalidValue("Unknown session device type: \(refreshed.deviceType)")
         }
     }
 
@@ -440,7 +444,7 @@ public enum SessionService {
         let root: [String: Any] = [
             "sessionId": "session-\(Int(Date().timeIntervalSince1970 * 1000))",
             "udid": udid,
-            "port": IOSUseProtocol.defaultDriverPort,
+            "port": Int(IOSUseProtocol.defaultDriverPort),
             "deviceName": deviceName,
             "deviceVersion": deviceVersion,
             "deviceType": deviceType,
@@ -450,6 +454,28 @@ public enum SessionService {
         try FileManager.default.createDirectory(atPath: sessionDir, withIntermediateDirectories: true, attributes: nil)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: URL(fileURLWithPath: paths.session), options: .atomic)
+    }
+
+    @discardableResult
+    private static func refreshSessionPortIfNeeded(_ current: Info, paths: IOSUsePaths) throws -> Info {
+        guard current.port != Int(IOSUseProtocol.defaultDriverPort) else {
+            return current
+        }
+        try writeSession(
+            udid: current.udid,
+            deviceName: current.deviceName,
+            deviceVersion: current.deviceVersion,
+            deviceType: current.deviceType,
+            paths: paths
+        )
+        return read(paths: paths) ?? Info(
+            sessionId: current.sessionId,
+            udid: current.udid,
+            port: Int(IOSUseProtocol.defaultDriverPort),
+            deviceName: current.deviceName,
+            deviceVersion: current.deviceVersion,
+            deviceType: current.deviceType
+        )
     }
 
     private static func ensureRealDriverRunning(udid: String, paths: IOSUsePaths, verbose: Bool, checkFirst: Bool = true) throws {

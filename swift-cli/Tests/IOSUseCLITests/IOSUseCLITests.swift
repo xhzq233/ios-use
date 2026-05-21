@@ -106,7 +106,7 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testProtocolConstantsMatchDriverDefaults() {
-        XCTAssertEqual(IOSUseProtocol.defaultDriverPort, 8100)
+        XCTAssertEqual(IOSUseProtocol.defaultDriverPort, 8102)
         XCTAssertEqual(IOSUseProtocol.maxFrameSizeBytes, 50 * 1024 * 1024)
         XCTAssertEqual(IOSUseProtocol.maxDriverConnections, 1)
         XCTAssertEqual(IOSUseProtocol.driverConnectionHandoffTimeoutMilliseconds, 250)
@@ -124,7 +124,7 @@ final class IOSUseCLITests: XCTestCase {
             .path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try """
-        {"devices":{"REAL-CMD":{"bundleId":"com.example.driver","port":"8100","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"REAL-CMD":{"bundleId":"com.example.driver","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
 
         DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-CMD"] }
