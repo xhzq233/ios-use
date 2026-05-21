@@ -43,6 +43,22 @@ BUILD_DIR="$PROJECT_DIR/build"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 XCTEST_WRAPPER_PATH="$BUILD_DIR/IOSUseDriver-Runner.app"
 
+CLI_VERSION="$(sed -n 's/.*public static let version = "\(.*\)".*/\1/p' "$ROOT_DIR/swift-cli/Sources/IOSUseCLI/IOSUseCLI.swift" | head -1)"
+if [ -z "$CLI_VERSION" ]; then
+  echo "[build] ERROR: failed to read IOSUseCLI.version"
+  exit 1
+fi
+DRIVER_GIT_SHA="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+DRIVER_BUILD_ID="$(date -u +%Y%m%d%H%M%S)"
+PROTOCOL_ID="$(
+  find "$ROOT_DIR/shared/IOSUseProtocol" "$ROOT_DIR/driver/tcp" "$ROOT_DIR/driver/ui" -name '*.swift' -type f -print0 \
+    | sort -z \
+    | xargs -0 shasum \
+    | shasum \
+    | awk '{print $1}'
+)"
+echo "[build] Driver identity: version=$CLI_VERSION build=$DRIVER_BUILD_ID git=$DRIVER_GIT_SHA protocol=$PROTOCOL_ID"
+
 # Release artifacts go to assets/ (ignored local build outputs).
 # Debug artifacts go to build/ (not tracked) to avoid accidental commits.
 if [ "$DEBUG_MODE" = true ]; then
@@ -67,6 +83,10 @@ XCODE_COMMON=(
   CONFIGURATION_BUILD_DIR="$BUILD_DIR"
   -derivedDataPath "$DERIVED_DATA"
   DEBUG_INFORMATION_FORMAT="$DEBUG_INFO_FORMAT"
+  MARKETING_VERSION="$CLI_VERSION"
+  CURRENT_PROJECT_VERSION="$DRIVER_BUILD_ID"
+  IOS_USE_DRIVER_GIT_SHA="$DRIVER_GIT_SHA"
+  IOS_USE_DRIVER_PROTOCOL_ID="$PROTOCOL_ID"
   CODE_SIGNING_ALLOWED=NO
 )
 
@@ -94,6 +114,28 @@ package_ipa() {
   fi
 }
 
+stamp_driver_identity() {
+  local app_path="$1"
+  local plist_paths=("$app_path/Info.plist")
+  if [ -d "$app_path/PlugIns" ]; then
+    while IFS= read -r -d '' plugin_plist; do
+      plist_paths+=("$plugin_plist")
+    done < <(find "$app_path/PlugIns" -name Info.plist -type f -print0)
+  fi
+
+  for plist in "${plist_paths[@]}"; do
+    [ -f "$plist" ] || continue
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CLI_VERSION" "$plist" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $CLI_VERSION" "$plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $DRIVER_BUILD_ID" "$plist" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $DRIVER_BUILD_ID" "$plist"
+    /usr/libexec/PlistBuddy -c "Set :IOSUseDriverGitSHA $DRIVER_GIT_SHA" "$plist" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :IOSUseDriverGitSHA string $DRIVER_GIT_SHA" "$plist"
+    /usr/libexec/PlistBuddy -c "Set :IOSUseDriverProtocolID $PROTOCOL_ID" "$plist" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :IOSUseDriverProtocolID string $PROTOCOL_ID" "$plist"
+  done
+}
+
 # =============================================================================
 # Device build
 # =============================================================================
@@ -113,6 +155,7 @@ if [ "$SIMULATOR_ONLY" != true ]; then
     exit 1
   fi
   echo "[build] Built xctest wrapper: $XCTEST_WRAPPER_PATH"
+  stamp_driver_identity "$XCTEST_WRAPPER_PATH"
 
   # Strip XC frameworks and libXCTestSwiftSupport.dylib for iOS 17+ compatibility.
   # On iOS 17+, device already has these frameworks / dylibs.
@@ -161,6 +204,7 @@ if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
   exit 1
 fi
 echo "[build] Built Simulator xctest wrapper: $XCTEST_WRAPPER_PATH"
+stamp_driver_identity "$XCTEST_WRAPPER_PATH"
 
 # Package Simulator IPA
 echo "[build] Packaging simulator IPA..."
