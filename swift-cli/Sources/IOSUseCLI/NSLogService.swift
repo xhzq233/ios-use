@@ -5,18 +5,31 @@ import IOSUseProtocol
 import NIOPosix
 @preconcurrency import NIOSSL
 
-public enum NSLogService {
-    public static func stream(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
-        let grepRegex = try options.grep.flatMap { grep -> NSRegularExpression? in
-            guard !grep.isEmpty else { return nil }
-            return try NSRegularExpression(pattern: grep, options: regexOptions(options.flags))
-        }
+public struct NSLogCaptureTarget: Codable, Equatable, Sendable {
+    public var logFile: String
+    public var name: String?
+    public var startedAt: Int
+    public var stoppedAt: Int?
+    public var status: String
+    public var pid: Int32?
+    public var port: Int?
+}
 
-        try acquireForegroundOwnership(paths: paths, mode: "cli")
+public struct NSLogState: Codable, Equatable, Sendable {
+    public var lastCapture: NSLogCaptureTarget?
+}
+
+public enum NSLogService {
+    static var executablePathOverrideForTesting: String?
+    static var processRunnerForTesting: ((Process) throws -> Void)?
+
+    public static func stream(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
+        let mode = options.captureMode ?? "cli"
+        try acquireForegroundOwnership(paths: paths, mode: mode)
         let server = try NSLoggerServer(options: NSLoggerServerOptions(name: options.name), paths: paths)
         do {
             try server.start()
-            try writeLock(paths: paths, server: server, mode: "cli")
+            try writeLock(paths: paths, server: server, mode: mode)
         } catch {
             server.stop()
             releaseLock(paths: paths)
@@ -28,17 +41,11 @@ public enum NSLogService {
         }
 
         server.onMessage = { entry in
-            guard let grepRegex else {
-                writeStdout("\(entry)\n")
-                return
-            }
-            if Self.matches(entry, regex: grepRegex) {
-                writeStdout("\(entry)\n")
-            }
+            writeStdout("\(entry)\n")
         }
 
-        writeStdout("NSLogger listening on port \(server.port) (SSL)\n")
-        writeStdout("Streaming logs... Press Ctrl+C to stop.\n")
+        writeStderr("NSLogger listening on port \(server.port) (SSL)\n")
+        writeStderr("Streaming logs... Press Ctrl+C to stop.\n")
 
         let interruptMonitor = InterruptMonitor(onInterrupt: {
             writeStderr("NSLogger interrupted, cleaning up...\n")
@@ -51,6 +58,118 @@ public enum NSLogService {
         }
         try interruptMonitor.throwIfInterrupted()
         return ""
+    }
+
+    public static func start(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
+        try acquireForegroundOwnership(paths: paths, mode: "daemon")
+        try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
+        let logFile = "\(paths.logs)/nslog-\(fileTimestamp()).log"
+        FileManager.default.createFile(atPath: logFile, contents: nil)
+        let fileHandle = try FileHandle(forWritingTo: URL(fileURLWithPath: logFile))
+        defer { try? fileHandle.close() }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: try executablePath())
+        var arguments = ["nslog", "--capture-mode", "daemon"]
+        if let name = options.name, !name.isEmpty {
+            arguments += ["--name", name]
+        }
+        process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new }
+        process.standardOutput = fileHandle
+        process.standardError = FileHandle.standardOutput
+        try runProcess(process)
+
+        let capture = try waitForCapture(pid: process.processIdentifier, logFile: logFile, fallbackName: options.name, paths: paths)
+        try writeState(NSLogState(lastCapture: capture), paths: paths)
+        return "NSLogger capture started.\nPID: \(process.processIdentifier)\nLog: \(logFile)\nRead with: ios-use nslog read\n"
+    }
+
+    public static func read(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
+        guard let capture = readState(paths: paths)?.lastCapture, !capture.logFile.isEmpty else {
+            throw CLIParseError.invalidValue("No nslog capture found. Run `ios-use nslog start` first.")
+        }
+        return try readCapture(capture: capture, pattern: options.pattern, flags: options.flags, timeout: options.timeout ?? 0, clearAfterRead: options.clearAfterRead, last: options.last)
+    }
+
+    public static func stop(paths: IOSUsePaths) throws -> String {
+        guard let record = readLock(paths: paths) else {
+            throw CLIParseError.invalidValue("NSLOG_NOT_RUNNING: no running nslog capture")
+        }
+        if processAlive(record.pid) {
+            guard record.iosUseHome == nil || standardizedPath(record.iosUseHome ?? "") == standardizedPath(paths.root),
+                  isIOSUseNSLogOwnerProcess(pid: record.pid) else {
+                throw CLIParseError.invalidValue("nslog lock is owned by an unrelated live process (PID \(record.pid)); not terminating it. Remove stale lock manually if needed: \(paths.nslogLock)")
+            }
+        }
+        terminateProcess(pid: record.pid)
+        try? FileManager.default.removeItem(atPath: paths.nslogLock)
+        if var state = readState(paths: paths), var capture = state.lastCapture {
+            capture.status = "stopped"
+            capture.stoppedAt = nowMs()
+            capture.pid = nil
+            state.lastCapture = capture
+            try writeState(state, paths: paths)
+        }
+        return "NSLogger capture stopped.\n"
+    }
+
+    public static func startFlowCapture(options: NSLoggerServerOptions, paths: IOSUsePaths) throws -> NSLogCaptureTarget {
+        try acquireForegroundOwnership(paths: paths, mode: "flow")
+        try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true)
+        let logFile = "\(paths.artifacts)/nslog-flow-\(fileTimestamp()).log"
+        FileManager.default.createFile(atPath: logFile, contents: nil)
+        let fileHandle = try FileHandle(forWritingTo: URL(fileURLWithPath: logFile))
+        defer { try? fileHandle.close() }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: try executablePath())
+        var arguments = ["nslog", "--capture-mode", "flow"]
+        if let name = options.name, !name.isEmpty {
+            arguments += ["--name", name]
+        }
+        process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new }
+        process.standardOutput = fileHandle
+        process.standardError = FileHandle.standardOutput
+        try runProcess(process)
+        return try waitForCapture(pid: process.processIdentifier, logFile: logFile, fallbackName: options.name, paths: paths)
+    }
+
+    public static func stopCapture(_ capture: NSLogCaptureTarget, paths: IOSUsePaths) {
+        if let pid = capture.pid {
+            terminateProcess(pid: pid)
+        }
+        if let record = readLock(paths: paths), record.pid == capture.pid {
+            try? FileManager.default.removeItem(atPath: paths.nslogLock)
+        }
+    }
+
+    static func readCapture(capture: NSLogCaptureTarget, pattern: String?, flags: String, timeout: Double, clearAfterRead: Bool, last: Int?, interruptMonitor: InterruptMonitor? = nil) throws -> String {
+        guard FileManager.default.fileExists(atPath: capture.logFile) else {
+            throw CLIParseError.invalidValue("NSLogger capture file not found: \(capture.logFile). Run `ios-use nslog start` first.")
+        }
+        let regex = try pattern.flatMap { $0.isEmpty ? nil : try NSRegularExpression(pattern: $0, options: regexOptions(flags)) }
+        let deadline = Date().addingTimeInterval(max(0, timeout))
+        let canWait = capture.status == "running" && timeout > 0
+        var lines: [String] = []
+        repeat {
+            try interruptMonitor?.throwIfInterrupted()
+            lines = try readMatchingLines(logFile: capture.logFile, regex: regex)
+            if !lines.isEmpty || !canWait {
+                break
+            }
+            usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
+        } while Date() < deadline
+        try interruptMonitor?.throwIfInterrupted()
+
+        if let last {
+            lines = Array(lines.suffix(last))
+        }
+        if clearAfterRead {
+            try Data().write(to: URL(fileURLWithPath: capture.logFile))
+        }
+        return lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")
     }
 
     static func matches(_ entry: String, pattern: String, flags: String) throws -> Bool {
@@ -229,6 +348,76 @@ public enum NSLogService {
             value = (value << 8) | UInt64(bytes[offset + i])
         }
         return value
+    }
+
+    static func readState(paths: IOSUsePaths) -> NSLogState? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.nslogState)) else { return nil }
+        return try? JSONDecoder().decode(NSLogState.self, from: data)
+    }
+
+    private static func writeState(_ state: NSLogState, paths: IOSUsePaths) throws {
+        try FileManager.default.createDirectory(atPath: URL(fileURLWithPath: paths.nslogState).deletingLastPathComponent().path, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(state)
+        try data.write(to: URL(fileURLWithPath: paths.nslogState), options: [.atomic])
+    }
+
+    private static func waitForCapture(pid: Int32, logFile: String, fallbackName: String?, paths: IOSUsePaths) throws -> NSLogCaptureTarget {
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if let record = readLock(paths: paths), record.pid == pid {
+                return NSLogCaptureTarget(
+                    logFile: logFile,
+                    name: record.name ?? fallbackName,
+                    startedAt: nowMs(),
+                    stoppedAt: nil,
+                    status: "running",
+                    pid: pid,
+                    port: record.port
+                )
+            }
+            usleep(50_000)
+        }
+        throw CLIParseError.invalidValue("Timed out waiting for NSLogger capture to start")
+    }
+
+    private static func readMatchingLines(logFile: String, regex: NSRegularExpression?) throws -> [String] {
+        let text = try String(contentsOfFile: logFile, encoding: .utf8)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let regex else {
+            return lines.filter { !$0.isEmpty }
+        }
+        return lines.filter { !$0.isEmpty && matches($0, regex: regex) }
+    }
+
+    private static func executablePath() throws -> String {
+        if let executablePathOverrideForTesting {
+            return executablePathOverrideForTesting
+        }
+        let arg0 = CommandLine.arguments[0]
+        if arg0.hasPrefix("/") {
+            return arg0
+        }
+        let path = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(arg0).standardized.path
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw CLIParseError.invalidValue("Unable to resolve current ios-use executable path from \(arg0)")
+        }
+        return path
+    }
+
+    private static func runProcess(_ process: Process) throws {
+        if let processRunnerForTesting {
+            try processRunnerForTesting(process)
+        } else {
+            try process.run()
+        }
+    }
+
+    private static func fileTimestamp() -> String {
+        ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: #"[:.]"#, with: "-", options: .regularExpression)
+    }
+
+    private static func nowMs() -> Int {
+        Int(Date().timeIntervalSince1970 * 1000)
     }
 
     private static func readLock(paths: IOSUsePaths) -> NSLogLockRecord? {

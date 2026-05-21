@@ -45,12 +45,12 @@ PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$IOS_USE_TEST_HOME-nslog" ios-use n
 NSLOG_PID=$!
 popd >/dev/null
 for _ in {1..50}; do
-  if grep -q "NSLogger listening on port" "$NSLOG_OUT" && grep -q "Streaming logs" "$NSLOG_OUT"; then
+  if grep -q "NSLogger listening on port" "$NSLOG_ERR" && grep -q "Streaming logs" "$NSLOG_ERR"; then
     break
   fi
   sleep 0.1
 done
-if ! grep -q "NSLogger listening on port" "$NSLOG_OUT" || ! grep -q "Streaming logs" "$NSLOG_OUT"; then
+if ! grep -q "NSLogger listening on port" "$NSLOG_ERR" || ! grep -q "Streaming logs" "$NSLOG_ERR"; then
   echo "[swift-cli] ERROR: nslog did not stream startup output" >&2
   echo "[swift-cli] stdout:" >&2
   cat "$NSLOG_OUT" >&2 || true

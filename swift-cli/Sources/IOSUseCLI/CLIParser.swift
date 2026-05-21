@@ -131,14 +131,31 @@ public struct FlowOptions: Equatable, Sendable {
 }
 
 public struct NSLogOptions: Equatable, Sendable {
-    public var name: String?
-    public var grep: String?
-    public var flags = ""
+    public enum Command: Equatable, Sendable {
+        case stream
+        case start
+        case read
+        case stop
+    }
 
-    public init(name: String? = nil, grep: String? = nil, flags: String = "") {
+    public var command: Command
+    public var name: String?
+    public var pattern: String?
+    public var flags = ""
+    public var timeout: Double?
+    public var clearAfterRead = false
+    public var last: Int?
+    public var captureMode: String?
+
+    public init(command: Command = .stream, name: String? = nil, pattern: String? = nil, flags: String = "", timeout: Double? = nil, clearAfterRead: Bool = false, last: Int? = nil, captureMode: String? = nil) {
+        self.command = command
         self.name = name
-        self.grep = grep
+        self.pattern = pattern
         self.flags = flags
+        self.timeout = timeout
+        self.clearAfterRead = clearAfterRead
+        self.last = last
+        self.captureMode = captureMode
     }
 }
 
@@ -263,12 +280,44 @@ public enum CLIParser {
     }
 
     private static func parseNSLog(_ parser: inout ArgumentParser) throws -> NSLogOptions {
-        var options = NSLogOptions()
+        var options = NSLogOptions(command: .stream)
         while let arg = parser.consume() {
             switch arg {
+            case "start":
+                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
+                    throw CLIParseError.unexpectedArgument(arg)
+                }
+                options.command = .start
+                while let startArg = parser.consume() {
+                    switch startArg {
+                    case "--name": options.name = try parser.value(for: startArg)
+                    default: throw CLIParseError.unknownOption(startArg)
+                    }
+                }
+            case "read":
+                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
+                    throw CLIParseError.unexpectedArgument(arg)
+                }
+                options.command = .read
+                while let readArg = parser.consume() {
+                    switch readArg {
+                    case "--pattern": options.pattern = try parser.valueAllowingLeadingDash(for: readArg)
+                    case "--flags": options.flags = try parser.value(for: readArg)
+                    case "--timeout": options.timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: readArg), label: readArg)
+                    case "--clearAfterRead": options.clearAfterRead = true
+                    case "--last": options.last = try parsePositiveIntStrict(parser.value(for: readArg), label: readArg)
+                    default: throw CLIParseError.unknownOption(readArg)
+                    }
+                }
+            case "stop":
+                guard options.command == .stream, options.name == nil, options.pattern == nil, options.flags.isEmpty else {
+                    throw CLIParseError.unexpectedArgument(arg)
+                }
+                options.command = .stop
             case "--name": options.name = try parser.value(for: arg)
-            case "--grep": options.grep = try parser.valueAllowingLeadingDash(for: arg)
-            case "--flags": options.flags = try parser.value(for: arg)
+            case "--grep", "--flags":
+                throw CLIParseError.invalidValue("\(arg) moved to `ios-use nslog read`. Use `ios-use nslog read --pattern <regex> --flags <flags>`.")
+            case "--capture-mode": options.captureMode = try parser.value(for: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }

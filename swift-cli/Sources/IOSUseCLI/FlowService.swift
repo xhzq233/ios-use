@@ -38,12 +38,10 @@ public enum FlowService {
         interruptMonitor.start()
         defer { interruptMonitor.stop() }
 
-        var nsloggerServer: NSLoggerServer?
-        var ownsNSLogLock = false
+        var nslogCapture: NSLogCaptureTarget?
         defer {
-            nsloggerServer?.stop()
-            if ownsNSLogLock {
-                NSLogService.releaseLock(paths: paths)
+            if let nslogCapture {
+                NSLogService.stopCapture(nslogCapture, paths: paths)
             }
         }
         let captureOutput = outputSink == nil
@@ -56,19 +54,11 @@ public enum FlowService {
         }
         emit("Executing flow...\n")
         if let options = try nsloggerOptions(needNSLog) {
-            try NSLogService.acquireForegroundOwnership(paths: paths, mode: "flow")
-            let server = try NSLoggerServer(options: options, paths: paths)
-            do {
-                try server.start()
-                try NSLogService.writeLock(paths: paths, server: server, mode: "flow")
-                ownsNSLogLock = true
-            } catch {
-                server.stop()
-                NSLogService.releaseLock(paths: paths)
-                throw error
+            let capture = try NSLogService.startFlowCapture(options: options, paths: paths)
+            nslogCapture = capture
+            if let port = capture.port {
+                emit("  → nslog: listening on port \(port)\n")
             }
-            nsloggerServer = server
-            emit("  → nslog: listening on port \(server.port)\n")
         }
         try SessionService.prepareDriverSession(SessionOptions(udid: options.udid, verbose: options.verbose), paths: paths)
         let session = SessionService.read(paths: paths)
@@ -96,10 +86,10 @@ public enum FlowService {
             interruptMonitor: interruptMonitor
         )
         runner.output = bootstrapOutput
-        runner.nsloggerServer = nsloggerServer
-        if let server = nsloggerServer {
+        runner.nslogCapture = nslogCapture
+        if let capture = nslogCapture {
             runner.emit("Waiting for app to connect to NSLogger...\n")
-            runner.emit(try waitForNSLoggerConnection(server: server, timeoutMilliseconds: IOSUseProtocol.flowNSLogConnectTimeoutMilliseconds, interruptMonitor: interruptMonitor))
+            runner.emit(try waitForNSLoggerConnection(capture: capture, timeoutMilliseconds: IOSUseProtocol.flowNSLogConnectTimeoutMilliseconds, interruptMonitor: interruptMonitor))
         }
         _ = try runner.run(file: resolvedFile, inheritedVars: options.externalVars, stack: [])
         return runner.output
@@ -113,6 +103,12 @@ public enum FlowService {
 
     static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, nsloggerServer: NSLoggerServer) throws -> (stdout: String, outputs: [String: Any]) {
         var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext(), nsloggerServer: nsloggerServer)
+        let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
+        return (runner.output, outputs)
+    }
+
+    static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, nslogCapture: NSLogCaptureTarget) throws -> (stdout: String, outputs: [String: Any]) {
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext(), nslogCapture: nslogCapture)
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
@@ -143,6 +139,7 @@ private struct FlowRunner {
     var interruptMonitor: InterruptMonitor? = nil
     var output = ""
     var nsloggerServer: NSLoggerServer?
+    var nslogCapture: NSLogCaptureTarget?
 
     mutating func emit(_ text: String) {
         if captureOutput {
@@ -273,6 +270,7 @@ private struct FlowRunner {
                 interruptMonitor: interruptMonitor
             )
             child.nsloggerServer = nsloggerServer
+            child.nslogCapture = nslogCapture
             let childOutputs = try child.run(file: childFile, inheritedVars: flowVars.merging(childVars) { _, new in new }, stack: stack)
             if outputSink == nil {
                 output += child.output
@@ -338,19 +336,29 @@ private struct FlowRunner {
             }
 
         case "nslog":
-            guard let nsloggerServer else {
+            guard nslogCapture != nil || nsloggerServer != nil else {
                 throw CLIParseError.invalidValue("nslog requires needNSLog in flow config")
             }
             let pattern = try requiredString(step["pattern"], field: "nslog.pattern")
             let flags = optionalString(step["flags"]) ?? ""
             let timeout = try optionalNumber(step["timeout"], field: "nslog.timeout") ?? 0
             let startedAt = Date()
-            let matches = try waitForNSLogMatches(server: nsloggerServer, pattern: pattern, flags: flags, timeout: timeout, interruptMonitor: interruptMonitor)
+            let matches: [String]
+            if let nslogCapture {
+                let output = try NSLogService.readCapture(capture: nslogCapture, pattern: pattern, flags: flags, timeout: timeout, clearAfterRead: bool(step["clearAfterRead"]), last: nil, interruptMonitor: interruptMonitor)
+                matches = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init).filter { !$0.isEmpty }
+            } else if let nsloggerServer {
+                matches = try waitForNSLogMatches(server: nsloggerServer, pattern: pattern, flags: flags, timeout: timeout, interruptMonitor: interruptMonitor)
+                if bool(step["clearAfterRead"]) {
+                    nsloggerServer.clear()
+                }
+            } else {
+                matches = []
+            }
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             let path = try saveLog(lines: matches, name: optionalString(step["name"]) ?? "nslog-\(flowTimestamp())")
             emit("  → nslog: \(matches.count) matched /\(pattern)/ in \(elapsedMs)ms → \(path)\n")
             if bool(step["clearAfterRead"]) {
-                nsloggerServer.clear()
                 emit("  → nslog: buffer cleared\n")
             }
 
@@ -533,12 +541,14 @@ private func waitForNSLogMatches(server: NSLoggerServer, pattern: String, flags:
     return server.grep(regex: regex, from: cursor).matches
 }
 
-private func waitForNSLoggerConnection(server: NSLoggerServer, timeoutMilliseconds: Int, interruptMonitor: InterruptMonitor? = nil) throws -> String {
+private func waitForNSLoggerConnection(capture: NSLogCaptureTarget, timeoutMilliseconds: Int, interruptMonitor: InterruptMonitor? = nil) throws -> String {
     let startedAt = Date()
     let timeoutSeconds = Double(max(0, timeoutMilliseconds)) / 1000.0
     while Date().timeIntervalSince(startedAt) < timeoutSeconds {
         try interruptMonitor?.throwIfInterrupted()
-        if server.activeClientCount > 0 {
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: capture.logFile),
+           let size = attrs[.size] as? NSNumber,
+           size.intValue > 0 {
             let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
             return "App connected to NSLogger (\(elapsedMs)ms)\n"
         }

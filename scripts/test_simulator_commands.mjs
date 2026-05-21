@@ -1039,6 +1039,8 @@ function buildCases() {
     { id: 'OL-7', run: () => runCaseFileExists('OL-7', path.join(iosHome, 'artifacts/oslog-global.log'), ['oslog', '--name', 'oslog-global', '--udid', sim.udid]) },
     { id: 'OL-8', run: () => runCaseContains('OL-8', 'cleared=', ['oslog', '--clear', '--bundle-id', 'com.apple.Preferences', '--udid', sim.udid]) },
     { id: 'OL-9', run: () => runCaseFileExists('OL-9', path.join(iosHome, 'artifacts/oslog-timeout.log'), ['oslog', '--name', 'oslog-timeout', '--pattern', '__ios_use_no_such_log_line__', '--timeout', '0.2', '--udid', sim.udid]) },
+    { id: 'NSL-3', run: () => runCaseFailsContains('NSL-3', 'nslog read', ['nslog', '--grep', 'ready']) },
+    { id: 'NSL-4', run: () => runCaseFailsContains('NSL-4', 'ios-use nslog start', ['nslog', 'read']) },
     { id: 'CFG-2', run: () => unsupportedCase('CFG-2', 'real-device signing/install path, not Simulator') },
     { id: 'CFG-3', run: () => unsupportedCase('CFG-3', 'Apple ID first-login signing path, not Simulator and must not touch local credentials') },
     ...['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'].map(id => ({ id, run: runDriverUnitCases })),

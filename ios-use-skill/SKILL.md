@@ -186,8 +186,10 @@ ios-use swipe --dir back --distance 300
 
 - `nslog`
   - 启动本地 NSLogger server，iOS app 主动推送日志（与 oslog 互补）
-  - `--name <name>` Bonjour 服务名
-  - `--grep <pattern>` 正则过滤，`--flags` 正则标志
+  - `ios-use nslog [--name <name>]` 前台 streaming；监听信息写 stderr，日志行写 stdout
+  - `ios-use nslog start [--name <name>]` 后台采集并把日志写入 `~/.ios-use/logs/nslog-*.log`
+  - `ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <sec>] [--clearAfterRead] [--last N]` 从最近一次后台采集读取
+  - `ios-use nslog stop` 停止后台采集；日志文件保留，可继续 read 历史日志
   - 适合验证 app 内 NSLog 埋点
 
 ## 5. Proxy 抓包

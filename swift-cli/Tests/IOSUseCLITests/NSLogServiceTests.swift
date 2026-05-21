@@ -10,6 +10,8 @@ final class NSLogServiceTests: XCTestCase {
         NSLogService.processCommandOverrideForTesting = nil
         NSLogService.processAliveOverrideForTesting = nil
         NSLogService.killOverrideForTesting = nil
+        NSLogService.executablePathOverrideForTesting = nil
+        NSLogService.processRunnerForTesting = nil
         super.tearDown()
     }
 
@@ -77,6 +79,42 @@ final class NSLogServiceTests: XCTestCase {
 
         XCTAssertThrowsError(try NSLogService.matches("ready", pattern: "ready", flags: "z")) { error in
             XCTAssertTrue(String(describing: error).contains("Invalid regex flag"))
+        }
+    }
+
+    func testReadCaptureFiltersLastAndClearsFile() throws {
+        let paths = makePaths()
+        try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
+        let logFile = "\(paths.logs)/nslog-test.log"
+        try "alpha\nbeta\nalphabet\n".write(toFile: logFile, atomically: true, encoding: .utf8)
+        let capture = NSLogCaptureTarget(logFile: logFile, name: "unit", startedAt: 1, stoppedAt: nil, status: "running", pid: 123, port: 456)
+
+        let output = try NSLogService.readCapture(capture: capture, pattern: "alpha", flags: "", timeout: 0, clearAfterRead: true, last: 1)
+
+        XCTAssertEqual(output, "alphabet\n")
+        XCTAssertEqual(try String(contentsOfFile: logFile, encoding: .utf8), "")
+    }
+
+    func testNSLogReadUsesLastCaptureState() throws {
+        let paths = makePaths()
+        try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
+        let logFile = "\(paths.logs)/nslog-test.log"
+        try "one\ntwo\nthree\n".write(toFile: logFile, atomically: true, encoding: .utf8)
+        let state = NSLogState(lastCapture: NSLogCaptureTarget(logFile: logFile, name: "unit", startedAt: 1, stoppedAt: 2, status: "stopped", pid: nil, port: 456))
+        try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: paths.nslogState))
+
+        XCTAssertEqual(
+            try NSLogService.read(options: NSLogOptions(command: .read, pattern: "t", last: 2), paths: paths),
+            "two\nthree\n"
+        )
+    }
+
+    func testNSLogReadFailsWithoutLastCapture() throws {
+        let paths = makePaths()
+
+        XCTAssertThrowsError(try NSLogService.read(options: NSLogOptions(command: .read), paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("ios-use nslog start"))
         }
     }
 
@@ -194,6 +232,27 @@ final class NSLogServiceTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try NSLogService.acquireForegroundOwnership(paths: paths, mode: "cli")) { error in
+            XCTAssertTrue(String(describing: error).contains("unrelated live process"))
+            XCTAssertTrue(String(describing: error).contains(paths.nslogLock))
+        }
+        XCTAssertTrue(signals.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.nslogLock))
+    }
+
+    func testStopDoesNotKillUnrelatedProcessFromLock() throws {
+        let paths = makePaths()
+        try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
+        try #"{"pid":4444,"port":51723,"startedAt":"old","iosUseHome":"\#(paths.root)","mode":"daemon"}"#
+            .write(toFile: paths.nslogLock, atomically: true, encoding: .utf8)
+        var signals: [(Int32, Int32)] = []
+        NSLogService.processAliveOverrideForTesting = { $0 == 4444 }
+        NSLogService.processCommandOverrideForTesting = { _ in "/bin/sleep 60" }
+        NSLogService.killOverrideForTesting = { pid, signal in
+            signals.append((pid, signal))
+            return 0
+        }
+
+        XCTAssertThrowsError(try NSLogService.stop(paths: paths)) { error in
             XCTAssertTrue(String(describing: error).contains("unrelated live process"))
             XCTAssertTrue(String(describing: error).contains(paths.nslogLock))
         }

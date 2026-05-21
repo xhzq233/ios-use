@@ -32,6 +32,7 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let config: String
     public let session: String
     public let nslogLock: String
+    public let nslogState: String
     public let logs: String
     public let artifacts: String
 
@@ -42,6 +43,7 @@ public struct IOSUsePaths: Equatable, Sendable {
             config: "\(root)/config.json",
             session: "\(root)/state/session.json",
             nslogLock: "\(root)/state/nslog.lock",
+            nslogState: "\(root)/state/nslog-state.json",
             logs: "\(root)/logs",
             artifacts: "\(root)/artifacts"
         )
@@ -122,7 +124,16 @@ public struct IOSUseCLI: Sendable {
             }
         case .nslog(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: paths))
+                switch options.command {
+                case .stream:
+                    return CLIResult(exitCode: 0, stdout: try NSLogService.stream(options: options, paths: paths))
+                case .start:
+                    return CLIResult(exitCode: 0, stdout: try NSLogService.start(options: options, paths: paths))
+                case .read:
+                    return CLIResult(exitCode: 0, stdout: try NSLogService.read(options: options, paths: paths))
+                case .stop:
+                    return CLIResult(exitCode: 0, stdout: try NSLogService.stop(paths: paths))
+                }
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
