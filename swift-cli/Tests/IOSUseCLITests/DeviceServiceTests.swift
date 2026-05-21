@@ -1,5 +1,4 @@
 import XCTest
-import IOSUseProtocol
 @testable import IOSUseCLI
 
 final class DeviceServiceTests: XCTestCase {
@@ -50,16 +49,7 @@ final class DeviceServiceTests: XCTestCase {
         let device = IOSDevice(name: "Phone", version: "26.2", udid: "REAL-1", kind: .real)
 
         XCTAssertEqual(
-            DeviceService.format(device, configuredDevices: ["REAL-1": DeviceService.ConfiguredDevice(driverVersion: "0.9.0", port: Int(IOSUseProtocol.defaultDriverPort))]),
-            "Phone | iOS 26.2 | Device | UDID: REAL-1 | configured | driver update required: run ios-use config --udid REAL-1"
-        )
-    }
-
-    func testFormatDeviceLabelIncludesDriverUpdateHintForOldPort() {
-        let device = IOSDevice(name: "Phone", version: "26.2", udid: "REAL-1", kind: .real)
-
-        XCTAssertEqual(
-            DeviceService.format(device, configuredDevices: ["REAL-1": DeviceService.ConfiguredDevice(driverVersion: IOSUseCLI.version, port: 8100)]),
+            DeviceService.format(device, configuredDevices: ["REAL-1": DeviceService.ConfiguredDevice(driverVersion: "0.9.0")]),
             "Phone | iOS 26.2 | Device | UDID: REAL-1 | configured | driver update required: run ios-use config --udid REAL-1"
         )
     }
