@@ -16,15 +16,15 @@ enum InputCommands {
         let elem: SnapshotElement
         switch rawFind(args.target, visibility: .only) {
         case .found(let e): elem = e
-        case .ambiguous(let matches): return try ambiguityResponse(args.target.label, matches: matches)
+        case .ambiguous(let matches): return ambiguityResponse(args.target.label, matches: matches)
         case .fuzzy(let s):
-            return try notFoundResponse(args.target.label,
-                                        suggestions: s,
-                                        hint: "Try adding --traits, or verify the active app before typing")
+            return notFoundResponse(args.target.label,
+                                    suggestions: s,
+                                    hint: "Try adding --traits, or verify the active app before typing")
         case .notFound(let s):
-            return try notFoundResponse(args.target.label,
-                                        suggestions: s,
-                                        hint: "Try adding --traits, or verify the active app before typing")
+            return notFoundResponse(args.target.label,
+                                    suggestions: s,
+                                    hint: "Try adding --traits, or verify the active app before typing")
         }
 
         let editableSnapshot = preferredInputSnapshot(around: elem.node)

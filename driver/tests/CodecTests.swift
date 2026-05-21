@@ -32,21 +32,6 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(decoded.value, "test")
     }
 
-    func testForyError_WithPayload() throws {
-        let fory = createFory()
-        var errPayload = ForyErrorPayload()
-        errPayload.hint = "try again"
-        errPayload.suggestions = ["a", "b"]
-        let resp = try Codec.foryError("not found", payload: errPayload)
-        XCTAssertFalse(resp.ok)
-        XCTAssertEqual(resp.error, "not found")
-        XCTAssertFalse(resp.payload.isEmpty)
-
-        let decoded = try fory.deserialize(resp.payload, as: ForyErrorPayload.self)
-        XCTAssertEqual(decoded.hint, "try again")
-        XCTAssertEqual(decoded.suggestions, ["a", "b"])
-    }
-
     // MARK: - maxFrameSize
 
     func testMaxFrameSize_Is50MB() {

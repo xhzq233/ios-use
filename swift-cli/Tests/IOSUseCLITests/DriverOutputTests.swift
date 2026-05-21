@@ -22,23 +22,14 @@ final class DriverOutputTests: XCTestCase {
         XCTAssertFalse(output.contains("matches=1"))
     }
 
-    func testDriverErrorIncludesErrorPayloadDetails() {
-        let error = DriverClientError.driverError(
-            "label '关闭' is ambiguous (2 matches)",
-            ForyErrorPayload(
-                hint: "Try adding --traits to disambiguate",
-                suggestions: ["关闭"],
-                matches: [
-                    ForyFindMatch(
-                        elemType: 7,
-                        label: "关闭",
-                        rect: ForyRect(x: 10, y: 20, w: 30, h: 40),
-                        traits: ["Button", "disabled"],
-                        ancestors: ["Application", "Table", "Cell[蓝牙]"]
-                    )
-                ]
-            )
-        )
+    func testDriverErrorUsesDriverProvidedString() {
+        let error = DriverClientError.driverError("""
+        label '关闭' is ambiguous (2 matches)
+        matches:
+          [Application > Table > Cell[蓝牙]] Button [disabled] "关闭" (10,20,30,40)
+        suggestions: 关闭
+        hint: Try adding --traits to disambiguate
+        """)
 
         let output = String(describing: error)
 

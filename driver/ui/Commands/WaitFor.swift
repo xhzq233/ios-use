@@ -33,7 +33,7 @@ enum WaitForCommands {
                 )
                 return try Codec.foryOK(payload)
             case .ambiguous(let matches):
-                return try ambiguityResponse(args.target.label, matches: matches)
+                return ambiguityResponse(args.target.label, matches: matches)
             case .fuzzy, .notFound:
                 break
             }

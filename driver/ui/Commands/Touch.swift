@@ -43,11 +43,11 @@ enum TouchCommands {
             )
             return try Codec.foryOK(payload)
         case .ambiguous(let matches):
-            return try ambiguityResponse(target.label, matches: matches)
+            return ambiguityResponse(target.label, matches: matches)
         case .fuzzy(let s):
-            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
+            return notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
         case .notFound(let s):
-            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
+            return notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
         }
     }
 
@@ -89,11 +89,11 @@ enum TouchCommands {
             )
             return try Codec.foryOK(payload)
         case .ambiguous(let matches):
-            return try ambiguityResponse(target.label, matches: matches)
+            return ambiguityResponse(target.label, matches: matches)
         case .fuzzy(let s):
-            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
+            return notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
         case .notFound(let s):
-            return try notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
+            return notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
         }
     }
 
