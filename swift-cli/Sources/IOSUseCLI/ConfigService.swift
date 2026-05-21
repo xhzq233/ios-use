@@ -358,7 +358,8 @@ public enum SessionService {
     }
 
     public static func prepareDriverSession(_ session: SessionOptions, paths: IOSUsePaths) throws {
-        if session.udid == nil, let current = read(paths: paths) {
+        let currentSession = read(paths: paths)
+        if session.udid == nil, let current = currentSession {
             try ConfigService.assertDriverInstallCurrent(udid: current.udid, paths: paths)
             return
         }
@@ -378,11 +379,13 @@ public enum SessionService {
             throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
         }
         try ConfigService.assertDriverInstallCurrent(udid: udid, paths: paths)
-        if let current = read(paths: paths), current.udid == udid {
+        if let current = currentSession, current.udid == udid {
             return
         }
-        if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
-            try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: false)
+        let bootedSimulators = try DeviceService.listDevices(simulatorOnly: true, paths: paths)
+        if let simulator = bootedSimulators.first(where: { $0.udid == udid }) {
+            let canReuseStoppedSingleSimulatorDriver = currentSession == nil && bootedSimulators.count == 1
+            try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: canReuseStoppedSingleSimulatorDriver)
             try writeSession(
                 udid: udid,
                 deviceName: simulator.name,
