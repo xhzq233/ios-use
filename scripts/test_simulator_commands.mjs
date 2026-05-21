@@ -721,9 +721,10 @@ function buildCases() {
     { id: 'DEV-6', run: () => runCaseMatches('DEV-6', /Simulator|Device/, ['devices', '--simulator']) },
     { id: 'AA-1', run: async () => {
       if (!selected('AA-1')) return recordSkip('AA-1');
-      console.log('[sim-test] RUN AA-1: ios-use home && stop && dom --fresh');
+      console.log('[sim-test] RUN AA-1: ios-use home && stop && sleep 1s && dom --fresh');
       const home = runCliToFiles(['home', '--udid', sim.udid], path.join(artifactDir, 'AA-1-home.out'), path.join(artifactDir, 'AA-1-home.err'));
       const stop = runCliToFiles(['stop'], path.join(artifactDir, 'AA-1-stop.out'), path.join(artifactDir, 'AA-1-stop.err'));
+      await sleep(1000);
       const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], path.join(artifactDir, 'AA-1.out'), path.join(artifactDir, 'AA-1.err'));
       if (home.code === 0 && stop.code === 0 && dom.code === 0 && dom.stdout.includes('App: com.apple.springboard')) recordPass('AA-1');
       else recordFail('AA-1', home.stdout + home.stderr + stop.stdout + stop.stderr + dom.stdout + dom.stderr);
