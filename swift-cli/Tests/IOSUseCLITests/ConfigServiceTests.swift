@@ -77,29 +77,36 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: "\(sessionDir)/session.json"))
     }
 
-    func testStopWithoutSessionDoesNotDiscoverOrTerminateRealDevice() throws {
+    func testStopWithoutSessionDoesNotDiscoverOrTerminateDriver() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         var didListDevices = false
-        var terminated: [String] = []
+        var terminatedReal: [String] = []
+        var terminatedSimulator: [String] = []
         DeviceService.listDevicesOverrideForTesting = { _, _ in
             didListDevices = true
             return [IOSDevice(name: "Phone", version: "26.0", udid: "REAL-1", kind: .real)]
         }
         SessionService.realDriverTerminatorForTesting = { udid in
-            terminated.append(udid)
+            terminatedReal.append(udid)
+            return true
+        }
+        SessionService.simulatorDriverTerminatorForTesting = { udid in
+            terminatedSimulator.append(udid)
             return true
         }
         addTeardownBlock {
             DeviceService.listDevicesOverrideForTesting = nil
             SessionService.realDriverTerminatorForTesting = nil
+            SessionService.simulatorDriverTerminatorForTesting = nil
         }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertFalse(didListDevices)
-        XCTAssertEqual(terminated, [])
+        XCTAssertEqual(terminatedReal, [])
+        XCTAssertEqual(terminatedSimulator, [])
         XCTAssertEqual(result.stdout, "No active session\nSession stopped\n")
         XCTAssertNil(SessionService.read(paths: paths))
     }
@@ -131,7 +138,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNil(SessionService.read(paths: paths))
     }
 
-    func testStopClearsSimulatorSessionWithoutTerminatingDriver() throws {
+    func testStopTerminatesSimulatorDriverBeforeClearingSession() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try SessionService.writeSimulatorSession(
@@ -140,11 +147,20 @@ final class ConfigServiceTests: XCTestCase {
             deviceVersion: "26.0",
             paths: paths
         )
+        var terminated: [String] = []
+        SessionService.simulatorDriverTerminatorForTesting = { udid in
+            terminated.append(udid)
+            return true
+        }
+        addTeardownBlock {
+            SessionService.simulatorDriverTerminatorForTesting = nil
+        }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "Session stopped\n")
+        XCTAssertEqual(terminated, ["SIM-1"])
+        XCTAssertEqual(result.stdout, "Driver app terminated on simulator\nSession stopped\n")
         XCTAssertNil(SessionService.read(paths: paths))
     }
 

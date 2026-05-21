@@ -302,7 +302,7 @@ public enum ProxyService {
             "--listen-port", String(IOSUseProtocol.proxyMitmdumpPort),
             "--set", "confdir=\(mitmproxyDir(paths: paths))",
             "--set", "ssl_insecure=true",
-            "--set", "connection_strategy=lazy",
+            "--set", "connection_strategy=eager",
             "--set", "save_stream_file=\(flowFile)",
         ]
         process.standardOutput = FileHandle.nullDevice
