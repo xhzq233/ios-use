@@ -35,7 +35,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cat > "$ROOT_DIR/ios-use" <<'CLI'
 #!/bin/sh
-echo 1.0.2
+echo 1.0.3
 CLI
 chmod +x "$ROOT_DIR/ios-use"
 SCRIPT
@@ -82,7 +82,7 @@ case "$url" in
   *ios-use-darwin-arm64)
     {
       printf '#!/bin/sh\n'
-      printf 'echo 1.0.2\n'
+      printf 'echo 1.0.3\n'
     } | write_output
     chmod +x "$out"
     ;;
@@ -119,7 +119,7 @@ run_install() {
   HOME="$home" \
     XDG_BIN_HOME="$home/bin" \
     IOS_USE_GITHUB_REPO="example/ios-use" \
-    IOS_USE_VERSION="v1.0.2" \
+    IOS_USE_VERSION="v1.0.3" \
     IOS_USE_INSTALL_TEST_TARBALL="$FAKE_TARBALL" \
     PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
     bash "$ROOT_DIR/scripts/install.sh" "$@" --print-path

@@ -82,7 +82,6 @@ final class DriverClient: DriverCommandClient {
 
     convenience init(session: SessionService.Info?) {
         self.init(
-            port: UInt16(session?.port ?? Int(IOSUseProtocol.defaultDriverPort)),
             udid: session?.udid,
             deviceType: session?.deviceType
         )

@@ -17,7 +17,7 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI().run(arguments: ["--version"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "1.0.2\n")
+        XCTAssertEqual(result.stdout, "1.0.3\n")
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
@@ -124,7 +124,7 @@ final class IOSUseCLITests: XCTestCase {
             .path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try """
-        {"devices":{"REAL-CMD":{"bundleId":"com.example.driver","port":"8102","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"REAL-CMD":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
 
         DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-CMD"] }
