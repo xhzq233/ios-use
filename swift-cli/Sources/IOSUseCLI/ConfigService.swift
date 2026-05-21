@@ -5,13 +5,11 @@ import IOSUseProtocol
 public struct DeviceConfigEntry: Equatable, Sendable {
     public let udid: String
     public let bundleId: String
-    public let port: String
     public let driverVersion: String
 
-    public init(udid: String, bundleId: String, port: String, driverVersion: String = "(missing)") {
+    public init(udid: String, bundleId: String, driverVersion: String = "(missing)") {
         self.udid = udid
         self.bundleId = bundleId
-        self.port = port
         self.driverVersion = driverVersion
     }
 }
@@ -81,7 +79,7 @@ public enum ConfigService {
         }
 
         _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "install", "app", "--device", udid, "\(payloadDir)/\(appEntry)"])
-        try saveConfig(udid: udid, bundleId: bundleId, port: String(IOSUseProtocol.defaultDriverPort), paths: paths)
+        try saveConfig(udid: udid, bundleId: bundleId, paths: paths)
 
         return """
         Using device: \(DeviceService.format(device, configured: DeviceService.configuredUdids(paths: paths)))
@@ -104,15 +102,14 @@ public enum ConfigService {
         return devices.keys.sorted().map { udid in
             let value = devices[udid] as? [String: Any] ?? [:]
             let bundleId = value["bundleId"] as? String ?? "(missing)"
-            let portValue = value["port"].map { String(describing: $0) } ?? "(missing)"
             let driverVersion = value["driverVersion"] as? String ?? "(missing)"
-            return DeviceConfigEntry(udid: udid, bundleId: bundleId, port: portValue, driverVersion: driverVersion)
+            return DeviceConfigEntry(udid: udid, bundleId: bundleId, driverVersion: driverVersion)
         }
     }
 
     public static func formatList(_ entries: [DeviceConfigEntry]) -> String {
         guard !entries.isEmpty else { return "No configured devices.\n" }
-        let lines = entries.map { "  \($0.udid) → bundleId: \($0.bundleId), port: \($0.port), driverVersion: \($0.driverVersion)" }.joined(separator: "\n")
+        let lines = entries.map { "  \($0.udid) → bundleId: \($0.bundleId), driverVersion: \($0.driverVersion)" }.joined(separator: "\n")
         return "Configured devices:\n\(lines)\n"
     }
 
@@ -147,7 +144,7 @@ public enum ConfigService {
 
         let launchOutput = try Shell.run("xcrun", arguments: ["simctl", "launch", udid, simulatorBundleId]).trimmingCharacters(in: .whitespacesAndNewlines)
         waitForSimulatorDriver()
-        try saveConfig(udid: udid, bundleId: simulatorBundleId, port: String(IOSUseProtocol.defaultDriverPort), paths: paths)
+        try saveConfig(udid: udid, bundleId: simulatorBundleId, paths: paths)
         let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first { $0.udid == udid }
         try SessionService.writeSimulatorSession(
             udid: udid,
@@ -205,8 +202,7 @@ public enum ConfigService {
             return
         }
         let installed = config.driverVersion ?? "unknown"
-        let installedPort = config.port.map(String.init) ?? "unknown"
-        throw CLIParseError.invalidValue("Driver for device \(udid) was installed by ios-use \(installed) on port \(installedPort), but current CLI is \(IOSUseCLI.version) and expects port \(IOSUseProtocol.defaultDriverPort). Run `ios-use config --udid \(udid)` to update the driver.")
+        throw CLIParseError.invalidValue("Driver for device \(udid) was installed by ios-use \(installed), but current CLI is \(IOSUseCLI.version). Run `ios-use config --udid \(udid)` to update the driver.")
     }
 
     private static func cachedAppleId(altsign: String) throws -> String? {
@@ -256,14 +252,14 @@ public enum ConfigService {
         _ = try Shell.run("plutil", arguments: ["-replace", "CFBundleIdentifier", "-string", newId, plistPath])
     }
 
-    private static func saveConfig(udid: String, bundleId: String, port: String, paths: IOSUsePaths) throws {
+    private static func saveConfig(udid: String, bundleId: String, paths: IOSUsePaths) throws {
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: URL(fileURLWithPath: paths.config)),
            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             root = parsed
         }
         var devices = root["devices"] as? [String: Any] ?? [:]
-        devices[udid] = ["bundleId": bundleId, "port": port, "driverVersion": IOSUseCLI.version]
+        devices[udid] = ["bundleId": bundleId, "driverVersion": IOSUseCLI.version]
         root["devices"] = devices
 
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
@@ -294,15 +290,13 @@ public enum SessionService {
     public struct Info: Equatable, Sendable {
         public let sessionId: String
         public let udid: String
-        public let port: Int
         public let deviceName: String
         public let deviceVersion: String
         public let deviceType: String
 
-        public init(sessionId: String, udid: String, port: Int, deviceName: String, deviceVersion: String, deviceType: String) {
+        public init(sessionId: String, udid: String, deviceName: String, deviceVersion: String, deviceType: String) {
             self.sessionId = sessionId
             self.udid = udid
-            self.port = port
             self.deviceName = deviceName
             self.deviceVersion = deviceVersion
             self.deviceType = deviceType
@@ -347,7 +341,6 @@ public enum SessionService {
         return Info(
             sessionId: sessionId,
             udid: udid,
-            port: raw["port"] as? Int ?? Int(IOSUseProtocol.defaultDriverPort),
             deviceName: raw["deviceName"] as? String ?? "",
             deviceVersion: raw["deviceVersion"] as? String ?? "",
             deviceType: raw["deviceType"] as? String ?? ""
@@ -367,7 +360,6 @@ public enum SessionService {
     public static func prepareDriverSession(_ session: SessionOptions, paths: IOSUsePaths) throws {
         if session.udid == nil, let current = read(paths: paths) {
             try ConfigService.assertDriverInstallCurrent(udid: current.udid, paths: paths)
-            _ = try refreshSessionPortIfNeeded(current, paths: paths)
             return
         }
 
@@ -387,7 +379,6 @@ public enum SessionService {
         }
         try ConfigService.assertDriverInstallCurrent(udid: udid, paths: paths)
         if let current = read(paths: paths), current.udid == udid {
-            _ = try refreshSessionPortIfNeeded(current, paths: paths)
             return
         }
         if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
@@ -429,14 +420,13 @@ public enum SessionService {
             throw CLIParseError.invalidValue("No active driver session. Run `ios-use config --udid <udid>` first.")
         }
         try ConfigService.assertDriverInstallCurrent(udid: current.udid, paths: paths)
-        let refreshed = try refreshSessionPortIfNeeded(current, paths: paths)
-        switch refreshed.deviceType {
+        switch current.deviceType {
         case "simulator":
-            try ensureSimulatorDriverRunning(udid: refreshed.udid, allowExistingDriver: false)
+            try ensureSimulatorDriverRunning(udid: current.udid, allowExistingDriver: false)
         case "real":
-            try ensureRealDriverRunning(udid: refreshed.udid, paths: paths, verbose: verbose, checkFirst: false)
+            try ensureRealDriverRunning(udid: current.udid, paths: paths, verbose: verbose, checkFirst: false)
         default:
-            throw CLIParseError.invalidValue("Unknown session device type: \(refreshed.deviceType)")
+            throw CLIParseError.invalidValue("Unknown session device type: \(current.deviceType)")
         }
     }
 
@@ -444,7 +434,6 @@ public enum SessionService {
         let root: [String: Any] = [
             "sessionId": "session-\(Int(Date().timeIntervalSince1970 * 1000))",
             "udid": udid,
-            "port": Int(IOSUseProtocol.defaultDriverPort),
             "deviceName": deviceName,
             "deviceVersion": deviceVersion,
             "deviceType": deviceType,
@@ -454,28 +443,6 @@ public enum SessionService {
         try FileManager.default.createDirectory(atPath: sessionDir, withIntermediateDirectories: true, attributes: nil)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: URL(fileURLWithPath: paths.session), options: .atomic)
-    }
-
-    @discardableResult
-    private static func refreshSessionPortIfNeeded(_ current: Info, paths: IOSUsePaths) throws -> Info {
-        guard current.port != Int(IOSUseProtocol.defaultDriverPort) else {
-            return current
-        }
-        try writeSession(
-            udid: current.udid,
-            deviceName: current.deviceName,
-            deviceVersion: current.deviceVersion,
-            deviceType: current.deviceType,
-            paths: paths
-        )
-        return read(paths: paths) ?? Info(
-            sessionId: current.sessionId,
-            udid: current.udid,
-            port: Int(IOSUseProtocol.defaultDriverPort),
-            deviceName: current.deviceName,
-            deviceVersion: current.deviceVersion,
-            deviceType: current.deviceType
-        )
     }
 
     private static func ensureRealDriverRunning(udid: String, paths: IOSUsePaths, verbose: Bool, checkFirst: Bool = true) throws {
