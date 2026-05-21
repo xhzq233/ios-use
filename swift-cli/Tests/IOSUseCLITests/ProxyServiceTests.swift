@@ -10,6 +10,7 @@ final class ProxyServiceTests: XCTestCase {
 
     override func tearDown() {
         ConfigService.expectedDriverIdentityOverrideForTesting = nil
+        ProxyService.mitmdumpReadOverrideForTesting = nil
         super.tearDown()
     }
 
@@ -87,6 +88,53 @@ final class ProxyServiceTests: XCTestCase {
             XCTAssertTrue(String(describing: error).contains("running for DEVICE-A"))
         }
         XCTAssertEqual(try ProxyService.resolveStopUdidForTesting(nil, state: state), "DEVICE-A")
+    }
+
+    func testProxyReadUsesLastCaptureWhenStoppedAndAppliesLastLines() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let flowFile = "\(root)/artifacts/proxy-test.mitm"
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(root)/artifacts", withIntermediateDirectories: true)
+        try Data().write(to: URL(fileURLWithPath: flowFile))
+        var state = ProxySessionState(
+            sessionId: "proxy-stopped",
+            status: "stopped",
+            startedAt: 1,
+            stoppedAt: 2,
+            udid: "DEVICE-A",
+            flowFile: flowFile
+        )
+        state.lastCapture = ProxyLastCapture(
+            flowFile: flowFile,
+            udid: "DEVICE-A",
+            startedAt: 1,
+            stoppedAt: 2,
+            status: "stopped",
+            mitmdumpPid: nil,
+            network: nil
+        )
+        try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
+        ProxyService.mitmdumpReadOverrideForTesting = { file, raw, filter in
+            XCTAssertEqual(file, flowFile)
+            XCTAssertTrue(raw)
+            XCTAssertEqual(filter, "~m POST")
+            return "one\ntwo\nthree\n"
+        }
+
+        XCTAssertEqual(
+            try ProxyService.read(filter: "~m POST", raw: true, last: 2, paths: paths),
+            "two\nthree\n"
+        )
+    }
+
+    func testProxyReadFailsWhenNoLastCaptureExists() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+
+        XCTAssertThrowsError(try ProxyService.read(filter: nil, raw: false, last: nil, paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("ios-use proxy start"))
+        }
     }
 
     func testMitmdumpProcessValidationRejectsUnrelatedPid() throws {

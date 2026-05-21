@@ -271,6 +271,7 @@ enum CLIHelp {
             Commands:
               configca    Install and trust the mitmproxy CA on the device
               start       Start capture and configure Wi-Fi proxy
+              read        Read the most recent capture
               stop        Clear Wi-Fi proxy and stop capture
               doctor      Check local proxy prerequisites
 
@@ -304,6 +305,18 @@ enum CLIHelp {
 
             Options:
               --udid <udid>  Target device or Simulator UDID
+
+            """
+        case "read":
+            return """
+            Usage: ios-use proxy read [--filter <expression>] [--raw] [--last N]
+
+            Read the most recent mitmdump capture recorded by proxy start.
+
+            Options:
+              --filter <expression>  mitmdump filter expression
+              --raw                  Print full flow detail
+              --last N               Print only the last N output lines (N > 0)
 
             """
         case "doctor":

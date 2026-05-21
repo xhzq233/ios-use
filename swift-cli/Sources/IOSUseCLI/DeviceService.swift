@@ -156,16 +156,16 @@ public enum DeviceService {
               let devices = json["devices"] as? [String: Any] else {
             return [:]
         }
-        let expectedIdentity = ConfigService.expectedDriverIdentity(paths: paths)
         return devices.reduce(into: [:]) { result, item in
             let value = item.value as? [String: Any] ?? [:]
+            let bundleId = value["bundleId"] as? String
             let driverVersion = value["driverVersion"] as? String
             let identity = (value["driverIdentity"] as? [String: Any]).flatMap(DriverIdentity.init(json:))
                 ?? driverVersion.map { DriverIdentity(version: $0, build: "", gitSHA: nil, protocolID: nil) }
             result[item.key] = ConfiguredDevice(
                 driverVersion: driverVersion,
                 driverIdentity: identity,
-                expectedDriverIdentity: expectedIdentity
+                expectedDriverIdentity: ConfigService.expectedDriverIdentity(paths: paths, bundleId: bundleId)
             )
         }
     }

@@ -259,11 +259,14 @@ public enum ConfigService {
         _ = try Shell.run("plutil", arguments: ["-replace", "CFBundleIdentifier", "-string", newId, plistPath])
     }
 
-    static func expectedDriverIdentity(paths: IOSUsePaths) -> DriverIdentity? {
+    static func expectedDriverIdentity(paths: IOSUsePaths, bundleId: String? = nil) -> DriverIdentity? {
         if let expectedDriverIdentityOverrideForTesting {
             return expectedDriverIdentityOverrideForTesting()
         }
-        for path in [deviceIPAPath(paths: paths), simulatorIPAPath(paths: paths)] {
+        let pathsToCheck = bundleId == simulatorBundleId
+            ? [simulatorIPAPath(paths: paths), deviceIPAPath(paths: paths)]
+            : [deviceIPAPath(paths: paths), simulatorIPAPath(paths: paths)]
+        for path in pathsToCheck {
             if let identity = try? readDriverIdentityFromIPA(path) {
                 return identity
             }
