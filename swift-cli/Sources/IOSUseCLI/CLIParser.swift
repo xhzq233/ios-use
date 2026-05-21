@@ -145,6 +145,7 @@ public struct NSLogOptions: Equatable, Sendable {
 public enum ProxyCommand: Equatable, Sendable {
     case configca(udid: String?)
     case start(udid: String?, interfaceName: String?)
+    case read(filter: String?, raw: Bool, last: Int?)
     case stop(udid: String?)
     case doctor
 
@@ -152,6 +153,7 @@ public enum ProxyCommand: Equatable, Sendable {
         switch self {
         case .configca: return "configca"
         case .start: return "start"
+        case .read: return "read"
         case .stop: return "stop"
         case .doctor: return "doctor"
         }
@@ -296,6 +298,19 @@ public enum CLIParser {
                 }
             }
             return .start(udid: udid, interfaceName: interfaceName)
+        case "read":
+            var filter: String?
+            var raw = false
+            var last: Int?
+            while let arg = parser.consume() {
+                switch arg {
+                case "--filter": filter = try parser.valueAllowingLeadingDash(for: arg)
+                case "--raw": raw = true
+                case "--last": last = try parsePositiveIntStrict(parser.value(for: arg), label: arg)
+                default: throw CLIParseError.unknownOption(arg)
+                }
+            }
+            return .read(filter: filter, raw: raw, last: last)
         case "stop":
             var udid: String?
             while let arg = parser.consume() {
@@ -558,6 +573,14 @@ public enum CLIParser {
         let parsed = try parseIntStrict(value, label: label)
         guard parsed >= 0 else {
             throw CLIParseError.invalidValue("\(label) must be non-negative")
+        }
+        return parsed
+    }
+
+    private static func parsePositiveIntStrict(_ value: String, label: String) throws -> Int {
+        let parsed = try parseIntStrict(value, label: label)
+        guard parsed > 0 else {
+            throw CLIParseError.invalidValue("\(label) must be greater than 0")
         }
         return parsed
     }

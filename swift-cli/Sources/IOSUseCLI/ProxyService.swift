@@ -20,9 +20,22 @@ public struct ProxySessionState: Codable, Equatable, Sendable {
     public var network: NetworkInfo?
     public var mitmdumpPid: Int32?
     public var mitmdumpPort: Int?
+    public var lastCapture: ProxyLastCapture? = nil
+}
+
+public struct ProxyLastCapture: Codable, Equatable, Sendable {
+    public var flowFile: String
+    public var udid: String
+    public var startedAt: Int
+    public var stoppedAt: Int?
+    public var status: String
+    public var mitmdumpPid: Int32?
+    public var network: ProxySessionState.NetworkInfo?
 }
 
 public enum ProxyService {
+    static var mitmdumpReadOverrideForTesting: ((String, Bool, String?) throws -> String)?
+
     public static func doctor(paths: IOSUsePaths) -> String {
         var lines = ["", "Proxy Doctor:", ""]
         lines.append(commandExists("mitmdump") ? "  ✓ mitmdump installed" : "  ✗ mitmdump installed")
@@ -85,11 +98,11 @@ public enum ProxyService {
         let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
         let caReady = caStateMatches(udid: udid, fingerprint: fingerprintPEM(pem), paths: paths)
         let wifi = try detectLanInfo(interfaceName: interfaceName)
-        let flowFile = "\(paths.artifacts)/proxy-\(isoStamp()).flow"
+        let flowFile = "\(paths.artifacts)/proxy-\(isoStamp()).mitm"
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
 
         let pid = try startMitmdump(flowFile: flowFile, paths: paths)
-        let startingState = ProxySessionState(
+        var startingState = ProxySessionState(
             sessionId: "proxy-\(nowMs())",
             status: "starting",
             startedAt: nowMs(),
@@ -100,6 +113,7 @@ public enum ProxyService {
             mitmdumpPid: pid,
             mitmdumpPort: IOSUseProtocol.proxyMitmdumpPort
         )
+        startingState.lastCapture = lastCapture(from: startingState)
         try writeState(startingState, paths: paths)
         var startupCompleted = false
         defer {
@@ -109,6 +123,7 @@ public enum ProxyService {
                 stoppedState.status = "stopped"
                 stoppedState.stoppedAt = nowMs()
                 stoppedState.mitmdumpPid = nil
+                stoppedState.lastCapture = lastCapture(from: stoppedState)
                 try? writeState(stoppedState, paths: paths)
             }
         }
@@ -130,7 +145,7 @@ public enum ProxyService {
             throw error
         }
 
-        let state = ProxySessionState(
+        var state = ProxySessionState(
             sessionId: "proxy-\(nowMs())",
             status: "running",
             startedAt: nowMs(),
@@ -141,9 +156,10 @@ public enum ProxyService {
             mitmdumpPid: pid,
             mitmdumpPort: IOSUseProtocol.proxyMitmdumpPort
         )
+        state.lastCapture = lastCapture(from: state)
         try writeState(state, paths: paths)
         startupCompleted = true
-        var output = "Proxy started. Traffic: device -> \(wifi.macLanIp):\(IOSUseProtocol.proxyMitmdumpPort) -> mitmdump\nCapture: \(flowFile)\nView with: mitmweb -r \(flowFile)\n"
+        var output = "Proxy started. Traffic: device -> \(wifi.macLanIp):\(IOSUseProtocol.proxyMitmdumpPort) -> mitmdump\nCapture: \(flowFile)\nView with: mitmweb -r \(flowFile)\nRead with: ios-use proxy read\n"
         if !caReady {
             output = "CA trust record not found. HTTP capture can still work; HTTPS decryption requires the CA to be installed and trusted.\n" + output
         }
@@ -173,8 +189,24 @@ public enum ProxyService {
         stoppedState.status = "stopped"
         stoppedState.stoppedAt = nowMs()
         stoppedState.mitmdumpPid = nil
+        stoppedState.lastCapture = lastCapture(from: stoppedState)
         try writeState(stoppedState, paths: paths)
         return pendingFlowOutput + "Proxy stopped.\n"
+    }
+
+    public static func read(filter: String?, raw: Bool, last: Int?, paths: IOSUsePaths) throws -> String {
+        guard let state = readState(paths: paths), let capture = state.lastCapture ?? lastCapture(from: state), !capture.flowFile.isEmpty else {
+            throw CLIParseError.invalidValue("No proxy capture found. Run `ios-use proxy start` first.")
+        }
+        guard FileManager.default.fileExists(atPath: capture.flowFile) else {
+            throw CLIParseError.invalidValue("Proxy capture file not found: \(capture.flowFile). Run `ios-use proxy start` first.")
+        }
+        let output = try readMitmdump(flowFile: capture.flowFile, raw: raw, filter: filter)
+        guard let last, last > 0 else { return output }
+        let hadTrailingNewline = output.hasSuffix("\n")
+        let trimmedOutput = hadTrailingNewline ? String(output.dropLast()) : output
+        let lines = trimmedOutput.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.suffix(last).joined(separator: "\n") + (hadTrailingNewline ? "\n" : "")
     }
 
     public static func readState(paths: IOSUsePaths) -> ProxySessionState? {
@@ -228,6 +260,30 @@ public enum ProxyService {
         try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true, attributes: nil)
         let data = try JSONEncoder().encode(state)
         try data.write(to: URL(fileURLWithPath: statePath(paths: paths)), options: .atomic)
+    }
+
+    private static func lastCapture(from state: ProxySessionState) -> ProxyLastCapture? {
+        guard !state.flowFile.isEmpty else { return nil }
+        return ProxyLastCapture(
+            flowFile: state.flowFile,
+            udid: state.udid,
+            startedAt: state.startedAt,
+            stoppedAt: state.stoppedAt,
+            status: state.status,
+            mitmdumpPid: state.mitmdumpPid,
+            network: state.network
+        )
+    }
+
+    private static func readMitmdump(flowFile: String, raw: Bool, filter: String?) throws -> String {
+        if let mitmdumpReadOverrideForTesting {
+            return try mitmdumpReadOverrideForTesting(flowFile, raw, filter)
+        }
+        var args = ["-n", "-r", flowFile, "--flow-detail=\(raw ? 4 : 1)"]
+        if let filter, !filter.isEmpty {
+            args.append(filter)
+        }
+        return try Shell.run("mitmdump", arguments: args)
     }
 
     private static func statePath(paths: IOSUsePaths) -> String { "\(paths.root)/state/proxy-session.json" }

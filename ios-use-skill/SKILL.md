@@ -206,33 +206,37 @@ ios-use proxy start
 # 3. 停止抓包
 ios-use proxy stop
 
-# 4. 查看抓包数据（mitmproxy flow dump 格式）
-mitmdump -r <flow文件路径>                                    # 列表概览
-mitmdump -r <flow文件路径> --set flow_detail=3 "~d okx.com"  # 按域名过滤 + 完整详情
+# 4. 查看抓包数据（读取最近一次 proxy start）
+ios-use proxy read
+ios-use proxy read --filter "~d okx.com" --raw
 ```
 
 ### 5.2 命令详解
 
 - `proxy configca` — 生成 mitmproxy CA 并在设备上安装+信任（一次性）
-- `proxy start [-i <interface>]` — 启动 mitmdump + 配置设备 Wi-Fi 代理，抓包保存为 `~/.ios-use/artifacts/proxy-*.flow`
+- `proxy start [-i <interface>]` — 启动 mitmdump + 配置设备 Wi-Fi 代理，抓包保存为 `~/.ios-use/artifacts/proxy-*.mitm`
+- `proxy read [--filter <expression>] [--raw] [--last N]` — 读取最近一次抓包；stopped 后仍可读历史文件；`--last` 必须大于 0
 - `proxy stop` — 先清除设备 Wi-Fi 代理，再停止 mitmdump；若设备侧清理失败，会提示手动关闭 Wi-Fi 代理且不继续停止本地服务
 - `proxy doctor` — 诊断 proxy 环境
 
-### 5.3 查看 .flow 文件
+### 5.3 查看 .mitm 文件
 
-抓包产物为 mitmproxy flow dump 格式，使用 mitmdump 查看：
+优先使用 `proxy read` 查看最近一次抓包：
 
 ```bash
 # 列出所有请求
-mitmdump -r file.flow
+ios-use proxy read
 
 # 按域名过滤，显示完整 headers + body
-mitmdump -r file.flow --set flow_detail=3 "~d example.com"
+ios-use proxy read --filter "~d example.com" --raw
 
 # 按 method / 状态码 / URL 路径过滤
-mitmdump -r file.flow "~m POST"
-mitmdump -r file.flow "~c 404"
-mitmdump -r file.flow "~u /api/"
+ios-use proxy read --filter "~m POST"
+ios-use proxy read --filter "~c 404"
+ios-use proxy read --filter "~u /api/"
+
+# 只看最近 N 行
+ios-use proxy read --last 20
 ```
 
 过滤表达式：`~d` 域名、`~u` URL 子串、`~m` method、`~c` 状态码、`~b` body 内容。组合用 `&`（AND）`|`（OR），取反用 `!`。
