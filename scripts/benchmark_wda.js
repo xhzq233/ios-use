@@ -218,6 +218,29 @@ function runSync(command, args, options = {}) {
   return { stdout, stderr, exitCode };
 }
 
+function gitOutput(args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function gitBenchmarkMetadata() {
+  const commit = gitOutput(['rev-parse', '--short=12', 'HEAD']) || 'unknown';
+  const branch = gitOutput(['branch', '--show-current']) || 'unknown';
+  const status = gitOutput(['status', '--short']);
+  return {
+    commit,
+    branch,
+    status: status ? 'dirty' : 'clean',
+  };
+}
+
 function cli(args, options = {}) {
   return runSync(iosUseExecutable, args, options);
 }
@@ -1039,7 +1062,8 @@ async function main() {
   }
 
   const suiteElapsedMs = nsToMs(nowNs() - suiteStartNs);
-  const generatedAt = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const generatedAt = new Date().toISOString();
+  const gitMeta = gitBenchmarkMetadata();
 
   const lines = [];
   lines.push(args.customOnly ? '# ios-use Custom Driver Benchmark' : '# ios-use vs Appium+WDA Benchmark');
@@ -1049,6 +1073,9 @@ async function main() {
   lines.push('| 项目 | 值 |');
   lines.push('|------|-----|');
   lines.push(`| 时间 | \`${generatedAt}\` |`);
+  lines.push(`| git commit | \`${gitMeta.commit}\` |`);
+  lines.push(`| git branch | \`${gitMeta.branch}\` |`);
+  lines.push(`| git status | \`${gitMeta.status}\` |`);
   lines.push('| 实验组 | `ios-use custom driver` |');
   lines.push(`| 对照组 | \`${args.customOnly ? 'skipped (--custom-only)' : 'Appium Server -> WDA'}\` |`);
   if (args.customOnly) {
