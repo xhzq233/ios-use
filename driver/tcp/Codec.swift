@@ -97,9 +97,4 @@ final class Codec {
     static func foryError(_ msg: String) -> ForyResponseFrame {
         ForyResponseFrame(ok: false, error: msg, payload: Data())
     }
-
-    static func foryError(_ msg: String, payload: ForyErrorPayload) throws -> ForyResponseFrame {
-        let data = try sharedFory.serialize(payload)
-        return ForyResponseFrame(ok: false, error: msg, payload: data)
-    }
 }

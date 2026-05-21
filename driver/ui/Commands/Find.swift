@@ -31,9 +31,7 @@ enum FindCommands {
             return try Codec.foryOK(payload)
 
         case .notFound:
-            var errPayload = ForyErrorPayload()
-            errPayload.hint = "Verify the active app or check the label spelling"
-            return try Codec.foryError("label '\(args.target.label)' not found", payload: errPayload)
+            return Codec.foryError("label '\(args.target.label)' not found; hint: Verify the active app or check the label spelling")
         }
     }
 }
