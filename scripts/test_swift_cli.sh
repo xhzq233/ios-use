@@ -6,6 +6,12 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 echo "[swift-cli] Running Swift CLI unit tests..."
 swift test --package-path "$ROOT_DIR/swift-cli"
 
+echo "[swift-cli] Checking driver build identity format..."
+if ! grep -q 'DRIVER_BUILD_ID=.*DRIVER_GIT_SHA' "$ROOT_DIR/scripts/build_driver.sh"; then
+  echo "[swift-cli] ERROR: DRIVER_BUILD_ID must include the short git SHA" >&2
+  exit 1
+fi
+
 echo "[swift-cli] Checking installed-style CLI invocation..."
 swift build --package-path "$ROOT_DIR/swift-cli"
 
