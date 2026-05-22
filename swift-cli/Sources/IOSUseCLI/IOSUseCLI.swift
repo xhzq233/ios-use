@@ -61,7 +61,7 @@ public struct IOSUsePaths: Equatable, Sendable {
 public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
 
-    public static let version = "1.0.3"
+    public static let version = "1.0.4"
     static var driverClientFactoryForTesting: ((SessionService.Info?) -> DriverCommandClient)?
 
     public let paths: IOSUsePaths
