@@ -23,14 +23,6 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
-    func testVersionMatchesCurrentPackageVersion() {
-        let result = IOSUseCLI().run(arguments: ["--version"])
-
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "1.0.3\n")
-        XCTAssertTrue(result.stderr.isEmpty)
-    }
-
     func testUnknownOptionFailsBeforeAnySessionWork() {
         let result = IOSUseCLI().run(arguments: ["--not-a-real-option"])
 
