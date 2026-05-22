@@ -346,9 +346,7 @@ async function runConfigDriverIdentityCase() {
     entry?.driverVersion === identity?.version &&
     typeof identity?.version === 'string' &&
     typeof identity?.build === 'string' &&
-    identity.build.length > 0 &&
-    typeof identity?.protocolID === 'string' &&
-    identity.protocolID.length > 0
+    /^\d{14}-[0-9a-fA-F]{12}$/.test(identity.build)
   ) {
     recordPass(id);
   } else {

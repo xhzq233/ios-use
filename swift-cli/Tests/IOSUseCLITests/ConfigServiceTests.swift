@@ -9,6 +9,7 @@ final class ConfigServiceTests: XCTestCase {
 
     override func tearDown() {
         ConfigService.expectedDriverIdentityOverrideForTesting = nil
+        Shell.runOverrideForTesting = nil
         super.tearDown()
     }
 
@@ -85,18 +86,14 @@ final class ConfigServiceTests: XCTestCase {
           <key>CFBundleShortVersionString</key>
           <string>1.2.3</string>
           <key>CFBundleVersion</key>
-          <string>20260521000000</string>
-          <key>IOSUseDriverGitSHA</key>
-          <string>abcdef123456</string>
-          <key>IOSUseDriverProtocolID</key>
-          <string>protocol-hash</string>
+          <string>20260521000000-abcdef123456</string>
         </dict>
         </plist>
         """.write(toFile: plist, atomically: true, encoding: .utf8)
 
         XCTAssertEqual(
             try ConfigService.readDriverIdentityFromInfoPlist(plist),
-            DriverIdentity(version: "1.2.3", build: "20260521000000", gitSHA: "abcdef123456", protocolID: "protocol-hash")
+            DriverIdentity(version: "1.2.3", build: "20260521000000-abcdef123456")
         )
     }
 
@@ -104,8 +101,8 @@ final class ConfigServiceTests: XCTestCase {
         ConfigService.expectedDriverIdentityOverrideForTesting = nil
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        let deviceIdentity = DriverIdentity(version: "device", build: "1", gitSHA: "device-git", protocolID: "device-protocol")
-        let simulatorIdentity = DriverIdentity(version: "sim", build: "2", gitSHA: "sim-git", protocolID: "sim-protocol")
+        let deviceIdentity = DriverIdentity(version: "device", build: "1")
+        let simulatorIdentity = DriverIdentity(version: "sim", build: "2")
         try writeDriverIPA(path: "\(root)/driver.ipa", identity: deviceIdentity)
         try writeDriverIPA(path: "\(root)/driver-sim.ipa", identity: simulatorIdentity)
 
@@ -120,25 +117,126 @@ final class ConfigServiceTests: XCTestCase {
         Bundle Identifier: com.example.other
         CFBundleShortVersionString: 9.9.9
         CFBundleVersion: other-build
-        IOSUseDriverGitSHA: other-git
-        IOSUseDriverProtocolID: other-protocol
 
         Bundle Identifier: com.example.driver
         CFBundleShortVersionString: 1.0.3
-        CFBundleVersion: 202605220001
-        IOSUseDriverGitSHA: driver-git
-        IOSUseDriverProtocolID: driver-protocol
+        CFBundleVersion: 20260522010000-3d54a6c2d7cd
         """
 
         XCTAssertEqual(
             ConfigService.parseDriverIdentity(fromDeviceInfoAppsOutput: output, bundleId: "com.example.driver"),
-            DriverIdentity(version: "1.0.3", build: "202605220001", gitSHA: "driver-git", protocolID: "driver-protocol")
+            DriverIdentity(version: "1.0.3", build: "20260522010000-3d54a6c2d7cd")
         )
+    }
+
+    func testParseDevicectlAppsJSONUsesTargetBundleOnly() throws {
+        let root = try temporaryRoot()
+        let jsonPath = "\(root)/apps.json"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {
+          "result": {
+            "apps": [
+              {
+                "bundleIdentifier": "com.example.other",
+                "version": "9.9.9",
+                "bundleVersion": "other-build"
+              },
+              {
+                "bundleIdentifier": "com.example.driver",
+                "version": "1.0.3",
+                "bundleVersion": "20260522010000-3d54a6c2d7cd"
+              }
+            ]
+          }
+        }
+        """.write(toFile: jsonPath, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(
+            ConfigService.parseDriverIdentity(fromDevicectlAppsJSONAtPath: jsonPath, bundleId: "com.example.driver"),
+            DriverIdentity(version: "1.0.3", build: "20260522010000-3d54a6c2d7cd")
+        )
+    }
+
+    func testReadRealDeviceInstalledIdentityReadsDevicectlVersionAndBundleVersion() throws {
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            if executable == "xcrun" {
+                XCTAssertEqual(Array(arguments.prefix(7)), ["devicectl", "device", "info", "apps", "--device", "REAL-1", "--bundle-id"])
+                let jsonIndex = try XCTUnwrap(arguments.firstIndex(of: "--json-output"))
+                let jsonPath = arguments[jsonIndex + 1]
+                try """
+                {
+                  "result": {
+                    "apps": [
+                      {
+                        "bundleIdentifier": "com.example.driver",
+                        "version": "\(IOSUseCLI.version)",
+                        "bundleVersion": "20260522010000-3d54a6c2d7cd"
+                      }
+                    ]
+                  }
+                }
+                """.write(toFile: jsonPath, atomically: true, encoding: .utf8)
+                return ""
+            }
+            XCTFail("Unexpected command \(executable) \(arguments)")
+            return ""
+        }
+
+        XCTAssertEqual(
+            try ConfigService.readRealDeviceInstalledDriverIdentity(udid: "REAL-1", bundleId: "com.example.driver"),
+            DriverIdentity(version: IOSUseCLI.version, build: "20260522010000-3d54a6c2d7cd")
+        )
+    }
+
+    func testReadRealDeviceInstalledIdentityRejectsOldUnstampedDeviceBuild() {
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            if executable == "xcrun" {
+                let jsonIndex = try XCTUnwrap(arguments.firstIndex(of: "--json-output"))
+                let jsonPath = arguments[jsonIndex + 1]
+                try """
+                {
+                  "result": {
+                    "apps": [
+                      {
+                        "bundleIdentifier": "com.example.driver",
+                        "version": "1.0",
+                        "bundleVersion": "1"
+                      }
+                    ]
+                  }
+                }
+                """.write(toFile: jsonPath, atomically: true, encoding: .utf8)
+                return ""
+            }
+            XCTFail("Unexpected command \(executable) \(arguments)")
+            return ""
+        }
+
+        XCTAssertThrowsError(try ConfigService.readRealDeviceInstalledDriverIdentity(udid: "REAL-1", bundleId: "com.example.driver")) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("Unable to verify installed driver identity"))
+            XCTAssertTrue(message.contains("does not match CLI version") || message.contains("not stamped"))
+        }
+    }
+
+    func testReadSimulatorInstalledIdentityRejectsMissingInstalledPlistWithoutLocalFallback() {
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            if executable == "xcrun", Array(arguments.prefix(3)) == ["simctl", "get_app_container", "SIM-1"] {
+                throw CLIParseError.invalidValue("container missing")
+            }
+            XCTFail("Unexpected command \(executable) \(arguments)")
+            return ""
+        }
+
+        XCTAssertThrowsError(try ConfigService.readSimulatorInstalledDriverIdentity(udid: "SIM-1", bundleId: ConfigService.simulatorBundleId)) { error in
+            XCTAssertTrue(String(describing: error).contains("Unable to verify installed Simulator driver identity"))
+        }
     }
 
     func testPrepareDriverSessionRejectsMismatchedDriverIdentity() throws {
         ConfigService.expectedDriverIdentityOverrideForTesting = {
-            DriverIdentity(version: IOSUseCLI.version, build: "new-build", gitSHA: "new-git", protocolID: "new-protocol")
+            DriverIdentity(version: IOSUseCLI.version, build: "new-build")
         }
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -151,9 +249,7 @@ final class ConfigServiceTests: XCTestCase {
               "driverVersion": "\(IOSUseCLI.version)",
               "driverIdentity": {
                 "version": "\(IOSUseCLI.version)",
-                "build": "old-build",
-                "gitSHA": "old-git",
-                "protocolID": "old-protocol"
+                "build": "old-build"
               }
             }
           }
@@ -547,10 +643,6 @@ final class ConfigServiceTests: XCTestCase {
           <string>\(identity.version)</string>
           <key>CFBundleVersion</key>
           <string>\(identity.build)</string>
-          <key>IOSUseDriverGitSHA</key>
-          <string>\(identity.gitSHA ?? "")</string>
-          <key>IOSUseDriverProtocolID</key>
-          <string>\(identity.protocolID ?? "")</string>
         </dict>
         </plist>
         """.write(toFile: "\(payload)/Info.plist", atomically: true, encoding: .utf8)
