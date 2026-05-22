@@ -178,26 +178,25 @@ final class NSLogServiceTests: XCTestCase {
         XCTAssertNil(json["bonjourPid"])
     }
 
-    func testAcquireForegroundOwnershipRemovesStaleLock() throws {
+    func testRequireCaptureSlotRemovesStaleLock() throws {
         let paths = makePaths()
         try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
         try #"{"pid":424242,"port":50000,"startedAt":"old","iosUseHome":"\#(paths.root)","mode":"cli"}"#
             .write(toFile: paths.nslogLock, atomically: true, encoding: .utf8)
         NSLogService.processAliveOverrideForTesting = { _ in false }
 
-        try NSLogService.acquireForegroundOwnership(paths: paths, mode: "cli")
+        try NSLogService.requireCaptureSlot(paths: paths)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.nslogLock))
     }
 
-    func testAcquireForegroundOwnershipTerminatesOldIOSUseAndBonjourProcesses() throws {
+    func testRequireCaptureSlotDoesNotKillExistingIOSUseCapture() throws {
         let paths = makePaths()
         try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
         try #"{"pid":1111,"bonjourPid":2222,"port":51723,"name":"unit","startedAt":"old","iosUseHome":"\#(paths.root)","mode":"cli"}"#
             .write(toFile: paths.nslogLock, atomically: true, encoding: .utf8)
-        var alive: Set<Int32> = [1111, 2222]
         var signals: [(Int32, Int32)] = []
-        NSLogService.processAliveOverrideForTesting = { alive.contains($0) }
+        NSLogService.processAliveOverrideForTesting = { $0 == 1111 || $0 == 2222 }
         NSLogService.processCommandOverrideForTesting = { pid in
             switch pid {
             case 1111: return "/usr/local/bin/ios-use nslog --name unit"
@@ -207,18 +206,17 @@ final class NSLogServiceTests: XCTestCase {
         }
         NSLogService.killOverrideForTesting = { pid, signal in
             signals.append((pid, signal))
-            alive.remove(pid)
             return 0
         }
 
-        try NSLogService.acquireForegroundOwnership(paths: paths, mode: "flow")
-
-        XCTAssertTrue(signals.contains { $0 == (1111, SIGTERM) })
-        XCTAssertTrue(signals.contains { $0 == (2222, SIGTERM) })
-        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.nslogLock))
+        XCTAssertThrowsError(try NSLogService.requireCaptureSlot(paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("NSLOG_ALREADY_RUNNING"))
+        }
+        XCTAssertTrue(signals.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.nslogLock))
     }
 
-    func testAcquireForegroundOwnershipDoesNotKillUnrelatedProcess() throws {
+    func testRequireCaptureSlotDoesNotKillUnrelatedProcess() throws {
         let paths = makePaths()
         try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
         try #"{"pid":3333,"port":51723,"startedAt":"old","iosUseHome":"\#(paths.root)","mode":"cli"}"#
@@ -231,9 +229,8 @@ final class NSLogServiceTests: XCTestCase {
             return 0
         }
 
-        XCTAssertThrowsError(try NSLogService.acquireForegroundOwnership(paths: paths, mode: "cli")) { error in
-            XCTAssertTrue(String(describing: error).contains("unrelated live process"))
-            XCTAssertTrue(String(describing: error).contains(paths.nslogLock))
+        XCTAssertThrowsError(try NSLogService.requireCaptureSlot(paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("NSLOG_ALREADY_RUNNING"))
         }
         XCTAssertTrue(signals.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.nslogLock))
@@ -258,6 +255,42 @@ final class NSLogServiceTests: XCTestCase {
         }
         XCTAssertTrue(signals.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.nslogLock))
+    }
+
+    func testStartRefusesExistingLiveCaptureWithoutKillingIt() throws {
+        let paths = makePaths()
+        try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
+        try #"{"pid":5555,"port":51723,"startedAt":"old","iosUseHome":"\#(paths.root)","mode":"flow"}"#
+            .write(toFile: paths.nslogLock, atomically: true, encoding: .utf8)
+        var signals: [(Int32, Int32)] = []
+        NSLogService.processAliveOverrideForTesting = { $0 == 5555 }
+        NSLogService.processCommandOverrideForTesting = { _ in "/usr/local/bin/ios-use flow active.yaml" }
+        NSLogService.killOverrideForTesting = { pid, signal in
+            signals.append((pid, signal))
+            return 0
+        }
+
+        XCTAssertThrowsError(try NSLogService.start(options: NSLogOptions(command: .start), paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("NSLOG_ALREADY_RUNNING"))
+            XCTAssertTrue(String(describing: error).contains("ios-use nslog stop"))
+        }
+        XCTAssertTrue(signals.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.nslogLock))
+    }
+
+    func testResolveExecutablePathUsesPathForInstalledInvocation() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-nslog-path-\(UUID().uuidString)").path
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        try FileManager.default.createDirectory(atPath: "\(root)/bin", withIntermediateDirectories: true)
+        let executable = "\(root)/bin/ios-use"
+        FileManager.default.createFile(atPath: executable, contents: Data("#!/bin/sh\n".utf8), attributes: [.posixPermissions: 0o755])
+
+        XCTAssertEqual(
+            try NSLogService.resolveExecutablePath(arg0: "ios-use", environment: ["PATH": "\(root)/bin:/usr/bin"], currentDirectoryPath: "\(root)/other"),
+            executable
+        )
     }
 
     private func makeMessage(parts: [(UInt8, UInt8, Data)]) -> Data {

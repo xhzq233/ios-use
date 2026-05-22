@@ -1,4 +1,4 @@
-# Proxy 抓包完整指南
+# Proxy 抓包操作手册
 
 ## 1. 完整流程
 
@@ -60,62 +60,14 @@ ios-use proxy read --last 20
 
 `--last` 必须大于 0。没有最近一次抓包或文件已删除时，先运行 `ios-use proxy start`。
 
-### 3.2 mitmdump flow_detail 级别
+### 3.2 需要 mitmproxy 工具链时
 
-| 级别 | 内容 |
-|------|------|
-| `0` | 不输出 body |
-| `1` | 每个请求一行摘要 |
-| `2` | + 请求/响应 headers |
-| `3` | + 完整 body（默认） |
-| `4` | 更完整的原始详情 |
-
-### 3.3 直接使用 mitmdump
-
-`proxy read` 内部调用 `mitmdump -n -r <file.mitm> --flow-detail=<1|4>`。需要 GUI 或 HAR 导出时可直接使用 mitmproxy 工具链。
+默认先用 `ios-use proxy read`。只有需要 GUI、HAR 导出或 `proxy read` 无法满足的高级过滤时，才直接使用 mitmproxy 工具链。
 
 ```bash
-mitmdump -r file.mitm
-```
-
-### 3.4 过滤语法
-
-过滤表达式作为最后一个参数传入：
-
-```bash
-# 按域名
-mitmdump -r file.mitm "~d example.com"
-
-# 按 URL 路径（子串匹配）
-mitmdump -r file.mitm "~u /api/"
-
-# 按 HTTP method
-mitmdump -r file.mitm "~m POST"
-
-# 按状态码
-mitmdump -r file.mitm "~c 404"
-
-# 按请求 body 内容
-mitmdump -r file.mitm "~b password"
-
-# 组合（AND 用 &，OR 用 |）
-mitmdump -r file.mitm "~d example.com & ~m POST"
-mitmdump -r file.mitm "~d a.com | ~d b.com"
-
-# 取反
-mitmdump -r file.mitm "!~d apple.com"
-```
-
-### 3.5 查看单个请求完整详情
-
-```bash
-mitmdump -r file.mitm --set flow_detail=3 "~d serverstatus.apple.com"
-```
-
-### 3.6 导出为 HAR
-
-```bash
-mitmdump -r file.mitm --set hardump=output.har
+mitmweb -n -r file.mitm
+mitmdump -n -r file.mitm "~d example.com & ~m POST"
+mitmdump -n -r file.mitm --set hardump=output.har
 ```
 
 ## 4. 命令参考

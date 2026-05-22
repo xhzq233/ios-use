@@ -115,6 +115,27 @@ final class ConfigServiceTests: XCTestCase {
         )
     }
 
+    func testParseDriverIdentityUsesOnlyTargetAppRecord() {
+        let output = """
+        Bundle Identifier: com.example.other
+        CFBundleShortVersionString: 9.9.9
+        CFBundleVersion: other-build
+        IOSUseDriverGitSHA: other-git
+        IOSUseDriverProtocolID: other-protocol
+
+        Bundle Identifier: com.example.driver
+        CFBundleShortVersionString: 1.0.3
+        CFBundleVersion: 202605220001
+        IOSUseDriverGitSHA: driver-git
+        IOSUseDriverProtocolID: driver-protocol
+        """
+
+        XCTAssertEqual(
+            ConfigService.parseDriverIdentity(fromDeviceInfoAppsOutput: output, bundleId: "com.example.driver"),
+            DriverIdentity(version: "1.0.3", build: "202605220001", gitSHA: "driver-git", protocolID: "driver-protocol")
+        )
+    }
+
     func testPrepareDriverSessionRejectsMismatchedDriverIdentity() throws {
         ConfigService.expectedDriverIdentityOverrideForTesting = {
             DriverIdentity(version: IOSUseCLI.version, build: "new-build", gitSHA: "new-git", protocolID: "new-protocol")

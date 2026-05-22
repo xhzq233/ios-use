@@ -325,13 +325,39 @@ public enum ConfigService {
     }
 
     static func parseDriverIdentity(fromDeviceInfoAppsOutput output: String, bundleId: String) -> DriverIdentity? {
-        guard output.contains(bundleId) else { return nil }
+        let records = appRecordCandidates(fromDeviceInfoAppsOutput: output, bundleId: bundleId)
+        for record in records {
+            if let identity = parseDriverIdentity(fromAppRecord: record) {
+                return identity
+            }
+        }
+        return nil
+    }
+
+    private static func appRecordCandidates(fromDeviceInfoAppsOutput output: String, bundleId: String) -> [String] {
+        let paragraphs = output.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.contains(bundleId) }
+        if !paragraphs.isEmpty {
+            return paragraphs
+        }
+
+        let lines = output.components(separatedBy: .newlines)
+        var records: [String] = []
+        for index in lines.indices where lines[index].contains(bundleId) {
+            let end = min(lines.endIndex, index + 21)
+            records.append(lines[index..<end].joined(separator: "\n"))
+        }
+        return records
+    }
+
+    private static func parseDriverIdentity(fromAppRecord record: String) -> DriverIdentity? {
         func capture(_ key: String) -> String? {
             guard let regex = try? NSRegularExpression(pattern: #"\b\#(key)\b\s*[:=]\s*"?([^",\n]+)"?"#) else { return nil }
-            let range = NSRange(output.startIndex..<output.endIndex, in: output)
-            guard let match = regex.firstMatch(in: output, range: range),
-                  let swiftRange = Range(match.range(at: 1), in: output) else { return nil }
-            return String(output[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let range = NSRange(record.startIndex..<record.endIndex, in: record)
+            guard let match = regex.firstMatch(in: record, range: range),
+                  let swiftRange = Range(match.range(at: 1), in: record) else { return nil }
+            return String(record[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard let version = capture("CFBundleShortVersionString") ?? capture("version") else { return nil }
         let build = capture("CFBundleVersion") ?? capture("build") ?? ""
