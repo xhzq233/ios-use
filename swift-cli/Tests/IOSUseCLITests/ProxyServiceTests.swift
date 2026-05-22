@@ -1,5 +1,6 @@
 import XCTest
 import Darwin
+import IOSUseProtocol
 @testable import IOSUseCLI
 
 final class ProxyServiceTests: XCTestCase {
@@ -168,6 +169,26 @@ final class ProxyServiceTests: XCTestCase {
 
         XCTAssertTrue(output.contains("CA generated"))
         XCTAssertTrue(output.contains("CA trust record: not recorded"))
+    }
+
+    func testProxyStartMitmdumpArgumentsDisableHTTP2() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let flowFile = "\(root)/artifacts/proxy-test.mitm"
+
+        let arguments = ProxyService.mitmdumpStartArgumentsForTesting(flowFile: flowFile, paths: paths)
+
+        XCTAssertEqual(arguments.first, "mitmdump")
+        XCTAssertTrue(arguments.contains("--mode"))
+        XCTAssertTrue(arguments.contains("regular"))
+        XCTAssertTrue(arguments.contains("--listen-port"))
+        XCTAssertTrue(arguments.contains(String(IOSUseProtocol.proxyMitmdumpPort)))
+        XCTAssertTrue(arguments.contains("--set"))
+        XCTAssertTrue(arguments.contains("confdir=\(root)/mitmproxy"))
+        XCTAssertTrue(arguments.contains("ssl_insecure=true"))
+        XCTAssertTrue(arguments.contains("http2=false"))
+        XCTAssertTrue(arguments.contains("connection_strategy=eager"))
+        XCTAssertTrue(arguments.contains("save_stream_file=\(flowFile)"))
     }
 
     func testConfigCASkipsInstallFlowWhenTrustRecordMatches() throws {

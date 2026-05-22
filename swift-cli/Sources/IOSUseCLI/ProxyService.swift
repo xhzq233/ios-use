@@ -350,17 +350,7 @@ public enum ProxyService {
     private static func startMitmdump(flowFile: String, paths: IOSUsePaths) throws -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [
-            "mitmdump",
-            "-q",
-            "--mode", "regular",
-            "--listen-host", "0.0.0.0",
-            "--listen-port", String(IOSUseProtocol.proxyMitmdumpPort),
-            "--set", "confdir=\(mitmproxyDir(paths: paths))",
-            "--set", "ssl_insecure=true",
-            "--set", "connection_strategy=eager",
-            "--set", "save_stream_file=\(flowFile)",
-        ]
+        process.arguments = mitmdumpStartArguments(flowFile: flowFile, paths: paths)
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
@@ -377,6 +367,25 @@ public enum ProxyService {
             process.terminate()
             throw error
         }
+    }
+
+    static func mitmdumpStartArgumentsForTesting(flowFile: String, paths: IOSUsePaths) -> [String] {
+        mitmdumpStartArguments(flowFile: flowFile, paths: paths)
+    }
+
+    private static func mitmdumpStartArguments(flowFile: String, paths: IOSUsePaths) -> [String] {
+        [
+            "mitmdump",
+            "-q",
+            "--mode", "regular",
+            "--listen-host", "0.0.0.0",
+            "--listen-port", String(IOSUseProtocol.proxyMitmdumpPort),
+            "--set", "confdir=\(mitmproxyDir(paths: paths))",
+            "--set", "ssl_insecure=true",
+            "--set", "http2=false",
+            "--set", "connection_strategy=eager",
+            "--set", "save_stream_file=\(flowFile)",
+        ]
     }
 
     private static func waitForPort(_ port: Int) throws {
