@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 import CryptoKit
-import Dispatch
 import IOSUseProtocol
 
 public struct ProxySessionState: Codable, Equatable, Sendable {
@@ -129,8 +128,6 @@ public enum ProxyService {
         }
         var pendingFlowOutput = ""
         do {
-            try interruptMonitor.throwIfInterrupted()
-            try verifyDeviceCanReachMac(udid: udid, macLanIp: wifi.macLanIp, paths: paths)
             try interruptMonitor.throwIfInterrupted()
             let flowOutput = try FlowService.run(
                 file: flowPath("proxy_set_wifi_proxy.yaml", paths: paths),
@@ -410,20 +407,6 @@ public enum ProxyService {
         throw CLIParseError.invalidValue("Port \(port) not ready after \(IOSUseProtocol.proxyWaitPortTimeoutMilliseconds)ms")
     }
 
-    private static func verifyDeviceCanReachMac(udid: String, macLanIp: String, paths: IOSUsePaths) throws {
-        try SessionService.prepareDriverSession(SessionOptions(udid: udid), paths: paths)
-        let token = UUID().uuidString
-        let server = try ProxyProbeServer(token: token)
-        defer { server.stop() }
-        let url = "http://\(macLanIp):\(server.port)/ios-use-probe?token=\(token)"
-        _ = try withRecoveredDriver(paths: paths) { driver in
-            try driver.openURL(url: url)
-        }
-        guard server.wait(timeoutMilliseconds: IOSUseProtocol.proxyWaitPortTimeoutMilliseconds) else {
-            throw CLIParseError.invalidValue("DEVICE_CANNOT_REACH_MAC: device \(udid) cannot reach \(macLanIp) before proxy configuration")
-        }
-    }
-
     private static func withRecoveredDriver<T>(paths: IOSUsePaths, _ body: (DriverClient) throws -> T) throws -> T {
         let driver = DriverClient(session: SessionService.read(paths: paths))
         do {
@@ -544,112 +527,5 @@ public enum ProxyService {
 
     private static func isoStamp() -> String {
         ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-    }
-}
-
-final class ProxyProbeServer {
-    private(set) var port: Int
-
-    private let fd: Int32
-    private let token: String
-    private let semaphore = DispatchSemaphore(value: 0)
-    private let lock = NSLock()
-    private var matched = false
-    private var stopped = false
-
-    init(token: String) throws {
-        self.token = token
-        fd = socket(AF_INET, SOCK_STREAM, 0)
-        port = 0
-        guard fd >= 0 else {
-            throw CLIParseError.invalidValue("Probe server socket failed: \(errno)")
-        }
-        var reuse: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
-
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = 0
-        addr.sin_addr.s_addr = INADDR_ANY.bigEndian
-        let bindResult = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        guard bindResult == 0 else {
-            Darwin.close(fd)
-            throw CLIParseError.invalidValue("Probe server bind failed: \(errno)")
-        }
-
-        var bound = sockaddr_in()
-        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let nameResult = withUnsafeMutablePointer(to: &bound) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                getsockname(fd, $0, &len)
-            }
-        }
-        guard nameResult == 0 else {
-            Darwin.close(fd)
-            throw CLIParseError.invalidValue("Probe server getsockname failed: \(errno)")
-        }
-        port = Int(UInt16(bigEndian: bound.sin_port))
-        guard listen(fd, 4) == 0 else {
-            Darwin.close(fd)
-            throw CLIParseError.invalidValue("Probe server listen failed: \(errno)")
-        }
-
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            self?.acceptLoop()
-        }
-    }
-
-    func wait(timeoutMilliseconds: Int) -> Bool {
-        _ = semaphore.wait(timeout: .now() + .milliseconds(timeoutMilliseconds))
-        lock.lock()
-        defer { lock.unlock() }
-        return matched
-    }
-
-    func stop() {
-        lock.lock()
-        stopped = true
-        lock.unlock()
-        Darwin.shutdown(fd, SHUT_RDWR)
-        Darwin.close(fd)
-    }
-
-    private func acceptLoop() {
-        while true {
-            lock.lock()
-            let shouldStop = stopped || matched
-            lock.unlock()
-            if shouldStop { return }
-
-            let client = accept(fd, nil, nil)
-            if client < 0 { return }
-            handle(client: client)
-        }
-    }
-
-    private func handle(client: Int32) {
-        defer { Darwin.close(client) }
-        var receiveTimeout = timeval(tv_sec: 0, tv_usec: 200_000)
-        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &receiveTimeout, socklen_t(MemoryLayout<timeval>.size))
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        let count = Darwin.read(client, &buffer, buffer.count)
-        let request = count > 0 ? String(decoding: buffer[0..<count], as: UTF8.self) : ""
-        let ok = request.contains(token)
-        let body = ok ? "ok\n" : "bad token\n"
-        let status = ok ? "200 OK" : "404 Not Found"
-        let response = "HTTP/1.1 \(status)\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
-        _ = response.withCString { ptr in
-            Darwin.write(client, ptr, strlen(ptr))
-        }
-        if ok {
-            lock.lock()
-            matched = true
-            lock.unlock()
-            semaphore.signal()
-        }
     }
 }

@@ -124,6 +124,32 @@ function readFileIfExists(file) {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
 }
 
+function findProxyPrecheckReferences() {
+  const files = [
+    'swift-cli/Sources/IOSUseCLI/ProxyService.swift',
+    'swift-cli/Tests/IOSUseCLITests/ProxyServiceTests.swift',
+  ];
+  const forbidden = [
+    'verifyDeviceCanReachMac',
+    'ProxyProbeServer',
+    'DEVICE_CANNOT_REACH_MAC',
+    'ios-use-probe',
+  ];
+  const hits = [];
+  for (const relativeFile of files) {
+    const file = path.join(rootDir, relativeFile);
+    const lines = readFileIfExists(file).split(/\r?\n/);
+    lines.forEach((line, index) => {
+      for (const term of forbidden) {
+        if (line.includes(term)) {
+          hits.push(`${relativeFile}:${index + 1}: ${term}`);
+        }
+      }
+    });
+  }
+  return hits;
+}
+
 function prepareSimulatorDriverAsset() {
   const src = path.join(rootDir, 'assets/driver-sim.ipa');
   const dst = path.join(iosHome, 'driver-sim.ipa');
@@ -709,10 +735,15 @@ async function runProxyUnitCases() {
   }
   console.log('[sim-test] RUN PROXY unit coverage: bash scripts/test_swift_cli.sh');
   const res = runExternalToFiles(['bash', 'scripts/test_swift_cli.sh'], path.join(artifactDir, 'proxy-unit.out'), path.join(artifactDir, 'proxy-unit.err'), { IOS_USE_HOME: iosHome });
+  const precheckHits = selected('PROXY-4') ? findProxyPrecheckReferences() : [];
+  if (selected('PROXY-4')) {
+    writeFile(path.join(artifactDir, 'PROXY-4-no-precheck.json'), JSON.stringify({ forbiddenReferences: precheckHits }, null, 2));
+  }
   for (const id of ids) {
     if (!selected(id)) recordSkip(id);
-    else if (res.code === 0) recordPass(id);
-    else recordFail(id, res.stdout + res.stderr);
+    else if (res.code !== 0) recordFail(id, res.stdout + res.stderr);
+    else if (id === 'PROXY-4' && precheckHits.length > 0) recordFail(id, `proxy precheck references remain:\n${precheckHits.join('\n')}\n`);
+    else recordPass(id);
   }
 }
 
