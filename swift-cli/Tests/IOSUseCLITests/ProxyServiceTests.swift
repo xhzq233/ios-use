@@ -6,11 +6,9 @@ import IOSUseProtocol
 final class ProxyServiceTests: XCTestCase {
     override func setUp() {
         super.setUp()
-        ConfigService.expectedDriverIdentityOverrideForTesting = { nil }
     }
 
     override func tearDown() {
-        ConfigService.expectedDriverIdentityOverrideForTesting = nil
         ProxyService.mitmdumpReadOverrideForTesting = nil
         super.tearDown()
     }
