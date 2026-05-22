@@ -25,7 +25,7 @@ public enum NSLogService {
 
     public static func stream(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
         let mode = options.captureMode ?? "cli"
-        try acquireForegroundOwnership(paths: paths, mode: mode)
+        try requireCaptureSlot(paths: paths)
         let server = try NSLoggerServer(options: NSLoggerServerOptions(name: options.name), paths: paths)
         do {
             try server.start()
@@ -61,7 +61,7 @@ public enum NSLogService {
     }
 
     public static func start(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
-        try acquireForegroundOwnership(paths: paths, mode: "daemon")
+        try requireCaptureSlot(paths: paths)
         try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
         let logFile = "\(paths.logs)/nslog-\(fileTimestamp()).log"
         FileManager.default.createFile(atPath: logFile, contents: nil)
@@ -115,7 +115,7 @@ public enum NSLogService {
     }
 
     public static func startFlowCapture(options: NSLoggerServerOptions, paths: IOSUsePaths) throws -> NSLogCaptureTarget {
-        try acquireForegroundOwnership(paths: paths, mode: "flow")
+        try requireCaptureSlot(paths: paths)
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true)
         let logFile = "\(paths.artifacts)/nslog-flow-\(fileTimestamp()).log"
         FileManager.default.createFile(atPath: logFile, contents: nil)
@@ -276,17 +276,10 @@ public enum NSLogService {
     static var processAliveOverrideForTesting: ((Int32) -> Bool)?
     static var killOverrideForTesting: ((Int32, Int32) -> Int32)?
 
-    static func acquireForegroundOwnership(paths: IOSUsePaths, mode: String) throws {
+    static func requireCaptureSlot(paths: IOSUsePaths) throws {
         if let record = readLock(paths: paths) {
             if processAlive(record.pid) {
-                guard record.iosUseHome == nil || standardizedPath(record.iosUseHome ?? "") == standardizedPath(paths.root),
-                      isIOSUseNSLogOwnerProcess(pid: record.pid) else {
-                    throw CLIParseError.invalidValue("nslog lock is owned by an unrelated live process (PID \(record.pid)); not terminating it. Remove stale lock manually if needed: \(paths.nslogLock)")
-                }
-                terminateProcess(pid: record.pid)
-                if let bonjourPid = record.bonjourPid {
-                    terminateBonjourPublisher(pid: bonjourPid)
-                }
+                throw CLIParseError.invalidValue("NSLOG_ALREADY_RUNNING: an nslog capture is already running (PID \(record.pid)). Stop it first with `ios-use nslog stop` or wait for the active flow to finish.")
             }
             try? FileManager.default.removeItem(atPath: paths.nslogLock)
         }
@@ -389,19 +382,30 @@ public enum NSLogService {
         return lines.filter { !$0.isEmpty && matches($0, regex: regex) }
     }
 
-    private static func executablePath() throws -> String {
+    static func executablePath(environment: [String: String] = ProcessInfo.processInfo.environment, currentDirectoryPath: String = FileManager.default.currentDirectoryPath) throws -> String {
         if let executablePathOverrideForTesting {
             return executablePathOverrideForTesting
         }
-        let arg0 = CommandLine.arguments[0]
+        return try resolveExecutablePath(arg0: CommandLine.arguments[0], environment: environment, currentDirectoryPath: currentDirectoryPath)
+    }
+
+    static func resolveExecutablePath(arg0: String, environment: [String: String], currentDirectoryPath: String) throws -> String {
         if arg0.hasPrefix("/") {
             return arg0
         }
-        let path = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(arg0).standardized.path
-        guard FileManager.default.fileExists(atPath: path) else {
-            throw CLIParseError.invalidValue("Unable to resolve current ios-use executable path from \(arg0)")
+        if arg0.contains("/") {
+            let path = URL(fileURLWithPath: currentDirectoryPath).appendingPathComponent(arg0).standardized.path
+            guard FileManager.default.fileExists(atPath: path) else {
+                throw CLIParseError.invalidValue("Unable to resolve current ios-use executable path from \(arg0)")
+            }
+            return path
         }
-        return path
+        for directory in (environment["PATH"] ?? "").split(separator: ":") {
+            let path = URL(fileURLWithPath: String(directory)).appendingPathComponent(arg0).standardized.path
+            guard FileManager.default.isExecutableFile(atPath: path) else { continue }
+            return path
+        }
+        throw CLIParseError.invalidValue("Unable to resolve current ios-use executable path from \(arg0) or PATH")
     }
 
     private static func runProcess(_ process: Process) throws {
@@ -448,23 +452,9 @@ public enum NSLogService {
         }
     }
 
-    private static func terminateBonjourPublisher(pid: Int32) {
-        guard pid > 0, isBonjourPublisherProcess(pid: pid) else { return }
-        _ = sendSignal(pid: pid, signal: SIGTERM)
-        try? waitForProcessExit(pid: pid, timeoutSeconds: 1)
-        if processAlive(pid) {
-            _ = sendSignal(pid: pid, signal: SIGKILL)
-        }
-    }
-
     private static func isIOSUseNSLogOwnerProcess(pid: Int32) -> Bool {
         guard let command = processCommand(pid: pid)?.lowercased() else { return false }
         return command.contains("ios-use") && (command.contains(" nslog") || command.contains(" flow"))
-    }
-
-    private static func isBonjourPublisherProcess(pid: Int32) -> Bool {
-        guard let command = processCommand(pid: pid) else { return false }
-        return command.contains("dns-sd -R") && command.contains("_nslogger-ssl._tcp")
     }
 
     private static func processAlive(_ pid: Int32) -> Bool {
