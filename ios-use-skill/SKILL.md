@@ -185,7 +185,7 @@ ios-use swipe --dir back --distance 300
   - 日志文件保存到 `~/.ios-use/artifacts/<name>.log`
 
 - `nslog`
-  - 启动本地 NSLogger server，iOS app 主动推送日志（与 oslog 互补）
+  - 启动本地 NSLogger server，iOS app 主动推送日志（与 oslog 互补）。最好在app启动前启动NSLogger server，不然app连接不上
   - `ios-use nslog [--name <name>]` 前台 streaming；监听信息写 stderr，日志行写 stdout
   - `ios-use nslog start [--name <name>]` 后台采集并把日志写入 `~/.ios-use/logs/nslog-*.log`
   - `ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <sec>] [--clearAfterRead] [--last N]` 从最近一次后台采集读取
