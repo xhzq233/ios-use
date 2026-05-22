@@ -1,5 +1,4 @@
 import XCTest
-import Darwin
 import IOSUseProtocol
 @testable import IOSUseCLI
 
@@ -208,46 +207,11 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertEqual(output, "CA already installed and trusted on device.\n")
     }
 
-    func testProbeServerIdleSocketDoesNotBlockValidProbe() throws {
-        let server = try ProxyProbeServer(token: "TOKEN")
-        defer { server.stop() }
-        let idle = try connectLocalhost(port: server.port)
-        defer { Darwin.close(idle) }
-
-        let valid = try connectLocalhost(port: server.port)
-        defer { Darwin.close(valid) }
-        let request = "GET /ios-use-probe?token=TOKEN HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-        _ = request.withCString { ptr in
-            Darwin.write(valid, ptr, strlen(ptr))
-        }
-
-        XCTAssertTrue(server.wait(timeoutMilliseconds: 2_000))
-    }
-
     private func temporaryRoot() throws -> String {
         let root = NSTemporaryDirectory() + "ios-use-swift-proxy-\(UUID().uuidString)"
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
         }
         return root
-    }
-
-    private func connectLocalhost(port: Int) throws -> Int32 {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        XCTAssertGreaterThanOrEqual(fd, 0)
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = UInt16(port).bigEndian
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-        let result = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        guard result == 0 else {
-            Darwin.close(fd)
-            throw CLIParseError.invalidValue("connect failed: \(errno)")
-        }
-        return fd
     }
 }

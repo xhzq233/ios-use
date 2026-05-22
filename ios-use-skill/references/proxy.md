@@ -87,10 +87,11 @@ mitmdump -n -r file.mitm --set hardump=output.har
 ### proxy start 行为
 
 1. 检测 Mac Wi-Fi interface / LAN IP
-2. 验证设备能访问 Mac LAN IP（probe server + Safari openURL）
-3. 启动 mitmdump（后台 detached 进程），抓包保存为 `.mitm` 文件
-4. 通过 UI flow 配置设备当前 Wi-Fi 的 HTTP 代理指向 Mac
-5. 输出抓包文件路径，命令立即返回（mitmdump 在后台持续运行）
+2. 启动 mitmdump（后台 detached 进程），抓包保存为 `.mitm` 文件
+3. 通过 UI flow 配置设备当前 Wi-Fi 的 HTTP 代理指向 Mac
+4. 输出抓包文件路径，命令立即返回（mitmdump 在后台持续运行）
+
+网络前提：设备与 Mac 需要在同一 Wi-Fi/LAN，且设备能通过 Mac LAN IP 访问 mitmdump 端口。`proxy start` 不做 probe precheck；VPN、防火墙或隔离 Wi-Fi 可能导致抓不到流量或设备断网。排障先运行 `ios-use proxy doctor`，再检查 Mac interface/IP、防火墙和设备网络。
 
 ### proxy stop 行为
 

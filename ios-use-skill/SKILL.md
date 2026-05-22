@@ -221,6 +221,8 @@ ios-use proxy read --filter "~d okx.com" --raw
 - `proxy stop` — 先清除设备 Wi-Fi 代理，再停止 mitmdump；若设备侧清理失败，会提示手动关闭 Wi-Fi 代理且不继续停止本地服务
 - `proxy doctor` — 诊断 proxy 环境
 
+网络前提：设备与 Mac 需要在同一 Wi-Fi/LAN，且设备能通过 Mac LAN IP 访问 mitmdump 端口。`proxy start` 信任该网络前提，不再做 probe precheck；VPN、防火墙或隔离 Wi-Fi 可能导致抓不到流量或设备断网，排障先看 `proxy doctor`。
+
 ### 5.3 查看 .mitm 文件
 
 优先使用 `proxy read` 查看最近一次抓包：
