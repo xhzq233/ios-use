@@ -9,10 +9,6 @@ public struct DriverIdentity: Equatable, Sendable {
         self.build = build
     }
 
-    public static var legacyCurrent: DriverIdentity {
-        DriverIdentity(version: IOSUseCLI.version, build: "")
-    }
-
     public var description: String {
         var parts = ["version=\(version)"]
         if !build.isEmpty { parts.append("build=\(build)") }
