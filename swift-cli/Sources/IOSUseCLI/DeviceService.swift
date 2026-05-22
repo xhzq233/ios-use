@@ -22,20 +22,13 @@ public struct IOSDevice: Equatable, Sendable {
 public enum DeviceService {
     public struct ConfiguredDevice: Equatable, Sendable {
         public let driverVersion: String?
-        public let driverIdentity: DriverIdentity?
-        public let expectedDriverIdentity: DriverIdentity?
 
-        public init(driverVersion: String?, driverIdentity: DriverIdentity? = nil, expectedDriverIdentity: DriverIdentity? = nil) {
+        public init(driverVersion: String?) {
             self.driverVersion = driverVersion
-            self.driverIdentity = driverIdentity
-            self.expectedDriverIdentity = expectedDriverIdentity
         }
 
         public var needsDriverUpdate: Bool {
-            if let expectedDriverIdentity {
-                return driverIdentity != expectedDriverIdentity
-            }
-            return driverVersion != IOSUseCLI.version
+            driverVersion != IOSUseCLI.version
         }
     }
 
@@ -158,15 +151,8 @@ public enum DeviceService {
         }
         return devices.reduce(into: [:]) { result, item in
             let value = item.value as? [String: Any] ?? [:]
-            let bundleId = value["bundleId"] as? String
             let driverVersion = value["driverVersion"] as? String
-            let identity = (value["driverIdentity"] as? [String: Any]).flatMap(DriverIdentity.init(json:))
-                ?? driverVersion.map { DriverIdentity(version: $0, build: "") }
-            result[item.key] = ConfiguredDevice(
-                driverVersion: driverVersion,
-                driverIdentity: identity,
-                expectedDriverIdentity: ConfigService.expectedDriverIdentity(paths: paths, bundleId: bundleId)
-            )
+            result[item.key] = ConfiguredDevice(driverVersion: driverVersion)
         }
     }
 

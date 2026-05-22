@@ -4,11 +4,9 @@ import XCTest
 final class ConfigServiceTests: XCTestCase {
     override func setUp() {
         super.setUp()
-        ConfigService.expectedDriverIdentityOverrideForTesting = { nil }
     }
 
     override func tearDown() {
-        ConfigService.expectedDriverIdentityOverrideForTesting = nil
         Shell.runOverrideForTesting = nil
         super.tearDown()
     }
@@ -94,21 +92,6 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(
             try ConfigService.readDriverIdentityFromInfoPlist(plist),
             DriverIdentity(version: "1.2.3", build: "20260521000000-abcdef123456")
-        )
-    }
-
-    func testExpectedDriverIdentityUsesSimulatorAssetForSimulatorBundle() throws {
-        ConfigService.expectedDriverIdentityOverrideForTesting = nil
-        let root = try temporaryRoot()
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        let deviceIdentity = DriverIdentity(version: "device", build: "1")
-        let simulatorIdentity = DriverIdentity(version: "sim", build: "2")
-        try writeDriverIPA(path: "\(root)/driver.ipa", identity: deviceIdentity)
-        try writeDriverIPA(path: "\(root)/driver-sim.ipa", identity: simulatorIdentity)
-
-        XCTAssertEqual(
-            ConfigService.expectedDriverIdentity(paths: paths, bundleId: ConfigService.simulatorBundleId),
-            simulatorIdentity
         )
     }
 
@@ -231,35 +214,6 @@ final class ConfigServiceTests: XCTestCase {
 
         XCTAssertThrowsError(try ConfigService.readSimulatorInstalledDriverIdentity(udid: "SIM-1", bundleId: ConfigService.simulatorBundleId)) { error in
             XCTAssertTrue(String(describing: error).contains("Unable to verify installed Simulator driver identity"))
-        }
-    }
-
-    func testPrepareDriverSessionRejectsMismatchedDriverIdentity() throws {
-        ConfigService.expectedDriverIdentityOverrideForTesting = {
-            DriverIdentity(version: IOSUseCLI.version, build: "new-build")
-        }
-        let root = try temporaryRoot()
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try """
-        {
-          "devices": {
-            "REAL-OLD-BUILD": {
-              "bundleId": "com.example.driver",
-              "driverVersion": "\(IOSUseCLI.version)",
-              "driverIdentity": {
-                "version": "\(IOSUseCLI.version)",
-                "build": "old-build"
-              }
-            }
-          }
-        }
-        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
-
-        XCTAssertThrowsError(try SessionService.prepareDriverSession(SessionOptions(udid: "REAL-OLD-BUILD"), paths: paths)) { error in
-            XCTAssertTrue(String(describing: error).contains("installed: version=\(IOSUseCLI.version), build=old-build"))
-            XCTAssertTrue(String(describing: error).contains("expected: version=\(IOSUseCLI.version), build=new-build"))
-            XCTAssertTrue(String(describing: error).contains("ios-use config --udid REAL-OLD-BUILD"))
         }
     }
 
@@ -591,8 +545,8 @@ final class ConfigServiceTests: XCTestCase {
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
 
         XCTAssertThrowsError(try SessionService.prepareDriverSession(SessionOptions(udid: "REAL-OLD"), paths: paths)) { error in
-            XCTAssertTrue(String(describing: error).contains("installed: version=0.9.0"))
-            XCTAssertTrue(String(describing: error).contains("expected: version=\(IOSUseCLI.version)"))
+            XCTAssertTrue(String(describing: error).contains("installed: 0.9.0"))
+            XCTAssertTrue(String(describing: error).contains("expected: \(IOSUseCLI.version)"))
             XCTAssertTrue(String(describing: error).contains("ios-use config --udid REAL-OLD"))
         }
     }

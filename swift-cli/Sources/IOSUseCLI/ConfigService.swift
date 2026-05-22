@@ -22,8 +22,6 @@ public enum ConfigService {
     private static let devXCTestBundleId = "com.iosuse.xcuidriver"
     private static let defaultDriverBundlePrefix = "com.ios-use.driver"
     private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
-    static var expectedDriverIdentityOverrideForTesting: (() -> DriverIdentity?)?
-
     public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
         let realDevices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
         let udid: String
@@ -211,9 +209,8 @@ public enum ConfigService {
         guard let config = DeviceService.configuredDevices(paths: paths)[udid], config.needsDriverUpdate else {
             return
         }
-        let installed = config.driverIdentity?.description ?? "unknown"
-        let expected = config.expectedDriverIdentity?.description ?? DriverIdentity.legacyCurrent.description
-        throw CLIParseError.invalidValue("Driver for device \(udid) is out of date (installed: \(installed); expected: \(expected)). Run `ios-use config --udid \(udid)` to update the driver.")
+        let installed = config.driverVersion ?? "unknown"
+        throw CLIParseError.invalidValue("Driver for device \(udid) is out of date (installed: \(installed); expected: \(IOSUseCLI.version)). Run `ios-use config --udid \(udid)` to update the driver.")
     }
 
     private static func cachedAppleId(altsign: String) throws -> String? {
@@ -261,21 +258,6 @@ public enum ConfigService {
         let current = try Shell.run("plutil", arguments: ["-extract", "CFBundleIdentifier", "raw", "-o", "-", plistPath]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard current == oldId, current != newId else { return }
         _ = try Shell.run("plutil", arguments: ["-replace", "CFBundleIdentifier", "-string", newId, plistPath])
-    }
-
-    static func expectedDriverIdentity(paths: IOSUsePaths, bundleId: String? = nil) -> DriverIdentity? {
-        if let expectedDriverIdentityOverrideForTesting {
-            return expectedDriverIdentityOverrideForTesting()
-        }
-        let pathsToCheck = bundleId == simulatorBundleId
-            ? [simulatorIPAPath(paths: paths), deviceIPAPath(paths: paths)]
-            : [deviceIPAPath(paths: paths), simulatorIPAPath(paths: paths)]
-        for path in pathsToCheck {
-            if let identity = try? readDriverIdentityFromIPA(path) {
-                return identity
-            }
-        }
-        return nil
     }
 
     static func readDriverIdentityFromIPA(_ ipaPath: String) throws -> DriverIdentity {
