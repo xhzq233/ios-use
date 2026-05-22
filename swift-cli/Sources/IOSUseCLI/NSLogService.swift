@@ -77,7 +77,7 @@ public enum NSLogService {
         process.arguments = arguments
         process.environment = ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new }
         process.standardOutput = fileHandle
-        process.standardError = FileHandle.standardOutput
+        process.standardError = duplicatedStdoutHandle()
         try runProcess(process)
 
         let capture = try waitForCapture(pid: process.processIdentifier, logFile: logFile, fallbackName: options.name, paths: paths)
@@ -131,7 +131,7 @@ public enum NSLogService {
         process.arguments = arguments
         process.environment = ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new }
         process.standardOutput = fileHandle
-        process.standardError = FileHandle.standardOutput
+        process.standardError = duplicatedStdoutHandle()
         try runProcess(process)
         return try waitForCapture(pid: process.processIdentifier, logFile: logFile, fallbackName: options.name, paths: paths)
     }
@@ -414,6 +414,14 @@ public enum NSLogService {
         } else {
             try process.run()
         }
+    }
+
+    private static func duplicatedStdoutHandle() -> FileHandle {
+        let fd = dup(STDOUT_FILENO)
+        guard fd >= 0 else {
+            return FileHandle.standardOutput
+        }
+        return FileHandle(fileDescriptor: fd, closeOnDealloc: true)
     }
 
     private static func fileTimestamp() -> String {
