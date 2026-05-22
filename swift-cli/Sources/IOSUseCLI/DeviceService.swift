@@ -161,7 +161,7 @@ public enum DeviceService {
             let bundleId = value["bundleId"] as? String
             let driverVersion = value["driverVersion"] as? String
             let identity = (value["driverIdentity"] as? [String: Any]).flatMap(DriverIdentity.init(json:))
-                ?? driverVersion.map { DriverIdentity(version: $0, build: "", gitSHA: nil, protocolID: nil) }
+                ?? driverVersion.map { DriverIdentity(version: $0, build: "") }
             result[item.key] = ConfiguredDevice(
                 driverVersion: driverVersion,
                 driverIdentity: identity,
@@ -209,6 +209,8 @@ public enum DeviceService {
 }
 
 enum Shell {
+    static var runOverrideForTesting: ((String, [String], String?, Bool) throws -> String)?
+
     static func run(_ executable: String, arguments: [String], cwd: String? = nil) throws -> String {
         try runCaptured(executable, arguments: arguments, cwd: cwd, combineStderr: false)
     }
@@ -235,6 +237,10 @@ enum Shell {
     }
 
     private static func runCaptured(_ executable: String, arguments: [String], cwd: String?, combineStderr: Bool) throws -> String {
+        if let runOverrideForTesting {
+            return try runOverrideForTesting(executable, arguments, cwd, combineStderr)
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [executable] + arguments

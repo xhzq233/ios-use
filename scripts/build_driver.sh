@@ -49,15 +49,8 @@ if [ -z "$CLI_VERSION" ]; then
   exit 1
 fi
 DRIVER_GIT_SHA="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
-DRIVER_BUILD_ID="$(date -u +%Y%m%d%H%M%S)"
-PROTOCOL_ID="$(
-  find "$ROOT_DIR/shared/IOSUseProtocol" "$ROOT_DIR/driver/tcp" "$ROOT_DIR/driver/ui" -name '*.swift' -type f -print0 \
-    | sort -z \
-    | xargs -0 shasum \
-    | shasum \
-    | awk '{print $1}'
-)"
-echo "[build] Driver identity: version=$CLI_VERSION build=$DRIVER_BUILD_ID git=$DRIVER_GIT_SHA protocol=$PROTOCOL_ID"
+DRIVER_BUILD_ID="$(date -u +%Y%m%d%H%M%S)-$DRIVER_GIT_SHA"
+echo "[build] Driver identity: version=$CLI_VERSION build=$DRIVER_BUILD_ID"
 
 # Release artifacts go to assets/ (ignored local build outputs).
 # Debug artifacts go to build/ (not tracked) to avoid accidental commits.
@@ -85,8 +78,6 @@ XCODE_COMMON=(
   DEBUG_INFORMATION_FORMAT="$DEBUG_INFO_FORMAT"
   MARKETING_VERSION="$CLI_VERSION"
   CURRENT_PROJECT_VERSION="$DRIVER_BUILD_ID"
-  IOS_USE_DRIVER_GIT_SHA="$DRIVER_GIT_SHA"
-  IOS_USE_DRIVER_PROTOCOL_ID="$PROTOCOL_ID"
   CODE_SIGNING_ALLOWED=NO
 )
 
@@ -129,10 +120,6 @@ stamp_driver_identity() {
       || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $CLI_VERSION" "$plist"
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $DRIVER_BUILD_ID" "$plist" 2>/dev/null \
       || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $DRIVER_BUILD_ID" "$plist"
-    /usr/libexec/PlistBuddy -c "Set :IOSUseDriverGitSHA $DRIVER_GIT_SHA" "$plist" 2>/dev/null \
-      || /usr/libexec/PlistBuddy -c "Add :IOSUseDriverGitSHA string $DRIVER_GIT_SHA" "$plist"
-    /usr/libexec/PlistBuddy -c "Set :IOSUseDriverProtocolID $PROTOCOL_ID" "$plist" 2>/dev/null \
-      || /usr/libexec/PlistBuddy -c "Add :IOSUseDriverProtocolID string $PROTOCOL_ID" "$plist"
   done
 }
 

@@ -69,6 +69,7 @@ public enum ConfigService {
         guard FileManager.default.fileExists(atPath: signedIpa) else {
             throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
         }
+        let expectedIdentity = try validateDriverIdentityFromArtifact(try readDriverIdentityFromIPA(signedIpa), source: "signed driver IPA")
 
         let extractDir = "\(paths.root)/driver-install-\(udid)"
         try? FileManager.default.removeItem(atPath: extractDir)
@@ -82,7 +83,8 @@ public enum ConfigService {
         }
 
         _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "install", "app", "--device", udid, "\(payloadDir)/\(appEntry)"])
-        let installedIdentity = readInstalledDriverIdentity(udid: udid, bundleId: bundleId, fallbackIPAPath: signedIpa)
+        let installedIdentity = try readRealDeviceInstalledDriverIdentity(udid: udid, bundleId: bundleId)
+        try assertInstalledDriverIdentity(installed: installedIdentity, expected: expectedIdentity, source: "devicectl")
         try saveConfig(udid: udid, bundleId: bundleId, driverIdentity: installedIdentity, paths: paths)
 
         return """
@@ -137,6 +139,7 @@ public enum ConfigService {
             throw CLIParseError.invalidValue("No .app found in Simulator IPA")
         }
         let appPath = "\(payloadDir)/\(appEntry)"
+        let expectedIdentity = try validateDriverIdentityFromArtifact(try readDriverIdentityFromIPA(ipaPath), source: "Simulator driver IPA")
 
         _ = try? Shell.run("xcrun", arguments: ["simctl", "terminate", udid, simulatorBundleId])
         do {
@@ -149,7 +152,8 @@ public enum ConfigService {
 
         let launchOutput = try Shell.run("xcrun", arguments: ["simctl", "launch", udid, simulatorBundleId]).trimmingCharacters(in: .whitespacesAndNewlines)
         waitForSimulatorDriver()
-        let installedIdentity = readSimulatorInstalledDriverIdentity(udid: udid, bundleId: simulatorBundleId, fallbackIPAPath: ipaPath)
+        let installedIdentity = try readSimulatorInstalledDriverIdentity(udid: udid, bundleId: simulatorBundleId)
+        try assertInstalledDriverIdentity(installed: installedIdentity, expected: expectedIdentity, source: "Simulator app Info.plist")
         try saveConfig(udid: udid, bundleId: simulatorBundleId, driverIdentity: installedIdentity, paths: paths)
         let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first { $0.udid == udid }
         try SessionService.writeSimulatorSession(
@@ -282,21 +286,41 @@ public enum ConfigService {
         return try readDriverIdentityFromExtractedPayload(payloadDir: "\(tmpDir)/Payload")
     }
 
-    private static func readInstalledDriverIdentity(udid: String, bundleId: String, fallbackIPAPath: String) -> DriverIdentity {
-        if let output = try? Shell.run("xcrun", arguments: ["devicectl", "device", "info", "apps", "--device", udid]),
-           let identity = parseDriverIdentity(fromDeviceInfoAppsOutput: output, bundleId: bundleId) {
-            return identity
+    static func readRealDeviceInstalledDriverIdentity(udid: String, bundleId: String) throws -> DriverIdentity {
+        do {
+            let identity = try readDevicectlInstalledDriverIdentity(udid: udid, bundleId: bundleId)
+            return try validateInstalledDriverIdentity(identity, source: "devicectl")
+        } catch {
+            throw CLIParseError.invalidValue("Unable to verify installed driver identity for \(bundleId) on \(udid). \(error)")
         }
-        return (try? readDriverIdentityFromIPA(fallbackIPAPath)) ?? DriverIdentity.legacyCurrent
     }
 
-    private static func readSimulatorInstalledDriverIdentity(udid: String, bundleId: String, fallbackIPAPath: String) -> DriverIdentity {
+    private static func readDevicectlInstalledDriverIdentity(udid: String, bundleId: String) throws -> DriverIdentity {
+        let jsonPath = "\(NSTemporaryDirectory())ios-use-devicectl-apps-\(UUID().uuidString).json"
+        defer { try? FileManager.default.removeItem(atPath: jsonPath) }
+        let output = try Shell.run("xcrun", arguments: [
+            "devicectl", "device", "info", "apps",
+            "--device", udid,
+            "--bundle-id", bundleId,
+            "--columns", "*",
+            "--json-output", jsonPath,
+        ])
+        if let identity = parseDriverIdentity(fromDevicectlAppsJSONAtPath: jsonPath, bundleId: bundleId) {
+            return identity
+        }
+        if let identity = parseDriverIdentity(fromDeviceInfoAppsOutput: output, bundleId: bundleId) {
+            return identity
+        }
+        throw CLIParseError.invalidValue("devicectl did not return installed app identity for \(bundleId)")
+    }
+
+    static func readSimulatorInstalledDriverIdentity(udid: String, bundleId: String) throws -> DriverIdentity {
         if let appContainer = try? Shell.run("xcrun", arguments: ["simctl", "get_app_container", udid, bundleId, "app"]).trimmingCharacters(in: .whitespacesAndNewlines),
            !appContainer.isEmpty,
            let identity = try? readDriverIdentityFromInfoPlist("\(appContainer)/Info.plist") {
-            return identity
+            return try validateInstalledDriverIdentity(identity, source: "Simulator app Info.plist")
         }
-        return (try? readDriverIdentityFromIPA(fallbackIPAPath)) ?? DriverIdentity.legacyCurrent
+        throw CLIParseError.invalidValue("Unable to verify installed Simulator driver identity for \(bundleId) on \(udid).")
     }
 
     private static func readDriverIdentityFromExtractedPayload(payloadDir: String) throws -> DriverIdentity {
@@ -318,10 +342,79 @@ public enum ConfigService {
         }
         return DriverIdentity(
             version: version,
-            build: build,
-            gitSHA: plist["IOSUseDriverGitSHA"] as? String,
-            protocolID: plist["IOSUseDriverProtocolID"] as? String
+            build: build
         )
+    }
+
+    static func parseDriverIdentity(fromDevicectlAppsJSONAtPath path: String, bundleId: String) -> DriverIdentity? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return appDictionaries(in: root)
+            .filter { dictionary in
+                ["bundleIdentifier", "CFBundleIdentifier", "identifier"].contains { key in
+                    stringValue(dictionary[key]) == bundleId
+                }
+            }
+            .compactMap(identityFromAppDictionary)
+            .first
+    }
+
+    private static func appDictionaries(in value: Any) -> [[String: Any]] {
+        if let dictionary = value as? [String: Any] {
+            var out = [dictionary]
+            for child in dictionary.values {
+                out.append(contentsOf: appDictionaries(in: child))
+            }
+            return out
+        }
+        if let array = value as? [Any] {
+            return array.flatMap(appDictionaries(in:))
+        }
+        return []
+    }
+
+    private static func identityFromAppDictionary(_ app: [String: Any]) -> DriverIdentity? {
+        guard let version = firstString(in: app, keys: ["CFBundleShortVersionString", "version", "shortVersionString", "bundleShortVersionString"]) else {
+            return nil
+        }
+        return DriverIdentity(
+            version: version,
+            build: firstString(in: app, keys: ["CFBundleVersion", "bundleVersion", "build"]) ?? ""
+        )
+    }
+
+    private static func validateInstalledDriverIdentity(_ identity: DriverIdentity, source: String) throws -> DriverIdentity {
+        var missing: [String] = []
+        if identity.version.isEmpty { missing.append("CFBundleShortVersionString") }
+        if identity.build.isEmpty { missing.append("CFBundleVersion") }
+        guard missing.isEmpty else {
+            throw CLIParseError.invalidValue("\(source) driver identity is incomplete (missing: \(missing.joined(separator: ", "))). Rebuild or reinstall a current driver IPA.")
+        }
+        guard identity.version == IOSUseCLI.version else {
+            throw CLIParseError.invalidValue("\(source) driver version \(identity.version) does not match CLI version \(IOSUseCLI.version). Rebuild or reinstall a current driver IPA.")
+        }
+        guard isStampedBuild(identity.build) else {
+            throw CLIParseError.invalidValue("\(source) driver build \(identity.build) is not stamped as yyyyMMddHHmmss-<12 char git sha>. Rebuild or reinstall a current driver IPA.")
+        }
+        return identity
+    }
+
+    private static func validateDriverIdentityFromArtifact(_ identity: DriverIdentity, source: String) throws -> DriverIdentity {
+        try validateInstalledDriverIdentity(identity, source: source)
+    }
+
+    private static func assertInstalledDriverIdentity(installed: DriverIdentity, expected: DriverIdentity, source: String) throws {
+        guard installed == expected else {
+            throw CLIParseError.invalidValue("\(source) installed driver identity mismatch (installed: \(installed.description); expected: \(expected.description)). Rebuild or reinstall a current driver IPA.")
+        }
+    }
+
+    private static func isStampedBuild(_ build: String) -> Bool {
+        let regex = try? NSRegularExpression(pattern: #"^\d{14}-[0-9A-Fa-f]{12}$"#)
+        let range = NSRange(build.startIndex..<build.endIndex, in: build)
+        return regex?.firstMatch(in: build, range: range) != nil
     }
 
     static func parseDriverIdentity(fromDeviceInfoAppsOutput output: String, bundleId: String) -> DriverIdentity? {
@@ -363,10 +456,28 @@ public enum ConfigService {
         let build = capture("CFBundleVersion") ?? capture("build") ?? ""
         return DriverIdentity(
             version: version,
-            build: build,
-            gitSHA: capture("IOSUseDriverGitSHA"),
-            protocolID: capture("IOSUseDriverProtocolID")
+            build: build
         )
+    }
+
+    private static func firstString(in dictionary: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = stringValue(dictionary[key]), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        switch value {
+        case let string as String:
+            return string.trimmingCharacters(in: .whitespacesAndNewlines)
+        case let number as NSNumber:
+            return number.stringValue
+        default:
+            return nil
+        }
     }
 
     private static func saveConfig(udid: String, bundleId: String, driverIdentity: DriverIdentity, paths: IOSUsePaths) throws {
