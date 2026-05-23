@@ -31,6 +31,7 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let root: String
     public let config: String
     public let session: String
+    public let driverLock: String
     public let nslogLock: String
     public let nslogState: String
     public let logs: String
@@ -42,6 +43,7 @@ public struct IOSUsePaths: Equatable, Sendable {
             root: root,
             config: "\(root)/config.json",
             session: "\(root)/state/session.json",
+            driverLock: "\(root)/state/driver.lock",
             nslogLock: "\(root)/state/nslog.lock",
             nslogState: "\(root)/state/nslog-state.json",
             logs: "\(root)/logs",
@@ -110,6 +112,12 @@ public struct IOSUseCLI: Sendable {
         case .config(let options):
             do {
                 return CLIResult(exitCode: 0, stdout: try ConfigService.configureDevice(options: options, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        case .start(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try SessionService.start(udid: options.udid, paths: paths, verbose: options.verbose))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }

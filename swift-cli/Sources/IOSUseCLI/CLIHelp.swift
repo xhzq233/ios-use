@@ -12,7 +12,7 @@ enum CLIHelp {
           -V, --version    Show version
 
         Commands:
-          devices, config, dom, find, waitFor, screenshot, tap, longpress, input, swipe
+          devices, config, start, stop, dom, find, waitFor, screenshot, tap, longpress, input, swipe
           activateApp, terminateApp, home, open, dismissAlert, flow, proxy, oslog, nslog
 
         """
@@ -73,11 +73,21 @@ enum CLIHelp {
               --verbose              Enable verbose output
 
             """
+        case "start":
+            return """
+            Usage: ios-use start <udid> [--verbose]
+
+            Start the configured driver and record the active driver lock.
+
+            Options:
+              --verbose    Enable verbose output
+
+            """
         case "stop":
             return """
             Usage: ios-use stop
 
-            Stop the active driver session.
+            Stop the active driver session and clear the driver lock.
 
             """
         case "dom":

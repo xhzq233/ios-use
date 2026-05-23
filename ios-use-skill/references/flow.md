@@ -408,8 +408,9 @@ steps:
 2. 把稳定可复用的前置过程抽成 subflow
 3. 用 `vars` 传输入，用 `outputs` 传回结果
 4. 在关键节点保留 `dom` / `oslog`
-5. 运行 `ios-use flow your-flow.yaml`
-6. 如果失败，回到 `SKILL.md` 的 CLI 工作流逐步单步复现
+5. 可先运行 `ios-use start <udid>` 预启动 driver；当前版本 `flow --udid <udid>` 仍兼容
+6. 运行 `ios-use flow your-flow.yaml`
+7. 如果失败，回到 `SKILL.md` 的 CLI 工作流逐步单步复现
 
 ## 8. 常见错误
 

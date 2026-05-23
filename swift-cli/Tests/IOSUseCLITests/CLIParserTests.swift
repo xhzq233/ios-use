@@ -17,6 +17,11 @@ final class CLIParserTests: XCTestCase {
             try CLIParser.parse(["config", "--list"]),
             .config(ConfigOptions(list: true))
         )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["start", "SIM-1", "--verbose"]),
+            .start(StartOptions(udid: "SIM-1", verbose: true))
+        )
     }
 
     func testParsesDriverReadCommands() throws {
@@ -163,6 +168,10 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertThrowsError(try CLIParser.parse(["config", "--ipa", "driver.ipa"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--ipa"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["start"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .missingRequiredArgument("udid"))
         }
 
         let legacyOpenCommand = "open" + "URL"
