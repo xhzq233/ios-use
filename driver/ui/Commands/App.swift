@@ -17,10 +17,6 @@ func shouldLaunchViaLaunchServices(state: XCUIApplication.State) -> Bool {
     state != .runningForeground
 }
 
-func shouldOpenURLViaSystem(_ url: URL, canOpen: (URL) -> Bool = { UIApplication.shared.canOpenURL($0) }) -> Bool {
-    canOpen(url)
-}
-
 enum App {
     static func activateApp(bundleId: String) throws -> XCUIApplication {
         NSLog("[app] activate called with bundleId=\(bundleId)")
@@ -83,7 +79,7 @@ enum App {
     }
 }
 
-// MARK: - App commands (doc 1.2 — activateApp/terminateApp/openURL)
+// MARK: - App commands (doc 1.2 — activateApp/terminateApp)
 
 enum AppCommands {
 
@@ -105,19 +101,4 @@ enum AppCommands {
         return Codec.foryOK()
     }
 
-    static func openURL(_ args: ForyOpenURLArgs) throws -> ForyResponseFrame {
-        guard let url = URL(string: args.url) else {
-            throw DriverError.invalidArgs("invalid url: \(args.url)")
-        }
-
-        if shouldOpenURLViaSystem(url) {
-            XCUIDevice.shared.system.open(url)
-            return try Codec.foryOK(ForySimpleStringPayload(value: args.url))
-        }
-
-        guard OpenURLViaLaunchServices(args.url) else {
-            throw DriverError.invalidArgs("no app registered for URL scheme: \(url.scheme ?? "unknown")")
-        }
-        return try Codec.foryOK(ForySimpleStringPayload(value: args.url))
-    }
 }

@@ -377,6 +377,34 @@ final class IOSUseCLITests: XCTestCase {
         ])
     }
 
+    func testOpenURLWithoutHostSideTargetFailsWithoutDriverFallback() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-no-target-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        Shell.runOverrideForTesting = { _, _, _, _ in
+            XCTFail("open URL without a host-side target should fail before shell")
+            return ""
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { session in
+            XCTFail("open URL without a host-side target should not fall back to driver, got session \(String(describing: session))")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            DeviceService.listDevicesOverrideForTesting = nil
+            DeviceService.resetCacheForTesting()
+            Shell.runOverrideForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("openURL requires a booted simulator, active session, or USB real device"))
+    }
+
     func testDriverCommandNamesMatchWireCommands() {
         let commands = Set(DriverCommand.allCases.map(\.rawValue))
 
@@ -384,7 +412,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(commands.contains("find"))
         XCTAssertTrue(commands.contains("waitFor"))
         XCTAssertTrue(commands.contains("dismissAlert"))
-        XCTAssertEqual(commands.count, 14)
+        XCTAssertEqual(commands.count, 13)
     }
 
     func testDriverCommandMetadataBindsArgsAndPayloadTypes() {
@@ -442,18 +470,13 @@ final class IOSUseCLITests: XCTestCase {
 
 private final class FakeDriverCommandClient: DriverCommandClient {
     private let domHandler: () throws -> ForyDomPayload
-    private let openURLHandler: (String) throws -> ForySimpleStringPayload
 
     init(
         domHandler: @escaping () throws -> ForyDomPayload = {
             throw CLIParseError.invalidValue("unexpected dom")
-        },
-        openURLHandler: @escaping (String) throws -> ForySimpleStringPayload = { _ in
-            throw CLIParseError.invalidValue("unexpected openURL")
         }
     ) {
         self.domHandler = domHandler
-        self.openURLHandler = openURLHandler
     }
 
     func close() {}
@@ -500,10 +523,6 @@ private final class FakeDriverCommandClient: DriverCommandClient {
 
     func home() throws {
         throw CLIParseError.invalidValue("unexpected home")
-    }
-
-    func openURL(url: String) throws -> ForySimpleStringPayload {
-        try openURLHandler(url)
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
