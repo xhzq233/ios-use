@@ -954,7 +954,7 @@ private func domObject(_ payload: ForyDomPayload) -> [String: Any] {
     [
         "app": payload.app,
         "window": [payload.windowSize.x, payload.windowSize.y],
-        "elements": payload.elements.map(domElementObject),
+        "elements": DriverOutput.presentationDomElements(payload.elements).map(domElementObject),
         "raw": payload.raw,
     ]
 }

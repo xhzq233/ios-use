@@ -309,6 +309,9 @@ private func cleanTree(
                 promoted.append(contentsOf: subtrees)
             }
         }
+        if promoted.count > 1 {
+            promoted = sortCleanSubtreesByY(promoted)
+        }
         return promoted.isEmpty ? .skip : .promote(promoted)
     }
 
@@ -411,6 +414,10 @@ private func cleanTree(
         return .keep(CleanSubtree(records: mergedRecords))
     }
 
+    if effectiveSubtrees.count > 1 {
+        effectiveSubtrees = sortCleanSubtreesByY(effectiveSubtrees)
+    }
+
     subtree[0] = SnapshotElement(
         node: node,
         traits: traits,
@@ -444,6 +451,19 @@ private func flattenCleanBuildResult(_ result: CleanBuildResult) -> [SnapshotEle
         }
         return records
     }
+}
+
+private func sortCleanSubtreesByY(_ subtrees: [CleanSubtree]) -> [CleanSubtree] {
+    subtrees.enumerated().sorted { lhs, rhs in
+        let lhsY = cleanSubtreeRootY(lhs.element)
+        let rhsY = cleanSubtreeRootY(rhs.element)
+        if lhsY != rhsY { return lhsY < rhsY }
+        return lhs.offset < rhs.offset
+    }.map(\.element)
+}
+
+private func cleanSubtreeRootY(_ subtree: CleanSubtree) -> CGFloat {
+    subtree.records.first?.node.frame.minY ?? 0
 }
 
 private func sameElementType(_ a: SafeSnapshot, _ b: SafeSnapshot) -> Bool {

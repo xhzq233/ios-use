@@ -271,6 +271,7 @@ steps:
 - 调试阶段建议多用
 - 需要落盘时加 `save: true`
 - 非 raw DOM 保存为 JSON，结构为 `{ dom, matches, firstMatch }`；raw DOM 保存为 `.txt`
+- 非 raw DOM 的展示/保存层可能给 `ScrollView` / `CollectionView` / `Table` 追加 `vertical` / `horizontal`；这是 DOM presentation 信息，不改变 driver 查找、点击、等待或滑动的 `traits` 过滤语义
 
 ```yaml
 - action: dom
