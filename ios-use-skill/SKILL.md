@@ -171,7 +171,9 @@ ios-use swipe --dir back --distance 300
 
 - `open`
   - `<url>` 在设备上打开 URL
-  - Safari 会处理该 URL
+  - Simulator 通过 Mac 侧 `xcrun simctl openurl` 打开；显式传 booted simulator UDID 时不需要已有 driver session
+  - 真机当前仍走 legacy driver openURL 路径；首次使用真机仍需先 `config`
+  - Safari 或已注册该 scheme 的 App 会处理该 URL
 
 - `dismissAlert`
   - 关闭当前系统弹窗（Alert）

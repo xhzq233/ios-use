@@ -101,6 +101,12 @@ public enum FlowService {
         return (runner.output, outputs)
     }
 
+    static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, deviceType: String?) throws -> (stdout: String, outputs: [String: Any]) {
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: deviceType, context: FlowRunContext())
+        let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
+        return (runner.output, outputs)
+    }
+
     static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, nsloggerServer: NSLoggerServer) throws -> (stdout: String, outputs: [String: Any]) {
         var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext(), nsloggerServer: nsloggerServer)
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
@@ -407,7 +413,10 @@ private struct FlowRunner {
             guard let url = optionalString(step["url"]) ?? optionalString(step["content"]), !url.isEmpty else {
                 throw CLIParseError.invalidValue("openURL requires url")
             }
-            _ = try driver.openURL(url: url)
+            let validatedURL = try OpenURLService.validatedURL(url)
+            if try !OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: udid, deviceType: deviceType, paths: paths) {
+                _ = try driver.openURL(url: validatedURL)
+            }
 
         case "dismissAlert":
             _ = try driver.dismissAlert(index: optionalInt(step["index"], field: "dismissAlert.index"))

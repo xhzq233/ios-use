@@ -263,11 +263,15 @@ public struct IOSUseCLI: Sendable {
                     try client.home()
                 }
                 return CLIResult(exitCode: 0, stdout: "Pressed Home\n")
-            case .openURL(let url, _):
-                _ = try withPreparedDriverClient(action.session) { client in
-                    try client.openURL(url: url)
+            case .openURL(let url, let session):
+                let validatedURL = try OpenURLService.validatedURL(url)
+                if try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: session, paths: paths) {
+                    return CLIResult(exitCode: 0, stdout: "Opened URL: \(validatedURL)\n")
                 }
-                return CLIResult(exitCode: 0, stdout: "Opened URL: \(url)\n")
+                _ = try withPreparedDriverClient(session) { client in
+                    try client.openURL(url: validatedURL)
+                }
+                return CLIResult(exitCode: 0, stdout: "Opened URL: \(validatedURL)\n")
             case .dismissAlert(let index, _):
                 let payload = try withPreparedDriverClient(action.session) { client in
                     try client.dismissAlert(index: index)
