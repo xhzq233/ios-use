@@ -10,6 +10,39 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("Flow file not found"))
     }
 
+    func testOpenURLStepUsesHostSideSimulatorOpen() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("open.yaml", """
+        name: open-url
+        steps:
+          - action: openURL
+            url: retouch://debug
+        """)
+        let driver = FakeFlowDriver()
+        var shellCalls: [(String, [String])] = []
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            shellCalls.append((executable, arguments))
+            return ""
+        }
+        addTeardownBlock {
+            Shell.runOverrideForTesting = nil
+        }
+
+        let result = try FlowService.runForTesting(
+            file: flow.path,
+            paths: fixture.paths,
+            driver: driver,
+            udid: "SIM-1",
+            deviceType: "simulator"
+        )
+
+        XCTAssertTrue(result.stdout.contains("Step 1/1: openURL"))
+        XCTAssertTrue(driver.openURLs.isEmpty)
+        XCTAssertEqual(shellCalls.count, 1)
+        XCTAssertEqual(shellCalls.first?.0, "xcrun")
+        XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", "SIM-1", "retouch://debug"])
+    }
+
     func testRunFlowBindsDeclaredOutputsAndExternalVarsOverrideDefaults() throws {
         let fixture = try FlowFixture()
         let child = try fixture.write("child.yaml", """
@@ -711,6 +744,7 @@ private final class FakeFlowDriver: FlowDriver {
     var activatedApps: [String] = []
     var terminatedApps: [String] = []
     var terminateError: Error?
+    var openURLs: [String] = []
     var swipes: [(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?)] = []
     var taps: [(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint)] = []
     var longPresses: [(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?)] = []
@@ -725,7 +759,10 @@ private final class FakeFlowDriver: FlowDriver {
         }
     }
     func home() throws {}
-    func openURL(url: String) throws -> ForySimpleStringPayload { ForySimpleStringPayload(value: url) }
+    func openURL(url: String) throws -> ForySimpleStringPayload {
+        openURLs.append(url)
+        return ForySimpleStringPayload(value: url)
+    }
     func dismissAlert(index: Int?) throws -> ForyAlertPayload { ForyAlertPayload(dismissed: true) }
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload {
         waits.append((label, timeout, traits, cindex))

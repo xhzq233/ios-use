@@ -350,6 +350,8 @@ steps:
 ### 6.8 `openURL`
 
 - 在设备上打开 URL（Safari 处理）
+- Simulator flow 运行时走 Mac 侧 `xcrun simctl openurl`，不发送 driver `openURL` command
+- 真机当前仍走 legacy driver openURL 路径
 - `url` 是必填字段
 
 ```yaml
