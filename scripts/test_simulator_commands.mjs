@@ -735,14 +735,14 @@ async function runProxyDoctorCase() {
   else recordFail(id, res.stdout + res.stderr);
 }
 
-async function runProxyUnitCases() {
-  const ids = ['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'];
+async function runSwiftCLIUnitCases() {
+  const ids = ['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6', 'FLOW-24', 'FLOW-25', 'FLOW-26'];
   if (!anySelected(ids)) {
     ids.forEach(recordSkip);
     return;
   }
-  console.log('[sim-test] RUN PROXY unit coverage: bash scripts/test_swift_cli.sh');
-  const res = runExternalToFiles(['bash', 'scripts/test_swift_cli.sh'], path.join(artifactDir, 'proxy-unit.out'), path.join(artifactDir, 'proxy-unit.err'), { IOS_USE_HOME: iosHome });
+  console.log('[sim-test] RUN Swift CLI unit coverage: bash scripts/test_swift_cli.sh');
+  const res = runExternalToFiles(['bash', 'scripts/test_swift_cli.sh'], path.join(artifactDir, 'swift-cli-unit.out'), path.join(artifactDir, 'swift-cli-unit.err'), { IOS_USE_HOME: iosHome });
   const precheckHits = selected('PROXY-4') ? findProxyPrecheckReferences() : [];
   if (selected('PROXY-4')) {
     writeFile(path.join(artifactDir, 'PROXY-4-no-precheck.json'), JSON.stringify({ forbiddenReferences: precheckHits }, null, 2));
@@ -1072,6 +1072,7 @@ function buildCases() {
     { id: 'FLOW-21', run: () => runCaseContains('FLOW-21', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.search', '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--verbose', '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
+    ...['FLOW-24', 'FLOW-25', 'FLOW-26'].map(id => ({ id, run: runSwiftCLIUnitCases })),
     { id: 'DOM-4', run: () => runCaseFileExists('DOM-4', path.join(iosHome, 'artifacts/simulator-dom-save.json'), ['flow', flow('dom-save.yaml'), '--udid', sim.udid], settingsHome) },
   ]);
 
@@ -1091,7 +1092,7 @@ function buildCases() {
     { id: 'CFG-3', run: () => unsupportedCase('CFG-3', 'Apple ID first-login signing path, not Simulator and must not touch local credentials') },
     ...['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'].map(id => ({ id, run: runDriverUnitCases })),
     { id: 'PROXY-1', run: runProxyDoctorCase },
-    ...['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'].map(id => ({ id, run: runProxyUnitCases })),
+    ...['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'].map(id => ({ id, run: runSwiftCLIUnitCases })),
     { id: 'PROXY-7', run: runProxyReadMissingCaptureCase },
     { id: 'STOP-1', run: () => runCase('STOP-1', ['stop']) },
     { id: 'STOP-2', run: () => runCase('STOP-2', ['stop']) },
@@ -1160,10 +1161,10 @@ async function main() {
     await prerequisiteConfig();
     const unitGroups = new Set();
     for (const testCase of cases) {
-      if ((testCase.run === runDriverUnitCases || testCase.run === runProxyUnitCases) && unitGroups.has(testCase.run)) {
+      if ((testCase.run === runDriverUnitCases || testCase.run === runSwiftCLIUnitCases) && unitGroups.has(testCase.run)) {
         continue;
       }
-      if (testCase.run === runDriverUnitCases || testCase.run === runProxyUnitCases) unitGroups.add(testCase.run);
+      if (testCase.run === runDriverUnitCases || testCase.run === runSwiftCLIUnitCases) unitGroups.add(testCase.run);
       await testCase.run();
     }
 

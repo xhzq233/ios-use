@@ -99,6 +99,7 @@ ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 ```
 
 Flow 的编写规范、字段语义、外部 `vars` 和 subflow 用法见 `references/flow.md`。
+Flow 执行前会先做静态 compile 校验；未知字段、明显类型错误和静态 subflow 错误会在任何设备动作前失败。
 
 ## 4. 当前命令语义
 

@@ -517,6 +517,79 @@ final class FlowServiceTests: XCTestCase {
         }
     }
 
+    func testFlowCompileRejectsUnknownKeysBeforeExecution() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("unknown-key.yaml", """
+        name: unknown-key
+        steps:
+          - action: find
+            label: General
+          - action: tap
+            label: General
+            tpyo: true
+        """)
+        let driver = FakeFlowDriver()
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)) { error in
+            XCTAssertTrue(String(describing: error).contains("tap has unknown field \"tpyo\""))
+        }
+        XCTAssertTrue(driver.finds.isEmpty)
+        XCTAssertTrue(driver.taps.isEmpty)
+    }
+
+    func testFlowCompileRejectsStrictTypesBeforeExecution() throws {
+        let fixture = try FlowFixture()
+        let badOffset = try fixture.write("bad-offset.yaml", """
+        name: bad-offset
+        steps:
+          - action: find
+            label: General
+          - action: tap
+            label: General
+            offset: "-50,-50"
+        """)
+        let rawString = try fixture.write("raw-string.yaml", """
+        name: raw-string
+        steps:
+          - action: dom
+            raw: "true"
+        """)
+        let driver = FakeFlowDriver()
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: badOffset.path, paths: fixture.paths, driver: driver)) { error in
+            XCTAssertTrue(String(describing: error).contains("tap offset must be a dict"))
+        }
+        XCTAssertTrue(driver.finds.isEmpty)
+        XCTAssertThrowsError(try FlowService.runForTesting(file: rawString.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("dom.raw must be a boolean"))
+        }
+    }
+
+    func testFlowCompileValidatesNestedRunFlowBeforeParentExecution() throws {
+        let fixture = try FlowFixture()
+        _ = try fixture.write("child.yaml", """
+        name: child
+        steps:
+          - action: waitFor
+            label: General
+            debgu: true
+        """)
+        let parent = try fixture.write("parent.yaml", """
+        name: parent
+        steps:
+          - action: find
+            label: General
+          - action: runFlow
+            file: child.yaml
+        """)
+        let driver = FakeFlowDriver()
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: parent.path, paths: fixture.paths, driver: driver)) { error in
+            XCTAssertTrue(String(describing: error).contains("waitFor has unknown field \"debgu\""))
+        }
+        XCTAssertTrue(driver.finds.isEmpty)
+    }
+
     func testFlowRejectsInvalidSwipeDirAndFractionalAlertIndex() throws {
         let fixture = try FlowFixture()
         let invalidDir = try fixture.write("invalid-dir.yaml", """
