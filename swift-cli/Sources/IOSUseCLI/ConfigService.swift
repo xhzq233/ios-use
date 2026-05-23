@@ -526,6 +526,42 @@ public enum SessionService {
 
     public static func clear(paths: IOSUsePaths) {
         try? FileManager.default.removeItem(atPath: paths.session)
+        clearDriverLock(paths: paths)
+    }
+
+    public static func readDriverLock(paths: IOSUsePaths) -> String? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.driverLock)),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let udid = raw["udid"] as? String,
+              !udid.isEmpty else {
+            return nil
+        }
+        return udid
+    }
+
+    public static func writeDriverLock(udid: String, paths: IOSUsePaths) throws {
+        let root: [String: Any] = ["udid": udid]
+        let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
+        try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: URL(fileURLWithPath: paths.driverLock), options: .atomic)
+    }
+
+    public static func clearDriverLock(paths: IOSUsePaths) {
+        try? FileManager.default.removeItem(atPath: paths.driverLock)
+    }
+
+    public static func start(udid: String, paths: IOSUsePaths, verbose: Bool) throws -> String {
+        let previousSession = read(paths: paths)
+        try prepareDriverSession(SessionOptions(udid: udid, verbose: verbose), paths: paths)
+        guard let current = read(paths: paths), current.udid == udid else {
+            throw CLIParseError.invalidValue("No active driver session for \(udid)")
+        }
+        if previousSession?.udid == udid || current.deviceType == "real" {
+            try launchPreparedDriverSession(paths: paths, verbose: verbose)
+        }
+        try writeDriverLock(udid: udid, paths: paths)
+        return "Driver started for \(udid)\n"
     }
 
     public static func stop(paths: IOSUsePaths) throws -> String {
