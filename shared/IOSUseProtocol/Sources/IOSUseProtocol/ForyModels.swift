@@ -259,15 +259,6 @@ public struct ForyTerminateAppArgs {
 }
 
 @ForyStruct
-public struct ForyOpenURLArgs {
-    public var url: String = ""
-
-    public init(url: String = "") {
-        self.url = url
-    }
-}
-
-@ForyStruct
 public struct ForyDomArgs {
     public var raw: Bool = false
     public var fresh: Bool = false
@@ -389,7 +380,6 @@ public enum ForyRegistry {
         try! fory.register(ForyProxyPayload.self, name: "ForyProxyPayload")
         try! fory.register(ForyActivateAppArgs.self, name: "ForyActivateAppArgs")
         try! fory.register(ForyTerminateAppArgs.self, name: "ForyTerminateAppArgs")
-        try! fory.register(ForyOpenURLArgs.self, name: "ForyOpenURLArgs")
         try! fory.register(ForyDomArgs.self, name: "ForyDomArgs")
         try! fory.register(ForyFindArgs.self, name: "ForyFindArgs")
         try! fory.register(ForyWaitForArgs.self, name: "ForyWaitForArgs")

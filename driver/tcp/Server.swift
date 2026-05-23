@@ -245,10 +245,6 @@ import Fory
         case .home:
             return try AppCommands.home()
 
-        case .openURL:
-            let args = try Codec.sharedFory.deserialize(payload, as: ForyOpenURLArgs.self)
-            return try AppCommands.openURL(args)
-
         case .proxyCAPush:
             let args = try Codec.sharedFory.deserialize(payload, as: ForyProxyCAPushArgs.self)
             return try ProxyCommands.proxyCAPush(args)
