@@ -529,15 +529,23 @@ async function openContactsNewContact() {
 }
 
 async function openSpringboardIconMenu(id) {
-  await ensureDriverReady();
-  runCli(['home', '--udid', sim.udid]);
-  await sleep(1000);
+  await openHomeScreenWithSafariIcon();
   runCliToFiles(
     ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid],
     path.join(artifactDir, `${id}-icon-menu.out`),
     path.join(artifactDir, `${id}-icon-menu.err`),
   );
   await sleep(1000);
+}
+
+async function openHomeScreenWithSafariIcon() {
+  await ensureDriverReady();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    runCli(['home', '--udid', sim.udid]);
+    await sleep(1000 + attempt * 500);
+    const visible = runCli(['waitFor', '--label', 'Safari', '--traits', 'Icon', '--timeout', '1', '--udid', sim.udid]);
+    if (visible.code === 0) return;
+  }
 }
 
 async function discardContactIfNeeded() {
@@ -690,7 +698,7 @@ steps:
   writeFile(path.join(flowDir, 'sleep-default.yaml'), 'name: simulator-sleep-default-flow\napp: com.apple.Preferences\nsteps:\n  - action: sleep\n  - action: dom\n    fresh: true\n    print: false\n');
   writeFile(path.join(flowDir, 'dom-save.yaml'), 'name: simulator-dom-save-flow\napp: com.apple.Preferences\nsteps:\n  - action: dom\n    save: true\n    name: simulator-dom-save\n    print: false\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-dom-raw-save\n    print: false\n');
   writeFile(path.join(flowDir, 'oslog-timeout.yaml'), 'name: simulator-oslog-timeout-flow\napp: com.apple.Preferences\nsteps:\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-oslog-timeout\n');
-  writeFile(path.join(flowDir, 'standard-smoke.yaml'), 'name: simulator-standard-smoke-flow\napp: com.apple.Preferences\nsteps:\n  - action: waitFor\n    label: com.apple.settings.general\n    traits: Button\n    timeout: 5\n  - action: dom\n    save: true\n    name: simulator-flow-smoke-dom\n    print: false\n  - action: screenshot\n    name: simulator-flow-smoke-screenshot\n  - action: oslog\n    clear: true\n    bundleId: com.apple.Preferences\n  - action: swipe\n    distance: 180\n    dir: forth\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-smoke-oslog\n    bundleId: com.apple.Preferences\n  - action: activateApp\n    bundleId: com.apple.Preferences\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-flow-smoke-raw\n    print: false\n');
+  writeFile(path.join(flowDir, 'standard-smoke.yaml'), 'name: simulator-standard-smoke-flow\napp: com.apple.Preferences\nsteps:\n  - action: waitFor\n    label: com.apple.settings.general\n    traits: Button\n    timeout: 5\n  - action: dom\n    save: true\n    name: simulator-flow-smoke-dom\n    print: false\n  - action: screenshot\n    name: simulator-flow-smoke-screenshot\n  - action: oslog\n    clear: true\n    bundleId: com.apple.Preferences\n  - action: swipe\n    distance: 300\n    dir: forth\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-smoke-oslog\n    bundleId: com.apple.Preferences\n  - action: activateApp\n    bundleId: com.apple.Preferences\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-flow-smoke-raw\n    print: false\n');
 }
 
 async function runDomPerfCase() {
@@ -943,7 +951,7 @@ function buildCases() {
     { id: 'LP-3', run: () => runCaseContains('LP-3', 'Longpress', ['longpress', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'LP-4', run: () => runCaseContains('LP-4', 'Longpress', ['longpress', 'About', '--duration', '500', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
     { id: 'LP-5', run: () => runCaseContains('LP-5', 'Longpress', ['longpress', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'LP-6', run: () => runCaseContains('LP-6', 'Longpress', ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
+    { id: 'LP-6', run: () => runCaseContains('LP-6', 'Longpress', ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid], openHomeScreenWithSafariIcon) },
     { id: 'DOM-5B', run: () => runCaseContains('DOM-5B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh', '--udid', sim.udid], () => openSpringboardIconMenu('DOM-5B')) },
     { id: 'SW-16B', run: () => runCaseContains('SW-16B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh', '--udid', sim.udid], () => openSpringboardIconMenu('SW-16B')) },
   ]);
@@ -1006,6 +1014,15 @@ function buildCases() {
     { id: 'TA-2', run: () => runCaseContains('TA-2', 'terminated', ['terminateApp', 'com.apple.Preferences', '--udid', sim.udid], settingsHome) },
     { id: 'AA-6', run: () => runCaseContains('AA-6', 'activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
     { id: 'OU-1', run: () => runCaseContains('OU-1', 'Opened URL: https://example.com', ['open', 'https://example.com', '--udid', sim.udid]) },
+    { id: 'OU-2', run: async () => {
+      if (!selected('OU-2')) return recordSkip('OU-2');
+      console.log('[sim-test] RUN OU-2: ios-use stop && open https://example.com --udid <sim>');
+      const stop = runCliToFiles(['stop'], path.join(artifactDir, 'OU-2-stop.out'), path.join(artifactDir, 'OU-2-stop.err'));
+      const open = runCliToFiles(['open', 'https://example.com', '--udid', sim.udid], path.join(artifactDir, 'OU-2.out'), path.join(artifactDir, 'OU-2.err'));
+      await waitForDriver();
+      if (stop.code === 0 && open.code === 0 && open.stdout.includes('Opened URL: https://example.com')) recordPass('OU-2');
+      else recordFail('OU-2', stop.stdout + stop.stderr + open.stdout + open.stderr);
+    } },
     { id: 'HOME-1', run: () => runCaseContains('HOME-1', 'Home', ['home', '--udid', sim.udid]) },
     { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--fresh', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
     { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--fresh', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },

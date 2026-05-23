@@ -200,6 +200,132 @@ final class IOSUseCLITests: XCTestCase {
         }
     }
 
+    func testOpenURLActiveSimulatorUsesSimctlWithoutDriver() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-active-sim-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try SessionService.writeSimulatorSession(
+            udid: "SIM-1",
+            deviceName: "iPhone",
+            deviceVersion: "26.0",
+            paths: paths
+        )
+        var shellCalls: [(String, [String])] = []
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            shellCalls.append((executable, arguments))
+            return ""
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("open URL for active simulator should not create a driver client")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            Shell.runOverrideForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "retouch://debug"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "Opened URL: retouch://debug\n")
+        XCTAssertTrue(result.stderr.isEmpty)
+        XCTAssertEqual(shellCalls.count, 1)
+        XCTAssertEqual(shellCalls.first?.0, "xcrun")
+        XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", "SIM-1", "retouch://debug"])
+    }
+
+    func testOpenURLExplicitBootedSimulatorUsesSimctlWithoutConfig() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-explicit-sim-\(UUID().uuidString)")
+            .path
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            XCTAssertTrue(simulatorOnly)
+            return [IOSDevice(name: "iPhone", version: "26.0", udid: "SIM-1", kind: .simulator)]
+        }
+        var shellCalls: [(String, [String])] = []
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            shellCalls.append((executable, arguments))
+            return ""
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("open URL for explicit booted simulator should not create a driver client")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            DeviceService.listDevicesOverrideForTesting = nil
+            DeviceService.resetCacheForTesting()
+            Shell.runOverrideForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com", "--udid", "SIM-1"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "Opened URL: https://example.com\n")
+        XCTAssertEqual(shellCalls.map(\.0), ["xcrun"])
+        XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", "SIM-1", "https://example.com"])
+    }
+
+    func testOpenURLInvalidURLFailsBeforeDriverOrShell() {
+        Shell.runOverrideForTesting = { _, _, _, _ in
+            XCTFail("invalid URL should fail before shell")
+            return ""
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("invalid URL should fail before driver")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            Shell.runOverrideForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI().run(arguments: ["open", "://missing"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("Invalid URL: ://missing"))
+    }
+
+    func testOpenURLRealDeviceFallsBackToLegacyDriverPath() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-real-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-CMD":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            XCTAssertTrue(simulatorOnly)
+            return []
+        }
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-CMD"] }
+        var openedURLs: [String] = []
+        IOSUseCLI.driverClientFactoryForTesting = { session in
+            XCTAssertEqual(session?.udid, "REAL-CMD")
+            XCTAssertEqual(session?.deviceType, "real")
+            return FakeDriverCommandClient(openURLHandler: { url in
+                openedURLs.append(url)
+                return ForySimpleStringPayload(value: url)
+            })
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            DeviceService.listDevicesOverrideForTesting = nil
+            DeviceService.usbDeviceUdidsOverrideForTesting = nil
+            DeviceService.resetCacheForTesting()
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com", "--udid", "REAL-CMD"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "Opened URL: https://example.com\n")
+        XCTAssertEqual(openedURLs, ["https://example.com"])
+    }
+
     func testDriverCommandNamesMatchWireCommands() {
         let commands = Set(DriverCommand.allCases.map(\.rawValue))
 
@@ -265,9 +391,18 @@ final class IOSUseCLITests: XCTestCase {
 
 private final class FakeDriverCommandClient: DriverCommandClient {
     private let domHandler: () throws -> ForyDomPayload
+    private let openURLHandler: (String) throws -> ForySimpleStringPayload
 
-    init(domHandler: @escaping () throws -> ForyDomPayload) {
+    init(
+        domHandler: @escaping () throws -> ForyDomPayload = {
+            throw CLIParseError.invalidValue("unexpected dom")
+        },
+        openURLHandler: @escaping (String) throws -> ForySimpleStringPayload = { _ in
+            throw CLIParseError.invalidValue("unexpected openURL")
+        }
+    ) {
         self.domHandler = domHandler
+        self.openURLHandler = openURLHandler
     }
 
     func close() {}
@@ -317,7 +452,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     }
 
     func openURL(url: String) throws -> ForySimpleStringPayload {
-        throw CLIParseError.invalidValue("unexpected openURL")
+        try openURLHandler(url)
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
