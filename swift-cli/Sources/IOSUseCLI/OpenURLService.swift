@@ -18,17 +18,63 @@ enum OpenURLService {
             try openSimulator(url: validated, udid: simulatorUdid)
             return true
         }
+        if let realUdid = try realDeviceUdid(session: session, paths: paths) {
+            try openRealDevice(url: validated, udid: realUdid)
+            return true
+        }
         return false
     }
 
     static func openHostSideIfAvailable(url: String, udid: String?, deviceType: String?, paths: IOSUsePaths) throws -> Bool {
         let validated = try validatedURL(url)
-        guard deviceType == "simulator" else { return false }
-        guard let udid, !udid.isEmpty else {
-            throw CLIParseError.invalidValue("openURL requires a simulator UDID")
+        switch deviceType {
+        case "simulator":
+            guard let udid, !udid.isEmpty else {
+                throw CLIParseError.invalidValue("openURL requires a simulator UDID")
+            }
+            try openSimulator(url: validated, udid: udid)
+            return true
+        case "real":
+            guard let udid, !udid.isEmpty else {
+                throw CLIParseError.invalidValue("openURL requires a real device UDID")
+            }
+            try openRealDevice(url: validated, udid: udid)
+            return true
+        default:
+            return false
         }
-        try openSimulator(url: validated, udid: udid)
-        return true
+    }
+
+    private static func realDeviceUdid(session: SessionOptions, paths: IOSUsePaths) throws -> String? {
+        if let requested = session.udid {
+            if let current = SessionService.read(paths: paths),
+               current.udid == requested,
+               current.deviceType == "real" {
+                return requested
+            }
+            if (try? DeviceService.isUsbDeviceConnected(udid: requested)) == true {
+                return requested
+            }
+            return nil
+        }
+
+        guard let current = SessionService.read(paths: paths),
+              current.deviceType == "real" else {
+            return try DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
+        }
+        return current.udid
+    }
+
+    private static func openRealDevice(url: String, udid: String) throws {
+        _ = try Shell.run("xcrun", arguments: [
+            "devicectl",
+            "device",
+            "process",
+            "launch",
+            "--device", udid,
+            "--payload-url", url,
+            "com.apple.springboard",
+        ])
     }
 
     private static func simulatorUdid(session: SessionOptions, paths: IOSUsePaths) throws -> String? {

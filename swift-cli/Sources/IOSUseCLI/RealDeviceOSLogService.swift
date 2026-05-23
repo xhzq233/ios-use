@@ -207,6 +207,7 @@ private final class PlainDeviceStream: DeviceStream {
 
     init(fd: Int32) {
         self.fd = fd
+        setSocketNoSigPipe(fd)
     }
 
     func write(_ data: Data) throws {
@@ -266,6 +267,7 @@ private final class OpenSSLDeviceStream: DeviceStream {
         self.outputPipe = Pipe()
         self.errorPipe = Pipe()
         self.input = inputPipe.fileHandleForWriting
+        setNoSigPipe(input.fileDescriptor)
         self.process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [
@@ -419,6 +421,8 @@ private final class LocalFDProxy {
         self.targetFD = targetFD
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw CLIParseError.invalidValue("failed to create TLS proxy socket") }
+        setSocketNoSigPipe(fd)
+        setSocketNoSigPipe(targetFD)
         self.listenerFD = fd
 
         var one: Int32 = 1
@@ -488,6 +492,7 @@ private final class LocalFDProxy {
             var len = socklen_t(MemoryLayout<sockaddr>.size)
             let accepted = Darwin.accept(self.listenerFD, &addr, &len)
             guard accepted >= 0 else { return }
+            setSocketNoSigPipe(accepted)
             self.lock.lock()
             if self.closed {
                 self.lock.unlock()
@@ -550,6 +555,7 @@ enum Usbmux {
     static func openSocket() throws -> Int32 {
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw CLIParseError.invalidValue("failed to open usbmux socket") }
+        setSocketNoSigPipe(fd)
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let path = Array("/var/run/usbmuxd".utf8CString)
@@ -704,6 +710,15 @@ private func setNonBlocking(_ fd: Int32) {
     } else if ProcessInfo.processInfo.environment["IOS_USE_DEBUG_OSLOG"] == "1" {
         FileHandle.standardError.write(Data("[real-oslog] fcntl get failed errno=\(errno)\n".utf8))
     }
+}
+
+private func setNoSigPipe(_ fd: Int32) {
+    _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+}
+
+private func setSocketNoSigPipe(_ fd: Int32) {
+    var noSigPipe: Int32 = 1
+    _ = Darwin.setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
 }
 
 private func fdZero(_ set: inout fd_set) {
