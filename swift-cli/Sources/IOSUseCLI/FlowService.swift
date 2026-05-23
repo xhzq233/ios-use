@@ -31,6 +31,7 @@ public enum FlowService {
         let context = FlowRunContext()
         let flow = try loadFlowFile(resolvedFile)
         context.flowCache[resolvedFile] = flow
+        try compileFlow(file: resolvedFile, context: context, stack: [])
         let bootstrapVars = try resolveVars(rawVars: flow.vars, inheritedVars: options.externalVars)
         let flowApp = try flow.app.map { try resolveTemplates($0, vars: bootstrapVars) } as? String
         let needNSLog = try flow.needNSLog.map { try resolveTemplates($0, vars: bootstrapVars) }
@@ -96,25 +97,33 @@ public enum FlowService {
     }
 
     static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil) throws -> (stdout: String, outputs: [String: Any]) {
-        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext())
+        let context = FlowRunContext()
+        try compileFlow(file: file, context: context, stack: [])
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: context)
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
 
     static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, deviceType: String?) throws -> (stdout: String, outputs: [String: Any]) {
-        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: deviceType, context: FlowRunContext())
+        let context = FlowRunContext()
+        try compileFlow(file: file, context: context, stack: [])
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: deviceType, context: context)
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
 
     static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, nsloggerServer: NSLoggerServer) throws -> (stdout: String, outputs: [String: Any]) {
-        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext(), nsloggerServer: nsloggerServer)
+        let context = FlowRunContext()
+        try compileFlow(file: file, context: context, stack: [])
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: context, nsloggerServer: nsloggerServer)
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
 
     static func runForTesting(file: String, externalVars: [String: Any] = [:], paths: IOSUsePaths, driver: FlowDriver, udid: String? = nil, nslogCapture: NSLogCaptureTarget) throws -> (stdout: String, outputs: [String: Any]) {
-        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: FlowRunContext(), nslogCapture: nslogCapture)
+        let context = FlowRunContext()
+        try compileFlow(file: file, context: context, stack: [])
+        var runner = FlowRunner(paths: paths, driver: driver, udid: udid, deviceType: nil, context: context, nslogCapture: nslogCapture)
         let outputs = try runner.run(file: file, inheritedVars: externalVars, stack: [])
         return (runner.output, outputs)
     }
@@ -131,6 +140,7 @@ private struct FlowFile {
 
 private final class FlowRunContext {
     var flowCache: [String: FlowFile] = [:]
+    var compiledFiles = Set<String>()
 }
 
 private struct FlowRunner {
@@ -511,6 +521,221 @@ private func loadFlowFile(_ path: String) throws -> FlowFile {
     )
 }
 
+private let flowStepGlobalKeys: Set<String> = ["action", "comment", "text"]
+
+private let flowStepAllowedKeys: [String: Set<String>] = [
+    "waitFor": ["label", "timeout", "traits", "cindex"],
+    "find": ["label", "traits", "cindex", "outputs", "print"],
+    "dom": ["raw", "fresh", "candidates", "outputs", "save", "print", "name"],
+    "tap": ["label", "offset", "traits", "cindex"],
+    "longpress": ["label", "duration", "traits", "cindex"],
+    "input": ["label", "content", "traits", "cindex"],
+    "swipe": ["dir", "from", "to", "distance", "traits", "cindex", "outputs"],
+    "screenshot": ["name"],
+    "activateApp": ["bundleId"],
+    "terminateApp": ["bundleId"],
+    "home": [],
+    "openURL": ["url", "content"],
+    "dismissAlert": ["index"],
+    "oslog": ["clear", "pattern", "flags", "bundleId", "timeout", "name"],
+    "nslog": ["pattern", "flags", "timeout", "clearAfterRead", "name"],
+    "runFlow": ["file", "vars", "outputs"],
+    "returnIf": ["value", "is"],
+    "sleep": ["ms"],
+]
+
+private let flowOutputActions: Set<String> = ["find", "dom", "runFlow", "swipe"]
+
+private func compileFlow(file: String, context: FlowRunContext, stack: [String]) throws {
+    let resolvedFile = URL(fileURLWithPath: file).standardized.path
+    if context.compiledFiles.contains(resolvedFile) {
+        return
+    }
+    guard FileManager.default.fileExists(atPath: resolvedFile) else {
+        throw CLIParseError.invalidValue("Flow file not found: \(file)")
+    }
+    if stack.contains(resolvedFile) {
+        throw CLIParseError.invalidValue("runFlow cycle detected: \((stack + [resolvedFile]).joined(separator: " -> "))")
+    }
+
+    let flow = try cachedFlowFile(resolvedFile, context: context)
+    _ = try outputNames(flow.outputs, fieldName: "flow outputs", allowMultiple: true)
+    if let vars = flow.vars as Any?, !(vars is [String: Any]) {
+        throw CLIParseError.invalidValue("flow vars must be an object")
+    }
+    try validateNeedNSLogForCompile(flow.needNSLog)
+
+    let nextStack = stack + [resolvedFile]
+    for (index, step) in flow.steps.enumerated() {
+        try compileFlowStep(step, index: index + 1, baseFile: resolvedFile, context: context, stack: nextStack)
+    }
+    context.compiledFiles.insert(resolvedFile)
+}
+
+private func cachedFlowFile(_ path: String, context: FlowRunContext) throws -> FlowFile {
+    let resolved = URL(fileURLWithPath: path).standardized.path
+    if let cached = context.flowCache[resolved] {
+        return cached
+    }
+    let flow = try loadFlowFile(resolved)
+    context.flowCache[resolved] = flow
+    return flow
+}
+
+private func compileFlowStep(_ step: [String: Any], index: Int, baseFile: String, context: FlowRunContext, stack: [String]) throws {
+    let action = try requiredStaticString(step["action"], field: "step \(index).action")
+    guard let allowed = flowStepAllowedKeys[action] else {
+        throw CLIParseError.invalidValue("unsupported flow action: \(action)")
+    }
+
+    if hasOutputs(step["outputs"]), !flowOutputActions.contains(action) {
+        throw CLIParseError.invalidValue("\(action) does not support outputs")
+    }
+
+    let allowedKeys = allowed.union(flowStepGlobalKeys)
+    for key in step.keys where !allowedKeys.contains(key) {
+        throw CLIParseError.invalidValue("\(action) has unknown field \"\(key)\"")
+    }
+
+    switch action {
+    case "waitFor":
+        try validateRequiredTarget(step["label"], field: "waitFor.label")
+        try validateStaticNumber(step["timeout"], field: "waitFor.timeout")
+        try validateStaticString(step["traits"], field: "waitFor.traits")
+        try validateStaticInt32(step["cindex"], field: "waitFor.cindex")
+
+    case "find":
+        try validateRequiredTarget(step["label"], field: "find.label")
+        try validateStaticString(step["traits"], field: "find.traits")
+        try validateStaticInt32(step["cindex"], field: "find.cindex")
+        _ = try outputNames(step["outputs"], fieldName: "find outputs", allowMultiple: false)
+        try validateStaticBool(step["print"], field: "find.print")
+
+    case "dom":
+        try validateStaticBool(step["raw"], field: "dom.raw")
+        try validateStaticBool(step["fresh"], field: "dom.fresh")
+        try validateStaticStringList(step["candidates"], field: "dom.candidates")
+        _ = try outputNames(step["outputs"], fieldName: "dom outputs", allowMultiple: false)
+        try validateStaticBool(step["save"], field: "dom.save")
+        try validateStaticBool(step["print"], field: "dom.print")
+        try validateStaticString(step["name"], field: "dom.name")
+
+    case "tap":
+        try validateRequiredTarget(step["label"], field: "tap.label")
+        try validateTapOffsetForCompile(step["offset"])
+        try validateStaticString(step["traits"], field: "tap.traits")
+        try validateStaticInt32(step["cindex"], field: "tap.cindex")
+
+    case "longpress":
+        try validateRequiredTarget(step["label"], field: "longpress.label")
+        try validateStaticInt(step["duration"], field: "longpress.duration")
+        try validateStaticString(step["traits"], field: "longpress.traits")
+        try validateStaticInt32(step["cindex"], field: "longpress.cindex")
+
+    case "input":
+        try validateRequiredStaticString(step["label"], field: "input.label")
+        try validateRequiredStaticString(step["content"], field: "input.content")
+        try validateStaticString(step["traits"], field: "input.traits")
+        try validateStaticInt32(step["cindex"], field: "input.cindex")
+
+    case "swipe":
+        try validateStaticSwipeDir(step["dir"])
+        try validateOptionalTarget(step["to"], field: "swipe.to")
+        try validateOptionalTarget(step["from"], field: "swipe.from")
+        try validateStaticNumber(step["distance"], field: "swipe.distance")
+        try validateStaticString(step["traits"], field: "swipe.traits")
+        try validateStaticInt32(step["cindex"], field: "swipe.cindex")
+        _ = try outputNames(step["outputs"], fieldName: "swipe outputs", allowMultiple: false)
+
+    case "screenshot":
+        try validateStaticString(step["name"], field: "screenshot.name")
+
+    case "activateApp":
+        try validateStaticString(step["bundleId"], field: "activateApp.bundleId")
+
+    case "terminateApp":
+        try validateStaticString(step["bundleId"], field: "terminateApp.bundleId")
+
+    case "home":
+        break
+
+    case "openURL":
+        guard !isNull(step["url"]) || !isNull(step["content"]) else {
+            throw CLIParseError.invalidValue("openURL requires url")
+        }
+        let url = try validateStaticString(step["url"], field: "openURL.url")
+        let content = try validateStaticString(step["content"], field: "openURL.content")
+        if let value = url ?? content, !containsTemplate(value) {
+            _ = try OpenURLService.validatedURL(value)
+        }
+
+    case "dismissAlert":
+        try validateStaticInt(step["index"], field: "dismissAlert.index")
+
+    case "oslog":
+        try validateStaticBool(step["clear"], field: "oslog.clear")
+        try validateStaticString(step["pattern"], field: "oslog.pattern")
+        try validateStaticString(step["flags"], field: "oslog.flags")
+        try validateStaticString(step["bundleId"], field: "oslog.bundleId")
+        try validateStaticNumber(step["timeout"], field: "oslog.timeout")
+        try validateStaticString(step["name"], field: "oslog.name")
+
+    case "nslog":
+        try validateRequiredStaticString(step["pattern"], field: "nslog.pattern")
+        try validateStaticString(step["flags"], field: "nslog.flags")
+        try validateStaticNumber(step["timeout"], field: "nslog.timeout")
+        try validateStaticBool(step["clearAfterRead"], field: "nslog.clearAfterRead")
+        try validateStaticString(step["name"], field: "nslog.name")
+
+    case "runFlow":
+        let childFileValue = try requiredStaticString(step["file"], field: "runFlow.file")
+        guard let vars = step["vars"], !isNull(vars) else {
+            try validateRunFlowOutputs(step["outputs"], childFileValue: childFileValue, baseFile: baseFile, context: context, stack: stack)
+            return
+        }
+        guard vars is [String: Any] || containsTemplate(vars) else {
+            throw CLIParseError.invalidValue("runFlow.vars must be an object")
+        }
+        try validateRunFlowOutputs(step["outputs"], childFileValue: childFileValue, baseFile: baseFile, context: context, stack: stack)
+
+    case "returnIf":
+        guard step.keys.contains("value") else {
+            throw CLIParseError.invalidValue("returnIf requires \"value\"")
+        }
+        if !containsTemplate(step["is"]), !isAllowedReturnMatcher(step["is"]) {
+            throw CLIParseError.invalidValue("returnIf requires \"is\" to be true, false, or null")
+        }
+
+    case "sleep":
+        if let ms = try validateStaticInt(step["ms"], field: "sleep.ms") {
+            let maxSleepMilliseconds = Int(UInt32.max / UInt32(IOSUseProtocol.microsecondsPerMillisecond))
+            guard ms <= maxSleepMilliseconds else {
+                throw CLIParseError.invalidValue("sleep.ms is too large")
+            }
+        }
+
+    default:
+        break
+    }
+}
+
+private func validateRunFlowOutputs(_ rawOutputs: Any?, childFileValue: String, baseFile: String, context: FlowRunContext, stack: [String]) throws {
+    let requested = try outputNames(rawOutputs, fieldName: "runFlow outputs", allowMultiple: true)
+    guard !containsTemplate(childFileValue) else { return }
+    let childFile = URL(fileURLWithPath: childFileValue, relativeTo: URL(fileURLWithPath: baseFile).deletingLastPathComponent()).standardized.path
+    try compileFlow(file: childFile, context: context, stack: stack)
+    let childFlow = try cachedFlowFile(childFile, context: context)
+    let declared = try outputNames(childFlow.outputs, fieldName: "flow outputs", allowMultiple: true)
+    for name in requested where !declared.contains(name) {
+        throw CLIParseError.invalidValue("runFlow requested undeclared output \"\(name)\" from \(childFile)")
+    }
+}
+
+private func validateNeedNSLogForCompile(_ raw: Any?) throws {
+    guard !isNull(raw), !containsTemplate(raw) else { return }
+    _ = try nsloggerOptions(raw)
+}
+
 private func nsloggerOptions(_ raw: Any?) throws -> NSLoggerServerOptions? {
     guard !isNull(raw) else { return nil }
     if let enabled = raw as? Bool {
@@ -810,6 +1035,185 @@ private func formatReturnMatcher(_ value: Any?) -> String {
 
 private func isNull(_ value: Any?) -> Bool {
     value == nil || value is NSNull
+}
+
+private func hasOutputs(_ raw: Any?) -> Bool {
+    raw != nil && !(raw is NSNull)
+}
+
+private func containsTemplate(_ value: Any?) -> Bool {
+    guard let value, !isNull(value) else { return false }
+    if let string = value as? String {
+        return string.contains("${")
+    }
+    if let list = value as? [Any] {
+        return list.contains { containsTemplate($0) }
+    }
+    if let dict = value as? [String: Any] {
+        return dict.values.contains { containsTemplate($0) }
+    }
+    return false
+}
+
+private func requiredStaticString(_ value: Any?, field: String) throws -> String {
+    guard !isNull(value) else {
+        throw CLIParseError.invalidValue("\(field) must be a string")
+    }
+    guard let string = value as? String, !string.isEmpty else {
+        throw CLIParseError.invalidValue("\(field) must be a string")
+    }
+    return string
+}
+
+@discardableResult
+private func validateRequiredStaticString(_ value: Any?, field: String) throws -> String {
+    try requiredStaticString(value, field: field)
+}
+
+@discardableResult
+private func validateStaticString(_ value: Any?, field: String) throws -> String? {
+    guard !isNull(value) else { return nil }
+    guard let string = value as? String else {
+        throw CLIParseError.invalidValue("\(field) must be a string")
+    }
+    return string
+}
+
+private func validateStaticStringList(_ value: Any?, field: String) throws {
+    guard !isNull(value) else { return }
+    guard let list = value as? [Any] else {
+        throw CLIParseError.invalidValue("\(field) must be a string array")
+    }
+    for item in list {
+        guard let string = item as? String, !string.isEmpty else {
+            throw CLIParseError.invalidValue("\(field) must contain only non-empty strings")
+        }
+    }
+}
+
+private func validateStaticBool(_ value: Any?, field: String) throws {
+    guard !isNull(value), !containsTemplate(value) else { return }
+    guard value is Bool else {
+        throw CLIParseError.invalidValue("\(field) must be a boolean")
+    }
+}
+
+@discardableResult
+private func validateStaticInt(_ value: Any?, field: String) throws -> Int? {
+    guard !isNull(value), !containsTemplate(value) else { return nil }
+    let parsed: Int?
+    if let int = value as? Int {
+        parsed = int
+    } else if let int32 = value as? Int32 {
+        parsed = Int(int32)
+    } else if let double = value as? Double, double.isFinite, double.rounded(.towardZero) == double {
+        parsed = Int(exactly: double)
+    } else {
+        parsed = nil
+    }
+    guard let parsed else {
+        throw CLIParseError.invalidValue("\(field) must be an integer")
+    }
+    guard parsed >= 0 else {
+        throw CLIParseError.invalidValue("\(field) must be non-negative")
+    }
+    return parsed
+}
+
+private func validateStaticInt32(_ value: Any?, field: String) throws {
+    guard !isNull(value), !containsTemplate(value) else { return }
+    let parsed: Int?
+    if let int = value as? Int {
+        parsed = int
+    } else if let int32 = value as? Int32 {
+        parsed = Int(int32)
+    } else if let double = value as? Double, double.isFinite, double.rounded(.towardZero) == double {
+        parsed = Int(exactly: double)
+    } else {
+        parsed = nil
+    }
+    guard let parsed else {
+        throw CLIParseError.invalidValue("\(field) must be an integer")
+    }
+    guard parsed >= Int(Int32.min), parsed <= Int(Int32.max) else {
+        throw CLIParseError.invalidValue("\(field) is out of Int32 range")
+    }
+}
+
+private func validateStaticNumber(_ value: Any?, field: String) throws {
+    guard !isNull(value), !containsTemplate(value) else { return }
+    let parsed: Double?
+    if let double = value as? Double {
+        parsed = double
+    } else if let int = value as? Int {
+        parsed = Double(int)
+    } else if let int32 = value as? Int32 {
+        parsed = Double(int32)
+    } else {
+        parsed = nil
+    }
+    guard let parsed, parsed.isFinite else {
+        throw CLIParseError.invalidValue("\(field) must be a finite number")
+    }
+    guard parsed >= 0 else {
+        throw CLIParseError.invalidValue("\(field) must be non-negative")
+    }
+}
+
+private func validateRequiredTarget(_ value: Any?, field: String) throws {
+    try validateOptionalTarget(value, field: field)
+    if isNull(value) {
+        throw CLIParseError.invalidValue("\(field) must be a non-empty string or [x, y] point")
+    }
+    if let string = value as? String, string.isEmpty {
+        throw CLIParseError.invalidValue("\(field) must be a non-empty string or [x, y] point")
+    }
+}
+
+private func validateOptionalTarget(_ value: Any?, field: String) throws {
+    guard !isNull(value) else { return }
+    if containsTemplate(value) { return }
+    _ = try target(value)
+}
+
+private func validateStaticSwipeDir(_ value: Any?) throws {
+    guard let dir = try validateStaticString(value, field: "swipe.dir"), !containsTemplate(dir) else { return }
+    if dir != "forth", dir != "back" {
+        throw CLIParseError.invalidValue("swipe.dir must be \"forth\" or \"back\"")
+    }
+}
+
+private func validateTapOffsetForCompile(_ value: Any?) throws {
+    guard !isNull(value) else { return }
+    guard let offset = value as? [String: Any] else {
+        throw CLIParseError.invalidValue("tap offset must be a dict with x/y/xRatio/yRatio keys")
+    }
+    let allowed = Set(["x", "y", "xRatio", "yRatio"])
+    for key in offset.keys where !allowed.contains(key) {
+        throw CLIParseError.invalidValue("tap offset must be a dict with x/y/xRatio/yRatio keys")
+    }
+    if offset["x"] != nil, offset["xRatio"] != nil {
+        throw CLIParseError.invalidValue("tap offset cannot specify both x and xRatio")
+    }
+    if offset["y"] != nil, offset["yRatio"] != nil {
+        throw CLIParseError.invalidValue("tap offset cannot specify both y and yRatio")
+    }
+    for key in ["x", "y"] {
+        if !isNull(offset[key]), !containsTemplate(offset[key]) {
+            try validateOffsetNumber(offset[key], message: "tap offset x and y must be finite numbers")
+        }
+    }
+    for key in ["xRatio", "yRatio"] {
+        if !isNull(offset[key]), !containsTemplate(offset[key]) {
+            try validateOffsetNumber(offset[key], message: "tap offset xRatio and yRatio must be finite numbers")
+        }
+    }
+}
+
+private func validateOffsetNumber(_ value: Any?, message: String) throws {
+    if let double = value as? Double, double.isFinite { return }
+    if value is Int || value is Int32 { return }
+    throw CLIParseError.invalidValue(message)
 }
 
 private func requiredString(_ value: Any?, field: String) throws -> String {
