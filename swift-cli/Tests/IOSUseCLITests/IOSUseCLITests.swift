@@ -289,33 +289,31 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("Invalid URL: ://missing"))
     }
 
-    func testOpenURLRealDeviceFallsBackToLegacyDriverPath() throws {
+    func testOpenURLExplicitRealDeviceUsesDevicectlSpringBoardWithoutDriver() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-open-url-real-\(UUID().uuidString)")
             .path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try """
-        {"devices":{"REAL-CMD":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
-        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             XCTAssertTrue(simulatorOnly)
             return []
         }
         DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-CMD"] }
-        var openedURLs: [String] = []
+        var shellCalls: [(String, [String])] = []
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            shellCalls.append((executable, arguments))
+            return ""
+        }
         IOSUseCLI.driverClientFactoryForTesting = { session in
-            XCTAssertEqual(session?.udid, "REAL-CMD")
-            XCTAssertEqual(session?.deviceType, "real")
-            return FakeDriverCommandClient(openURLHandler: { url in
-                openedURLs.append(url)
-                return ForySimpleStringPayload(value: url)
-            })
+            XCTFail("open URL for real device should not create a driver client, got session \(String(describing: session))")
+            return FakeDriverCommandClient()
         }
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
             DeviceService.listDevicesOverrideForTesting = nil
             DeviceService.usbDeviceUdidsOverrideForTesting = nil
             DeviceService.resetCacheForTesting()
+            Shell.runOverrideForTesting = nil
             IOSUseCLI.driverClientFactoryForTesting = nil
         }
 
@@ -323,7 +321,60 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "Opened URL: https://example.com\n")
-        XCTAssertEqual(openedURLs, ["https://example.com"])
+        XCTAssertEqual(shellCalls.count, 1)
+        XCTAssertEqual(shellCalls.first?.0, "xcrun")
+        XCTAssertEqual(shellCalls.first?.1, [
+            "devicectl",
+            "device",
+            "process",
+            "launch",
+            "--device", "REAL-CMD",
+            "--payload-url", "https://example.com",
+            "com.apple.springboard",
+        ])
+    }
+
+    func testOpenURLDefaultUsbRealDeviceUsesDevicectlWithoutDriver() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-default-real-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            XCTAssertFalse(simulatorOnly)
+            return [IOSDevice(name: "iPhone", version: "26.0", udid: "REAL-DEFAULT", kind: .real)]
+        }
+        var shellCalls: [(String, [String])] = []
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            shellCalls.append((executable, arguments))
+            return ""
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { session in
+            XCTFail("open URL for default real device should not create a driver client, got session \(String(describing: session))")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            DeviceService.listDevicesOverrideForTesting = nil
+            DeviceService.resetCacheForTesting()
+            Shell.runOverrideForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "Opened URL: https://example.com\n")
+        XCTAssertEqual(shellCalls.count, 1)
+        XCTAssertEqual(shellCalls.first?.0, "xcrun")
+        XCTAssertEqual(shellCalls.first?.1, [
+            "devicectl",
+            "device",
+            "process",
+            "launch",
+            "--device", "REAL-DEFAULT",
+            "--payload-url", "https://example.com",
+            "com.apple.springboard",
+        ])
     }
 
     func testDriverCommandNamesMatchWireCommands() {
