@@ -6,7 +6,6 @@ protocol FlowDriver {
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
     func home() throws
-    func openURL(url: String) throws -> ForySimpleStringPayload
     func dismissAlert(index: Int?) throws -> ForyAlertPayload
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload
     func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload
@@ -425,7 +424,7 @@ private struct FlowRunner {
             }
             let validatedURL = try OpenURLService.validatedURL(url)
             if try !OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: udid, deviceType: deviceType, paths: paths) {
-                _ = try driver.openURL(url: validatedURL)
+                throw CLIParseError.invalidValue("openURL requires a booted simulator, active session, or USB real device")
             }
 
         case "dismissAlert":
@@ -1475,10 +1474,6 @@ private final class RecoveringFlowDriver: FlowDriver {
 
     func home() throws {
         try run { try $0.home() }
-    }
-
-    func openURL(url: String) throws -> ForySimpleStringPayload {
-        try run { try $0.openURL(url: url) }
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {

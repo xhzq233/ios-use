@@ -268,10 +268,7 @@ public struct IOSUseCLI: Sendable {
                 if try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: session, paths: paths) {
                     return CLIResult(exitCode: 0, stdout: "Opened URL: \(validatedURL)\n")
                 }
-                _ = try withPreparedDriverClient(session) { client in
-                    try client.openURL(url: validatedURL)
-                }
-                return CLIResult(exitCode: 0, stdout: "Opened URL: \(validatedURL)\n")
+                throw CLIParseError.invalidValue("openURL requires a booted simulator, active session, or USB real device")
             case .dismissAlert(let index, _):
                 let payload = try withPreparedDriverClient(action.session) { client in
                     try client.dismissAlert(index: index)

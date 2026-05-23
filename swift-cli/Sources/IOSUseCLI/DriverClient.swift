@@ -52,7 +52,6 @@ protocol DriverCommandClient: AnyObject {
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
     func home() throws
-    func openURL(url: String) throws -> ForySimpleStringPayload
     func dismissAlert(index: Int?) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
 }
@@ -150,10 +149,6 @@ final class DriverClient: DriverCommandClient {
 
     func home() throws {
         _ = try sendRawPayload(command: DriverCommand.home.rawValue, payload: Data())
-    }
-
-    func openURL(url: String) throws -> ForySimpleStringPayload {
-        try send(OpenURLCommand.self, args: ForyOpenURLArgs(url: url))
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {

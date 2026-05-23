@@ -42,19 +42,4 @@ final class SessionTests: XCTestCase {
         XCTAssertFalse(shouldLaunchViaLaunchServices(state: .runningForeground))
     }
 
-    func testOpenURLUsesSystemOnlyWhenApplicationCanOpenURL() throws {
-        let allowed = Set(["http", "https", "prefs"])
-        let canOpen: (URL) -> Bool = { url in
-            guard let scheme = url.scheme?.lowercased() else { return false }
-            return allowed.contains(scheme)
-        }
-
-        XCTAssertTrue(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "http://127.0.0.1:9088/ca.cer")), canOpen: canOpen))
-        XCTAssertTrue(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "https://example.com")), canOpen: canOpen))
-        XCTAssertTrue(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "HTTPS://example.com")), canOpen: canOpen))
-        XCTAssertTrue(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "prefs:root=WIFI")), canOpen: canOpen))
-
-        XCTAssertFalse(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "xtretouch://open")), canOpen: canOpen))
-        XCTAssertFalse(shouldOpenURLViaSystem(try XCTUnwrap(URL(string: "itms-services://?action=download-manifest")), canOpen: canOpen))
-    }
 }
