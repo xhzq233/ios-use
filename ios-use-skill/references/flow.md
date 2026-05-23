@@ -81,6 +81,8 @@ Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
 - 普通字符串字段支持模板替换，例如 `${vars.targetLabel}`
 - 整段 `${...}` 可以传对象或数组原值，不只限于字符串
 - 实现上应在解析后的 flow runtime 合并外部变量，不能靠拼接 YAML 注入新的 `vars:` 块
+- 执行前会先 compile 整个 flow；静态错误会在任何 driver step 执行前失败
+- 含模板的字段在 compile 阶段只校验外层结构，运行时解析后再做最终类型/格式校验
 
 ```yaml
 vars:
@@ -276,6 +278,14 @@ steps:
   name: settings-home
   print: false
 ```
+
+### 6.x Compile 校验
+
+- 未知字段会直接报错，不会静默忽略。
+- `outputs` 只支持 `find` / `dom` / `runFlow` / `swipe`。
+- 静态字段类型严格：`raw: "true"`、`clear: 1`、`offset: "-50,-50"` 都会失败。
+- `offset` 必须写成对象，例如 `{x: -50, y: -50}` 或 `{xRatio: 0.8}`。
+- 静态 `runFlow.file` 的子 flow 会在父 flow 执行前一起校验。
 
 ### 6.4 `swipe`
 
