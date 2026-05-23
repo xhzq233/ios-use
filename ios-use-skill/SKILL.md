@@ -160,6 +160,7 @@ ios-use swipe --dir back --distance 300
 - `dom`
   - `--raw` 输出原始 snapshot 格式化文本字符串（跳过 clean tree，调试用）
   - `--fresh` 忽略缓存，重新构建 snapshot
+  - CLI 展示层可能给 `ScrollView` / `CollectionView` / `Table` 追加 `vertical` / `horizontal`，只用于阅读 DOM；不要把这些方向当成 `find/tap/waitFor/swipe --traits` 的可过滤 trait
 
 - `find`
   - `find <label>` 查找元素。完整 label 优先 exact；无 exact 时回退 contains；歧义和模糊建议不报错，只有真正未找到才报错

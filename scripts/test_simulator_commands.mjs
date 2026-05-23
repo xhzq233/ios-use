@@ -324,7 +324,7 @@ async function runAutoLabelFindCase() {
   const findErr = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: dom auto label then find generated label`);
   const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
-  const match = dom.stdout.match(/^\s+([^\s]+Applicationc\d*) \[CollectionView\]:/m);
+  const match = dom.stdout.match(/^\s+([^\s]+Applicationc\d*) \[CollectionView(?:,[^\]]*)?\]:/m);
   if (dom.code !== 0 || !match) {
     return recordFail(id, dom.stdout + dom.stderr);
   }
@@ -786,7 +786,7 @@ async function runProxyDoctorCase() {
 }
 
 async function runSwiftCLIUnitCases() {
-  const ids = ['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6', 'FLOW-24', 'FLOW-25', 'FLOW-26'];
+  const ids = ['DOM-12', 'PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6', 'FLOW-24', 'FLOW-25', 'FLOW-26'];
   if (!anySelected(ids)) {
     ids.forEach(recordSkip);
     return;
@@ -810,7 +810,7 @@ async function runProxyReadMissingCaptureCase() {
 }
 
 async function runDriverUnitCases() {
-  const ids = ['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'];
+  const ids = ['DOM-9', 'DOM-11', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'];
   if (!anySelected(ids)) {
     ids.forEach(recordSkip);
     return;
@@ -1141,7 +1141,8 @@ function buildCases() {
     { id: 'NSL-4', run: () => runCaseFailsContains('NSL-4', 'ios-use nslog start', ['nslog', 'read']) },
     { id: 'CFG-2', run: () => unsupportedCase('CFG-2', 'real-device signing/install path, not Simulator') },
     { id: 'CFG-3', run: () => unsupportedCase('CFG-3', 'Apple ID first-login signing path, not Simulator and must not touch local credentials') },
-    ...['DOM-9', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'].map(id => ({ id, run: runDriverUnitCases })),
+    ...['DOM-9', 'DOM-11', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'].map(id => ({ id, run: runDriverUnitCases })),
+    { id: 'DOM-12', run: runSwiftCLIUnitCases },
     { id: 'PROXY-1', run: runProxyDoctorCase },
     ...['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'].map(id => ({ id, run: runSwiftCLIUnitCases })),
     { id: 'PROXY-7', run: runProxyReadMissingCaptureCase },

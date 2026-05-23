@@ -61,11 +61,11 @@ final class DriverOutputTests: XCTestCase {
             app: "com.apple.Preferences",
             windowSize: ForyPoint(x: 402, y: 874),
             elements: [
-                ForyDomElement(traits: ["NavigationBar"], childCount: 2),
+                ForyDomElement(traits: ["NavigationBar"], childCount: 2, rect: ForyRect(x: 0, y: 44, w: 402, h: 60)),
                 ForyDomElement(traits: ["Button"], label: "Back", rect: ForyRect(x: 16, y: 54, w: 44, h: 44)),
                 ForyDomElement(traits: ["StaticText"], label: "Settings", rect: ForyRect(x: 156, y: 54, w: 132, h: 44)),
-                ForyDomElement(traits: ["Table"], childCount: 1),
-                ForyDomElement(traits: ["Cell"], childCount: 1, label: "Wi-Fi"),
+                ForyDomElement(traits: ["Table"], childCount: 1, rect: ForyRect(x: 0, y: 100, w: 402, h: 774)),
+                ForyDomElement(traits: ["Cell"], childCount: 1, label: "Wi-Fi", rect: ForyRect(x: 0, y: 100, w: 402, h: 44)),
                 ForyDomElement(traits: ["Switch"], value: "1", rect: ForyRect(x: 340, y: 10, w: 50, h: 30))
             ]
         )
@@ -74,13 +74,66 @@ final class DriverOutputTests: XCTestCase {
 
         XCTAssertTrue(output.contains("""
 Elements:
-  NavigationBar [NavigationBar]:
+  NavigationBar [NavigationBar] (0,44,402,60):
     - Back [Button] (16,54,44,44)
     - Settings [StaticText] (156,54,132,44)
-  Table [Table]:
-    Wi-Fi [Cell]:
+  Table [Table,vertical] (0,100,402,774):
+    Wi-Fi [Cell] (0,100,402,44):
       - =1 [Switch] (340,10,50,30)
 """))
+    }
+
+    func testFormatDomAddsVerticalDirectionInPresentationOnly() {
+        let payload = ForyDomPayload(
+            app: "com.example",
+            elements: [
+                ForyDomElement(traits: ["ScrollView"], childCount: 2),
+                ForyDomElement(traits: ["Cell"], label: "First", rect: ForyRect(x: 0, y: 20, w: 320, h: 44)),
+                ForyDomElement(traits: ["Cell"], label: "Second", rect: ForyRect(x: 0, y: 120, w: 320, h: 44)),
+            ]
+        )
+
+        let output = DriverOutput.formatDom(payload)
+
+        XCTAssertTrue(output.contains("ScrollView [ScrollView,vertical]:"))
+        XCTAssertEqual(payload.elements[0].traits, ["ScrollView"])
+    }
+
+    func testPresentationDomElementsAddsHorizontalDirectionFromDirectChildren() {
+        let elements = [
+            ForyDomElement(traits: ["CollectionView"], childCount: 2),
+            ForyDomElement(traits: ["Cell"], childCount: 1, label: "A", rect: ForyRect(x: 10, y: 20, w: 80, h: 80)),
+            ForyDomElement(traits: ["StaticText"], label: "Nested A", rect: ForyRect(x: 10, y: 20, w: 80, h: 20)),
+            ForyDomElement(traits: ["Cell"], childCount: 1, label: "B", rect: ForyRect(x: 140, y: 20, w: 80, h: 80)),
+            ForyDomElement(traits: ["StaticText"], label: "Nested B", rect: ForyRect(x: 140, y: 20, w: 80, h: 20)),
+        ]
+
+        let presentation = DriverOutput.presentationDomElements(elements)
+
+        XCTAssertEqual(presentation[0].traits, ["CollectionView", "horizontal"])
+        XCTAssertEqual(elements[0].traits, ["CollectionView"])
+    }
+
+    func testPresentationDomElementsDoesNotAddDirectionForWebView() {
+        let elements = [
+            ForyDomElement(traits: ["WebView"], childCount: 1),
+            ForyDomElement(traits: ["StaticText"], label: "Content", rect: ForyRect(x: 0, y: 100, w: 300, h: 40)),
+        ]
+
+        let presentation = DriverOutput.presentationDomElements(elements)
+
+        XCTAssertEqual(presentation[0].traits, ["WebView"])
+    }
+
+    func testPresentationDomElementsDefaultsSingleChildScrollableToVertical() {
+        let elements = [
+            ForyDomElement(traits: ["Table"], childCount: 1),
+            ForyDomElement(traits: ["Cell"], label: "Only", rect: ForyRect(x: 0, y: 100, w: 390, h: 44)),
+        ]
+
+        let presentation = DriverOutput.presentationDomElements(elements)
+
+        XCTAssertEqual(presentation[0].traits, ["Table", "vertical"])
     }
 
     func testFormatElementAndSwipe() {

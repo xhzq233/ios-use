@@ -60,9 +60,7 @@ func serializeDomFlat(from elements: [SnapshotElement]) -> [ForyDomElement] {
         fEl.childCount = Int32(element.childCount)
         if let l = displayName(for: node), !l.isEmpty { fEl.label = l }
         if let value = displayValue(for: node) { fEl.value = value }
-        if element.childCount == 0 {
-            fEl.rect = makeForyRect(node.frame)
-        }
+        fEl.rect = makeForyRect(node.frame)
         return fEl
     }
 }
