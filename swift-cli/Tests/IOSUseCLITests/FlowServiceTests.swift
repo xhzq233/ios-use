@@ -210,6 +210,38 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertTrue(savedText.contains("\"Close\""))
     }
 
+    func testDomSaveUsesPresentationScrollDirection() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("dom-direction.yaml", """
+        name: dom-direction-flow
+        steps:
+          - action: dom
+            save: true
+            name: dom-direction
+            print: false
+        """)
+        let driver = FakeFlowDriver()
+        driver.domPayload = ForyDomPayload(
+            app: "com.example",
+            windowSize: ForyPoint(x: 390, y: 844),
+            elements: [
+                ForyDomElement(traits: ["ScrollView"], childCount: 2),
+                ForyDomElement(traits: ["Cell"], label: "First", rect: ForyRect(x: 0, y: 100, w: 390, h: 44)),
+                ForyDomElement(traits: ["Cell"], label: "Second", rect: ForyRect(x: 0, y: 200, w: 390, h: 44)),
+            ]
+        )
+
+        _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+
+        let saved = "\(fixture.paths.artifacts)/dom-direction.json"
+        let data = try Data(contentsOf: URL(fileURLWithPath: saved))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let dom = try XCTUnwrap(json["dom"] as? [String: Any])
+        let elements = try XCTUnwrap(dom["elements"] as? [[String: Any]])
+        let traits = try XCTUnwrap(elements.first?["traits"] as? [String])
+        XCTAssertEqual(traits, ["ScrollView", "vertical"])
+    }
+
     func testMissingTemplateValueFailsFast() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("missing-template.yaml", """

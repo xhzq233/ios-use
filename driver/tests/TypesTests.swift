@@ -61,14 +61,18 @@ final class TypesTests: XCTestCase {
         identifier: String? = nil,
         value: String? = nil,
         placeholderValue: String? = nil,
-        type: XCUIElement.ElementType = .staticText
+        type: XCUIElement.ElementType = .staticText,
+        frame: CGRect = CGRect(x: 0, y: 0, width: 100, height: 40),
+        isVisible: Bool = true
     ) -> SnapshotElement {
         let raw = FakeRawSnapshot(
             label: label,
             identifier: identifier,
             value: value,
             placeholderValue: placeholderValue,
-            elementType: type
+            elementType: type,
+            frame: frame,
+            isVisible: isVisible
         )
         let snapshot = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
         return SnapshotElement(
@@ -354,7 +358,7 @@ final class TypesTests: XCTestCase {
 
     // MARK: - serializeDomFlat (ForyDomElement)
 
-    func testSerializeDomFlat_ReconstructsNestedTreeFromChildCount() {
+    func testSerializeDomFlat_SerializesPreorderElements() {
         let root = makeElement(label: "Root", type: .other)
         let child1 = makeElement(label: "Child 1", type: .button)
         let parent = makeElement(label: "Parent", type: .cell)
@@ -374,21 +378,26 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(dom.count, 5)
         XCTAssertEqual(dom[0].label, "Root")
         XCTAssertEqual(dom[0].childCount, 3)
+        XCTAssertNotNil(dom[0].rect)
         XCTAssertEqual(dom[1].label, "Child 1")
         XCTAssertEqual(dom[1].childCount, 0)
+        XCTAssertNotNil(dom[1].rect)
         XCTAssertEqual(dom[2].label, "Parent")
         XCTAssertEqual(dom[2].childCount, 1)
+        XCTAssertNotNil(dom[2].rect)
         XCTAssertEqual(dom[3].label, "Grandchild")
         XCTAssertEqual(dom[3].childCount, 0)
+        XCTAssertNotNil(dom[3].rect)
         XCTAssertEqual(dom[4].label, "Child 2")
         XCTAssertEqual(dom[4].childCount, 0)
+        XCTAssertNotNil(dom[4].rect)
     }
 
     func testSerializeDomFlat_EmptyElementsReturnsEmptyArray() {
         XCTAssertTrue(serializeDomFlat(from: []).isEmpty)
     }
 
-    func testSerializeDomFlat_ChildCountZeroSerializesLeafRect() {
+    func testSerializeDomFlat_SerializesLeafRect() {
         let leaf = makeElement(label: "Leaf", type: .button)
         let dom = serializeDomFlat(from: [leaf])
 
@@ -396,6 +405,28 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(dom[0].label, "Leaf")
         XCTAssertNotNil(dom[0].rect)
         XCTAssertEqual(dom[0].childCount, 0)
+    }
+
+    func testCleanTree_SortsChildrenByYAndKeepsSameYStable() {
+        let bottom = FakeRawSnapshot(label: "Bottom", elementType: .button, frame: CGRect(x: 0, y: 300, width: 100, height: 44))
+        let sameA = FakeRawSnapshot(label: "Same A", elementType: .button, frame: CGRect(x: 200, y: 150, width: 100, height: 44))
+        let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
+        let sameB = FakeRawSnapshot(label: "Same B", elementType: .button, frame: CGRect(x: 0, y: 150, width: 100, height: 44))
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [bottom, sameA, top, sameB])
+
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+
+        XCTAssertEqual(elements.map { $0.node.label }, ["App", "Top", "Same A", "Same B", "Bottom"])
+    }
+
+    func testCleanTree_SortsPromotedChildrenByY() {
+        let bottom = FakeRawSnapshot(label: "Bottom", elementType: .button, frame: CGRect(x: 0, y: 300, width: 100, height: 44))
+        let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
+        let window = FakeRawSnapshot(elementType: .window, children: [bottom, top])
+
+        let elements = buildCleanElements(from: SafeSnapshot(raw: window, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+
+        XCTAssertEqual(elements.map { $0.node.label }, ["Top", "Bottom"])
     }
 
     func testCleanTree_Rule4SameTypeMergePreservesDescendants() {
@@ -488,6 +519,29 @@ final class TypesTests: XCTestCase {
         default:
             XCTFail("expected deduped sibling alias to be searchable")
         }
+    }
+
+    func testAutoLabelsUseSortedSiblingOrder() {
+        let tableChild = FakeRawSnapshot(label: "TableChild", elementType: .staticText)
+        let table = FakeRawSnapshot(elementType: .table, frame: CGRect(x: 0, y: 300, width: 320, height: 80), children: [tableChild])
+        let collectionChild = FakeRawSnapshot(label: "CollectionChild", elementType: .staticText)
+        let collection = FakeRawSnapshot(elementType: .collectionView, frame: CGRect(x: 0, y: 100, width: 320, height: 80), children: [collectionChild])
+        let scrollChild = FakeRawSnapshot(label: "ScrollChild", elementType: .staticText)
+        let scroll = FakeRawSnapshot(elementType: .scrollView, frame: CGRect(x: 0, y: 200, width: 320, height: 80), children: [scrollChild])
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [table, collection, scroll])
+
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+        assignAutoLabels(elements)
+
+        XCTAssertEqual(elements.map { displayName(for: $0.node) }, [
+            "App",
+            "AppApplicationc1",
+            "CollectionChild",
+            "AppApplicationc2",
+            "ScrollChild",
+            "AppApplicationc3",
+            "TableChild",
+        ])
     }
 
     // MARK: - elementTypeName
