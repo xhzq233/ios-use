@@ -672,14 +672,6 @@ public enum CLIParser {
         return parsed
     }
 
-    private static func parsePositiveDoubleStrict(_ value: String, label: String) throws -> Double {
-        let parsed = try parseDoubleStrict(value, label: label)
-        guard parsed > 0 else {
-            throw CLIParseError.invalidValue("\(label) must be greater than 0")
-        }
-        return parsed
-    }
-
     private static func isFlowExternalVarName(_ value: String) -> Bool {
         value.range(of: #"^[A-Za-z_][A-Za-z0-9_-]*$"#, options: .regularExpression) != nil
     }
