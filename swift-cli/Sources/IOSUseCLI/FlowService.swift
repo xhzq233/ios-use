@@ -1310,14 +1310,6 @@ private func optionalNumber(_ value: Any?, field: String) throws -> Double? {
     return parsed
 }
 
-private func optionalPositiveNumber(_ value: Any?, field: String) throws -> Double? {
-    guard let parsed = try optionalNumber(value, field: field) else { return nil }
-    guard parsed > 0 else {
-        throw CLIParseError.invalidValue("\(field) must be greater than 0")
-    }
-    return parsed
-}
-
 private func requiredTarget(_ value: Any?, field: String) throws -> ForyTarget {
     let target = try target(value)
     if target.label.isEmpty, target.point == nil {
