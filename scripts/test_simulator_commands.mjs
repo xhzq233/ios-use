@@ -380,6 +380,54 @@ async function runConfigDriverIdentityCase() {
   }
 }
 
+async function runStartCreatesDriverLockCase() {
+  const id = 'START-1';
+  if (!selected(id)) return recordSkip(id);
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  const domOut = path.join(artifactDir, `${id}-dom.out`);
+  const domErr = path.join(artifactDir, `${id}-dom.err`);
+  console.log(`[sim-test] RUN ${id}: ios-use start <sim>`);
+  const res = runCliToFiles(['start', sim.udid], out, err);
+  let lock;
+  try {
+    lock = JSON.parse(readFileIfExists(path.join(iosHome, 'state/driver.lock')) || '{}');
+  } catch (error) {
+    return recordFail(id, `${res.stdout}${res.stderr}${error}\n`);
+  }
+  const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
+  if (
+    res.code === 0 &&
+    res.stdout.includes(`Driver started for ${sim.udid}`) &&
+    lock.udid === sim.udid &&
+    dom.code === 0 &&
+    dom.stdout.includes('App:')
+  ) {
+    recordPass(id);
+  } else {
+    recordFail(id, `${res.stdout}${res.stderr}${readFileIfExists(path.join(iosHome, 'state/driver.lock'))}\n${dom.stdout}${dom.stderr}`);
+  }
+}
+
+async function runStopClearsDriverLockCase() {
+  const id = 'STOP-3';
+  if (!selected(id)) return recordSkip(id);
+  const startOut = path.join(artifactDir, `${id}-start.out`);
+  const startErr = path.join(artifactDir, `${id}-start.err`);
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  console.log(`[sim-test] RUN ${id}: ios-use start <sim> && ios-use stop`);
+  const start = runCliToFiles(['start', sim.udid], startOut, startErr);
+  const stop = runCliToFiles(['stop'], out, err);
+  const lockExists = fs.existsSync(path.join(iosHome, 'state/driver.lock'));
+  const sessionExists = fs.existsSync(path.join(iosHome, 'state/session.json'));
+  if (start.code === 0 && stop.code === 0 && !lockExists && !sessionExists) {
+    recordPass(id);
+  } else {
+    recordFail(id, `${start.stdout}${start.stderr}${stop.stdout}${stop.stderr}[sim-test] lockExists=${lockExists} sessionExists=${sessionExists}\n`);
+  }
+}
+
 function backupStateFile(rel) {
   const src = path.join(iosHome, rel);
   const dst = path.join(stateBackupDir, rel);
@@ -404,11 +452,13 @@ function backupLocalState() {
   ensureDir(stateBackupDir);
   backupStateFile('config.json');
   backupStateFile('state/session.json');
+  backupStateFile('state/driver.lock');
 }
 
 function restoreLocalState() {
   restoreStateFile('config.json');
   restoreStateFile('state/session.json');
+  restoreStateFile('state/driver.lock');
 }
 
 async function waitForDriver() {
@@ -804,6 +854,7 @@ function buildCases() {
     { id: 'CFG-7', run: runConfigDriverIdentityCase },
     { id: 'CFG-5', run: () => runCaseFailsContains('CFG-5', 'unknown option', ['config', '--ipa', path.join(rootDir, 'assets/driver-sim.ipa')]) },
     { id: 'CFG-6', run: () => runCaseFailsContains('CFG-6', 'unknown option', ['config', '--port', '8100']) },
+    { id: 'START-1', run: runStartCreatesDriverLockCase },
     { id: 'DEV-4', run: () => runCaseContains('DEV-4', 'configured', ['devices', '--simulator']) },
     { id: 'DEV-6', run: () => runCaseMatches('DEV-6', /Simulator|Device/, ['devices', '--simulator']) },
     { id: 'AA-1', run: async () => {
@@ -1096,6 +1147,7 @@ function buildCases() {
     { id: 'PROXY-7', run: runProxyReadMissingCaptureCase },
     { id: 'STOP-1', run: () => runCase('STOP-1', ['stop']) },
     { id: 'STOP-2', run: () => runCase('STOP-2', ['stop']) },
+    { id: 'STOP-3', run: runStopClearsDriverLockCase },
   ]);
 
   return cases;

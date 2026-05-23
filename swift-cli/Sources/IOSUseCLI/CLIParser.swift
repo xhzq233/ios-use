@@ -3,6 +3,7 @@ import Foundation
 public enum ParsedCommand: Equatable, Sendable {
     case devices(DeviceOptions)
     case config(ConfigOptions)
+    case start(StartOptions)
     case stop
     case driver(DriverAction)
     case flow(FlowOptions)
@@ -13,6 +14,7 @@ public enum ParsedCommand: Equatable, Sendable {
         switch self {
         case .devices: return "devices"
         case .config: return "config"
+        case .start: return "start"
         case .stop: return "stop"
         case .driver(let action): return action.name
         case .flow: return "flow"
@@ -55,6 +57,16 @@ public struct SessionOptions: Equatable, Sendable {
     public var verbose = false
 
     public init(udid: String? = nil, verbose: Bool = false) {
+        self.udid = udid
+        self.verbose = verbose
+    }
+}
+
+public struct StartOptions: Equatable, Sendable {
+    public var udid: String
+    public var verbose = false
+
+    public init(udid: String, verbose: Bool = false) {
         self.udid = udid
         self.verbose = verbose
     }
@@ -189,6 +201,8 @@ public enum CLIParser {
             return .devices(try parseDevices(&parser))
         case "config":
             return .config(try parseConfig(&parser))
+        case "start":
+            return .start(try parseStart(&parser))
         case "stop":
             try parser.requireEnd()
             return .stop
@@ -254,6 +268,22 @@ public enum CLIParser {
             case "--password": options.password = try parser.value(for: arg)
             case "--verbose": options.verbose = true
             default: throw CLIParseError.unknownOption(arg)
+            }
+        }
+        return options
+    }
+
+    private static func parseStart(_ parser: inout ArgumentParser) throws -> StartOptions {
+        let udid = try parser.requiredPositional("udid")
+        var options = StartOptions(udid: udid)
+        while let arg = parser.consume() {
+            switch arg {
+            case "--verbose": options.verbose = true
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                throw CLIParseError.unexpectedArgument(arg)
             }
         }
         return options

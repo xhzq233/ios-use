@@ -19,11 +19,13 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ```bash
 ios-use devices               # 查看设备列表、udid 和配置状态
 ios-use config --udid <udid>  # 完成设备配置（显示 configured 后即可使用）
+ios-use start <udid>          # 可选：预启动 driver，并记录 driver.lock
 ```
 
 - 如果 `ios-use devices` 显示 `driver update required`，必须重新执行 `ios-use config --udid <udid>`。
 - 首次配置真机时可能需要补 Apple ID，并触发 Apple 2FA 验证码输入，AI 无法代用户完成。此时应提示用户：「真机首次签名需要一个免费的 Apple Developer 账号。请在终端手动运行以下命令，按提示输入 Apple ID、App 专用密码，并完成两步验证（2FA）：`ios-use config --udid <udid> --apple-id <your-apple-id> --password '<app-specific-password>'`」
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
+- `start <udid>` 会启动已配置设备的 driver 并写入 `~/.ios-use/state/driver.lock`；当前版本中 driver-backed 命令的 `--udid` 仍兼容，不要求必须先 start
 - 真机首次执行 `dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/proxy configca` 等 driver-backed 命令时必须先 `config`，不要跳过；`open <url>` 是 host-side 命令，不要求已有 driver session
 - 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
 
@@ -45,6 +47,7 @@ ios-use devices               # 确认设备已连接且 configured
 ```
 
 设备未显示 `configured`，或显示 `driver update required` 时，先执行 `ios-use config --udid <udid>`。
+需要降低后续首条命令的启动成本时，可执行 `ios-use start <udid>` 预启动 driver；`stop` 会清理 `driver.lock` 和当前 session。
 
 需要操作特定 app 时先 `activateApp`：
 

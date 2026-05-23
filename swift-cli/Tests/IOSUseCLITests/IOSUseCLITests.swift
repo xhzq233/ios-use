@@ -17,7 +17,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Swift CLI for ios-use"))
         XCTAssertTrue(result.stdout.contains("Usage: ios-use [--help] [--version] <command>"))
-        XCTAssertTrue(result.stdout.contains("devices, config, dom"))
+        XCTAssertTrue(result.stdout.contains("devices, config, start, stop, dom"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
@@ -52,6 +52,7 @@ final class IOSUseCLITests: XCTestCase {
         let cases: [(arguments: [String], usage: String)] = [
             (["devices", "--help"], "Usage: ios-use devices"),
             (["config", "--help"], "Usage: ios-use config"),
+            (["start", "--help"], "Usage: ios-use start"),
             (["stop", "--help"], "Usage: ios-use stop"),
             (["dom", "--help"], "Usage: ios-use dom"),
             (["find", "--help"], "Usage: ios-use find"),
@@ -437,6 +438,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(paths.root, "/tmp/ios-use-swift-test-home")
         XCTAssertEqual(paths.config, "/tmp/ios-use-swift-test-home/config.json")
         XCTAssertEqual(paths.session, "/tmp/ios-use-swift-test-home/state/session.json")
+        XCTAssertEqual(paths.driverLock, "/tmp/ios-use-swift-test-home/state/driver.lock")
         XCTAssertEqual(paths.nslogLock, "/tmp/ios-use-swift-test-home/state/nslog.lock")
         XCTAssertEqual(paths.logs, "/tmp/ios-use-swift-test-home/logs")
         XCTAssertEqual(paths.artifacts, "/tmp/ios-use-swift-test-home/artifacts")
