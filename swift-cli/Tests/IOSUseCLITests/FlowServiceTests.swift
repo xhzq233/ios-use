@@ -43,6 +43,47 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", "SIM-1", "retouch://debug"])
     }
 
+    func testOpenURLStepUsesHostSideRealDeviceOpen() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("open.yaml", """
+        name: open-url
+        steps:
+          - action: openURL
+            url: https://example.com
+        """)
+        let driver = FakeFlowDriver()
+        var shellCalls: [(String, [String])] = []
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            shellCalls.append((executable, arguments))
+            return ""
+        }
+        addTeardownBlock {
+            Shell.runOverrideForTesting = nil
+        }
+
+        let result = try FlowService.runForTesting(
+            file: flow.path,
+            paths: fixture.paths,
+            driver: driver,
+            udid: "REAL-1",
+            deviceType: "real"
+        )
+
+        XCTAssertTrue(result.stdout.contains("Step 1/1: openURL"))
+        XCTAssertTrue(driver.openURLs.isEmpty)
+        XCTAssertEqual(shellCalls.count, 1)
+        XCTAssertEqual(shellCalls.first?.0, "xcrun")
+        XCTAssertEqual(shellCalls.first?.1, [
+            "devicectl",
+            "device",
+            "process",
+            "launch",
+            "--device", "REAL-1",
+            "--payload-url", "https://example.com",
+            "com.apple.springboard",
+        ])
+    }
+
     func testRunFlowBindsDeclaredOutputsAndExternalVarsOverrideDefaults() throws {
         let fixture = try FlowFixture()
         let child = try fixture.write("child.yaml", """
