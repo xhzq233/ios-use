@@ -596,6 +596,10 @@ function terminateCustomDriverProcesses(udid) {
   terminateProcessesByExecutableName(udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
 }
 
+function terminateWdaProcesses(udid) {
+  terminateProcessesByExecutableName(udid, ['WebDriverAgentRunner-Runner']);
+}
+
 async function waitForProcessesGone(udid, executableNames, timeoutMs = 8000) {
   const targets = new Set(executableNames.filter(Boolean));
   const startedAt = Date.now();
@@ -941,11 +945,15 @@ function customStopSessionQuiet() {
 }
 
 async function customPrepareNoSession(customUdid = WDA_DEVICE_UDID, appBundle = DEFAULT_APP_BUNDLE) {
+  terminateWdaProcesses(customUdid);
+  await waitForProcessesGone(customUdid, ['WebDriverAgentRunner-Runner']);
   customEnsureDriverStarted(customUdid);
   cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
 }
 
 async function customPrepareAppSession(customUdid, appBundle, label) {
+  terminateWdaProcesses(customUdid);
+  await waitForProcessesGone(customUdid, ['WebDriverAgentRunner-Runner']);
   customEnsureDriverStarted(customUdid);
   cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
   cli(['activateApp', appBundle, '--udid', customUdid]);
@@ -953,6 +961,8 @@ async function customPrepareAppSession(customUdid, appBundle, label) {
 }
 
 async function customPrepareInputSession(ctx) {
+  terminateWdaProcesses(ctx.customUdid);
+  await waitForProcessesGone(ctx.customUdid, ['WebDriverAgentRunner-Runner']);
   customEnsureDriverStarted(ctx.customUdid);
   cli(['terminateApp', ctx.inputBundleId, '--udid', ctx.customUdid], { allowFailure: true });
   if (ctx.inputOpenUrl) {
