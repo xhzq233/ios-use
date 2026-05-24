@@ -60,8 +60,6 @@ public enum FlowService {
                 emit("  → nslog: listening on port \(port)\n")
             }
         }
-        try SessionService.prepareDriverSession(SessionOptions(udid: options.udid, verbose: options.verbose), paths: paths)
-        let session = SessionService.read(paths: paths)
         let driver = RecoveringFlowDriver(paths: paths, verbose: options.verbose)
         defer { driver.close() }
         if let flowApp, !flowApp.isEmpty {
@@ -77,8 +75,8 @@ public enum FlowService {
         var runner = FlowRunner(
             paths: paths,
             driver: driver,
-            udid: options.udid ?? session?.udid,
-            deviceType: session?.deviceType,
+            udid: options.udid,
+            deviceType: nil,
             context: context,
             inheritedFlowApp: flowApp,
             outputSink: outputSink,
@@ -424,7 +422,7 @@ private struct FlowRunner {
             }
             let validatedURL = try OpenURLService.validatedURL(url)
             if try OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: udid, deviceType: deviceType, paths: paths) == nil {
-                throw CLIParseError.invalidValue("openURL requires a booted simulator, active session, or USB real device")
+                throw CLIParseError.invalidValue("openURL requires a booted simulator, active driver, or USB real device")
             }
 
         case "dismissAlert":
@@ -1428,32 +1426,18 @@ private func flowStepLabel(_ step: [String: Any]) -> String {
 }
 
 private final class RecoveringFlowDriver: FlowDriver {
-    private let paths: IOSUsePaths
-    private let verbose: Bool
-    private var driver: DriverClient
+    private let session: LockedDriverClientSession
 
     init(paths: IOSUsePaths, verbose: Bool) {
-        self.paths = paths
-        self.verbose = verbose
-        self.driver = DriverClient(session: SessionService.read(paths: paths))
+        self.session = LockedDriverClientSession(paths: paths, verbose: verbose)
     }
 
     func close() {
-        driver.close()
+        session.close()
     }
 
-    private func run<T>(_ body: (DriverClient) throws -> T) throws -> T {
-        do {
-            return try body(driver)
-        } catch {
-            guard (error as? DriverClientError)?.isRecoverableConnectFailure == true else {
-                throw error
-            }
-            driver.close()
-            try SessionService.launchPreparedDriverSession(paths: paths, verbose: verbose)
-            driver = DriverClient(session: SessionService.read(paths: paths))
-            return try body(driver)
-        }
+    private func run<T>(_ body: (DriverCommandClient) throws -> T) throws -> T {
+        try session.run(body)
     }
 
     func activateApp(bundleId: String) throws {

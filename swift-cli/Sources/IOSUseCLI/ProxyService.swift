@@ -61,7 +61,6 @@ public enum ProxyService {
         if caStateMatches(udid: udid, fingerprint: fingerprint, paths: paths) {
             return "CA already installed and trusted on device.\n"
         }
-        try SessionService.prepareDriverSession(SessionOptions(udid: udid), paths: paths)
         _ = try withRecoveredDriver(paths: paths) { driver in
             try driver.proxyCAPush(caBase64: base64Body(fromPEM: pem))
         }
@@ -225,17 +224,16 @@ public enum ProxyService {
 
     private static func resolveUdid(_ requested: String?, paths: IOSUsePaths) throws -> String {
         if let requested, !requested.isEmpty { return requested }
-        if let session = readSession(paths: paths), let udid = session["udid"] as? String, !udid.isEmpty { return udid }
         if let state = readState(paths: paths), !state.udid.isEmpty { return state.udid }
-        try SessionService.prepareDriverSession(SessionOptions(), paths: paths)
-        if let session = readSession(paths: paths), let udid = session["udid"] as? String, !udid.isEmpty { return udid }
+        if let lock = SessionService.read(paths: paths) {
+            return lock.udid
+        }
         throw CLIParseError.invalidValue("No device UDID. Pass --udid or run an action command first.")
     }
 
     private static func resolveStartUdid(_ requested: String?, paths: IOSUsePaths) throws -> String {
         if let requested, !requested.isEmpty { return requested }
         if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first {
-            try SessionService.prepareDriverSession(SessionOptions(udid: device.udid), paths: paths)
             return device.udid
         }
         throw CLIParseError.invalidValue("No USB device UDID. Pass --udid or connect a configured USB device.")
@@ -246,11 +244,6 @@ public enum ProxyService {
             throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not \(requested). Run `proxy stop --udid \(state.udid)` or manually disable Wi-Fi proxy.")
         }
         return state.udid
-    }
-
-    private static func readSession(paths: IOSUsePaths) -> [String: Any]? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.session)) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     private static func writeState(_ state: ProxySessionState, paths: IOSUsePaths) throws {
@@ -407,21 +400,8 @@ public enum ProxyService {
         throw CLIParseError.invalidValue("Port \(port) not ready after \(IOSUseProtocol.proxyWaitPortTimeoutMilliseconds)ms")
     }
 
-    private static func withRecoveredDriver<T>(paths: IOSUsePaths, _ body: (DriverClient) throws -> T) throws -> T {
-        let driver = DriverClient(session: SessionService.read(paths: paths))
-        do {
-            defer { driver.close() }
-            return try body(driver)
-        } catch {
-            driver.close()
-            guard (error as? DriverClientError)?.isRecoverableConnectFailure == true else {
-                throw error
-            }
-            try SessionService.launchPreparedDriverSession(paths: paths, verbose: false)
-            let retry = DriverClient(session: SessionService.read(paths: paths))
-            defer { retry.close() }
-            return try body(retry)
-        }
+    private static func withRecoveredDriver<T>(paths: IOSUsePaths, _ body: (DriverCommandClient) throws -> T) throws -> T {
+        try DriverCommandExecution.withLockedClient(paths: paths, body)
     }
 
     private static func detectLanInfo(interfaceName: String?) throws -> ProxySessionState.NetworkInfo {

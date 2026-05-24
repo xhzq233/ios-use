@@ -26,47 +26,47 @@ final class CLIParserTests: XCTestCase {
 
     func testParsesDriverReadCommands() throws {
         XCTAssertEqual(
-            try CLIParser.parse(["dom", "--raw", "--fresh", "--udid", "SIM-1"]),
-            .driver(.dom(raw: true, fresh: true, session: SessionOptions(udid: "SIM-1", verbose: false)))
+            try CLIParser.parse(["dom", "--raw", "--fresh"]),
+            .driver(.dom(raw: true, fresh: true))
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["find", "General", "--traits", "Cell,selected", "--cindex", "-1", "--verbose"]),
-            .driver(.find(label: "General", traits: "Cell,selected", cindex: -1, session: SessionOptions(udid: nil, verbose: true)))
+            try CLIParser.parse(["find", "General", "--traits", "Cell,selected", "--cindex", "-1"]),
+            .driver(.find(label: "General", traits: "Cell,selected", cindex: -1))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["waitFor", "--label", "Ready", "--timeout", "1.5", "--traits", "StaticText", "--cindex", "0"]),
-            .driver(.waitFor(label: "Ready", timeout: 1.5, traits: "StaticText", cindex: 0, session: SessionOptions()))
+            .driver(.waitFor(label: "Ready", timeout: 1.5, traits: "StaticText", cindex: 0))
         )
     }
 
     func testParsesDriverMutationCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["tap", "General", "--offset", "1,2", "--offset-ratio", ".5,.25", "--traits", "Cell", "--cindex", "2"]),
-            .driver(.tap(target: "General", offset: "1,2", offsetRatio: ".5,.25", traits: "Cell", cindex: 2, session: SessionOptions()))
+            .driver(.tap(target: "General", offset: "1,2", offsetRatio: ".5,.25", traits: "Cell", cindex: 2))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["longpress", "General", "--duration", "500", "--traits", "Icon", "--cindex", "-2"]),
-            .driver(.longPress(target: "General", duration: 500, traits: "Icon", cindex: -2, session: SessionOptions()))
+            .driver(.longPress(target: "General", duration: 500, traits: "Icon", cindex: -2))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["input", "--label", "First name", "--content", "Alpha", "--traits", "TextField", "--cindex", "0"]),
-            .driver(.input(label: "First name", content: "Alpha", traits: "TextField", cindex: 0, session: SessionOptions()))
+            .driver(.input(label: "First name", content: "Alpha", traits: "TextField", cindex: 0))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["swipe", "--to", "General", "--from", "Settings", "--dir", "forth", "--distance", "200", "--traits", "Cell", "--cindex", "-1"]),
-            .driver(.swipe(to: "General", from: "Settings", dir: "forth", distance: 200, traits: "Cell", cindex: -1, session: SessionOptions()))
+            .driver(.swipe(to: "General", from: "Settings", dir: "forth", distance: 200, traits: "Cell", cindex: -1))
         )
     }
 
     func testParsesAppAndUtilityDriverCommands() throws {
         XCTAssertEqual(
-            try CLIParser.parse(["activateApp", "com.apple.Preferences", "--udid", "DEVICE-1"]),
-            .driver(.activateApp(bundleId: "com.apple.Preferences", session: SessionOptions(udid: "DEVICE-1", verbose: false)))
+            try CLIParser.parse(["activateApp", "com.apple.Preferences"]),
+            .driver(.activateApp(bundleId: "com.apple.Preferences"))
         )
 
         XCTAssertEqual(
@@ -76,7 +76,7 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["dismissAlert", "--index", "0"]),
-            .driver(.dismissAlert(index: 0, session: SessionOptions()))
+            .driver(.dismissAlert(index: 0))
         )
 
         XCTAssertEqual(
@@ -182,22 +182,34 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parse(["flow", "flows/test_flow.yaml", "--server", "--port", "9080"])) { error in
             XCTAssertEqual(error as? CLIParseError, .missingOptionValue("--server"))
         }
+
+        XCTAssertThrowsError(try CLIParser.parse(["dom", "--udid", "SIM-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--udid", "SIM-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["find", "General", "--verbose"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--verbose"))
+        }
     }
 
     func testParsesDashPrefixedOptionValuesWhereSemanticallyValid() throws {
         XCTAssertEqual(
             try CLIParser.parse(["input", "--label", "First name", "--content", "-Alpha"]),
-            .driver(.input(label: "First name", content: "-Alpha", traits: nil, cindex: nil, session: SessionOptions()))
+            .driver(.input(label: "First name", content: "-Alpha", traits: nil, cindex: nil))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["tap", "General", "--offset", "-1,2", "--offset-ratio", "-.5,.25"]),
-            .driver(.tap(target: "General", offset: "-1,2", offsetRatio: "-.5,.25", traits: nil, cindex: nil, session: SessionOptions()))
+            .driver(.tap(target: "General", offset: "-1,2", offsetRatio: "-.5,.25", traits: nil, cindex: nil))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["tap", "General", "--cindex", "-1"]),
-            .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: -1, session: SessionOptions()))
+            .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: -1))
         )
 
         XCTAssertEqual(

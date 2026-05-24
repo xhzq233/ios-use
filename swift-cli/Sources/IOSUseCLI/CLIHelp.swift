@@ -87,12 +87,12 @@ enum CLIHelp {
             return """
             Usage: ios-use stop
 
-            Stop the active driver session and clear the driver lock.
+            Stop the active driver from driver.lock and clear the driver lock.
 
             """
         case "dom":
             return driverHelp(
-                usage: "ios-use dom [--raw] [--fresh] [--udid <udid>] [--verbose]",
+                usage: "ios-use dom [--raw] [--fresh]",
                 summary: "Print the current UI element tree.",
                 options: [
                     "--raw        Print raw snapshot text",
@@ -101,7 +101,7 @@ enum CLIHelp {
             )
         case "find":
             return driverHelp(
-                usage: "ios-use find <label> [--traits <traits>] [--cindex <index>] [--udid <udid>] [--verbose]",
+                usage: "ios-use find <label> [--traits <traits>] [--cindex <index>]",
                 summary: "Find UI elements by label.",
                 options: [
                     "--traits <traits>  Comma-separated trait filter",
@@ -110,7 +110,7 @@ enum CLIHelp {
             )
         case "waitFor":
             return driverHelp(
-                usage: "ios-use waitFor --label <label> [--timeout <seconds>] [--traits <traits>] [--cindex <index>] [--udid <udid>] [--verbose]",
+                usage: "ios-use waitFor --label <label> [--timeout <seconds>] [--traits <traits>] [--cindex <index>]",
                 summary: "Wait until an element appears.",
                 options: [
                     "--label <label>      Target label",
@@ -121,13 +121,13 @@ enum CLIHelp {
             )
         case "screenshot":
             return driverHelp(
-                usage: "ios-use screenshot [--name <name>] [--udid <udid>] [--verbose]",
+                usage: "ios-use screenshot [--name <name>]",
                 summary: "Save a screenshot under ios-use artifacts.",
                 options: ["--name <name>  Output name"]
             )
         case "tap":
             return driverHelp(
-                usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--udid <udid>] [--verbose]",
+                usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>]",
                 summary: "Tap an element label or x,y coordinate.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
@@ -138,7 +138,7 @@ enum CLIHelp {
             )
         case "longpress":
             return driverHelp(
-                usage: "ios-use longpress <target> [--duration <ms>] [--traits <traits>] [--cindex <index>] [--udid <udid>] [--verbose]",
+                usage: "ios-use longpress <target> [--duration <ms>] [--traits <traits>] [--cindex <index>]",
                 summary: "Long press an element label or x,y coordinate.",
                 options: [
                     "--duration <ms>   Press duration in milliseconds",
@@ -148,7 +148,7 @@ enum CLIHelp {
             )
         case "input":
             return driverHelp(
-                usage: "ios-use input --label <label> --content <text> [--traits <traits>] [--cindex <index>] [--udid <udid>] [--verbose]",
+                usage: "ios-use input --label <label> --content <text> [--traits <traits>] [--cindex <index>]",
                 summary: "Input text into a field.",
                 options: [
                     "--label <label>    Target field label",
@@ -159,7 +159,7 @@ enum CLIHelp {
             )
         case "swipe":
             return driverHelp(
-                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--udid <udid>] [--verbose]",
+                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>]",
                 summary: "Scroll toward a target or by a fixed distance.",
                 options: [
                     "--to <label>       Target element",
@@ -172,27 +172,33 @@ enum CLIHelp {
             )
         case "activateApp":
             return driverHelp(
-                usage: "ios-use activateApp <bundleId> [--udid <udid>] [--verbose]",
+                usage: "ios-use activateApp <bundleId>",
                 summary: "Activate an app by bundle ID."
             )
         case "terminateApp":
             return driverHelp(
-                usage: "ios-use terminateApp <bundleId> [--udid <udid>] [--verbose]",
+                usage: "ios-use terminateApp <bundleId>",
                 summary: "Terminate an app by bundle ID."
             )
         case "home":
             return driverHelp(
-                usage: "ios-use home [--udid <udid>] [--verbose]",
+                usage: "ios-use home",
                 summary: "Press the Home button."
             )
         case "open":
-            return driverHelp(
-                usage: "ios-use open <url> [--udid <udid>] [--verbose]",
-                summary: "Open a URL on the device."
-            )
+            return """
+            Usage: ios-use open <url> [--udid <udid>] [--verbose]
+
+            Open a URL on the device using host-side simctl/devicectl.
+
+            Options:
+              --udid <udid>  Target device or Simulator UDID
+              --verbose      Enable verbose output
+
+            """
         case "dismissAlert":
             return driverHelp(
-                usage: "ios-use dismissAlert [--index <index>] [--udid <udid>] [--verbose]",
+                usage: "ios-use dismissAlert [--index <index>]",
                 summary: "Dismiss a system alert.",
                 options: ["--index <index>  Button index; defaults to the last button"]
             )
@@ -267,9 +273,7 @@ enum CLIHelp {
             "",
             summary,
             "",
-            "Common options:",
-            "  --udid <udid>  Target device or Simulator UDID",
-            "  --verbose      Enable verbose output",
+            "Requires an active driver.lock. Run `ios-use start <UDID>` first.",
         ]
         if !options.isEmpty {
             lines += ["", "Options:"]

@@ -56,6 +56,77 @@ protocol DriverCommandClient: AnyObject {
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
 }
 
+enum DriverCommandExecution {
+    static var clientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)?
+
+    static func withLockedClient<T>(paths: IOSUsePaths, verbose: Bool = false, _ body: (DriverCommandClient) throws -> T) throws -> T {
+        let session = LockedDriverClientSession(paths: paths, verbose: verbose)
+        defer { session.close() }
+        return try session.run(body)
+    }
+}
+
+final class LockedDriverClientSession {
+    private let paths: IOSUsePaths
+    private let verbose: Bool
+    private var info: SessionService.Info?
+    private var client: DriverCommandClient?
+    private var didRecoverConnectFailure = false
+
+    init(paths: IOSUsePaths, verbose: Bool = false) {
+        self.paths = paths
+        self.verbose = verbose
+    }
+
+    func run<T>(_ body: (DriverCommandClient) throws -> T) throws -> T {
+        let lock = try lockedInfo()
+        do {
+            return try body(currentClient(for: lock))
+        } catch {
+            guard (error as? DriverClientError)?.isRecoverableConnectFailure == true,
+                  !didRecoverConnectFailure else {
+                throw error
+            }
+            didRecoverConnectFailure = true
+            closeClient()
+            try SessionService.launchDriver(for: lock, paths: paths, verbose: verbose)
+            return try body(replaceClient(for: lock))
+        }
+    }
+
+    func close() {
+        closeClient()
+    }
+
+    private func lockedInfo() throws -> SessionService.Info {
+        if let info {
+            return info
+        }
+        let lock = try SessionService.requireDriverLock(paths: paths)
+        info = lock
+        return lock
+    }
+
+    private func currentClient(for info: SessionService.Info) -> DriverCommandClient {
+        if let client {
+            return client
+        }
+        return replaceClient(for: info)
+    }
+
+    private func replaceClient(for info: SessionService.Info) -> DriverCommandClient {
+        closeClient()
+        let next = DriverCommandExecution.clientFactoryForTesting?(info) ?? DriverClient(session: info)
+        client = next
+        return next
+    }
+
+    private func closeClient() {
+        client?.close()
+        client = nil
+    }
+}
+
 private extension ForyTarget {
     func withLookup(traits: String?, cindex: Int32?) -> ForyTarget {
         ForyTarget(label: label, point: point, traits: traits ?? self.traits, cindex: cindex ?? self.cindex)
@@ -79,10 +150,10 @@ final class DriverClient: DriverCommandClient {
         self.deviceType = deviceType
     }
 
-    convenience init(session: SessionService.Info?) {
+    convenience init(session: SessionService.Info) {
         self.init(
-            udid: session?.udid,
-            deviceType: session?.deviceType
+            udid: session.udid,
+            deviceType: session.deviceType
         )
     }
 
