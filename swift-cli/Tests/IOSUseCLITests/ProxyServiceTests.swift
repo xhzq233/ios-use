@@ -12,7 +12,7 @@ final class ProxyServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testResolveUdidPrefersExplicitThenProxyStateThenDriverLock() throws {
+    func testProxyTargetComesFromActiveDriverLockNotStaleProxyState() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
@@ -27,46 +27,40 @@ final class ProxyServiceTests: XCTestCase {
         let data = try JSONEncoder().encode(stale)
         try data.write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
 
-        XCTAssertEqual(try ProxyService.resolveUdidForTesting("EXPLICIT", paths: paths), "EXPLICIT")
-        XCTAssertEqual(try ProxyService.resolveUdidForTesting(nil, paths: paths), "STALE-PROXY-DEVICE")
-
-        try FileManager.default.removeItem(atPath: "\(root)/state/proxy-session.json")
-        XCTAssertEqual(try ProxyService.resolveUdidForTesting(nil, paths: paths), "LOCK-DEVICE")
+        XCTAssertEqual(try ProxyService.activeUdidForTesting(paths: paths), "LOCK-DEVICE")
     }
 
-    func testProxyStartDefaultDoesNotUseDriverLockOrStaleProxyState() throws {
+    func testProxyStartWithoutDriverLockFailsBeforeDeviceDiscovery() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        DeviceService.listDevicesOverrideForTesting = { _, _ in
+            XCTFail("proxy start without driver.lock must not discover devices")
+            return []
+        }
+        addTeardownBlock {
+            DeviceService.listDevicesOverrideForTesting = nil
+        }
+
+        XCTAssertThrowsError(try ProxyService.start(interfaceName: nil, paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
+        }
+    }
+
+    func testProxyConfigCAWithoutDriverLockFailsBeforeCAWork() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+
+        XCTAssertThrowsError(try ProxyService.configCA(paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(root)/mitmproxy/mitmproxy-ca-cert.pem"))
+    }
+
+    func testProxyStopWithoutDriverLockFailsBeforeStateCleanup() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
-        try writeDriverLock(udid: "LOCK-SIM", paths: paths)
-        try JSONEncoder().encode(ProxySessionState(
-            sessionId: "proxy-old",
-            status: "stopped",
-            startedAt: 1,
-            udid: "STALE-PROXY-DEVICE",
-            flowFile: "old.flow"
-        )).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
-        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
-            simulatorOnly ? [] : [IOSDevice(name: "USB", version: "26.0", udid: "USB-DEVICE", kind: .real)]
-        }
-        SessionService.simulatorDriverReachableForTesting = { true }
-        addTeardownBlock {
-            DeviceService.listDevicesOverrideForTesting = nil
-            SessionService.simulatorDriverReachableForTesting = nil
-            SessionService.simulatorDriverLauncherForTesting = nil
-            SessionService.realDriverReachableForTesting = nil
-            SessionService.realDriverLauncherForTesting = nil
-        }
-        SessionService.realDriverReachableForTesting = { _ in true }
-        SessionService.realDriverLauncherForTesting = { _, _ in }
-        try """
-        {"devices":{"USB-DEVICE":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
-        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
-
-        XCTAssertEqual(try ProxyService.resolveStartUdidForTesting(nil, paths: paths), "USB-DEVICE")
-    }
-
-    func testProxyStopRejectsMismatchedRequestedUdid() throws {
+        let statePath = "\(root)/state/proxy-session.json"
         let state = ProxySessionState(
             sessionId: "proxy-running",
             status: "running",
@@ -74,11 +68,31 @@ final class ProxyServiceTests: XCTestCase {
             udid: "DEVICE-A",
             flowFile: "capture.flow"
         )
+        try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: statePath))
 
-        XCTAssertThrowsError(try ProxyService.resolveStopUdidForTesting("DEVICE-B", state: state)) { error in
+        XCTAssertThrowsError(try ProxyService.stop(paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: statePath))
+    }
+
+    func testProxyStopRejectsStateForDifferentActiveDriver() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try writeDriverLock(udid: "DEVICE-B", paths: paths)
+        let state = ProxySessionState(
+            sessionId: "proxy-running",
+            status: "running",
+            startedAt: 1,
+            udid: "DEVICE-A",
+            flowFile: "capture.flow"
+        )
+        try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
+
+        XCTAssertThrowsError(try ProxyService.stop(paths: paths)) { error in
             XCTAssertTrue(String(describing: error).contains("running for DEVICE-A"))
         }
-        XCTAssertEqual(try ProxyService.resolveStopUdidForTesting(nil, state: state), "DEVICE-A")
     }
 
     func testProxyReadUsesLastCaptureWhenStoppedAndAppliesLastLines() throws {
@@ -195,7 +209,9 @@ final class ProxyServiceTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: record)
         try data.write(to: URL(fileURLWithPath: "\(root)/state/proxy-ca.json"))
 
-        let output = try ProxyService.configCA(udid: "DEVICE-1", paths: paths)
+        try writeDriverLock(udid: "DEVICE-1", paths: paths)
+
+        let output = try ProxyService.configCA(paths: paths)
 
         XCTAssertEqual(output, "CA already installed and trusted on device.\n")
     }

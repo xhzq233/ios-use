@@ -76,7 +76,7 @@ Flow-only 编排 action（没有单命令等价物，在 flow 引擎层处理）
 - `vars` 是唯一输入模型
 - 顶层 `vars` 是默认值；CLI 外部变量可以覆盖同名默认值
 - CLI 外部变量写法：`ios-use flow <file> --targetLabel 蓝牙 --timeout 5`
-- `--udid`、`--verbose` 等 flow 命令自身选项不进入 `vars`
+- `--verbose` 是 flow 命令自身选项，不进入 `vars`；`--udid` 已移除，Flow 目标来自当前 `driver.lock`
 - 普通字符串字段支持模板替换，例如 `${vars.targetLabel}`
 - 整段 `${...}` 可以传对象或数组原值，不只限于字符串
 - 实现上应在解析后的 flow runtime 合并外部变量，不能靠拼接 YAML 注入新的 `vars:` 块
@@ -400,7 +400,7 @@ steps:
 2. 把稳定可复用的前置过程抽成 subflow
 3. 用 `vars` 传输入，用 `outputs` 传回结果
 4. 在关键节点保留 `dom` / `oslog`
-5. 可先运行 `ios-use start <udid>` 预启动 driver；当前版本 `flow --udid <udid>` 仍兼容
+5. 先运行 `ios-use start <udid>` 启动目标 driver；`flow --udid <udid>` 不再支持
 6. 运行 `ios-use flow your-flow.yaml`
 7. 如果失败，回到 `SKILL.md` 的 CLI 工作流逐步单步复现
 

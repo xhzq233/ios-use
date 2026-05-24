@@ -10,6 +10,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 let skipBuild = false;
 let caseFilterIds;
+let driverIpaPath = '';
+let expectedDriverIdentity;
 const testIosUseHome = process.env.IOS_USE_TEST_HOME ?? path.join(os.homedir(), '.ios-use/test-homes/simulator-commands');
 const iosUseCli = process.env.IOS_USE_TEST_CLI ?? path.join(rootDir, 'ios-use');
 
@@ -31,6 +33,7 @@ export function isCaseSelected(id, filterIds) {
 export function parseRunnerArgs(argv) {
   let parsedSkipBuild = false;
   let parsedCaseFilterIds;
+  let parsedDriverIpaPath = '';
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--skip-build') {
@@ -39,11 +42,20 @@ export function parseRunnerArgs(argv) {
       const value = argv[++i];
       if (!value) throw new Error('--case requires a value');
       parsedCaseFilterIds = parseCaseFilter(value);
+    } else if (arg === '--driver-ipa') {
+      const value = argv[++i];
+      if (!value) throw new Error('--driver-ipa requires a value');
+      parsedDriverIpaPath = path.resolve(value);
+    } else if (arg.startsWith('--driver-ipa=')) {
+      parsedDriverIpaPath = path.resolve(arg.slice('--driver-ipa='.length));
     } else {
       throw new Error(`unknown option ${arg}`);
     }
   }
-  return { skipBuild: parsedSkipBuild, caseFilterIds: parsedCaseFilterIds };
+  if (!parsedDriverIpaPath) {
+    throw new Error('--driver-ipa is required; build or choose the Simulator driver IPA outside the full Simulator runner');
+  }
+  return { skipBuild: parsedSkipBuild, caseFilterIds: parsedCaseFilterIds, driverIpaPath: parsedDriverIpaPath };
 }
 
 export function validateCaseFilter(caseIds, filterIds) {
@@ -150,17 +162,7 @@ function findProxyPrecheckReferences() {
   return hits;
 }
 
-function prepareSimulatorDriverAsset() {
-  const src = path.join(rootDir, 'assets/driver-sim.ipa');
-  const dst = path.join(iosHome, 'driver-sim.ipa');
-  if (!fs.existsSync(src)) {
-    throw new Error(`prebuilt Simulator driver IPA not found: ${src}`);
-  }
-  ensureDir(path.dirname(dst));
-  fs.copyFileSync(src, dst);
-}
-
-function execCmd(cmd, opts = {}) {
+function runProcess(cmd, opts = {}) {
   const proc = spawnSync(cmd[0], cmd.slice(1), {
     cwd: opts.cwd ?? rootDir,
     env: { ...process.env, ...(opts.env ?? {}) },
@@ -172,6 +174,76 @@ function execCmd(cmd, opts = {}) {
     stdout: decoder.decode(proc.stdout ?? new Uint8Array()),
     stderr: decoder.decode(proc.stderr ?? new Uint8Array()),
   };
+}
+
+function findFirstAppInfoPlist(dir) {
+  if (!fs.existsSync(dir)) return '';
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory() && entry.name.endsWith('.app')) {
+      const plist = path.join(fullPath, 'Info.plist');
+      if (fs.existsSync(plist)) return plist;
+    }
+  }
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const found = findFirstAppInfoPlist(path.join(dir, entry.name));
+    if (found) return found;
+  }
+  return '';
+}
+
+function readPlistValue(plistPath, key) {
+  const res = runProcess(['/usr/libexec/PlistBuddy', '-c', `Print ${key}`, plistPath]);
+  if (res.code !== 0) {
+    throw new Error(`failed to read ${key} from ${plistPath}: ${res.stderr || res.stdout}`);
+  }
+  const value = res.stdout.trim();
+  if (!value) throw new Error(`missing ${key} in ${plistPath}`);
+  return value;
+}
+
+function readDriverIdentityFromIpa(ipaPath) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ios-use-sim-driver-'));
+  try {
+    const unzip = runProcess(['unzip', '-q', '-o', ipaPath, '-d', tmpDir]);
+    if (unzip.code !== 0) {
+      throw new Error(`failed to unzip driver IPA ${ipaPath}: ${unzip.stderr || unzip.stdout}`);
+    }
+    const infoPlist = findFirstAppInfoPlist(path.join(tmpDir, 'Payload'));
+    if (!infoPlist) throw new Error(`No .app Info.plist found in driver IPA: ${ipaPath}`);
+    return {
+      version: readPlistValue(infoPlist, 'CFBundleShortVersionString'),
+      build: readPlistValue(infoPlist, 'CFBundleVersion'),
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function formatDriverIdentity(identity) {
+  if (!identity) return 'unavailable';
+  return `${identity.version} (${identity.build})`;
+}
+
+function prepareSimulatorDriverAsset(src) {
+  const dst = path.join(iosHome, 'driver-sim.ipa');
+  if (!fs.existsSync(src)) {
+    throw new Error(`prebuilt Simulator driver IPA not found: ${src}`);
+  }
+  ensureDir(path.dirname(dst));
+  if (path.resolve(src) !== path.resolve(dst)) {
+    fs.copyFileSync(src, dst);
+  }
+  return {
+    sourcePath: src,
+    installedPath: dst,
+    identity: readDriverIdentityFromIpa(dst),
+  };
+}
+
+function execCmd(cmd, opts = {}) {
+  return runProcess(cmd, opts);
 }
 
 async function sleep(ms) {
@@ -430,13 +502,12 @@ async function runConfigDriverIdentityCase() {
     devices.code === 0 &&
     !devices.stdout.includes('driver update required') &&
     entry?.driverVersion === identity?.version &&
-    typeof identity?.version === 'string' &&
-    typeof identity?.build === 'string' &&
-    /^\d{14}-[0-9a-fA-F]{12}$/.test(identity.build)
+    identity?.version === expectedDriverIdentity?.version &&
+    identity?.build === expectedDriverIdentity?.build
   ) {
     recordPass(id);
   } else {
-    recordFail(id, `${devices.stdout}${devices.stderr}${JSON.stringify(entry, null, 2)}\n`);
+    recordFail(id, `${devices.stdout}${devices.stderr}${JSON.stringify(entry, null, 2)}\nexpected driver identity: ${formatDriverIdentity(expectedDriverIdentity)}\n`);
   }
 }
 
@@ -1296,17 +1367,13 @@ async function main() {
   const parsedArgs = parseRunnerArgs(process.argv.slice(2));
   skipBuild = parsedArgs.skipBuild;
   caseFilterIds = parsedArgs.caseFilterIds;
+  driverIpaPath = parsedArgs.driverIpaPath;
 
   if (!skipBuild) {
     const swiftCliBuild = execCmd(['bash', path.join(rootDir, 'scripts/build_swift_cli.sh')], { cwd: rootDir });
     process.stdout.write(swiftCliBuild.stdout);
     process.stderr.write(swiftCliBuild.stderr);
     if (swiftCliBuild.code !== 0) process.exit(swiftCliBuild.code);
-
-    const build = execCmd(['bash', path.join(rootDir, 'scripts/build_driver.sh'), '--simulator-only'], { cwd: rootDir });
-    process.stdout.write(build.stdout);
-    process.stderr.write(build.stderr);
-    if (build.code !== 0) process.exit(build.code);
   }
 
   console.log('[sim-test] Resolving IOSUseTest Simulator...');
@@ -1322,11 +1389,14 @@ async function main() {
 
   console.log(`[sim-test] IOS_USE_HOME: ${iosHome}`);
   console.log(`[sim-test] Simulator: ${sim.name} | ${sim.runtime} | ${sim.state} | UDID: ${sim.udid}`);
+  const driverArtifact = prepareSimulatorDriverAsset(driverIpaPath);
+  expectedDriverIdentity = driverArtifact.identity;
   console.log(`[sim-test] CLI: ${iosUseCli}`);
-  console.log(`[sim-test] driver-sim IPA: ${path.join(rootDir, 'assets/driver-sim.ipa')}`);
+  console.log(`[sim-test] driver-sim IPA source: ${driverArtifact.sourcePath}`);
+  console.log(`[sim-test] driver-sim IPA installed: ${driverArtifact.installedPath}`);
+  console.log(`[sim-test] driver identity: ${formatDriverIdentity(expectedDriverIdentity)}`);
   console.log(`[sim-test] Artifacts: ${artifactDir}`);
 
-  prepareSimulatorDriverAsset();
   backupLocalState();
   writeFlowFixtures();
   let cleanupDone = false;

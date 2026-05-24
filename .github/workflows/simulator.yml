@@ -58,12 +58,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.xcode-cache.outputs.version }}-driver-
 
+      - name: Build Simulator driver artifact
+        run: bash scripts/build_driver.sh --simulator-only
+
       - name: Run full local regression
         if: inputs.full_simulator && inputs.simulator_cases == ''
-        run: bash scripts/ci_full_simulator.sh
+        run: bash scripts/ci_full_simulator.sh --driver-ipa assets/driver-sim.ipa
 
       - name: Run selected Simulator command cases
         if: inputs.simulator_cases != ''
         env:
           IOS_USE_SIMULATOR_CASES: ${{ inputs.simulator_cases }}
-        run: bash scripts/ci_full_simulator.sh --case "$IOS_USE_SIMULATOR_CASES"
+        run: bash scripts/ci_full_simulator.sh --driver-ipa assets/driver-sim.ipa --case "$IOS_USE_SIMULATOR_CASES"
