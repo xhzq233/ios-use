@@ -12,16 +12,11 @@ final class ProxyServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testResolveUdidPrefersExplicitThenActiveSessionThenProxyState() throws {
+    func testResolveUdidPrefersExplicitThenProxyStateThenDriverLock() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
-        try SessionService.writeSimulatorSession(
-            udid: "ACTIVE-DEVICE",
-            deviceName: "Active",
-            deviceVersion: "26.0",
-            paths: paths
-        )
+        try writeDriverLock(udid: "LOCK-DEVICE", paths: paths)
         let stale = ProxySessionState(
             sessionId: "proxy-old",
             status: "stopped",
@@ -33,19 +28,17 @@ final class ProxyServiceTests: XCTestCase {
         try data.write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
 
         XCTAssertEqual(try ProxyService.resolveUdidForTesting("EXPLICIT", paths: paths), "EXPLICIT")
-        XCTAssertEqual(try ProxyService.resolveUdidForTesting(nil, paths: paths), "ACTIVE-DEVICE")
+        XCTAssertEqual(try ProxyService.resolveUdidForTesting(nil, paths: paths), "STALE-PROXY-DEVICE")
+
+        try FileManager.default.removeItem(atPath: "\(root)/state/proxy-session.json")
+        XCTAssertEqual(try ProxyService.resolveUdidForTesting(nil, paths: paths), "LOCK-DEVICE")
     }
 
-    func testProxyStartDefaultDoesNotUseActiveSessionOrStaleProxyState() throws {
+    func testProxyStartDefaultDoesNotUseDriverLockOrStaleProxyState() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
-        try SessionService.writeSimulatorSession(
-            udid: "ACTIVE-SIM",
-            deviceName: "Simulator",
-            deviceVersion: "26.0",
-            paths: paths
-        )
+        try writeDriverLock(udid: "LOCK-SIM", paths: paths)
         try JSONEncoder().encode(ProxySessionState(
             sessionId: "proxy-old",
             status: "stopped",
@@ -213,5 +206,18 @@ final class ProxyServiceTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: root)
         }
         return root
+    }
+
+    private func writeDriverLock(udid: String, paths: IOSUsePaths) throws {
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: udid,
+                deviceName: "Simulator",
+                deviceVersion: "26.0",
+                deviceType: "simulator",
+                startedAt: 1
+            ),
+            paths: paths
+        )
     }
 }
