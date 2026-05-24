@@ -467,12 +467,31 @@ async function waitForDriver() {
   console.log('[sim-test] Waiting for driver...');
   const startedAt = performance.now();
   let attempt = 0;
+  let reconfigured = false;
+  let consecutiveUnreachable = 0;
   while (performance.now() - startedAt < driverReadyTimeoutMs) {
     attempt++;
     const res = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], out, err);
     if (res.code === 0) {
       console.log('[sim-test] Driver ready');
       return;
+    }
+    const combined = res.stdout + res.stderr;
+    if (!reconfigured && combined.includes('out of date')) {
+      console.log('[sim-test] Driver version mismatch, reinstalling');
+      runCliToFiles(['config', '--simulator', '--udid', sim.udid], path.join(artifactDir, 'driver-reconfig.out'), path.join(artifactDir, 'driver-reconfig.err'));
+      reconfigured = true;
+      await sleep(3000);
+      continue;
+    }
+    if (combined.includes('did not become reachable')) {
+      consecutiveUnreachable++;
+      if (consecutiveUnreachable >= 6) {
+        console.log('[sim-test] Driver port unreachable after 6 attempts, giving up');
+        break;
+      }
+    } else {
+      consecutiveUnreachable = 0;
     }
     if (attempt % 5 === 0) {
       relaunchSimulatorDriver(attempt);
@@ -596,6 +615,25 @@ async function openHomeScreenWithSafariIcon() {
     const visible = runCli(['waitFor', '--label', 'Safari', '--traits', 'Icon', '--timeout', '1', '--udid', sim.udid]);
     if (visible.code === 0) return;
   }
+}
+
+async function verifyExampleDomainOpened(id) {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await sleep(1000);
+    const dom = runCliToFiles(
+      ['dom', '--fresh', '--udid', sim.udid],
+      path.join(artifactDir, `${id}-verify-dom.out`),
+      path.join(artifactDir, `${id}-verify-dom.err`),
+    );
+    if (
+      dom.code === 0
+      && dom.stdout.includes('App: com.apple.mobilesafari')
+      && dom.stdout.includes('Example Domain')
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 async function discardContactIfNeeded() {
@@ -1064,15 +1102,26 @@ function buildCases() {
     { id: 'TA-1', run: () => runCaseContains('TA-1', 'terminated', ['terminateApp', 'com.apple.Preferences', '--udid', sim.udid], settingsHome) },
     { id: 'TA-2', run: () => runCaseContains('TA-2', 'terminated', ['terminateApp', 'com.apple.Preferences', '--udid', sim.udid], settingsHome) },
     { id: 'AA-6', run: () => runCaseContains('AA-6', 'activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
-    { id: 'OU-1', run: () => runCaseContains('OU-1', 'Opened URL: https://example.com', ['open', 'https://example.com', '--udid', sim.udid]) },
+    { id: 'OU-1', run: async () => {
+      if (!selected('OU-1')) return recordSkip('OU-1');
+      console.log('[sim-test] RUN OU-1: open https://example.com and verify Safari DOM');
+      const open = runCliToFiles(['open', 'https://example.com', '--udid', sim.udid], path.join(artifactDir, 'OU-1.out'), path.join(artifactDir, 'OU-1.err'));
+      const verified = open.code === 0 && await verifyExampleDomainOpened('OU-1');
+      if (verified) recordPass('OU-1');
+      else recordFail('OU-1', open.stdout + open.stderr + readFileIfExists(path.join(artifactDir, 'OU-1-verify-dom.out')) + readFileIfExists(path.join(artifactDir, 'OU-1-verify-dom.err')));
+    } },
     { id: 'OU-2', run: async () => {
       if (!selected('OU-2')) return recordSkip('OU-2');
-      console.log('[sim-test] RUN OU-2: ios-use stop && open https://example.com --udid <sim>');
-      const stop = runCliToFiles(['stop'], path.join(artifactDir, 'OU-2-stop.out'), path.join(artifactDir, 'OU-2-stop.err'));
+      console.log('[sim-test] RUN OU-2: ios-use stop && open https://example.com --udid <sim> && stop');
+      const stopBefore = runCliToFiles(['stop'], path.join(artifactDir, 'OU-2-stop-before.out'), path.join(artifactDir, 'OU-2-stop-before.err'));
       const open = runCliToFiles(['open', 'https://example.com', '--udid', sim.udid], path.join(artifactDir, 'OU-2.out'), path.join(artifactDir, 'OU-2.err'));
-      await waitForDriver();
-      if (stop.code === 0 && open.code === 0 && open.stdout.includes('Opened URL: https://example.com')) recordPass('OU-2');
-      else recordFail('OU-2', stop.stdout + stop.stderr + open.stdout + open.stderr);
+      const stopAfter = runCliToFiles(['stop'], path.join(artifactDir, 'OU-2-stop-after.out'), path.join(artifactDir, 'OU-2-stop-after.err'));
+      const verified = stopBefore.code === 0
+        && open.code === 0
+        && stopAfter.code === 0
+        && stopAfter.stdout.includes('No active session');
+      if (verified) recordPass('OU-2');
+      else recordFail('OU-2', stopBefore.stdout + stopBefore.stderr + open.stdout + open.stderr + stopAfter.stdout + stopAfter.stderr);
     } },
     { id: 'HOME-1', run: () => runCaseContains('HOME-1', 'Home', ['home', '--udid', sim.udid]) },
     { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--fresh', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },

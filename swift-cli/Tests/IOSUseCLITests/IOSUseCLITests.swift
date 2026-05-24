@@ -213,9 +213,9 @@ final class IOSUseCLITests: XCTestCase {
             paths: paths
         )
         var shellCalls: [(String, [String])] = []
-        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+        Shell.runResultOverrideForTesting = { executable, arguments, _ in
             shellCalls.append((executable, arguments))
-            return ""
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("open URL for active simulator should not create a driver client")
@@ -223,7 +223,7 @@ final class IOSUseCLITests: XCTestCase {
         }
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
-            Shell.runOverrideForTesting = nil
+            Shell.runResultOverrideForTesting = nil
             IOSUseCLI.driverClientFactoryForTesting = nil
         }
 
@@ -246,9 +246,9 @@ final class IOSUseCLITests: XCTestCase {
             return [IOSDevice(name: "iPhone", version: "26.0", udid: "SIM-1", kind: .simulator)]
         }
         var shellCalls: [(String, [String])] = []
-        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+        Shell.runResultOverrideForTesting = { executable, arguments, _ in
             shellCalls.append((executable, arguments))
-            return ""
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("open URL for explicit booted simulator should not create a driver client")
@@ -258,7 +258,7 @@ final class IOSUseCLITests: XCTestCase {
             try? FileManager.default.removeItem(atPath: root)
             DeviceService.listDevicesOverrideForTesting = nil
             DeviceService.resetCacheForTesting()
-            Shell.runOverrideForTesting = nil
+            Shell.runResultOverrideForTesting = nil
             IOSUseCLI.driverClientFactoryForTesting = nil
         }
 
@@ -300,6 +300,12 @@ final class IOSUseCLITests: XCTestCase {
             return []
         }
         DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-CMD"] }
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { scheme, _ in
+            if scheme == "https" {
+                return OpenURLService.SchemeRegistry.LookupResult(registeredHandlers: ["com.apple.mobilesafari"], lookupFailed: false)
+            }
+            return nil
+        }
         var shellCalls: [(String, [String])] = []
         Shell.runOverrideForTesting = { executable, arguments, _, _ in
             shellCalls.append((executable, arguments))
@@ -316,12 +322,13 @@ final class IOSUseCLITests: XCTestCase {
             DeviceService.resetCacheForTesting()
             Shell.runOverrideForTesting = nil
             IOSUseCLI.driverClientFactoryForTesting = nil
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
         }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com", "--udid", "REAL-CMD"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "Opened URL: https://example.com\n")
+        XCTAssertEqual(result.stdout, "Opened URL: https://example.com (handler: com.apple.mobilesafari)\n")
         XCTAssertEqual(shellCalls.count, 1)
         XCTAssertEqual(shellCalls.first?.0, "xcrun")
         XCTAssertEqual(shellCalls.first?.1, [
@@ -344,6 +351,12 @@ final class IOSUseCLITests: XCTestCase {
             XCTAssertFalse(simulatorOnly)
             return [IOSDevice(name: "iPhone", version: "26.0", udid: "REAL-DEFAULT", kind: .real)]
         }
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { scheme, _ in
+            if scheme == "https" {
+                return OpenURLService.SchemeRegistry.LookupResult(registeredHandlers: ["com.apple.mobilesafari"], lookupFailed: false)
+            }
+            return nil
+        }
         var shellCalls: [(String, [String])] = []
         Shell.runOverrideForTesting = { executable, arguments, _, _ in
             shellCalls.append((executable, arguments))
@@ -359,12 +372,13 @@ final class IOSUseCLITests: XCTestCase {
             DeviceService.resetCacheForTesting()
             Shell.runOverrideForTesting = nil
             IOSUseCLI.driverClientFactoryForTesting = nil
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
         }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "Opened URL: https://example.com\n")
+        XCTAssertEqual(result.stdout, "Opened URL: https://example.com (handler: com.apple.mobilesafari)\n")
         XCTAssertEqual(shellCalls.count, 1)
         XCTAssertEqual(shellCalls.first?.0, "xcrun")
         XCTAssertEqual(shellCalls.first?.1, [
@@ -406,6 +420,101 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("openURL requires a booted simulator, active session, or USB real device"))
     }
 
+    func testOpenURLSimulatorUnregisteredSchemeReportsError() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-sim-unregistered-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try? SessionService.writeSimulatorSession(
+            udid: "SIM-1",
+            deviceName: "iPhone",
+            deviceVersion: "26.0",
+            paths: paths
+        )
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "Simulator device failed to open notexist://test", exitCode: 194)
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            Shell.runResultOverrideForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "notexist://test"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("URL scheme \"notexist\" not registered on device"))
+    }
+
+    func testOpenURLRealDeviceUnregisteredSchemeReportsError() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-real-unregistered-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            XCTAssertTrue(simulatorOnly)
+            return []
+        }
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-1"] }
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { scheme, _ in
+            if scheme == "notexist" {
+                return OpenURLService.SchemeRegistry.LookupResult(registeredHandlers: [], lookupFailed: false)
+            }
+            return nil
+        }
+        Shell.runOverrideForTesting = { _, _, _, _ in
+            XCTFail("unregistered scheme should not invoke devicectl")
+            return ""
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            DeviceService.listDevicesOverrideForTesting = nil
+            DeviceService.usbDeviceUdidsOverrideForTesting = nil
+            DeviceService.resetCacheForTesting()
+            Shell.runOverrideForTesting = nil
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "notexist://test", "--udid", "REAL-1"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("URL scheme \"notexist\" not registered on device"))
+    }
+
+    func testOpenURLRealDeviceLookupFailsGradesToSentURLRequest() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-real-lookup-fail-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            XCTAssertTrue(simulatorOnly)
+            return []
+        }
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-1"] }
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { _, _ in
+            OpenURLService.SchemeRegistry.LookupResult(registeredHandlers: [], lookupFailed: true)
+        }
+        var shellCalls: [(String, [String])] = []
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            shellCalls.append((executable, arguments))
+            return ""
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            DeviceService.listDevicesOverrideForTesting = nil
+            DeviceService.usbDeviceUdidsOverrideForTesting = nil
+            DeviceService.resetCacheForTesting()
+            Shell.runOverrideForTesting = nil
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com", "--udid", "REAL-1"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("Sent URL request: https://example.com"))
+        XCTAssertTrue(result.stdout.contains("unable to verify scheme registration"))
+        XCTAssertEqual(shellCalls.count, 1)
+    }
+
     func testDriverCommandNamesMatchWireCommands() {
         let commands = Set(DriverCommand.allCases.map(\.rawValue))
 
@@ -427,6 +536,96 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertNil(DriverCommand.home.metadata.argsTypeName)
         XCTAssertNil(DriverCommand.home.metadata.payloadTypeName)
+    }
+
+    // MARK: - SchemeRegistry.parseSchemeHandlers
+
+    func testParseSchemeHandlersFindsRegisteredBundleIDs() {
+        let response: [String: Any] = [
+            "LookupResult": [
+                "com.apple.mobilesafari": [
+                    "CFBundleIdentifier": "com.apple.mobilesafari",
+                    "CFBundleURLTypes": [
+                        ["CFBundleURLSchemes": ["https", "http"]],
+                    ],
+                ],
+                "com.example.app": [
+                    "CFBundleIdentifier": "com.example.app",
+                    "CFBundleURLTypes": [
+                        ["CFBundleURLSchemes": ["myapp"]],
+                    ],
+                ],
+            ],
+        ]
+        let handlers = OpenURLService.SchemeRegistry.parseSchemeHandlers(scheme: "https", response: response)
+        XCTAssertEqual(handlers, ["com.apple.mobilesafari"])
+    }
+
+    func testParseSchemeHandlersIsCaseInsensitive() {
+        let response: [String: Any] = [
+            "LookupResult": [
+                "com.example.App": [
+                    "CFBundleIdentifier": "com.example.App",
+                    "CFBundleURLTypes": [
+                        ["CFBundleURLSchemes": ["MyApp"]],
+                    ],
+                ],
+            ],
+        ]
+        let handlers = OpenURLService.SchemeRegistry.parseSchemeHandlers(scheme: "myapp", response: response)
+        XCTAssertEqual(handlers, ["com.example.App"])
+    }
+
+    func testParseSchemeHandlersReturnsEmptyForUnregisteredScheme() {
+        let response: [String: Any] = [
+            "LookupResult": [
+                "com.apple.mobilesafari": [
+                    "CFBundleIdentifier": "com.apple.mobilesafari",
+                    "CFBundleURLTypes": [
+                        ["CFBundleURLSchemes": ["https"]],
+                    ],
+                ],
+            ],
+        ]
+        let handlers = OpenURLService.SchemeRegistry.parseSchemeHandlers(scheme: "notexist", response: response)
+        XCTAssertEqual(handlers, [])
+    }
+
+    func testParseSchemeHandlersReturnsEmptyForMissingLookupResult() {
+        let handlers = OpenURLService.SchemeRegistry.parseSchemeHandlers(scheme: "https", response: [:])
+        XCTAssertEqual(handlers, [])
+    }
+
+    func testParseSchemeHandlersSkipsAppsMissingURLTypes() {
+        let response: [String: Any] = [
+            "LookupResult": [
+                "com.example.no-urltypes": [
+                    "CFBundleIdentifier": "com.example.no-urltypes",
+                ],
+                "com.example.empty": [
+                    "CFBundleIdentifier": "com.example.empty",
+                    "CFBundleURLTypes": [],
+                ],
+            ],
+        ]
+        let handlers = OpenURLService.SchemeRegistry.parseSchemeHandlers(scheme: "https", response: response)
+        XCTAssertEqual(handlers, [])
+    }
+
+    func testParseSchemeHandlersDeduplicatesBundleIDs() {
+        let response: [String: Any] = [
+            "LookupResult": [
+                "com.example.app": [
+                    "CFBundleIdentifier": "com.example.app",
+                    "CFBundleURLTypes": [
+                        ["CFBundleURLSchemes": ["myapp"]],
+                        ["CFBundleURLSchemes": ["myapp", "other"]],
+                    ],
+                ],
+            ],
+        ]
+        let handlers = OpenURLService.SchemeRegistry.parseSchemeHandlers(scheme: "myapp", response: response)
+        XCTAssertEqual(handlers, ["com.example.app"])
     }
 
     func testPathsRespectIOSUseHomeOverrideWithoutWritingFiles() {
