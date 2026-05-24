@@ -8,6 +8,18 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     override func tearDown() {
+        DeviceService.listDevicesOverrideForTesting = nil
+        DeviceService.usbDeviceUdidsOverrideForTesting = nil
+        DeviceService.resetCacheForTesting()
+        DriverClient.usbmuxConnectorForTesting = nil
+        IOSUseCLI.driverClientFactoryForTesting = nil
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+        SessionService.realDriverLauncherForTesting = nil
+        SessionService.realDriverReachableForTesting = nil
+        SessionService.simulatorDriverLauncherForTesting = nil
+        SessionService.simulatorDriverReachableForTesting = nil
+        Shell.runOverrideForTesting = nil
+        Shell.runResultOverrideForTesting = nil
         super.tearDown()
     }
 
@@ -124,11 +136,20 @@ final class IOSUseCLITests: XCTestCase {
             .appendingPathComponent("ios-use-driver-retry-\(UUID().uuidString)")
             .path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try """
         {"devices":{"REAL-CMD":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try writeDriverLock(udid: "REAL-CMD", deviceType: "real", paths: paths)
 
-        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-CMD"] }
+        DeviceService.listDevicesOverrideForTesting = { _, _ in
+            XCTFail("direct driver command must not discover devices")
+            return []
+        }
+        DeviceService.usbDeviceUdidsOverrideForTesting = {
+            XCTFail("direct driver command must not inspect USB devices")
+            return []
+        }
         var launched: [(String, String)] = []
         SessionService.realDriverLauncherForTesting = { udid, bundleId in
             launched.append((udid, bundleId))
@@ -138,8 +159,8 @@ final class IOSUseCLITests: XCTestCase {
         }
         var attempts = 0
         IOSUseCLI.driverClientFactoryForTesting = { session in
-            XCTAssertEqual(session?.udid, "REAL-CMD")
-            XCTAssertEqual(session?.deviceType, "real")
+            XCTAssertEqual(session.udid, "REAL-CMD")
+            XCTAssertEqual(session.deviceType, "real")
             attempts += 1
             if attempts == 1 {
                 return FakeDriverCommandClient(domHandler: {
@@ -152,19 +173,72 @@ final class IOSUseCLITests: XCTestCase {
         }
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
-            DeviceService.usbDeviceUdidsOverrideForTesting = nil
-            SessionService.realDriverLauncherForTesting = nil
-            SessionService.realDriverReachableForTesting = nil
-            IOSUseCLI.driverClientFactoryForTesting = nil
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom", "--udid", "REAL-CMD"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("App: com.example.app"))
         XCTAssertEqual(attempts, 2)
         XCTAssertEqual(launched.map(\.0), ["REAL-CMD"])
         XCTAssertEqual(launched.map(\.1), ["com.example.driver"])
+    }
+
+    func testDriverCommandWithoutLockFailsBeforeClientOrDiscovery() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-driver-no-lock-\(UUID().uuidString)")
+            .path
+        DeviceService.listDevicesOverrideForTesting = { _, _ in
+            XCTFail("direct driver command without lock must not discover devices")
+            return []
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("direct driver command without lock must not create a client")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("No active driver. Run `ios-use start <UDID>` first."))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(root)/state/session.json"))
+    }
+
+    func testDriverCommandUsesLockInsteadOfStaleSessionJSONAndDoesNotRetryReadFailure() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-driver-lock-over-session-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try """
+        {"sessionId":"legacy","udid":"SESSION-UDID","deviceType":"real"}
+        """.write(toFile: paths.session, atomically: true, encoding: .utf8)
+        try writeDriverLock(udid: "SIM-LOCK", deviceType: "simulator", paths: paths)
+        var attempts = 0
+        IOSUseCLI.driverClientFactoryForTesting = { session in
+            attempts += 1
+            XCTAssertEqual(session.udid, "SIM-LOCK")
+            XCTAssertEqual(session.deviceType, "simulator")
+            return FakeDriverCommandClient(domHandler: {
+                throw DriverClientError.readFailed
+            })
+        }
+        SessionService.simulatorDriverLauncherForTesting = { _ in
+            XCTFail("read/write failures after command send must not relaunch")
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("driver TCP read failed"))
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(SessionService.readDriverLock(paths: paths), "SIM-LOCK")
     }
 
     func testRealDeviceUsbmuxConnectFailureIsRecoverable() {
@@ -206,12 +280,7 @@ final class IOSUseCLITests: XCTestCase {
             .appendingPathComponent("ios-use-open-url-active-sim-\(UUID().uuidString)")
             .path
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try SessionService.writeSimulatorSession(
-            udid: "SIM-1",
-            deviceName: "iPhone",
-            deviceVersion: "26.0",
-            paths: paths
-        )
+        try writeDriverLock(udid: "SIM-1", deviceType: "simulator", paths: paths)
         var shellCalls: [(String, [String])] = []
         Shell.runResultOverrideForTesting = { executable, arguments, _ in
             shellCalls.append((executable, arguments))
@@ -417,7 +486,7 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("openURL requires a booted simulator, active session, or USB real device"))
+        XCTAssertTrue(result.stderr.contains("openURL requires a booted simulator, active driver, or USB real device"))
     }
 
     func testOpenURLSimulatorUnregisteredSchemeReportsError() {
@@ -425,12 +494,7 @@ final class IOSUseCLITests: XCTestCase {
             .appendingPathComponent("ios-use-open-url-sim-unregistered-\(UUID().uuidString)")
             .path
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try? SessionService.writeSimulatorSession(
-            udid: "SIM-1",
-            deviceName: "iPhone",
-            deviceVersion: "26.0",
-            paths: paths
-        )
+        try? writeDriverLock(udid: "SIM-1", deviceType: "simulator", paths: paths)
         Shell.runResultOverrideForTesting = { _, _, _ in
             Shell.RunResult(stdout: "", stderr: "Simulator device failed to open notexist://test", exitCode: 194)
         }
@@ -666,6 +730,19 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertEqual(result.stderr, "error: example failure\n")
         XCTAssertTrue(result.stdout.isEmpty)
+    }
+
+    private func writeDriverLock(udid: String, deviceType: String, paths: IOSUsePaths) throws {
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: udid,
+                deviceName: deviceType == "simulator" ? "iPhone" : "Phone",
+                deviceVersion: "26.0",
+                deviceType: deviceType,
+                startedAt: 1
+            ),
+            paths: paths
+        )
     }
 }
 

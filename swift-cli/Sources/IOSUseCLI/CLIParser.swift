@@ -73,19 +73,19 @@ public struct StartOptions: Equatable, Sendable {
 }
 
 public enum DriverAction: Equatable, Sendable {
-    case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, session: SessionOptions)
-    case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, session: SessionOptions)
-    case input(label: String, content: String, traits: String?, cindex: Int32?, session: SessionOptions)
-    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, session: SessionOptions)
-    case dom(raw: Bool, fresh: Bool, session: SessionOptions)
-    case find(label: String, traits: String?, cindex: Int32?, session: SessionOptions)
-    case screenshot(name: String?, session: SessionOptions)
-    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, session: SessionOptions)
-    case activateApp(bundleId: String, session: SessionOptions)
-    case terminateApp(bundleId: String, session: SessionOptions)
-    case home(session: SessionOptions)
+    case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?)
+    case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?)
+    case input(label: String, content: String, traits: String?, cindex: Int32?)
+    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?)
+    case dom(raw: Bool, fresh: Bool)
+    case find(label: String, traits: String?, cindex: Int32?)
+    case screenshot(name: String?)
+    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?)
+    case activateApp(bundleId: String)
+    case terminateApp(bundleId: String)
+    case home
     case openURL(url: String, session: SessionOptions)
-    case dismissAlert(index: Int?, session: SessionOptions)
+    case dismissAlert(index: Int?)
     case oslog(pattern: String?, flags: String?, timeout: Double?, name: String?, clear: Bool, bundleId: String?, session: SessionOptions)
 
     public var name: String {
@@ -104,26 +104,6 @@ public enum DriverAction: Equatable, Sendable {
         case .openURL: return "openURL"
         case .dismissAlert: return "dismissAlert"
         case .oslog: return "oslog"
-        }
-    }
-
-    public var session: SessionOptions {
-        switch self {
-        case .tap(_, _, _, _, _, let session),
-             .longPress(_, _, _, _, let session),
-             .input(_, _, _, _, let session),
-             .swipe(_, _, _, _, _, _, let session),
-             .dom(_, _, let session),
-             .find(_, _, _, let session),
-             .screenshot(_, let session),
-             .waitFor(_, _, _, _, let session),
-             .activateApp(_, let session),
-             .terminateApp(_, let session),
-             .home(let session),
-             .openURL(_, let session),
-             .dismissAlert(_, let session),
-             .oslog(_, _, _, _, _, _, let session):
-            return session
         }
     }
 }
@@ -413,17 +393,16 @@ public enum CLIParser {
         var offsetRatio: String?
         var traits: String?
         var cindex: Int32?
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--offset": offset = try parser.valueAllowingLeadingDash(for: arg)
             case "--offset-ratio": offsetRatio = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, session: session)
+        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
     }
 
     private static func parseLongPress(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -431,16 +410,15 @@ public enum CLIParser {
         var duration: Int?
         var traits: String?
         var cindex: Int32?
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--duration": duration = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex, session: session)
+        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex)
     }
 
     private static func parseInput(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -448,17 +426,16 @@ public enum CLIParser {
         var content: String?
         var traits: String?
         var cindex: Int32?
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--label": label = try parser.value(for: arg)
             case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .input(label: try require(label, option: "--label"), content: try require(content, option: "--content"), traits: traits, cindex: cindex, session: session)
+        return .input(label: try require(label, option: "--label"), content: try require(content, option: "--content"), traits: traits, cindex: cindex)
     }
 
     private static func parseSwipe(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -468,7 +445,6 @@ public enum CLIParser {
         var distance: Double?
         var traits: String?
         var cindex: Int32?
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--to": to = try parser.value(for: arg)
@@ -480,51 +456,48 @@ public enum CLIParser {
             case "--distance": distance = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex, session: session)
+        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex)
     }
 
     private static func parseDom(_ parser: inout ArgumentParser) throws -> DriverAction {
         var raw = false
         var fresh = false
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--raw": raw = true
             case "--fresh": fresh = true
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .dom(raw: raw, fresh: fresh, session: session)
+        return .dom(raw: raw, fresh: fresh)
     }
 
     private static func parseFind(_ parser: inout ArgumentParser) throws -> DriverAction {
         let label = try parser.requiredPositional("label")
         var traits: String?
         var cindex: Int32?
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .find(label: label, traits: traits, cindex: cindex, session: session)
+        return .find(label: label, traits: traits, cindex: cindex)
     }
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
         var name: String?
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--name": name = try parser.value(for: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .screenshot(name: name, session: session)
+        return .screenshot(name: name)
     }
 
     private static func parseWaitFor(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -532,17 +505,16 @@ public enum CLIParser {
         var timeout: Double?
         var traits: String?
         var cindex: Int32?
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--label": label = try parser.value(for: arg)
             case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .waitFor(label: try require(label, option: "--label"), timeout: timeout, traits: traits, cindex: cindex, session: session)
+        return .waitFor(label: try require(label, option: "--label"), timeout: timeout, traits: traits, cindex: cindex)
     }
 
     private enum BundleActionKind {
@@ -552,22 +524,16 @@ public enum CLIParser {
 
     private static func parseBundleAction(_ parser: inout ArgumentParser, kind: BundleActionKind) throws -> DriverAction {
         let bundleId = try parser.requiredPositional("bundleId")
-        var session = SessionOptions()
-        while let arg = parser.consume() {
-            try parseSession(arg, parser: &parser, session: &session)
-        }
+        try parser.requireEnd()
         switch kind {
-        case .activateApp: return .activateApp(bundleId: bundleId, session: session)
-        case .terminateApp: return .terminateApp(bundleId: bundleId, session: session)
+        case .activateApp: return .activateApp(bundleId: bundleId)
+        case .terminateApp: return .terminateApp(bundleId: bundleId)
         }
     }
 
     private static func parseHome(_ parser: inout ArgumentParser) throws -> DriverAction {
-        var session = SessionOptions()
-        while let arg = parser.consume() {
-            try parseSession(arg, parser: &parser, session: &session)
-        }
-        return .home(session: session)
+        try parser.requireEnd()
+        return .home
     }
 
     private static func parseOpen(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -581,14 +547,13 @@ public enum CLIParser {
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
         var index: Int?
-        var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--index": index = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: try parseSession(arg, parser: &parser, session: &session)
+            default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .dismissAlert(index: index, session: session)
+        return .dismissAlert(index: index)
     }
 
     private static func parseOSLog(_ parser: inout ArgumentParser) throws -> DriverAction {

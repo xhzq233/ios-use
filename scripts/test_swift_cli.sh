@@ -40,7 +40,16 @@ fi
 
 (
   cd "$WORK_DIR"
-  PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$IOS_USE_TEST_HOME" ios-use stop >/dev/null
+  if PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$IOS_USE_TEST_HOME" ios-use stop >"$TMP_ROOT/stop.out" 2>"$TMP_ROOT/stop.err"; then
+    echo "[swift-cli] ERROR: stop without driver.lock unexpectedly succeeded" >&2
+    cat "$TMP_ROOT/stop.out" >&2 || true
+    exit 1
+  fi
+  if ! grep -q 'No active driver. Run `ios-use start <UDID>` first.' "$TMP_ROOT/stop.err"; then
+    echo "[swift-cli] ERROR: stop without driver.lock returned unexpected error" >&2
+    cat "$TMP_ROOT/stop.err" >&2 || true
+    exit 1
+  fi
 )
 
 echo "[swift-cli] Checking installed-style nslog streaming output..."
@@ -70,7 +79,7 @@ kill -INT "$NSLOG_PID" 2>/dev/null || true
 wait "$NSLOG_PID" 2>/dev/null || true
 (
   cd "$WORK_DIR"
-  PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$IOS_USE_TEST_HOME-nslog" ios-use stop >/dev/null
+  PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$IOS_USE_TEST_HOME-nslog" ios-use nslog stop >/dev/null 2>&1 || true
 )
 
 echo "[swift-cli] Checking installed-style nslog capture log separation..."

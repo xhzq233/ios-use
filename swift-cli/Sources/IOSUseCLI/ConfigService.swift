@@ -153,13 +153,6 @@ public enum ConfigService {
         let installedIdentity = try readSimulatorInstalledDriverIdentity(udid: udid, bundleId: simulatorBundleId)
         try assertInstalledDriverIdentity(installed: installedIdentity, expected: expectedIdentity, source: "Simulator app Info.plist")
         try saveConfig(udid: udid, bundleId: simulatorBundleId, driverIdentity: installedIdentity, paths: paths)
-        let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first { $0.udid == udid }
-        try SessionService.writeSimulatorSession(
-            udid: udid,
-            deviceName: simulator?.name ?? "Simulator",
-            deviceVersion: simulator?.version ?? "",
-            paths: paths
-        )
         return "Using prebuilt driver: \(ipaPath)\nDriver installed to Simulator\nDriver launched on Simulator (PID: \(launchOutput))\nSimulator config complete!\n"
     }
 
@@ -502,18 +495,18 @@ private extension String {
 
 public enum SessionService {
     public struct Info: Equatable, Sendable {
-        public let sessionId: String
         public let udid: String
         public let deviceName: String
         public let deviceVersion: String
         public let deviceType: String
+        public let startedAt: Int
 
-        public init(sessionId: String, udid: String, deviceName: String, deviceVersion: String, deviceType: String) {
-            self.sessionId = sessionId
+        public init(udid: String, deviceName: String, deviceVersion: String, deviceType: String, startedAt: Int = Int(Date().timeIntervalSince1970 * 1000)) {
             self.udid = udid
             self.deviceName = deviceName
             self.deviceVersion = deviceVersion
             self.deviceType = deviceType
+            self.startedAt = startedAt
         }
     }
 
@@ -525,22 +518,55 @@ public enum SessionService {
     static var realDriverTerminatorForTesting: ((String) throws -> Bool)?
 
     public static func clear(paths: IOSUsePaths) {
-        try? FileManager.default.removeItem(atPath: paths.session)
         clearDriverLock(paths: paths)
     }
 
     public static func readDriverLock(paths: IOSUsePaths) -> String? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.driverLock)),
-              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let udid = raw["udid"] as? String,
-              !udid.isEmpty else {
-            return nil
-        }
-        return udid
+        try? readDriverLockInfo(paths: paths)?.udid
     }
 
-    public static func writeDriverLock(udid: String, paths: IOSUsePaths) throws {
-        let root: [String: Any] = ["udid": udid]
+    public static func readDriverLockInfo(paths: IOSUsePaths) throws -> Info? {
+        guard FileManager.default.fileExists(atPath: paths.driverLock) else {
+            return nil
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: paths.driverLock))
+        guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CLIParseError.invalidValue("Invalid driver.lock: expected JSON object.")
+        }
+        guard let udid = raw["udid"] as? String, !udid.isEmpty,
+              let deviceType = raw["deviceType"] as? String, !deviceType.isEmpty else {
+            throw CLIParseError.invalidValue("Invalid driver.lock: missing udid/deviceType.")
+        }
+        guard deviceType == "real" || deviceType == "simulator" else {
+            throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType).")
+        }
+        guard let startedAt = raw["startedAt"] as? Int else {
+            throw CLIParseError.invalidValue("Invalid driver.lock: missing startedAt.")
+        }
+        return Info(
+            udid: udid,
+            deviceName: raw["deviceName"] as? String ?? "",
+            deviceVersion: raw["deviceVersion"] as? String ?? "",
+            deviceType: deviceType,
+            startedAt: startedAt
+        )
+    }
+
+    public static func requireDriverLock(paths: IOSUsePaths) throws -> Info {
+        guard let info = try readDriverLockInfo(paths: paths) else {
+            throw CLIParseError.invalidValue("No active driver. Run `ios-use start <UDID>` first.")
+        }
+        return info
+    }
+
+    public static func writeDriverLock(info: Info, paths: IOSUsePaths) throws {
+        let root: [String: Any] = [
+            "udid": info.udid,
+            "deviceName": info.deviceName,
+            "deviceVersion": info.deviceVersion,
+            "deviceType": info.deviceType,
+            "startedAt": info.startedAt,
+        ]
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
@@ -552,153 +578,85 @@ public enum SessionService {
     }
 
     public static func start(udid: String, paths: IOSUsePaths, verbose: Bool) throws -> String {
-        let previousSession = read(paths: paths)
-        try prepareDriverSession(SessionOptions(udid: udid, verbose: verbose), paths: paths)
-        guard let current = read(paths: paths), current.udid == udid else {
-            throw CLIParseError.invalidValue("No active driver session for \(udid)")
+        if let current = try readDriverLockInfo(paths: paths) {
+            throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
         }
-        if previousSession?.udid == udid || current.deviceType == "real" {
-            try launchPreparedDriverSession(paths: paths, verbose: verbose)
-        }
-        try writeDriverLock(udid: udid, paths: paths)
+        let info = try resolveDriverInfo(udid: udid, paths: paths)
+        try launchDriver(for: info, paths: paths, verbose: verbose)
+        try writeDriverLock(info: info, paths: paths)
         return "Driver started for \(udid)\n"
     }
 
     public static func stop(paths: IOSUsePaths) throws -> String {
-        let current = read(paths: paths)
-
+        let current = try requireDriverLock(paths: paths)
         var output = ""
-        if let current, current.deviceType == "simulator" {
+        if current.deviceType == "simulator" {
             let terminate = simulatorDriverTerminatorForTesting ?? terminateSimulatorDriver
-            if (try? terminate(current.udid)) == true {
-                output += "Driver app terminated on simulator\n"
+            guard try terminate(current.udid) else {
+                throw CLIParseError.invalidValue("Driver app was not terminated for \(current.udid).")
             }
-        } else if let current {
+            output += "Driver app terminated on simulator\n"
+        } else {
             let terminate = realDriverTerminatorForTesting ?? terminateRealDriverProcesses
-            if (try? terminate(current.udid)) == true {
-                output += "Driver app terminated on device\n"
+            guard try terminate(current.udid) else {
+                throw CLIParseError.invalidValue("Driver app was not terminated for \(current.udid).")
             }
-        } else if current == nil {
-            output += "No active session\n"
+            output += "Driver app terminated on device\n"
         }
 
-        clear(paths: paths)
-        output += "Session stopped\n"
+        clearDriverLock(paths: paths)
+        output += "Driver stopped\n"
         return output
     }
 
     public static func read(paths: IOSUsePaths) -> Info? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: paths.session)),
-              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let sessionId = raw["sessionId"] as? String,
-              let udid = raw["udid"] as? String else {
-            return nil
-        }
-        return Info(
-            sessionId: sessionId,
-            udid: udid,
-            deviceName: raw["deviceName"] as? String ?? "",
-            deviceVersion: raw["deviceVersion"] as? String ?? "",
-            deviceType: raw["deviceType"] as? String ?? ""
-        )
+        try? readDriverLockInfo(paths: paths)
     }
 
-    public static func writeSimulatorSession(udid: String, deviceName: String, deviceVersion: String, paths: IOSUsePaths) throws {
-        try writeSession(
-            udid: udid,
-            deviceName: deviceName,
-            deviceVersion: deviceVersion,
-            deviceType: "simulator",
-            paths: paths
-        )
-    }
-
-    public static func prepareDriverSession(_ session: SessionOptions, paths: IOSUsePaths) throws {
-        if session.udid == nil, let current = read(paths: paths) {
-            try ConfigService.assertDriverInstallCurrent(udid: current.udid, paths: paths)
-            return
-        }
-
-        let udid: String
-        if let requested = session.udid {
-            udid = requested
-        } else {
-            let devices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
-            guard let device = devices.first else {
-                throw CLIParseError.invalidValue("No --udid and no USB devices detected. Simulator requires explicit --udid.")
-            }
-            udid = device.udid
-        }
+    public static func resolveDriverInfo(udid: String, paths: IOSUsePaths) throws -> Info {
         let configured = DeviceService.configuredUdids(paths: paths)
         guard configured.contains(udid) else {
             throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
         }
         try ConfigService.assertDriverInstallCurrent(udid: udid, paths: paths)
-        if let current = read(paths: paths), current.udid == udid {
-            return
-        }
         if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
-            try ensureSimulatorDriverRunning(udid: udid, allowExistingDriver: false)
-            try writeSession(
+            return Info(
                 udid: udid,
                 deviceName: simulator.name,
                 deviceVersion: simulator.version,
-                deviceType: "simulator",
-                paths: paths
+                deviceType: "simulator"
             )
-            return
         }
-        if session.udid != nil, try DeviceService.isUsbDeviceConnected(udid: udid) {
-            try writeSession(
+        if try DeviceService.isUsbDeviceConnected(udid: udid) {
+            let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first { $0.udid == udid }
+            return Info(
                 udid: udid,
-                deviceName: "Unknown",
-                deviceVersion: "",
-                deviceType: "real",
-                paths: paths
+                deviceName: device?.name ?? "Unknown",
+                deviceVersion: device?.version ?? "",
+                deviceType: "real"
             )
-            return
         }
         if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first(where: { $0.udid == udid }) {
-            try writeSession(
+            return Info(
                 udid: udid,
                 deviceName: device.name,
                 deviceVersion: device.version,
-                deviceType: "real",
-                paths: paths
+                deviceType: "real"
             )
-            return
         }
         throw CLIParseError.invalidValue("Device \(udid) not found.")
     }
 
-    public static func launchPreparedDriverSession(paths: IOSUsePaths, verbose: Bool) throws {
-        guard let current = read(paths: paths) else {
-            throw CLIParseError.invalidValue("No active driver session. Run `ios-use config --udid <udid>` first.")
-        }
-        try ConfigService.assertDriverInstallCurrent(udid: current.udid, paths: paths)
-        switch current.deviceType {
+    public static func launchDriver(for info: Info, paths: IOSUsePaths, verbose: Bool) throws {
+        try ConfigService.assertDriverInstallCurrent(udid: info.udid, paths: paths)
+        switch info.deviceType {
         case "simulator":
-            try ensureSimulatorDriverRunning(udid: current.udid, allowExistingDriver: false)
+            try ensureSimulatorDriverRunning(udid: info.udid, allowExistingDriver: false)
         case "real":
-            try ensureRealDriverRunning(udid: current.udid, paths: paths, verbose: verbose, checkFirst: false)
+            try ensureRealDriverRunning(udid: info.udid, paths: paths, verbose: verbose, checkFirst: false)
         default:
-            throw CLIParseError.invalidValue("Unknown session device type: \(current.deviceType)")
+            throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(info.deviceType).")
         }
-    }
-
-    public static func writeSession(udid: String, deviceName: String, deviceVersion: String, deviceType: String, paths: IOSUsePaths) throws {
-        let root: [String: Any] = [
-            "sessionId": "session-\(Int(Date().timeIntervalSince1970 * 1000))",
-            "udid": udid,
-            "deviceName": deviceName,
-            "deviceVersion": deviceVersion,
-            "deviceType": deviceType,
-            "createdAt": Int(Date().timeIntervalSince1970 * 1000),
-        ]
-        let sessionDir = URL(fileURLWithPath: paths.session).deletingLastPathComponent().path
-        try FileManager.default.createDirectory(atPath: sessionDir, withIntermediateDirectories: true, attributes: nil)
-        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: URL(fileURLWithPath: paths.session), options: .atomic)
     }
 
     private static func ensureRealDriverRunning(udid: String, paths: IOSUsePaths, verbose: Bool, checkFirst: Bool = true) throws {

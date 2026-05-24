@@ -5,7 +5,10 @@ public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
 
     public static let version = "1.0.4"
-    static var driverClientFactoryForTesting: ((SessionService.Info?) -> DriverCommandClient)?
+    static var driverClientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)? {
+        get { DriverCommandExecution.clientFactoryForTesting }
+        set { DriverCommandExecution.clientFactoryForTesting = newValue }
+    }
 
     public let paths: IOSUsePaths
     public let outputSink: CLIOutputSink?
@@ -141,63 +144,63 @@ public struct IOSUseCLI: Sendable {
         }
         do {
             switch action {
-            case .dom(let raw, let fresh, _):
-                let payload = try withPreparedDriverClient(action.session) { client in
+            case .dom(let raw, let fresh):
+                let payload = try withLockedDriverClient { client in
                     try client.dom(raw: raw, fresh: fresh)
                 }
                 return CLIResult(exitCode: 0, stdout: DriverOutput.formatDom(payload))
-            case .find(let label, let traits, let cindex, _):
-                let payload = try withPreparedDriverClient(action.session) { client in
+            case .find(let label, let traits, let cindex):
+                let payload = try withLockedDriverClient { client in
                     try client.find(label: label, traits: traits, cindex: cindex)
                 }
                 return CLIResult(exitCode: 0, stdout: DriverOutput.formatFind(label: label, payload: payload))
-            case .waitFor(let label, let timeout, let traits, let cindex, _):
-                let payload = try withPreparedDriverClient(action.session) { client in
+            case .waitFor(let label, let timeout, let traits, let cindex):
+                let payload = try withLockedDriverClient { client in
                     try client.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)
                 }
                 return CLIResult(exitCode: 0, stdout: DriverOutput.formatWaitFor(label: label, payload: payload))
-            case .screenshot(let name, _):
-                let data = try withPreparedDriverClient(action.session) { client in
+            case .screenshot(let name):
+                let data = try withLockedDriverClient { client in
                     try client.screenshot()
                 }
                 return try saveScreenshot(name: name, data: data)
-            case .tap(let target, let offset, let offsetRatio, let traits, let cindex, _):
+            case .tap(let target, let offset, let offsetRatio, let traits, let cindex):
                 let foryTarget = try Self.target(target, traits: traits, cindex: cindex)
                 if foryTarget.point != nil && (offset != nil || offsetRatio != nil) {
                     throw CLIParseError.invalidValue("offset requires element label, not absolute point")
                 }
                 let offsetPoint = try offset.map { try Self.pointPair($0, emptyDefault: 0) }
                 let ratioPoint = try offsetPoint == nil ? (offsetRatio.map { try Self.pointPair($0, emptyDefault: IOSUseProtocol.defaultTargetRatio) } ?? ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) : ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
-                let payload = try withPreparedDriverClient(action.session) { client in
+                let payload = try withLockedDriverClient { client in
                     try client.tap(target: foryTarget, traits: traits, cindex: cindex, offset: offsetPoint, ratio: ratioPoint)
                 }
                 return CLIResult(exitCode: 0, stdout: "Tap\n\(DriverOutput.formatElement(payload))")
-            case .longPress(let target, let duration, let traits, let cindex, _):
+            case .longPress(let target, let duration, let traits, let cindex):
                 let foryTarget = try Self.target(target, traits: traits, cindex: cindex)
-                let payload = try withPreparedDriverClient(action.session) { client in
+                let payload = try withLockedDriverClient { client in
                     try client.longPress(target: foryTarget, durationMs: duration, traits: traits, cindex: cindex)
                 }
                 return CLIResult(exitCode: 0, stdout: "Longpress\n\(DriverOutput.formatElement(payload))")
-            case .input(let label, let content, let traits, let cindex, _):
-                try withPreparedDriverClient(action.session) { client in
+            case .input(let label, let content, let traits, let cindex):
+                try withLockedDriverClient { client in
                     try client.input(label: label, content: content, traits: traits, cindex: cindex)
                 }
                 return CLIResult(exitCode: 0, stdout: "Input \"\(content)\" into \"\(label)\"\n")
-            case .swipe(let to, let from, let dir, let distance, let traits, let cindex, _):
+            case .swipe(let to, let from, let dir, let distance, let traits, let cindex):
                 let toTarget = try Self.target(to, traits: traits, cindex: cindex)
                 let fromTarget = try Self.target(from)
-                let result = try withPreparedDriverClient(action.session) { client in
+                let result = try withLockedDriverClient { client in
                     try client.swipe(to: toTarget, from: fromTarget, distance: distance, dir: dir, traits: traits, cindex: cindex)
                 }
                 return CLIResult(exitCode: 0, stdout: DriverOutput.formatSwipe(result))
-            case .activateApp(let bundleId, _):
-                try withPreparedDriverClient(action.session) { client in
+            case .activateApp(let bundleId):
+                try withLockedDriverClient { client in
                     try client.activateApp(bundleId: bundleId)
                 }
                 return CLIResult(exitCode: 0, stdout: "App \(bundleId) activated\n")
-            case .terminateApp(let bundleId, _):
+            case .terminateApp(let bundleId):
                 do {
-                    try withPreparedDriverClient(action.session) { client in
+                    try withLockedDriverClient { client in
                         try client.terminateApp(bundleId: bundleId)
                     }
                 } catch {
@@ -208,7 +211,7 @@ public struct IOSUseCLI: Sendable {
                 }
                 return CLIResult(exitCode: 0, stdout: "App \(bundleId) terminated\n")
             case .home:
-                try withPreparedDriverClient(action.session) { client in
+                try withLockedDriverClient { client in
                     try client.home()
                 }
                 return CLIResult(exitCode: 0, stdout: "Pressed Home\n")
@@ -217,9 +220,9 @@ public struct IOSUseCLI: Sendable {
                 if let result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: session, paths: paths) {
                     return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
                 }
-                throw CLIParseError.invalidValue("openURL requires a booted simulator, active session, or USB real device")
-            case .dismissAlert(let index, _):
-                let payload = try withPreparedDriverClient(action.session) { client in
+                throw CLIParseError.invalidValue("openURL requires a booted simulator, active driver, or USB real device")
+            case .dismissAlert(let index):
+                let payload = try withLockedDriverClient { client in
                     try client.dismissAlert(index: index)
                 }
                 return CLIResult(exitCode: 0, stdout: DriverOutput.formatAlert(payload))
@@ -231,22 +234,8 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func withPreparedDriverClient<T>(_ session: SessionOptions, _ body: (DriverCommandClient) throws -> T) throws -> T {
-        try prepareDriverSession(session)
-        do {
-            return try runWithDriverClient(body)
-        } catch {
-            guard Self.isRecoverableDriverConnectFailure(error) else { throw error }
-            try SessionService.launchPreparedDriverSession(paths: paths, verbose: session.verbose)
-            return try runWithDriverClient(body)
-        }
-    }
-
-    private func runWithDriverClient<T>(_ body: (DriverCommandClient) throws -> T) throws -> T {
-        let client = Self.driverClientFactoryForTesting?(SessionService.read(paths: paths))
-            ?? DriverClient(session: SessionService.read(paths: paths))
-        defer { client.close() }
-        return try body(client)
+    private func withLockedDriverClient<T>(_ body: (DriverCommandClient) throws -> T) throws -> T {
+        try DriverCommandExecution.withLockedClient(paths: paths, body)
     }
 
     private func saveScreenshot(name: String?, data: Data) throws -> CLIResult {
@@ -263,12 +252,12 @@ public struct IOSUseCLI: Sendable {
             }
             return CLIResult(exitCode: 0, stdout: OSLogService.clear())
         }
-        let activeSession = SessionService.read(paths: paths)
-        let defaultUsbUdid = try session.udid == nil && activeSession?.udid == nil
+        let activeDriver = SessionService.read(paths: paths)
+        let defaultUsbUdid = try session.udid == nil && activeDriver?.udid == nil
             ? DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
             : nil
-        guard let udid = session.udid ?? activeSession?.udid ?? defaultUsbUdid else {
-            throw CLIParseError.invalidValue("oslog requires --udid, an active session, or a connected USB device")
+        guard let udid = session.udid ?? activeDriver?.udid ?? defaultUsbUdid else {
+            throw CLIParseError.invalidValue("oslog requires --udid, an active driver, or a connected USB device")
         }
         return CLIResult(
             exitCode: 0,
@@ -280,13 +269,9 @@ public struct IOSUseCLI: Sendable {
                 timeout: timeout,
                 name: name,
                 paths: paths,
-                deviceTypeHint: activeSession?.udid == udid ? activeSession?.deviceType : (defaultUsbUdid == udid ? "real" : nil)
+                deviceTypeHint: activeDriver?.udid == udid ? activeDriver?.deviceType : (defaultUsbUdid == udid ? "real" : nil)
             )
         )
-    }
-
-    private func prepareDriverSession(_ session: SessionOptions) throws {
-        try SessionService.prepareDriverSession(session, paths: paths)
     }
 
     private static func isRecoverableDriverConnectFailure(_ error: Error) -> Bool {
