@@ -50,7 +50,7 @@ GitHub CI uses `.github/workflows/ci.yml` for the default gate and runs script s
 | --- | --- |
 | `scripts/install.sh` | Install the release CLI, driver IPAs, skill, flows, and altsign helper. Use `--build-from-source` to compile locally. |
 | `scripts/release_build.sh` | Build and stage GitHub Release assets under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. |
-| `scripts/benchmark_wda.js` | Compare ios-use against Appium/WebDriverAgent on a real device; automatically picks a free WDA local port when `WDA_LOCAL_PORT` is not set. |
+| `scripts/benchmark_wda.js` | Compare ios-use against Appium/WebDriverAgent on a real device; `--custom-only` skips Appium/WDA, and `--label` / `--input-label` / `--scroll-to-label` can adapt UI labels for the target locale. Use `--custom-simulator` only for local Simulator-only custom runs. |
 
 ## Release Artifacts
 
