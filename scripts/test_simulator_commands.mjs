@@ -1300,32 +1300,37 @@ function buildCases() {
   ]);
 
   const flow = (name) => path.join(flowDir, name);
+  const flowArgs = (name, ...args) => ['flow', flow(name), ...args];
+  const flowSetup = (setup) => async () => {
+    await ensureDriverReady();
+    await setup?.();
+  };
   addCases(cases, [
-    { id: 'FLOW-1', run: () => runCaseContains('FLOW-1', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-2', run: () => runCaseFailsContains('FLOW-2', 'Flow file not found', ['flow', flow('missing-file.yaml'), '--udid', sim.udid]) },
-    { id: 'FLOW-3', run: () => runCaseContainsRetryTransient('FLOW-3', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-4', run: () => runCaseContains('FLOW-4', 'Running flow', ['flow', flow('basic.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-6', run: () => runCaseContains('FLOW-6', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-7', run: () => runCaseContains('FLOW-7', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-8', run: () => runCaseContains('FLOW-8', 'Running flow', ['flow', flow('parent.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-9', run: () => runCaseFailsContains('FLOW-9', 'requested undeclared output', ['flow', flow('missing-output.yaml'), '--udid', sim.udid]) },
-    { id: 'FLOW-10', run: () => runCaseFailsContains('FLOW-10', 'cycle detected', ['flow', flow('cycle-a.yaml'), '--udid', sim.udid]) },
-    { id: 'FLOW-11', run: () => runCaseContains('FLOW-11', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-12', run: () => runCaseContains('FLOW-12', 'returnIf matched', ['flow', flow('return-null.yaml'), '--udid', sim.udid]) },
-    { id: 'FLOW-13', run: () => runCaseFailsContains('FLOW-13', 'returnIf requires', ['flow', flow('invalid-return.yaml'), '--udid', sim.udid]) },
-    { id: 'FLOW-14', run: () => runCaseContains('FLOW-14', 'Tap', ['flow', flow('tap-offset.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-15', run: () => runCaseContains('FLOW-15', 'oslog: matched=', ['flow', flow('oslog-timeout.yaml'), '--udid', sim.udid]) },
+    { id: 'FLOW-1', run: () => runCaseContains('FLOW-1', 'Running flow', flowArgs('basic.yaml'), flowSetup(settingsHome)) },
+    { id: 'FLOW-2', run: () => runCaseFailsContains('FLOW-2', 'Flow file not found', flowArgs('missing-file.yaml'), flowSetup()) },
+    { id: 'FLOW-3', run: () => runCaseContainsRetryTransient('FLOW-3', 'Running flow', flowArgs('basic.yaml'), flowSetup(settingsHome)) },
+    { id: 'FLOW-4', run: () => runCaseContains('FLOW-4', 'Running flow', flowArgs('basic.yaml'), flowSetup(settingsHome)) },
+    { id: 'FLOW-6', run: () => runCaseContains('FLOW-6', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
+    { id: 'FLOW-7', run: () => runCaseContains('FLOW-7', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
+    { id: 'FLOW-8', run: () => runCaseContains('FLOW-8', 'Running flow', flowArgs('parent.yaml'), flowSetup(settingsHome)) },
+    { id: 'FLOW-9', run: () => runCaseFailsContains('FLOW-9', 'requested undeclared output', flowArgs('missing-output.yaml'), flowSetup()) },
+    { id: 'FLOW-10', run: () => runCaseFailsContains('FLOW-10', 'cycle detected', flowArgs('cycle-a.yaml'), flowSetup()) },
+    { id: 'FLOW-11', run: () => runCaseContains('FLOW-11', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
+    { id: 'FLOW-12', run: () => runCaseContains('FLOW-12', 'returnIf matched', flowArgs('return-null.yaml'), flowSetup()) },
+    { id: 'FLOW-13', run: () => runCaseFailsContains('FLOW-13', 'returnIf requires', flowArgs('invalid-return.yaml'), flowSetup()) },
+    { id: 'FLOW-14', run: () => runCaseContains('FLOW-14', 'Tap', flowArgs('tap-offset.yaml'), flowSetup(settingsHome)) },
+    { id: 'FLOW-15', run: () => runCaseContains('FLOW-15', 'oslog: matched=', flowArgs('oslog-timeout.yaml'), flowSetup()) },
     { id: 'FLOW-16', run: () => unsupportedCase('FLOW-16', 'nslog flow timeout is intentionally excluded from Simulator command coverage') },
-    { id: 'FLOW-5', run: () => runCaseFileExists('FLOW-5', path.join(iosHome, 'artifacts/simulator-flow-smoke-screenshot.jpg'), ['flow', flow('standard-smoke.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-17', run: () => runCaseContains('FLOW-17', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-18', run: () => runCaseContains('FLOW-18', 'Running flow', ['flow', flow('sleep-default.yaml'), '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-19', run: () => runCaseContains('FLOW-19', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], async () => { runCli(['config', '--simulator', '--udid', sim.udid]); await waitForDriver(); await settingsHome(); }) },
-    { id: 'FLOW-20', run: () => runCaseContains('FLOW-20', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-21', run: () => runCaseContains('FLOW-21', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.search', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--verbose', '--udid', sim.udid], settingsHome) },
-    { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
+    { id: 'FLOW-5', run: () => runCaseFileExists('FLOW-5', path.join(iosHome, 'artifacts/simulator-flow-smoke-screenshot.jpg'), flowArgs('standard-smoke.yaml'), flowSetup(settingsHome)) },
+    { id: 'FLOW-17', run: () => runCaseContains('FLOW-17', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
+    { id: 'FLOW-18', run: () => runCaseContains('FLOW-18', 'Running flow', flowArgs('sleep-default.yaml'), flowSetup(settingsHome)) },
+    { id: 'FLOW-19', run: () => runCaseContains('FLOW-19', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), async () => { runCli(['config', '--simulator', '--udid', sim.udid]); await waitForDriver(); await settingsHome(); }) },
+    { id: 'FLOW-20', run: () => runCaseContains('FLOW-20', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
+    { id: 'FLOW-21', run: () => runCaseContains('FLOW-21', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.search'), flowSetup(settingsHome)) },
+    { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general', '--verbose'), flowSetup(settingsHome)) },
+    { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
     ...['FLOW-24', 'FLOW-25', 'FLOW-26'].map(id => ({ id, run: runSwiftCLIUnitCases })),
-    { id: 'DOM-4', run: () => runCaseFailsContains('DOM-4', 'unknown field', ['flow', flow('dom-save.yaml'), '--udid', sim.udid], settingsHome) },
+    { id: 'DOM-4', run: () => runCaseFailsContains('DOM-4', 'unknown field', flowArgs('dom-save.yaml'), flowSetup(settingsHome)) },
   ]);
 
   addCases(cases, [
