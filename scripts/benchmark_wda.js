@@ -91,7 +91,16 @@ function parseArgs(argv) {
     output: '',
     bundleId: DEFAULT_APP_BUNDLE,
     label: DEFAULT_LABEL,
+    searchLabel: '搜索',
+    scrollToLabel: '开发者',
+    inputBundleId: '',
+    inputLabel: '',
+    inputTraits: 'SearchField',
+    inputContent: '蓝牙',
+    inputPrepareLabel: '',
+    inputOpenUrl: '',
     customUdid: '',
+    customSimulator: false,
     cases: '',
     customOnly: false,
   };
@@ -111,8 +120,35 @@ function parseArgs(argv) {
       case '--label':
         args.label = argv[++i] || DEFAULT_LABEL;
         break;
+      case '--search-label':
+        args.searchLabel = argv[++i] || '搜索';
+        break;
+      case '--scroll-to-label':
+        args.scrollToLabel = argv[++i] || '开发者';
+        break;
+      case '--input-bundle-id':
+        args.inputBundleId = argv[++i] || '';
+        break;
+      case '--input-label':
+        args.inputLabel = argv[++i] || '';
+        break;
+      case '--input-traits':
+        args.inputTraits = argv[++i] || '';
+        break;
+      case '--input-content':
+        args.inputContent = argv[++i] || '蓝牙';
+        break;
+      case '--input-prepare-label':
+        args.inputPrepareLabel = argv[++i] || '';
+        break;
+      case '--input-open-url':
+        args.inputOpenUrl = argv[++i] || '';
+        break;
       case '--custom-udid':
         args.customUdid = argv[++i] || '';
+        break;
+      case '--custom-simulator':
+        args.customSimulator = true;
         break;
       case '--cases':
         args.cases = argv[++i] || '';
@@ -132,6 +168,10 @@ function parseArgs(argv) {
   if (!Number.isInteger(args.iterations) || args.iterations <= 0) {
     throw new Error('--iterations must be a positive integer');
   }
+  args.inputBundleId ||= args.bundleId;
+  args.inputLabel ||= args.searchLabel;
+  if (args.inputTraits.toLowerCase() === 'none') args.inputTraits = '';
+  args.inputPrepareLabel ||= args.inputBundleId === args.bundleId ? args.label : args.inputLabel;
 
   return args;
 }
@@ -146,7 +186,16 @@ Options:
   --output <path>     markdown output path
   --bundle-id <id>    app bundle to benchmark, default: ${DEFAULT_APP_BUNDLE}
   --label <text>      anchor label for find/waitFor, default: ${DEFAULT_LABEL}
+  --search-label <t>  SearchField label for input case, default: 搜索
+  --scroll-to-label <t> target label for scroll_to_visible case, default: 开发者
+  --input-bundle-id <id> app bundle for input case, default: --bundle-id
+  --input-label <t>   input target label, default: --search-label
+  --input-traits <t>  input target traits, default: SearchField; use none to disable
+  --input-content <t> text for input case, default: 蓝牙
+  --input-prepare-label <t> label to wait before input, default: input label or anchor label
+  --input-open-url <url> open URL during custom input prepare
   --custom-udid <id>  custom-driver device UDID, default: WDA_INSTALLED_DEVICE
+  --custom-simulator  configure the custom target as Simulator
   --cases <list>      comma-separated subset, e.g. auto_session_activate_app,dom_vs_source,find
   --custom-only       measure only ios-use custom driver; do not start Appium/WDA
 
@@ -364,11 +413,14 @@ function iosUseInstallMode() {
   return shouldBuildCliFromSource() ? 'repo-release-build' : 'release-download';
 }
 
-function configureCustomDriver(customUdid) {
+function configureCustomDriver(customUdid, customSimulator = false) {
   if (process.env.IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG === '1') {
     return 'skipped';
   }
-  cli(['config', '--udid', customUdid], { capture: false });
+  const args = ['config'];
+  if (customSimulator) args.push('--simulator');
+  args.push('--udid', customUdid);
+  cli(args, { capture: false });
   return 'installed';
 }
 
@@ -766,6 +818,17 @@ async function customPrepareAppSession(customUdid, appBundle, label) {
   cli(['waitFor', '--label', label, '--timeout', '8', '--udid', customUdid]);
 }
 
+async function customPrepareInputSession(ctx) {
+  customEnsureDriverStarted(ctx.customUdid);
+  cli(['terminateApp', ctx.inputBundleId, '--udid', ctx.customUdid], { allowFailure: true });
+  if (ctx.inputOpenUrl) {
+    cli(['open', ctx.inputOpenUrl, '--udid', ctx.customUdid]);
+  } else {
+    cli(['activateApp', ctx.inputBundleId, '--udid', ctx.customUdid]);
+  }
+  cli(['waitFor', '--label', ctx.inputPrepareLabel, '--timeout', '8', '--udid', ctx.customUdid]);
+}
+
 async function appiumPrepareNoSession(driver) {
   customStopSessionQuiet();
   terminateCustomDriverProcesses(driver.udid);
@@ -789,6 +852,23 @@ async function appiumPrepareSettingsHome(driver, label) {
   }
   await driver.activateApp(driver.appBundle);
   await driver.waitForElement(label, 8000, 500);
+}
+
+async function appiumPrepareInputSession(driver, ctx) {
+  customStopSessionQuiet();
+  terminateCustomDriverProcesses(driver.udid);
+  await driver.resetState();
+  await waitForProcessesGone(driver.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
+  await sleep(1000);
+  await driver.createSession();
+  await driver.updateSettings({ screenshotQuality: WDA_SCREENSHOT_QUALITY });
+  try {
+    await driver.terminateApp(ctx.inputBundleId);
+  } catch {
+    // ignore; the input app may not be running yet
+  }
+  await driver.activateApp(ctx.inputBundleId);
+  await driver.waitForElement(ctx.inputPrepareLabel, 8000, 500);
 }
 
 async function measureSide(sideName, runs, prepareFn, runFn) {
@@ -844,7 +924,7 @@ function buildCases(ctx) {
   const centerX = 187;
   const topTapY = 80;
   const swipeDistance = 200;
-  const scrollToLabel = '开发者';
+  const scrollToLabel = ctx.scrollToLabel;
 
   return [
     {
@@ -926,7 +1006,7 @@ function buildCases(ctx) {
       name: 'tap_label',
       kind: 'mutate',
       runs: ctx.iterations,
-      mapping: '`tap 蓝牙` ↔ `POST /element` + `POST /element/:id/click`',
+      mapping: `\`tap ${ctx.label}\` ↔ \`POST /element\` + \`POST /element/:id/click\``,
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
@@ -953,16 +1033,20 @@ function buildCases(ctx) {
       name: 'input',
       kind: 'mutate',
       runs: ctx.iterations,
-      mapping: '`input` ↔ `POST /element` + `POST /element/:id/click` + `POST /keys`',
+      mapping: `\`input --label ${ctx.inputLabel}\` ↔ \`POST /element\` + \`POST /element/:id/click\` + \`POST /keys\``,
       customPrepare: async () => {
-        await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
+        await customPrepareInputSession(ctx);
       },
-      customRun: async () => { cli(['input', '--label', '搜索', '--content', '蓝牙', '--traits', 'SearchField', '--udid', ctx.customUdid]); },
-      appiumPrepare: async () => { await appiumPrepareSettingsHome(ctx.appium, ctx.label); },
+      customRun: async () => {
+        const args = ['input', '--label', ctx.inputLabel, '--content', ctx.inputContent, '--udid', ctx.customUdid];
+        if (ctx.inputTraits) args.splice(args.length - 2, 0, '--traits', ctx.inputTraits);
+        cli(args);
+      },
+      appiumPrepare: async () => { await appiumPrepareInputSession(ctx.appium, ctx); },
       appiumRun: async () => {
-        const elementId = await ctx.appium.findElement('搜索');
+        const elementId = await ctx.appium.findElement(ctx.inputLabel);
         await ctx.appium.clickElement(elementId);
-        await ctx.appium.keys('蓝牙');
+        await ctx.appium.keys(ctx.inputContent);
       },
     },
     {
@@ -1058,7 +1142,7 @@ async function main() {
   const customUdid = args.customUdid || WDA_DEVICE_UDID;
   const driverBuild = buildReleaseDriverArtifacts();
   const installedCliPath = installIosUseExecutable();
-  const customDriverInstall = configureCustomDriver(customUdid);
+  const customDriverInstall = configureCustomDriver(customUdid, args.customSimulator);
 
   ensureDir(BENCHMARK_DIR);
   const output = args.output || path.join(BENCHMARK_DIR, `benchmark-wda-${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}.md`);
@@ -1070,6 +1154,14 @@ async function main() {
     iterations: args.iterations,
     appBundle: args.bundleId,
     label: args.label,
+    searchLabel: args.searchLabel,
+    scrollToLabel: args.scrollToLabel,
+    inputBundleId: args.inputBundleId,
+    inputLabel: args.inputLabel,
+    inputTraits: args.inputTraits,
+    inputContent: args.inputContent,
+    inputPrepareLabel: args.inputPrepareLabel,
+    inputOpenUrl: args.inputOpenUrl,
     customUdid,
     appium: args.customOnly ? null : new AppiumDriver({ udid: WDA_DEVICE_UDID, appBundle: args.bundleId }),
   };
@@ -1128,8 +1220,18 @@ async function main() {
   }
   lines.push(`| custom driver build | \`${driverBuild}\` |`);
   lines.push(`| custom driver install | \`${customDriverInstall}\` |`);
+  lines.push(`| custom target type | \`${args.customSimulator ? 'Simulator' : 'device'}\` |`);
   lines.push(`| App | \`${args.bundleId}\` |`);
   lines.push(`| 锚点 label | \`${args.label}\` |`);
+  lines.push(`| SearchField label | \`${args.searchLabel}\` |`);
+  lines.push(`| scroll target label | \`${args.scrollToLabel}\` |`);
+  lines.push(`| input App | \`${args.inputBundleId}\` |`);
+  lines.push(`| input label | \`${args.inputLabel}\` |`);
+  lines.push(`| input traits | \`${args.inputTraits || 'none'}\` |`);
+  lines.push(`| input prepare label | \`${args.inputPrepareLabel}\` |`);
+  if (args.inputOpenUrl) {
+    lines.push(`| input open URL | \`${args.inputOpenUrl}\` |`);
+  }
   if (!args.customOnly) {
     lines.push(`| Appium URL | \`${APPIUM_BASE_URL}\` |`);
     lines.push(`| WDA attach URL | \`${APPIUM_WDA_URL || 'auto(preinstalled WDA)'}\` |`);
