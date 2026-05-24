@@ -21,18 +21,17 @@ steps:
     label: 蓝牙
 
   - action: dom
-    save: true
-    name: settings-bluetooth
+    outputs: settingsDom
 ```
 
 - `name`：flow 名称，建议能说明页面或目标
-- `app`：可选；指定目标 app，常用于主 flow；入口 flow 会切到目标 app，不要再把 `terminateApp` / `activateApp` / `openURL` 当成通用前置步骤写进 flow
+- `app`：可选；指定目标 app，常用于主 flow；入口 flow 会切到目标 app，不要再把 `terminateApp` / `activateApp` / `open` 当成通用前置步骤写进 flow
 - `needNSLog`：设为 `true` 时自动启动 nslog capture 进程并等待 app 连接，flow 中的 `nslog` action 需要它
 - `steps`：按顺序执行的动作列表
 
 ## 3. 支持的 action
 
-标准 action（经 `executeStep` 执行）：
+CLI-backed action（复用 CLI command model 执行）：
 
 - `tap`
 - `input`
@@ -44,12 +43,12 @@ steps:
 - `waitFor`
 - `activateApp`
 - `terminateApp`
-- `openURL`
+- `open`
 - `dismissAlert`
 - `oslog`
 - `nslog`
 
-Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
+Flow-only 编排 action（没有单命令等价物，在 flow 引擎层处理）：
 
 - `runFlow`
 - `returnIf`
@@ -81,8 +80,9 @@ Flow 编排 action（不经 `executeStep`，在 flow 引擎层处理）：
 - 普通字符串字段支持模板替换，例如 `${vars.targetLabel}`
 - 整段 `${...}` 可以传对象或数组原值，不只限于字符串
 - 实现上应在解析后的 flow runtime 合并外部变量，不能靠拼接 YAML 注入新的 `vars:` 块
-- 执行前会先 compile 整个 flow；静态错误会在任何 driver step 执行前失败
-- 含模板的字段在 compile 阶段只校验外层结构，运行时解析后再做最终类型/格式校验
+- 执行前会先编译校验整个 flow；静态错误会在任何 step 执行前失败
+- 含模板的字段在执行前只校验外层结构，运行时解析后再做最终类型/格式校验
+- Flow action 复用 CLI command model；`print` / `save` / `dom.name` 不是合法 Flow 字段
 
 ```yaml
 vars:
@@ -110,12 +110,11 @@ ios-use flow flows/proxy_set_wifi_proxy.yaml --server 192.168.1.10 --port 9080
 
 - `outputs` 是唯一结果回传模型
 - `outputs` 只写变量名，不做映射
-- 第一批支持写入 `outputs` 的 action 只有 `find` / `dom` / `runFlow`
+- 支持写入 `outputs` 的 action 只有 `find` / `dom` / `runFlow` / `swipe`
 
 ```yaml
 - action: find
   label: 蓝牙
-  print: false
   outputs: matchedNode
 ```
 
@@ -138,7 +137,6 @@ ios-use flow flows/proxy_set_wifi_proxy.yaml --server 192.168.1.10 --port 9080
 
 - action: find
   label: ${matchedNode.label}
-  print: false
 ```
 
 子 flow：
@@ -155,7 +153,6 @@ steps:
 
   - action: find
     label: ${vars.targetLabel}
-    print: false
     outputs: matchedNode
 ```
 
@@ -184,17 +181,16 @@ steps:
 
 ### 5.5 `tap offset`
 
-- `offset.x/y`：相对目标元素左上角 `(0,0)` 的绝对像素偏移（整数）
-- `offset.xRatio/yRatio`：相对目标元素宽高的比例偏移（浮点，范围 `0..1`）
-- 缺失单轴时，默认补 `0.5` ratio
-- `offset` 只对元素 label 生效
-- 如果 `label` 是绝对坐标 `x,y`，再传 `offset` 会直接报错
+- `offset: "x,y"`：相对目标元素左上角 `(0,0)` 的绝对像素偏移，和 CLI `--offset` 一致
+- `offsetRatio: "x,y"`：相对目标元素宽高的比例偏移，和 CLI `--offset-ratio` 一致
+- 缺失单轴时，`offset` 补 `0`，`offsetRatio` 补 `0.5`
+- `offset` / `offsetRatio` 只对元素 label 生效
+- 如果 `label` 是绝对坐标字符串 `x,y`，再传 offset 会直接报错
 
 ```yaml
 - action: tap
   label: 亮度
-  offset:
-    xRatio: 0.8
+  offsetRatio: "0.8,"
 ```
 
 ### 5.6 `returnIf`
@@ -254,7 +250,6 @@ steps:
   label: 蓝牙
   traits: Cell
   cindex: -1
-  print: false
   outputs: bluetoothNode
 ```
 
@@ -262,30 +257,28 @@ steps:
 - action: find
   label: 开关
   traits: "Cell,Switch"
-  print: false
 ```
 
 ### 6.3 `dom`
 
 - 用于观察当前页面全量结构
 - 调试阶段建议多用
-- 需要落盘时加 `save: true`
-- 非 raw DOM 保存为 JSON，结构为 `{ dom, matches, firstMatch }`；raw DOM 保存为 `.txt`
-- 非 raw DOM 的展示/保存层可能给 `ScrollView` / `CollectionView` / `Table` 追加 `vertical` / `horizontal`；这是 DOM presentation 信息，不改变 driver 查找、点击、等待或滑动的 `traits` 过滤语义
+- Flow 内需要消费 DOM 结果时使用 `outputs`
+- `dom.save` / `dom.print` / `dom.name` 不是合法 Flow 字段；需要落盘或人工查看时直接运行 CLI `ios-use dom`
+- Flow `dom.outputs` 复用 CLI output DOM 转换；`ScrollView` / `CollectionView` / `Table` 可能带 `vertical` / `horizontal` presentation 信息，但不改变 driver 查找、点击、等待或滑动的 `traits` 过滤语义
 
 ```yaml
 - action: dom
-  save: true
-  name: settings-home
-  print: false
+  outputs: settingsDom
 ```
 
 ### 6.x Compile 校验
 
 - 未知字段会直接报错，不会静默忽略。
+- `find.print`、`dom.print`、`dom.save`、`dom.name` 均不是合法字段。
 - `outputs` 只支持 `find` / `dom` / `runFlow` / `swipe`。
-- 静态字段类型严格：`raw: "true"`、`clear: 1`、`offset: "-50,-50"` 都会失败。
-- `offset` 必须写成对象，例如 `{x: -50, y: -50}` 或 `{xRatio: 0.8}`。
+- 静态字段类型严格：`raw: "true"`、`clear: 1`、`offset: {x: -50}` 都会失败。
+- `offset` / `offsetRatio` 必须写成 CLI 同款字符串，例如 `offset: "-50,-50"` 或 `offsetRatio: "0.8,"`。
 - 静态 `runFlow.file` 的子 flow 会在父 flow 执行前一起校验。
 
 ### 6.4 `swipe`
@@ -358,13 +351,13 @@ steps:
   clearAfterRead: true
 ```
 
-### 6.8 `openURL`
+### 6.8 `open`
 
 - 在设备上执行 host-side URL 打开语义，`url` 是必填字段
 - 未注册 scheme 时步骤失败并报错；是否真正打开目标页面应由后续 `dom` / `waitFor` 验证
 
 ```yaml
-- action: openURL
+- action: open
   url: "https://example.com"
 ```
 

@@ -178,8 +178,49 @@ async function sleep(ms) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const driverSideCommands = new Set([
+  'activateApp',
+  'dismissAlert',
+  'dom',
+  'find',
+  'home',
+  'input',
+  'longpress',
+  'screenshot',
+  'swipe',
+  'tap',
+  'terminateApp',
+  'waitFor',
+]);
+
+function stripSimulatorUdid(args) {
+  if (!driverSideCommands.has(args[0])) return args;
+  const stripped = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--udid' && args[i + 1] === sim?.udid) {
+      i++;
+      continue;
+    }
+    if (arg === `--udid=${sim?.udid}`) {
+      continue;
+    }
+    stripped.push(arg);
+  }
+  return stripped;
+}
+
+function readDriverLockInfo() {
+  try {
+    const lock = JSON.parse(readFileIfExists(path.join(iosHome, 'state/driver.lock')) || '{}');
+    return typeof lock.udid === 'string' ? lock : null;
+  } catch {
+    return null;
+  }
+}
+
 function runCli(args) {
-  return execCmd([iosUseCli, ...args], { env: { IOS_USE_HOME: iosHome } });
+  return execCmd([iosUseCli, ...stripSimulatorUdid(args)], { env: { IOS_USE_HOME: iosHome } });
 }
 
 function runCliToFiles(args, out, err) {
@@ -407,6 +448,7 @@ async function runStartCreatesDriverLockCase() {
   const domOut = path.join(artifactDir, `${id}-dom.out`);
   const domErr = path.join(artifactDir, `${id}-dom.err`);
   console.log(`[sim-test] RUN ${id}: ios-use start <sim>`);
+  stopDriverIfLocked(id);
   const res = runCliToFiles(['start', sim.udid], out, err);
   let lock;
   try {
@@ -414,7 +456,7 @@ async function runStartCreatesDriverLockCase() {
   } catch (error) {
     return recordFail(id, `${res.stdout}${res.stderr}${error}\n`);
   }
-  const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
+  const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
   if (
     res.code === 0 &&
     res.stdout.includes(`Driver started for ${sim.udid}`) &&
@@ -429,22 +471,27 @@ async function runStartCreatesDriverLockCase() {
 }
 
 async function runStopClearsDriverLockCase() {
-  const id = 'STOP-3';
+  const id = 'STOP-1';
   if (!selected(id)) return recordSkip(id);
-  const startOut = path.join(artifactDir, `${id}-start.out`);
-  const startErr = path.join(artifactDir, `${id}-start.err`);
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
-  console.log(`[sim-test] RUN ${id}: ios-use start <sim> && ios-use stop`);
-  const start = runCliToFiles(['start', sim.udid], startOut, startErr);
+  console.log(`[sim-test] RUN ${id}: ios-use stop with active driver.lock`);
+  ensureDriverStarted(`${id}-start`);
   const stop = runCliToFiles(['stop'], out, err);
   const lockExists = fs.existsSync(path.join(iosHome, 'state/driver.lock'));
   const sessionExists = fs.existsSync(path.join(iosHome, 'state/session.json'));
-  if (start.code === 0 && stop.code === 0 && !lockExists && !sessionExists) {
+  if (stop.code === 0 && !lockExists && !sessionExists) {
     recordPass(id);
   } else {
-    recordFail(id, `${start.stdout}${start.stderr}${stop.stdout}${stop.stderr}[sim-test] lockExists=${lockExists} sessionExists=${sessionExists}\n`);
+    recordFail(id, `${stop.stdout}${stop.stderr}[sim-test] lockExists=${lockExists} sessionExists=${sessionExists}\n`);
   }
+}
+
+async function runStopWithoutDriverLockCase() {
+  const id = 'STOP-2';
+  if (!selected(id)) return recordSkip(id);
+  stopDriverIfLocked(id);
+  await runCaseFailsContains(id, 'No active driver', ['stop']);
 }
 
 function backupStateFile(rel) {
@@ -484,13 +531,14 @@ async function waitForDriver() {
   const out = path.join(artifactDir, 'driver-warmup.out');
   const err = path.join(artifactDir, 'driver-warmup.err');
   console.log('[sim-test] Waiting for driver...');
+  ensureDriverStarted('driver-warmup-start');
   const startedAt = performance.now();
   let attempt = 0;
   let reconfigured = false;
   let consecutiveUnreachable = 0;
   while (performance.now() - startedAt < driverReadyTimeoutMs) {
     attempt++;
-    const res = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], out, err);
+    const res = runCliToFiles(['dom', '--fresh'], out, err);
     if (res.code === 0) {
       console.log('[sim-test] Driver ready');
       return;
@@ -499,6 +547,7 @@ async function waitForDriver() {
     if (!reconfigured && combined.includes('out of date')) {
       console.log('[sim-test] Driver version mismatch, reinstalling');
       runCliToFiles(['config', '--simulator', '--udid', sim.udid], path.join(artifactDir, 'driver-reconfig.out'), path.join(artifactDir, 'driver-reconfig.err'));
+      ensureDriverStarted('driver-reconfig-start');
       reconfigured = true;
       await sleep(3000);
       continue;
@@ -544,9 +593,40 @@ function collectDriverWarmupDiagnostics() {
 }
 
 let recoveryCount = 0;
+let startCount = 0;
+
+function stopDriverIfLocked(prefix) {
+  if (!readDriverLockInfo()) return null;
+  return runCliToFiles(
+    ['stop'],
+    path.join(artifactDir, `${prefix}-stop.out`),
+    path.join(artifactDir, `${prefix}-stop.err`),
+  );
+}
+
+function ensureDriverStarted(prefix = 'driver-start') {
+  const lock = readDriverLockInfo();
+  if (lock?.udid === sim.udid) return;
+  if (lock) {
+    const stopped = stopDriverIfLocked(prefix);
+    if (stopped && stopped.code !== 0) {
+      throw new Error(`failed to stop existing driver lock\n${stopped.stdout}${stopped.stderr}`);
+    }
+  }
+  startCount++;
+  const start = runCliToFiles(
+    ['start', sim.udid],
+    path.join(artifactDir, `${prefix}-${startCount}.out`),
+    path.join(artifactDir, `${prefix}-${startCount}.err`),
+  );
+  if (start.code !== 0) {
+    throw new Error(`failed to start simulator driver lock\n${start.stdout}${start.stderr}`);
+  }
+}
 
 async function ensureDriverReady() {
-  const probe = runCli(['dom', '--fresh', '--udid', sim.udid]);
+  ensureDriverStarted('driver-ready-start');
+  const probe = runCli(['dom', '--fresh']);
   if (probe.code === 0) return;
   recoveryCount++;
   console.log('[sim-test] Driver unavailable, reconfiguring simulator driver');
@@ -731,14 +811,12 @@ steps:
   - action: find
     label: \${vars.targetLabel}
     traits: Button
-    print: false
     outputs: found
   - action: dom
     fresh: true
     candidates:
       - \${vars.targetLabel}
       - Search
-    print: false
     outputs: page
   - action: returnIf
     value: \${page.firstMatch}
@@ -747,7 +825,6 @@ steps:
     ms: 10
   - action: dom
     fresh: true
-    print: false
 `);
   writeFile(path.join(flowDir, 'child.yaml'), `name: simulator-child-flow
 vars:
@@ -761,7 +838,6 @@ steps:
   - action: find
     label: \${vars.targetLabel}
     traits: Button
-    print: false
     outputs: found
 `);
   writeFile(path.join(flowDir, 'parent.yaml'), `name: simulator-parent-flow
@@ -775,7 +851,6 @@ steps:
   - action: find
     label: \${found.firstMatch.label}
     traits: Button
-    print: false
 `);
   writeFile(path.join(flowDir, 'missing-output.yaml'), `name: simulator-missing-output-flow
 app: com.apple.Preferences
@@ -792,7 +867,6 @@ steps:
   - action: dom
     candidates:
       - __ios_use_missing_label__
-    print: false
     outputs: page
   - action: returnIf
     value: \${page.firstMatch}
@@ -801,11 +875,11 @@ steps:
     label: __must_not_run__
 `);
   writeFile(path.join(flowDir, 'invalid-return.yaml'), 'name: simulator-invalid-return-flow\nsteps:\n  - action: returnIf\n    value: true\n    is: invalid\n');
-  writeFile(path.join(flowDir, 'tap-offset.yaml'), 'name: simulator-tap-offset-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    offset:\n      xRatio: 0.5\n');
-  writeFile(path.join(flowDir, 'sleep-default.yaml'), 'name: simulator-sleep-default-flow\napp: com.apple.Preferences\nsteps:\n  - action: sleep\n  - action: dom\n    fresh: true\n    print: false\n');
-  writeFile(path.join(flowDir, 'dom-save.yaml'), 'name: simulator-dom-save-flow\napp: com.apple.Preferences\nsteps:\n  - action: dom\n    save: true\n    name: simulator-dom-save\n    print: false\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-dom-raw-save\n    print: false\n');
+  writeFile(path.join(flowDir, 'tap-offset.yaml'), 'name: simulator-tap-offset-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    offsetRatio: "0.5,"\n');
+  writeFile(path.join(flowDir, 'sleep-default.yaml'), 'name: simulator-sleep-default-flow\napp: com.apple.Preferences\nsteps:\n  - action: sleep\n  - action: dom\n    fresh: true\n');
+  writeFile(path.join(flowDir, 'dom-save.yaml'), 'name: simulator-dom-save-flow\napp: com.apple.Preferences\nsteps:\n  - action: dom\n    save: true\n    name: simulator-dom-save\n');
   writeFile(path.join(flowDir, 'oslog-timeout.yaml'), 'name: simulator-oslog-timeout-flow\napp: com.apple.Preferences\nsteps:\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-oslog-timeout\n');
-  writeFile(path.join(flowDir, 'standard-smoke.yaml'), 'name: simulator-standard-smoke-flow\napp: com.apple.Preferences\nsteps:\n  - action: waitFor\n    label: com.apple.settings.general\n    traits: Button\n    timeout: 5\n  - action: dom\n    save: true\n    name: simulator-flow-smoke-dom\n    print: false\n  - action: screenshot\n    name: simulator-flow-smoke-screenshot\n  - action: oslog\n    clear: true\n    bundleId: com.apple.Preferences\n  - action: swipe\n    distance: 300\n    dir: forth\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-smoke-oslog\n    bundleId: com.apple.Preferences\n  - action: activateApp\n    bundleId: com.apple.Preferences\n  - action: dom\n    raw: true\n    save: true\n    name: simulator-flow-smoke-raw\n    print: false\n');
+  writeFile(path.join(flowDir, 'standard-smoke.yaml'), 'name: simulator-standard-smoke-flow\napp: com.apple.Preferences\nsteps:\n  - action: waitFor\n    label: com.apple.settings.general\n    traits: Button\n    timeout: 5\n  - action: dom\n    outputs: smokeDom\n  - action: screenshot\n    name: simulator-flow-smoke-screenshot\n  - action: oslog\n    clear: true\n    bundleId: com.apple.Preferences\n  - action: swipe\n    distance: 300\n    dir: forth\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-smoke-oslog\n    bundleId: com.apple.Preferences\n  - action: activateApp\n    bundleId: com.apple.Preferences\n  - action: dom\n    raw: true\n    outputs: smokeRaw\n');
 }
 
 async function runDomPerfCase() {
@@ -916,20 +990,15 @@ function buildCases() {
     { id: 'DEV-6', run: () => runCaseMatches('DEV-6', /Simulator|Device/, ['devices', '--simulator']) },
     { id: 'AA-1', run: async () => {
       if (!selected('AA-1')) return recordSkip('AA-1');
-      console.log('[sim-test] RUN AA-1: ios-use home && stop && sleep 1s && dom --fresh');
+      console.log('[sim-test] RUN AA-1: ios-use home && sleep 1s && dom --fresh');
       const home = runCliToFiles(['home', '--udid', sim.udid], path.join(artifactDir, 'AA-1-home.out'), path.join(artifactDir, 'AA-1-home.err'));
-      const stop = runCliToFiles(['stop'], path.join(artifactDir, 'AA-1-stop.out'), path.join(artifactDir, 'AA-1-stop.err'));
       await sleep(1000);
       const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], path.join(artifactDir, 'AA-1.out'), path.join(artifactDir, 'AA-1.err'));
-      if (home.code === 0 && stop.code === 0 && dom.code === 0 && dom.stdout.includes('App: com.apple.springboard')) recordPass('AA-1');
-      else recordFail('AA-1', home.stdout + home.stderr + stop.stdout + stop.stderr + dom.stdout + dom.stderr);
+      if (home.code === 0 && dom.code === 0 && dom.stdout.includes('App: com.apple.springboard')) recordPass('AA-1');
+      else recordFail('AA-1', home.stdout + home.stderr + dom.stdout + dom.stderr);
     } },
-    { id: 'AS-7', run: () => runCaseContains('AS-7', 'App: com.apple.springboard', ['dom', '--fresh', '--udid', sim.udid], async () => {
-      runCli(['home', '--udid', sim.udid]);
-      await sleep(1000);
-    }) },
+    { id: 'AS-7', run: () => unsupportedCase('AS-7', 'host-only Flow/proxy lock behavior is covered by Swift unit tests') },
     { id: 'AA-2', run: () => runCaseContains('AA-2', 'App com.apple.Preferences activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
-    { id: 'AS-2', run: () => runCaseContains('AS-2', 'App: com.apple.Preferences', ['dom', '--fresh', '--udid', sim.udid]) },
     { id: 'AA-3', run: async () => {
       await runCaseContains('AA-3', 'activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid], async () => {
         runCliToFiles(['activateApp', 'com.apple.mobilesafari', '--udid', sim.udid], path.join(artifactDir, 'AA-3-safari.out'), path.join(artifactDir, 'AA-3-safari.err'));
@@ -1131,14 +1200,17 @@ function buildCases() {
     } },
     { id: 'OU-2', run: async () => {
       if (!selected('OU-2')) return recordSkip('OU-2');
-      console.log('[sim-test] RUN OU-2: ios-use stop && open https://example.com --udid <sim> && stop');
-      const stopBefore = runCliToFiles(['stop'], path.join(artifactDir, 'OU-2-stop-before.out'), path.join(artifactDir, 'OU-2-stop-before.err'));
+      console.log('[sim-test] RUN OU-2: ios-use stop && open https://example.com --udid <sim> without recreating driver.lock');
+      const stopBefore = stopDriverIfLocked('OU-2-stop-before') ?? { code: 0, stdout: '', stderr: '' };
       const open = runCliToFiles(['open', 'https://example.com', '--udid', sim.udid], path.join(artifactDir, 'OU-2.out'), path.join(artifactDir, 'OU-2.err'));
+      const lockAfterOpen = readDriverLockInfo();
       const stopAfter = runCliToFiles(['stop'], path.join(artifactDir, 'OU-2-stop-after.out'), path.join(artifactDir, 'OU-2-stop-after.err'));
       const verified = stopBefore.code === 0
         && open.code === 0
-        && stopAfter.code === 0
-        && stopAfter.stdout.includes('No active session');
+        && lockAfterOpen == null
+        && stopAfter.code !== 0
+        && `${stopAfter.stdout}\n${stopAfter.stderr}`.includes('No active driver');
+      if (verified) ensureDriverStarted('OU-2-restore');
       if (verified) recordPass('OU-2');
       else recordFail('OU-2', stopBefore.stdout + stopBefore.stderr + open.stdout + open.stderr + stopAfter.stdout + stopAfter.stderr);
     } },
@@ -1147,22 +1219,12 @@ function buildCases() {
     { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--fresh', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
     { id: 'AA-4', run: () => runCaseContains('AA-4', 'activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
     { id: 'AA-5', run: () => runCaseFailsMatches('AA-5', /app not found|state=unknown|not installed/i, ['activateApp', 'com.iosuse.invalid.bundle', '--udid', sim.udid]) },
-    { id: 'AS-1', run: async () => { if (!selected('AS-1')) return recordSkip('AS-1'); runCli(['stop']); await runCaseContains('AS-1', 'App:', ['dom', '--fresh', '--udid', sim.udid]); } },
-    { id: 'AS-3', run: () => runCaseContains('AS-3', 'Find', ['find', 'General', '--udid', sim.udid], settingsHome) },
-    { id: 'AS-4', run: async () => { if (selected('AS-4')) runCli(['stop']); await runCaseContains('AS-4', 'App:', ['dom', '--fresh', '--udid', sim.udid]); } },
-    { id: 'AS-5', run: () => runCaseFailsMatches('AS-5', /No signing config|Run .*config|not found/i, ['dom', '--fresh', '--udid', '00000000-0000-0000-0000-000000000000']) },
-    { id: 'AS-6', run: async () => {
-      if (!selected('AS-6')) return recordSkip('AS-6');
-      const out = path.join(artifactDir, 'AS-6.out');
-      const err = path.join(artifactDir, 'AS-6.err');
-      console.log('[sim-test] RUN AS-6: ios-use dom --fresh (empty IOS_USE_HOME)');
-      const res = runExternalToFiles([iosUseCli, 'dom', '--fresh'], out, err, { IOS_USE_HOME: path.join(artifactDir, emptyHomeName) });
-      if (res.code === 0 || /Using default device:|Device \| UDID:|Session created/i.test(`${res.stdout}\n${res.stderr}`)) {
-        console.log('[sim-test] SKIP AS-6: USB real device is available, no-USB precondition is not met');
-        recordSkip('AS-6');
-      } else if (/No signing config|Run .*config|No USB|No connected real devices|not found/i.test(`${res.stdout}\n${res.stderr}`)) recordPass('AS-6');
-      else recordFail('AS-6', res.stdout + res.stderr);
-    } },
+    { id: 'AS-1', run: async () => { if (!selected('AS-1')) return recordSkip('AS-1'); stopDriverIfLocked('AS-1'); await runCaseFailsContains('AS-1', 'No active driver', ['dom', '--fresh']); } },
+    { id: 'AS-2', run: () => runCaseFailsMatches('AS-2', /unknown option '--udid'/i, ['dom', '--fresh', '--udid', '00000000-0000-0000-0000-000000000000']) },
+    { id: 'AS-3', run: () => runCaseContains('AS-3', 'App: com.apple.Preferences', ['dom', '--fresh', '--udid', sim.udid], settingsHome) },
+    { id: 'AS-4', run: () => unsupportedCase('AS-4', 'recoverable connect retry is covered by Swift unit tests') },
+    { id: 'AS-5', run: () => unsupportedCase('AS-5', 'post-send read/write failure is covered by Swift unit tests') },
+    { id: 'AS-6', run: () => unsupportedCase('AS-6', 'Flow single-client reuse is covered by Swift unit tests') },
     { id: 'AS-8', run: () => runCaseContains('AS-8', 'App:', ['dom', '--fresh', '--udid', sim.udid]) },
   ]);
 
@@ -1192,7 +1254,7 @@ function buildCases() {
     { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--verbose', '--udid', sim.udid], settingsHome) },
     { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', ['flow', flow('basic.yaml'), '--targetLabel', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
     ...['FLOW-24', 'FLOW-25', 'FLOW-26'].map(id => ({ id, run: runSwiftCLIUnitCases })),
-    { id: 'DOM-4', run: () => runCaseFileExists('DOM-4', path.join(iosHome, 'artifacts/simulator-dom-save.json'), ['flow', flow('dom-save.yaml'), '--udid', sim.udid], settingsHome) },
+    { id: 'DOM-4', run: () => runCaseFailsContains('DOM-4', 'unknown field', ['flow', flow('dom-save.yaml'), '--udid', sim.udid], settingsHome) },
   ]);
 
   addCases(cases, [
@@ -1214,9 +1276,9 @@ function buildCases() {
     { id: 'PROXY-1', run: runProxyDoctorCase },
     ...['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'].map(id => ({ id, run: runSwiftCLIUnitCases })),
     { id: 'PROXY-7', run: runProxyReadMissingCaptureCase },
-    { id: 'STOP-1', run: () => runCase('STOP-1', ['stop']) },
-    { id: 'STOP-2', run: () => runCase('STOP-2', ['stop']) },
-    { id: 'STOP-3', run: runStopClearsDriverLockCase },
+    { id: 'STOP-1', run: runStopClearsDriverLockCase },
+    { id: 'STOP-2', run: runStopWithoutDriverLockCase },
+    { id: 'STOP-3', run: () => unsupportedCase('STOP-3', 'terminator failure is covered by Swift unit tests') },
   ]);
 
   return cases;
