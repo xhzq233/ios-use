@@ -173,6 +173,9 @@ public enum ConfigService {
 
     private static func ipaPath(assetName: String, paths: IOSUsePaths) -> String {
         let installedAsset = "\(paths.root)/\(assetName)"
+        if FileManager.default.fileExists(atPath: installedAsset) {
+            return installedAsset
+        }
         #if DEBUG
         let cwd = FileManager.default.currentDirectoryPath
         let localAsset = "\(cwd)/assets/\(assetName)"
@@ -199,11 +202,31 @@ public enum ConfigService {
     }
 
     static func assertDriverInstallCurrent(udid: String, paths: IOSUsePaths) throws {
-        guard let config = DeviceService.configuredDevices(paths: paths)[udid], config.needsDriverUpdate else {
+        guard let entry = listEntries(paths: paths).first(where: { $0.udid == udid }) else {
+            throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
+        }
+        guard entry.driverVersion == IOSUseCLI.version else {
+            let installed = entry.driverVersion
+            throw CLIParseError.invalidValue("Driver for device \(udid) is out of date (installed: \(installed); expected: \(IOSUseCLI.version)). Run `ios-use config --udid \(udid)` to update the driver.")
+        }
+        guard let recordedIdentity = entry.driverIdentity else {
             return
         }
-        let installed = config.driverVersion ?? "unknown"
-        throw CLIParseError.invalidValue("Driver for device \(udid) is out of date (installed: \(installed); expected: \(IOSUseCLI.version)). Run `ios-use config --udid \(udid)` to update the driver.")
+        guard let expectedIdentity = try localDriverArtifactIdentity(udid: udid, paths: paths) else {
+            return
+        }
+        guard recordedIdentity == expectedIdentity else {
+            throw CLIParseError.invalidValue("Driver for device \(udid) was configured from a different driver IPA (configured: \(recordedIdentity.description); selected: \(expectedIdentity.description)). Run `ios-use config --udid \(udid)` to reinstall the selected driver.")
+        }
+    }
+
+    private static func localDriverArtifactIdentity(udid: String, paths: IOSUsePaths) throws -> DriverIdentity? {
+        let simulatorUdids = (try? DeviceService.listDevices(simulatorOnly: true, paths: paths).map(\.udid)) ?? []
+        let ipaPath = simulatorUdids.contains(udid) ? simulatorIPAPath(paths: paths) : deviceIPAPath(paths: paths)
+        guard FileManager.default.fileExists(atPath: ipaPath) else {
+            return nil
+        }
+        return try validateDriverIdentityFromArtifact(try readDriverIdentityFromIPA(ipaPath), source: "selected driver IPA")
     }
 
     private static func cachedAppleId(altsign: String) throws -> String? {
@@ -592,16 +615,18 @@ public enum SessionService {
         var output = ""
         if current.deviceType == "simulator" {
             let terminate = simulatorDriverTerminatorForTesting ?? terminateSimulatorDriver
-            guard try terminate(current.udid) else {
-                throw CLIParseError.invalidValue("Driver app was not terminated for \(current.udid).")
+            if try terminate(current.udid) {
+                output += "Driver app terminated on simulator\n"
+            } else {
+                output += "Driver app was not running on simulator\n"
             }
-            output += "Driver app terminated on simulator\n"
         } else {
             let terminate = realDriverTerminatorForTesting ?? terminateRealDriverProcesses
-            guard try terminate(current.udid) else {
-                throw CLIParseError.invalidValue("Driver app was not terminated for \(current.udid).")
+            if try terminate(current.udid) {
+                output += "Driver app terminated on device\n"
+            } else {
+                output += "Driver app was not running on device\n"
             }
-            output += "Driver app terminated on device\n"
         }
 
         clearDriverLock(paths: paths)

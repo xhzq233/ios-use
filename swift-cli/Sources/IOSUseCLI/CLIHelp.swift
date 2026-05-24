@@ -204,12 +204,11 @@ enum CLIHelp {
             )
         case "flow":
             return """
-            Usage: ios-use flow <file> [--udid <udid>] [--verbose] [--<var> <value>...]
+            Usage: ios-use flow <file> [--verbose] [--<var> <value>...]
 
             Run a YAML flow.
 
             Options:
-              --udid <udid>   Target device or Simulator UDID
               --verbose       Enable verbose output
               --<var> <value> Pass an external flow variable
 
@@ -301,33 +300,32 @@ enum CLIHelp {
             """
         case "configca":
             return """
-            Usage: ios-use proxy configca [--udid <udid>]
+            Usage: ios-use proxy configca
 
             Install and trust the mitmproxy CA on the device.
 
-            Options:
-              --udid <udid>  Target device or Simulator UDID
+            Requires an active driver.lock. Run `ios-use start <UDID>` first.
 
             """
         case "start":
             return """
-            Usage: ios-use proxy start [--udid <udid>] [-i <interface>]
+            Usage: ios-use proxy start [-i <interface>]
 
             Start mitmdump and configure the device Wi-Fi proxy.
 
+            Requires an active driver.lock. Run `ios-use start <UDID>` first.
+
             Options:
-              --udid <udid>             Target device or Simulator UDID
               -i, --interface <name>    Network interface to advertise
 
             """
         case "stop":
             return """
-            Usage: ios-use proxy stop [--udid <udid>]
+            Usage: ios-use proxy stop
 
             Clear the device Wi-Fi proxy and stop capture.
 
-            Options:
-              --udid <udid>  Target device or Simulator UDID
+            Requires an active driver.lock. Run `ios-use start <UDID>` first.
 
             """
         case "read":

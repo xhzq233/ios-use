@@ -445,6 +445,24 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertTrue(try String(contentsOfFile: saved).contains("Driver READY"))
     }
 
+    func testFlowNSLogNameTemplateMustResolveToString() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("bad-nslog-name.yaml", """
+        name: bad-nslog-name
+        needNSLog: true
+        steps:
+          - action: nslog
+            pattern: ready
+            name: "${vars.name}"
+        """)
+        let server = try NSLoggerServer(paths: fixture.paths)
+        server.ingestForTesting(makeNSLogMessage(message: "Driver READY"))
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, externalVars: ["name": 42], paths: fixture.paths, driver: FakeFlowDriver(), nsloggerServer: server)) { error in
+            XCTAssertTrue(String(describing: error).contains("nslog.name must be a string"))
+        }
+    }
+
     func testRunFlowInheritsParentAppForLifecycleSteps() throws {
         let fixture = try FlowFixture()
         let child = try fixture.write("child.yaml", """
@@ -871,8 +889,23 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(client.commands, ["tap", "dom", "swipe"])
     }
 
-    func testHostOnlyFlowDoesNotCreateDriverClientWithoutLock() throws {
+    func testFlowRequiresActiveDriverLockBeforeRunning() throws {
         let fixture = try FlowFixture()
+        let flow = try fixture.write("host-only.yaml", """
+        name: host-only
+        steps:
+          - action: oslog
+            clear: true
+        """)
+
+        XCTAssertThrowsError(try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
+        }
+    }
+
+    func testHostOnlyFlowWithLockDoesNotCreateDriverClient() throws {
+        let fixture = try FlowFixture()
+        try writeDriverLock(udid: "SIM-FLOW", deviceType: "simulator", paths: fixture.paths)
         let flow = try fixture.write("host-only.yaml", """
         name: host-only
         steps:
@@ -890,7 +923,23 @@ final class FlowServiceTests: XCTestCase {
         let output = try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)
 
         XCTAssertTrue(output.contains("oslog: cleared="))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.paths.driverLock))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.driverLock))
+    }
+
+    func testFlowCommentTemplateDoesNotSkipDriverValidation() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("comment-template-validation.yaml", """
+        name: comment-template-validation
+        steps:
+          - action: tap
+            comment: "${vars.comment}"
+            label: General
+            offset: bad
+        """)
+
+        XCTAssertThrowsError(try FlowService.compileForTesting(file: flow.path)) { error in
+            XCTAssertTrue(String(describing: error).contains("Invalid point pair"))
+        }
     }
 
     func testRepoFlowsCompileWithCurrentDSL() throws {

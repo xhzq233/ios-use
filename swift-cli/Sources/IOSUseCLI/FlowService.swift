@@ -18,6 +18,7 @@ public enum FlowService {
         let flow = try loadFlowFile(resolvedFile)
         context.flowCache[resolvedFile] = flow
         try compileFlow(file: resolvedFile, context: context, stack: [])
+        let activeDriver = try SessionService.requireDriverLock(paths: paths)
         let bootstrapVars = try resolveVars(rawVars: flow.vars, inheritedVars: options.externalVars)
         let flowApp = try flow.app.map { try resolveTemplates($0, vars: bootstrapVars) } as? String
         let needNSLog = try flow.needNSLog.map { try resolveTemplates($0, vars: bootstrapVars) }
@@ -60,8 +61,8 @@ public enum FlowService {
         var runner = FlowRunner(
             paths: paths,
             driver: driver,
-            udid: options.udid,
-            deviceType: nil,
+            udid: nil,
+            deviceType: activeDriver.deviceType,
             context: context,
             inheritedFlowApp: flowApp,
             outputSink: outputSink,
@@ -290,7 +291,9 @@ private struct FlowRunner {
             guard case .nslog(var options) = parsed else {
                 throw CLIParseError.invalidValue("internal error: expected nslog command")
             }
-            options.name = step["name"] as? String
+            if !isNull(step["name"]) {
+                options.name = try requiredString(step["name"], field: "nslog.name")
+            }
             emit(try runNSLogStep(options))
 
         default:
@@ -805,7 +808,8 @@ private func compileFlowStep(_ step: [String: Any], index: Int, baseFile: String
             break
         }
         let lifecycleNeedsFlowApp = ["activateApp", "terminateApp"].contains(action) && isNull(step["bundleId"])
-        if !containsTemplate(step), !lifecycleNeedsFlowApp {
+        let cliFieldsContainTemplates = containsTemplateInActionFields(step, action: action)
+        if !cliFieldsContainTemplates, !lifecycleNeedsFlowApp {
             let parsed = try FlowLowering.parseCLIBackedStep(step)
             if case .driver(let driverAction) = parsed {
                 try DriverCommandExecutor.validate(action: driverAction)
@@ -815,7 +819,7 @@ private func compileFlowStep(_ step: [String: Any], index: Int, baseFile: String
             action: action,
             raw: step,
             outputs: outputs,
-            cli: CompiledCLIBackedStep(actionName: action, rawFields: step, containsTemplates: containsTemplate(step)),
+            cli: CompiledCLIBackedStep(actionName: action, rawFields: step, containsTemplates: cliFieldsContainTemplates),
             flowOnly: nil
         )
     }
@@ -855,6 +859,13 @@ private func compileFlowStep(_ step: [String: Any], index: Int, baseFile: String
     default:
         throw CLIParseError.invalidValue("unsupported flow action: \(action)")
     }
+}
+
+private func containsTemplateInActionFields(_ step: [String: Any], action: String) -> Bool {
+    guard let fields = flowStepAllowedKeys[action] else {
+        return containsTemplate(step)
+    }
+    return fields.contains { containsTemplate(step[$0]) }
 }
 
 private func validateRunFlowOutputs(_ rawOutputs: Any?, childFileValue: String, baseFile: String, context: FlowRunContext, stack: [String]) throws {

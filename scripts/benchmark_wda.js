@@ -89,6 +89,7 @@ function parseArgs(argv) {
   const args = {
     iterations: DEFAULT_ITERATIONS,
     output: '',
+    driverIpa: '',
     bundleId: DEFAULT_APP_BUNDLE,
     label: DEFAULT_LABEL,
     searchLabel: '搜索',
@@ -107,12 +108,19 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg.startsWith('--driver-ipa=')) {
+      args.driverIpa = arg.slice('--driver-ipa='.length);
+      continue;
+    }
     switch (arg) {
       case '--iterations':
         args.iterations = Number(argv[++i] || DEFAULT_ITERATIONS);
         break;
       case '--output':
         args.output = argv[++i] || '';
+        break;
+      case '--driver-ipa':
+        args.driverIpa = argv[++i] || '';
         break;
       case '--bundle-id':
         args.bundleId = argv[++i] || DEFAULT_APP_BUNDLE;
@@ -168,6 +176,15 @@ function parseArgs(argv) {
   if (!Number.isInteger(args.iterations) || args.iterations <= 0) {
     throw new Error('--iterations must be a positive integer');
   }
+  if (!args.driverIpa) {
+    throw new Error('--driver-ipa is required; build or choose the driver IPA outside the benchmark');
+  }
+  if (args.customSimulator && !args.customOnly) {
+    throw new Error('--custom-simulator is only allowed with --custom-only');
+  }
+  if (args.inputOpenUrl && !args.customOnly) {
+    throw new Error('--input-open-url is only supported with --custom-only; Appium comparison must prepare the same UI state');
+  }
   args.inputBundleId ||= args.bundleId;
   args.inputLabel ||= args.searchLabel;
   if (args.inputTraits.toLowerCase() === 'none') args.inputTraits = '';
@@ -184,6 +201,7 @@ Usage:
 Options:
   --iterations <n>    default: 3
   --output <path>     markdown output path
+  --driver-ipa <path> required custom driver IPA; use driver.ipa for real devices, driver-sim.ipa with --custom-simulator
   --bundle-id <id>    app bundle to benchmark, default: ${DEFAULT_APP_BUNDLE}
   --label <text>      anchor label for find/waitFor, default: ${DEFAULT_LABEL}
   --search-label <t>  SearchField label for input case, default: 搜索
@@ -195,7 +213,7 @@ Options:
   --input-prepare-label <t> label to wait before input, default: input label or anchor label
   --input-open-url <url> open URL during custom input prepare
   --custom-udid <id>  custom-driver device UDID, default: WDA_INSTALLED_DEVICE
-  --custom-simulator  configure the custom target as Simulator
+  --custom-simulator  configure the custom target as Simulator; only valid with --custom-only
   --cases <list>      comma-separated subset, e.g. auto_session_activate_app,dom_vs_source,find
   --custom-only       measure only ios-use custom driver; do not start Appium/WDA
 
@@ -206,15 +224,16 @@ Optional env:
   IOS_USE_BENCHMARK_BUILD_CLI_FROM_SOURCE  set 1 to install the local Swift CLI
   IOS_USE_BENCHMARK_IOS_USE_BIN  use an existing ios-use binary instead of running install.sh;
                                   if this points to repo ./ios-use, Release build runs first
-  IOS_USE_BENCHMARK_SKIP_DRIVER_BUILD  set 1 to skip release driver build
-  IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG set 1 to skip reinstalling custom driver
   IOS_USE_BENCHMARK_DEVICECTL_TIMEOUT_MS default: 30000
 `.trim());
 }
 
-function ensureEnv() {
-  if (!WDA_DEVICE_UDID) throw new Error('Missing env WDA_INSTALLED_DEVICE');
-  if (!WDA_BUNDLE_ID) throw new Error('Missing env WDA_BUNDLE_ID');
+function ensureEnv(args) {
+  if (!args.customOnly && !WDA_DEVICE_UDID) throw new Error('Missing env WDA_INSTALLED_DEVICE');
+  if (!args.customOnly && !WDA_BUNDLE_ID) throw new Error('Missing env WDA_BUNDLE_ID');
+  if (args.customOnly && !args.customUdid && !WDA_DEVICE_UDID) {
+    throw new Error('Missing --custom-udid or env WDA_INSTALLED_DEVICE');
+  }
 }
 
 function sleep(ms) {
@@ -342,14 +361,6 @@ function customEnsureDriverStarted(customUdid) {
   cli(['start', customUdid], { capture: false });
 }
 
-function buildReleaseDriverArtifacts() {
-  if (process.env.IOS_USE_BENCHMARK_SKIP_DRIVER_BUILD === '1') {
-    return 'skipped';
-  }
-  runSync('bash', ['scripts/build_driver.sh'], { capture: false });
-  return 'Release';
-}
-
 function repoIosUsePath() {
   return path.join(ROOT, 'ios-use');
 }
@@ -413,15 +424,138 @@ function iosUseInstallMode() {
   return shouldBuildCliFromSource() ? 'repo-release-build' : 'release-download';
 }
 
-function configureCustomDriver(customUdid, customSimulator = false) {
+function readDriverIdentityFromIpa(ipaPath) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ios-use-benchmark-driver-'));
+  try {
+    runSync('unzip', ['-q', '-o', ipaPath, '-d', tmpDir]);
+    const infoPlist = findFirstAppInfoPlist(path.join(tmpDir, 'Payload'));
+    if (!infoPlist) {
+      throw new Error(`No .app Info.plist found in driver IPA: ${ipaPath}`);
+    }
+    return readDriverIdentityFromPlist(infoPlist);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function findFirstAppInfoPlist(dir) {
+  if (!fs.existsSync(dir)) return '';
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory() && entry.name.endsWith('.app')) {
+      const plist = path.join(fullPath, 'Info.plist');
+      if (fs.existsSync(plist)) return plist;
+    }
+  }
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const found = findFirstAppInfoPlist(path.join(dir, entry.name));
+    if (found) return found;
+  }
+  return '';
+}
+
+function readDriverIdentityFromPlist(plistPath) {
+  const version = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleShortVersionString', plistPath], { encoding: 'utf8' }).trim();
+  const build = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleVersion', plistPath], { encoding: 'utf8' }).trim();
+  if (!version || !build) {
+    throw new Error(`Driver Info.plist missing identity fields: ${plistPath}`);
+  }
+  return { version, build };
+}
+
+function formatDriverIdentity(identity) {
+  if (!identity) return 'unavailable';
+  return `${identity.version} (${identity.build})`;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function appendOption(parts, name, value, defaultValue = '') {
+  if (value === undefined || value === null || value === defaultValue || value === '') return;
+  parts.push(name, String(value));
+}
+
+function benchmarkReproCommand(args, installedCliPath) {
+  const env = [];
+  if (process.env.IOS_USE_BENCHMARK_IOS_USE_BIN) {
+    env.push(`IOS_USE_BENCHMARK_IOS_USE_BIN=${shellQuote(installedCliPath)}`);
+  }
+  if (WDA_DEVICE_UDID) {
+    env.push(`WDA_INSTALLED_DEVICE=${shellQuote(WDA_DEVICE_UDID)}`);
+  }
+  if (!args.customOnly && WDA_BUNDLE_ID) {
+    env.push(`WDA_BUNDLE_ID=${shellQuote(WDA_BUNDLE_ID)}`);
+  }
+
+  const parts = ['node', 'scripts/benchmark_wda.js', '--iterations', String(args.iterations), '--driver-ipa', path.resolve(args.driverIpa)];
+  appendOption(parts, '--output', args.output);
+  appendOption(parts, '--bundle-id', args.bundleId, DEFAULT_APP_BUNDLE);
+  appendOption(parts, '--label', args.label, DEFAULT_LABEL);
+  appendOption(parts, '--search-label', args.searchLabel, '搜索');
+  appendOption(parts, '--scroll-to-label', args.scrollToLabel, '蓝牙');
+  appendOption(parts, '--cases', args.cases);
+  appendOption(parts, '--input-bundle-id', args.inputBundleId, args.bundleId);
+  appendOption(parts, '--input-label', args.inputLabel, args.searchLabel);
+  appendOption(parts, '--input-traits', args.inputTraits, 'searchField');
+  appendOption(parts, '--input-content', args.inputContent, 'ios-use benchmark');
+  appendOption(parts, '--input-prepare-label', args.inputPrepareLabel, args.label);
+  appendOption(parts, '--input-open-url', args.inputOpenUrl);
+  appendOption(parts, '--custom-udid', args.customUdid);
+  if (args.customSimulator) parts.push('--custom-simulator');
+  if (args.customOnly) parts.push('--custom-only');
+
+  const command = parts.map(shellQuote).join(' ');
+  return env.length > 0 ? `${env.join(' ')} \\\n  ${command}` : command;
+}
+
+function prepareCustomDriverIpa(driverIpa, customSimulator) {
+  const sourcePath = path.resolve(driverIpa);
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`--driver-ipa does not exist: ${sourcePath}`);
+  }
+  const assetName = customSimulator ? 'driver-sim.ipa' : 'driver.ipa';
+  const installedPath = path.join(IOS_USE_HOME, assetName);
+  ensureDir(path.dirname(installedPath));
+  if (path.resolve(sourcePath) !== path.resolve(installedPath)) {
+    fs.copyFileSync(sourcePath, installedPath);
+  }
+  return {
+    sourcePath,
+    installedPath,
+    identity: readDriverIdentityFromIpa(installedPath),
+  };
+}
+
+function readConfiguredDriverIdentity(customUdid) {
+  const configPath = path.join(IOS_USE_HOME, 'config.json');
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const identity = config?.devices?.[customUdid]?.driverIdentity;
+  if (!identity || typeof identity.version !== 'string' || typeof identity.build !== 'string') {
+    throw new Error(`config.json missing driverIdentity for ${customUdid}`);
+  }
+  return { version: identity.version, build: identity.build };
+}
+
+function assertSameDriverIdentity(actual, expected, context) {
+  if (actual.version !== expected.version || actual.build !== expected.build) {
+    throw new Error(`${context} driver identity mismatch: actual=${formatDriverIdentity(actual)}, expected=${formatDriverIdentity(expected)}`);
+  }
+}
+
+function configureCustomDriver(customUdid, customSimulator, expectedIdentity) {
   if (process.env.IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG === '1') {
-    return 'skipped';
+    throw new Error('IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG is no longer supported; pass --driver-ipa and let benchmark reinstall the selected driver');
   }
   const args = ['config'];
   if (customSimulator) args.push('--simulator');
   args.push('--udid', customUdid);
   cli(args, { capture: false });
-  return 'installed';
+  const configIdentity = readConfiguredDriverIdentity(customUdid);
+  assertSameDriverIdentity(configIdentity, expectedIdentity, 'configured');
+  return { status: 'installed', identity: configIdentity };
 }
 
 function listDeviceProcesses(udid) {
@@ -1138,11 +1272,11 @@ function buildCases(ctx) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  ensureEnv();
+  ensureEnv(args);
   const customUdid = args.customUdid || WDA_DEVICE_UDID;
-  const driverBuild = buildReleaseDriverArtifacts();
+  const driverArtifact = prepareCustomDriverIpa(args.driverIpa, args.customSimulator);
   const installedCliPath = installIosUseExecutable();
-  const customDriverInstall = configureCustomDriver(customUdid, args.customSimulator);
+  const customDriverInstall = configureCustomDriver(customUdid, args.customSimulator, driverArtifact.identity);
 
   ensureDir(BENCHMARK_DIR);
   const output = args.output || path.join(BENCHMARK_DIR, `benchmark-wda-${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}.md`);
@@ -1218,8 +1352,11 @@ async function main() {
     lines.push(`| WDA launch timeout | \`${WDA_LAUNCH_TIMEOUT_MS} ms\` |`);
     lines.push(`| custom 设备 | \`${customUdid}\` |`);
   }
-  lines.push(`| custom driver build | \`${driverBuild}\` |`);
-  lines.push(`| custom driver install | \`${customDriverInstall}\` |`);
+  lines.push(`| custom driver IPA source | \`${driverArtifact.sourcePath}\` |`);
+  lines.push(`| custom driver IPA installed path | \`${driverArtifact.installedPath}\` |`);
+  lines.push(`| custom driver IPA identity | \`${formatDriverIdentity(driverArtifact.identity)}\` |`);
+  lines.push(`| configured driver identity | \`${formatDriverIdentity(customDriverInstall.identity)}\` |`);
+  lines.push(`| custom driver install | \`${customDriverInstall.status}\` |`);
   lines.push(`| custom target type | \`${args.customSimulator ? 'Simulator' : 'device'}\` |`);
   lines.push(`| App | \`${args.bundleId}\` |`);
   lines.push(`| 锚点 label | \`${args.label}\` |`);
@@ -1295,17 +1432,13 @@ async function main() {
   lines.push('## 使用方式');
   lines.push('');
   lines.push('```bash');
-  if (process.env.IOS_USE_BENCHMARK_IOS_USE_BIN) {
-    lines.push(`IOS_USE_BENCHMARK_IOS_USE_BIN=${installedCliPath} \\\n  WDA_INSTALLED_DEVICE=${WDA_DEVICE_UDID} WDA_BUNDLE_ID=${WDA_BUNDLE_ID} \\\n  node scripts/benchmark_wda.js --iterations 3${args.customOnly ? ' --custom-only' : ''}`);
-  } else {
-    lines.push(`WDA_INSTALLED_DEVICE=${WDA_DEVICE_UDID} WDA_BUNDLE_ID=${WDA_BUNDLE_ID} \\\n  node scripts/benchmark_wda.js --iterations 3${args.customOnly ? ' --custom-only' : ''}`);
-  }
+  lines.push(benchmarkReproCommand(args, installedCliPath));
   lines.push('```');
   lines.push('');
   if (process.env.IOS_USE_BENCHMARK_IOS_USE_BIN) {
     lines.push('说明：本次通过 `IOS_USE_BENCHMARK_IOS_USE_BIN` 使用已有 `ios-use` 可执行文件，不执行 `scripts/install.sh`。');
   } else {
-    lines.push('说明：脚本开始前会先执行 Release driver build、`scripts/install.sh` 和 `ios-use config --udid <customUdid>`，并使用安装后的 `ios-use` 可执行文件进行 custom 侧 benchmark。');
+    lines.push('说明：脚本开始前会执行 `scripts/install.sh` 和 `ios-use config --udid <customUdid>`，并使用安装后的 `ios-use` 可执行文件进行 custom 侧 benchmark；driver IPA 由 `--driver-ipa` 显式指定，脚本不会构建 driver。');
   }
   if (args.customOnly) {
     lines.push('说明：本次只测 ios-use custom driver，不启动 Appium/WDA 对照组。');
@@ -1318,4 +1451,7 @@ async function main() {
   console.log(`Benchmark written to ${output}`);
 }
 
-await main();
+main().catch(error => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

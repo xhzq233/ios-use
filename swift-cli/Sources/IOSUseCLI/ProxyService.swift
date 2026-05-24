@@ -53,8 +53,9 @@ public enum ProxyService {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    public static func configCA(udid requestedUdid: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
-        let udid = try resolveUdid(requestedUdid, paths: paths)
+    public static func configCA(paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+        let activeDriver = try SessionService.requireDriverLock(paths: paths)
+        let udid = activeDriver.udid
         try ensureMitmproxyCA(paths: paths)
         let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
         let fingerprint = fingerprintPEM(pem)
@@ -64,7 +65,7 @@ public enum ProxyService {
         _ = try withRecoveredDriver(paths: paths) { driver in
             try driver.proxyCAPush(caBase64: base64Body(fromPEM: pem))
         }
-        let flowOutput = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
+        let flowOutput = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: ""), paths: paths, outputSink: outputSink)
 
         let existingState = readState(paths: paths)
         var state = existingState ?? ProxySessionState(
@@ -83,12 +84,16 @@ public enum ProxyService {
         return (outputSink == nil ? flowOutput : "") + "CA installed and trusted on device.\n"
     }
 
-    public static func start(udid requestedUdid: String?, interfaceName: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+    public static func start(interfaceName: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
         let interruptMonitor = InterruptMonitor()
         interruptMonitor.start()
         defer { interruptMonitor.stop() }
-        let udid = try resolveStartUdid(requestedUdid, paths: paths)
+        let activeDriver = try SessionService.requireDriverLock(paths: paths)
+        let udid = activeDriver.udid
         if let state = readState(paths: paths), state.status == "running", isMitmdumpProcess(pid: state.mitmdumpPid ?? 0, expectedFlowFile: state.flowFile) {
+            if state.udid != udid {
+                throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not active driver \(udid). Run `ios-use start \(state.udid)` and `ios-use proxy stop`, or manually disable Wi-Fi proxy.")
+            }
             throw CLIParseError.invalidValue("Proxy already running. Run `proxy stop` first.")
         }
 
@@ -130,7 +135,7 @@ public enum ProxyService {
             try interruptMonitor.throwIfInterrupted()
             let flowOutput = try FlowService.run(
                 file: flowPath("proxy_set_wifi_proxy.yaml", paths: paths),
-                options: FlowOptions(file: "", udid: udid, externalVars: ["server": wifi.macLanIp, "port": String(IOSUseProtocol.proxyMitmdumpPort)]),
+                options: FlowOptions(file: "", externalVars: ["server": wifi.macLanIp, "port": String(IOSUseProtocol.proxyMitmdumpPort)]),
                 paths: paths,
                 outputSink: outputSink
             )
@@ -162,18 +167,17 @@ public enum ProxyService {
         return pendingFlowOutput + output
     }
 
-    public static func stop(udid requestedUdid: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+    public static func stop(paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+        let activeDriver = try SessionService.requireDriverLock(paths: paths)
         guard let state = readState(paths: paths) else {
-            if let requestedUdid, !requestedUdid.isEmpty {
-                let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: requestedUdid), paths: paths, outputSink: outputSink)
-                return (outputSink == nil ? flowOutput : "") + "Proxy stopped.\n"
-            }
             throw CLIParseError.invalidValue("PROXY_NOT_RUNNING: no running proxy session")
         }
-        let udid = try resolveStopUdid(requestedUdid, state: state)
+        guard state.udid == activeDriver.udid else {
+            throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not active driver \(activeDriver.udid). Run `ios-use start \(state.udid)` and `ios-use proxy stop`, or manually disable Wi-Fi proxy.")
+        }
         var pendingFlowOutput = ""
         do {
-            let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: "", udid: udid), paths: paths, outputSink: outputSink)
+            let flowOutput = try FlowService.run(file: flowPath("proxy_clear_wifi_proxy.yaml", paths: paths), options: FlowOptions(file: ""), paths: paths, outputSink: outputSink)
             if outputSink == nil {
                 pendingFlowOutput = flowOutput
             }
@@ -210,40 +214,8 @@ public enum ProxyService {
         return try? JSONDecoder().decode(ProxySessionState.self, from: data)
     }
 
-    static func resolveUdidForTesting(_ requested: String?, paths: IOSUsePaths) throws -> String {
-        try resolveUdid(requested, paths: paths)
-    }
-
-    static func resolveStartUdidForTesting(_ requested: String?, paths: IOSUsePaths) throws -> String {
-        try resolveStartUdid(requested, paths: paths)
-    }
-
-    static func resolveStopUdidForTesting(_ requested: String?, state: ProxySessionState) throws -> String {
-        try resolveStopUdid(requested, state: state)
-    }
-
-    private static func resolveUdid(_ requested: String?, paths: IOSUsePaths) throws -> String {
-        if let requested, !requested.isEmpty { return requested }
-        if let state = readState(paths: paths), !state.udid.isEmpty { return state.udid }
-        if let lock = SessionService.read(paths: paths) {
-            return lock.udid
-        }
-        throw CLIParseError.invalidValue("No device UDID. Pass --udid or run an action command first.")
-    }
-
-    private static func resolveStartUdid(_ requested: String?, paths: IOSUsePaths) throws -> String {
-        if let requested, !requested.isEmpty { return requested }
-        if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first {
-            return device.udid
-        }
-        throw CLIParseError.invalidValue("No USB device UDID. Pass --udid or connect a configured USB device.")
-    }
-
-    private static func resolveStopUdid(_ requested: String?, state: ProxySessionState) throws -> String {
-        if let requested, !requested.isEmpty, requested != state.udid {
-            throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not \(requested). Run `proxy stop --udid \(state.udid)` or manually disable Wi-Fi proxy.")
-        }
-        return state.udid
+    static func activeUdidForTesting(paths: IOSUsePaths) throws -> String {
+        try SessionService.requireDriverLock(paths: paths).udid
     }
 
     private static func writeState(_ state: ProxySessionState, paths: IOSUsePaths) throws {
