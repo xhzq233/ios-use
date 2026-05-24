@@ -110,13 +110,11 @@ public enum DriverAction: Equatable, Sendable {
 
 public struct FlowOptions: Equatable, Sendable {
     public var file: String
-    public var udid: String?
     public var verbose = false
     public var externalVars: [String: String] = [:]
 
-    public init(file: String, udid: String? = nil, verbose: Bool = false, externalVars: [String: String] = [:]) {
+    public init(file: String, verbose: Bool = false, externalVars: [String: String] = [:]) {
         self.file = file
-        self.udid = udid
         self.verbose = verbose
         self.externalVars = externalVars
     }
@@ -152,10 +150,10 @@ public struct NSLogOptions: Equatable, Sendable {
 }
 
 public enum ProxyCommand: Equatable, Sendable {
-    case configca(udid: String?)
-    case start(udid: String?, interfaceName: String?)
+    case configca
+    case start(interfaceName: String?)
     case read(filter: String?, raw: Bool, last: Int?)
-    case stop(udid: String?)
+    case stop
     case doctor
 
     public var subcommand: String {
@@ -274,11 +272,15 @@ public enum CLIParser {
         var options = FlowOptions(file: file)
         while let arg = parser.consume() {
             switch arg {
-            case "--udid": options.udid = try parser.value(for: arg)
+            case "--udid":
+                throw CLIParseError.unknownOption(arg)
             case "--verbose": options.verbose = true
             default:
                 guard arg.hasPrefix("--") else { throw CLIParseError.unexpectedArgument(arg) }
                 let key = String(arg.dropFirst(2))
+                if key == "udid" || key.hasPrefix("udid=") {
+                    throw CLIParseError.unknownOption("--udid")
+                }
                 guard !key.isEmpty else { throw CLIParseError.unknownOption(arg) }
                 guard isFlowExternalVarName(key) else {
                     throw CLIParseError.invalidValue("Invalid flow external variable name: \(key)")
@@ -338,25 +340,21 @@ public enum CLIParser {
         let subcommand = try parser.requiredPositional("subcommand")
         switch subcommand {
         case "configca":
-            var udid: String?
             while let arg = parser.consume() {
                 switch arg {
-                case "--udid": udid = try parser.value(for: arg)
                 default: throw CLIParseError.unknownOption(arg)
                 }
             }
-            return .configca(udid: udid)
+            return .configca
         case "start":
-            var udid: String?
             var interfaceName: String?
             while let arg = parser.consume() {
                 switch arg {
-                case "--udid": udid = try parser.value(for: arg)
                 case "-i", "--interface": interfaceName = try parser.value(for: arg)
                 default: throw CLIParseError.unknownOption(arg)
                 }
             }
-            return .start(udid: udid, interfaceName: interfaceName)
+            return .start(interfaceName: interfaceName)
         case "read":
             var filter: String?
             var raw = false
@@ -371,14 +369,12 @@ public enum CLIParser {
             }
             return .read(filter: filter, raw: raw, last: last)
         case "stop":
-            var udid: String?
             while let arg = parser.consume() {
                 switch arg {
-                case "--udid": udid = try parser.value(for: arg)
                 default: throw CLIParseError.unknownOption(arg)
                 }
             }
-            return .stop(udid: udid)
+            return .stop
         case "doctor":
             try parser.requireEnd()
             return .doctor

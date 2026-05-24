@@ -25,14 +25,14 @@ ios-use start <udid>          # 启动 driver，并记录当前 driver.lock
 - 如果 `ios-use devices` 显示 `driver update required`，必须重新执行 `ios-use config --udid <udid>`。
 - 首次配置真机时可能需要补 Apple ID，并触发 Apple 2FA 验证码输入，AI 无法代用户完成。此时应提示用户：「真机首次签名需要一个免费的 Apple Developer 账号。请在终端手动运行以下命令，按提示输入 Apple ID、App 专用密码，并完成两步验证（2FA）：`ios-use config --udid <udid> --apple-id <your-apple-id> --password '<app-specific-password>'`」
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
-- `start <udid>` 会启动已配置设备的 driver 并写入 `~/.ios-use/state/driver.lock`；`dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/proxy configca` 等 driver-backed 命令必须先 start，且不再接受自己的 `--udid`
+- `start <udid>` 会启动已配置设备的 driver 并写入 `~/.ios-use/state/driver.lock`；`dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/flow/proxy configca/proxy start/proxy stop` 等命令必须先 start，且不再接受自己的 `--udid`
 - `open <url>` 是 host-side 命令，不要求已有 driver lock，仍可用 `--udid` 指定目标
 - 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
 
 ## 2. 硬规则
 
 - 真机必须 USB 连接，WiFi 连接的设备在 usbmux 中不可见，会报错
-- `devices` / `config` / host-side `open` / `oslog` 可使用 `--udid`；driver-backed 操作命令不接受 `--udid`，目标来自当前 `driver.lock`
+- `devices` / `config` / host-side `open` / `oslog` 可使用 `--udid`；driver-backed 操作命令、Flow、proxy configca/start/stop 不接受 `--udid`，目标来自当前 `driver.lock`
 - 执行 driver-backed 操作前先 `ios-use devices` 确认设备已连接且显示 `configured`，且没有 `driver update required`，然后运行 `ios-use start <udid>`
 - 执行动作前，多用 `dom` 查看当前页面状态，不要盲点
 - **不要猜**：每一步执行前，用 `dom`/`find` 确认当前页面状态，不要凭猜测执行。尤其是 bundle ID，如果不知道目标 app 的 bundle ID，问用户或从设备上查找（如通过 Spotlight、App Store 链接、或 dom 查看 home screen），不要逐个尝试猜测变体

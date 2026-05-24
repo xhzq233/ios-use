@@ -99,17 +99,17 @@ public struct IOSUseCLI: Sendable {
             }
         case .proxy(.doctor):
             return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
-        case .proxy(.configca(let udid)):
+        case .proxy(.configca):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(udid: udid, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(paths: paths, outputSink: outputSink))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
-        case .proxy(.start(let udid, let interfaceName)):
+        case .proxy(.start(let interfaceName)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.start(udid: udid, interfaceName: interfaceName, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.start(interfaceName: interfaceName, paths: paths, outputSink: outputSink))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -121,9 +121,9 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
-        case .proxy(.stop(let udid)):
+        case .proxy(.stop):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(udid: udid, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(paths: paths, outputSink: outputSink))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {

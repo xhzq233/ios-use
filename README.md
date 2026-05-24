@@ -77,13 +77,14 @@ When upgrading `ios-use`, run `ios-use devices` after installation. If a device 
 
 ```bash
 ios-use devices
-ios-use activateApp com.apple.Preferences --udid <device-udid>
+ios-use start <device-udid>
+ios-use activateApp com.apple.Preferences
 ```
 
-No manual `session start` is required. The first action command auto-creates a device session; `activateApp` foregrounds the target app when needed.
+Driver-backed commands use the active `driver.lock`. To switch targets, run `ios-use stop`, then `ios-use start <other-udid>`.
 
 ```bash
-ios-use dom --udid <device-udid>
+ios-use dom
 ```
 
 ### 4. Run Commands
@@ -106,6 +107,7 @@ ios-use flow flows/test_flow.yaml
 ## Benchmark
 
 The benchmark below compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same app scenario.
+Current benchmark runs require an explicit custom driver IPA, for example `node scripts/benchmark_wda.js --driver-ipa assets/driver.ipa --iterations 3`; the script does not build driver artifacts itself.
 
 Setup summary:
 
@@ -183,7 +185,7 @@ bash scripts/build_driver.sh
 bash scripts/ci_test.sh
 ```
 
-`bash scripts/build_swift_cli.sh` builds the local workspace CLI to repo-root `./ios-use`; use that binary for development instead of a global `ios-use`. `scripts/ci_test.sh` is the default CI/local Swift-only validation path. Full Simulator command matrix tests use `bash scripts/ci_full_simulator.sh`. See `scripts/README.md` for the script index.
+`bash scripts/build_swift_cli.sh` builds the local workspace CLI to repo-root `./ios-use`; use that binary for development instead of a global `ios-use`. `scripts/ci_test.sh` is the default CI/local Swift-only validation path. Full Simulator command matrix tests use `bash scripts/ci_full_simulator.sh --driver-ipa <driver-sim.ipa>`. See `scripts/README.md` for the script index.
 
 ## Acknowledgments
 

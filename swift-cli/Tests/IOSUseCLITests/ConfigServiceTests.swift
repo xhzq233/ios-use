@@ -80,6 +80,12 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(root)/driver.ipa")
         XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), "\(root)/driver-sim.ipa")
         #endif
+
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try Data().write(to: URL(fileURLWithPath: "\(root)/driver.ipa"))
+        try Data().write(to: URL(fileURLWithPath: "\(root)/driver-sim.ipa"))
+        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(root)/driver.ipa")
+        XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), "\(root)/driver-sim.ipa")
     }
 
     func testReadDriverIdentityFromInfoPlistReadsStampedFields() throws {
@@ -213,6 +219,25 @@ final class ConfigServiceTests: XCTestCase {
         }
     }
 
+    func testAssertDriverInstallCurrentRejectsDifferentSelectedIPAIdentity() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let selectedIdentity = DriverIdentity(version: IOSUseCLI.version, build: "20260524000000-aaaaaaaaaaaa")
+        let configuredIdentity = DriverIdentity(version: IOSUseCLI.version, build: "20260523000000-bbbbbbbbbbbb")
+        try writeDriverIPA(path: "\(root)/driver-sim.ipa", identity: selectedIdentity)
+        try """
+        {"devices":{"SIM-1":{"bundleId":"com.iosuse.xcuidriver.xctrunner","driverVersion":"\(IOSUseCLI.version)","driverIdentity":{"version":"\(configuredIdentity.version)","build":"\(configuredIdentity.build)"}}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [IOSDevice(name: "IOSUseTest", version: "26.0", udid: "SIM-1", kind: .simulator)] : []
+        }
+
+        XCTAssertThrowsError(try ConfigService.assertDriverInstallCurrent(udid: "SIM-1", paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("configured from a different driver IPA"))
+        }
+    }
+
     func testReadSimulatorInstalledIdentityRejectsMissingInstalledPlistWithoutLocalFallback() {
         Shell.runOverrideForTesting = { executable, arguments, _, _ in
             if executable == "xcrun", Array(arguments.prefix(3)) == ["simctl", "get_app_container", "SIM-1"] {
@@ -298,7 +323,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/state/nslog.lock"))
     }
 
-    func testStopTerminatesSimulatorDriverAndPreservesLockOnFailure() throws {
+    func testStopClearsStaleSimulatorDriverLockWhenAppAlreadyStopped() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try writeDriverLock(udid: "SIM-1", deviceType: "simulator", paths: paths)
@@ -308,22 +333,11 @@ final class ConfigServiceTests: XCTestCase {
             return false
         }
 
-        var result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
-        XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("Driver app was not terminated for SIM-1."))
-        XCTAssertEqual(SessionService.readDriverLock(paths: paths), "SIM-1")
-        XCTAssertEqual(terminated, ["SIM-1"])
-
-        SessionService.simulatorDriverTerminatorForTesting = { udid in
-            terminated.append(udid)
-            return true
-        }
-        result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
-
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "Driver app terminated on simulator\nDriver stopped\n")
-        XCTAssertEqual(terminated, ["SIM-1", "SIM-1"])
+        XCTAssertEqual(result.stdout, "Driver app was not running on simulator\nDriver stopped\n")
         XCTAssertNil(SessionService.readDriverLock(paths: paths))
+        XCTAssertEqual(terminated, ["SIM-1"])
     }
 
     func testStartCommandCreatesFullSimulatorDriverLockWithoutSessionJSON() throws {

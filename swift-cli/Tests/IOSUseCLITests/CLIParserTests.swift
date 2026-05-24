@@ -92,13 +92,8 @@ final class CLIParserTests: XCTestCase {
 
     func testParsesFlowNSLogAndProxyCommands() throws {
         XCTAssertEqual(
-            try CLIParser.parse(["flow", "flows/test_flow.yaml", "--udid", "SIM-1", "--verbose", "--server", "192.168.1.10", "--port", "8080"]),
-            .flow(FlowOptions(file: "flows/test_flow.yaml", udid: "SIM-1", verbose: true, externalVars: ["server": "192.168.1.10", "port": "8080"]))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse(["flow", "flows/test_flow.yaml", "--udid=SIM-1", "--server=192.168.1.10", "--flag=-value"]),
-            .flow(FlowOptions(file: "flows/test_flow.yaml", udid: "SIM-1", externalVars: ["server": "192.168.1.10", "flag": "-value"]))
+            try CLIParser.parse(["flow", "flows/test_flow.yaml", "--verbose", "--server", "192.168.1.10", "--port", "8080"]),
+            .flow(FlowOptions(file: "flows/test_flow.yaml", verbose: true, externalVars: ["server": "192.168.1.10", "port": "8080"]))
         )
 
         XCTAssertEqual(
@@ -127,18 +122,18 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["proxy", "start", "--udid=DEVICE-1", "--interface=en0"]),
-            .proxy(.start(udid: "DEVICE-1", interfaceName: "en0"))
+            try CLIParser.parse(["proxy", "start", "--interface=en0"]),
+            .proxy(.start(interfaceName: "en0"))
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["proxy", "start", "--udid", "DEVICE-1", "-i", "en1"]),
-            .proxy(.start(udid: "DEVICE-1", interfaceName: "en1"))
+            try CLIParser.parse(["proxy", "start", "-i", "en1"]),
+            .proxy(.start(interfaceName: "en1"))
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["proxy", "configca", "--udid", "DEVICE-1"]),
-            .proxy(.configca(udid: "DEVICE-1"))
+            try CLIParser.parse(["proxy", "configca"]),
+            .proxy(.configca)
         )
 
         XCTAssertEqual(
@@ -147,8 +142,8 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["proxy", "stop", "--udid", "DEVICE-1"]),
-            .proxy(.stop(udid: "DEVICE-1"))
+            try CLIParser.parse(["proxy", "stop"]),
+            .proxy(.stop)
         )
 
         XCTAssertEqual(
@@ -188,6 +183,26 @@ final class CLIParserTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--udid", "SIM-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["flow", "flows/test_flow.yaml", "--udid", "SIM-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["flow", "flows/test_flow.yaml", "--udid=SIM-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["proxy", "start", "--udid", "SIM-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["proxy", "configca", "--udid", "SIM-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["proxy", "stop", "--udid", "SIM-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--udid"))
         }
 
