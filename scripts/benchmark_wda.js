@@ -1072,7 +1072,7 @@ function buildCases(ctx) {
       name: 'scroll_to_visible',
       kind: 'mutate',
       runs: ctx.iterations,
-      mapping: '`swipe --to 开发者 --from 蓝牙` ↔ loop `mobile: scroll(direction=down)` + visible check (`label == "开发者" AND visible == 1`)',
+      mapping: `\`swipe --to ${scrollToLabel} --from ${ctx.label}\` ↔ loop \`mobile: scroll(direction=down)\` + visible check (\`label == "${scrollToLabel}" AND visible == 1\`)`,
       customPrepare: async () => {
         await customPrepareAppSession(ctx.customUdid, ctx.appBundle, ctx.label);
       },
