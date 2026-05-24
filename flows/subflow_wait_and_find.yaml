@@ -10,6 +10,5 @@ steps:
 
   - action: find
     label: ${vars.targetLabel}
-    print: false
     outputs: matchedNode
     comment: "子 flow 输出命中节点供主 flow 复用"

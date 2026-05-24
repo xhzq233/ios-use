@@ -10,7 +10,6 @@ steps:
 
   - action: find
     label: ${matchedNode.firstMatch.label}
-    print: false
     comment: "验证主 flow 可以消费子 flow 返回的节点信息"
 
   - action: waitFor
@@ -19,10 +18,8 @@ steps:
     comment: "确认 Settings 首页已稳定，且入口锚点可唯一命中"
 
   - action: dom
-    save: true
-    name: test-flow-home-clean
-    print: false
-    comment: "保存首页 clean DOM，验证 dom action"
+    outputs: homeDom
+    comment: "输出首页 clean DOM，验证 dom action"
 
   - action: screenshot
     name: test-flow-settings-home
@@ -30,7 +27,6 @@ steps:
 
   - action: find
     label: 蜂窝网络
-    print: false
     comment: "验证 find 可命中首页可见列表项"
 
   - action: swipe
@@ -40,7 +36,6 @@ steps:
 
   - action: find
     label: 通用
-    print: false
     comment: "验证滚动后可命中「通用」"
 
   - action: screenshot
@@ -87,10 +82,7 @@ steps:
 
   - action: dom
     raw: true
-    save: true
-    name: test-flow-home-raw
-    print: false
-    comment: "保存首页 raw DOM，验证 raw=true"
+    comment: "输出首页 raw DOM，验证 raw=true"
 
   - action: screenshot
     name: test-flow-settings-relaunched

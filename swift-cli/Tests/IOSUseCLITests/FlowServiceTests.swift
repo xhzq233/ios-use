@@ -10,12 +10,12 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("Flow file not found"))
     }
 
-    func testOpenURLStepUsesHostSideSimulatorOpen() throws {
+    func testOpenStepUsesHostSideSimulatorOpen() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("open.yaml", """
         name: open-url
         steps:
-          - action: openURL
+          - action: open
             url: retouch://debug
         """)
         let driver = FakeFlowDriver()
@@ -36,18 +36,18 @@ final class FlowServiceTests: XCTestCase {
             deviceType: "simulator"
         )
 
-        XCTAssertTrue(result.stdout.contains("Step 1/1: openURL"))
+        XCTAssertTrue(result.stdout.contains("Step 1/1: open"))
         XCTAssertEqual(shellCalls.count, 1)
         XCTAssertEqual(shellCalls.first?.0, "xcrun")
         XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", "SIM-1", "retouch://debug"])
     }
 
-    func testOpenURLStepUsesHostSideRealDeviceOpen() throws {
+    func testOpenStepUsesHostSideRealDeviceOpen() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("open.yaml", """
         name: open-url
         steps:
-          - action: openURL
+          - action: open
             url: https://example.com
         """)
         let driver = FakeFlowDriver()
@@ -75,7 +75,7 @@ final class FlowServiceTests: XCTestCase {
             deviceType: "real"
         )
 
-        XCTAssertTrue(result.stdout.contains("Step 1/1: openURL"))
+        XCTAssertTrue(result.stdout.contains("Step 1/1: open"))
         XCTAssertEqual(shellCalls.count, 1)
         XCTAssertEqual(shellCalls.first?.0, "xcrun")
         XCTAssertEqual(shellCalls.first?.1, [
@@ -178,15 +178,13 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(driver.findLabels, ["ShouldRun"])
     }
 
-    func testDomCandidatesRespectCandidatePriorityAndSaveDerivedJson() throws {
+    func testDomCandidatesRespectCandidatePriorityAndBindOutput() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("dom.yaml", """
         name: dom-flow
         outputs: page
         steps:
           - action: dom
-            save: true
-            name: page
             candidates:
               - Close
               - Cancel
@@ -209,23 +207,17 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(first["label"] as? String, "Close")
         XCTAssertEqual(first["type"] as? String, "Button")
         XCTAssertTrue(result.stdout.contains("App: com.example"))
-
-        let saved = "\(fixture.paths.artifacts)/page.json"
-        XCTAssertTrue(FileManager.default.fileExists(atPath: saved))
-        let savedText = try String(contentsOfFile: saved)
-        XCTAssertTrue(savedText.contains("\"firstMatch\""))
-        XCTAssertTrue(savedText.contains("\"Close\""))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.paths.artifacts))
     }
 
-    func testDomSaveUsesPresentationScrollDirection() throws {
+    func testDomOutputUsesPresentationScrollDirection() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("dom-direction.yaml", """
         name: dom-direction-flow
+        outputs: page
         steps:
           - action: dom
-            save: true
-            name: dom-direction
-            print: false
+            outputs: page
         """)
         let driver = FakeFlowDriver()
         driver.domPayload = ForyDomPayload(
@@ -238,12 +230,10 @@ final class FlowServiceTests: XCTestCase {
             ]
         )
 
-        _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+        let result = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
 
-        let saved = "\(fixture.paths.artifacts)/dom-direction.json"
-        let data = try Data(contentsOf: URL(fileURLWithPath: saved))
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let dom = try XCTUnwrap(json["dom"] as? [String: Any])
+        let page = try XCTUnwrap(result.outputs["page"] as? [String: Any])
+        let dom = try XCTUnwrap(page["dom"] as? [String: Any])
         let elements = try XCTUnwrap(dom["elements"] as? [[String: Any]])
         let traits = try XCTUnwrap(elements.first?["traits"] as? [String])
         XCTAssertEqual(traits, ["ScrollView", "vertical"])
@@ -314,7 +304,7 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(element["type"] as? String, "Cell")
     }
 
-    func testFlowTargetsSupportCommaLabelsAndArrayPoints() throws {
+    func testFlowTargetsUseCLIStringCoordinatesAndRejectArrayPoints() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("targets.yaml", """
         name: targets
@@ -322,10 +312,16 @@ final class FlowServiceTests: XCTestCase {
           - action: tap
             label: A,B
           - action: tap
-            label: [100, 200]
+            label: 100,200
           - action: swipe
-            to: [10, 20]
+            to: 10,20
             from: A,B
+        """)
+        let bad = try fixture.write("bad-targets.yaml", """
+        name: bad-targets
+        steps:
+          - action: tap
+            label: [100, 200]
         """)
         let driver = FakeFlowDriver()
 
@@ -337,6 +333,9 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(driver.taps[1].target.point?.y, 200)
         XCTAssertEqual(driver.swipes[0].to.point?.x, 10)
         XCTAssertEqual(driver.swipes[0].from.label, "A,B")
+        XCTAssertThrowsError(try FlowService.runForTesting(file: bad.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("tap.label must be a string"))
+        }
     }
 
     func testFlowLongpressPassesDurationAndTraits() throws {
@@ -405,7 +404,7 @@ final class FlowServiceTests: XCTestCase {
         name: bad-cindex
         steps:
           - action: tap
-            label: [100, 200]
+            label: 100,200
             cindex: 0
         """)
 
@@ -552,16 +551,14 @@ final class FlowServiceTests: XCTestCase {
         steps:
           - action: tap
             label: General
-            offset:
-              x: 12
+            offset: "12,"
         """)
         let ratio = try fixture.write("partial-ratio.yaml", """
         name: partial-ratio
         steps:
           - action: tap
             label: General
-            offset:
-              xRatio: 0.2
+            offsetRatio: "0.2,"
         """)
         let absoluteDriver = FakeFlowDriver()
         let ratioDriver = FakeFlowDriver()
@@ -617,8 +614,8 @@ final class FlowServiceTests: XCTestCase {
 
     func testFlowCompileRejectsStrictTypesBeforeExecution() throws {
         let fixture = try FlowFixture()
-        let badOffset = try fixture.write("bad-offset.yaml", """
-        name: bad-offset
+        let stringOffset = try fixture.write("string-offset.yaml", """
+        name: string-offset
         steps:
           - action: find
             label: General
@@ -632,14 +629,28 @@ final class FlowServiceTests: XCTestCase {
           - action: dom
             raw: "true"
         """)
+        let badOffsetDict = try fixture.write("bad-offset-dict.yaml", """
+        name: bad-offset-dict
+        steps:
+          - action: find
+            label: General
+          - action: tap
+            label: General
+            offset:
+              x: -50
+              y: -50
+        """)
         let driver = FakeFlowDriver()
 
-        XCTAssertThrowsError(try FlowService.runForTesting(file: badOffset.path, paths: fixture.paths, driver: driver)) { error in
-            XCTAssertTrue(String(describing: error).contains("tap offset must be a dict"))
-        }
-        XCTAssertTrue(driver.finds.isEmpty)
+        _ = try FlowService.runForTesting(file: stringOffset.path, paths: fixture.paths, driver: driver)
+        XCTAssertEqual(driver.finds.map(\.label), ["General"])
+        XCTAssertEqual(driver.taps.first?.offset?.x, -50)
+        XCTAssertEqual(driver.taps.first?.offset?.y, -50)
         XCTAssertThrowsError(try FlowService.runForTesting(file: rawString.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
             XCTAssertTrue(String(describing: error).contains("dom.raw must be a boolean"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: badOffsetDict.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("tap.offset must be a string"))
         }
     }
 
@@ -684,14 +695,14 @@ final class FlowServiceTests: XCTestCase {
         """)
 
         XCTAssertThrowsError(try FlowService.runForTesting(file: invalidDir.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
-            XCTAssertTrue(String(describing: error).contains("swipe.dir must be"))
+            XCTAssertTrue(String(describing: error).contains("Invalid swipe dir"))
         }
         XCTAssertThrowsError(try FlowService.runForTesting(file: fractionalIndex.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
             XCTAssertTrue(String(describing: error).contains("dismissAlert.index must be an integer"))
         }
     }
 
-    func testFlowRejectsHugeSleepAndNonFinitePointTargets() throws {
+    func testFlowRejectsHugeSleepAndTreatsInvalidPointLikeTargetAsCLILabel() throws {
         let fixture = try FlowFixture()
         let hugeSleep = try fixture.write("huge-sleep.yaml", """
         name: huge-sleep
@@ -711,6 +722,7 @@ final class FlowServiceTests: XCTestCase {
           - action: tap
             label: inf,0
         """)
+        let driver = FakeFlowDriver()
 
         XCTAssertThrowsError(try FlowService.runForTesting(file: hugeSleep.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
             XCTAssertTrue(String(describing: error).contains("sleep.ms must be an integer"))
@@ -718,9 +730,8 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertThrowsError(try FlowService.runForTesting(file: overflowingSleep.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
             XCTAssertTrue(String(describing: error).contains("sleep.ms is too large"))
         }
-        XCTAssertThrowsError(try FlowService.runForTesting(file: invalidPoint.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
-            XCTAssertTrue(String(describing: error).contains("Invalid point"))
-        }
+        _ = try FlowService.runForTesting(file: invalidPoint.path, paths: fixture.paths, driver: driver)
+        XCTAssertEqual(driver.taps.first?.target.label, "inf,0")
     }
 
     func testFlowRejectsInvalidDomCandidatesAndNegativeOslogTimeout() throws {
@@ -755,7 +766,7 @@ final class FlowServiceTests: XCTestCase {
             XCTAssertTrue(String(describing: error).contains("dom.candidates must contain only non-empty strings"))
         }
         XCTAssertThrowsError(try FlowService.runForTesting(file: negativeOslogTimeout.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
-            XCTAssertTrue(String(describing: error).contains("oslog.timeout must be non-negative"))
+            XCTAssertTrue(String(describing: error).contains("--timeout must be non-negative"))
         }
     }
 
@@ -813,19 +824,110 @@ final class FlowServiceTests: XCTestCase {
         }
     }
 
-    func testFlowStepLogUsesTextFieldForLegacyComments() throws {
+    func testFlowStepLogUsesCommentField() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("text-log.yaml", """
         name: text-log
         steps:
           - action: find
-            text: Open Settings
+            comment: Open Settings
             label: General
         """)
 
         let result = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())
 
         XCTAssertTrue(result.stdout.contains("Step 1/1: Open Settings"))
+    }
+
+    func testFlowDriverBackedStepsReuseOneDriverClientAndSendOnlyTargetCommands() throws {
+        let fixture = try FlowFixture()
+        try writeDriverLock(udid: "SIM-FLOW", deviceType: "simulator", paths: fixture.paths)
+        let flow = try fixture.write("driver-backed.yaml", """
+        name: driver-backed
+        steps:
+          - action: tap
+            label: General
+            offset: "1,2"
+          - action: dom
+          - action: swipe
+            to: 10,20
+            from: General
+        """)
+        let client = FakeFlowDriver()
+        var factoryCalls = 0
+        IOSUseCLI.driverClientFactoryForTesting = { session in
+            factoryCalls += 1
+            XCTAssertEqual(session.udid, "SIM-FLOW")
+            XCTAssertEqual(session.deviceType, "simulator")
+            return client
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        _ = try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)
+
+        XCTAssertEqual(factoryCalls, 1)
+        XCTAssertEqual(client.commands, ["tap", "dom", "swipe"])
+    }
+
+    func testHostOnlyFlowDoesNotCreateDriverClientWithoutLock() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("host-only.yaml", """
+        name: host-only
+        steps:
+          - action: oslog
+            clear: true
+        """)
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("host-only flow must not create a driver client")
+            return FakeFlowDriver()
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let output = try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)
+
+        XCTAssertTrue(output.contains("oslog: cleared="))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.paths.driverLock))
+    }
+
+    func testRepoFlowsCompileWithCurrentDSL() throws {
+        let repoRoot = repositoryRootForTest()
+        let flowFiles = [
+            "flows/proxy_clear_wifi_proxy.yaml",
+            "flows/proxy_set_wifi_proxy.yaml",
+            "flows/proxy_configca.yaml",
+            "flows/subflow_wait_and_find.yaml",
+            "flows/test_flow.yaml",
+            "flows/tmp_nslog_perf.yaml",
+        ]
+
+        for relativePath in flowFiles {
+            try FlowService.compileForTesting(file: repoRoot.appendingPathComponent(relativePath).path)
+        }
+    }
+
+    private func writeDriverLock(udid: String, deviceType: String, paths: IOSUsePaths) throws {
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: udid,
+                deviceName: "Test Device",
+                deviceVersion: "1.0",
+                deviceType: deviceType,
+                startedAt: 1
+            ),
+            paths: paths
+        )
+    }
+
+    private func repositoryRootForTest() -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<4 {
+            url.deleteLastPathComponent()
+        }
+        return url
     }
 }
 
@@ -898,23 +1000,34 @@ private final class FakeFlowDriver: FlowDriver {
     var swipes: [(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?)] = []
     var taps: [(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint)] = []
     var longPresses: [(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?)] = []
+    var commands: [String] = []
+    var domCalls = 0
 
+    func close() {}
+    func proxyCAPush(caBase64: String) throws -> ForyProxyPayload { ForyProxyPayload() }
     func activateApp(bundleId: String) throws {
+        commands.append("activateApp")
         activatedApps.append(bundleId)
     }
     func terminateApp(bundleId: String) throws {
+        commands.append("terminateApp")
         terminatedApps.append(bundleId)
         if let terminateError {
             throw terminateError
         }
     }
-    func home() throws {}
-    func dismissAlert(index: Int?) throws -> ForyAlertPayload { ForyAlertPayload(dismissed: true) }
+    func home() throws { commands.append("home") }
+    func dismissAlert(index: Int?) throws -> ForyAlertPayload {
+        commands.append("dismissAlert")
+        return ForyAlertPayload(dismissed: true)
+    }
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload {
+        commands.append("waitFor")
         waits.append((label, timeout, traits, cindex))
         return ForyWaitForPayload(label: label)
     }
     func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload {
+        commands.append("find")
         findLabels.append(label)
         finds.append((label, traits, cindex))
         if let findError {
@@ -922,21 +1035,32 @@ private final class FakeFlowDriver: FlowDriver {
         }
         return findPayload
     }
-    func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload { domPayload }
+    func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload {
+        commands.append("dom")
+        domCalls += 1
+        return domPayload
+    }
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+        commands.append("tap")
         taps.append((target, traits, cindex, offset, ratio))
         return ForyElementPayload(label: target.label)
     }
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload {
+        commands.append("longpress")
         longPresses.append((target, durationMs, traits, cindex))
         return ForyElementPayload(label: target.label)
     }
     func input(label: String, content: String, traits: String?, cindex: Int32?) throws {
+        commands.append("input")
         inputs.append((label, content, traits, cindex))
     }
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
+        commands.append("swipe")
         swipes.append((to, from, distance, dir, traits, cindex))
         return ForySwipePayload(elemType: 8, label: to.label, scrolls: 1, scrollDirection: "down")
     }
-    func screenshot() throws -> Data { Data([0xff, 0xd8, 0xff]) }
+    func screenshot() throws -> Data {
+        commands.append("screenshot")
+        return Data([0xff, 0xd8, 0xff])
+    }
 }

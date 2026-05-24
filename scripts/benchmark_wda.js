@@ -241,8 +241,56 @@ function gitBenchmarkMetadata() {
   };
 }
 
+const driverSideCommands = new Set([
+  'activateApp',
+  'dismissAlert',
+  'dom',
+  'find',
+  'home',
+  'input',
+  'longpress',
+  'screenshot',
+  'swipe',
+  'tap',
+  'terminateApp',
+  'waitFor',
+]);
+
+function stripDriverUdidArgs(args) {
+  if (!driverSideCommands.has(args[0])) return args;
+  const stripped = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '--udid') {
+      i += 1;
+      continue;
+    }
+    if (args[i].startsWith('--udid=')) {
+      continue;
+    }
+    stripped.push(args[i]);
+  }
+  return stripped;
+}
+
 function cli(args, options = {}) {
-  return runSync(iosUseExecutable, args, options);
+  return runSync(iosUseExecutable, stripDriverUdidArgs(args), options);
+}
+
+function readDriverLock() {
+  try {
+    const raw = fs.readFileSync(path.join(IOS_USE_HOME, 'state', 'driver.lock'), 'utf8');
+    const parsed = JSON.parse(raw);
+    return typeof parsed?.udid === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function customEnsureDriverStarted(customUdid) {
+  const lock = readDriverLock();
+  if (lock?.udid === customUdid) return;
+  if (lock) cli(['stop'], { allowFailure: true });
+  cli(['start', customUdid], { capture: false });
 }
 
 function buildReleaseDriverArtifacts() {
@@ -707,10 +755,12 @@ function customStopSessionQuiet() {
 }
 
 async function customPrepareNoSession(customUdid = WDA_DEVICE_UDID, appBundle = DEFAULT_APP_BUNDLE) {
+  customEnsureDriverStarted(customUdid);
   cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
 }
 
 async function customPrepareAppSession(customUdid, appBundle, label) {
+  customEnsureDriverStarted(customUdid);
   cli(['terminateApp', appBundle, '--udid', customUdid], { allowFailure: true });
   cli(['activateApp', appBundle, '--udid', customUdid]);
   cli(['waitFor', '--label', label, '--timeout', '8', '--udid', customUdid]);
@@ -801,7 +851,7 @@ function buildCases(ctx) {
       name: 'auto_session_activate_app',
       kind: 'lifecycle',
       runs: 1,
-      mapping: '`activateApp` auto-session ↔ `POST /session` + activate app',
+      mapping: '`start <udid>` prepared lock + `activateApp` ↔ `POST /session` + activate app',
       customPrepare: async () => { await customPrepareNoSession(ctx.customUdid, ctx.appBundle); },
       customRun: async () => {
         cli(['activateApp', ctx.appBundle, '--udid', ctx.customUdid]);
