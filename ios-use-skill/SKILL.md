@@ -104,7 +104,7 @@ ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 ```
 
 Flow 的编写规范、字段语义、外部 `vars` 和 subflow 用法见 `references/flow.md`。
-Flow 执行前会先做静态 compile 校验；未知字段、明显类型错误和静态 subflow 错误会在任何设备动作前失败。
+Flow 执行前会先做静态 compile 校验；未知字段、明显类型错误和静态 subflow 错误会在任何设备动作前失败。CLI-backed Flow action 复用 CLI command model，Flow 中坐标、offset、offsetRatio 都写 CLI 同款字符串。
 
 ## 4. 当前命令语义
 
@@ -114,7 +114,7 @@ Flow 执行前会先做静态 compile 校验；未知字段、明显类型错误
   - 支持 `--cindex <int>` 选择匹配父元素的第 N 个 cleaned child；坐标 target 不支持 traits/cindex
   - `tap` 支持 `--offset "x,y"`（像素偏移）和 `--offset-ratio "x,y"`（比例偏移）
   - offset 原点固定为目标元素左上角 `(0,0)`
-  - 缺失单轴时默认补 `0.5` ratio
+  - `--offset` 缺失单轴时补 `0`；`--offset-ratio` 缺失单轴时补 `0.5`
   - 若 target 是绝对坐标 `x,y`，则不能再传 offset
   - `longpress` 默认 `500ms`，可通过 `--duration <ms>` 自定义
 

@@ -135,100 +135,11 @@ public struct IOSUseCLI: Sendable {
     }
 
     private func executeDriver(_ action: DriverAction) -> CLIResult {
-        if case .oslog(let pattern, let flags, let timeout, let name, let clear, let bundleId, let session) = action {
-            do {
-                return try oslog(pattern: pattern, flags: flags, timeout: timeout, name: name, clear: clear, bundleId: bundleId, session: session)
-            } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
-            }
-        }
         do {
-            switch action {
-            case .dom(let raw, let fresh):
-                let payload = try withLockedDriverClient { client in
-                    try client.dom(raw: raw, fresh: fresh)
-                }
-                return CLIResult(exitCode: 0, stdout: DriverOutput.formatDom(payload))
-            case .find(let label, let traits, let cindex):
-                let payload = try withLockedDriverClient { client in
-                    try client.find(label: label, traits: traits, cindex: cindex)
-                }
-                return CLIResult(exitCode: 0, stdout: DriverOutput.formatFind(label: label, payload: payload))
-            case .waitFor(let label, let timeout, let traits, let cindex):
-                let payload = try withLockedDriverClient { client in
-                    try client.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)
-                }
-                return CLIResult(exitCode: 0, stdout: DriverOutput.formatWaitFor(label: label, payload: payload))
-            case .screenshot(let name):
-                let data = try withLockedDriverClient { client in
-                    try client.screenshot()
-                }
-                return try saveScreenshot(name: name, data: data)
-            case .tap(let target, let offset, let offsetRatio, let traits, let cindex):
-                let foryTarget = try Self.target(target, traits: traits, cindex: cindex)
-                if foryTarget.point != nil && (offset != nil || offsetRatio != nil) {
-                    throw CLIParseError.invalidValue("offset requires element label, not absolute point")
-                }
-                let offsetPoint = try offset.map { try Self.pointPair($0, emptyDefault: 0) }
-                let ratioPoint = try offsetPoint == nil ? (offsetRatio.map { try Self.pointPair($0, emptyDefault: IOSUseProtocol.defaultTargetRatio) } ?? ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)) : ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
-                let payload = try withLockedDriverClient { client in
-                    try client.tap(target: foryTarget, traits: traits, cindex: cindex, offset: offsetPoint, ratio: ratioPoint)
-                }
-                return CLIResult(exitCode: 0, stdout: "Tap\n\(DriverOutput.formatElement(payload))")
-            case .longPress(let target, let duration, let traits, let cindex):
-                let foryTarget = try Self.target(target, traits: traits, cindex: cindex)
-                let payload = try withLockedDriverClient { client in
-                    try client.longPress(target: foryTarget, durationMs: duration, traits: traits, cindex: cindex)
-                }
-                return CLIResult(exitCode: 0, stdout: "Longpress\n\(DriverOutput.formatElement(payload))")
-            case .input(let label, let content, let traits, let cindex):
-                try withLockedDriverClient { client in
-                    try client.input(label: label, content: content, traits: traits, cindex: cindex)
-                }
-                return CLIResult(exitCode: 0, stdout: "Input \"\(content)\" into \"\(label)\"\n")
-            case .swipe(let to, let from, let dir, let distance, let traits, let cindex):
-                let toTarget = try Self.target(to, traits: traits, cindex: cindex)
-                let fromTarget = try Self.target(from)
-                let result = try withLockedDriverClient { client in
-                    try client.swipe(to: toTarget, from: fromTarget, distance: distance, dir: dir, traits: traits, cindex: cindex)
-                }
-                return CLIResult(exitCode: 0, stdout: DriverOutput.formatSwipe(result))
-            case .activateApp(let bundleId):
-                try withLockedDriverClient { client in
-                    try client.activateApp(bundleId: bundleId)
-                }
-                return CLIResult(exitCode: 0, stdout: "App \(bundleId) activated\n")
-            case .terminateApp(let bundleId):
-                do {
-                    try withLockedDriverClient { client in
-                        try client.terminateApp(bundleId: bundleId)
-                    }
-                } catch {
-                    if Self.isAppNotRunningError(error) {
-                        return CLIResult(exitCode: 0, stdout: "App \(bundleId) not running, skipped terminate\n")
-                    }
-                    throw error
-                }
-                return CLIResult(exitCode: 0, stdout: "App \(bundleId) terminated\n")
-            case .home:
-                try withLockedDriverClient { client in
-                    try client.home()
-                }
-                return CLIResult(exitCode: 0, stdout: "Pressed Home\n")
-            case .openURL(let url, let session):
-                let validatedURL = try OpenURLService.validatedURL(url)
-                if let result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: session, paths: paths) {
-                    return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
-                }
-                throw CLIParseError.invalidValue("openURL requires a booted simulator, active driver, or USB real device")
-            case .dismissAlert(let index):
-                let payload = try withLockedDriverClient { client in
-                    try client.dismissAlert(index: index)
-                }
-                return CLIResult(exitCode: 0, stdout: DriverOutput.formatAlert(payload))
-            case .oslog:
-                throw CLIParseError.invalidValue("internal error: oslog should not require driver session")
+            let result = try DriverCommandExecutor.execute(action: action, paths: paths) { body in
+                try withLockedDriverClient(body)
             }
+            return CLIResult(exitCode: 0, stdout: result.stdout)
         } catch {
             return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
         }
@@ -238,42 +149,6 @@ public struct IOSUseCLI: Sendable {
         try DriverCommandExecution.withLockedClient(paths: paths, body)
     }
 
-    private func saveScreenshot(name: String?, data: Data) throws -> CLIResult {
-        try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "screenshot", extension: "jpg")
-        try data.write(to: URL(fileURLWithPath: path))
-        return CLIResult(exitCode: 0, stdout: "Screenshot saved: \(path)\n")
-    }
-
-    private func oslog(pattern: String?, flags: String?, timeout: Double?, name: String?, clear: Bool, bundleId: String?, session: SessionOptions) throws -> CLIResult {
-        if clear {
-            if let udid = session.udid ?? SessionService.read(paths: paths)?.udid {
-                return CLIResult(exitCode: 0, stdout: OSLogService.clear(udid: udid))
-            }
-            return CLIResult(exitCode: 0, stdout: OSLogService.clear())
-        }
-        let activeDriver = SessionService.read(paths: paths)
-        let defaultUsbUdid = try session.udid == nil && activeDriver?.udid == nil
-            ? DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
-            : nil
-        guard let udid = session.udid ?? activeDriver?.udid ?? defaultUsbUdid else {
-            throw CLIParseError.invalidValue("oslog requires --udid, an active driver, or a connected USB device")
-        }
-        return CLIResult(
-            exitCode: 0,
-            stdout: try OSLogService.fetch(
-                udid: udid,
-                pattern: pattern,
-                flags: flags,
-                bundleId: bundleId,
-                timeout: timeout,
-                name: name,
-                paths: paths,
-                deviceTypeHint: activeDriver?.udid == udid ? activeDriver?.deviceType : (defaultUsbUdid == udid ? "real" : nil)
-            )
-        )
-    }
-
     private static func isRecoverableDriverConnectFailure(_ error: Error) -> Bool {
         (error as? DriverClientError)?.isRecoverableConnectFailure == true
     }
@@ -281,37 +156,6 @@ public struct IOSUseCLI: Sendable {
     static func isAppNotRunningError(_ error: Error) -> Bool {
         let message = String(describing: error)
         return message.range(of: #"not running|already terminated|no such process|state=1|state=0"#, options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
-    private static func target(_ value: String?, traits: String? = nil, cindex: Int32? = nil) throws -> ForyTarget {
-        guard let value, !value.isEmpty else {
-            if traits != nil || cindex != nil {
-                throw CLIParseError.invalidValue("traits or cindex require label target")
-            }
-            return ForyTarget()
-        }
-        if let point = try? pointPair(value, emptyDefault: 0) {
-            if traits != nil || cindex != nil {
-                throw CLIParseError.invalidValue("point target does not support traits or cindex")
-            }
-            return ForyTarget(label: "", point: point)
-        }
-        return ForyTarget(label: value, point: nil, traits: traits ?? "", cindex: cindex)
-    }
-
-    private static func pointPair(_ value: String, emptyDefault: Double) throws -> ForyPoint {
-        let parts = value.split(separator: ",", omittingEmptySubsequences: false)
-        guard parts.count == 2 else {
-            throw CLIParseError.invalidValue("Invalid point pair: \"\(value)\"")
-        }
-        let rawX = parts[0].trimmingCharacters(in: .whitespaces)
-        let rawY = parts[1].trimmingCharacters(in: .whitespaces)
-        let x = rawX.isEmpty ? emptyDefault : Double(rawX)
-        let y = rawY.isEmpty ? emptyDefault : Double(rawY)
-        guard let x, let y, x.isFinite, y.isFinite else {
-            throw CLIParseError.invalidValue("Invalid point pair: \"\(value)\"")
-        }
-        return ForyPoint(x: x, y: y)
     }
 
     private func listDevices(_ options: DeviceOptions) -> CLIResult {

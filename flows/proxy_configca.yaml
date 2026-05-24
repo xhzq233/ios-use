@@ -6,7 +6,7 @@ steps:
   - action: terminateApp
     bundleId: com.apple.mobilesafari
 
-  - action: openURL
+  - action: open
     url: "http://127.0.0.1:9088/ca.cer"
 
   - action: tap
@@ -88,8 +88,7 @@ steps:
   - action: tap
     label: mitmproxy
     traits: "Cell,Switch"
-    offset:
-      xRatio: 0.9
+    offsetRatio: "0.9,"
     comment: "点击开关启用信任"
 
   - action: tap

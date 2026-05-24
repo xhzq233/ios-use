@@ -13,9 +13,7 @@ steps:
   - action: tap
     label: 信号强度
     traits: "Cell,selected"
-    offset:
-      xRatio: 0.9
-      yRatio: 0.5
+    offsetRatio: "0.9,0.5"
     comment: "点击当前已连接网络行右侧的详情按钮"
 
   - action: swipe
