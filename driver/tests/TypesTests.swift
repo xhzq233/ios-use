@@ -429,6 +429,19 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(elements.map { $0.node.label }, ["Top", "Bottom"])
     }
 
+    func testCleanTree_SortsAfterRule3AndRule6() {
+        let mergedChild = FakeRawSnapshot(label: "Merged", elementType: .staticText, frame: CGRect(x: 0, y: 300, width: 100, height: 44))
+        let mergedParent = FakeRawSnapshot(label: "Merged", elementType: .button, frame: CGRect(x: 0, y: 300, width: 100, height: 44), children: [mergedChild])
+        let emptyTrimmed = FakeRawSnapshot(elementType: .other, frame: CGRect(x: 0, y: 150, width: 0, height: 0))
+        let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [mergedParent, emptyTrimmed, top])
+
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+
+        XCTAssertEqual(elements.map { $0.node.label }, ["App", "Top", "Merged"])
+        XCTAssertEqual(elements.map { $0.traits.first }, ["Application", "Button", "Button"])
+    }
+
     func testCleanTree_Rule4SameTypeMergePreservesDescendants() {
         let content = FakeRawSnapshot(
             label: "content",
@@ -457,6 +470,19 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(elements[0].node.label, "NestedWeb")
         XCTAssertEqual(elements[0].childCount, 1)
         XCTAssertEqual(elements[1].node.label, "content")
+    }
+
+    func testCleanTree_SortsAfterRule4Merge() {
+        let descendant = FakeRawSnapshot(label: "Detail", elementType: .staticText, frame: CGRect(x: 10, y: 320, width: 100, height: 20))
+        let childCell = FakeRawSnapshot(label: "MergedCell", elementType: .cell, frame: CGRect(x: 0, y: 300, width: 320, height: 44), children: [descendant])
+        let parentCell = FakeRawSnapshot(label: "MergedCell", elementType: .cell, frame: CGRect(x: 0, y: 300, width: 320, height: 44), children: [childCell])
+        let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [parentCell, top])
+
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+
+        XCTAssertEqual(elements.map { $0.node.label }, ["App", "Top", "MergedCell", "Detail"])
+        XCTAssertEqual(elements[2].childCount, 1)
     }
 
     func testAutoLabelsUnnamedCleanedContainerAndRawFindCanLocateIt() {
@@ -682,6 +708,18 @@ final class TypesTests: XCTestCase {
             break // expected: Button does not have StaticText trait
         default:
             XCTFail("expected notFound when traits don't all match")
+        }
+    }
+
+    func testRawFindInSnapshot_PresentationDirectionTraitDoesNotMatchDriverTraits() {
+        let scrollView = makeElement(label: "List", type: .scrollView)
+        let cs = makeCleanedSnapshot([scrollView])
+
+        switch rawFindInSnapshot(ForyTarget(label: "List", traits: "vertical"), cs: cs) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected presentation-only direction trait not to match driver search traits")
         }
     }
 
