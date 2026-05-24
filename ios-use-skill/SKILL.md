@@ -94,6 +94,8 @@ ios-use dismissAlert                # 默认点最后一个按钮
 ios-use dismissAlert --index 0      # 点第一个按钮
 ```
 
+`open <url>` 执行前会校验 URL 格式和 scheme 注册状态。成功输出 `Opened URL: <url>`；设备上无 App 注册该 scheme 时报错 `URL scheme "xxx" not registered on device`。真机已注册 scheme 时输出包含 handler 信息：`Opened URL: <url> (handler: <bundle IDs>)`。
+
 ### 3.6 跑 flow
 
 ```bash
@@ -176,9 +178,9 @@ ios-use swipe --dir back --distance 300
 
 - `open`
   - `<url>` 在设备上打开 URL
-  - Simulator 通过 Mac 侧 `xcrun simctl openurl` 打开；显式传 booted simulator UDID 时不需要已有 driver session
-  - 真机通过 Mac 侧 `xcrun devicectl ... --payload-url` 打开；显式 USB 真机 UDID、active real session 或默认 USB 真机都不需要已有 driver session
-  - Safari 或已注册该 scheme 的 App 会处理该 URL
+  - 成功输出 `Opened URL: <url>`；真机已注册 scheme 包含 `(handler: <bundle IDs>)`
+  - 未注册 scheme 报错 `URL scheme "xxx" not registered on device`
+  - 不需要已有 driver session
 
 - `dismissAlert`
   - 关闭当前系统弹窗（Alert）

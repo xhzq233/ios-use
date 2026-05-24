@@ -20,12 +20,12 @@ final class FlowServiceTests: XCTestCase {
         """)
         let driver = FakeFlowDriver()
         var shellCalls: [(String, [String])] = []
-        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+        Shell.runResultOverrideForTesting = { executable, arguments, _ in
             shellCalls.append((executable, arguments))
-            return ""
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
         }
         addTeardownBlock {
-            Shell.runOverrideForTesting = nil
+            Shell.runResultOverrideForTesting = nil
         }
 
         let result = try FlowService.runForTesting(
@@ -51,6 +51,12 @@ final class FlowServiceTests: XCTestCase {
             url: https://example.com
         """)
         let driver = FakeFlowDriver()
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { scheme, _ in
+            if scheme == "https" {
+                return OpenURLService.SchemeRegistry.LookupResult(registeredHandlers: ["com.apple.mobilesafari"], lookupFailed: false)
+            }
+            return nil
+        }
         var shellCalls: [(String, [String])] = []
         Shell.runOverrideForTesting = { executable, arguments, _, _ in
             shellCalls.append((executable, arguments))
@@ -58,6 +64,7 @@ final class FlowServiceTests: XCTestCase {
         }
         addTeardownBlock {
             Shell.runOverrideForTesting = nil
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
         }
 
         let result = try FlowService.runForTesting(

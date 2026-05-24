@@ -423,7 +423,7 @@ private struct FlowRunner {
                 throw CLIParseError.invalidValue("openURL requires url")
             }
             let validatedURL = try OpenURLService.validatedURL(url)
-            if try !OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: udid, deviceType: deviceType, paths: paths) {
+            if try OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: udid, deviceType: deviceType, paths: paths) == nil {
                 throw CLIParseError.invalidValue("openURL requires a booted simulator, active session, or USB real device")
             }
 

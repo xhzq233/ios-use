@@ -360,10 +360,8 @@ steps:
 
 ### 6.8 `openURL`
 
-- 在设备上打开 URL（Safari 处理）
-- Simulator flow 运行时走 Mac 侧 `xcrun simctl openurl`，不发送 driver `openURL` command
-- 真机 flow 运行时走 Mac 侧 `xcrun devicectl ... --payload-url`，不发送 driver `openURL` command
-- `url` 是必填字段
+- 在设备上执行 host-side URL 打开语义，`url` 是必填字段
+- 未注册 scheme 时步骤失败并报错；是否真正打开目标页面应由后续 `dom` / `waitFor` 验证
 
 ```yaml
 - action: openURL

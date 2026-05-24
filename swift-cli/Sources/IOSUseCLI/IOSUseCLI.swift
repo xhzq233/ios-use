@@ -214,8 +214,8 @@ public struct IOSUseCLI: Sendable {
                 return CLIResult(exitCode: 0, stdout: "Pressed Home\n")
             case .openURL(let url, let session):
                 let validatedURL = try OpenURLService.validatedURL(url)
-                if try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: session, paths: paths) {
-                    return CLIResult(exitCode: 0, stdout: "Opened URL: \(validatedURL)\n")
+                if let result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: session, paths: paths) {
+                    return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
                 }
                 throw CLIParseError.invalidValue("openURL requires a booted simulator, active session, or USB real device")
             case .dismissAlert(let index, _):
