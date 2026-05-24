@@ -136,6 +136,39 @@ Elements:
         XCTAssertEqual(presentation[0].traits, ["Table", "vertical"])
     }
 
+    func testPresentationDomElementsDefaultsOverlappingChildrenToVertical() {
+        let elements = [
+            ForyDomElement(traits: ["ScrollView"], childCount: 2, rect: ForyRect(x: 0, y: 0, w: 320, h: 640)),
+            ForyDomElement(traits: ["Cell"], label: "First", rect: ForyRect(x: 10, y: 20, w: 80, h: 80)),
+            ForyDomElement(traits: ["Cell"], label: "Second", rect: ForyRect(x: 10, y: 20, w: 80, h: 80)),
+        ]
+
+        let presentation = DriverOutput.presentationDomElements(elements)
+
+        XCTAssertEqual(presentation[0].traits, ["ScrollView", "vertical"])
+    }
+
+    func testPresentationDomElementsFallsBackToHorizontalFromContainerAspectRatio() {
+        let elements = [
+            ForyDomElement(traits: ["ScrollView"], childCount: 1, rect: ForyRect(x: 0, y: 0, w: 500, h: 120)),
+            ForyDomElement(traits: ["Cell"], label: "Only", rect: ForyRect(x: 10, y: 20, w: 80, h: 80)),
+        ]
+
+        let presentation = DriverOutput.presentationDomElements(elements)
+
+        XCTAssertEqual(presentation[0].traits, ["ScrollView", "horizontal"])
+    }
+
+    func testPresentationDomElementsDefaultsMissingRectFallbackToVertical() {
+        let elements = [
+            ForyDomElement(traits: ["ScrollView"], childCount: 0),
+        ]
+
+        let presentation = DriverOutput.presentationDomElements(elements)
+
+        XCTAssertEqual(presentation[0].traits, ["ScrollView", "vertical"])
+    }
+
     func testFormatElementAndSwipe() {
         XCTAssertEqual(
             DriverOutput.formatElement(ForyElementPayload(elemType: 7, label: "Add", rect: ForyRect(x: 1, y: 2, w: 3, h: 4))),
