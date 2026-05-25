@@ -34,6 +34,7 @@ ios-use start <udid>          # 启动 driver，并记录当前 driver.lock
 - 真机必须 USB 连接，WiFi 连接的设备在 usbmux 中不可见，会报错
 - `devices` / `config` / host-side `open` / `oslog` 可使用 `--udid`；driver-backed 操作命令、Flow、proxy configca/start/stop 不接受 `--udid`，目标来自当前 `driver.lock`
 - 执行 driver-backed 操作前先 `ios-use devices` 确认设备已连接且显示 `configured`，且没有 `driver update required`，然后运行 `ios-use start <udid>`
+- 同一设备上的 `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` 等 driver-backed UI 命令必须串行执行；不要并发运行多个 UI 命令，否则会竞争同一个 driver TCP 连接并导致读失败或页面状态误判
 - 执行动作前，多用 `dom` 查看当前页面状态，不要盲点
 - **不要猜**：每一步执行前，用 `dom`/`find` 确认当前页面状态，不要凭猜测执行。尤其是 bundle ID，如果不知道目标 app 的 bundle ID，问用户或从设备上查找（如通过 Spotlight、App Store 链接、或 dom 查看 home screen），不要逐个尝试猜测变体
 - **截图策略**：默认以 `dom`/`find` 理解页面，不主动截图。只有以下场景才用 `screenshot`：(1) DOM 无法描述的视觉内容（颜色、布局、图片、动画状态）；(2) 用户明确要求看最终效果或视觉验收。不要在每一步自动截图
