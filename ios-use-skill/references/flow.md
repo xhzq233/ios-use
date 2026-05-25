@@ -26,12 +26,12 @@ steps:
 
 - `name`：flow 名称，建议能说明页面或目标
 - `app`：可选；指定目标 app，常用于主 flow；入口 flow 会切到目标 app，不要再把 `terminateApp` / `activateApp` / `open` 当成通用前置步骤写进 flow
-- `needNSLog`：设为 `true` 时自动启动 nslog capture 进程并等待 app 连接，flow 中的 `nslog` action 需要它
+- `needNSLog`：设为 `true` 时自动开始采集 nslog 并等待 app 连接，flow 中的 `nslog` action 需要它
 - `steps`：按顺序执行的动作列表
 
 ## 3. 支持的 action
 
-CLI-backed action（复用 CLI command model 执行）：
+和 CLI 命令同名、同参数风格的 action：
 
 - `tap`
 - `input`
@@ -48,7 +48,7 @@ CLI-backed action（复用 CLI command model 执行）：
 - `oslog`
 - `nslog`
 
-Flow-only 编排 action（没有单命令等价物，在 flow 引擎层处理）：
+只在 Flow 里使用的编排 action：
 
 - `runFlow`
 - `returnIf`
@@ -62,7 +62,7 @@ Flow-only 编排 action（没有单命令等价物，在 flow 引擎层处理）
 
 ## 4. 编写原则
 
-- 先手动，后组装：先用 CLI 验证动作语义，再写进 flow
+- 先手动，后组装：先用 CLI 验证动作能跑通，再写进 flow
 - 先确认页面，再做动作：切页后先 `waitFor` 或 `dom`
 - 能用 label 就不用坐标；坐标只作兜底
 - 需要滚动到目标时，优先 `swipe --to` 对应的 flow 写法
@@ -73,16 +73,15 @@ Flow-only 编排 action（没有单命令等价物，在 flow 引擎层处理）
 
 ### 5.1 `vars`
 
-- `vars` 是唯一输入模型
+- `vars` 是 Flow 的输入
 - 顶层 `vars` 是默认值；CLI 外部变量可以覆盖同名默认值
 - CLI 外部变量写法：`ios-use flow <file> --targetLabel 蓝牙 --timeout 5`
-- `--verbose` 是 flow 命令自身选项，不进入 `vars`；`--udid` 已移除，Flow 目标来自当前 `driver.lock`
+- `--verbose` 是 flow 命令自身选项，不进入 `vars`；Flow 不支持 `--udid`，目标就是最近一次 `ios-use start <udid>` 的设备
 - 普通字符串字段支持模板替换，例如 `${vars.targetLabel}`
 - 整段 `${...}` 可以传对象或数组原值，不只限于字符串
-- 实现上应在解析后的 flow runtime 合并外部变量，不能靠拼接 YAML 注入新的 `vars:` 块
-- 执行前会先编译校验整个 flow；静态错误会在任何 step 执行前失败
-- 含模板的字段在执行前只校验外层结构，运行时解析后再做最终类型/格式校验
-- Flow action 复用 CLI command model；`print` / `save` / `dom.name` 不是合法 Flow 字段
+- 执行前会先检查整份 flow；能提前发现的错误会在任何 step 执行前失败
+- 含模板的字段会先检查外层结构，模板解析后再检查最终值
+- `print` / `save` / `dom.name` 不是合法 Flow 字段；需要人工查看或保存 DOM 时直接运行 `ios-use dom`
 
 ```yaml
 vars:
@@ -108,7 +107,7 @@ ios-use flow flows/proxy_set_wifi_proxy.yaml --server 192.168.1.10 --port 9080
 
 ### 5.2 `outputs`
 
-- `outputs` 是唯一结果回传模型
+- `outputs` 是 Flow 的结果输出
 - `outputs` 只写变量名，不做映射
 - 支持写入 `outputs` 的 action 只有 `find` / `dom` / `runFlow` / `swipe`
 
@@ -230,7 +229,7 @@ steps:
 ### 6.1 `waitFor`
 
 - 用于等待元素出现或变为可见
-- 轮询间隔是内部固定值 `100ms`，不对外暴露 `interval`
+- 超时会返回失败；没有 `interval` 字段
 
 ```yaml
 - action: waitFor
@@ -243,7 +242,7 @@ steps:
 - 用于拿到结构化节点，常和 `outputs` 配合
 - 找不到或命中歧义时会直接失败
 - `traits` 支持逗号分隔多值，AND 语义（元素必须同时包含所有指定 trait）
-- `cindex` 支持按 cleaned child 顺序选择父元素的直接 child，允许负数，`-1` 表示最后一个 child
+- `cindex` 支持按 DOM 中显示的顺序选择父元素的直接子元素，允许负数，`-1` 表示最后一个子元素
 
 ```yaml
 - action: find
@@ -265,26 +264,26 @@ steps:
 - 调试阶段建议多用
 - Flow 内需要消费 DOM 结果时使用 `outputs`
 - `dom.save` / `dom.print` / `dom.name` 不是合法 Flow 字段；需要落盘或人工查看时直接运行 CLI `ios-use dom`
-- Flow `dom.outputs` 复用 CLI output DOM 转换；`ScrollView` / `CollectionView` / `Table` 可能带 `vertical` / `horizontal` presentation 信息，但不改变 driver 查找、点击、等待或滑动的 `traits` 过滤语义
+- Flow `dom.outputs` 的 DOM 结构和 `ios-use dom` 展示一致；`ScrollView` / `CollectionView` / `Table` 可能显示 `vertical` / `horizontal`，但这些方向不能作为 `traits` 过滤条件
 
 ```yaml
 - action: dom
   outputs: settingsDom
 ```
 
-### 6.x Compile 校验
+### 6.x 执行前校验
 
-- 未知字段会直接报错，不会静默忽略。
-- `find.print`、`dom.print`、`dom.save`、`dom.name` 均不是合法字段。
-- `outputs` 只支持 `find` / `dom` / `runFlow` / `swipe`。
-- 静态字段类型严格：`raw: "true"`、`clear: 1`、`offset: {x: -50}` 都会失败。
-- `offset` / `offsetRatio` 必须写成 CLI 同款字符串，例如 `offset: "-50,-50"` 或 `offsetRatio: "0.8,"`。
-- 静态 `runFlow.file` 的子 flow 会在父 flow 执行前一起校验。
+- 未知字段会直接报错，不会静默忽略
+- `find.print`、`dom.print`、`dom.save`、`dom.name` 均不是合法字段
+- `outputs` 只支持 `find` / `dom` / `runFlow` / `swipe`
+- 字段类型严格：`raw: "true"`、`clear: 1`、`offset: {x: -50}` 都会失败
+- `offset` / `offsetRatio` 必须写成 CLI 同款字符串，例如 `offset: "-50,-50"` 或 `offsetRatio: "0.8,"`
+- 明确写死路径的 `runFlow.file` 子 flow 会和父 flow 一起提前检查
 
 ### 6.4 `swipe`
 
 - **目标导向（推荐）**：通过 `to` / `from` 自动循环滚动，直到目标进入可见区域
-  - 目标不需要初始可见，但必须已在 AX 树中（不确定时先 `dom` 确认）
+  - 目标不需要初始可见，但必须能被系统界面树发现（不确定时先 `dom` 确认）
   - `from` 是锚点，传一个当前可见的元素，从它所在的可滚动区域开始滚动；**目标不在当前屏幕时必须传 `from`**
   - 不传 `from` 时目标必须初始可见，否则返回 not found
   - 方向自动推断，无需手动指定
@@ -338,10 +337,10 @@ steps:
 
 ### 6.7 `nslog`
 
-- 需要 `needNSLog: true`（自动启动 nslog capture 进程并等待 app 连接）
+- 需要 `needNSLog: true`（自动开始采集 nslog 并等待 app 连接）
 - `pattern` 是正则匹配，`timeout` 轮询等待匹配出现
 - `clearAfterRead: true` 读取后截断当前 flow 的 nslog 文件，避免后续 action 重复命中
-- flow 内 `nslog` 从本次 flow 的 capture 文件读取，不更新全局 `ios-use nslog read` 使用的 `lastCapture`
+- flow 内 `nslog` 只读取本次 flow 自动采集到的日志
 - 适合验证 app 内 NSLog 埋点是否触发
 
 ```yaml
@@ -353,7 +352,7 @@ steps:
 
 ### 6.8 `open`
 
-- 在设备上执行 host-side URL 打开语义，`url` 是必填字段
+- 在设备上打开 URL，`url` 是必填字段
 - 未注册 scheme 时步骤失败并报错；是否真正打开目标页面应由后续 `dom` / `waitFor` 验证
 
 ```yaml
@@ -400,13 +399,13 @@ steps:
 2. 把稳定可复用的前置过程抽成 subflow
 3. 用 `vars` 传输入，用 `outputs` 传回结果
 4. 在关键节点保留 `dom` / `oslog`
-5. 先运行 `ios-use start <udid>` 启动目标 driver；`flow --udid <udid>` 不再支持
+5. 先运行 `ios-use start <udid>` 选择目标设备；`flow --udid <udid>` 不再支持
 6. 运行 `ios-use flow your-flow.yaml`
 7. 如果失败，回到 `SKILL.md` 的 CLI 工作流逐步单步复现
 
 ## 8. 常见错误
 
-- 一上来就写大 flow，不先手动验证：最后很难知道是哪一步语义错了
+- 一上来就写大 flow，不先手动验证：最后很难知道是哪一步用法错了
 - 用坐标代替 label：页面稍微变化就脆
 - 公共步骤复制多份：后期改一个弹窗策略要改很多地方
 - 把多候选查找硬塞给 `find`：应该改用 `dom + candidates`
@@ -417,5 +416,5 @@ steps:
 
 - 第一次 Ctrl+C：优雅中断，等待当前 step 完成后停止
 - 第二次 Ctrl+C：强制退出
-- 中断时自动清理临时资源、停止 nslog capture
-- `needNSLog: true` 的 flow 结束时自动停止 nslog capture 进程（无论正常结束还是中断）
+- 中断时自动清理临时资源、停止 nslog 采集
+- `needNSLog: true` 的 flow 结束时自动停止 nslog 采集（无论正常结束还是中断）
