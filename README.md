@@ -1,30 +1,52 @@
 # ios-use
 
-> iOS UI automation CLI powered by a custom XCTest TCP driver for real devices and Simulators.
+> Fast iOS UI automation from the terminal, powered by a lightweight XCTest TCP driver.
 
-`ios-use` connects directly to a lightweight XCTest driver instead of going through an HTTP bridge. The result is a small CLI focused on fast session reuse, direct device control, and a simple flow format.
+[![Release](https://img.shields.io/github/v/release/xhzq233/ios-use?sort=semver)](https://github.com/xhzq233/ios-use/releases)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20iOS-lightgrey.svg)](#dependency-matrix)
 
+`ios-use` drives real iPhones and Simulators directly from a Swift CLI. It avoids the usual Appium Server -> WebDriverAgent HTTP stack, so agents and scripts can inspect UI state, find labels, tap, swipe, capture logs, and run YAML flows with much lower overhead.
 
 ![ios-use demo](docs/media/demo.gif)
 
+## Quick Start
 
-## Features
+```bash
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 
-- **Zero external dependencies**: No Appium server, no WDA, no iproxy, no ideviceinstaller — only macOS system tools (`xcrun`, `usbmuxd`) and a free Apple ID.
-- **Custom TCP driver**: The CLI talks directly to a lightweight XCTest driver over TCP or usbmuxd, without an HTTP bridge.
-- **Free Apple ID signing**: Signs and installs the driver using a regular (free) Apple ID via altsign-cli. No paid developer account required.
-- **Auto session reuse**: the first action command starts or reconnects the driver automatically; later commands reuse the saved session state. DOM queries hit `~13 ms`, find hits `~16 ms`.
-- **Real device and Simulator**: Real devices connect through usbmuxd; Simulators connect over `localhost:8100`.
-- **Smart DOM tree**: a unified cleaning pipeline trims the raw XCUI snapshot into a concise, readable tree while preserving visible hierarchy and useful traits.
-- **Normalized find with traits disambiguation**: contains-match over label/value text with whitespace, punctuation, and case normalization, plus fuzzy fallback and `--traits` filtering.
-- **4 scroll modes**: scroll-to-label, point swipe, anchor-based scroll, and fixed-distance swipe. Auto axis detection from visible cell layout.
-- **OSLog integration**: Fetch Simulator/device logs from the host side with regex filtering, grouped by bundle ID.
-- **Built-in NSLogger receiver**: Capture NSLogger TLS logs from the CLI with Bonjour service discovery.
-- **Flow runner**: Describe multi-step automations in YAML using the same command set as the CLI.
+ios-use devices
+ios-use config --udid <device-udid>
+ios-use start <device-udid>
+ios-use activateApp com.apple.Preferences
+ios-use dom
+```
+
+After `start`, screen-driving commands target the selected device. To switch devices, run `ios-use stop`, then `ios-use start <other-udid>`.
+
+## Why ios-use
+
+- **Built for tight agent loops**: `dom` and `find` are cheap enough to call before actions instead of guessing UI state.
+- **No automation server to run**: no Appium server, no WDA checkout, no iproxy process, no separate WebDriver bridge.
+- **Label-first actions**: tap, input, waitFor, and swipe can target visible UI text before falling back to coordinates.
+- **Real device and Simulator support**: real devices connect through usbmuxd; Simulators connect over `localhost`.
+- **Flows, logs, and proxy capture included**: YAML flows, OSLog, NSLogger, and HTTP/HTTPS proxy capture are first-class CLI workflows.
+
+## What It Is
+
+`ios-use` is a command-line automation tool for macOS users who want direct iOS UI control.
+
+It is **not** a WebDriver-compatible Appium server. If you need Selenium/Appium protocol compatibility, use Appium. If you want a small CLI that an AI agent or local script can call repeatedly, `ios-use` is optimized for that path.
+
+Driving devices still requires Apple's tooling:
+
+- Real devices require USB and a full Xcode install.
+- Simulators require a full Xcode install and the target Simulator runtime.
+- Real-device first setup requires Apple ID signing. A free Apple Developer account is enough.
 
 ## Installation
 
-### 1. Install The CLI
+### Install The CLI
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
@@ -33,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.1.0
 ```
 
 Intel Macs should compile locally instead:
@@ -42,54 +64,56 @@ Intel Macs should compile locally instead:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
-### 2. First-Time Setup
+### First-Time Setup
 
-Choose the environment you want to drive:
+Choose the environment you want to drive.
 
 **Real device:**
 
-- USB connection
-- A full Xcode installation that provides `xcrun devicectl` and `xcrun xctrace`
-- Apple ID credentials for signing on first install
-
 ```bash
-# First run: provide Apple ID credentials
+ios-use devices
+
+# First run: provide Apple ID credentials if prompted.
 ios-use config --udid <device-udid> --apple-id <email> --password '<app-password>'
 
-# Later runs: cached signing session is reused
+# Later runs: cached signing state is reused.
 ios-use config --udid <device-udid>
+ios-use start <device-udid>
 ```
 
 **Simulator:**
 
-- A full Xcode installation that provides `xcrun simctl`
-- The specific Simulator runtime you want to boot
-
 ```bash
+ios-use devices --simulator
 ios-use config --simulator --udid <simulator-udid>
+ios-use start <simulator-udid>
 ```
-
-`config` signs and installs the driver onto the target. CLI installation alone does not require Xcode, but **driving any real device or Simulator currently depends on a full Xcode installation**.
 
 When upgrading `ios-use`, run `ios-use devices` after installation. If a device line says `driver update required`, run `ios-use config --udid <device-udid>` again so the on-device driver matches the newly installed CLI.
 
-### 3. Select An App
+## Command Overview
+
+| Command | Use it for |
+| --- | --- |
+| `devices` | List real devices or Simulators and see configuration status. |
+| `config` | Install or update the on-device driver. |
+| `start` / `stop` | Select or release the current automation target. |
+| `activateApp` / `terminateApp` | Open or close an app by bundle ID. |
+| `dom` | Print the current UI tree for inspection and planning. |
+| `find` | Locate elements by label/value text and optional traits. |
+| `tap` / `longpress` | Act on a label or coordinate. |
+| `swipe` | Scroll by direction/distance or toward a target label. |
+| `input` | Focus a text field by label and type content. |
+| `screenshot` | Capture a visual fallback when DOM is not enough. |
+| `flow` | Run a YAML automation flow. |
+| `oslog` / `nslog` | Capture system logs or app-side NSLogger output. |
+| `proxy` | Capture HTTP/HTTPS traffic through mitmproxy. |
+| `open` | Open a URL or custom scheme on a device. |
+
+Typical manual loop:
 
 ```bash
-ios-use devices
-ios-use start <device-udid>
 ios-use activateApp com.apple.Preferences
-```
-
-Driver-backed commands use the active `driver.lock`. To switch targets, run `ios-use stop`, then `ios-use start <other-udid>`.
-
-```bash
-ios-use dom
-```
-
-### 4. Run Commands
-
-```bash
 ios-use dom
 ios-use find "蓝牙"
 ios-use tap "通用"
@@ -98,53 +122,48 @@ ios-use input --label "搜索" --content "蓝牙"
 ios-use screenshot --name settings-home
 ```
 
-### 5. Run A Flow
+Typical flow:
 
 ```bash
 ios-use flow flows/test_flow.yaml
 ```
 
-## Benchmark
+## Performance Snapshot
 
-The benchmark below compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same app scenario.
-Current benchmark runs require an explicit custom driver IPA, for example `node scripts/benchmark_wda.js --driver-ipa assets/driver.ipa --iterations 3`; the script does not build driver artifacts itself.
+The benchmark below compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same real-device Settings scenario.
 
-Setup summary:
+| Case | ios-use Avg | Appium+WDA Avg | Reduction |
+| --- | ---: | ---: | ---: |
+| `dom` | `13.5 ms` | `984.2 ms` | `98.6%` |
+| `find` | `15.7 ms` | `279.8 ms` | `94.4%` |
+| `waitFor` | `13.7 ms` | `277.2 ms` | `95.1%` |
+| `screenshot` | `45.5 ms` | `215.0 ms` | `78.8%` |
+| `tap_label` | `542.8 ms` | `1089.5 ms` | `50.2%` |
 
-- App: `com.apple.Preferences`
-- Device: real iPhone over USB/usbmuxd
-- Custom side: Swift CLI + custom XCTest TCP driver
-- Baseline: Appium Server + WDA
-- Iterations: `3`
-- Report date: 2026-05-18
+These are the operations that matter most to AI agents: refresh UI state, locate targets, wait for changes, and act. Full benchmark setup and results are in [docs/benchmark.md](docs/benchmark.md).
 
-| Case | ios-use Avg (ms) | Appium+WDA Avg (ms) | Reduction |
-| --- | ---: | ---: | --- |
-| `auto_session_activate_app` | 3257.4 | 9622.1 | `66.1%` |
-| `dom` | 13.5 | 984.2 | `98.6%` |
-| `find` | 15.7 | 279.8 | `94.4%` |
-| `waitFor` | 13.7 | 277.2 | `95.1%` |
-| `screenshot` | 45.5 | 215.0 | `78.8%` |
-| `tap_coord` | 377.3 | 557.3 | `32.3%` |
-| `tap_label` | 542.8 | 1089.5 | `50.2%` |
-| `longpress_coord` | 819.9 | 967.4 | `15.2%` |
-| `input` | 1534.0 | 1760.8 | `12.9%` |
-| `swipe_distance` | 2062.5 | 2595.4 | `20.5%` |
-| `scroll_to_visible` | 10717.0 | 17123.0 | `37.4%` |
-| `activate_app` | 1213.7 | 2591.1 | `53.2%` |
-| `terminate_app` | 1141.4 | 1164.7 | `2.0%` |
+## Flow Example
 
-Why this matters for AI agents:
+```yaml
+name: Settings Search
+app: com.apple.Preferences
+steps:
+  - action: waitFor
+    label: 蓝牙
+    timeout: 8
 
-- `dom` at `13.5 ms` keeps world-state refresh cheap.
-- `find` at `15.7 ms` and `waitFor` at `13.7 ms` make polling and retry loops practical.
-- `tap_label` at `542.8 ms` keeps common action steps short enough for interactive agent workflows.
-- `screenshot` at `45.5 ms` makes visual fallback much cheaper than a typical WDA path.
-- `scroll_to_visible` is still expensive in absolute terms, but it saves more than `6 s` versus the baseline in this benchmark.
+  - action: tap
+    label: 蓝牙
 
-Numbers vary by device, app state, and whether the target page is already warm, but the shape is stable: `dom`, `find`, `waitFor`, `tap`, and screenshot are the operations that most improve AI-facing responsiveness.
+  - action: dom
+    outputs: settingsDom
+```
 
-Note: in this run, the `input` custom average is calculated from two successful iterations; one prepare step failed with a transient driver TCP read error and is tracked separately from the latency comparison.
+Run it with:
+
+```bash
+ios-use flow settings.yaml
+```
 
 ## Dependency Matrix
 
@@ -159,19 +178,20 @@ Note: in this run, the `input` custom average is calculated from two successful 
 | `altsign-cli` | copied by installer if bundled | required for real-device signing | not needed |
 | `openssl` | not needed | required for real-device `oslog` TLS relay | not needed |
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
+| `mitmproxy` | not needed | proxy capture only | proxy capture only |
 | `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_driver.sh` |
 | `appium`, `lsof` | not needed | not needed at runtime | benchmark only |
 
 ## Repository Layout
 
 ```text
-swift-cli/            Default Swift CLI, session orchestration, config, transport client
+swift-cli/             Swift CLI, command parsing, config, Flow, host tools
 shared/IOSUseProtocol/ Shared Swift RPC types and Fory frame models
-driver/               Swift XCTest driver
-flows/                Example flows
-scripts/              Install, build, and benchmark utilities
-docs/                 Public documentation
-assets/               Prebuilt driver artifacts
+driver/                Swift XCTest driver
+flows/                 Example flows
+scripts/               Install, build, test, and benchmark utilities
+docs/                  Public documentation
+assets/                Prebuilt driver artifacts
 ```
 
 ## Development
@@ -195,4 +215,4 @@ bash scripts/ci_test.sh
 
 ## License
 
-[GNU AGPL v3.0](https://www.gnu.org/licenses/agpl-3.0.html) — see [LICENSE](LICENSE).
+[GNU AGPL v3.0](https://www.gnu.org/licenses/agpl-3.0.html) - see [LICENSE](LICENSE).
