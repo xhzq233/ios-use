@@ -14,27 +14,27 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ```
 
 - 安装完成后，所有命令都直接使用 `ios-use`
-- 真机首次执行 driver-backed 命令，或升级到新版本后，先执行：
+- 真机首次执行需要操作设备屏幕的命令，或升级到新版本后，先执行：
 
 ```bash
 ios-use devices               # 查看设备列表、udid 和配置状态
 ios-use config --udid <udid>  # 完成设备配置（显示 configured 后即可使用）
-ios-use start <udid>          # 启动 driver，并记录当前 driver.lock
+ios-use start <udid>          # 启动并选择当前要操作的设备
 ```
 
 - 如果 `ios-use devices` 显示 `driver update required`，必须重新执行 `ios-use config --udid <udid>`。
-- 首次配置真机时可能需要补 Apple ID，并触发 Apple 2FA 验证码输入，AI 无法代用户完成。此时应提示用户：「真机首次签名需要一个免费的 Apple Developer 账号。请在终端手动运行以下命令，按提示输入 Apple ID、App 专用密码，并完成两步验证（2FA）：`ios-use config --udid <udid> --apple-id <your-apple-id> --password '<app-specific-password>'`」
+- 首次配置真机时可能需要补 Apple ID，并触发 Apple 2FA 验证码输入。出现这类提示时，需要用户在终端手动运行：`ios-use config --udid <udid> --apple-id <your-apple-id> --password '<app-specific-password>'`
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
-- `start <udid>` 会启动已配置设备的 driver 并写入 `~/.ios-use/state/driver.lock`；`dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/flow/proxy configca/proxy start/proxy stop` 等命令必须先 start，且不再接受自己的 `--udid`
-- `open <url>` 是 host-side 命令，不要求已有 driver lock，仍可用 `--udid` 指定目标
+- `start <udid>` 会启动已配置设备的 driver，并把它设为后续操作目标；`dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/flow/proxy configca/proxy start/proxy stop` 等命令必须先 start，且不再接受自己的 `--udid`
+- `open <url>` 不要求先执行 `start`，仍可用 `--udid` 指定目标
 - 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
 
 ## 2. 硬规则
 
-- 真机必须 USB 连接，WiFi 连接的设备在 usbmux 中不可见，会报错
-- `devices` / `config` / host-side `open` / `oslog` 可使用 `--udid`；driver-backed 操作命令、Flow、proxy configca/start/stop 不接受 `--udid`，目标来自当前 `driver.lock`
-- 执行 driver-backed 操作前先 `ios-use devices` 确认设备已连接且显示 `configured`，且没有 `driver update required`，然后运行 `ios-use start <udid>`
-- 同一设备上的 `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` 等 driver-backed UI 命令必须串行执行；不要并发运行多个 UI 命令，否则会竞争同一个 driver TCP 连接并导致读失败或页面状态误判
+- 真机必须 USB 连接；只通过 Wi-Fi 连接的设备不可用
+- `devices` / `config` / `open` / `oslog` 可使用 `--udid`；其他需要操作屏幕或当前设备状态的命令、Flow、proxy configca/start/stop 不接受 `--udid`，目标就是最近一次 `start` 的设备
+- 操作屏幕或当前设备状态前，先 `ios-use devices` 确认设备已连接且显示 `configured`，且没有 `driver update required`，然后运行 `ios-use start <udid>`
+- 同一设备上的 `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` 等 UI 命令必须串行执行；不要并发运行多个 UI 命令，否则容易读失败或误判页面状态
 - 执行动作前，多用 `dom` 查看当前页面状态，不要盲点
 - **不要猜**：每一步执行前，用 `dom`/`find` 确认当前页面状态，不要凭猜测执行。尤其是 bundle ID，如果不知道目标 app 的 bundle ID，问用户或从设备上查找（如通过 Spotlight、App Store 链接、或 dom 查看 home screen），不要逐个尝试猜测变体
 - **截图策略**：默认以 `dom`/`find` 理解页面，不主动截图。只有以下场景才用 `screenshot`：(1) DOM 无法描述的视觉内容（颜色、布局、图片、动画状态）；(2) 用户明确要求看最终效果或视觉验收。不要在每一步自动截图
@@ -48,7 +48,7 @@ ios-use devices               # 确认设备已连接且 configured
 ```
 
 设备未显示 `configured`，或显示 `driver update required` 时，先执行 `ios-use config --udid <udid>`。
-driver-backed 操作前执行 `ios-use start <udid>`；`stop` 会停止 locked driver 并清理 `driver.lock`。需要切换设备时先 `stop` 再 `start <new-udid>`。
+操作屏幕或当前设备状态前执行 `ios-use start <udid>`；`stop` 会停止当前设备的 driver。需要切换设备时先 `stop` 再 `start <new-udid>`。
 
 需要操作特定 app 时先 `activateApp`：
 
@@ -61,7 +61,7 @@ ios-use dom
 
 ```bash
 ios-use dom                        # 先看当前页面元素树
-ios-use dom --raw                  # 原始 snapshot 文本，调试用
+ios-use dom --raw                  # 原始界面树文本，调试用
 ios-use dom --fresh                # 忽略缓存，重新构建
 ios-use find "蓝牙"                # 在 dom 基础上查目标元素
 ios-use waitFor --label "蓝牙" --timeout 8
@@ -104,15 +104,15 @@ ios-use flow my-flow.yaml
 ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 ```
 
-Flow 的编写规范、字段语义、外部 `vars` 和 subflow 用法见 `references/flow.md`。
-Flow 执行前会先做静态 compile 校验；未知字段、明显类型错误和静态 subflow 错误会在任何设备动作前失败。CLI-backed Flow action 复用 CLI command model，Flow 中坐标、offset、offsetRatio 都写 CLI 同款字符串。
+Flow 的写法、外部 `vars` 和 subflow 用法见 `references/flow.md`。
+Flow 执行前会先检查整份 YAML；未知字段、明显类型错误和可提前发现的 subflow 错误会在任何设备动作前失败。Flow 中坐标、offset、offsetRatio 都写成和 CLI 参数一致的字符串。
 
-## 4. 当前命令语义
+## 4. 当前命令用法
 
 - `tap` / `longpress`
   - `<target>` — 元素 label 或 `"x,y"` 坐标（positional，不是 option）
   - 支持 `--traits <traits>` 按 traits 过滤（逗号分隔，AND 语义）
-  - 支持 `--cindex <int>` 选择匹配父元素的第 N 个 cleaned child；坐标 target 不支持 traits/cindex
+  - 支持 `--cindex <int>` 选择匹配父元素在 DOM 中显示的第 N 个直接子元素；坐标 target 不支持 traits/cindex
   - `tap` 支持 `--offset "x,y"`（像素偏移）和 `--offset-ratio "x,y"`（比例偏移）
   - offset 原点固定为目标元素左上角 `(0,0)`
   - `--offset` 缺失单轴时补 `0`；`--offset-ratio` 缺失单轴时补 `0.5`
@@ -126,10 +126,10 @@ ios-use tap "亮度" --offset-ratio 0.8,
 
 - `swipe`
   - 目标导向（推荐）：`--to <label> --from <label|point>`，自动循环滚动直到目标进入可见区域
-    - 目标不需要初始可见，但必须已在 AX 树中（不确定时先 `dom` 确认）
+  - 目标不需要初始可见，但必须能被系统界面树发现（不确定时先 `dom` 确认）
     - `--from` 是锚点：传一个当前可见的元素，从它所在的可滚动区域开始滚动；**目标不在当前屏幕时必须传 `--from`**
     - 不传 `--from` 时目标必须初始可见，否则返回 not found
-    - 方向自动推断：根据目标 cell 相对于当前可见 cell 的位置决定 `forth`（向下/右）或 `back`（向上/左）
+    - 方向自动推断：根据目标元素相对于当前可见元素的位置决定 `forth`（向下/右）或 `back`（向上/左）
     - 页面内的长列表滚动，**优先用目标导向**，不要自己拆成多次纯距离 swipe
   - 固定距离：`--dir forth|back --distance <px>`，适合已经确认页面方向时做纯距离滚动
   - `forth` 通常表示继续往前浏览当前列表，`back` 表示反方向回拉
@@ -157,23 +157,22 @@ ios-use swipe --dir back --distance 300
   - 支持 `--cindex <int>`
 
 - `screenshot`
-  - 保存为 JPEG 到 `~/.ios-use/artifacts/<name>.jpg`
+  - 截图并输出保存路径
   - **只在用户明确要求查看视觉效果时使用**，默认不截图；AI 以 `dom`/`find` 理解页面
 
 - `dom`
-  - `--raw` 输出原始 snapshot 格式化文本字符串（跳过 clean tree，调试用）
-  - `--fresh` 忽略缓存，重新构建 snapshot
+  - `--raw` 输出设备返回的原始界面树文本，排查 DOM 异常时使用
+  - `--fresh` 忽略缓存，重新获取界面树
   - CLI 展示层可能给 `ScrollView` / `CollectionView` / `Table` 追加 `vertical` / `horizontal`，只用于阅读 DOM；不要把这些方向当成 `find/tap/waitFor/swipe --traits` 的可过滤 trait
 
 - `find`
   - `find <label>` 查找元素。完整 label 优先 exact；无 exact 时回退 contains；歧义和模糊建议不报错，只有真正未找到才报错
   - `--traits <traits>` 按 traits 过滤，逗号分隔多值，AND 语义（如 `Switch`、`disabled`、`Cell,Switch`，大小写不敏感）
-  - `--cindex <int>` 先找父元素再选第 N 个 cleaned child，`-1` 表示最后一个
+  - `--cindex <int>` 先找父元素再选 DOM 中显示的第 N 个直接子元素，`-1` 表示最后一个
 
 - `waitFor`
   - 轮询等待元素出现，超时返回 not-found
   - `--label <text> --timeout <seconds>`
-  - 轮询间隔是内部固定值 `100ms`，不对外暴露 `interval`
   - 支持 `--traits <traits>`
   - 支持 `--cindex <int>`
 
@@ -181,7 +180,7 @@ ios-use swipe --dir back --distance 300
   - `<url>` 在设备上打开 URL
   - 成功输出 `Opened URL: <url>`；真机已注册 scheme 包含 `(handler: <bundle IDs>)`
   - 未注册 scheme 报错 `URL scheme "xxx" not registered on device`
-  - 不需要已有 driver session
+  - 不需要先执行 `start`
 
 - `dismissAlert`
   - 关闭当前系统弹窗（Alert）
@@ -192,7 +191,7 @@ ios-use swipe --dir back --distance 300
   - `--pattern` 正则过滤，`--flags` 正则标志（`i`/`s`/`m`）
   - `--clear` 清空 buffer
   - `--bundle-id` 按 bundle ID 过滤
-  - 日志文件保存到 `~/.ios-use/artifacts/<name>.log`
+  - 采集完成后会输出日志文件路径
 
 - `nslog`
   - 启动本地 NSLogger server，iOS app 主动推送日志（与 oslog 互补）。最好在app启动前启动NSLogger server，不然app连接不上
@@ -227,11 +226,11 @@ ios-use proxy read --filter "~d okx.com" --raw
 
 - `proxy configca` — 生成 mitmproxy CA 并在设备上安装+信任（一次性）
 - `proxy start [-i <interface>]` — 启动 mitmdump + 配置设备 Wi-Fi 代理，抓包保存为 `~/.ios-use/artifacts/proxy-*.mitm`
-- `proxy read [--filter <expression>] [--raw] [--last N]` — 读取最近一次抓包；stopped 后仍可读历史文件；`--last` 必须大于 0
+- `proxy read [--filter <expression>] [--raw] [--last N]` — 读取最近一次抓包；`proxy stop` 后仍可读历史文件；`--last` 必须大于 0
 - `proxy stop` — 先清除设备 Wi-Fi 代理，再停止 mitmdump；若设备侧清理失败，会提示手动关闭 Wi-Fi 代理且不继续停止本地服务
 - `proxy doctor` — 诊断 proxy 环境
 
-网络前提：设备与 Mac 需要在同一 Wi-Fi/LAN，且设备能通过 Mac LAN IP 访问 mitmdump 端口。`proxy start` 信任该网络前提，不再做 probe precheck；VPN、防火墙或隔离 Wi-Fi 可能导致抓不到流量或设备断网，排障先看 `proxy doctor`。
+网络前提：设备与 Mac 需要在同一 Wi-Fi/LAN，且设备能访问 Mac 的抓包端口。VPN、防火墙或隔离 Wi-Fi 可能导致抓不到流量或设备断网，排障先看 `proxy doctor`。
 
 ### 5.3 查看 .mitm 文件
 
