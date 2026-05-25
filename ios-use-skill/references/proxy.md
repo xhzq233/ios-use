@@ -31,13 +31,7 @@ ios-use proxy read [--filter <表达式>] [--raw] [--last N]
 ℹ Read with: ios-use proxy read
 ```
 
-文件保存在 `~/.ios-use/artifacts/`，命名格式 `proxy-<ISO-timestamp>.mitm`。`proxy-session.json.lastCapture` 保存最近一次抓包，因此 `proxy stop` 后仍可继续读取历史文件。
-
-也可以从 proxy session 状态获取：
-
-```bash
-cat ~/.ios-use/state/proxy-session.json | grep flowFile
-```
+文件保存在 `~/.ios-use/artifacts/`，命名格式 `proxy-<ISO-timestamp>.mitm`。`proxy stop` 后仍可继续用 `ios-use proxy read` 读取最近一次抓包。
 
 ## 3. 查看抓包
 
@@ -74,7 +68,7 @@ mitmdump -n -r file.mitm --set hardump=output.har
 
 | 命令 | 说明 |
 |------|------|
-| `proxy configca` | 安装并信任 mitmproxy CA；若本地记录显示当前 CA 已安装并信任，会直接跳过安装 flow |
+| `proxy configca` | 安装并信任 mitmproxy CA；若当前 CA 已安装并信任，会直接跳过 |
 | `proxy start [-i <interface>]` | 启动抓包 + 配置设备 Wi-Fi 代理 |
 | `proxy read [--filter <expression>] [--raw] [--last N]` | 读取最近一次抓包 |
 | `proxy stop` | 清除设备 Wi-Fi 代理 + 停止抓包 |
@@ -86,16 +80,16 @@ mitmdump -n -r file.mitm --set hardump=output.har
 
 ### proxy start 行为
 
-1. 检测 Mac Wi-Fi interface / LAN IP
-2. 启动 mitmdump（后台 detached 进程），抓包保存为 `.mitm` 文件
-3. 通过 UI flow 配置设备当前 Wi-Fi 的 HTTP 代理指向 Mac
+1. 检测 Mac Wi-Fi 网卡和局域网 IP
+2. 启动本地抓包进程，抓包保存为 `.mitm` 文件
+3. 自动把设备当前 Wi-Fi 的 HTTP 代理指向 Mac
 4. 输出抓包文件路径，命令立即返回（mitmdump 在后台持续运行）
 
-网络前提：设备与 Mac 需要在同一 Wi-Fi/LAN，且设备能通过 Mac LAN IP 访问 mitmdump 端口。`proxy start` 不做 probe precheck；VPN、防火墙或隔离 Wi-Fi 可能导致抓不到流量或设备断网。排障先运行 `ios-use proxy doctor`，再检查 Mac interface/IP、防火墙和设备网络。
+网络前提：设备与 Mac 需要在同一 Wi-Fi/LAN，且设备能访问 Mac 的抓包端口。VPN、防火墙或隔离 Wi-Fi 可能导致抓不到流量或设备断网。排障先运行 `ios-use proxy doctor`，再检查 Mac 网卡/IP、防火墙和设备网络。
 
 ### proxy stop 行为
 
 必须先清除设备代理再停 mitmdump，否则设备断网。顺序：
 
-1. UI flow 关闭设备 Wi-Fi 代理
-2. SIGTERM 停止 mitmdump
+1. 自动关闭设备 Wi-Fi 代理
+2. 停止本地抓包进程
