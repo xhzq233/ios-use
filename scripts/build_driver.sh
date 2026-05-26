@@ -48,9 +48,7 @@ if [ -z "$CLI_VERSION" ]; then
   echo "[build] ERROR: failed to read IOSUseCLI.version"
   exit 1
 fi
-DRIVER_GIT_SHA="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
-DRIVER_BUILD_ID="$(date -u +%Y%m%d%H%M%S)-$DRIVER_GIT_SHA"
-echo "[build] Driver identity: version=$CLI_VERSION build=$DRIVER_BUILD_ID"
+echo "[build] Driver version: $CLI_VERSION"
 
 # Release artifacts go to assets/ (ignored local build outputs).
 # Debug artifacts go to build/ (not tracked) to avoid accidental commits.
@@ -77,7 +75,7 @@ XCODE_COMMON=(
   -derivedDataPath "$DERIVED_DATA"
   DEBUG_INFORMATION_FORMAT="$DEBUG_INFO_FORMAT"
   MARKETING_VERSION="$CLI_VERSION"
-  CURRENT_PROJECT_VERSION="$DRIVER_BUILD_ID"
+  CURRENT_PROJECT_VERSION="$CLI_VERSION"
   CODE_SIGNING_ALLOWED=NO
 )
 
@@ -105,7 +103,7 @@ package_ipa() {
   fi
 }
 
-stamp_driver_identity() {
+stamp_driver_version() {
   local app_path="$1"
   local plist_paths=("$app_path/Info.plist")
   if [ -d "$app_path/PlugIns" ]; then
@@ -118,8 +116,8 @@ stamp_driver_identity() {
     [ -f "$plist" ] || continue
     /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CLI_VERSION" "$plist" 2>/dev/null \
       || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $CLI_VERSION" "$plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $DRIVER_BUILD_ID" "$plist" 2>/dev/null \
-      || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $DRIVER_BUILD_ID" "$plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $CLI_VERSION" "$plist" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $CLI_VERSION" "$plist"
   done
 }
 
@@ -142,7 +140,7 @@ if [ "$SIMULATOR_ONLY" != true ]; then
     exit 1
   fi
   echo "[build] Built xctest wrapper: $XCTEST_WRAPPER_PATH"
-  stamp_driver_identity "$XCTEST_WRAPPER_PATH"
+  stamp_driver_version "$XCTEST_WRAPPER_PATH"
 
   # Strip XC frameworks and libXCTestSwiftSupport.dylib for iOS 17+ compatibility.
   # On iOS 17+, device already has these frameworks / dylibs.
@@ -191,7 +189,7 @@ if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
   exit 1
 fi
 echo "[build] Built Simulator xctest wrapper: $XCTEST_WRAPPER_PATH"
-stamp_driver_identity "$XCTEST_WRAPPER_PATH"
+stamp_driver_version "$XCTEST_WRAPPER_PATH"
 
 # Package Simulator IPA
 echo "[build] Packaging simulator IPA..."

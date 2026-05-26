@@ -214,7 +214,7 @@ Options:
   --input-open-url <url> open URL during custom input prepare
   --custom-udid <id>  custom-driver device UDID, default: WDA_INSTALLED_DEVICE
   --custom-simulator  configure the custom target as Simulator; only valid with --custom-only
-  --cases <list>      comma-separated subset, e.g. auto_session_activate_app,dom_vs_source,find
+  --cases <list>      comma-separated subset, e.g. start_and_activate_app,dom_vs_source,find
   --custom-only       measure only ios-use custom driver; do not start Appium/WDA
 
 Optional env:
@@ -271,7 +271,7 @@ function speedup(appiumMs, customMs) {
 
 function runSync(command, args, options = {}) {
   const result = spawnSync(command, args, {
-    cwd: ROOT,
+    cwd: options.cwd || ROOT,
     env: { ...process.env, ...(options.env || {}) },
     stdio: options.capture === false ? 'inherit' : ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
@@ -424,51 +424,6 @@ function iosUseInstallMode() {
   return shouldBuildCliFromSource() ? 'repo-release-build' : 'release-download';
 }
 
-function readDriverIdentityFromIpa(ipaPath) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ios-use-benchmark-driver-'));
-  try {
-    runSync('unzip', ['-q', '-o', ipaPath, '-d', tmpDir]);
-    const infoPlist = findFirstAppInfoPlist(path.join(tmpDir, 'Payload'));
-    if (!infoPlist) {
-      throw new Error(`No .app Info.plist found in driver IPA: ${ipaPath}`);
-    }
-    return readDriverIdentityFromPlist(infoPlist);
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
-function findFirstAppInfoPlist(dir) {
-  if (!fs.existsSync(dir)) return '';
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory() && entry.name.endsWith('.app')) {
-      const plist = path.join(fullPath, 'Info.plist');
-      if (fs.existsSync(plist)) return plist;
-    }
-  }
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const found = findFirstAppInfoPlist(path.join(dir, entry.name));
-    if (found) return found;
-  }
-  return '';
-}
-
-function readDriverIdentityFromPlist(plistPath) {
-  const version = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleShortVersionString', plistPath], { encoding: 'utf8' }).trim();
-  const build = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print CFBundleVersion', plistPath], { encoding: 'utf8' }).trim();
-  if (!version || !build) {
-    throw new Error(`Driver Info.plist missing identity fields: ${plistPath}`);
-  }
-  return { version, build };
-}
-
-function formatDriverIdentity(identity) {
-  if (!identity) return 'unavailable';
-  return `${identity.version} (${identity.build})`;
-}
-
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -525,37 +480,28 @@ function prepareCustomDriverIpa(driverIpa, customSimulator) {
   return {
     sourcePath,
     installedPath,
-    identity: readDriverIdentityFromIpa(installedPath),
   };
 }
 
-function readConfiguredDriverIdentity(customUdid) {
+function readConfiguredDriverVersion(customUdid) {
   const configPath = path.join(IOS_USE_HOME, 'config.json');
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  const identity = config?.devices?.[customUdid]?.driverIdentity;
-  if (!identity || typeof identity.version !== 'string' || typeof identity.build !== 'string') {
-    throw new Error(`config.json missing driverIdentity for ${customUdid}`);
+  const driverVersion = config?.devices?.[customUdid]?.driverVersion;
+  if (typeof driverVersion !== 'string' || driverVersion.length === 0) {
+    throw new Error(`config.json missing driverVersion for ${customUdid}`);
   }
-  return { version: identity.version, build: identity.build };
+  return driverVersion;
 }
 
-function assertSameDriverIdentity(actual, expected, context) {
-  if (actual.version !== expected.version || actual.build !== expected.build) {
-    throw new Error(`${context} driver identity mismatch: actual=${formatDriverIdentity(actual)}, expected=${formatDriverIdentity(expected)}`);
-  }
-}
-
-function configureCustomDriver(customUdid, customSimulator, expectedIdentity) {
+function configureCustomDriver(customUdid, customSimulator) {
   if (process.env.IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG === '1') {
     throw new Error('IOS_USE_BENCHMARK_SKIP_DRIVER_CONFIG is no longer supported; pass --driver-ipa and let benchmark reinstall the selected driver');
   }
   const args = ['config'];
   if (customSimulator) args.push('--simulator');
   args.push('--udid', customUdid);
-  cli(args, { capture: false });
-  const configIdentity = readConfiguredDriverIdentity(customUdid);
-  assertSameDriverIdentity(configIdentity, expectedIdentity, 'configured');
-  return { status: 'installed', identity: configIdentity };
+  cli(args, { capture: false, cwd: IOS_USE_HOME });
+  return { status: 'installed', driverVersion: readConfiguredDriverVersion(customUdid) };
 }
 
 function listDeviceProcesses(udid) {
@@ -1072,7 +1018,7 @@ function buildCases(ctx) {
 
   return [
     {
-      name: 'auto_session_activate_app',
+      name: 'start_and_activate_app',
       kind: 'lifecycle',
       runs: 1,
       mapping: '`start <udid>` prepared lock + `activateApp` ↔ `POST /session` + activate app',
@@ -1284,9 +1230,6 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   ensureEnv(args);
   const customUdid = args.customUdid || WDA_DEVICE_UDID;
-  const driverArtifact = prepareCustomDriverIpa(args.driverIpa, args.customSimulator);
-  const installedCliPath = installIosUseExecutable();
-  const customDriverInstall = configureCustomDriver(customUdid, args.customSimulator, driverArtifact.identity);
 
   ensureDir(BENCHMARK_DIR);
   const output = args.output || path.join(BENCHMARK_DIR, `benchmark-wda-${new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)}.md`);
@@ -1311,9 +1254,23 @@ async function main() {
   };
 
   const cases = buildCases(ctx).filter(item => !selectedCases || selectedCases.has(item.name));
+  if (selectedCases) {
+    const availableCases = new Set(buildCases(ctx).map(item => item.name));
+    const unknownCases = [...selectedCases].filter(name => !availableCases.has(name));
+    if (unknownCases.length > 0) {
+      const legacyHint = unknownCases.includes('auto_session_activate_app')
+        ? ' (auto_session_activate_app was renamed to start_and_activate_app)'
+        : '';
+      throw new Error(`Unknown benchmark case(s): ${unknownCases.join(', ')}${legacyHint}`);
+    }
+  }
   if (cases.length === 0) {
     throw new Error('No benchmark cases selected');
   }
+
+  const driverArtifact = prepareCustomDriverIpa(args.driverIpa, args.customSimulator);
+  const installedCliPath = installIosUseExecutable();
+  const customDriverInstall = configureCustomDriver(customUdid, args.customSimulator);
 
   const suiteStartNs = nowNs();
   const rows = [];
@@ -1364,8 +1321,7 @@ async function main() {
   }
   lines.push(`| custom driver IPA source | \`${driverArtifact.sourcePath}\` |`);
   lines.push(`| custom driver IPA installed path | \`${driverArtifact.installedPath}\` |`);
-  lines.push(`| custom driver IPA identity | \`${formatDriverIdentity(driverArtifact.identity)}\` |`);
-  lines.push(`| configured driver identity | \`${formatDriverIdentity(customDriverInstall.identity)}\` |`);
+  lines.push(`| configured driverVersion | \`${customDriverInstall.driverVersion}\` |`);
   lines.push(`| custom driver install | \`${customDriverInstall.status}\` |`);
   lines.push(`| custom target type | \`${args.customSimulator ? 'Simulator' : 'device'}\` |`);
   lines.push(`| App | \`${args.bundleId}\` |`);

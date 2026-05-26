@@ -6,9 +6,9 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 echo "[swift-cli] Running Swift CLI unit tests..."
 swift test --package-path "$ROOT_DIR/swift-cli"
 
-echo "[swift-cli] Checking driver build identity format..."
-if ! grep -q 'DRIVER_BUILD_ID=.*DRIVER_GIT_SHA' "$ROOT_DIR/scripts/build_driver.sh"; then
-  echo "[swift-cli] ERROR: DRIVER_BUILD_ID must include the short git SHA" >&2
+echo "[swift-cli] Checking driver version stamping..."
+if grep -Eq 'date -u \+%Y%m%d%H%M%S|rev-parse --short=12' "$ROOT_DIR/scripts/build_driver.sh"; then
+  echo "[swift-cli] ERROR: per-build driver stamping must not be reintroduced" >&2
   exit 1
 fi
 
