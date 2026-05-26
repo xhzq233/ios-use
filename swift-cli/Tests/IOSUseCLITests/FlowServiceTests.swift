@@ -926,6 +926,37 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.driverLock))
     }
 
+    func testProductionFlowOpenUsesActiveDriverLockUdidWithoutDriverClient() throws {
+        let fixture = try FlowFixture()
+        try writeDriverLock(udid: "SIM-FLOW", deviceType: "simulator", paths: fixture.paths)
+        let flow = try fixture.write("open.yaml", """
+        name: open-url
+        steps:
+          - action: open
+            url: retouch://debug
+        """)
+        var shellCalls: [(String, [String])] = []
+        Shell.runResultOverrideForTesting = { executable, arguments, _ in
+            shellCalls.append((executable, arguments))
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("flow open should use host-side URL opening without creating a driver client")
+            return FakeFlowDriver()
+        }
+        addTeardownBlock {
+            Shell.runResultOverrideForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let output = try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)
+
+        XCTAssertTrue(output.contains("Step 1/1: open"))
+        XCTAssertEqual(shellCalls.count, 1)
+        XCTAssertEqual(shellCalls.first?.0, "xcrun")
+        XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", "SIM-FLOW", "retouch://debug"])
+    }
+
     func testFlowCommentTemplateDoesNotSkipDriverValidation() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("comment-template-validation.yaml", """

@@ -61,7 +61,7 @@ public enum FlowService {
         var runner = FlowRunner(
             paths: paths,
             driver: driver,
-            udid: nil,
+            udid: activeDriver.udid,
             deviceType: activeDriver.deviceType,
             context: context,
             inheritedFlowApp: flowApp,

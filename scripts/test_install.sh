@@ -125,6 +125,18 @@ run_install() {
     bash "$ROOT_DIR/scripts/install.sh" "$@" --print-path
 }
 
+run_install_verbose() {
+  local home="$1"
+  shift
+  HOME="$home" \
+    XDG_BIN_HOME="$home/bin" \
+    IOS_USE_GITHUB_REPO="example/ios-use" \
+    IOS_USE_VERSION="v1.0.3" \
+    IOS_USE_INSTALL_TEST_TARBALL="$FAKE_TARBALL" \
+    PATH="$FAKE_BIN:/usr/bin:/bin:/usr/sbin:/sbin" \
+    bash "$ROOT_DIR/scripts/install.sh" "$@"
+}
+
 BUILD_HOME="$FAKE_HOME/build-from-source"
 mkdir -p "$BUILD_HOME"
 BUILD_PATH="$(run_install "$BUILD_HOME" --build-from-source | tail -n 1)"
@@ -158,6 +170,18 @@ if [[ "$DOWNLOAD_PATH" != "$DOWNLOAD_HOME/bin/ios-use" || ! -x "$DOWNLOAD_PATH" 
 fi
 if ! grep -q 'remote skill fixture' "$DOWNLOAD_HOME/.ios-use/skill/SKILL.md"; then
   echo "[install-test] ERROR: release download install did not use bootstrapped remote skill" >&2
+  exit 1
+fi
+
+VERBOSE_HOME="$FAKE_HOME/verbose"
+mkdir -p "$VERBOSE_HOME"
+VERBOSE_OUTPUT="$(run_install_verbose "$VERBOSE_HOME")"
+if ! grep -q 'ios-use start <udid>' <<<"$VERBOSE_OUTPUT"; then
+  echo "[install-test] ERROR: install next steps do not include ios-use start" >&2
+  exit 1
+fi
+if grep -qi 'auto-creates session\|No session start needed' <<<"$VERBOSE_OUTPUT"; then
+  echo "[install-test] ERROR: install next steps still mention old auto session semantics" >&2
   exit 1
 fi
 
