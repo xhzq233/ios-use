@@ -454,12 +454,23 @@ private func flattenCleanBuildResult(_ result: CleanBuildResult) -> [SnapshotEle
 }
 
 private func sortCleanSubtreesByY(_ subtrees: [CleanSubtree]) -> [CleanSubtree] {
-    subtrees.enumerated().sorted { lhs, rhs in
-        let lhsY = cleanSubtreeRootY(lhs.element)
-        let rhsY = cleanSubtreeRootY(rhs.element)
-        if lhsY != rhsY { return lhsY < rhsY }
-        return lhs.offset < rhs.offset
-    }.map(\.element)
+    guard subtrees.count > 1 else { return subtrees }
+
+    var previousY = cleanSubtreeRootY(subtrees[0])
+    for index in subtrees.indices.dropFirst() {
+        let y = cleanSubtreeRootY(subtrees[index])
+        if y < previousY {
+            return subtrees.enumerated().sorted { lhs, rhs in
+                let lhsY = cleanSubtreeRootY(lhs.element)
+                let rhsY = cleanSubtreeRootY(rhs.element)
+                if lhsY != rhsY { return lhsY < rhsY }
+                return lhs.offset < rhs.offset
+            }.map(\.element)
+        }
+        previousY = y
+    }
+
+    return subtrees
 }
 
 private func cleanSubtreeRootY(_ subtree: CleanSubtree) -> CGFloat {
