@@ -25,6 +25,7 @@ public enum NSLogService {
 
     public static func stream(options: NSLogOptions, paths: IOSUsePaths) throws -> String {
         let mode = options.captureMode ?? "cli"
+        let foreground = mode == "cli"
         try requireCaptureSlot(paths: paths)
         let server = try NSLoggerServer(options: NSLoggerServerOptions(name: options.name), paths: paths)
         do {
@@ -47,16 +48,18 @@ public enum NSLogService {
         writeStderr("NSLogger listening on port \(server.port) (SSL)\n")
         writeStderr("Streaming logs... Press Ctrl+C to stop.\n")
 
-        let interruptMonitor = InterruptMonitor(onInterrupt: {
+        let interruptMonitor = InterruptMonitor(onInterrupt: foreground ? {
             writeStderr("NSLogger interrupted, cleaning up...\n")
-        })
+        } : nil)
         interruptMonitor.start()
         defer { interruptMonitor.stop() }
 
         while server.isRunning && !interruptMonitor.interrupted {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
         }
-        try interruptMonitor.throwIfInterrupted()
+        if foreground {
+            try interruptMonitor.throwIfInterrupted()
+        }
         return ""
     }
 
@@ -562,6 +565,7 @@ public final class NSLoggerServer {
         isRunning = true
 
         if options.publishBonjour {
+            warnExistingBonjourServices()
             do {
                 let publisher = try startBonjour(name: options.name, port: port)
                 bonjour = publisher
@@ -571,6 +575,12 @@ public final class NSLoggerServer {
                 throw error
             }
         }
+    }
+
+    private func warnExistingBonjourServices() {
+        let conflicts = NSLoggerBonjourDiagnostics.diagnoseExistingServices()
+        guard !conflicts.isEmpty else { return }
+        writeStderr(NSLoggerBonjourDiagnostics.formatWarning(conflicts))
     }
 
     public func stop() {
@@ -756,6 +766,107 @@ public final class NSLoggerServer {
         return Host.current().name ?? Host.current().localizedName ?? "ios-use"
     }
 
+}
+
+struct NSLoggerBonjourConflict: Equatable {
+    enum Kind {
+        case staleLocalPublisher
+        case liveNSLogServer
+    }
+
+    var kind: Kind
+    var name: String
+    var port: Int
+    var pid: Int32?
+}
+
+enum NSLoggerBonjourDiagnostics {
+    static func diagnoseExistingServices() -> [NSLoggerBonjourConflict] {
+        let psOutput: String
+        do {
+            psOutput = try Shell.run("ps", arguments: ["-axo", "pid,args"])
+        } catch {
+            return []
+        }
+        return diagnoseExistingServices(psOutput: psOutput, hasListeningPort: portHasListener)
+    }
+
+    static func diagnoseExistingServices(psOutput: String, hasListeningPort: (Int) -> Bool) -> [NSLoggerBonjourConflict] {
+        var conflicts: [NSLoggerBonjourConflict] = []
+        var seen = Set<String>()
+        for line in psOutput.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
+            guard let publisher = parseLocalPublisher(line: line) else { continue }
+            let key = "\(publisher.pid):\(publisher.port):\(publisher.name)"
+            guard seen.insert(key).inserted else { continue }
+            let kind: NSLoggerBonjourConflict.Kind = hasListeningPort(publisher.port) ? .liveNSLogServer : .staleLocalPublisher
+            conflicts.append(NSLoggerBonjourConflict(kind: kind, name: publisher.name, port: publisher.port, pid: publisher.pid))
+        }
+        return conflicts
+    }
+
+    static func formatWarning(_ conflicts: [NSLoggerBonjourConflict]) -> String {
+        var lines = ["Warning: existing NSLogger Bonjour services may intercept app logging:"]
+        for conflict in conflicts {
+            let pidText = conflict.pid.map { "pid=\($0) " } ?? ""
+            switch conflict.kind {
+            case .staleLocalPublisher:
+                lines.append("  - stale local publisher: \(conflict.name) (\(pidText)port=\(conflict.port), no TCP listener)")
+            case .liveNSLogServer:
+                lines.append("  - live nslog server: \(conflict.name) (\(pidText)port=\(conflict.port))")
+            }
+        }
+        lines.append("  Stale publishers can make the app connect to a dead port. Kill stale dns-sd PIDs, close old NSLogger viewers, or restart ios-use nslog with a unique --name when the target app is configured to use that name.")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func parseLocalPublisher(line: String) -> (pid: Int32, name: String, port: Int)? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let firstSpace = trimmed.firstIndex(where: { $0 == " " || $0 == "\t" }) else { return nil }
+        let pidText = trimmed[..<firstSpace]
+        guard let pid = Int32(pidText) else { return nil }
+
+        let command = String(trimmed[firstSpace...].trimmingCharacters(in: .whitespacesAndNewlines))
+        guard let nameStart = registrationNameStart(in: command) else { return nil }
+        guard let serviceRange = command.range(of: " _nslogger-ssl._tcp ", range: nameStart..<command.endIndex) else { return nil }
+        let name = String(command[nameStart..<serviceRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+
+        let remainder = command[serviceRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = remainder.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        guard parts.count >= 2, parts[0] == "local", let port = Int(parts[1]), port > 0 else { return nil }
+        return (pid: pid, name: name, port: port)
+    }
+
+    private static func registrationNameStart(in command: String) -> String.Index? {
+        guard let first = nextToken(in: command, from: command.startIndex) else { return nil }
+        if commandName(first.value) == "dns-sd" {
+            guard let second = nextToken(in: command, from: first.range.upperBound), second.value == "-R" else { return nil }
+            return command[second.range.upperBound...].firstIndex(where: { $0 != " " && $0 != "\t" })
+        }
+        if commandName(first.value) == "env" {
+            guard let second = nextToken(in: command, from: first.range.upperBound), commandName(second.value) == "dns-sd" else { return nil }
+            guard let third = nextToken(in: command, from: second.range.upperBound), third.value == "-R" else { return nil }
+            return command[third.range.upperBound...].firstIndex(where: { $0 != " " && $0 != "\t" })
+        }
+        return nil
+    }
+
+    private static func nextToken(in text: String, from index: String.Index) -> (value: String, range: Range<String.Index>)? {
+        guard let start = text[index...].firstIndex(where: { $0 != " " && $0 != "\t" }) else { return nil }
+        let end = text[start...].firstIndex(where: { $0 == " " || $0 == "\t" }) ?? text.endIndex
+        return (String(text[start..<end]), start..<end)
+    }
+
+    private static func commandName(_ value: String) -> String {
+        URL(fileURLWithPath: value).lastPathComponent
+    }
+
+    private static func portHasListener(_ port: Int) -> Bool {
+        guard let output = try? Shell.run("lsof", arguments: ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN"]) else {
+            return false
+        }
+        return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 private enum NSLoggerTLSMaterial {

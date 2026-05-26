@@ -199,6 +199,7 @@ ios-use swipe --dir back --distance 300
   - `ios-use nslog start [--name <name>]` 后台采集并把日志写入 `~/.ios-use/logs/nslog-*.log`
   - `ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <sec>] [--clearAfterRead] [--last N]` 从最近一次后台采集读取
   - `ios-use nslog stop` 停止后台采集；日志文件保留，可继续 read 历史日志
+  - 启动时如果提示 stale local publisher 或 live nslog server，说明本机已有 `_nslogger-ssl._tcp` Bonjour 发布可能抢占 app 连接。按提示里的 PID/port 清掉 stale `dns-sd` 或关闭旧 NSLogger viewer 后重试；该 warning 不代表当前命令启动失败
   - 适合验证 app 内 NSLog 埋点
 
 ## 5. Proxy 抓包

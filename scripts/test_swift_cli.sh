@@ -85,6 +85,7 @@ wait "$NSLOG_PID" 2>/dev/null || true
 echo "[swift-cli] Checking installed-style nslog capture log separation..."
 NSLOG_CAPTURE_HOME="$IOS_USE_TEST_HOME-nslog-capture"
 NSLOG_START_OUT="$TMP_ROOT/nslog-start.out"
+NSLOG_STOP_OUT="$TMP_ROOT/nslog-stop.out"
 NSLOG_READ_OUT="$TMP_ROOT/nslog-read.out"
 (
   cd "$WORK_DIR"
@@ -115,5 +116,10 @@ if grep -q "NSLogger listening on port\\|Streaming logs" "$NSLOG_READ_OUT"; then
 fi
 (
   cd "$WORK_DIR"
-  PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$NSLOG_CAPTURE_HOME" ios-use nslog stop >/dev/null
+  PATH="$BIN_DIR:$ORIGINAL_PATH" IOS_USE_HOME="$NSLOG_CAPTURE_HOME" ios-use nslog stop >"$NSLOG_STOP_OUT"
 )
+if grep -q "Interrupted by Ctrl+C\\|NSLogger interrupted" "$NSLOG_STOP_OUT"; then
+  echo "[swift-cli] ERROR: nslog stop leaked interrupt noise" >&2
+  cat "$NSLOG_STOP_OUT" >&2 || true
+  exit 1
+fi
