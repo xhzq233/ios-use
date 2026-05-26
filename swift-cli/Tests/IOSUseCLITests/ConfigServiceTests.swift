@@ -64,192 +64,25 @@ final class ConfigServiceTests: XCTestCase {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
 
-        #if DEBUG
         let cwd = FileManager.default.currentDirectoryPath
         let localDriver = "\(cwd)/assets/driver.ipa"
         let localSimulatorDriver = "\(cwd)/assets/driver-sim.ipa"
+        let expectedDriver = FileManager.default.fileExists(atPath: localDriver) ? localDriver : "\(root)/driver.ipa"
+        let expectedSimulatorDriver = FileManager.default.fileExists(atPath: localSimulatorDriver) ? localSimulatorDriver : "\(root)/driver-sim.ipa"
         XCTAssertEqual(
             ConfigService.deviceIPAPath(paths: paths),
-            FileManager.default.fileExists(atPath: localDriver) ? localDriver : "\(root)/driver.ipa"
+            expectedDriver
         )
         XCTAssertEqual(
             ConfigService.simulatorIPAPath(paths: paths),
-            FileManager.default.fileExists(atPath: localSimulatorDriver) ? localSimulatorDriver : "\(root)/driver-sim.ipa"
+            expectedSimulatorDriver
         )
-        #else
-        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(root)/driver.ipa")
-        XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), "\(root)/driver-sim.ipa")
-        #endif
 
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try Data().write(to: URL(fileURLWithPath: "\(root)/driver.ipa"))
         try Data().write(to: URL(fileURLWithPath: "\(root)/driver-sim.ipa"))
-        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(root)/driver.ipa")
-        XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), "\(root)/driver-sim.ipa")
-    }
-
-    func testReadDriverIdentityFromInfoPlistReadsStampedFields() throws {
-        let root = try temporaryRoot()
-        let plist = "\(root)/Info.plist"
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-          <key>CFBundleShortVersionString</key>
-          <string>1.2.3</string>
-          <key>CFBundleVersion</key>
-          <string>20260521000000-abcdef123456</string>
-        </dict>
-        </plist>
-        """.write(toFile: plist, atomically: true, encoding: .utf8)
-
-        XCTAssertEqual(
-            try ConfigService.readDriverIdentityFromInfoPlist(plist),
-            DriverIdentity(version: "1.2.3", build: "20260521000000-abcdef123456")
-        )
-    }
-
-    func testParseDriverIdentityUsesOnlyTargetAppRecord() {
-        let output = """
-        Bundle Identifier: com.example.other
-        CFBundleShortVersionString: 9.9.9
-        CFBundleVersion: other-build
-
-        Bundle Identifier: com.example.driver
-        CFBundleShortVersionString: 1.0.3
-        CFBundleVersion: 20260522010000-3d54a6c2d7cd
-        """
-
-        XCTAssertEqual(
-            ConfigService.parseDriverIdentity(fromDeviceInfoAppsOutput: output, bundleId: "com.example.driver"),
-            DriverIdentity(version: "1.0.3", build: "20260522010000-3d54a6c2d7cd")
-        )
-    }
-
-    func testParseDevicectlAppsJSONUsesTargetBundleOnly() throws {
-        let root = try temporaryRoot()
-        let jsonPath = "\(root)/apps.json"
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try """
-        {
-          "result": {
-            "apps": [
-              {
-                "bundleIdentifier": "com.example.other",
-                "version": "9.9.9",
-                "bundleVersion": "other-build"
-              },
-              {
-                "bundleIdentifier": "com.example.driver",
-                "version": "1.0.3",
-                "bundleVersion": "20260522010000-3d54a6c2d7cd"
-              }
-            ]
-          }
-        }
-        """.write(toFile: jsonPath, atomically: true, encoding: .utf8)
-
-        XCTAssertEqual(
-            ConfigService.parseDriverIdentity(fromDevicectlAppsJSONAtPath: jsonPath, bundleId: "com.example.driver"),
-            DriverIdentity(version: "1.0.3", build: "20260522010000-3d54a6c2d7cd")
-        )
-    }
-
-    func testReadRealDeviceInstalledIdentityReadsDevicectlVersionAndBundleVersion() throws {
-        Shell.runOverrideForTesting = { executable, arguments, _, _ in
-            if executable == "xcrun" {
-                XCTAssertEqual(Array(arguments.prefix(7)), ["devicectl", "device", "info", "apps", "--device", "REAL-1", "--bundle-id"])
-                let jsonIndex = try XCTUnwrap(arguments.firstIndex(of: "--json-output"))
-                let jsonPath = arguments[jsonIndex + 1]
-                try """
-                {
-                  "result": {
-                    "apps": [
-                      {
-                        "bundleIdentifier": "com.example.driver",
-                        "version": "\(IOSUseCLI.version)",
-                        "bundleVersion": "20260522010000-3d54a6c2d7cd"
-                      }
-                    ]
-                  }
-                }
-                """.write(toFile: jsonPath, atomically: true, encoding: .utf8)
-                return ""
-            }
-            XCTFail("Unexpected command \(executable) \(arguments)")
-            return ""
-        }
-
-        XCTAssertEqual(
-            try ConfigService.readRealDeviceInstalledDriverIdentity(udid: "REAL-1", bundleId: "com.example.driver"),
-            DriverIdentity(version: IOSUseCLI.version, build: "20260522010000-3d54a6c2d7cd")
-        )
-    }
-
-    func testReadRealDeviceInstalledIdentityRejectsOldUnstampedDeviceBuild() {
-        Shell.runOverrideForTesting = { executable, arguments, _, _ in
-            if executable == "xcrun" {
-                let jsonIndex = try XCTUnwrap(arguments.firstIndex(of: "--json-output"))
-                let jsonPath = arguments[jsonIndex + 1]
-                try """
-                {
-                  "result": {
-                    "apps": [
-                      {
-                        "bundleIdentifier": "com.example.driver",
-                        "version": "1.0",
-                        "bundleVersion": "1"
-                      }
-                    ]
-                  }
-                }
-                """.write(toFile: jsonPath, atomically: true, encoding: .utf8)
-                return ""
-            }
-            XCTFail("Unexpected command \(executable) \(arguments)")
-            return ""
-        }
-
-        XCTAssertThrowsError(try ConfigService.readRealDeviceInstalledDriverIdentity(udid: "REAL-1", bundleId: "com.example.driver")) { error in
-            let message = String(describing: error)
-            XCTAssertTrue(message.contains("Unable to verify installed driver identity"))
-            XCTAssertTrue(message.contains("does not match CLI version") || message.contains("not stamped"))
-        }
-    }
-
-    func testAssertDriverInstallCurrentRejectsDifferentSelectedIPAIdentity() throws {
-        let root = try temporaryRoot()
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        let selectedIdentity = DriverIdentity(version: IOSUseCLI.version, build: "20260524000000-aaaaaaaaaaaa")
-        let configuredIdentity = DriverIdentity(version: IOSUseCLI.version, build: "20260523000000-bbbbbbbbbbbb")
-        try writeDriverIPA(path: "\(root)/driver-sim.ipa", identity: selectedIdentity)
-        try """
-        {"devices":{"SIM-1":{"bundleId":"com.iosuse.xcuidriver.xctrunner","driverVersion":"\(IOSUseCLI.version)","driverIdentity":{"version":"\(configuredIdentity.version)","build":"\(configuredIdentity.build)"}}}}
-        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
-        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
-            simulatorOnly ? [IOSDevice(name: "IOSUseTest", version: "26.0", udid: "SIM-1", kind: .simulator)] : []
-        }
-
-        XCTAssertThrowsError(try ConfigService.assertDriverInstallCurrent(udid: "SIM-1", paths: paths)) { error in
-            XCTAssertTrue(String(describing: error).contains("configured from a different driver IPA"))
-        }
-    }
-
-    func testReadSimulatorInstalledIdentityRejectsMissingInstalledPlistWithoutLocalFallback() {
-        Shell.runOverrideForTesting = { executable, arguments, _, _ in
-            if executable == "xcrun", Array(arguments.prefix(3)) == ["simctl", "get_app_container", "SIM-1"] {
-                throw CLIParseError.invalidValue("container missing")
-            }
-            XCTFail("Unexpected command \(executable) \(arguments)")
-            return ""
-        }
-
-        XCTAssertThrowsError(try ConfigService.readSimulatorInstalledDriverIdentity(udid: "SIM-1", bundleId: ConfigService.simulatorBundleId)) { error in
-            XCTAssertTrue(String(describing: error).contains("Unable to verify installed Simulator driver identity"))
-        }
+        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), expectedDriver)
+        XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), expectedSimulatorDriver)
     }
 
     func testDriverLockRejectsInvalidShapeAndDoesNotFallbackToSessionJSON() throws {
@@ -497,24 +330,4 @@ final class ConfigServiceTests: XCTestCase {
         return root
     }
 
-    private func writeDriverIPA(path: String, identity: DriverIdentity) throws {
-        let root = URL(fileURLWithPath: path).deletingLastPathComponent().path
-        let payload = "\(root)/Payload/IOSUseDriver-Runner.app"
-        try FileManager.default.createDirectory(atPath: payload, withIntermediateDirectories: true)
-        try """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-          <key>CFBundleShortVersionString</key>
-          <string>\(identity.version)</string>
-          <key>CFBundleVersion</key>
-          <string>\(identity.build)</string>
-        </dict>
-        </plist>
-        """.write(toFile: "\(payload)/Info.plist", atomically: true, encoding: .utf8)
-        try? FileManager.default.removeItem(atPath: path)
-        _ = try Shell.run("zip", arguments: ["-r", "-q", path, "Payload"], cwd: root)
-        try FileManager.default.removeItem(atPath: "\(root)/Payload")
-    }
 }

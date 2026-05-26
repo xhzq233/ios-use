@@ -11,7 +11,6 @@ const rootDir = path.resolve(__dirname, '..');
 let skipBuild = false;
 let caseFilterIds;
 let driverIpaPath = '';
-let expectedDriverIdentity;
 const testIosUseHome = process.env.IOS_USE_TEST_HOME ?? path.join(os.homedir(), '.ios-use/test-homes/simulator-commands');
 const iosUseCli = process.env.IOS_USE_TEST_CLI ?? path.join(rootDir, 'ios-use');
 
@@ -176,56 +175,6 @@ function runProcess(cmd, opts = {}) {
   };
 }
 
-function findFirstAppInfoPlist(dir) {
-  if (!fs.existsSync(dir)) return '';
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory() && entry.name.endsWith('.app')) {
-      const plist = path.join(fullPath, 'Info.plist');
-      if (fs.existsSync(plist)) return plist;
-    }
-  }
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const found = findFirstAppInfoPlist(path.join(dir, entry.name));
-    if (found) return found;
-  }
-  return '';
-}
-
-function readPlistValue(plistPath, key) {
-  const res = runProcess(['/usr/libexec/PlistBuddy', '-c', `Print ${key}`, plistPath]);
-  if (res.code !== 0) {
-    throw new Error(`failed to read ${key} from ${plistPath}: ${res.stderr || res.stdout}`);
-  }
-  const value = res.stdout.trim();
-  if (!value) throw new Error(`missing ${key} in ${plistPath}`);
-  return value;
-}
-
-function readDriverIdentityFromIpa(ipaPath) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ios-use-sim-driver-'));
-  try {
-    const unzip = runProcess(['unzip', '-q', '-o', ipaPath, '-d', tmpDir]);
-    if (unzip.code !== 0) {
-      throw new Error(`failed to unzip driver IPA ${ipaPath}: ${unzip.stderr || unzip.stdout}`);
-    }
-    const infoPlist = findFirstAppInfoPlist(path.join(tmpDir, 'Payload'));
-    if (!infoPlist) throw new Error(`No .app Info.plist found in driver IPA: ${ipaPath}`);
-    return {
-      version: readPlistValue(infoPlist, 'CFBundleShortVersionString'),
-      build: readPlistValue(infoPlist, 'CFBundleVersion'),
-    };
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
-
-function formatDriverIdentity(identity) {
-  if (!identity) return 'unavailable';
-  return `${identity.version} (${identity.build})`;
-}
-
 function prepareSimulatorDriverAsset(src) {
   const dst = path.join(iosHome, 'driver-sim.ipa');
   if (!fs.existsSync(src)) {
@@ -238,7 +187,6 @@ function prepareSimulatorDriverAsset(src) {
   return {
     sourcePath: src,
     installedPath: dst,
-    identity: readDriverIdentityFromIpa(dst),
   };
 }
 
@@ -265,23 +213,6 @@ const driverSideCommands = new Set([
   'waitFor',
 ]);
 
-function stripSimulatorUdid(args) {
-  if (!driverSideCommands.has(args[0])) return args;
-  const stripped = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--udid' && args[i + 1] === sim?.udid) {
-      i++;
-      continue;
-    }
-    if (arg === `--udid=${sim?.udid}`) {
-      continue;
-    }
-    stripped.push(arg);
-  }
-  return stripped;
-}
-
 function readDriverLockInfo() {
   try {
     const lock = JSON.parse(readFileIfExists(path.join(iosHome, 'state/driver.lock')) || '{}');
@@ -292,7 +223,17 @@ function readDriverLockInfo() {
 }
 
 function runCli(args) {
-  return execCmd([iosUseCli, ...stripSimulatorUdid(args)], { env: { IOS_USE_HOME: iosHome } });
+  if (driverSideCommands.has(args[0])) {
+    for (let i = 0; i < args.length; i++) {
+      if ((args[i] === '--udid' && args[i + 1] === sim?.udid) || args[i] === `--udid=${sim?.udid}`) {
+        throw new Error(`Simulator runner driver-side case must not pass --udid: ${args.join(' ')}`);
+      }
+    }
+  }
+  return execCmd([iosUseCli, ...args], {
+    cwd: args[0] === 'config' ? iosHome : rootDir,
+    env: { IOS_USE_HOME: iosHome },
+  });
 }
 
 function runCliToFiles(args, out, err) {
@@ -436,13 +377,13 @@ async function runAutoLabelFindCase() {
   const findOut = path.join(artifactDir, `${id}.out`);
   const findErr = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: dom auto label then find generated label`);
-  const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
+  const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
   const match = dom.stdout.match(/^\s+([^\s]+Applicationc\d*) \[CollectionView(?:,[^\]]*)?\](?: \(\d+,\d+,\d+,\d+\))?:/m);
   if (dom.code !== 0 || !match) {
     return recordFail(id, dom.stdout + dom.stderr);
   }
   const autoLabel = match[1];
-  const found = runCliToFiles(['find', autoLabel, '--traits', 'CollectionView', '--udid', sim.udid], findOut, findErr);
+  const found = runCliToFiles(['find', autoLabel, '--traits', 'CollectionView'], findOut, findErr);
   if (found.code === 0 && found.stdout.includes(autoLabel)) {
     recordPass(id);
   } else {
@@ -457,7 +398,7 @@ async function runDomPresentationCase() {
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use dom presentation shape`);
-  const res = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], out, err);
+  const res = runCliToFiles(['dom', '--fresh'], out, err);
   const output = res.stdout;
   const hasScrollableDirection = /^\s+\S+ \[(?:ScrollView|CollectionView|Table),(?:vertical|horizontal)(?:,[^\]]*)?\] \(\d+,\d+,\d+,\d+\):/m.test(output);
   const hasLeafRect = /^\s+- .+ \[[^\]]+\] \(\d+,\d+,\d+,\d+\)$/m.test(output);
@@ -469,13 +410,33 @@ async function runDomPresentationCase() {
   }
 }
 
+async function runDomPayloadShapeCase() {
+  const id = 'DOM-4';
+  if (!selected(id)) return recordSkip(id);
+  await resetSettingsHome();
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  console.log(`[sim-test] RUN ${id}: ios-use dom payload/output shape`);
+  const res = runCliToFiles(['dom', '--fresh'], out, err);
+  const output = res.stdout;
+  const hasAppHeader = output.includes('App: com.apple.Preferences');
+  const hasWindow = /Window:\s*\d+x\d+/.test(output);
+  const hasContainerRect = /^\s+\S+ \[[^\]]+\] \(\d+,\d+,\d+,\d+\):/m.test(output);
+  const hasLeafRect = /^\s+- .+ \[[^\]]+\] \(\d+,\d+,\d+,\d+\)$/m.test(output);
+  if (res.code === 0 && hasAppHeader && hasWindow && hasContainerRect && hasLeafRect) {
+    recordPass(id);
+  } else {
+    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-4 expected app/window plus container and leaf rects\n`);
+  }
+}
+
 async function runFindExactPreferredCase(id) {
   if (!selected(id)) return recordSkip(id);
   await resetSettingsHome();
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: find exact label should not return contains ambiguity`);
-  const res = runCliToFiles(['find', 'General', '--udid', sim.udid], out, err);
+  const res = runCliToFiles(['find', 'General'], out, err);
   if (res.code === 0 && res.stdout.includes('Find "General":') && !/Find "General" \(\d+ matches\):/.test(res.stdout)) {
     recordPass(id);
   } else {
@@ -483,12 +444,12 @@ async function runFindExactPreferredCase(id) {
   }
 }
 
-async function runConfigDriverIdentityCase() {
+async function runConfigDriverVersionCase() {
   const id = 'CFG-7';
   if (!selected(id)) return recordSkip(id);
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
-  console.log(`[sim-test] RUN ${id}: config writes driver identity`);
+  console.log(`[sim-test] RUN ${id}: config writes driverVersion only`);
   const devices = runCliToFiles(['devices', '--simulator'], out, err);
   let entry;
   try {
@@ -497,17 +458,16 @@ async function runConfigDriverIdentityCase() {
   } catch (error) {
     return recordFail(id, `${devices.stdout}${devices.stderr}${error}\n`);
   }
-  const identity = entry?.driverIdentity;
   if (
     devices.code === 0 &&
     !devices.stdout.includes('driver update required') &&
-    entry?.driverVersion === identity?.version &&
-    identity?.version === expectedDriverIdentity?.version &&
-    identity?.build === expectedDriverIdentity?.build
+    typeof entry?.driverVersion === 'string' &&
+    entry.driverVersion.length > 0 &&
+    Object.keys(entry).sort().join(',') === 'bundleId,driverVersion'
   ) {
     recordPass(id);
   } else {
-    recordFail(id, `${devices.stdout}${devices.stderr}${JSON.stringify(entry, null, 2)}\nexpected driver identity: ${formatDriverIdentity(expectedDriverIdentity)}\n`);
+    recordFail(id, `${devices.stdout}${devices.stderr}${JSON.stringify(entry, null, 2)}\n`);
   }
 }
 
@@ -548,10 +508,12 @@ async function runStopClearsDriverLockCase() {
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use stop with active driver.lock`);
   ensureDriverStarted(`${id}-start`);
+  const sessionPath = path.join(iosHome, 'state/session.json');
+  writeFile(sessionPath, JSON.stringify({ legacy: true }));
   const stop = runCliToFiles(['stop'], out, err);
   const lockExists = fs.existsSync(path.join(iosHome, 'state/driver.lock'));
-  const sessionExists = fs.existsSync(path.join(iosHome, 'state/session.json'));
-  if (stop.code === 0 && !lockExists && !sessionExists) {
+  const sessionExists = fs.existsSync(sessionPath);
+  if (stop.code === 0 && !lockExists && sessionExists) {
     recordPass(id);
   } else {
     recordFail(id, `${stop.stdout}${stop.stderr}[sim-test] lockExists=${lockExists} sessionExists=${sessionExists}\n`);
@@ -718,50 +680,50 @@ async function prerequisiteConfig() {
 
 async function resetSettingsHome() {
   await ensureDriverReady();
-  runCli(['terminateApp', 'com.apple.Preferences', '--udid', sim.udid]);
-  runCli(['activateApp', 'com.apple.Preferences', '--udid', sim.udid]);
+  runCli(['terminateApp', 'com.apple.Preferences']);
+  runCli(['activateApp', 'com.apple.Preferences']);
   await sleep(1000);
 }
 
 async function openGeneralPage() {
   await resetSettingsHome();
-  runCli(['tap', 'BackButton', '--traits', 'Button', '--udid', sim.udid]);
+  runCli(['tap', 'BackButton', '--traits', 'Button']);
   await sleep(500);
-  const byId = runCli(['tap', 'com.apple.settings.general', '--traits', 'Button', '--udid', sim.udid]);
-  if (byId.code !== 0) runCli(['tap', 'General', '--traits', 'Button', '--udid', sim.udid]);
+  const byId = runCli(['tap', 'com.apple.settings.general', '--traits', 'Button']);
+  if (byId.code !== 0) runCli(['tap', 'General', '--traits', 'Button']);
   await sleep(1000);
-  runCli(['swipe', '--distance', '900', '--dir', 'back', '--udid', sim.udid]);
-  runCli(['swipe', '--distance', '900', '--dir', 'back', '--udid', sim.udid]);
+  runCli(['swipe', '--distance', '900', '--dir', 'back']);
+  runCli(['swipe', '--distance', '900', '--dir', 'back']);
 }
 
 async function openContactsNewContact() {
   await ensureDriverReady();
-  runCli(['terminateApp', 'com.apple.MobileAddressBook', '--udid', sim.udid]);
-  runCli(['activateApp', 'com.apple.MobileAddressBook', '--udid', sim.udid]);
+  runCli(['terminateApp', 'com.apple.MobileAddressBook']);
+  runCli(['activateApp', 'com.apple.MobileAddressBook']);
   await sleep(1000);
-  runCli(['dismissAlert', '--udid', sim.udid]);
+  runCli(['dismissAlert']);
 
-  const formVisible = () => runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '0.5', '--udid', sim.udid]).code === 0;
+  const formVisible = () => runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '0.5']).code === 0;
   if (formVisible()) return;
 
   for (let i = 0; i < 3; i++) {
-    const addVisible = runCli(['waitFor', '--label', 'Add', '--traits', 'Button', '--timeout', '1', '--udid', sim.udid]);
+    const addVisible = runCli(['waitFor', '--label', 'Add', '--traits', 'Button', '--timeout', '1']);
     if (addVisible.code === 0) {
-      const add = runCli(['tap', 'Add', '--traits', 'Button', '--udid', sim.udid]);
-      if (add.code !== 0) runCli(['tap', '340,800', '--udid', sim.udid]);
+      const add = runCli(['tap', 'Add', '--traits', 'Button']);
+      if (add.code !== 0) runCli(['tap', '340,800']);
     } else {
-      runCli(['tap', '340,800', '--udid', sim.udid]);
+      runCli(['tap', '340,800']);
     }
     await sleep(1000);
     if (formVisible()) return;
 
-    runCli(['tap', 'close', '--traits', 'Button', '--udid', sim.udid]);
+    runCli(['tap', 'close', '--traits', 'Button']);
     await sleep(500);
-    runCli(['dismissAlert', '--udid', sim.udid]);
+    runCli(['dismissAlert']);
     if (formVisible()) return;
   }
 
-  const finalWait = runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '3', '--udid', sim.udid]);
+  const finalWait = runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '3']);
   if (finalWait.code !== 0) {
     throw new Error(`failed to open Contacts New Contact form\n${finalWait.stdout}${finalWait.stderr}`);
   }
@@ -770,7 +732,7 @@ async function openContactsNewContact() {
 async function openSpringboardIconMenu(id) {
   await openHomeScreenWithSafariIcon();
   runCliToFiles(
-    ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid],
+    ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900'],
     path.join(artifactDir, `${id}-icon-menu.out`),
     path.join(artifactDir, `${id}-icon-menu.err`),
   );
@@ -780,9 +742,9 @@ async function openSpringboardIconMenu(id) {
 async function openHomeScreenWithSafariIcon() {
   await ensureDriverReady();
   for (let attempt = 0; attempt < 3; attempt++) {
-    runCli(['home', '--udid', sim.udid]);
+    runCli(['home']);
     await sleep(1000 + attempt * 500);
-    const visible = runCli(['waitFor', '--label', 'Safari', '--traits', 'Icon', '--timeout', '1', '--udid', sim.udid]);
+    const visible = runCli(['waitFor', '--label', 'Safari', '--traits', 'Icon', '--timeout', '1']);
     if (visible.code === 0) return;
   }
 }
@@ -791,7 +753,7 @@ async function verifyExampleDomainOpened(id) {
   for (let attempt = 0; attempt < 12; attempt++) {
     await sleep(1000);
     const dom = runCliToFiles(
-      ['dom', '--fresh', '--udid', sim.udid],
+      ['dom', '--fresh'],
       path.join(artifactDir, `${id}-verify-dom.out`),
       path.join(artifactDir, `${id}-verify-dom.err`),
     );
@@ -807,15 +769,15 @@ async function verifyExampleDomainOpened(id) {
 }
 
 async function discardContactIfNeeded() {
-  runCli(['tap', 'close', '--traits', 'Button', '--udid', sim.udid]);
+  runCli(['tap', 'close', '--traits', 'Button']);
   await sleep(500);
-  runCli(['dismissAlert', '--udid', sim.udid]);
+  runCli(['dismissAlert']);
 }
 
 async function openContactsDiscardAlert() {
   await openContactsNewContact();
-  runCli(['input', '--label', 'First name', '--content', 'AlertTest', '--traits', 'TextField', '--udid', sim.udid]);
-  runCli(['tap', 'close', '--traits', 'Button', '--udid', sim.udid]);
+  runCli(['input', '--label', 'First name', '--content', 'AlertTest', '--traits', 'TextField']);
+  runCli(['tap', 'close', '--traits', 'Button']);
   await sleep(500);
 }
 
@@ -842,7 +804,7 @@ async function runInputAndVerifyDom(
     await setup?.();
     res = runCliToFiles(['input', '--label', label, '--content', content, ...args], out, err);
   }
-  const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
+  const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
   if (res.stdout.includes('Input') && dom.code === 0 && dom.stdout.includes(expected)) recordPass(id);
   else recordFail(id, `${readFileIfExists(out)}${readFileIfExists(err)}${readFileIfExists(domOut)}${readFileIfExists(domErr)}`);
 }
@@ -853,11 +815,11 @@ async function verifyContactsNameFields(id, suffix) {
   const domOut = path.join(artifactDir, `${id}${suffix}-dom.out`);
   const domErr = path.join(artifactDir, `${id}${suffix}-dom.err`);
   await openContactsNewContact();
-  const first = runCli(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField', '--udid', sim.udid]);
-  const last = runCli(['input', '--label', 'Last name', '--content', 'Beta', '--traits', 'TextField', '--udid', sim.udid]);
+  const first = runCli(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField']);
+  const last = runCli(['input', '--label', 'Last name', '--content', 'Beta', '--traits', 'TextField']);
   writeFile(out, first.stdout + last.stdout);
   writeFile(err, first.stderr + last.stderr);
-  const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], domOut, domErr);
+  const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
   return first.code === 0 && last.code === 0 && dom.code === 0 && dom.stdout.includes('First name=Alpha') && dom.stdout.includes('Last name=Beta');
 }
 
@@ -963,10 +925,10 @@ async function runDomPerfCase() {
   const warmErr = path.join(artifactDir, `${id}-warm.err`);
   console.log(`[sim-test] RUN ${id}: cold/warm dom stability`);
   const coldStart = performance.now();
-  const cold = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], coldOut, coldErr);
+  const cold = runCliToFiles(['dom', '--fresh'], coldOut, coldErr);
   const coldMs = Math.round(performance.now() - coldStart);
   const warmStart = performance.now();
-  const warm = runCliToFiles(['dom', '--udid', sim.udid], warmOut, warmErr);
+  const warm = runCliToFiles(['dom'], warmOut, warmErr);
   const warmMs = Math.round(performance.now() - warmStart);
   if (cold.code === 0 && warm.code === 0 && cold.stdout.includes('App:') && warm.stdout.includes('App:') && coldMs < 20000 && warmMs < 10000) {
     writeFile(path.join(artifactDir, `${id}.json`), JSON.stringify({ coldMs, warmMs }));
@@ -988,7 +950,16 @@ async function runProxyDoctorCase() {
 }
 
 async function runSwiftCLIUnitCases() {
-  const ids = ['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6', 'FLOW-24', 'FLOW-25', 'FLOW-26'];
+  const ids = [
+    'CLI-1', 'CLI-2', 'CLI-3',
+    'DEV-7', 'CFG-8',
+    'OU-3', 'OU-4', 'OU-5', 'OU-6',
+    'PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6',
+    'FLOW-24', 'FLOW-25', 'FLOW-26', 'FLOW-27',
+    'IN-7',
+    'NSL-1', 'NSL-2', 'NSL-5', 'NSL-6', 'NSL-7', 'NSL-8', 'NSL-10',
+    'OL-10', 'OL-11',
+  ];
   if (!anySelected(ids)) {
     ids.forEach(recordSkip);
     return;
@@ -1011,8 +982,33 @@ async function runProxyReadMissingCaptureCase() {
   await runCaseFailsContains('PROXY-7', 'ios-use proxy start', ['proxy', 'read']);
 }
 
+async function runProxyReadDoctorNoLockCase() {
+  const id = 'AS-8';
+  if (!selected(id)) return recordSkip(id);
+  console.log(`[sim-test] RUN ${id}: proxy read/doctor without active driver.lock`);
+  const stop = stopDriverIfLocked(`${id}-stop-before`) ?? { code: 0, stdout: '', stderr: '' };
+  fs.rmSync(path.join(iosHome, 'state/proxy-session.json'), { force: true });
+  const doctor = runCliToFiles(['proxy', 'doctor'], path.join(artifactDir, `${id}-doctor.out`), path.join(artifactDir, `${id}-doctor.err`));
+  const read = runCliToFiles(['proxy', 'read'], path.join(artifactDir, `${id}-read.out`), path.join(artifactDir, `${id}-read.err`));
+  const readText = `${read.stdout}\n${read.stderr}`;
+  const ok = stop.code === 0
+    && doctor.code === 0
+    && doctor.stdout.includes('Proxy:')
+    && read.code !== 0
+    && readText.includes('ios-use proxy start')
+    && !readText.includes('No active driver');
+  ensureDriverStarted(`${id}-restore`);
+  if (ok) recordPass(id);
+  else recordFail(id, stop.stdout + stop.stderr + doctor.stdout + doctor.stderr + read.stdout + read.stderr);
+}
+
 async function runDriverUnitCases() {
-  const ids = ['DOM-9', 'DOM-11', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'];
+  const ids = [
+    'DOM-9', 'DOM-10', 'DOM-11',
+    'FIND-5A', 'FIND-5C', 'FIND-5D', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E',
+    'FIND-10', 'FIND-11', 'FIND-11B',
+    'SW-9B', 'SW-16',
+  ];
   if (!anySelected(ids)) {
     ids.forEach(recordSkip);
     return;
@@ -1053,69 +1049,81 @@ function buildCases() {
       if (selected('CFG-4') || !caseFilterIds) await waitForDriver();
     } },
     { id: 'CFG-1', run: () => runCaseContains('CFG-1', sim.udid, ['config', '--list']) },
-    { id: 'CFG-7', run: runConfigDriverIdentityCase },
+    { id: 'CFG-7', run: runConfigDriverVersionCase },
     { id: 'CFG-5', run: () => runCaseFailsContains('CFG-5', 'unknown option', ['config', '--ipa', path.join(rootDir, 'assets/driver-sim.ipa')]) },
     { id: 'CFG-6', run: () => runCaseFailsContains('CFG-6', 'unknown option', ['config', '--port', '8100']) },
+    ...['CLI-1', 'CLI-2', 'CLI-3', 'DEV-7', 'CFG-8'].map(id => ({ id, run: runSwiftCLIUnitCases })),
+    { id: 'START-1R', run: () => unsupportedCase('START-1R', 'real-device driver start path, not Simulator') },
+    { id: 'START-2', run: async () => {
+      if (!selected('START-2')) return recordSkip('START-2');
+      stopDriverIfLocked('START-2-cleanup');
+      await runCaseFailsContains('START-2', 'config', ['start', '00000000-0000-0000-0000-000000000000']);
+    } },
     { id: 'START-1', run: runStartCreatesDriverLockCase },
+    { id: 'START-3', run: async () => {
+      if (!selected('START-3')) return recordSkip('START-3');
+      ensureDriverStarted('START-3-existing');
+      await runCaseFailsContains('START-3', 'Driver already started', ['start', sim.udid]);
+    } },
     { id: 'DEV-4', run: () => runCaseContains('DEV-4', 'configured', ['devices', '--simulator']) },
     { id: 'DEV-6', run: () => runCaseMatches('DEV-6', /Simulator|Device/, ['devices', '--simulator']) },
     { id: 'AA-1', run: async () => {
       if (!selected('AA-1')) return recordSkip('AA-1');
       console.log('[sim-test] RUN AA-1: ios-use home && sleep 1s && dom --fresh');
-      const home = runCliToFiles(['home', '--udid', sim.udid], path.join(artifactDir, 'AA-1-home.out'), path.join(artifactDir, 'AA-1-home.err'));
+      const home = runCliToFiles(['home'], path.join(artifactDir, 'AA-1-home.out'), path.join(artifactDir, 'AA-1-home.err'));
       await sleep(1000);
-      const dom = runCliToFiles(['dom', '--fresh', '--udid', sim.udid], path.join(artifactDir, 'AA-1.out'), path.join(artifactDir, 'AA-1.err'));
+      const dom = runCliToFiles(['dom', '--fresh'], path.join(artifactDir, 'AA-1.out'), path.join(artifactDir, 'AA-1.err'));
       if (home.code === 0 && dom.code === 0 && dom.stdout.includes('App: com.apple.springboard')) recordPass('AA-1');
       else recordFail('AA-1', home.stdout + home.stderr + dom.stdout + dom.stderr);
     } },
     { id: 'AS-7', run: () => unsupportedCase('AS-7', 'host-only Flow/proxy lock behavior is covered by Swift unit tests') },
-    { id: 'AA-2', run: () => runCaseContains('AA-2', 'App com.apple.Preferences activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
+    { id: 'AA-2', run: () => runCaseContains('AA-2', 'App com.apple.Preferences activated', ['activateApp', 'com.apple.Preferences']) },
     { id: 'AA-3', run: async () => {
-      await runCaseContains('AA-3', 'activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid], async () => {
-        runCliToFiles(['activateApp', 'com.apple.mobilesafari', '--udid', sim.udid], path.join(artifactDir, 'AA-3-safari.out'), path.join(artifactDir, 'AA-3-safari.err'));
+      await runCaseContains('AA-3', 'activated', ['activateApp', 'com.apple.Preferences'], async () => {
+        runCliToFiles(['activateApp', 'com.apple.mobilesafari'], path.join(artifactDir, 'AA-3-safari.out'), path.join(artifactDir, 'AA-3-safari.err'));
       });
     } },
   ]);
 
   addCases(cases, [
-    { id: 'DOM-1', run: () => runCaseContains('DOM-1', 'App: com.apple.Preferences', ['dom', '--fresh', '--udid', sim.udid], settingsHome) },
-    { id: 'DOM-2', run: () => runCaseContains('DOM-2', 'Application', ['dom', '--raw', '--fresh', '--udid', sim.udid], settingsHome) },
-    { id: 'DOM-5', run: () => runCaseContains('DOM-5', 'Settings', ['dom', '--fresh', '--udid', sim.udid], settingsHome) },
-    { id: 'DOM-6', run: () => runCaseContains('DOM-6', 'Window:', ['dom', '--fresh', '--udid', sim.udid], settingsHome) },
+    { id: 'DOM-1', run: () => runCaseContains('DOM-1', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
+    { id: 'DOM-2', run: () => runCaseContains('DOM-2', 'Application', ['dom', '--raw', '--fresh'], settingsHome) },
+    { id: 'DOM-5', run: () => runCaseContains('DOM-5', 'Settings', ['dom', '--fresh'], settingsHome) },
+    { id: 'DOM-6', run: () => runCaseContains('DOM-6', 'Window:', ['dom', '--fresh'], settingsHome) },
     { id: 'DOM-7', run: runDomPerfCase },
-    { id: 'DOM-8', run: () => runCaseContains('DOM-8', 'App: com.apple.Preferences', ['dom', '--fresh', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-1', run: () => runCaseContains('FIND-1', 'Find', ['find', 'General', '--udid', sim.udid], settingsHome) },
+    { id: 'DOM-8', run: () => runCaseContains('DOM-8', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
+    { id: 'FIND-1', run: () => runCaseContains('FIND-1', 'Find', ['find', 'General'], settingsHome) },
     { id: 'FIND-2', run: () => runFindExactPreferredCase('FIND-2') },
-    { id: 'FIND-3', run: () => runCaseContains('FIND-3', 'Find', ['find', 'com.apple.settings.general', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-4', run: () => runCaseContains('FIND-4', 'Find', ['find', 'chevron', '--traits', 'Button,disabled', '--udid', sim.udid], generalPage) },
-    { id: 'FIND-5', run: () => runCaseMatches('FIND-5', /suggestions|Did you mean|General/, ['find', 'Generak', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-7', run: () => runCaseContains('FIND-7', 'Find', ['find', 'HomeScreen', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'com.apple.settings.search', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled', '--udid', sim.udid], generalPage) },
+    { id: 'FIND-3', run: () => runCaseContains('FIND-3', 'Find', ['find', 'com.apple.settings.general', '--traits', 'Button'], settingsHome) },
+    { id: 'FIND-4', run: () => runCaseContains('FIND-4', 'Find', ['find', 'chevron', '--traits', 'Button,disabled'], generalPage) },
+    { id: 'FIND-5', run: () => runCaseMatches('FIND-5', /suggestions|Did you mean|General/, ['find', 'Generak'], settingsHome) },
+    { id: 'FIND-7', run: () => runCaseContains('FIND-7', 'Find', ['find', 'HomeScreen'], settingsHome) },
+    { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'com.apple.settings.search', '--traits', 'Button'], settingsHome) },
+    { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled'], generalPage) },
     { id: 'FIND-12', run: runAutoLabelFindCase },
-    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Other "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-10B', run: () => runCaseContains('FIND-10B', 'chevron.forward', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '-1', '--udid', sim.udid], settingsHome) },
-    { id: 'FIND-11A', run: () => runCaseFailsContains('FIND-11A', 'not found', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '99', '--udid', sim.udid], settingsHome) },
+    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Other "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
+    { id: 'FIND-10B', run: () => runCaseContains('FIND-10B', 'chevron.forward', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '-1'], settingsHome) },
+    { id: 'FIND-11A', run: () => runCaseFailsContains('FIND-11A', 'not found', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '99'], settingsHome) },
     { id: 'FIND-1B', run: async () => {
-      await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'TextField', '--udid', sim.udid], async () => {
+      await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'TextField'], async () => {
         await openContactsNewContact();
-        const input = runCliToFiles(['input', '--label', 'First name', '--content', 'iosuse-find', '--traits', 'TextField', '--udid', sim.udid], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
+        const input = runCliToFiles(['input', '--label', 'First name', '--content', 'iosuse-find', '--traits', 'TextField'], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
         if (input.code !== 0) {
           throw new Error(`FIND-1B setup input failed\n${input.stdout}${input.stderr}`);
         }
       });
       if (selected('FIND-1B')) await discardContactIfNeeded();
     } },
-    { id: 'FIND-5B', run: () => runCaseFailsContains('FIND-5B', 'not found', ['find', '__ios_use_missing_label__', '--udid', sim.udid], settingsHome) },
-    { id: 'WF-1', run: () => runCaseContains('WF-1', 'waited=', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--timeout', '2', '--udid', sim.udid], settingsHome) },
-    { id: 'WF-2', run: () => runCaseFailsMatches('WF-2', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.3', '--udid', sim.udid], settingsHome) },
-    { id: 'WF-4', run: () => runCaseFailsMatches('WF-4', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.2', '--udid', sim.udid], settingsHome) },
-    { id: 'WF-5', run: () => runCaseContains('WF-5', 'General', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--timeout', '2', '--udid', sim.udid], settingsHome) },
+    { id: 'FIND-5B', run: () => runCaseFailsContains('FIND-5B', 'not found', ['find', '__ios_use_missing_label__'], settingsHome) },
+    { id: 'WF-1', run: () => runCaseContains('WF-1', 'waited=', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--timeout', '2'], settingsHome) },
+    { id: 'WF-2', run: () => runCaseFailsMatches('WF-2', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.3'], settingsHome) },
+    { id: 'WF-4', run: () => runCaseFailsMatches('WF-4', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.2'], settingsHome) },
+    { id: 'WF-5', run: () => runCaseContains('WF-5', 'General', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--timeout', '2'], settingsHome) },
   ]);
 
   addCases(cases, [
     { id: 'SC-2', run: async () => {
-      await runCase('SC-2', ['screenshot', '--name', 'sim_command_screenshot', '--udid', sim.udid], settingsHome);
+      await runCase('SC-2', ['screenshot', '--name', 'sim_command_screenshot'], settingsHome);
       if (selected('SC-2')) {
         const screenshot = path.join(iosHome, 'artifacts/sim_command_screenshot.jpg');
         if (fs.existsSync(screenshot) && fs.statSync(screenshot).size > 0) fs.copyFileSync(screenshot, path.join(artifactDir, 'sim_command_screenshot.jpg'));
@@ -1129,7 +1137,7 @@ function buildCases() {
       const out = path.join(artifactDir, 'SC-1.out');
       const err = path.join(artifactDir, 'SC-1.err');
       const name = 'sim_command_protocol_screenshot';
-      const res = runCliToFiles(['screenshot', '--name', name, '--udid', sim.udid], out, err);
+      const res = runCliToFiles(['screenshot', '--name', name], out, err);
       const screenshot = path.join(iosHome, 'artifacts', `${name}.jpg`);
       if (res.code === 0 && fs.existsSync(screenshot) && fs.statSync(screenshot).size > 2) recordPass('SC-1');
       else recordFail('SC-1', res.stdout + res.stderr);
@@ -1137,81 +1145,81 @@ function buildCases() {
   ]);
 
   const tapCases = [
-    { id: 'TAP-1', run: () => runCaseContains('TAP-1', 'Tap', ['tap', 'com.apple.settings.general', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-5', run: () => runCaseContains('TAP-5', 'Tap', ['tap', 'com.apple.settings.general', '--offset', '10,10', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-6', run: () => runCaseContains('TAP-6', 'Tap', ['tap', 'com.apple.settings.general', '--offset-ratio', '0.5,0.5', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-7', run: () => runCaseContains('TAP-7', 'Tap', ['tap', 'com.apple.settings.general', '--offset-ratio', '0.5,', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-8', run: () => runCaseContains('TAP-8', 'Tap', ['tap', 'com.apple.settings.general', '--offset', ',10', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-2', run: () => runCaseContains('TAP-2', 'Tap', ['tap', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'TAP-9', run: () => runCaseFailsContains('TAP-9', 'offset requires element label', ['tap', '200,400', '--offset', '1,1', '--udid', sim.udid], generalPage) },
-    { id: 'TAP-10', run: () => runCaseContains('TAP-10', 'Tap', ['tap', 'About', '--offset', '500,500', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
+    { id: 'TAP-1', run: () => runCaseContains('TAP-1', 'Tap', ['tap', 'com.apple.settings.general', '--traits', 'Button'], settingsHome) },
+    { id: 'TAP-5', run: () => runCaseContains('TAP-5', 'Tap', ['tap', 'com.apple.settings.general', '--offset', '10,10', '--traits', 'Button'], settingsHome) },
+    { id: 'TAP-6', run: () => runCaseContains('TAP-6', 'Tap', ['tap', 'com.apple.settings.general', '--offset-ratio', '0.5,0.5', '--traits', 'Button'], settingsHome) },
+    { id: 'TAP-7', run: () => runCaseContains('TAP-7', 'Tap', ['tap', 'com.apple.settings.general', '--offset-ratio', '0.5,', '--traits', 'Button'], settingsHome) },
+    { id: 'TAP-8', run: () => runCaseContains('TAP-8', 'Tap', ['tap', 'com.apple.settings.general', '--offset', ',10', '--traits', 'Button'], settingsHome) },
+    { id: 'TAP-2', run: () => runCaseContains('TAP-2', 'Tap', ['tap', 'About', '--traits', 'Cell'], generalPage) },
+    { id: 'TAP-9', run: () => runCaseFailsContains('TAP-9', 'offset requires element label', ['tap', '200,400', '--offset', '1,1'], generalPage) },
+    { id: 'TAP-10', run: () => runCaseContains('TAP-10', 'Tap', ['tap', 'About', '--offset', '500,500', '--traits', 'Cell'], generalPage) },
     { id: 'TAP-12', run: async () => {
       if (!selected('TAP-12')) return recordSkip('TAP-12');
       await settingsHome();
       const out = path.join(artifactDir, 'TAP-12.out');
       const err = path.join(artifactDir, 'TAP-12.err');
       console.log('[sim-test] RUN TAP-12: tap cindex child and verify navigation');
-      const tap = runCliToFiles(['tap', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], out, err);
-      const verify = runCliToFiles(['find', 'About', '--traits', 'Cell', '--udid', sim.udid], path.join(artifactDir, 'TAP-12-verify.out'), path.join(artifactDir, 'TAP-12-verify.err'));
+      const tap = runCliToFiles(['tap', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], out, err);
+      const verify = runCliToFiles(['find', 'About', '--traits', 'Cell'], path.join(artifactDir, 'TAP-12-verify.out'), path.join(artifactDir, 'TAP-12-verify.err'));
       if (tap.code === 0 && verify.code === 0) recordPass('TAP-12');
       else recordFail('TAP-12', tap.stdout + tap.stderr + verify.stdout + verify.stderr);
     } },
-    { id: 'TAP-13', run: () => runCaseFailsContains('TAP-13', 'point target does not support traits or cindex', ['tap', '200,400', '--cindex', '0', '--udid', sim.udid], settingsHome) },
-    { id: 'TAP-3', run: () => runCase('TAP-3', ['tap', '200,400', '--udid', sim.udid], generalPage) },
-    { id: 'TAP-4', run: () => runCaseFailsContains('TAP-4', 'not found', ['tap', '__ios_use_missing_label__', '--udid', sim.udid], settingsHome) },
+    { id: 'TAP-13', run: () => runCaseFailsContains('TAP-13', 'point target does not support traits or cindex', ['tap', '200,400', '--cindex', '0'], settingsHome) },
+    { id: 'TAP-3', run: () => runCase('TAP-3', ['tap', '200,400'], generalPage) },
+    { id: 'TAP-4', run: () => runCaseFailsContains('TAP-4', 'not found', ['tap', '__ios_use_missing_label__'], settingsHome) },
   ];
   addCases(cases, tapCases);
 
   const swipeCases = [
-    { id: 'SW-7B', run: () => runCaseMatches('SW-7B', /scrolls=\d+ direction=down/, ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], generalPage) },
-    { id: 'SW-10', run: () => runCaseFailsMatches('SW-10', /boundary.*direction=up/, ['swipe', '--distance', '200', '--dir', 'back', '--udid', sim.udid], async () => {
+    { id: 'SW-7B', run: () => runCaseMatches('SW-7B', /scrolls=\d+ direction=down/, ['swipe', '--distance', '200', '--dir', 'forth'], generalPage) },
+    { id: 'SW-10', run: () => runCaseFailsMatches('SW-10', /boundary.*direction=up/, ['swipe', '--distance', '200', '--dir', 'back'], async () => {
       await generalPage();
-      runCli(['swipe', '--distance', '200', '--dir', 'back', '--udid', sim.udid]);
+      runCli(['swipe', '--distance', '200', '--dir', 'back']);
     }) },
-    { id: 'SW-12', run: () => runCaseFailsMatches('SW-12', /not found|suggestions/i, ['swipe', '--to', '__ios_use_missing_label__', '--udid', sim.udid], generalPage) },
-    { id: 'SW-13', run: () => runCaseContains('SW-13', 'scrolls=', ['swipe', '--to', 'Settings', '--udid', sim.udid], settingsHome) },
-    { id: 'SW-14', run: () => runCaseContains('SW-14', 'scrolls=', ['swipe', '--to', 'Settings', '--udid', sim.udid], settingsHome) },
-    { id: 'SW-15', run: () => runCaseContains('SW-15', 'scrolls=', ['swipe', '--to', 'Settings', '--from', 'com.apple.settings.general', '--udid', sim.udid], settingsHome) },
-    { id: 'SW-17', run: () => runCaseContains('SW-17', 'scrolls=', ['swipe', '--to', 'com.apple.settings.general', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'SW-1', run: () => runCaseContains('SW-1', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--to', 'Keyboard', '--dir', 'forth', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'SW-3', run: () => runCaseContains('SW-3', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'SW-3B', run: () => runCaseContains('SW-3B', 'Other "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--udid', sim.udid], settingsHome) },
-    { id: 'SW-4', run: () => runCaseMatches('SW-4', /scrolls=\d+ direction=up/, ['swipe', '--to', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell', '--udid', sim.udid], async () => {
+    { id: 'SW-12', run: () => runCaseFailsMatches('SW-12', /not found|suggestions/i, ['swipe', '--to', '__ios_use_missing_label__'], generalPage) },
+    { id: 'SW-13', run: () => runCaseContains('SW-13', 'scrolls=', ['swipe', '--to', 'Settings'], settingsHome) },
+    { id: 'SW-14', run: () => runCaseContains('SW-14', 'scrolls=', ['swipe', '--to', 'Settings'], settingsHome) },
+    { id: 'SW-15', run: () => runCaseContains('SW-15', 'scrolls=', ['swipe', '--to', 'Settings', '--from', 'com.apple.settings.general'], settingsHome) },
+    { id: 'SW-17', run: () => runCaseContains('SW-17', 'scrolls=', ['swipe', '--to', 'com.apple.settings.general', '--traits', 'Button'], settingsHome) },
+    { id: 'SW-1', run: () => runCaseContains('SW-1', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell'], generalPage) },
+    { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--to', 'Keyboard', '--dir', 'forth', '--traits', 'Cell'], generalPage) },
+    { id: 'SW-3', run: () => runCaseContains('SW-3', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell'], generalPage) },
+    { id: 'SW-3B', run: () => runCaseContains('SW-3B', 'Other "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
+    { id: 'SW-4', run: () => runCaseMatches('SW-4', /scrolls=\d+ direction=up/, ['swipe', '--to', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell'], async () => {
       await generalPage();
-      runCliToFiles(['swipe', '--to', 'Keyboard', '--traits', 'Cell', '--udid', sim.udid], path.join(artifactDir, 'SW-4-setup.out'), path.join(artifactDir, 'SW-4-setup.err'));
+      runCliToFiles(['swipe', '--to', 'Keyboard', '--traits', 'Cell'], path.join(artifactDir, 'SW-4-setup.out'), path.join(artifactDir, 'SW-4-setup.err'));
     }) },
-    { id: 'SW-5', run: () => runCaseContains('SW-5', 'scrolls=', ['swipe', '--to', 'About', '--from', '200,650', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'SW-6', run: () => runCaseContains('SW-6', 'scrolls=', ['swipe', '--to', '100,700', '--udid', sim.udid], generalPage) },
-    { id: 'SW-7', run: () => runCaseContains('SW-7', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], generalPage) },
-    { id: 'SW-8', run: () => runCaseContains('SW-8', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], generalPage) },
-    { id: 'SW-9', run: () => runCaseMatches('SW-9', /scrolls=\d+ direction=down/, ['swipe', '--distance', '900', '--dir', 'forth', '--udid', sim.udid], generalPage) },
-    { id: 'SW-11', run: () => runCaseFailsMatches('SW-11', /boundary.*direction=down|not connected/i, ['swipe', '--distance', '200', '--dir', 'forth', '--udid', sim.udid], async () => {
+    { id: 'SW-5', run: () => runCaseContains('SW-5', 'scrolls=', ['swipe', '--to', 'About', '--from', '200,650', '--traits', 'Cell'], generalPage) },
+    { id: 'SW-6', run: () => runCaseContains('SW-6', 'scrolls=', ['swipe', '--to', '100,700'], generalPage) },
+    { id: 'SW-7', run: () => runCaseContains('SW-7', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth'], generalPage) },
+    { id: 'SW-8', run: () => runCaseContains('SW-8', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth'], generalPage) },
+    { id: 'SW-9', run: () => runCaseMatches('SW-9', /scrolls=\d+ direction=down/, ['swipe', '--distance', '900', '--dir', 'forth'], generalPage) },
+    { id: 'SW-11', run: () => runCaseFailsMatches('SW-11', /boundary.*direction=down|not connected/i, ['swipe', '--distance', '200', '--dir', 'forth'], async () => {
       await generalPage();
-      for (let i = 0; i < 6; i++) runCli(['swipe', '--distance', '900', '--dir', 'forth', '--udid', sim.udid]);
+      for (let i = 0; i < 6; i++) runCli(['swipe', '--distance', '900', '--dir', 'forth']);
     }) },
   ];
   addCases(cases, swipeCases);
 
   addCases(cases, [
-    { id: 'LP-1', run: () => runCaseContains('LP-1', 'Longpress', ['longpress', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'LP-2', run: () => runCaseContains('LP-2', 'Longpress', ['longpress', '200,400', '--udid', sim.udid], generalPage) },
-    { id: 'LP-3', run: () => runCaseContains('LP-3', 'Longpress', ['longpress', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'LP-4', run: () => runCaseContains('LP-4', 'Longpress', ['longpress', 'About', '--duration', '500', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'LP-5', run: () => runCaseContains('LP-5', 'Longpress', ['longpress', 'About', '--traits', 'Cell', '--udid', sim.udid], generalPage) },
-    { id: 'LP-6', run: () => runCaseContains('LP-6', 'Longpress', ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900', '--udid', sim.udid], openHomeScreenWithSafariIcon) },
-    { id: 'DOM-5B', run: () => runCaseContains('DOM-5B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh', '--udid', sim.udid], () => openSpringboardIconMenu('DOM-5B')) },
-    { id: 'SW-16B', run: () => runCaseContains('SW-16B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh', '--udid', sim.udid], () => openSpringboardIconMenu('SW-16B')) },
+    { id: 'LP-1', run: () => runCaseContains('LP-1', 'Longpress', ['longpress', 'About', '--traits', 'Cell'], generalPage) },
+    { id: 'LP-2', run: () => runCaseContains('LP-2', 'Longpress', ['longpress', '200,400'], generalPage) },
+    { id: 'LP-3', run: () => runCaseContains('LP-3', 'Longpress', ['longpress', 'About', '--traits', 'Cell'], generalPage) },
+    { id: 'LP-4', run: () => runCaseContains('LP-4', 'Longpress', ['longpress', 'About', '--duration', '500', '--traits', 'Cell'], generalPage) },
+    { id: 'LP-5', run: () => runCaseContains('LP-5', 'Longpress', ['longpress', 'About', '--traits', 'Cell'], generalPage) },
+    { id: 'LP-6', run: () => runCaseContains('LP-6', 'Longpress', ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900'], openHomeScreenWithSafariIcon) },
+    { id: 'DOM-5B', run: () => runCaseContains('DOM-5B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh'], () => openSpringboardIconMenu('DOM-5B')) },
+    { id: 'SW-16B', run: () => runCaseContains('SW-16B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh'], () => openSpringboardIconMenu('SW-16B')) },
   ]);
 
   addCases(cases, [
-    { id: 'IN-1', run: async () => { await runInputAndVerifyDom('IN-1', 'First name', 'Alpha', 'First name=Alpha', ['--udid', sim.udid], openContactsNewContact); if (selected('IN-1')) await discardContactIfNeeded(); } },
-    { id: 'IN-2', run: async () => { await runInputAndVerifyDom('IN-2', 'Last name', 'Beta', 'Last name=Beta', ['--traits', 'TextField', '--udid', sim.udid], openContactsNewContact); if (selected('IN-2')) await discardContactIfNeeded(); } },
-    { id: 'IN-3', run: async () => { await runInputAndVerifyDom('IN-3', 'Alpha', 'More', 'First name=AlphaMore', ['--traits', 'TextField', '--udid', sim.udid], async () => { await openContactsNewContact(); runCliToFiles(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField', '--udid', sim.udid], path.join(artifactDir, 'IN-3-setup.out'), path.join(artifactDir, 'IN-3-setup.err')); }); if (selected('IN-3')) await discardContactIfNeeded(); } },
-    { id: 'IN-4', run: () => runCaseFailsMatches('IN-4', /not inputtable|not found|failed/i, ['input', '--label', 'General', '--content', 'Nope', '--traits', 'Button', '--udid', sim.udid], settingsHome) },
-    { id: 'IN-5', run: () => runInputAndVerifyDom('IN-5', 'Search', 'ZZZIOSUse', 'ZZZIOSUse', ['--traits', 'SearchField', '--udid', sim.udid], async () => {
-      runCli(['terminateApp', 'com.apple.MobileAddressBook', '--udid', sim.udid]);
-      runCli(['activateApp', 'com.apple.MobileAddressBook', '--udid', sim.udid]);
+    { id: 'IN-1', run: async () => { await runInputAndVerifyDom('IN-1', 'First name', 'Alpha', 'First name=Alpha', [], openContactsNewContact); if (selected('IN-1')) await discardContactIfNeeded(); } },
+    { id: 'IN-2', run: async () => { await runInputAndVerifyDom('IN-2', 'Last name', 'Beta', 'Last name=Beta', ['--traits', 'TextField'], openContactsNewContact); if (selected('IN-2')) await discardContactIfNeeded(); } },
+    { id: 'IN-3', run: async () => { await runInputAndVerifyDom('IN-3', 'Alpha', 'More', 'First name=AlphaMore', ['--traits', 'TextField'], async () => { await openContactsNewContact(); runCliToFiles(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField'], path.join(artifactDir, 'IN-3-setup.out'), path.join(artifactDir, 'IN-3-setup.err')); }); if (selected('IN-3')) await discardContactIfNeeded(); } },
+    { id: 'IN-4', run: () => runCaseFailsMatches('IN-4', /not inputtable|not found|failed/i, ['input', '--label', 'General', '--content', 'Nope', '--traits', 'Button'], settingsHome) },
+    { id: 'IN-5', run: () => runInputAndVerifyDom('IN-5', 'Search', 'ZZZIOSUse', 'ZZZIOSUse', ['--traits', 'SearchField'], async () => {
+      runCli(['terminateApp', 'com.apple.MobileAddressBook']);
+      runCli(['activateApp', 'com.apple.MobileAddressBook']);
       await sleep(1000);
     }) },
     { id: 'IN-6', run: async () => {
@@ -1240,16 +1248,16 @@ function buildCases() {
       }
       await discardContactIfNeeded();
     } },
-    { id: 'DA-1', run: () => runCaseContains('DA-1', 'Alert dismissed', ['dismissAlert', '--udid', sim.udid], openContactsDiscardAlert) },
-    { id: 'DA-2', run: () => runCaseContains('DA-2', 'Alert dismissed', ['dismissAlert', '--index', '0', '--udid', sim.udid], openContactsDiscardAlert) },
+    { id: 'DA-1', run: () => runCaseContains('DA-1', 'Alert dismissed', ['dismissAlert'], openContactsDiscardAlert) },
+    { id: 'DA-2', run: () => runCaseContains('DA-2', 'Alert dismissed', ['dismissAlert', '--index', '0'], openContactsDiscardAlert) },
     { id: 'TAP-11', run: async () => {
       if (!selected('TAP-11')) return recordSkip('TAP-11');
       const out = path.join(artifactDir, 'TAP-11.out');
       const err = path.join(artifactDir, 'TAP-11.err');
       console.log('[sim-test] RUN TAP-11: waitFor Discard Changes then immediate tap');
       await openContactsDiscardAlert();
-      const wait = runCli(['waitFor', '--label', 'Discard Changes', '--traits', 'Button', '--timeout', '3', '--udid', sim.udid]);
-      const tap = runCli(['tap', 'Discard Changes', '--traits', 'Button', '--udid', sim.udid]);
+      const wait = runCli(['waitFor', '--label', 'Discard Changes', '--traits', 'Button', '--timeout', '3']);
+      const tap = runCli(['tap', 'Discard Changes', '--traits', 'Button']);
       writeFile(out, wait.stdout + tap.stdout);
       writeFile(err, wait.stderr + tap.stderr);
       if (wait.code === 0 && tap.code === 0) recordPass('TAP-11');
@@ -1258,9 +1266,9 @@ function buildCases() {
   ]);
 
   addCases(cases, [
-    { id: 'TA-1', run: () => runCaseContains('TA-1', 'terminated', ['terminateApp', 'com.apple.Preferences', '--udid', sim.udid], settingsHome) },
-    { id: 'TA-2', run: () => runCaseContains('TA-2', 'terminated', ['terminateApp', 'com.apple.Preferences', '--udid', sim.udid], settingsHome) },
-    { id: 'AA-6', run: () => runCaseContains('AA-6', 'activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
+    { id: 'TA-1', run: () => runCaseContains('TA-1', 'terminated', ['terminateApp', 'com.apple.Preferences'], settingsHome) },
+    { id: 'TA-2', run: () => runCaseContains('TA-2', 'terminated', ['terminateApp', 'com.apple.Preferences'], settingsHome) },
+    { id: 'AA-6', run: () => runCaseContains('AA-6', 'activated', ['activateApp', 'com.apple.Preferences']) },
     { id: 'OU-1', run: async () => {
       if (!selected('OU-1')) return recordSkip('OU-1');
       console.log('[sim-test] RUN OU-1: open https://example.com and verify Safari DOM');
@@ -1285,18 +1293,19 @@ function buildCases() {
       if (verified) recordPass('OU-2');
       else recordFail('OU-2', stopBefore.stdout + stopBefore.stderr + open.stdout + open.stderr + stopAfter.stdout + stopAfter.stderr);
     } },
-    { id: 'HOME-1', run: () => runCaseContains('HOME-1', 'Home', ['home', '--udid', sim.udid]) },
-    { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--fresh', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
-    { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--fresh', '--udid', sim.udid], async () => { runCli(['home', '--udid', sim.udid]); await sleep(1000); }) },
-    { id: 'AA-4', run: () => runCaseContains('AA-4', 'activated', ['activateApp', 'com.apple.Preferences', '--udid', sim.udid]) },
-    { id: 'AA-5', run: () => runCaseFailsMatches('AA-5', /app not found|state=unknown|not installed/i, ['activateApp', 'com.iosuse.invalid.bundle', '--udid', sim.udid]) },
+    ...['OU-3', 'OU-4', 'OU-5', 'OU-6'].map(id => ({ id, run: runSwiftCLIUnitCases })),
+    { id: 'HOME-1', run: () => runCaseContains('HOME-1', 'Home', ['home']) },
+    { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
+    { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
+    { id: 'AA-4', run: () => runCaseContains('AA-4', 'activated', ['activateApp', 'com.apple.Preferences']) },
+    { id: 'AA-5', run: () => runCaseFailsMatches('AA-5', /app not found|state=unknown|not installed/i, ['activateApp', 'com.iosuse.invalid.bundle']) },
     { id: 'AS-1', run: async () => { if (!selected('AS-1')) return recordSkip('AS-1'); stopDriverIfLocked('AS-1'); await runCaseFailsContains('AS-1', 'No active driver', ['dom', '--fresh']); } },
     { id: 'AS-2', run: () => runCaseFailsMatches('AS-2', /unknown option '--udid'/i, ['dom', '--fresh', '--udid', '00000000-0000-0000-0000-000000000000']) },
-    { id: 'AS-3', run: () => runCaseContains('AS-3', 'App: com.apple.Preferences', ['dom', '--fresh', '--udid', sim.udid], settingsHome) },
+    { id: 'AS-3', run: () => runCaseContains('AS-3', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
     { id: 'AS-4', run: () => unsupportedCase('AS-4', 'recoverable connect retry is covered by Swift unit tests') },
     { id: 'AS-5', run: () => unsupportedCase('AS-5', 'post-send read/write failure is covered by Swift unit tests') },
     { id: 'AS-6', run: () => unsupportedCase('AS-6', 'Flow single-client reuse is covered by Swift unit tests') },
-    { id: 'AS-8', run: () => runCaseContains('AS-8', 'App:', ['dom', '--fresh', '--udid', sim.udid]) },
+    { id: 'AS-8', run: runProxyReadDoctorNoLockCase },
   ]);
 
   const flow = (name) => path.join(flowDir, name);
@@ -1329,8 +1338,8 @@ function buildCases() {
     { id: 'FLOW-21', run: () => runCaseContains('FLOW-21', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.search'), flowSetup(settingsHome)) },
     { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general', '--verbose'), flowSetup(settingsHome)) },
     { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
-    ...['FLOW-24', 'FLOW-25', 'FLOW-26'].map(id => ({ id, run: runSwiftCLIUnitCases })),
-    { id: 'DOM-4', run: () => runCaseFailsContains('DOM-4', 'unknown field', flowArgs('dom-save.yaml'), flowSetup(settingsHome)) },
+    ...['FLOW-24', 'FLOW-25', 'FLOW-26', 'FLOW-27'].map(id => ({ id, run: runSwiftCLIUnitCases })),
+    { id: 'DOM-4', run: runDomPayloadShapeCase },
   ]);
 
   addCases(cases, [
@@ -1347,7 +1356,13 @@ function buildCases() {
     { id: 'NSL-4', run: () => runCaseFailsContains('NSL-4', 'ios-use nslog start', ['nslog', 'read']) },
     { id: 'CFG-2', run: () => unsupportedCase('CFG-2', 'real-device signing/install path, not Simulator') },
     { id: 'CFG-3', run: () => unsupportedCase('CFG-3', 'Apple ID first-login signing path, not Simulator and must not touch local credentials') },
-    ...['DOM-9', 'DOM-11', 'FIND-5A', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E', 'SW-16'].map(id => ({ id, run: runDriverUnitCases })),
+    { id: 'STOP-1R', run: () => unsupportedCase('STOP-1R', 'real-device driver stop path, not Simulator') },
+    ...[
+      'DOM-9', 'DOM-10', 'DOM-11',
+      'FIND-5A', 'FIND-5C', 'FIND-5D', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E',
+      'FIND-10', 'FIND-11', 'FIND-11B',
+      'SW-9B', 'SW-16',
+    ].map(id => ({ id, run: runDriverUnitCases })),
     { id: 'DOM-12', run: runDomPresentationCase },
     { id: 'PROXY-1', run: runProxyDoctorCase },
     ...['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'].map(id => ({ id, run: runSwiftCLIUnitCases })),
@@ -1355,6 +1370,8 @@ function buildCases() {
     { id: 'STOP-1', run: runStopClearsDriverLockCase },
     { id: 'STOP-2', run: runStopWithoutDriverLockCase },
     { id: 'STOP-3', run: () => unsupportedCase('STOP-3', 'terminator failure is covered by Swift unit tests') },
+    ...['IN-7', 'OL-10', 'OL-11', 'NSL-1', 'NSL-2', 'NSL-5', 'NSL-6', 'NSL-7', 'NSL-8', 'NSL-10'].map(id => ({ id, run: runSwiftCLIUnitCases })),
+    { id: 'NSL-9', run: () => unsupportedCase('NSL-9', 'requires a real app integrated with NSLogger on a real device') },
   ]);
 
   return cases;
@@ -1395,11 +1412,9 @@ async function main() {
   console.log(`[sim-test] IOS_USE_HOME: ${iosHome}`);
   console.log(`[sim-test] Simulator: ${sim.name} | ${sim.runtime} | ${sim.state} | UDID: ${sim.udid}`);
   const driverArtifact = prepareSimulatorDriverAsset(driverIpaPath);
-  expectedDriverIdentity = driverArtifact.identity;
   console.log(`[sim-test] CLI: ${iosUseCli}`);
   console.log(`[sim-test] driver-sim IPA source: ${driverArtifact.sourcePath}`);
   console.log(`[sim-test] driver-sim IPA installed: ${driverArtifact.installedPath}`);
-  console.log(`[sim-test] driver identity: ${formatDriverIdentity(expectedDriverIdentity)}`);
   console.log(`[sim-test] Artifacts: ${artifactDir}`);
 
   backupLocalState();
