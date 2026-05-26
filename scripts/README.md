@@ -50,7 +50,7 @@ GitHub CI uses `.github/workflows/ci.yml` for the default gate and runs script s
 | --- | --- |
 | `scripts/install.sh` | Install the release CLI, driver IPAs, skill, flows, and altsign helper. Use `--build-from-source` to compile locally. |
 | `scripts/release_build.sh` | Build and stage GitHub Release assets under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. |
-| `scripts/benchmark_wda.js --driver-ipa <path>` | Compare ios-use against Appium/WebDriverAgent on a real device; the caller chooses the custom driver IPA and the script verifies its identity after `config`. `--custom-only` skips Appium/WDA. `--custom-simulator` is only valid with `--custom-only` for local Simulator runs. |
+| `scripts/benchmark_wda.js --driver-ipa <path>` | Compare ios-use against Appium/WebDriverAgent on a real device; the caller chooses the custom driver IPA and the script records the copied IPA path plus configured `driverVersion`. `--custom-only` skips Appium/WDA. `--custom-simulator` is only valid with `--custom-only` for local Simulator runs. |
 
 ## Release Artifacts
 
