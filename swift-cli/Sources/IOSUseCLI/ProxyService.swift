@@ -172,6 +172,9 @@ public enum ProxyService {
         guard let state = readState(paths: paths) else {
             throw CLIParseError.invalidValue("PROXY_NOT_RUNNING: no running proxy session")
         }
+        guard state.status == "running" else {
+            throw CLIParseError.invalidValue("PROXY_NOT_RUNNING: no running proxy session")
+        }
         guard state.udid == activeDriver.udid else {
             throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not active driver \(activeDriver.udid). Run `ios-use start \(state.udid)` and `ios-use proxy stop`, or manually disable Wi-Fi proxy.")
         }

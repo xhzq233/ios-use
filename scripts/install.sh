@@ -260,10 +260,11 @@ echo ""
 echo "Next steps:"
 echo "  ios-use devices"
 echo "  ios-use config --udid <udid>"
+echo "  ios-use start <udid>"
 echo "  ios-use activateApp <bundleId>"
 echo "  ios-use dom"
 echo ""
-echo "No session start needed — ios-use auto-creates session on first command."
+echo "Run ios-use stop before switching to another device."
 echo "USB connection required for real devices."
 
 case ":$PATH:" in
