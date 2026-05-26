@@ -95,6 +95,54 @@ final class ProxyServiceTests: XCTestCase {
         }
     }
 
+    func testProxyStopRejectsStoppedStateBeforeClearingDeviceProxy() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try writeDriverLock(udid: "DEVICE-A", paths: paths)
+        let state = ProxySessionState(
+            sessionId: "proxy-stopped",
+            status: "stopped",
+            startedAt: 1,
+            stoppedAt: 2,
+            udid: "DEVICE-A",
+            flowFile: "capture.flow"
+        )
+        try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("proxy stop must not run the clear Wi-Fi proxy flow when state is stopped")
+            return DriverClient(host: "127.0.0.1", port: 1)
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        XCTAssertThrowsError(try ProxyService.stop(paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("PROXY_NOT_RUNNING"))
+        }
+    }
+
+    func testProxyStopRejectsStoppedStateBeforeComparingActiveDriver() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try writeDriverLock(udid: "DEVICE-B", paths: paths)
+        let state = ProxySessionState(
+            sessionId: "proxy-stopped",
+            status: "stopped",
+            startedAt: 1,
+            stoppedAt: 2,
+            udid: "DEVICE-A",
+            flowFile: "capture.flow"
+        )
+        try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
+
+        XCTAssertThrowsError(try ProxyService.stop(paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("PROXY_NOT_RUNNING"))
+            XCTAssertFalse(String(describing: error).contains("running for DEVICE-A"))
+        }
+    }
+
     func testProxyReadUsesLastCaptureWhenStoppedAndAppliesLastLines() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
