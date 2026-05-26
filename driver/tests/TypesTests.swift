@@ -429,6 +429,18 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(elements.map { $0.node.label }, ["Top", "Bottom"])
     }
 
+    func testCleanTree_AlreadySortedChildrenKeepOrder() {
+        let top = FakeRawSnapshot(label: "Top", elementType: .button, frame: CGRect(x: 0, y: 100, width: 100, height: 44))
+        let sameA = FakeRawSnapshot(label: "Same A", elementType: .button, frame: CGRect(x: 200, y: 150, width: 100, height: 44))
+        let sameB = FakeRawSnapshot(label: "Same B", elementType: .button, frame: CGRect(x: 0, y: 150, width: 100, height: 44))
+        let bottom = FakeRawSnapshot(label: "Bottom", elementType: .button, frame: CGRect(x: 0, y: 300, width: 100, height: 44))
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [top, sameA, sameB, bottom])
+
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+
+        XCTAssertEqual(elements.map { $0.node.label }, ["App", "Top", "Same A", "Same B", "Bottom"])
+    }
+
     func testCleanTree_SortsAfterRule3AndRule6() {
         let mergedChild = FakeRawSnapshot(label: "Merged", elementType: .staticText, frame: CGRect(x: 0, y: 300, width: 100, height: 44))
         let mergedParent = FakeRawSnapshot(label: "Merged", elementType: .button, frame: CGRect(x: 0, y: 300, width: 100, height: 44), children: [mergedChild])
