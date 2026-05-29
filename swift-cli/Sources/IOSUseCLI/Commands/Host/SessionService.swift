@@ -41,6 +41,24 @@ public enum SessionService {
         try DriverSessionStore.requireInfo(paths: paths)
     }
 
+    public static func resolveTargetUdid(
+        explicitUdid: String?,
+        paths: IOSUsePaths,
+        missingMessage: String,
+        fallbackUdid: (() throws -> String?)? = nil
+    ) throws -> String {
+        if let explicitUdid, !explicitUdid.isEmpty {
+            return explicitUdid
+        }
+        if let current = read(paths: paths) {
+            return current.udid
+        }
+        if let fallback = try fallbackUdid?(), !fallback.isEmpty {
+            return fallback
+        }
+        throw CLIParseError.invalidValue(missingMessage)
+    }
+
     public static func writeDriverLock(info: Info, paths: IOSUsePaths) throws {
         try DriverSessionStore.write(info: info, paths: paths)
     }

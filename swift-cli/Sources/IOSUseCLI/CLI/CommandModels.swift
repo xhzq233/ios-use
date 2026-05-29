@@ -84,10 +84,10 @@ public struct StartOptions: Equatable, Sendable {
 
 public struct AppInstallOptions: Equatable, Sendable {
     public var ipaPath: String
-    public var udid: String
+    public var udid: String?
     public var verbose: Bool
 
-    public init(ipaPath: String, udid: String, verbose: Bool = false) {
+    public init(ipaPath: String, udid: String? = nil, verbose: Bool = false) {
         self.ipaPath = ipaPath
         self.udid = udid
         self.verbose = verbose
@@ -96,10 +96,10 @@ public struct AppInstallOptions: Equatable, Sendable {
 
 public struct AppUninstallOptions: Equatable, Sendable {
     public var bundleID: String
-    public var udid: String
+    public var udid: String?
     public var verbose: Bool
 
-    public init(bundleID: String, udid: String, verbose: Bool = false) {
+    public init(bundleID: String, udid: String? = nil, verbose: Bool = false) {
         self.bundleID = bundleID
         self.udid = udid
         self.verbose = verbose
@@ -107,11 +107,11 @@ public struct AppUninstallOptions: Equatable, Sendable {
 }
 
 public struct AppsOptions: Equatable, Sendable {
-    public var udid: String
+    public var udid: String?
     public var includeSystem: Bool
     public var json: Bool
 
-    public init(udid: String, includeSystem: Bool = false, json: Bool = false) {
+    public init(udid: String? = nil, includeSystem: Bool = false, json: Bool = false) {
         self.udid = udid
         self.includeSystem = includeSystem
         self.json = json

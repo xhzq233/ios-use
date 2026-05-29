@@ -92,34 +92,37 @@ enum CLIHelp {
             """
         case "install":
             return """
-            Usage: ios-use install <ipa> --udid <udid> [--verbose]
+            Usage: ios-use install <ipa> [--udid <udid>] [--verbose]
 
             Install a signed IPA on a USB real device using AFC and installation_proxy.
+            Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
-              --udid <udid>  Target USB real device UDID
+              --udid <udid>  Target USB real device UDID; overrides active driver.lock
               --verbose      Enable verbose output
 
             """
         case "uninstall":
             return """
-            Usage: ios-use uninstall <bundleId> --udid <udid> [--verbose]
+            Usage: ios-use uninstall <bundleId> [--udid <udid>] [--verbose]
 
             Uninstall an app from a USB real device using installation_proxy.
+            Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
-              --udid <udid>  Target USB real device UDID
+              --udid <udid>  Target USB real device UDID; overrides active driver.lock
               --verbose      Print installation_proxy response frames
 
             """
         case "apps":
             return """
-            Usage: ios-use apps --udid <udid> [--system] [--json]
+            Usage: ios-use apps [--udid <udid>] [--system] [--json]
 
             List apps installed on a USB real device using installation_proxy.
+            Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
-              --udid <udid>  Target USB real device UDID
+              --udid <udid>  Target USB real device UDID; overrides active driver.lock
               --system       Include system apps
               --json         Print JSON
 
@@ -224,9 +227,10 @@ enum CLIHelp {
             Usage: ios-use open <url> [--udid <udid>] [--verbose]
 
             Open a URL on the device using host-side device services.
+            Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
-              --udid <udid>  Target device or Simulator UDID
+              --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
               --verbose      Enable verbose output
 
             """
@@ -254,9 +258,10 @@ enum CLIHelp {
             Usage: ios-use oslog [--udid <udid>] [--pattern <regex>] [--flags <flags>] [--timeout <seconds>] [--name <name>] [--bundle-id <bundleId>] [--clear] [--verbose]
 
             Fetch or clear OSLog output.
+            Fetch defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
-              --udid <udid>          Target device or Simulator UDID
+              --udid <udid>          Target device or Simulator UDID; overrides active driver.lock
               --pattern <regex>      Regex filter
               --flags <flags>        Regex flags: i, m, s
               --timeout <seconds>    Collection or polling timeout

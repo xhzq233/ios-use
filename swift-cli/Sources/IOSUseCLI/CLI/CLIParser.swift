@@ -121,7 +121,7 @@ public enum CLIParser {
                 throw CLIParseError.unexpectedArgument(arg)
             }
         }
-        return AppInstallOptions(ipaPath: ipaPath, udid: try require(udid, option: "--udid"), verbose: verbose)
+        return AppInstallOptions(ipaPath: ipaPath, udid: udid, verbose: verbose)
     }
 
     private static func parseUninstall(_ parser: inout ArgumentParser) throws -> AppUninstallOptions {
@@ -139,7 +139,7 @@ public enum CLIParser {
                 throw CLIParseError.unexpectedArgument(arg)
             }
         }
-        return AppUninstallOptions(bundleID: bundleID, udid: try require(udid, option: "--udid"), verbose: verbose)
+        return AppUninstallOptions(bundleID: bundleID, udid: udid, verbose: verbose)
     }
 
     private static func parseApps(_ parser: inout ArgumentParser) throws -> AppsOptions {
@@ -158,7 +158,7 @@ public enum CLIParser {
                 throw CLIParseError.unexpectedArgument(arg)
             }
         }
-        return AppsOptions(udid: try require(udid, option: "--udid"), includeSystem: includeSystem, json: json)
+        return AppsOptions(udid: udid, includeSystem: includeSystem, json: json)
     }
 
     private static func parseFlow(_ parser: inout ArgumentParser) throws -> FlowOptions {

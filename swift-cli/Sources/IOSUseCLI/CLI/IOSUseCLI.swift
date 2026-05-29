@@ -67,19 +67,19 @@ public struct IOSUseCLI: Sendable {
             }
         case .install(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try AppManagementService.install(options: options))
+                return CLIResult(exitCode: 0, stdout: try AppManagementService.install(options: options, paths: paths))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .uninstall(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try AppManagementService.uninstall(options: options))
+                return CLIResult(exitCode: 0, stdout: try AppManagementService.uninstall(options: options, paths: paths))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .apps(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try AppManagementService.list(options: options))
+                return CLIResult(exitCode: 0, stdout: try AppManagementService.list(options: options, paths: paths))
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
@@ -167,7 +167,7 @@ public struct IOSUseCLI: Sendable {
                 result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
             }
             guard let result else {
-                throw CLIParseError.invalidValue("openURL requires a booted simulator, active driver, or USB real device")
+                throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start <UDID>` first.")
             }
             return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
         } catch {

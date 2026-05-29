@@ -73,14 +73,28 @@ enum OpenURLService {
 
     static func openHostSideIfAvailable(url: String, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult? {
         let validated = try validatedURL(url)
-        if let realUdid = try realDeviceUdid(session: session, paths: paths) {
-            return try openRealDevice(url: validated, udid: realUdid)
+        let activeDriver = SessionService.read(paths: paths)
+        let targetUdid = try SessionService.resolveTargetUdid(
+            explicitUdid: session.udid,
+            paths: paths,
+            missingMessage: "open requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+        )
+        if activeDriver?.udid == targetUdid {
+            if activeDriver?.deviceType == "simulator" {
+                try openSimulator(url: validated, udid: targetUdid)
+                return OpenResult(message: "Opened URL: \(validated)")
+            }
+            return try openRealDevice(url: validated, udid: targetUdid)
         }
-        if let simulatorUdid = try simulatorUdid(session: session, paths: paths) {
-            try openSimulator(url: validated, udid: simulatorUdid)
+        if DeviceService.looksLikeSimulatorUDID(targetUdid) {
+            let bootedSimulators = try DeviceService.listDevices(simulatorOnly: true, paths: paths)
+            guard bootedSimulators.contains(where: { $0.udid == targetUdid }) else {
+                return nil
+            }
+            try openSimulator(url: validated, udid: targetUdid)
             return OpenResult(message: "Opened URL: \(validated)")
         }
-        return nil
+        return try openRealDevice(url: validated, udid: targetUdid)
     }
 
     static func openHostSideIfAvailable(url: String, udid: String?, deviceType: String?, paths: IOSUsePaths) throws -> OpenResult? {
@@ -136,55 +150,4 @@ enum OpenURLService {
         try CoreDeviceURLLauncher().open(url: url, udid: udid)
     }
 
-    // MARK: - Device Resolution
-
-    private static func realDeviceUdid(session: SessionOptions, paths: IOSUsePaths) throws -> String? {
-        if let requested = session.udid {
-            if let current = SessionService.read(paths: paths),
-               current.udid == requested,
-               current.deviceType == "real" {
-                return requested
-            }
-            if (try? DeviceService.isUsbDeviceConnected(udid: requested)) == true {
-                return requested
-            }
-            return nil
-        }
-
-        if let current = SessionService.read(paths: paths) {
-            return current.deviceType == "real" ? current.udid : nil
-        }
-        if DeviceService.looksLikeSimulatorUDID(session.udid ?? "") {
-            return nil
-        }
-        if session.udid != nil {
-            return nil
-        }
-        do {
-            return try DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
-        } catch {
-            return nil
-        }
-    }
-
-    private static func simulatorUdid(session: SessionOptions, paths: IOSUsePaths) throws -> String? {
-        if let requested = session.udid {
-            if let current = SessionService.read(paths: paths),
-               current.udid == requested,
-               current.deviceType == "simulator" {
-                return requested
-            }
-            guard DeviceService.looksLikeSimulatorUDID(requested) else {
-                return nil
-            }
-            let bootedSimulators = try DeviceService.listDevices(simulatorOnly: true, paths: paths)
-            return bootedSimulators.contains { $0.udid == requested } ? requested : nil
-        }
-
-        guard let current = SessionService.read(paths: paths),
-              current.deviceType == "simulator" else {
-            return nil
-        }
-        return current.udid
-    }
 }

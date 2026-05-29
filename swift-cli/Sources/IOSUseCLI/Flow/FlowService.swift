@@ -309,7 +309,7 @@ private struct FlowRunner {
                 paths: paths
             ) ?? OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
             guard let result else {
-                throw CLIParseError.invalidValue("openURL requires a booted simulator, active driver, or USB real device")
+                throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start <UDID>` first.")
             }
             emit("\(result.message)\n")
 
