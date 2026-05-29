@@ -222,10 +222,10 @@ public struct NSLogOptions: Equatable, Sendable {
 }
 
 public enum ProxyCommand: Equatable, Sendable {
-    case configca
-    case start(interfaceName: String?)
+    case configca(markTrusted: Bool)
+    case start(interfaceName: String?, serverOnly: Bool)
     case read(filter: String?, raw: Bool, last: Int?)
-    case stop
+    case stop(serverOnly: Bool)
     case doctor
 
     public var subcommand: String {

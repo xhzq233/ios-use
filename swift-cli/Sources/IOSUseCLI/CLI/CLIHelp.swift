@@ -334,32 +334,43 @@ enum CLIHelp {
             """
         case "configca":
             return """
-            Usage: ios-use proxy configca
+            Usage: ios-use proxy configca [--mark-trusted]
 
             Install and trust the mitmproxy CA on the device.
-
-            Requires an active driver.lock. Run `ios-use start <UDID>` first.
-
-            """
-        case "start":
-            return """
-            Usage: ios-use proxy start [-i <interface>]
-
-            Start mitmdump and configure the device Wi-Fi proxy.
+            If iOS requires manual passcode/trust steps, finish them on the device
+            and then run with --mark-trusted to record manual confirmation.
 
             Requires an active driver.lock. Run `ios-use start <UDID>` first.
 
             Options:
+              --mark-trusted    Record that the current CA was manually trusted
+
+            """
+        case "start":
+            return """
+            Usage: ios-use proxy start [--server] [-i <interface>]
+
+            Start mitmdump and configure the device Wi-Fi proxy.
+            With --server, only start the local mitmdump server and record last capture.
+
+            Requires an active driver.lock unless --server is used.
+
+            Options:
               -i, --interface <name>    Network interface to advertise
+              --server                  Start only the local mitmdump server
 
             """
         case "stop":
             return """
-            Usage: ios-use proxy stop
+            Usage: ios-use proxy stop [--server]
 
             Clear the device Wi-Fi proxy and stop capture.
+            With --server, only stop the local mitmdump server.
 
-            Requires an active driver.lock. Run `ios-use start <UDID>` first.
+            Requires an active driver.lock unless --server is used.
+
+            Options:
+              --server    Stop only the local mitmdump server
 
             """
         case "read":

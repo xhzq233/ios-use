@@ -20,6 +20,10 @@ public struct ProxySessionState: Codable, Equatable, Sendable {
     public var mitmdumpPid: Int32?
     public var mitmdumpPort: Int?
     public var lastCapture: ProxyLastCapture? = nil
+    public var serverStatus: String? = nil
+    public var deviceProxyStatus: String? = nil
+    public var caStatus: String? = nil
+    public var lastError: String? = nil
 }
 
 public struct ProxyLastCapture: Codable, Equatable, Sendable {
@@ -34,6 +38,9 @@ public struct ProxyLastCapture: Codable, Equatable, Sendable {
 
 public enum ProxyService {
     static var mitmdumpReadOverrideForTesting: ((String, Bool, String?) throws -> String)?
+    static var startMitmdumpOverrideForTesting: ((String, IOSUsePaths) throws -> Int32)?
+    static var detectLanInfoOverrideForTesting: ((String?) throws -> ProxySessionState.NetworkInfo)?
+    static var flowDirectoryOverrideForTesting: String?
 
     public static func doctor(paths: IOSUsePaths) -> String {
         var lines = ["", "Proxy Doctor:", ""]
@@ -49,11 +56,21 @@ public enum ProxyService {
         let state = readState(paths: paths)
         let running = state?.status == "running" && isMitmdumpProcess(pid: state?.mitmdumpPid ?? 0, expectedFlowFile: state?.flowFile)
         lines.append(running ? "  ✓ Proxy: running" : "  - Proxy: not running")
+        if let state {
+            lines.append("  - Proxy server status: \(running ? "running" : (state.serverStatus ?? state.status))")
+            lines.append("  - Device proxy status: \(state.deviceProxyStatus ?? (state.status == "running" ? "configured" : "unknown"))")
+            if let caStatus = state.caStatus {
+                lines.append("  - CA status: \(caStatus)")
+            }
+            if let lastError = state.lastError, !lastError.isEmpty {
+                lines.append("  - Last proxy error: \(lastError)")
+            }
+        }
         lines.append("")
         return lines.joined(separator: "\n") + "\n"
     }
 
-    public static func configCA(paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+    public static func configCA(markTrusted: Bool = false, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
         let activeDriver = try SessionService.requireDriverLock(paths: paths)
         let udid = activeDriver.udid
         try ensureMitmproxyCA(paths: paths)
@@ -62,90 +79,71 @@ public enum ProxyService {
         if caStateMatches(udid: udid, fingerprint: fingerprint, paths: paths) {
             return "CA already installed and trusted on device.\n"
         }
+        if markTrusted {
+            try writeCAState(udid: udid, fingerprint: fingerprint, paths: paths)
+            try updateProxyCAStatus(udid: udid, caInstalled: true, caStatus: "trusted", lastError: nil, paths: paths)
+            return "CA trust marked as manually confirmed on device.\n"
+        }
         _ = try withRecoveredDriver(paths: paths) { driver in
             try driver.proxyCAPush(caBase64: base64Body(fromPEM: pem))
         }
-        let flowOutput = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: ""), paths: paths, outputSink: outputSink)
-
-        let existingState = readState(paths: paths)
-        var state = existingState ?? ProxySessionState(
-            sessionId: "proxy-\(nowMs())",
-            status: "stopped",
-            startedAt: nowMs(),
-            udid: udid,
-            flowFile: ""
-        )
-        if existingState?.status != "running" || existingState?.udid == udid {
-            state.udid = udid
-            state.caInstalled = true
-            try writeState(state, paths: paths)
+        do {
+            let flowOutput = try FlowService.run(file: flowPath("proxy_configca.yaml", paths: paths), options: FlowOptions(file: ""), paths: paths, outputSink: outputSink)
+            try writeCAState(udid: udid, fingerprint: fingerprint, paths: paths)
+            try updateProxyCAStatus(udid: udid, caInstalled: true, caStatus: "trusted", lastError: nil, paths: paths)
+            return (outputSink == nil ? flowOutput : "") + "CA installed and trusted on device.\n"
+        } catch let signal as CLIExitSignal {
+            try? updateProxyCAStatus(udid: udid, caInstalled: false, caStatus: "pendingManualTrust", lastError: signal.message, paths: paths)
+            throw signal
+        } catch {
+            try? updateProxyCAStatus(udid: udid, caInstalled: false, caStatus: "pendingManualTrust", lastError: String(describing: error), paths: paths)
+            return """
+            CA trust requires manual confirmation.
+            Complete the CA profile install/trust steps on the device, then run:
+              ios-use proxy configca --mark-trusted
+            Automation stopped at: \(error)
+            """
         }
-        try writeCAState(udid: udid, fingerprint: fingerprint, paths: paths)
-        return (outputSink == nil ? flowOutput : "") + "CA installed and trusted on device.\n"
     }
 
-    public static func start(interfaceName: String?, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
+    public static func start(interfaceName: String?, serverOnly: Bool = false, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
         let interruptMonitor = InterruptMonitor()
         interruptMonitor.start()
         defer { interruptMonitor.stop() }
-        let activeDriver = try SessionService.requireDriverLock(paths: paths)
-        let udid = activeDriver.udid
-        if let state = readState(paths: paths), state.status == "running", isMitmdumpProcess(pid: state.mitmdumpPid ?? 0, expectedFlowFile: state.flowFile) {
-            if state.udid != udid {
+        let activeDriver = serverOnly ? try? SessionService.requireDriverLock(paths: paths) : try SessionService.requireDriverLock(paths: paths)
+        let udid = activeDriver?.udid ?? ""
+
+        if var state = readState(paths: paths), isRunningProxyServer(state) {
+            if serverOnly {
+                return "Proxy server already running. Traffic: device -> \(state.network?.macLanIp ?? "Mac LAN IP"):\(state.mitmdumpPort ?? IOSUseProtocol.proxyMitmdumpPort) -> mitmdump\nCapture: \(state.flowFile)\nRead with: ios-use proxy read\n"
+            }
+            if !state.udid.isEmpty && state.udid != udid {
                 throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not active driver \(udid). Run `ios-use start \(state.udid)` and `ios-use proxy stop`, or manually disable Wi-Fi proxy.")
             }
-            throw CLIParseError.invalidValue("Proxy already running. Run `proxy stop` first.")
+            if state.deviceProxyStatus == "configured" || state.deviceProxyStatus == nil {
+                throw CLIParseError.invalidValue("Proxy already running. Run `proxy stop` first.")
+            }
+            let wifi = try interfaceName == nil ? (state.network ?? detectLanInfo(interfaceName: nil)) : detectLanInfo(interfaceName: interfaceName)
+            let caReady = currentCAReady(udid: udid, paths: paths) ?? (state.caInstalled ?? false)
+            state.udid = udid
+            state.network = wifi
+            state.caInstalled = caReady
+            state.caStatus = caReady ? "trusted" : "unknown"
+            state.deviceProxyStatus = "pending"
+            state.serverStatus = "running"
+            state.lastCapture = state.lastCapture ?? lastCapture(from: state)
+            try writeState(state, paths: paths)
+            return try configureDeviceProxy(state: state, wifi: wifi, caReady: caReady, paths: paths, outputSink: outputSink, interruptMonitor: interruptMonitor)
         }
 
         try ensureMitmproxyCA(paths: paths)
         let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
-        let caReady = caStateMatches(udid: udid, fingerprint: fingerprintPEM(pem), paths: paths)
+        let caReady = !udid.isEmpty && caStateMatches(udid: udid, fingerprint: fingerprintPEM(pem), paths: paths)
         let wifi = try detectLanInfo(interfaceName: interfaceName)
         let flowFile = "\(paths.artifacts)/proxy-\(isoStamp()).mitm"
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
 
         let pid = try startMitmdump(flowFile: flowFile, paths: paths)
-        var startingState = ProxySessionState(
-            sessionId: "proxy-\(nowMs())",
-            status: "starting",
-            startedAt: nowMs(),
-            udid: udid,
-            flowFile: flowFile,
-            caInstalled: caReady,
-            network: ProxySessionState.NetworkInfo(interface: wifi.interface, macLanIp: wifi.macLanIp),
-            mitmdumpPid: pid,
-            mitmdumpPort: IOSUseProtocol.proxyMitmdumpPort
-        )
-        startingState.lastCapture = lastCapture(from: startingState)
-        try writeState(startingState, paths: paths)
-        var startupCompleted = false
-        defer {
-            if !startupCompleted {
-                killMitmdump(pid: pid, expectedFlowFile: flowFile)
-                var stoppedState = startingState
-                stoppedState.status = "stopped"
-                stoppedState.stoppedAt = nowMs()
-                stoppedState.mitmdumpPid = nil
-                stoppedState.lastCapture = lastCapture(from: stoppedState)
-                try? writeState(stoppedState, paths: paths)
-            }
-        }
-        var pendingFlowOutput = ""
-        do {
-            try interruptMonitor.throwIfInterrupted()
-            let flowOutput = try FlowService.run(
-                file: flowPath("proxy_set_wifi_proxy.yaml", paths: paths),
-                options: FlowOptions(file: "", externalVars: ["server": wifi.macLanIp, "port": String(IOSUseProtocol.proxyMitmdumpPort)]),
-                paths: paths,
-                outputSink: outputSink
-            )
-            if outputSink == nil {
-                pendingFlowOutput = flowOutput
-            }
-        } catch {
-            throw error
-        }
-
         var state = ProxySessionState(
             sessionId: "proxy-\(nowMs())",
             status: "running",
@@ -157,25 +155,35 @@ public enum ProxyService {
             mitmdumpPid: pid,
             mitmdumpPort: IOSUseProtocol.proxyMitmdumpPort
         )
+        state.serverStatus = "running"
+        state.deviceProxyStatus = serverOnly ? "unknown" : "pending"
+        state.caStatus = caReady ? "trusted" : "unknown"
         state.lastCapture = lastCapture(from: state)
-        try writeState(state, paths: paths)
-        startupCompleted = true
-        var output = "Proxy started. Traffic: device -> \(wifi.macLanIp):\(IOSUseProtocol.proxyMitmdumpPort) -> mitmdump\nCapture: \(flowFile)\nView with: mitmweb -r \(flowFile)\nRead with: ios-use proxy read\n"
-        if !caReady {
-            output = "CA trust record not found. HTTP capture can still work; HTTPS decryption requires the CA to be installed and trusted.\n" + output
+        do {
+            try writeState(state, paths: paths)
+        } catch {
+            killMitmdump(pid: pid, expectedFlowFile: flowFile)
+            throw error
         }
-        return pendingFlowOutput + output
+
+        if serverOnly {
+            return serverStartedOutput(state: state, wifi: wifi, configuredDevice: false, caReady: caReady)
+        }
+        return try configureDeviceProxy(state: state, wifi: wifi, caReady: caReady, paths: paths, outputSink: outputSink, interruptMonitor: interruptMonitor)
     }
 
-    public static func stop(paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
-        let activeDriver = try SessionService.requireDriverLock(paths: paths)
+    public static func stop(serverOnly: Bool = false, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
         guard let state = readState(paths: paths) else {
             throw CLIParseError.invalidValue("PROXY_NOT_RUNNING: no running proxy session")
         }
         guard state.status == "running" else {
             throw CLIParseError.invalidValue("PROXY_NOT_RUNNING: no running proxy session")
         }
-        guard state.udid == activeDriver.udid else {
+        if serverOnly {
+            return try stopProxyServerOnly(state: state, paths: paths)
+        }
+        let activeDriver = try SessionService.requireDriverLock(paths: paths)
+        guard state.udid.isEmpty || state.udid == activeDriver.udid else {
             throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not active driver \(activeDriver.udid). Run `ios-use start \(state.udid)` and `ios-use proxy stop`, or manually disable Wi-Fi proxy.")
         }
         var pendingFlowOutput = ""
@@ -185,6 +193,11 @@ public enum ProxyService {
                 pendingFlowOutput = flowOutput
             }
         } catch {
+            var failedState = state
+            failedState.deviceProxyStatus = "clearFailed"
+            failedState.lastError = String(describing: error)
+            failedState.lastCapture = failedState.lastCapture ?? lastCapture(from: failedState)
+            try? writeState(failedState, paths: paths)
             throw CLIParseError.invalidValue("Unable to clear device Wi-Fi proxy. Manually disable Wi-Fi proxy: Settings -> Wi-Fi -> current network (i) -> Configure Proxy -> Off, then retry `ios-use proxy stop`.")
         }
         killMitmdump(pid: state.mitmdumpPid, expectedFlowFile: state.flowFile)
@@ -192,13 +205,16 @@ public enum ProxyService {
         stoppedState.status = "stopped"
         stoppedState.stoppedAt = nowMs()
         stoppedState.mitmdumpPid = nil
+        stoppedState.serverStatus = "stopped"
+        stoppedState.deviceProxyStatus = "unknown"
+        stoppedState.lastError = nil
         stoppedState.lastCapture = lastCapture(from: stoppedState)
         try writeState(stoppedState, paths: paths)
         return pendingFlowOutput + "Proxy stopped.\n"
     }
 
     public static func read(filter: String?, raw: Bool, last: Int?, paths: IOSUsePaths) throws -> String {
-        guard let state = readState(paths: paths), let capture = state.lastCapture ?? lastCapture(from: state), !capture.flowFile.isEmpty else {
+        guard let capture = readState(paths: paths)?.lastCapture, !capture.flowFile.isEmpty else {
             throw CLIParseError.invalidValue("No proxy capture found. Run `ios-use proxy start` first.")
         }
         guard FileManager.default.fileExists(atPath: capture.flowFile) else {
@@ -225,6 +241,114 @@ public enum ProxyService {
         try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true, attributes: nil)
         let data = try JSONEncoder().encode(state)
         try data.write(to: URL(fileURLWithPath: statePath(paths: paths)), options: .atomic)
+    }
+
+    private static func updateProxyCAStatus(udid: String, caInstalled: Bool, caStatus: String, lastError: String?, paths: IOSUsePaths) throws {
+        let existingState = readState(paths: paths)
+        var state = existingState ?? ProxySessionState(
+            sessionId: "proxy-\(nowMs())",
+            status: "stopped",
+            startedAt: nowMs(),
+            udid: udid,
+            flowFile: ""
+        )
+        guard existingState?.status != "running" || existingState?.udid == udid else {
+            return
+        }
+        state.udid = udid
+        state.caInstalled = caInstalled
+        state.caStatus = caStatus
+        state.lastError = lastError
+        try writeState(state, paths: paths)
+    }
+
+    private static func currentCAReady(udid: String, paths: IOSUsePaths) -> Bool? {
+        guard !udid.isEmpty,
+              let pem = try? String(contentsOfFile: caPath(paths: paths), encoding: .utf8) else {
+            return nil
+        }
+        return caStateMatches(udid: udid, fingerprint: fingerprintPEM(pem), paths: paths)
+    }
+
+    private static func isRunningProxyServer(_ state: ProxySessionState) -> Bool {
+        state.status == "running" && isMitmdumpProcess(pid: state.mitmdumpPid ?? 0, expectedFlowFile: state.flowFile)
+    }
+
+    private static func configureDeviceProxy(
+        state: ProxySessionState,
+        wifi: ProxySessionState.NetworkInfo,
+        caReady: Bool,
+        paths: IOSUsePaths,
+        outputSink: FlowService.OutputSink?,
+        interruptMonitor: InterruptMonitor
+    ) throws -> String {
+        var pendingState = state
+        pendingState.serverStatus = "running"
+        pendingState.deviceProxyStatus = "pending"
+        pendingState.lastError = nil
+        pendingState.lastCapture = pendingState.lastCapture ?? lastCapture(from: pendingState)
+        try writeState(pendingState, paths: paths)
+
+        var pendingFlowOutput = ""
+        do {
+            try interruptMonitor.throwIfInterrupted()
+            let flowOutput = try FlowService.run(
+                file: flowPath("proxy_set_wifi_proxy.yaml", paths: paths),
+                options: FlowOptions(file: "", externalVars: ["server": wifi.macLanIp, "port": String(pendingState.mitmdumpPort ?? IOSUseProtocol.proxyMitmdumpPort)]),
+                paths: paths,
+                outputSink: outputSink
+            )
+            if outputSink == nil {
+                pendingFlowOutput = flowOutput
+            }
+        } catch let signal as CLIExitSignal {
+            var failedState = pendingState
+            failedState.lastError = signal.message
+            failedState.lastCapture = failedState.lastCapture ?? lastCapture(from: failedState)
+            try? writeState(failedState, paths: paths)
+            throw signal
+        } catch {
+            var failedState = pendingState
+            failedState.lastError = String(describing: error)
+            failedState.lastCapture = failedState.lastCapture ?? lastCapture(from: failedState)
+            try? writeState(failedState, paths: paths)
+            throw CLIParseError.invalidValue("Proxy server is running at \(wifi.macLanIp):\(pendingState.mitmdumpPort ?? IOSUseProtocol.proxyMitmdumpPort), but device Wi-Fi proxy automation failed: \(error). Capture: \(pendingState.flowFile). Read with `ios-use proxy read`; retry device setup with `ios-use proxy start` or configure Wi-Fi proxy manually.")
+        }
+
+        var configuredState = pendingState
+        configuredState.deviceProxyStatus = "configured"
+        configuredState.lastError = nil
+        configuredState.lastCapture = configuredState.lastCapture ?? lastCapture(from: configuredState)
+        try writeState(configuredState, paths: paths)
+        return pendingFlowOutput + serverStartedOutput(state: configuredState, wifi: wifi, configuredDevice: true, caReady: caReady)
+    }
+
+    private static func serverStartedOutput(state: ProxySessionState, wifi: ProxySessionState.NetworkInfo, configuredDevice: Bool, caReady: Bool) -> String {
+        let port = state.mitmdumpPort ?? IOSUseProtocol.proxyMitmdumpPort
+        var output = configuredDevice
+            ? "Proxy started. Traffic: device -> \(wifi.macLanIp):\(port) -> mitmdump\n"
+            : "Proxy server started. Device Wi-Fi proxy was not configured.\nTraffic: device -> \(wifi.macLanIp):\(port) -> mitmdump\n"
+        output += "Capture: \(state.flowFile)\nView with: mitmweb -r \(state.flowFile)\nRead with: ios-use proxy read\n"
+        if !configuredDevice {
+            output += "Configure device Wi-Fi proxy manually or run: ios-use proxy start\n"
+        }
+        if !caReady {
+            output = "CA trust record not found. HTTP capture can still work; HTTPS decryption requires the CA to be installed and trusted.\n" + output
+        }
+        return output
+    }
+
+    private static func stopProxyServerOnly(state: ProxySessionState, paths: IOSUsePaths) throws -> String {
+        killMitmdump(pid: state.mitmdumpPid, expectedFlowFile: state.flowFile)
+        var stoppedState = state
+        stoppedState.status = "stopped"
+        stoppedState.stoppedAt = nowMs()
+        stoppedState.mitmdumpPid = nil
+        stoppedState.serverStatus = "stopped"
+        stoppedState.lastError = nil
+        stoppedState.lastCapture = lastCapture(from: stoppedState)
+        try writeState(stoppedState, paths: paths)
+        return "Proxy server stopped. Device Wi-Fi proxy was not changed.\n"
     }
 
     private static func lastCapture(from state: ProxySessionState) -> ProxyLastCapture? {
@@ -313,6 +437,14 @@ public enum ProxyService {
     }
 
     private static func startMitmdump(flowFile: String, paths: IOSUsePaths) throws -> Int32 {
+        if let startMitmdumpOverrideForTesting {
+            return try startMitmdumpOverrideForTesting(flowFile, paths)
+        }
+        let port = IOSUseProtocol.proxyMitmdumpPort
+        let existingOwners = listeningPortOwners(port: port)
+        if !existingOwners.isEmpty {
+            throw CLIParseError.invalidValue("Proxy port \(port) is already in use by \(portOwnerDescription(existingOwners)). Stop that process and retry `ios-use proxy start`.")
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = mitmdumpStartArguments(flowFile: flowFile, paths: paths)
@@ -320,12 +452,14 @@ public enum ProxyService {
         process.standardError = FileHandle.nullDevice
         try process.run()
         do {
-            try waitForPort(IOSUseProtocol.proxyMitmdumpPort)
+            try waitForPort(port)
             guard processAlive(process.processIdentifier),
                   isMitmdumpProcess(pid: process.processIdentifier, expectedFlowFile: flowFile),
-                  processOwnsListeningPort(pid: process.processIdentifier, port: IOSUseProtocol.proxyMitmdumpPort) else {
+                  processOwnsListeningPort(pid: process.processIdentifier, port: port) else {
+                let owners = listeningPortOwners(port: port).filter { $0 != process.processIdentifier }
                 process.terminate()
-                throw CLIParseError.invalidValue("mitmdump did not start correctly on port \(IOSUseProtocol.proxyMitmdumpPort)")
+                let ownerSuffix = owners.isEmpty ? "" : " Current owner: \(portOwnerDescription(owners))."
+                throw CLIParseError.invalidValue("mitmdump did not start correctly on port \(port).\(ownerSuffix)")
             }
             return process.processIdentifier
         } catch {
@@ -380,6 +514,9 @@ public enum ProxyService {
     }
 
     private static func detectLanInfo(interfaceName: String?) throws -> ProxySessionState.NetworkInfo {
+        if let detectLanInfoOverrideForTesting {
+            return try detectLanInfoOverrideForTesting(interfaceName)
+        }
         let iface = try interfaceName ?? wifiInterface()
         let output = try Shell.run("ifconfig", arguments: [iface])
         guard output.contains("status: active"),
@@ -414,9 +551,25 @@ public enum ProxyService {
     }
 
     private static func flowPath(_ name: String, paths: IOSUsePaths) -> String {
-        let userFlow = "\(paths.root)/flows/\(name)"
-        if FileManager.default.fileExists(atPath: userFlow) { return userFlow }
-        return "\(FileManager.default.currentDirectoryPath)/flows/\(name)"
+        for directory in flowDirectories(paths: paths) {
+            let candidate = "\(directory)/\(name)"
+            if FileManager.default.fileExists(atPath: candidate) { return candidate }
+        }
+        return "\(paths.root)/flows/\(name)"
+    }
+
+    private static func flowDirectories(paths: IOSUsePaths) -> [String] {
+        var directories: [String] = []
+        if let flowDirectoryOverrideForTesting {
+            directories.append(flowDirectoryOverrideForTesting)
+        }
+        if let executableDirectory = Bundle.main.executableURL?.deletingLastPathComponent().path {
+            directories.append("\(executableDirectory)/flows")
+        }
+        directories.append("\(paths.root)/flows")
+        directories.append("\(FileManager.default.currentDirectoryPath)/flows")
+        var seen = Set<String>()
+        return directories.filter { seen.insert($0).inserted }
     }
 
     private static func base64Body(fromPEM pem: String) -> String {
@@ -469,6 +622,33 @@ public enum ProxyService {
             return true
         }
         return output.split(separator: "\n").contains("p\(pid)")
+    }
+
+    static func listeningPortOwnersForTesting(port: Int) -> [Int32] {
+        listeningPortOwners(port: port)
+    }
+
+    private static func listeningPortOwners(port: Int) -> [Int32] {
+        guard let output = try? Shell.run("lsof", arguments: ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-Fp"]) else {
+            return []
+        }
+        var seen = Set<Int32>()
+        var owners: [Int32] = []
+        for line in output.split(separator: "\n") {
+            guard line.first == "p", let pid = Int32(line.dropFirst()), !seen.contains(pid) else { continue }
+            seen.insert(pid)
+            owners.append(pid)
+        }
+        return owners
+    }
+
+    private static func portOwnerDescription(_ owners: [Int32]) -> String {
+        owners.map { pid in
+            if let command = processCommand(pid: pid), !command.isEmpty {
+                return "PID \(pid) (\(command))"
+            }
+            return "PID \(pid)"
+        }.joined(separator: ", ")
     }
 
     private static func processCommand(pid: Int32) -> String? {

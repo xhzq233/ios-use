@@ -40,10 +40,8 @@ steps:
     label: 关闭
     comment: "选择关闭代理"
 
-  - action: waitFor
-    label: 保存
-    timeout: 3
-
   - action: tap
-    label: 保存
-    comment: "保存配置"
+    label: 配置代理
+    traits: NavigationBar
+    offsetRatio: "0.88,0.41"
+    comment: "点击右上角确认按钮"
