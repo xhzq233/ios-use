@@ -9,6 +9,10 @@ final class ProxyServiceTests: XCTestCase {
 
     override func tearDown() {
         ProxyService.mitmdumpReadOverrideForTesting = nil
+        ProxyService.startMitmdumpOverrideForTesting = nil
+        ProxyService.detectLanInfoOverrideForTesting = nil
+        ProxyService.flowDirectoryOverrideForTesting = nil
+        Shell.runOverrideForTesting = nil
         super.tearDown()
     }
 
@@ -44,6 +48,75 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertThrowsError(try ProxyService.start(interfaceName: nil, paths: paths)) { error in
             XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
         }
+    }
+
+    func testProxyStartServerOnlyDoesNotRequireDriverLockAndWritesLastCapture() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/mitmproxy", withIntermediateDirectories: true)
+        try "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n".write(
+            toFile: "\(root)/mitmproxy/mitmproxy-ca-cert.pem",
+            atomically: true,
+            encoding: .utf8
+        )
+        ProxyService.detectLanInfoOverrideForTesting = { interfaceName in
+            XCTAssertNil(interfaceName)
+            return ProxySessionState.NetworkInfo(interface: "en0", macLanIp: "192.168.1.10")
+        }
+        ProxyService.startMitmdumpOverrideForTesting = { flowFile, _ in
+            XCTAssertTrue(flowFile.hasPrefix("\(root)/artifacts/proxy-"))
+            return 321
+        }
+
+        let output = try ProxyService.start(interfaceName: nil, serverOnly: true, paths: paths)
+
+        XCTAssertTrue(output.contains("Proxy server started"))
+        XCTAssertTrue(output.contains("Device Wi-Fi proxy was not configured"))
+        let state = try XCTUnwrap(ProxyService.readState(paths: paths))
+        XCTAssertEqual(state.status, "running")
+        XCTAssertEqual(state.serverStatus, "running")
+        XCTAssertEqual(state.deviceProxyStatus, "unknown")
+        XCTAssertEqual(state.udid, "")
+        XCTAssertEqual(state.mitmdumpPid, 321)
+        XCTAssertEqual(state.mitmdumpPort, IOSUseProtocol.proxyMitmdumpPort)
+        XCTAssertEqual(state.lastCapture?.flowFile, state.flowFile)
+    }
+
+    func testProxyStartPrefersExecutableFlowDirectoryOverHomeCopy() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let preferredFlowDirectory = "\(root)/preferred-flows"
+        try FileManager.default.createDirectory(atPath: "\(root)/mitmproxy", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(root)/flows", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: preferredFlowDirectory, withIntermediateDirectories: true)
+        try "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n".write(
+            toFile: "\(root)/mitmproxy/mitmproxy-ca-cert.pem",
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        name: stale proxy flow
+        steps:
+          - action: unknown
+        """.write(toFile: "\(root)/flows/proxy_set_wifi_proxy.yaml", atomically: true, encoding: .utf8)
+        try """
+        name: preferred proxy flow
+        steps:
+          - action: sleep
+            ms: 1
+        """.write(toFile: "\(preferredFlowDirectory)/proxy_set_wifi_proxy.yaml", atomically: true, encoding: .utf8)
+        try writeDriverLock(udid: "DEVICE-A", paths: paths)
+        ProxyService.flowDirectoryOverrideForTesting = preferredFlowDirectory
+        ProxyService.detectLanInfoOverrideForTesting = { _ in
+            ProxySessionState.NetworkInfo(interface: "en0", macLanIp: "192.168.1.10")
+        }
+        ProxyService.startMitmdumpOverrideForTesting = { _, _ in 321 }
+
+        let output = try ProxyService.start(interfaceName: nil, paths: paths)
+
+        XCTAssertTrue(output.contains("Proxy started"))
+        let state = try XCTUnwrap(ProxyService.readState(paths: paths))
+        XCTAssertEqual(state.deviceProxyStatus, "configured")
     }
 
     func testProxyConfigCAWithoutDriverLockFailsBeforeCAWork() throws {
@@ -143,6 +216,44 @@ final class ProxyServiceTests: XCTestCase {
         }
     }
 
+    func testProxyStopServerOnlyDoesNotRequireDriverLockAndKeepsLastCapture() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let flowFile = "\(root)/artifacts/proxy-test.mitm"
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(root)/artifacts", withIntermediateDirectories: true)
+        try Data().write(to: URL(fileURLWithPath: flowFile))
+        var state = ProxySessionState(
+            sessionId: "proxy-running",
+            status: "running",
+            startedAt: 1,
+            udid: "",
+            flowFile: flowFile,
+            mitmdumpPid: nil,
+            mitmdumpPort: IOSUseProtocol.proxyMitmdumpPort
+        )
+        state.serverStatus = "running"
+        state.deviceProxyStatus = "unknown"
+        state.lastCapture = ProxyLastCapture(
+            flowFile: flowFile,
+            udid: "",
+            startedAt: 1,
+            stoppedAt: nil,
+            status: "running",
+            mitmdumpPid: nil,
+            network: nil
+        )
+        try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
+
+        let output = try ProxyService.stop(serverOnly: true, paths: paths)
+
+        XCTAssertTrue(output.contains("Device Wi-Fi proxy was not changed"))
+        let stopped = try XCTUnwrap(ProxyService.readState(paths: paths))
+        XCTAssertEqual(stopped.status, "stopped")
+        XCTAssertEqual(stopped.serverStatus, "stopped")
+        XCTAssertEqual(stopped.lastCapture?.flowFile, flowFile)
+    }
+
     func testProxyReadUsesLastCaptureWhenStoppedAndAppliesLastLines() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -184,6 +295,32 @@ final class ProxyServiceTests: XCTestCase {
     func testProxyReadFailsWhenNoLastCaptureExists() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+
+        XCTAssertThrowsError(try ProxyService.read(filter: nil, raw: false, last: nil, paths: paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("ios-use proxy start"))
+        }
+    }
+
+    func testProxyReadDoesNotInferCaptureFromSessionFlowFile() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let flowFile = "\(root)/artifacts/proxy-test.mitm"
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: "\(root)/artifacts", withIntermediateDirectories: true)
+        try Data().write(to: URL(fileURLWithPath: flowFile))
+        let state = ProxySessionState(
+            sessionId: "proxy-legacy",
+            status: "stopped",
+            startedAt: 1,
+            stoppedAt: 2,
+            udid: "DEVICE-A",
+            flowFile: flowFile
+        )
+        try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
+        ProxyService.mitmdumpReadOverrideForTesting = { _, _, _ in
+            XCTFail("proxy read must only use explicit lastCapture")
+            return ""
+        }
 
         XCTAssertThrowsError(try ProxyService.read(filter: nil, raw: false, last: nil, paths: paths)) { error in
             XCTAssertTrue(String(describing: error).contains("ios-use proxy start"))
@@ -243,6 +380,16 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertTrue(arguments.contains("save_stream_file=\(flowFile)"))
     }
 
+    func testProxyPortOwnersParseLsofOutput() throws {
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            XCTAssertEqual(executable, "lsof")
+            XCTAssertEqual(arguments, ["-nP", "-iTCP:\(IOSUseProtocol.proxyMitmdumpPort)", "-sTCP:LISTEN", "-Fp"])
+            return "p123\np456\np123\n"
+        }
+
+        XCTAssertEqual(ProxyService.listeningPortOwnersForTesting(port: IOSUseProtocol.proxyMitmdumpPort), [123, 456])
+    }
+
     func testConfigCASkipsInstallFlowWhenTrustRecordMatches() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -262,6 +409,24 @@ final class ProxyServiceTests: XCTestCase {
         let output = try ProxyService.configCA(paths: paths)
 
         XCTAssertEqual(output, "CA already installed and trusted on device.\n")
+    }
+
+    func testConfigCAMarkTrustedWritesTrustRecordWithoutInstallFlow() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let pem = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n"
+        try FileManager.default.createDirectory(atPath: "\(root)/mitmproxy", withIntermediateDirectories: true)
+        try pem.write(toFile: "\(root)/mitmproxy/mitmproxy-ca-cert.pem", atomically: true, encoding: .utf8)
+        try writeDriverLock(udid: "DEVICE-1", paths: paths)
+
+        let output = try ProxyService.configCA(markTrusted: true, paths: paths)
+
+        XCTAssertEqual(output, "CA trust marked as manually confirmed on device.\n")
+        let secondOutput = try ProxyService.configCA(paths: paths)
+        XCTAssertEqual(secondOutput, "CA already installed and trusted on device.\n")
+        let state = try XCTUnwrap(ProxyService.readState(paths: paths))
+        XCTAssertEqual(state.caInstalled, true)
+        XCTAssertEqual(state.caStatus, "trusted")
     }
 
     private func temporaryRoot() throws -> String {

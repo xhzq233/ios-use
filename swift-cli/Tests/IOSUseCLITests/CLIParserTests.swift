@@ -138,17 +138,27 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["proxy", "start", "--interface=en0"]),
-            .proxy(.start(interfaceName: "en0"))
+            .proxy(.start(interfaceName: "en0", serverOnly: false))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["proxy", "start", "-i", "en1"]),
-            .proxy(.start(interfaceName: "en1"))
+            .proxy(.start(interfaceName: "en1", serverOnly: false))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["proxy", "start", "--server", "-i", "en1"]),
+            .proxy(.start(interfaceName: "en1", serverOnly: true))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["proxy", "configca"]),
-            .proxy(.configca)
+            .proxy(.configca(markTrusted: false))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["proxy", "configca", "--mark-trusted"]),
+            .proxy(.configca(markTrusted: true))
         )
 
         XCTAssertEqual(
@@ -158,7 +168,12 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["proxy", "stop"]),
-            .proxy(.stop)
+            .proxy(.stop(serverOnly: false))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["proxy", "stop", "--server"]),
+            .proxy(.stop(serverOnly: true))
         )
 
         XCTAssertEqual(

@@ -121,17 +121,17 @@ public struct IOSUseCLI: Sendable {
             }
         case .proxy(.doctor):
             return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
-        case .proxy(.configca):
+        case .proxy(.configca(let markTrusted)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(markTrusted: markTrusted, paths: paths, outputSink: outputSink))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
-        case .proxy(.start(let interfaceName)):
+        case .proxy(.start(let interfaceName, let serverOnly)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.start(interfaceName: interfaceName, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.start(interfaceName: interfaceName, serverOnly: serverOnly, paths: paths, outputSink: outputSink))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -143,9 +143,9 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
-        case .proxy(.stop):
+        case .proxy(.stop(let serverOnly)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(serverOnly: serverOnly, paths: paths, outputSink: outputSink))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {

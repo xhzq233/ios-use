@@ -17,7 +17,7 @@ ios-use proxy start
 # 4. 停止抓包
 ios-use proxy stop
 
-# 5. 查看抓包数据
+# 5. 查看抓包数据（读取最近一次 proxy start 写入的 last capture）
 ios-use proxy read [--filter <表达式>] [--raw] [--last N]
 ```
 
@@ -31,7 +31,7 @@ ios-use proxy read [--filter <表达式>] [--raw] [--last N]
 ℹ Read with: ios-use proxy read
 ```
 
-文件保存在 `~/.ios-use/artifacts/`，命名格式 `proxy-<ISO-timestamp>.mitm`。`proxy stop` 后仍可继续用 `ios-use proxy read` 读取最近一次抓包。
+文件保存在 `~/.ios-use/artifacts/`，命名格式 `proxy-<ISO-timestamp>.mitm`。`proxy start` 会把本次文件写为 last capture；`proxy stop` 不会删除 last capture，stop 后仍可继续用 `ios-use proxy read` 读取。
 
 ## 3. 查看抓包
 
@@ -52,7 +52,7 @@ ios-use proxy read --filter "~m POST"
 ios-use proxy read --last 20
 ```
 
-`--last` 必须大于 0。没有最近一次抓包或文件已删除时，先运行 `ios-use proxy start`。
+`proxy read` 只读取最近一次 `proxy start` 记录的 last capture。`--last` 必须大于 0。没有 last capture 或文件已删除时，先运行 `ios-use proxy start`。
 
 ### 3.2 需要 mitmproxy 工具链时
 
@@ -68,15 +68,16 @@ mitmdump -n -r file.mitm --set hardump=output.har
 
 | 命令 | 说明 |
 |------|------|
-| `proxy configca` | 安装并信任 mitmproxy CA；若当前 CA 已安装并信任，会直接跳过 |
-| `proxy start [-i <interface>]` | 启动抓包 + 配置设备 Wi-Fi 代理 |
-| `proxy read [--filter <expression>] [--raw] [--last N]` | 读取最近一次抓包 |
-| `proxy stop` | 清除设备 Wi-Fi 代理 + 停止抓包 |
+| `proxy configca [--mark-trusted]` | 安装并信任 mitmproxy CA；若需要设备密码或手动信任证书，完成后用 `--mark-trusted` 记录人工确认 |
+| `proxy start [--server] [-i <interface>]` | 默认启动抓包 + 配置设备 Wi-Fi 代理，并记录 last capture；`--server` 只启动本机 mitmdump |
+| `proxy read [--filter <expression>] [--raw] [--last N]` | 读取最近一次 `proxy start` 记录的 last capture，`proxy stop` 后仍可读 |
+| `proxy stop [--server]` | 默认清除设备 Wi-Fi 代理 + 停止抓包；`--server` 只停止本机 mitmdump |
 | `proxy doctor` | 诊断 proxy 环境 |
 
 ### proxy start 选项
 
 - `-i, --interface <iface>` — 指定 Mac 网卡（默认自动选 Wi-Fi）
+- `--server` — 只启动本机 mitmdump server，不配置设备 Wi-Fi 代理；后续仍可用 `proxy read` 读取 last capture
 
 ### proxy start 行为
 
@@ -89,7 +90,9 @@ mitmdump -n -r file.mitm --set hardump=output.har
 
 ### proxy stop 行为
 
-必须先清除设备代理再停 mitmdump，否则设备断网。顺序：
+默认必须先清除设备代理再停 mitmdump，否则设备断网。顺序：
 
 1. 自动关闭设备 Wi-Fi 代理
 2. 停止本地抓包进程
+
+`proxy stop --server` 只停止本机 mitmdump，不清设备 Wi-Fi 代理；只有明确知道设备代理已手动关闭或只想保留设备设置时才使用。

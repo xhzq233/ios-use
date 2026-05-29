@@ -234,21 +234,25 @@ public enum CLIParser {
         let subcommand = try parser.requiredPositional("subcommand")
         switch subcommand {
         case "configca":
+            var markTrusted = false
             while let arg = parser.consume() {
                 switch arg {
+                case "--mark-trusted": markTrusted = true
                 default: throw CLIParseError.unknownOption(arg)
                 }
             }
-            return .configca
+            return .configca(markTrusted: markTrusted)
         case "start":
             var interfaceName: String?
+            var serverOnly = false
             while let arg = parser.consume() {
                 switch arg {
                 case "-i", "--interface": interfaceName = try parser.value(for: arg)
+                case "--server": serverOnly = true
                 default: throw CLIParseError.unknownOption(arg)
                 }
             }
-            return .start(interfaceName: interfaceName)
+            return .start(interfaceName: interfaceName, serverOnly: serverOnly)
         case "read":
             var filter: String?
             var raw = false
@@ -263,12 +267,14 @@ public enum CLIParser {
             }
             return .read(filter: filter, raw: raw, last: last)
         case "stop":
+            var serverOnly = false
             while let arg = parser.consume() {
                 switch arg {
+                case "--server": serverOnly = true
                 default: throw CLIParseError.unknownOption(arg)
                 }
             }
-            return .stop
+            return .stop(serverOnly: serverOnly)
         case "doctor":
             try parser.requireEnd()
             return .doctor
