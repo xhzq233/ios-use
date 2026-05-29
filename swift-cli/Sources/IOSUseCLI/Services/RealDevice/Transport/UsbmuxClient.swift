@@ -36,7 +36,7 @@ enum Usbmux {
             if let connectionType = props["ConnectionType"] as? String, connectionType != "USB" {
                 return nil
             }
-            let deviceID = (props["DeviceID"] as? Int) ?? (device["DeviceID"] as? Int) ?? 0
+            let deviceID = Self.deviceID(from: device) ?? 0
             return Device(
                 serialNumber: serial,
                 deviceID: deviceID,
@@ -93,8 +93,8 @@ enum Usbmux {
                       let serial = props["SerialNumber"] as? String else { return false }
                 return serial.replacingOccurrences(of: "-", with: "").lowercased() == normalized
             }
-            guard let properties = match?["Properties"] as? [String: Any],
-                  let deviceID = properties["DeviceID"] as? Int else {
+            guard let match,
+                  let deviceID = Self.deviceID(from: match) else {
                 throw CLIParseError.invalidValue("Device \(udid) not found via usbmux. USB connection is required.")
             }
             let response = try request(fd: fd, payload: [
@@ -105,7 +105,7 @@ enum Usbmux {
                 "PortNumber": swap16(port),
             ], tag: 1)
             guard (response["Number"] as? Int) == 0 else {
-                throw CLIParseError.invalidValue("usbmux Connect failed with code \(response["Number"] ?? "unknown")")
+                throw CLIParseError.invalidValue("usbmux Connect failed: \(plistResponseSummary(response))")
             }
             return fd
         } catch {
@@ -134,6 +134,11 @@ enum Usbmux {
     private static func swap16(_ value: Int) -> Int {
         ((value & 0xff) << 8) | ((value >> 8) & 0xff)
     }
+
+    static func deviceID(from device: [String: Any]) -> Int? {
+        let properties = device["Properties"] as? [String: Any]
+        return (properties?["DeviceID"] as? Int) ?? (device["DeviceID"] as? Int)
+    }
 }
 
 func serializePlist(_ value: [String: Any]) throws -> Data {
@@ -146,6 +151,15 @@ func parsePlist(_ data: Data) throws -> [String: Any] {
         throw CLIParseError.invalidValue("plist response is not a dictionary")
     }
     return dict
+}
+
+func plistResponseSummary(_ response: [String: Any]) -> String {
+    if JSONSerialization.isValidJSONObject(response),
+       let data = try? JSONSerialization.data(withJSONObject: response, options: [.sortedKeys]),
+       let text = String(data: data, encoding: .utf8) {
+        return text
+    }
+    return String(describing: response)
 }
 
 func readExact(fd: Int32, byteCount: Int, timeoutSeconds: Double) throws -> Data {

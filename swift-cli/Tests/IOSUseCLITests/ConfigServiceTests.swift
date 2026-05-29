@@ -16,6 +16,7 @@ final class ConfigServiceTests: XCTestCase {
         ConfigService.altsignRunnerForTesting = nil
         ConfigService.realDeviceInstallerForTesting = nil
         ConfigService.installedDriverVersionProviderForTesting = nil
+        ConfigService.driverIPAPathProviderForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverTerminatorForTesting = nil
@@ -68,47 +69,47 @@ final class ConfigServiceTests: XCTestCase {
     }
 
     func testDriverAssetPathFollowsBuildConfiguration() throws {
-        let root = try temporaryRoot()
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let explicitRoot = try temporaryRoot()
+        let explicitPaths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": explicitRoot])
 
-        let cwd = FileManager.default.currentDirectoryPath
-        let localDriver = "\(cwd)/assets/driver.ipa"
-        let localSimulatorDriver = "\(cwd)/assets/driver-sim.ipa"
-        let expectedDriver = FileManager.default.fileExists(atPath: localDriver) ? localDriver : "\(root)/driver.ipa"
-        let expectedSimulatorDriver = FileManager.default.fileExists(atPath: localSimulatorDriver) ? localSimulatorDriver : "\(root)/driver-sim.ipa"
         XCTAssertEqual(
-            ConfigService.deviceIPAPath(paths: paths),
-            expectedDriver
+            ConfigService.deviceIPAPath(paths: explicitPaths),
+            "\(explicitRoot)/driver.ipa"
         )
         XCTAssertEqual(
-            ConfigService.simulatorIPAPath(paths: paths),
-            expectedSimulatorDriver
+            ConfigService.simulatorIPAPath(paths: explicitPaths),
+            "\(explicitRoot)/driver-sim.ipa"
         )
 
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try Data().write(to: URL(fileURLWithPath: "\(root)/driver.ipa"))
-        try Data().write(to: URL(fileURLWithPath: "\(root)/driver-sim.ipa"))
-        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), expectedDriver)
-        XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), expectedSimulatorDriver)
-    }
-
-    func testDriverAssetPathPrefersCurrentInstalledDriverOverStaleLocalAsset() throws {
-        let root = try temporaryRoot()
-        let workspace = try temporaryRoot()
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let implicitRoot = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["HOME": implicitRoot])
+        #if DEBUG
+        let cwd = try temporaryRoot()
+        try FileManager.default.createDirectory(atPath: cwd, withIntermediateDirectories: true)
         let oldCwd = FileManager.default.currentDirectoryPath
-        try FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
-        XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(workspace))
+        XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(cwd))
         addTeardownBlock {
             _ = FileManager.default.changeCurrentDirectoryPath(oldCwd)
         }
+        let canonicalCwd = FileManager.default.currentDirectoryPath
+        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(canonicalCwd)/.ios-use/driver.ipa")
+        XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), "\(canonicalCwd)/.ios-use/driver-sim.ipa")
+        #else
+        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(implicitRoot)/.ios-use/driver.ipa")
+        XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), "\(implicitRoot)/.ios-use/driver-sim.ipa")
+        #endif
+    }
 
-        try FileManager.default.createDirectory(atPath: "\(workspace)/assets", withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try makeMinimalDriverIpa(path: "\(workspace)/assets/driver.ipa", version: "0.9.0")
-        try makeMinimalDriverIpa(path: "\(root)/driver.ipa", version: IOSUseCLI.version)
+    func testDriverAssetPathProviderForTestingOverridesBuildConfiguration() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        ConfigService.driverIPAPathProviderForTesting = { assetName, receivedPaths in
+            XCTAssertEqual(receivedPaths.root, paths.root)
+            return "\(root)/override-\(assetName)"
+        }
 
-        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(root)/driver.ipa")
+        XCTAssertEqual(ConfigService.deviceIPAPath(paths: paths), "\(root)/override-driver.ipa")
+        XCTAssertEqual(ConfigService.simulatorIPAPath(paths: paths), "\(root)/override-driver-sim.ipa")
     }
 
     func testDriverLockRejectsInvalidShapeAndDoesNotFallbackToSessionJSON() throws {
@@ -180,6 +181,30 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.session))
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/state/nslog.lock"))
+    }
+
+    func testStopReportsFailureWhenDriverLockCannotBeRemoved() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let stateDir = "\(root)/state"
+        try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true)
+        try writeDriverLock(udid: "REAL-LOCKED", deviceType: "real", paths: paths)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: stateDir)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stateDir)
+        }
+        var terminated: [String] = []
+        SessionService.realDriverTerminatorForTesting = { udid in
+            terminated.append(udid)
+            return true
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("Driver stopped, but failed to remove"))
+        XCTAssertEqual(terminated, ["REAL-LOCKED"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.driverLock))
     }
 
     func testStopRealDeviceUsesCoreDeviceNativeLifecycleByDefaultWithoutDevicectl() throws {
@@ -399,6 +424,28 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
     }
 
+    func testStartDoesNotLaunchWhenDriverLockCannotBeWritten() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"SIM-LOCKFAIL":{"bundleId":"com.iosuse.xcuidriver.xctrunner","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try "not a directory".write(toFile: "\(root)/state", atomically: true, encoding: .utf8)
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [IOSDevice(name: "IOSUseTest", version: "26.0", udid: "SIM-LOCKFAIL", kind: .simulator)] : []
+        }
+        var launched: [String] = []
+        SessionService.simulatorDriverLauncherForTesting = { launched.append($0) }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "SIM-LOCKFAIL"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(launched.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
+    }
+
     func testStartRejectsUnconfiguredOutdatedAndMissingDevicesWithoutLock() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -478,6 +525,7 @@ final class ConfigServiceTests: XCTestCase {
         try "#!/bin/sh\nexit 0\n".write(toFile: altsign, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
         try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
 
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             if simulatorOnly {
@@ -545,6 +593,7 @@ final class ConfigServiceTests: XCTestCase {
         try "#!/bin/sh\nexit 0\n".write(toFile: altsign, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
         try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
         try """
         {"devices":{"REAL-CONFIG":{"bundleId":"com.ios-use.driver.user-example-com.xctrunner","driverVersion":"old"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
@@ -605,6 +654,7 @@ final class ConfigServiceTests: XCTestCase {
         try "#!/bin/sh\nexit 0\n".write(toFile: altsign, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
         try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
 
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             if simulatorOnly {

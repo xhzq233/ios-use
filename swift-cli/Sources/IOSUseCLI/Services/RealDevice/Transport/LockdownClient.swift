@@ -19,7 +19,7 @@ final class LockdownClient {
             "SystemBUID": pairRecord.systemBUID,
         ])
         if let error = response["Error"] {
-            throw CLIParseError.invalidValue("StartSession failed: \(error)")
+            throw CLIParseError.invalidValue("StartSession failed: \(Self.errorDescription(error, response: response))")
         }
         guard response["SessionID"] != nil else {
             throw CLIParseError.invalidValue("StartSession returned no SessionID")
@@ -36,7 +36,7 @@ final class LockdownClient {
             "Service": serviceName,
         ])
         if let error = response["Error"] {
-            throw CLIParseError.invalidValue("StartService(\(serviceName)) failed: \(error)")
+            throw CLIParseError.invalidValue("StartService(\(serviceName)) failed: \(Self.errorDescription(error, response: response))")
         }
         guard let port = response["Port"] as? Int else {
             throw CLIParseError.invalidValue("StartService(\(serviceName)) returned no port")
@@ -54,7 +54,7 @@ final class LockdownClient {
         }
         let response = try request(body)
         if let error = response["Error"] {
-            throw CLIParseError.invalidValue("GetValue failed: \(error)")
+            throw CLIParseError.invalidValue("GetValue failed: \(Self.errorDescription(error, response: response))")
         }
         guard let value = response["Value"] else {
             return response
@@ -85,5 +85,10 @@ final class LockdownClient {
             throw CLIParseError.invalidValue("lockdown plist invalid size: \(size)")
         }
         return try parsePlist(try stream.readExact(byteCount: size, timeoutSeconds: 5))
+    }
+
+    private static func errorDescription(_ error: Any, response: [String: Any]) -> String {
+        let description = response["ErrorDescription"].map { String(describing: $0) } ?? String(describing: error)
+        return "\(description); response: \(plistResponseSummary(response))"
     }
 }

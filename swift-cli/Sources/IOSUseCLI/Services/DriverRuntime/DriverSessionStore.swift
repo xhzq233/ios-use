@@ -58,6 +58,17 @@ enum DriverSessionStore {
     }
 
     static func clearDriverLock(paths: IOSUsePaths) {
-        try? FileManager.default.removeItem(atPath: paths.driverLock)
+        try? removeDriverLock(paths: paths)
+    }
+
+    static func removeDriverLock(paths: IOSUsePaths) throws {
+        do {
+            try FileManager.default.removeItem(atPath: paths.driverLock)
+        } catch {
+            if !FileManager.default.fileExists(atPath: paths.driverLock) {
+                return
+            }
+            throw error
+        }
     }
 }

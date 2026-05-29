@@ -21,6 +21,7 @@ public enum ConfigService {
     static var altsignRunnerForTesting: ((String, [String]) throws -> Void)?
     static var realDeviceInstallerForTesting: ((String, String, String) throws -> Void)?
     static var installedDriverVersionProviderForTesting: ((String, String) throws -> String?)?
+    static var driverIPAPathProviderForTesting: ((String, IOSUsePaths) -> String)?
 
     public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
         let realDevices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
@@ -133,22 +134,25 @@ public enum ConfigService {
     }
 
     private static func ipaPath(assetName: String, paths: IOSUsePaths) -> String {
-        let cwd = FileManager.default.currentDirectoryPath
-        let localAsset = "\(cwd)/assets/\(assetName)"
-        let installedAsset = "\(paths.root)/\(assetName)"
-        let candidates = [localAsset, installedAsset]
-        for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
-            if driverIPAVersion(at: candidate) == IOSUseCLI.version {
-                return candidate
-            }
+        if let driverIPAPathProviderForTesting {
+            return driverIPAPathProviderForTesting(assetName, paths)
         }
-        if FileManager.default.fileExists(atPath: localAsset) {
-            return localAsset
+        #if DEBUG
+        if paths.hasExplicitHome {
+            return installedIPAPath(assetName: assetName, paths: paths)
         }
-        if FileManager.default.fileExists(atPath: installedAsset) {
-            return installedAsset
-        }
-        return installedAsset
+        return cwdIPAPath(assetName: assetName)
+        #else
+        return installedIPAPath(assetName: assetName, paths: paths)
+        #endif
+    }
+
+    static func cwdIPAPath(assetName: String, currentDirectoryPath: String = FileManager.default.currentDirectoryPath) -> String {
+        "\(currentDirectoryPath)/.ios-use/\(assetName)"
+    }
+
+    private static func installedIPAPath(assetName: String, paths: IOSUsePaths) -> String {
+        "\(paths.root)/\(assetName)"
     }
 
     static func driverIPAVersion(at ipaPath: String) -> String? {

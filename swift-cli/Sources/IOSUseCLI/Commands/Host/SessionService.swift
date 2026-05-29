@@ -54,8 +54,13 @@ public enum SessionService {
             throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
         }
         let info = try resolveDriverInfo(udid: udid, paths: paths)
-        try launchDriver(for: info, paths: paths, verbose: verbose)
         try writeDriverLock(info: info, paths: paths)
+        do {
+            try launchDriver(for: info, paths: paths, verbose: verbose)
+        } catch {
+            clearDriverLock(paths: paths)
+            throw error
+        }
         return "Driver started for \(udid)\n"
     }
 
@@ -68,7 +73,11 @@ public enum SessionService {
             realTerminator: realDriverTerminatorForTesting,
             coreDeviceFactory: coreDeviceLifecycleFactoryForTesting
         )
-        clearDriverLock(paths: paths)
+        do {
+            try DriverSessionStore.removeDriverLock(paths: paths)
+        } catch {
+            throw CLIParseError.invalidValue("Driver stopped, but failed to remove \(paths.driverLock): \(error)")
+        }
         output += "Driver stopped\n"
         return output
     }
