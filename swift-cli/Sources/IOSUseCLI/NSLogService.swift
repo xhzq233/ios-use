@@ -45,7 +45,7 @@ public enum NSLogService {
             writeStdout("\(entry)\n")
         }
 
-        writeStderr("NSLogger listening on port \(server.port) (SSL)\n")
+        writeStderr("NSLogger listening on port \(server.port) (SSL, IPv4+IPv6)\n")
         writeStderr("Streaming logs... Press Ctrl+C to stop.\n")
 
         let interruptMonitor = InterruptMonitor(onInterrupt: foreground ? {
@@ -538,11 +538,12 @@ public final class NSLoggerServer {
     public var onMessage: ((String) -> Void)?
     public private(set) var bonjourPid: Int32?
     public private(set) var bonjourServiceName: String?
+    public private(set) var listenerAddresses: [String] = []
 
     private let options: NSLoggerServerOptions
     private let paths: IOSUsePaths
     private var eventLoopGroup: MultiThreadedEventLoopGroup?
-    private var serverChannel: Channel?
+    private var serverChannels: [Channel] = []
     private var bonjour: Process?
     private var receiveBuffer = Data()
     private var entries: [String] = []
@@ -584,8 +585,11 @@ public final class NSLoggerServer {
     }
 
     public func stop() {
-        try? serverChannel?.close().wait()
-        serverChannel = nil
+        for channel in serverChannels {
+            try? channel.close().wait()
+        }
+        serverChannels.removeAll()
+        listenerAddresses.removeAll()
         try? eventLoopGroup?.syncShutdownGracefully()
         eventLoopGroup = nil
         bonjour?.terminate()
@@ -732,30 +736,78 @@ public final class NSLoggerServer {
         )
         let sslContext = try NIOSSLContext(configuration: configuration)
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        do {
-            let channel = try ServerBootstrap(group: group)
-                .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-                .childChannelInitializer { [weak self] channel in
-                    channel.pipeline.addHandler(NIOSSLServerHandler(context: sslContext)).flatMap {
-                        channel.pipeline.addHandler(NSLoggerTLSChannelHandler(
-                            onActive: { [weak self] in self?.markClientConnected() },
-                            onInactive: { [weak self] in self?.markClientDisconnected() },
-                            onData: { [weak self] data in self?.ingest(data) }
-                        ))
-                    }
+        let maxAttempts = options.port == 0 ? 5 : 1
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            var openedChannels: [Channel] = []
+            do {
+                let ipv4Channel: Channel
+                do {
+                    ipv4Channel = try makeServerBootstrap(group: group, sslContext: sslContext)
+                        .bind(host: "0.0.0.0", port: options.port)
+                        .wait()
+                } catch {
+                    throw CLIParseError.invalidValue("NSLogger TLS server failed to listen on IPv4 0.0.0.0 port \(options.port): \(error)")
                 }
-                .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-                .bind(host: "0.0.0.0", port: port)
-                .wait()
-            if let actualPort = channel.localAddress?.port {
+                openedChannels.append(ipv4Channel)
+
+                guard let actualPort = ipv4Channel.localAddress?.port else {
+                    throw CLIParseError.invalidValue("NSLogger TLS server failed to determine IPv4 listener port")
+                }
+
+                let ipv6Channel: Channel
+                do {
+                    ipv6Channel = try makeServerBootstrap(group: group, sslContext: sslContext, ipv6Only: true)
+                        .bind(host: "::", port: actualPort)
+                        .wait()
+                } catch {
+                    throw CLIParseError.invalidValue("NSLogger TLS server failed to listen on IPv6 :: port \(actualPort): \(error)")
+                }
+                openedChannels.append(ipv6Channel)
+
                 port = actualPort
+                eventLoopGroup = group
+                serverChannels = openedChannels
+                listenerAddresses = ["0.0.0.0:\(actualPort)", "[::]:\(actualPort)"]
+                return
+            } catch {
+                lastError = error
+                for channel in openedChannels {
+                    try? channel.close().wait()
+                }
+                if options.port == 0 && attempt < maxAttempts {
+                    continue
+                }
+                try? group.syncShutdownGracefully()
+                throw error
             }
-            eventLoopGroup = group
-            serverChannel = channel
-        } catch {
-            try? group.syncShutdownGracefully()
-            throw CLIParseError.invalidValue("NSLogger TLS server failed to listen on port \(port): \(error)")
         }
+
+        try? group.syncShutdownGracefully()
+        throw lastError ?? CLIParseError.invalidValue("NSLogger TLS server failed to listen")
+    }
+
+    private func makeServerBootstrap(group: MultiThreadedEventLoopGroup, sslContext: NIOSSLContext, ipv6Only: Bool = false) -> ServerBootstrap {
+        let bootstrap = ServerBootstrap(group: group)
+            .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+            .childChannelInitializer { [weak self] channel in
+                channel.pipeline.addHandler(NIOSSLServerHandler(context: sslContext)).flatMap {
+                    channel.pipeline.addHandler(NSLoggerTLSChannelHandler(
+                        onActive: { [weak self] in self?.markClientConnected() },
+                        onInactive: { [weak self] in self?.markClientDisconnected() },
+                        onData: { [weak self] data in self?.ingest(data) }
+                    ))
+                }
+            }
+            .childChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+        if ipv6Only {
+            return bootstrap.serverChannelOption(
+                ChannelOptions.Types.SocketOption(level: .ipv6, name: .ipv6_v6only),
+                value: 1
+            )
+        }
+        return bootstrap
     }
 
     private func defaultBonjourName() -> String {
