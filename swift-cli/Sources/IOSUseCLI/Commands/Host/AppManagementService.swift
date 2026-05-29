@@ -13,9 +13,10 @@ enum AppManagementService {
     static var appsProviderForTesting: ((String, Bool) throws -> [AppInfo])?
 
     static func install(options: AppInstallOptions, paths: IOSUsePaths) throws -> String {
-        let targetUdid = try SessionService.resolveTargetUdid(
+        let targetUdid = try resolveRealDeviceTargetUdid(
             explicitUdid: options.udid,
             paths: paths,
+            command: "install",
             missingMessage: "install requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
         )
         guard FileManager.default.fileExists(atPath: options.ipaPath) else {
@@ -41,9 +42,10 @@ enum AppManagementService {
     }
 
     static func uninstall(options: AppUninstallOptions, paths: IOSUsePaths) throws -> String {
-        let targetUdid = try SessionService.resolveTargetUdid(
+        let targetUdid = try resolveRealDeviceTargetUdid(
             explicitUdid: options.udid,
             paths: paths,
+            command: "uninstall",
             missingMessage: "uninstall requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
         )
         var responseFrames: [[String: Any]] = []
@@ -77,9 +79,10 @@ enum AppManagementService {
     }
 
     static func list(options: AppsOptions, paths: IOSUsePaths) throws -> String {
-        let targetUdid = try SessionService.resolveTargetUdid(
+        let targetUdid = try resolveRealDeviceTargetUdid(
             explicitUdid: options.udid,
             paths: paths,
+            command: "apps",
             missingMessage: "apps requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
         )
         let apps: [AppInfo]
@@ -136,6 +139,31 @@ enum AppManagementService {
             }
             return line
         }.joined(separator: "\n") + "\n"
+    }
+
+    private static func resolveRealDeviceTargetUdid(
+        explicitUdid: String?,
+        paths: IOSUsePaths,
+        command: String,
+        missingMessage: String
+    ) throws -> String {
+        let targetUdid = try SessionService.resolveTargetUdid(
+            explicitUdid: explicitUdid,
+            paths: paths,
+            missingMessage: missingMessage
+        )
+        if let explicitUdid, !explicitUdid.isEmpty {
+            if DeviceService.looksLikeSimulatorUDID(targetUdid) {
+                throw CLIParseError.invalidValue("\(command) supports USB real devices only; Simulator app management is not implemented.")
+            }
+            return targetUdid
+        }
+        guard let current = SessionService.read(paths: paths),
+              current.udid == targetUdid,
+              current.deviceType == "real" else {
+            throw CLIParseError.invalidValue("\(command) supports USB real devices only. Pass a real device --udid or start a real device.")
+        }
+        return targetUdid
     }
 
     static func extractBundleID(ipaPath: String) throws -> String {

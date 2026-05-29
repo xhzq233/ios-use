@@ -328,6 +328,9 @@ final class DriverClient: DriverCommandClient {
         Darwin.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
         var noSigPipe: Int32 = 1
         Darwin.setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: time_t(IOSUseProtocol.commandTimeoutSeconds), tv_usec: 0)
+        Darwin.setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        Darwin.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     }
 
     private func readLengthPrefixed(_ fd: Int32) throws -> Data {
