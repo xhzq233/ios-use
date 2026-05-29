@@ -75,6 +75,22 @@ if ! grep -q "NSLogger listening on port" "$NSLOG_ERR" || ! grep -q "Streaming l
   wait "$NSLOG_PID" 2>/dev/null || true
   exit 1
 fi
+NSLOG_PORT="$(sed -n 's/.*NSLogger listening on port \([0-9][0-9]*\).*/\1/p' "$NSLOG_ERR" | head -1)"
+if [[ -z "$NSLOG_PORT" ]]; then
+  echo "[swift-cli] ERROR: nslog startup output did not include a parseable port" >&2
+  cat "$NSLOG_ERR" >&2 || true
+  kill -INT "$NSLOG_PID" 2>/dev/null || true
+  wait "$NSLOG_PID" 2>/dev/null || true
+  exit 1
+fi
+NSLOG_LISTENERS="$(lsof -nP -iTCP:"$NSLOG_PORT" -sTCP:LISTEN 2>/dev/null || true)"
+if [[ -z "$NSLOG_LISTENERS" ]] || ! grep -q "IPv4" <<<"$NSLOG_LISTENERS" || ! grep -q "IPv6" <<<"$NSLOG_LISTENERS"; then
+  echo "[swift-cli] ERROR: nslog did not expose both IPv4 and IPv6 listeners on port $NSLOG_PORT" >&2
+  printf '%s\n' "$NSLOG_LISTENERS" >&2
+  kill -INT "$NSLOG_PID" 2>/dev/null || true
+  wait "$NSLOG_PID" 2>/dev/null || true
+  exit 1
+fi
 kill -INT "$NSLOG_PID" 2>/dev/null || true
 wait "$NSLOG_PID" 2>/dev/null || true
 (

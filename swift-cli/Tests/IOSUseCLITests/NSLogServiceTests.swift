@@ -139,7 +139,10 @@ final class NSLogServiceTests: XCTestCase {
         XCTAssertTrue(second.matches[0].contains("new three"))
     }
 
-    func testServerAcceptsRealTLSClientFrameWithoutKeychain() throws {
+    func testServerAcceptsIPv4AndIPv6TLSClientFramesWithoutKeychain() throws {
+        guard ipv6LoopbackAvailable() else {
+            throw XCTSkip("IPv6 loopback is unavailable on this host")
+        }
         let paths = IOSUsePaths.resolve(environment: [
             "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-nslog-tls-\(UUID().uuidString)").path
         ])
@@ -149,18 +152,26 @@ final class NSLogServiceTests: XCTestCase {
 
         XCTAssertNotEqual(server.port, 0)
         XCTAssertNotEqual(server.port, 50_000)
+        XCTAssertEqual(server.listenerAddresses, ["0.0.0.0:\(server.port)", "[::]:\(server.port)"])
 
-        try sendTLSFrame(makeMessage(parts: [(7, 0, stringData("TLS ready"))]), port: UInt16(server.port))
+        try sendTLSFrame(makeMessage(parts: [(7, 0, stringData("IPv4 TLS ready"))]), host: "127.0.0.1", port: UInt16(server.port))
+        try sendTLSFrame(makeMessage(parts: [(7, 0, stringData("IPv6 TLS ready"))]), host: "::1", port: UInt16(server.port))
 
         let deadline = Date().addingTimeInterval(5)
-        while server.logCount == 0, Date() < deadline {
+        while server.logCount < 2, Date() < deadline {
             usleep(50_000)
         }
 
-        XCTAssertEqual(server.clientCount, 1)
-        XCTAssertEqual(try server.grep(pattern: "TLS ready").count, 1)
+        XCTAssertEqual(server.clientCount, 2)
+        XCTAssertEqual(try server.grep(pattern: "IPv4 TLS ready").count, 1)
+        XCTAssertEqual(try server.grep(pattern: "IPv6 TLS ready").count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(paths.root)/runtime/nslogger-selfsigned.key"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(paths.root)/runtime/nslogger-selfsigned.crt"))
+
+        let port = server.port
+        server.stop()
+        XCTAssertFalse(canOpenTCP(host: "127.0.0.1", port: port))
+        XCTAssertFalse(canOpenTCP(host: "::1", port: port))
     }
 
     func testLockRecordsActualRandomPortAndBonjourPid() throws {
@@ -415,7 +426,7 @@ final class NSLogServiceTests: XCTestCase {
         ])
     }
 
-    private func sendTLSFrame(_ data: Data, port: UInt16) throws {
+    private func sendTLSFrame(_ data: Data, host: String, port: UInt16) throws {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { try? group.syncShutdownGracefully() }
         var configuration = TLSConfiguration.makeClientConfiguration()
@@ -430,11 +441,31 @@ final class NSLogServiceTests: XCTestCase {
                     return channel.eventLoop.makeFailedFuture(error)
                 }
             }
-        let channel = try bootstrap.connect(host: "127.0.0.1", port: Int(port)).wait()
+        let channel = try bootstrap.connect(host: host, port: Int(port)).wait()
         var buffer = channel.allocator.buffer(capacity: data.count)
         buffer.writeBytes(data)
         try channel.writeAndFlush(buffer).wait()
         usleep(100_000)
         try channel.close().wait()
+    }
+
+    private func canOpenTCP(host: String, port: Int) -> Bool {
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { try? group.syncShutdownGracefully() }
+        do {
+            let channel = try ClientBootstrap(group: group).connect(host: host, port: port).wait()
+            try? channel.close().wait()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func ipv6LoopbackAvailable() -> Bool {
+        guard let loopback = try? SocketAddress.makeAddressResolvingHost("::1", port: 0),
+              let devices = try? System.enumerateDevices() else {
+            return false
+        }
+        return devices.contains { $0.address == loopback }
     }
 }
