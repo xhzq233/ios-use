@@ -27,12 +27,14 @@ ios-use start <udid>          # 启动并选择当前要操作的设备
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
 - `start <udid>` 会启动已配置设备的 driver，并把它设为后续操作目标；`dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/flow/proxy configca/proxy start/proxy stop` 等命令必须先 start，且不再接受自己的 `--udid`
 - `open <url>` 不要求先执行 `start`，仍可用 `--udid` 指定目标
+- `install <ipa> --udid <udid>`、`uninstall <bundleId> --udid <udid>`、`apps --udid <udid>` 是真机 host-side app 管理命令，不要求先执行 `start`
 - 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
 
 ## 2. 硬规则
 
 - 真机必须 USB 连接；只通过 Wi-Fi 连接的设备不可用
-- `devices` / `config` / `open` / `oslog` 可使用 `--udid`；其他需要操作屏幕或当前设备状态的命令、Flow、proxy configca/start/stop 不接受 `--udid`，目标就是最近一次 `start` 的设备
+- `devices` / `config` / `install` / `uninstall` / `apps` / `open` / `oslog` 可使用 `--udid`；其他需要操作屏幕或当前设备状态的命令、Flow、proxy configca/start/stop 不接受 `--udid`，目标就是最近一次 `start` 的设备
+- 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `start` / `stop` / `open` / `oslog` 不要求 Xcode CLI；Simulator 使用仍需要 Xcode / simctl。
 - 操作屏幕或当前设备状态前，先 `ios-use devices` 确认设备已连接且显示 `configured`，且没有 `driver update required`，然后运行 `ios-use start <udid>`
 - 同一设备上的 `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` 等 UI 命令必须串行执行；不要并发运行多个 UI 命令，否则容易读失败或误判页面状态
 - 执行动作前，多用 `dom` 查看当前页面状态，不要盲点
@@ -87,6 +89,17 @@ ios-use activateApp com.apple.Preferences
 ios-use terminateApp com.apple.Preferences
 ```
 
+### 3.4.1 管理真机 App
+
+```bash
+ios-use apps --udid <udid>
+ios-use apps --udid <udid> --json
+ios-use install path/to/app.ipa --udid <udid>
+ios-use uninstall com.example.app --udid <udid>
+```
+
+这些命令直接走设备服务，不需要先 `start`。`install` 只安装已签名 IPA，不负责给任意 App 自动签名；卸载前确认 bundle ID，避免误删用户设备上的真实 App。
+
 ### 3.5 打开 URL 和关闭弹窗
 
 ```bash
@@ -95,7 +108,7 @@ ios-use dismissAlert                # 默认点最后一个按钮
 ios-use dismissAlert --index 0      # 点第一个按钮
 ```
 
-`open <url>` 执行前会校验 URL 格式和 scheme 注册状态。成功输出 `Opened URL: <url>`；设备上无 App 注册该 scheme 时报错 `URL scheme "xxx" not registered on device`。真机已注册 scheme 时输出包含 handler 信息：`Opened URL: <url> (handler: <bundle IDs>)`。
+`open <url>` 执行前会校验 URL 格式和 scheme 注册状态。成功输出 `Opened URL: <url>`；设备上无 App 注册该 scheme 时报错 `URL scheme "xxx" not registered on device`。真机已注册 scheme 时输出包含 handler 信息：`Opened URL: <url> (handler: <bundle IDs>)`，底层走原生 CoreDevice URL launch，不调用 `devicectl`。
 
 ### 3.6 跑 flow
 

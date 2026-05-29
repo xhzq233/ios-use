@@ -1,172 +1,5 @@
 import Foundation
 
-public enum ParsedCommand: Equatable, Sendable {
-    case devices(DeviceOptions)
-    case config(ConfigOptions)
-    case start(StartOptions)
-    case stop
-    case driver(DriverAction)
-    case flow(FlowOptions)
-    case nslog(NSLogOptions)
-    case proxy(ProxyCommand)
-
-    public var commandName: String {
-        switch self {
-        case .devices: return "devices"
-        case .config: return "config"
-        case .start: return "start"
-        case .stop: return "stop"
-        case .driver(let action): return action.name
-        case .flow: return "flow"
-        case .nslog: return "nslog"
-        case .proxy(let command): return "proxy \(command.subcommand)"
-        }
-    }
-}
-
-public struct DeviceOptions: Equatable, Sendable {
-    public var simulator = false
-    public var verbose = false
-
-    public init(simulator: Bool = false, verbose: Bool = false) {
-        self.simulator = simulator
-        self.verbose = verbose
-    }
-}
-
-public struct ConfigOptions: Equatable, Sendable {
-    public var udid: String?
-    public var list = false
-    public var simulator = false
-    public var appleId: String?
-    public var password: String?
-    public var verbose = false
-
-    public init(udid: String? = nil, list: Bool = false, simulator: Bool = false, appleId: String? = nil, password: String? = nil, verbose: Bool = false) {
-        self.udid = udid
-        self.list = list
-        self.simulator = simulator
-        self.appleId = appleId
-        self.password = password
-        self.verbose = verbose
-    }
-}
-
-public struct SessionOptions: Equatable, Sendable {
-    public var udid: String?
-    public var verbose = false
-
-    public init(udid: String? = nil, verbose: Bool = false) {
-        self.udid = udid
-        self.verbose = verbose
-    }
-}
-
-public struct StartOptions: Equatable, Sendable {
-    public var udid: String
-    public var verbose = false
-
-    public init(udid: String, verbose: Bool = false) {
-        self.udid = udid
-        self.verbose = verbose
-    }
-}
-
-public enum DriverAction: Equatable, Sendable {
-    case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?)
-    case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?)
-    case input(label: String, content: String, traits: String?, cindex: Int32?)
-    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?)
-    case dom(raw: Bool, fresh: Bool)
-    case find(label: String, traits: String?, cindex: Int32?)
-    case screenshot(name: String?)
-    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?)
-    case activateApp(bundleId: String)
-    case terminateApp(bundleId: String)
-    case home
-    case openURL(url: String, session: SessionOptions)
-    case dismissAlert(index: Int?)
-    case oslog(pattern: String?, flags: String?, timeout: Double?, name: String?, clear: Bool, bundleId: String?, session: SessionOptions)
-
-    public var name: String {
-        switch self {
-        case .tap: return "tap"
-        case .longPress: return "longpress"
-        case .input: return "input"
-        case .swipe: return "swipe"
-        case .dom: return "dom"
-        case .find: return "find"
-        case .screenshot: return "screenshot"
-        case .waitFor: return "waitFor"
-        case .activateApp: return "activateApp"
-        case .terminateApp: return "terminateApp"
-        case .home: return "home"
-        case .openURL: return "openURL"
-        case .dismissAlert: return "dismissAlert"
-        case .oslog: return "oslog"
-        }
-    }
-}
-
-public struct FlowOptions: Equatable, Sendable {
-    public var file: String
-    public var verbose = false
-    public var externalVars: [String: String] = [:]
-
-    public init(file: String, verbose: Bool = false, externalVars: [String: String] = [:]) {
-        self.file = file
-        self.verbose = verbose
-        self.externalVars = externalVars
-    }
-}
-
-public struct NSLogOptions: Equatable, Sendable {
-    public enum Command: Equatable, Sendable {
-        case stream
-        case start
-        case read
-        case stop
-    }
-
-    public var command: Command
-    public var name: String?
-    public var pattern: String?
-    public var flags = ""
-    public var timeout: Double?
-    public var clearAfterRead = false
-    public var last: Int?
-    public var captureMode: String?
-
-    public init(command: Command = .stream, name: String? = nil, pattern: String? = nil, flags: String = "", timeout: Double? = nil, clearAfterRead: Bool = false, last: Int? = nil, captureMode: String? = nil) {
-        self.command = command
-        self.name = name
-        self.pattern = pattern
-        self.flags = flags
-        self.timeout = timeout
-        self.clearAfterRead = clearAfterRead
-        self.last = last
-        self.captureMode = captureMode
-    }
-}
-
-public enum ProxyCommand: Equatable, Sendable {
-    case configca
-    case start(interfaceName: String?)
-    case read(filter: String?, raw: Bool, last: Int?)
-    case stop
-    case doctor
-
-    public var subcommand: String {
-        switch self {
-        case .configca: return "configca"
-        case .start: return "start"
-        case .read: return "read"
-        case .stop: return "stop"
-        case .doctor: return "doctor"
-        }
-    }
-}
-
 public enum CLIParser {
     public static func parse(_ arguments: [String]) throws -> ParsedCommand {
         var parser = ArgumentParser(arguments)
@@ -184,6 +17,12 @@ public enum CLIParser {
         case "stop":
             try parser.requireEnd()
             return .stop
+        case "install":
+            return .install(try parseInstall(&parser))
+        case "uninstall":
+            return .uninstall(try parseUninstall(&parser))
+        case "apps":
+            return .apps(try parseApps(&parser))
         case "flow":
             return .flow(try parseFlow(&parser))
         case "nslog":
@@ -213,11 +52,11 @@ public enum CLIParser {
         case "home":
             return .driver(try parseHome(&parser))
         case "open":
-            return .driver(try parseOpen(&parser))
+            return .open(try parseOpen(&parser))
         case "dismissAlert":
             return .driver(try parseDismissAlert(&parser))
         case "oslog":
-            return .driver(try parseOSLog(&parser))
+            return .oslog(try parseOSLog(&parser))
         default:
             throw CLIParseError.unknownCommand(command)
         }
@@ -265,6 +104,61 @@ public enum CLIParser {
             }
         }
         return options
+    }
+
+    private static func parseInstall(_ parser: inout ArgumentParser) throws -> AppInstallOptions {
+        let ipaPath = try parser.requiredPositional("ipa")
+        var udid: String?
+        var verbose = false
+        while let arg = parser.consume() {
+            switch arg {
+            case "--udid": udid = try parser.value(for: arg)
+            case "--verbose": verbose = true
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                throw CLIParseError.unexpectedArgument(arg)
+            }
+        }
+        return AppInstallOptions(ipaPath: ipaPath, udid: try require(udid, option: "--udid"), verbose: verbose)
+    }
+
+    private static func parseUninstall(_ parser: inout ArgumentParser) throws -> AppUninstallOptions {
+        let bundleID = try parser.requiredPositional("bundleId")
+        var udid: String?
+        var verbose = false
+        while let arg = parser.consume() {
+            switch arg {
+            case "--udid": udid = try parser.value(for: arg)
+            case "--verbose": verbose = true
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                throw CLIParseError.unexpectedArgument(arg)
+            }
+        }
+        return AppUninstallOptions(bundleID: bundleID, udid: try require(udid, option: "--udid"), verbose: verbose)
+    }
+
+    private static func parseApps(_ parser: inout ArgumentParser) throws -> AppsOptions {
+        var udid: String?
+        var includeSystem = false
+        var json = false
+        while let arg = parser.consume() {
+            switch arg {
+            case "--udid": udid = try parser.value(for: arg)
+            case "--system": includeSystem = true
+            case "--json": json = true
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                throw CLIParseError.unexpectedArgument(arg)
+            }
+        }
+        return AppsOptions(udid: try require(udid, option: "--udid"), includeSystem: includeSystem, json: json)
     }
 
     private static func parseFlow(_ parser: inout ArgumentParser) throws -> FlowOptions {
@@ -532,13 +426,13 @@ public enum CLIParser {
         return .home
     }
 
-    private static func parseOpen(_ parser: inout ArgumentParser) throws -> DriverAction {
+    private static func parseOpen(_ parser: inout ArgumentParser) throws -> OpenURLOptions {
         let url = try parser.requiredPositional("url")
         var session = SessionOptions()
         while let arg = parser.consume() {
             try parseSession(arg, parser: &parser, session: &session)
         }
-        return .openURL(url: url, session: session)
+        return OpenURLOptions(url: url, session: session)
     }
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -552,7 +446,7 @@ public enum CLIParser {
         return .dismissAlert(index: index)
     }
 
-    private static func parseOSLog(_ parser: inout ArgumentParser) throws -> DriverAction {
+    private static func parseOSLog(_ parser: inout ArgumentParser) throws -> OSLogOptions {
         var pattern: String?
         var flags: String?
         var timeout: Double?
@@ -571,7 +465,7 @@ public enum CLIParser {
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return .oslog(pattern: pattern, flags: flags, timeout: timeout, name: name, clear: clear, bundleId: bundleId, session: session)
+        return OSLogOptions(pattern: pattern, flags: flags, timeout: timeout, name: name, clear: clear, bundleId: bundleId, session: session)
     }
 
     private static func parseSession(_ arg: String, parser: inout ArgumentParser, session: inout SessionOptions) throws {

@@ -1,0 +1,63 @@
+import Foundation
+
+enum DriverSessionStore {
+    static func clear(paths: IOSUsePaths) {
+        clearDriverLock(paths: paths)
+    }
+
+    static func readDriverLock(paths: IOSUsePaths) -> String? {
+        try? readInfo(paths: paths)?.udid
+    }
+
+    static func readInfo(paths: IOSUsePaths) throws -> SessionService.Info? {
+        guard FileManager.default.fileExists(atPath: paths.driverLock) else {
+            return nil
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: paths.driverLock))
+        guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw CLIParseError.invalidValue("Invalid driver.lock: expected JSON object.")
+        }
+        guard let udid = raw["udid"] as? String, !udid.isEmpty,
+              let deviceType = raw["deviceType"] as? String, !deviceType.isEmpty else {
+            throw CLIParseError.invalidValue("Invalid driver.lock: missing udid/deviceType.")
+        }
+        guard deviceType == "real" || deviceType == "simulator" else {
+            throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType).")
+        }
+        guard let startedAt = raw["startedAt"] as? Int else {
+            throw CLIParseError.invalidValue("Invalid driver.lock: missing startedAt.")
+        }
+        return SessionService.Info(
+            udid: udid,
+            deviceName: raw["deviceName"] as? String ?? "",
+            deviceVersion: raw["deviceVersion"] as? String ?? "",
+            deviceType: deviceType,
+            startedAt: startedAt
+        )
+    }
+
+    static func requireInfo(paths: IOSUsePaths) throws -> SessionService.Info {
+        guard let info = try readInfo(paths: paths) else {
+            throw CLIParseError.invalidValue("No active driver. Run `ios-use start <UDID>` first.")
+        }
+        return info
+    }
+
+    static func write(info: SessionService.Info, paths: IOSUsePaths) throws {
+        let root: [String: Any] = [
+            "udid": info.udid,
+            "deviceName": info.deviceName,
+            "deviceVersion": info.deviceVersion,
+            "deviceType": info.deviceType,
+            "startedAt": info.startedAt,
+        ]
+        let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
+        try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: URL(fileURLWithPath: paths.driverLock), options: .atomic)
+    }
+
+    static func clearDriverLock(paths: IOSUsePaths) {
+        try? FileManager.default.removeItem(atPath: paths.driverLock)
+    }
+}

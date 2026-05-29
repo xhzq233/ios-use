@@ -296,6 +296,30 @@ private struct FlowRunner {
             }
             emit(try runNSLogStep(options))
 
+        case "open":
+            let parsed = try FlowLowering.parseCLIBackedStep(step, flowApp: flowApp, hostUdid: udid)
+            guard case .open(let options) = parsed else {
+                throw CLIParseError.invalidValue("internal error: expected open command")
+            }
+            let validatedURL = try OpenURLService.validatedURL(options.url)
+            let result = try OpenURLService.openHostSideIfAvailable(
+                url: validatedURL,
+                udid: options.session.udid,
+                deviceType: deviceType,
+                paths: paths
+            ) ?? OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+            guard let result else {
+                throw CLIParseError.invalidValue("openURL requires a booted simulator, active driver, or USB real device")
+            }
+            emit("\(result.message)\n")
+
+        case "oslog":
+            let parsed = try FlowLowering.parseCLIBackedStep(step, flowApp: flowApp, hostUdid: udid)
+            guard case .oslog(let options) = parsed else {
+                throw CLIParseError.invalidValue("internal error: expected oslog command")
+            }
+            emit(try OSLogCommandService.run(options: options, paths: paths, hostDeviceTypeHint: deviceType))
+
         default:
             let parsed = try FlowLowering.parseCLIBackedStep(step, flowApp: flowApp, hostUdid: udid)
             guard case .driver(let driverAction) = parsed else {

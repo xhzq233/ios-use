@@ -13,7 +13,7 @@ enum CLIHelp {
 
         Commands:
           devices, config, start, stop, dom, find, waitFor, screenshot, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, flow, proxy, oslog, nslog
+          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, flow, proxy, oslog, nslog
 
         """
     }
@@ -88,6 +88,40 @@ enum CLIHelp {
             Usage: ios-use stop
 
             Stop the active driver from driver.lock and clear the driver lock.
+
+            """
+        case "install":
+            return """
+            Usage: ios-use install <ipa> --udid <udid> [--verbose]
+
+            Install a signed IPA on a USB real device using AFC and installation_proxy.
+
+            Options:
+              --udid <udid>  Target USB real device UDID
+              --verbose      Enable verbose output
+
+            """
+        case "uninstall":
+            return """
+            Usage: ios-use uninstall <bundleId> --udid <udid> [--verbose]
+
+            Uninstall an app from a USB real device using installation_proxy.
+
+            Options:
+              --udid <udid>  Target USB real device UDID
+              --verbose      Print installation_proxy response frames
+
+            """
+        case "apps":
+            return """
+            Usage: ios-use apps --udid <udid> [--system] [--json]
+
+            List apps installed on a USB real device using installation_proxy.
+
+            Options:
+              --udid <udid>  Target USB real device UDID
+              --system       Include system apps
+              --json         Print JSON
 
             """
         case "dom":
@@ -189,7 +223,7 @@ enum CLIHelp {
             return """
             Usage: ios-use open <url> [--udid <udid>] [--verbose]
 
-            Open a URL on the device using host-side simctl/devicectl.
+            Open a URL on the device using host-side device services.
 
             Options:
               --udid <udid>  Target device or Simulator UDID

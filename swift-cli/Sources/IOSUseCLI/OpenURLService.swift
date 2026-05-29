@@ -1,7 +1,8 @@
-import Darwin
 import Foundation
 
 enum OpenURLService {
+    static var realDeviceURLLauncherForTesting: ((String, String) throws -> Void)?
+
     // MARK: - Scheme Registry
 
     enum SchemeRegistry {
@@ -41,68 +42,15 @@ enum OpenURLService {
 
         private static func performLookup(scheme: String, udid: String) -> LookupResult {
             do {
-                let pairRecord = try PairRecord.load(udid: udid)
-                let service = try startLockdownService("com.apple.mobile.installation_proxy", udid: udid, pairRecord: pairRecord)
-                let fd = try Usbmux.connect(udid: udid, port: service.port)
-                defer { Darwin.close(fd) }
-                let stream: DeviceStream
-                if service.enableServiceSSL {
-                    stream = try OpenSSLDeviceStream(fd: fd, pairRecord: pairRecord)
-                } else {
-                    stream = PlainDeviceStream(fd: fd)
+                let response = try InstallationProxyClient.withClient(udid: udid) { client in
+                    try client.lookup(attributes: ["CFBundleIdentifier", "CFBundleURLTypes"])
                 }
-                defer { stream.close() }
-
-                let response = try sendInstallationProxyLookup(stream: stream)
                 let handlers = parseSchemeHandlers(scheme: scheme, response: response)
                 return LookupResult(registeredHandlers: handlers, lookupFailed: false)
             } catch {
                 fputs("[open-url] scheme lookup failed for \(scheme) on \(udid): \(error)\n", stderr)
                 return LookupResult(registeredHandlers: [], lookupFailed: true)
             }
-        }
-
-        private static func sendInstallationProxyLookup(stream: DeviceStream) throws -> [String: Any] {
-            let body: [String: Any] = [
-                "Command": "Lookup",
-                "ClientOptions": [
-                    "ApplicationType": "Any",
-                    "ReturnAttributes": ["CFBundleIdentifier", "CFBundleURLTypes"],
-                ],
-            ]
-            let xml = try serializePlist(body)
-            try stream.write(uint32BE(UInt32(xml.count)) + xml)
-            let header = try stream.readExact(byteCount: 4, timeoutSeconds: 10)
-            let size = Int(readUInt32BE(header, 0))
-            guard size > 0, size <= 50 * 1024 * 1024 else {
-                throw CLIParseError.invalidValue("installation_proxy response too large: \(size)")
-            }
-            return try parsePlist(try stream.readExact(byteCount: size, timeoutSeconds: 10))
-        }
-    }
-
-    // MARK: - Lockdown Service Helper
-
-    private static func startLockdownService(_ serviceName: String, udid: String, pairRecord: PairRecord) throws -> LockdownService {
-        let lockdown = try LockdownClient(udid: udid, pairRecord: pairRecord)
-        do {
-            try lockdown.startSession()
-            try lockdown.enableSessionSSL()
-            let service = try lockdown.startService(serviceName)
-            lockdown.disconnect()
-            return service
-        } catch {
-            lockdown.disconnect()
-        }
-        let fallback = try LockdownClient(udid: udid, pairRecord: pairRecord)
-        do {
-            try fallback.startSession()
-            let service = try fallback.startService(serviceName)
-            fallback.disconnect()
-            return service
-        } catch {
-            fallback.disconnect()
-            throw error
         }
     }
 
@@ -125,12 +73,12 @@ enum OpenURLService {
 
     static func openHostSideIfAvailable(url: String, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult? {
         let validated = try validatedURL(url)
+        if let realUdid = try realDeviceUdid(session: session, paths: paths) {
+            return try openRealDevice(url: validated, udid: realUdid)
+        }
         if let simulatorUdid = try simulatorUdid(session: session, paths: paths) {
             try openSimulator(url: validated, udid: simulatorUdid)
             return OpenResult(message: "Opened URL: \(validated)")
-        }
-        if let realUdid = try realDeviceUdid(session: session, paths: paths) {
-            return try openRealDevice(url: validated, udid: realUdid)
         }
         return nil
     }
@@ -157,18 +105,7 @@ enum OpenURLService {
     // MARK: - Simulator
 
     private static func openSimulator(url: String, udid: String) throws {
-        let result = try Shell.runWithResult("xcrun", arguments: ["simctl", "openurl", udid, url])
-        switch result.exitCode {
-        case 0:
-            break
-        case 194:
-            let scheme = URLComponents(string: url)?.scheme ?? url
-            throw CLIParseError.invalidValue("URL scheme \"\(scheme)\" not registered on device")
-        default:
-            throw CLIParseError.invalidValue(result.stderr.isEmpty
-                ? "simctl openurl failed with exit \(result.exitCode)"
-                : result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
+        try SimulatorService.openURL(url, udid: udid)
     }
 
     // MARK: - Real Device
@@ -181,12 +118,7 @@ enum OpenURLService {
             throw CLIParseError.invalidValue("URL scheme \"\(scheme)\" not registered on device")
         }
 
-        _ = try Shell.run("xcrun", arguments: [
-            "devicectl", "device", "process", "launch",
-            "--device", udid,
-            "--payload-url", url,
-            "com.apple.springboard",
-        ])
+        try openRealDeviceURL(url: url, udid: udid)
 
         if lookup.lookupFailed {
             return OpenResult(message: "Sent URL request: \(url) (unable to verify scheme registration)")
@@ -194,6 +126,14 @@ enum OpenURLService {
 
         let handlers = lookup.registeredHandlers.joined(separator: ", ")
         return OpenResult(message: "Opened URL: \(url) (handler: \(handlers))")
+    }
+
+    private static func openRealDeviceURL(url: String, udid: String) throws {
+        if let launcher = realDeviceURLLauncherForTesting {
+            try launcher(url, udid)
+            return
+        }
+        try CoreDeviceURLLauncher().open(url: url, udid: udid)
     }
 
     // MARK: - Device Resolution
@@ -211,11 +151,20 @@ enum OpenURLService {
             return nil
         }
 
-        guard let current = SessionService.read(paths: paths),
-              current.deviceType == "real" else {
-            return try DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
+        if let current = SessionService.read(paths: paths) {
+            return current.deviceType == "real" ? current.udid : nil
         }
-        return current.udid
+        if DeviceService.looksLikeSimulatorUDID(session.udid ?? "") {
+            return nil
+        }
+        if session.udid != nil {
+            return nil
+        }
+        do {
+            return try DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
+        } catch {
+            return nil
+        }
     }
 
     private static func simulatorUdid(session: SessionOptions, paths: IOSUsePaths) throws -> String? {
@@ -224,6 +173,9 @@ enum OpenURLService {
                current.udid == requested,
                current.deviceType == "simulator" {
                 return requested
+            }
+            guard DeviceService.looksLikeSimulatorUDID(requested) else {
+                return nil
             }
             let bootedSimulators = try DeviceService.listDevices(simulatorOnly: true, paths: paths)
             return bootedSimulators.contains { $0.udid == requested } ? requested : nil

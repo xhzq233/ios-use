@@ -1,6 +1,4 @@
-import Darwin
 import Foundation
-import IOSUseProtocol
 
 public struct DeviceConfigEntry: Equatable, Sendable {
     public let udid: String
@@ -20,13 +18,14 @@ public enum ConfigService {
     private static let devXCTestBundleId = "com.iosuse.xcuidriver"
     private static let defaultDriverBundlePrefix = "com.ios-use.driver"
     private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
+    static var altsignRunnerForTesting: ((String, [String]) throws -> Void)?
+    static var realDeviceInstallerForTesting: ((String, String, String) throws -> Void)?
+    static var installedDriverVersionProviderForTesting: ((String, String) throws -> String?)?
+
     public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
         let realDevices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
         let udid: String
         if let requested = options.udid {
-            if try DeviceService.listDevices(simulatorOnly: true, paths: paths).contains(where: { $0.udid == requested }) {
-                return try configureSimulator(udid: requested, paths: paths)
-            }
             udid = requested
         } else if let device = realDevices.first {
             udid = device.udid
@@ -50,6 +49,9 @@ public enum ConfigService {
         guard FileManager.default.fileExists(atPath: ipaPath) else {
             throw CLIParseError.invalidValue("Prebuilt driver IPA not found at \(ipaPath)\nBuild it first: ./scripts/build_driver.sh")
         }
+        if let driverVersion = driverIPAVersion(at: ipaPath), driverVersion != IOSUseCLI.version {
+            throw CLIParseError.invalidValue("Prebuilt driver IPA at \(ipaPath) is out of date (found: \(driverVersion); expected: \(IOSUseCLI.version)). Build or install the current driver IPA first.")
+        }
 
         let rewritten = try rewriteIpaBundleIds(ipaPath: ipaPath, runnerBundleId: bundleId, xctestBundleId: xctestBundleId, paths: paths)
         defer { if rewritten != ipaPath { try? FileManager.default.removeItem(atPath: rewritten) } }
@@ -60,23 +62,28 @@ public enum ConfigService {
         if let appleId = options.appleId { signArgs += ["--apple-id", appleId] }
         if let password = options.password { signArgs += ["--password", password] }
         if options.verbose { signArgs.append("--verbose") }
-        try Shell.runInheriting(altsign, arguments: signArgs)
+        if let altsignRunnerForTesting {
+            try altsignRunnerForTesting(altsign, signArgs)
+        } else {
+            try Shell.runInheriting(altsign, arguments: signArgs)
+        }
 
         guard FileManager.default.fileExists(atPath: signedIpa) else {
             throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
         }
-        let extractDir = "\(paths.root)/driver-install-\(udid)"
-        try? FileManager.default.removeItem(atPath: extractDir)
-        try FileManager.default.createDirectory(atPath: extractDir, withIntermediateDirectories: true, attributes: nil)
-        defer { try? FileManager.default.removeItem(atPath: extractDir) }
-        _ = try Shell.run("unzip", arguments: ["-q", "-o", signedIpa, "-d", extractDir])
-        let payloadDir = "\(extractDir)/Payload"
-        let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
-        guard let appEntry = appEntries.first else {
-            throw CLIParseError.invalidValue("No .app found in signed IPA at \(payloadDir)")
+        let installedVersion = try currentInstalledDriverVersion(udid: udid, bundleId: bundleId)
+        let installMessage: String
+        if installedVersion == IOSUseCLI.version {
+            installMessage = "Driver already installed on device"
+        } else {
+            if let realDeviceInstallerForTesting {
+                try realDeviceInstallerForTesting(signedIpa, udid, bundleId)
+            } else {
+                try RealDevicePackageInstaller.installIpa(ipaPath: signedIpa, udid: udid, bundleID: bundleId)
+            }
+            installMessage = "Driver installed to device"
         }
 
-        _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "install", "app", "--device", udid, "\(payloadDir)/\(appEntry)"])
         try saveConfig(udid: udid, bundleId: bundleId, driverVersion: IOSUseCLI.version, paths: paths)
 
         return """
@@ -85,8 +92,8 @@ public enum ConfigService {
         XCTest Bundle ID: \(xctestBundleId)
         Using prebuilt driver: \(ipaPath)
         Driver signed
-        Driver installed to device
-        Device config complete! Run `ios-use activateApp <bundleId>` to start, or just use any action command.
+        \(installMessage)
+        Device config complete! Run `ios-use start \(udid)` before driver-backed commands.
         """ + "\n"
     }
 
@@ -112,45 +119,9 @@ public enum ConfigService {
     }
 
     public static func configureSimulator(udid requestedUdid: String?, paths: IOSUsePaths) throws -> String {
-        let udid = try requestedUdid ?? defaultBootedSimulatorUdid()
-        let ipaPath = simulatorIPAPath(paths: paths)
-        guard FileManager.default.fileExists(atPath: ipaPath) else {
-            throw CLIParseError.invalidValue("Prebuilt Simulator driver IPA not found. Expected: assets/driver-sim.ipa")
-        }
-
-        let extractDir = "\(paths.root)/driver-sim-install-\(udid)"
-        try? FileManager.default.removeItem(atPath: extractDir)
-        try FileManager.default.createDirectory(atPath: extractDir, withIntermediateDirectories: true, attributes: nil)
-        defer { try? FileManager.default.removeItem(atPath: extractDir) }
-
-        _ = try Shell.run("unzip", arguments: ["-q", "-o", ipaPath, "-d", extractDir])
-        let payloadDir = "\(extractDir)/Payload"
-        let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
-        guard let appEntry = appEntries.first else {
-            throw CLIParseError.invalidValue("No .app found in Simulator IPA")
-        }
-        let appPath = "\(payloadDir)/\(appEntry)"
-
-        _ = try? Shell.run("xcrun", arguments: ["simctl", "terminate", udid, simulatorBundleId])
-        do {
-            _ = try Shell.run("xcrun", arguments: ["simctl", "install", udid, appPath])
-        } catch {
-            _ = try? Shell.run("xcrun", arguments: ["simctl", "boot", udid])
-            _ = try Shell.run("xcrun", arguments: ["simctl", "bootstatus", udid, "-b"])
-            _ = try Shell.run("xcrun", arguments: ["simctl", "install", udid, appPath])
-        }
-
-        let launchOutput = try Shell.run("xcrun", arguments: ["simctl", "launch", udid, simulatorBundleId]).trimmingCharacters(in: .whitespacesAndNewlines)
-        waitForSimulatorDriver()
-        try saveConfig(udid: udid, bundleId: simulatorBundleId, driverVersion: IOSUseCLI.version, paths: paths)
-        return "Using prebuilt driver: \(ipaPath)\nDriver installed to Simulator\nDriver launched on Simulator (PID: \(launchOutput))\nSimulator config complete!\n"
-    }
-
-    private static func defaultBootedSimulatorUdid() throws -> String {
-        guard let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: IOSUsePaths.resolve()).first else {
-            throw CLIParseError.invalidValue("No --udid and no booted Simulators found.")
-        }
-        return simulator.udid
+        let result = try SimulatorService.configureDriver(udid: requestedUdid, paths: paths)
+        try saveConfig(udid: result.udid, bundleId: simulatorBundleId, driverVersion: IOSUseCLI.version, paths: paths)
+        return "Using prebuilt driver: \(result.ipaPath)\nDriver installed to Simulator\nDriver launched on Simulator (PID: \(result.launchOutput))\nSimulator config complete!\n"
     }
 
     static func simulatorIPAPath(paths: IOSUsePaths) -> String {
@@ -164,14 +135,38 @@ public enum ConfigService {
     private static func ipaPath(assetName: String, paths: IOSUsePaths) -> String {
         let cwd = FileManager.default.currentDirectoryPath
         let localAsset = "\(cwd)/assets/\(assetName)"
+        let installedAsset = "\(paths.root)/\(assetName)"
+        let candidates = [localAsset, installedAsset]
+        for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
+            if driverIPAVersion(at: candidate) == IOSUseCLI.version {
+                return candidate
+            }
+        }
         if FileManager.default.fileExists(atPath: localAsset) {
             return localAsset
         }
-        let installedAsset = "\(paths.root)/\(assetName)"
         if FileManager.default.fileExists(atPath: installedAsset) {
             return installedAsset
         }
         return installedAsset
+    }
+
+    static func driverIPAVersion(at ipaPath: String) -> String? {
+        guard FileManager.default.fileExists(atPath: ipaPath) else { return nil }
+        let tmpDir = "\(FileManager.default.temporaryDirectory.path)/ios-use-ipa-version-\(UUID().uuidString)"
+        do {
+            try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(atPath: tmpDir) }
+            _ = try Shell.run("unzip", arguments: ["-q", "-o", ipaPath, "-d", tmpDir])
+            let payloadDir = "\(tmpDir)/Payload"
+            let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
+            guard let appEntry = appEntries.first else { return nil }
+            return try Shell.run("plutil", arguments: ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", "\(payloadDir)/\(appEntry)/Info.plist"])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nonEmpty
+        } catch {
+            return nil
+        }
     }
 
     private static func dynamicBundleId(options: ConfigOptions, altsign: String) throws -> String {
@@ -207,6 +202,16 @@ public enum ConfigService {
             return nil
         }
         return String(output[range])
+    }
+
+    private static func currentInstalledDriverVersion(udid: String, bundleId: String) throws -> String? {
+        if let installedDriverVersionProviderForTesting {
+            return try installedDriverVersionProviderForTesting(udid, bundleId)
+        }
+        if realDeviceInstallerForTesting != nil {
+            return nil
+        }
+        return try? RealDevicePackageInstaller.installedVersion(udid: udid, bundleID: bundleId)
     }
 
     private static func sanitizeForBundleId(_ value: String) -> String {
@@ -265,348 +270,10 @@ public enum ConfigService {
         try data.write(to: URL(fileURLWithPath: paths.config), options: .atomic)
     }
 
-    private static func waitForSimulatorDriver() {
-        for _ in 0..<50 {
-            let driver = DriverClient()
-            defer { driver.close() }
-            if (try? driver.dom(raw: false, fresh: false)) != nil {
-                return
-            }
-            usleep(200_000)
-        }
-    }
 }
 
 private extension String {
     var nonEmpty: String? {
         isEmpty ? nil : self
-    }
-}
-
-public enum SessionService {
-    public struct Info: Equatable, Sendable {
-        public let udid: String
-        public let deviceName: String
-        public let deviceVersion: String
-        public let deviceType: String
-        public let startedAt: Int
-
-        public init(udid: String, deviceName: String, deviceVersion: String, deviceType: String, startedAt: Int = Int(Date().timeIntervalSince1970 * 1000)) {
-            self.udid = udid
-            self.deviceName = deviceName
-            self.deviceVersion = deviceVersion
-            self.deviceType = deviceType
-            self.startedAt = startedAt
-        }
-    }
-
-    static var simulatorDriverReachableForTesting: (() -> Bool)?
-    static var simulatorDriverLauncherForTesting: ((String) throws -> Void)?
-    static var simulatorDriverTerminatorForTesting: ((String) throws -> Bool)?
-    static var realDriverReachableForTesting: ((String) -> Bool)?
-    static var realDriverLauncherForTesting: ((String, String) throws -> Void)?
-    static var realDriverTerminatorForTesting: ((String) throws -> Bool)?
-
-    public static func clear(paths: IOSUsePaths) {
-        clearDriverLock(paths: paths)
-    }
-
-    public static func readDriverLock(paths: IOSUsePaths) -> String? {
-        try? readDriverLockInfo(paths: paths)?.udid
-    }
-
-    public static func readDriverLockInfo(paths: IOSUsePaths) throws -> Info? {
-        guard FileManager.default.fileExists(atPath: paths.driverLock) else {
-            return nil
-        }
-        let data = try Data(contentsOf: URL(fileURLWithPath: paths.driverLock))
-        guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw CLIParseError.invalidValue("Invalid driver.lock: expected JSON object.")
-        }
-        guard let udid = raw["udid"] as? String, !udid.isEmpty,
-              let deviceType = raw["deviceType"] as? String, !deviceType.isEmpty else {
-            throw CLIParseError.invalidValue("Invalid driver.lock: missing udid/deviceType.")
-        }
-        guard deviceType == "real" || deviceType == "simulator" else {
-            throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType).")
-        }
-        guard let startedAt = raw["startedAt"] as? Int else {
-            throw CLIParseError.invalidValue("Invalid driver.lock: missing startedAt.")
-        }
-        return Info(
-            udid: udid,
-            deviceName: raw["deviceName"] as? String ?? "",
-            deviceVersion: raw["deviceVersion"] as? String ?? "",
-            deviceType: deviceType,
-            startedAt: startedAt
-        )
-    }
-
-    public static func requireDriverLock(paths: IOSUsePaths) throws -> Info {
-        guard let info = try readDriverLockInfo(paths: paths) else {
-            throw CLIParseError.invalidValue("No active driver. Run `ios-use start <UDID>` first.")
-        }
-        return info
-    }
-
-    public static func writeDriverLock(info: Info, paths: IOSUsePaths) throws {
-        let root: [String: Any] = [
-            "udid": info.udid,
-            "deviceName": info.deviceName,
-            "deviceVersion": info.deviceVersion,
-            "deviceType": info.deviceType,
-            "startedAt": info.startedAt,
-        ]
-        let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
-        try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
-        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: URL(fileURLWithPath: paths.driverLock), options: .atomic)
-    }
-
-    public static func clearDriverLock(paths: IOSUsePaths) {
-        try? FileManager.default.removeItem(atPath: paths.driverLock)
-    }
-
-    public static func start(udid: String, paths: IOSUsePaths, verbose: Bool) throws -> String {
-        if let current = try readDriverLockInfo(paths: paths) {
-            throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
-        }
-        let info = try resolveDriverInfo(udid: udid, paths: paths)
-        try launchDriver(for: info, paths: paths, verbose: verbose)
-        try writeDriverLock(info: info, paths: paths)
-        return "Driver started for \(udid)\n"
-    }
-
-    public static func stop(paths: IOSUsePaths) throws -> String {
-        let current = try requireDriverLock(paths: paths)
-        var output = ""
-        if current.deviceType == "simulator" {
-            let terminate = simulatorDriverTerminatorForTesting ?? terminateSimulatorDriver
-            if try terminate(current.udid) {
-                output += "Driver app terminated on simulator\n"
-            } else {
-                output += "Driver app was not running on simulator\n"
-            }
-        } else {
-            let terminate = realDriverTerminatorForTesting ?? terminateRealDriverProcesses
-            if try terminate(current.udid) {
-                output += "Driver app terminated on device\n"
-            } else {
-                output += "Driver app was not running on device\n"
-            }
-        }
-
-        clearDriverLock(paths: paths)
-        output += "Driver stopped\n"
-        return output
-    }
-
-    public static func read(paths: IOSUsePaths) -> Info? {
-        try? readDriverLockInfo(paths: paths)
-    }
-
-    public static func resolveDriverInfo(udid: String, paths: IOSUsePaths) throws -> Info {
-        let configured = DeviceService.configuredUdids(paths: paths)
-        guard configured.contains(udid) else {
-            throw CLIParseError.invalidValue("No signing config found for device \(udid). Run `ios-use config --udid \(udid)` first.")
-        }
-        try ConfigService.assertDriverInstallCurrent(udid: udid, paths: paths)
-        if let simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).first(where: { $0.udid == udid }) {
-            return Info(
-                udid: udid,
-                deviceName: simulator.name,
-                deviceVersion: simulator.version,
-                deviceType: "simulator"
-            )
-        }
-        if try DeviceService.isUsbDeviceConnected(udid: udid) {
-            let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first { $0.udid == udid }
-            return Info(
-                udid: udid,
-                deviceName: device?.name ?? "Unknown",
-                deviceVersion: device?.version ?? "",
-                deviceType: "real"
-            )
-        }
-        if let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first(where: { $0.udid == udid }) {
-            return Info(
-                udid: udid,
-                deviceName: device.name,
-                deviceVersion: device.version,
-                deviceType: "real"
-            )
-        }
-        throw CLIParseError.invalidValue("Device \(udid) not found.")
-    }
-
-    public static func launchDriver(for info: Info, paths: IOSUsePaths, verbose: Bool) throws {
-        try ConfigService.assertDriverInstallCurrent(udid: info.udid, paths: paths)
-        switch info.deviceType {
-        case "simulator":
-            try ensureSimulatorDriverRunning(udid: info.udid, allowExistingDriver: false)
-        case "real":
-            try ensureRealDriverRunning(udid: info.udid, paths: paths, verbose: verbose, checkFirst: false)
-        default:
-            throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(info.deviceType).")
-        }
-    }
-
-    private static func ensureRealDriverRunning(udid: String, paths: IOSUsePaths, verbose: Bool, checkFirst: Bool = true) throws {
-        let isReachable = realDriverReachableForTesting ?? { targetUdid in
-            isDriverPortReachable(udid: targetUdid)
-        }
-        let launch = realDriverLauncherForTesting ?? { targetUdid, bundleId in
-            try launchRealDriverDetached(udid: targetUdid, bundleId: bundleId, paths: paths, verbose: verbose)
-        }
-        if checkFirst && isReachable(udid) {
-            return
-        }
-        guard let bundleId = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid })?.bundleId,
-              !bundleId.isEmpty,
-              bundleId != "(missing)" else {
-            throw CLIParseError.invalidValue("No driver bundle ID found for device \(udid). Run `ios-use config --udid \(udid)` first.")
-        }
-        try launch(udid, bundleId)
-        let deadline = Date().addingTimeInterval(30)
-        while Date() < deadline {
-            if isReachable(udid) {
-                return
-            }
-            usleep(250_000)
-        }
-        throw CLIParseError.invalidValue("Driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable on device \(udid). Check \(driverLogPath(paths: paths))")
-    }
-
-    private static func launchRealDriverDetached(udid: String, bundleId: String, paths: IOSUsePaths, verbose: Bool) throws {
-        try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true, attributes: nil)
-        let logPath = driverLogPath(paths: paths)
-        rotateDriverLogIfNeeded(logPath)
-        let separator = "\n--- session start \(ISO8601DateFormatter().string(from: Date())) ---\n"
-        if !FileManager.default.fileExists(atPath: logPath) {
-            FileManager.default.createFile(atPath: logPath, contents: nil)
-        }
-        if let handle = FileHandle(forWritingAtPath: logPath) {
-            _ = try? handle.seekToEnd()
-            if let data = separator.data(using: .utf8) {
-                try? handle.write(contentsOf: data)
-            }
-            try? handle.close()
-        }
-
-        let args = [
-            "xcrun", "devicectl", "device", "process", "launch",
-            "--device", udid,
-            "--terminate-existing",
-            "--console",
-            bundleId,
-        ]
-        let command = "exec \(args.map(shellQuote).joined(separator: " ")) >> \(shellQuote(logPath)) 2>&1"
-        if verbose {
-            FileHandle.standardError.write(Data("Driver console log: \(logPath)\n".utf8))
-        }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-lc", command]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-    }
-
-    private static func driverLogPath(paths: IOSUsePaths) -> String {
-        "\(paths.logs)/driver.log"
-    }
-
-    private static func rotateDriverLogIfNeeded(_ logPath: String) {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: logPath),
-              let size = attrs[.size] as? NSNumber,
-              size.intValue > 2 * 1024 * 1024 else {
-            return
-        }
-        try? FileManager.default.removeItem(atPath: "\(logPath).1")
-        try? FileManager.default.moveItem(atPath: logPath, toPath: "\(logPath).1")
-    }
-
-    private static func shellQuote(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
-    private static func ensureSimulatorDriverRunning(udid: String, allowExistingDriver: Bool) throws {
-        let isReachable = simulatorDriverReachableForTesting ?? {
-            isLocalDriverPortReachable()
-        }
-        let launch = simulatorDriverLauncherForTesting ?? { targetUdid in
-            _ = try Shell.run("xcrun", arguments: ["simctl", "launch", targetUdid, ConfigService.simulatorBundleId])
-        }
-        if allowExistingDriver, isReachable() {
-            return
-        }
-        try launch(udid)
-        let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline {
-            if isReachable() {
-                return
-            }
-            usleep(250_000)
-        }
-        throw CLIParseError.invalidValue("Simulator driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable for \(udid)")
-    }
-
-    private static func isDriverPortReachable(udid: String) -> Bool {
-        guard let fd = try? Usbmux.connect(udid: udid, port: Int(IOSUseProtocol.defaultDriverPort)) else {
-            return false
-        }
-        Darwin.close(fd)
-        return true
-    }
-
-    private static func isLocalDriverPortReachable() -> Bool {
-        let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
-        defer { Darwin.close(fd) }
-
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = UInt16(IOSUseProtocol.defaultDriverPort).bigEndian
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-
-        return withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        } == 0
-    }
-
-    private static func terminateSimulatorDriver(udid: String) throws -> Bool {
-        do {
-            _ = try Shell.run("xcrun", arguments: ["simctl", "terminate", udid, ConfigService.simulatorBundleId])
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    private static func terminateRealDriverProcesses(udid: String) throws -> Bool {
-        let output = (try? Shell.run("xcrun", arguments: ["devicectl", "device", "info", "processes", "--device", udid, "--quiet", "--json-output", "-"])) ?? ""
-        guard let data = output.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let result = root["result"] as? [String: Any] else {
-            return false
-        }
-        let processes = (result["runningProcesses"] as? [[String: Any]]) ?? (result["processTokens"] as? [[String: Any]]) ?? []
-        var terminated = false
-        for process in processes {
-            let executable = process["executable"].map { String(describing: $0) } ?? ""
-            let basename = URL(fileURLWithPath: executable).lastPathComponent
-            let pidValue = process["processIdentifier"]
-            let pid = (pidValue as? Int) ?? (pidValue as? NSNumber).map(\.intValue)
-            guard basename == "IOSUseDriver-Runner", let pid else { continue }
-            do {
-                _ = try Shell.run("xcrun", arguments: ["devicectl", "device", "process", "terminate", "--device", udid, "--pid", String(pid), "--kill"])
-                terminated = true
-            } catch {
-                // The process may already have exited between listing and termination.
-            }
-        }
-        return terminated
     }
 }

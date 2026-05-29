@@ -65,6 +65,28 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .install(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try AppManagementService.install(options: options))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        case .uninstall(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try AppManagementService.uninstall(options: options))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        case .apps(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try AppManagementService.list(options: options))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        case .open(let options):
+            return executeOpen(options)
+        case .oslog(let options):
+            return executeOSLog(options)
         case .flow(let options):
             do {
                 let stdout = try FlowService.run(file: options.file, options: options, paths: paths, outputSink: outputSink)
@@ -134,6 +156,33 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
+    private func executeOpen(_ options: OpenURLOptions, hostDeviceTypeHint: String? = nil) -> CLIResult {
+        do {
+            let validatedURL = try OpenURLService.validatedURL(options.url)
+            let result: OpenURLService.OpenResult?
+            if options.session.udid != nil || hostDeviceTypeHint != nil {
+                result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: options.session.udid, deviceType: hostDeviceTypeHint, paths: paths)
+                    ?? OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+            } else {
+                result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+            }
+            guard let result else {
+                throw CLIParseError.invalidValue("openURL requires a booted simulator, active driver, or USB real device")
+            }
+            return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
+        } catch {
+            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+        }
+    }
+
+    private func executeOSLog(_ options: OSLogOptions, hostDeviceTypeHint: String? = nil) -> CLIResult {
+        do {
+            return CLIResult(exitCode: 0, stdout: try OSLogCommandService.run(options: options, paths: paths, hostDeviceTypeHint: hostDeviceTypeHint))
+        } catch {
+            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+        }
+    }
+
     private func executeDriver(_ action: DriverAction) -> CLIResult {
         do {
             let result = try DriverCommandExecutor.execute(action: action, paths: paths) { body in
@@ -165,7 +214,7 @@ public struct IOSUseCLI: Sendable {
                 return CLIResult(exitCode: 0, stdout: options.simulator ? "No booted Simulators found\n" : "No connected real devices found\n")
             }
             let configured = DeviceService.configuredDevices(paths: paths)
-            let lines = devices.map { DeviceService.format($0, configuredDevices: configured) }.joined(separator: "\n")
+            let lines = devices.map { DeviceService.format($0, configuredDevices: configured, verbose: options.verbose) }.joined(separator: "\n")
             return CLIResult(exitCode: 0, stdout: "\(lines)\n")
         } catch {
             return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
