@@ -71,12 +71,16 @@ public enum OSLogService {
             simulator = true
         } else if deviceTypeHint == "real" {
             simulator = false
-        } else if (try? DeviceService.isUsbDeviceConnected(udid: udid)) == true {
-            simulator = false
-        } else if !DeviceService.looksLikeSimulatorUDID(udid) {
-            simulator = false
+        } else if DeviceService.looksLikeSimulatorUDID(udid) {
+            let normalized = normalizeUdid(udid)
+            let booted = try DeviceService.listDevices(simulatorOnly: true, paths: paths)
+                .contains { normalizeUdid($0.udid) == normalized }
+            guard booted else {
+                throw CLIParseError.invalidValue("Simulator \(udid) is not booted or not found.")
+            }
+            simulator = true
         } else {
-            simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).contains { $0.udid == udid }
+            simulator = false
         }
         if simulator {
             return try fetchSimulator(
@@ -185,6 +189,10 @@ public enum OSLogService {
     private static func logTimestamp() -> String {
         ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: #"[:.]"#, with: "-", options: .regularExpression)
+    }
+
+    private static func normalizeUdid(_ udid: String) -> String {
+        udid.replacingOccurrences(of: "-", with: "").lowercased()
     }
 }
 

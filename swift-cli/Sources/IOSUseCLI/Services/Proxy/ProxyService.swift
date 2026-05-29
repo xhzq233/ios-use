@@ -73,16 +73,21 @@ public enum ProxyService {
     public static func configCA(markTrusted: Bool = false, paths: IOSUsePaths, outputSink: FlowService.OutputSink? = nil) throws -> String {
         let activeDriver = try SessionService.requireDriverLock(paths: paths)
         let udid = activeDriver.udid
+        if markTrusted {
+            guard FileManager.default.fileExists(atPath: caPath(paths: paths)) else {
+                throw CLIParseError.invalidValue("No mitmproxy CA found. Run `ios-use proxy configca` first, complete the device trust steps, then run `ios-use proxy configca --mark-trusted`.")
+            }
+            let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
+            let fingerprint = fingerprintPEM(pem)
+            try writeCAState(udid: udid, fingerprint: fingerprint, paths: paths)
+            try updateProxyCAStatus(udid: udid, caInstalled: true, caStatus: "trusted", lastError: nil, paths: paths)
+            return "CA trust marked as manually confirmed on device.\n"
+        }
         try ensureMitmproxyCA(paths: paths)
         let pem = try String(contentsOfFile: caPath(paths: paths), encoding: .utf8)
         let fingerprint = fingerprintPEM(pem)
         if caStateMatches(udid: udid, fingerprint: fingerprint, paths: paths) {
             return "CA already installed and trusted on device.\n"
-        }
-        if markTrusted {
-            try writeCAState(udid: udid, fingerprint: fingerprint, paths: paths)
-            try updateProxyCAStatus(udid: udid, caInstalled: true, caStatus: "trusted", lastError: nil, paths: paths)
-            return "CA trust marked as manually confirmed on device.\n"
         }
         _ = try withRecoveredDriver(paths: paths) { driver in
             try driver.proxyCAPush(caBase64: base64Body(fromPEM: pem))
@@ -183,7 +188,10 @@ public enum ProxyService {
             return try stopProxyServerOnly(state: state, paths: paths)
         }
         let activeDriver = try SessionService.requireDriverLock(paths: paths)
-        guard state.udid.isEmpty || state.udid == activeDriver.udid else {
+        guard !state.udid.isEmpty else {
+            throw CLIParseError.invalidValue("Proxy server was started with --server and no device Wi-Fi proxy was configured. Use `ios-use proxy stop --server` to stop only the local mitmdump server.")
+        }
+        guard state.udid == activeDriver.udid else {
             throw CLIParseError.invalidValue("Proxy is running for \(state.udid), not active driver \(activeDriver.udid). Run `ios-use start \(state.udid)` and `ios-use proxy stop`, or manually disable Wi-Fi proxy.")
         }
         var pendingFlowOutput = ""

@@ -79,17 +79,38 @@ final class OpenSSLDeviceStream: DeviceStream {
 
     init(fd: Int32, pairRecord: PairRecord, ownsFD: Bool = true) throws {
         Self.debug("prepare openssl client credentials")
-        self.tempDir = FileManager.default.temporaryDirectory
+        let createdTempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-openssl-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        let keyPath = tempDir.appendingPathComponent("host.key").path
-        let certPath = tempDir.appendingPathComponent("host.crt").path
-        try pairRecord.hostPrivateKey.write(to: URL(fileURLWithPath: keyPath), options: .atomic)
-        try pairRecord.hostCertificate.write(to: URL(fileURLWithPath: certPath), options: .atomic)
+        let keyPath = createdTempDir.appendingPathComponent("host.key").path
+        let certPath = createdTempDir.appendingPathComponent("host.crt").path
+        do {
+            try FileManager.default.createDirectory(at: createdTempDir, withIntermediateDirectories: true)
+            try pairRecord.hostPrivateKey.write(to: URL(fileURLWithPath: keyPath), options: .atomic)
+            try pairRecord.hostCertificate.write(to: URL(fileURLWithPath: certPath), options: .atomic)
+        } catch {
+            if ownsFD {
+                Darwin.shutdown(fd, SHUT_RDWR)
+                Darwin.close(fd)
+            }
+            try? FileManager.default.removeItem(at: createdTempDir)
+            throw error
+        }
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyPath)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: certPath)
 
-        self.proxy = try LocalFDProxy(targetFD: fd, closeTargetOnClose: ownsFD)
+        self.tempDir = createdTempDir
+        let createdProxy: LocalFDProxy
+        do {
+            createdProxy = try LocalFDProxy(targetFD: fd, closeTargetOnClose: ownsFD)
+        } catch {
+            if ownsFD {
+                Darwin.shutdown(fd, SHUT_RDWR)
+                Darwin.close(fd)
+            }
+            try? FileManager.default.removeItem(at: createdTempDir)
+            throw error
+        }
+        self.proxy = createdProxy
         let inputPipe = Pipe()
         self.outputPipe = Pipe()
         self.errorPipe = Pipe()

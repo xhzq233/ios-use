@@ -186,6 +186,42 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("install requires --udid or an active driver"))
     }
 
+    func testAppManagementCommandsRejectActiveSimulatorLock() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-app-management-simulator-lock-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-LOCK", deviceType: "simulator", paths: paths)
+        let ipaPath = "\(root)/app.ipa"
+        try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app")
+        AppManagementService.installerForTesting = { _, _, _ in
+            XCTFail("simulator lock must fail before install")
+        }
+        AppManagementService.uninstallerForTesting = { _, _ in
+            XCTFail("simulator lock must fail before uninstall")
+        }
+        AppManagementService.appsProviderForTesting = { _, _ in
+            XCTFail("simulator lock must fail before apps")
+            return []
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+        let install = cli.run(arguments: ["install", ipaPath])
+        let uninstall = cli.run(arguments: ["uninstall", "com.example.app"])
+        let apps = cli.run(arguments: ["apps"])
+
+        XCTAssertEqual(install.exitCode, 1)
+        XCTAssertTrue(install.stderr.contains("install supports USB real devices only"))
+        XCTAssertEqual(uninstall.exitCode, 1)
+        XCTAssertTrue(uninstall.stderr.contains("uninstall supports USB real devices only"))
+        XCTAssertEqual(apps.exitCode, 1)
+        XCTAssertTrue(apps.stderr.contains("apps supports USB real devices only"))
+    }
+
     func testAppsCommandJsonRendersProviderResults() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-apps-host-only-\(UUID().uuidString)")

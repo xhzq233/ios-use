@@ -68,7 +68,8 @@ mitmdump -n -r file.mitm --set hardump=output.har
 
 | 命令 | 说明 |
 |------|------|
-| `proxy configca [--mark-trusted]` | 安装并信任 mitmproxy CA；若需要设备密码或手动信任证书，完成后用 `--mark-trusted` 记录人工确认 |
+| `proxy configca` | 安装并信任 mitmproxy CA；若需要设备密码或手动信任证书，完成后用 `--mark-trusted` 记录人工确认 |
+| `proxy configca --mark-trusted` | 不 push CA、不执行安装 flow，只在已有当前 CA 文件时记录人工确认 |
 | `proxy start [--server] [-i <interface>]` | 默认启动抓包 + 配置设备 Wi-Fi 代理，并记录 last capture；`--server` 只启动本机 mitmdump |
 | `proxy read [--filter <expression>] [--raw] [--last N]` | 读取最近一次 `proxy start` 记录的 last capture，`proxy stop` 后仍可读 |
 | `proxy stop [--server]` | 默认清除设备 Wi-Fi 代理 + 停止抓包；`--server` 只停止本机 mitmdump |
