@@ -45,7 +45,7 @@ enum SimulatorService {
         let udid = try requestedUdid ?? defaultBootedUdid(paths: paths)
         let ipaPath = ConfigService.simulatorIPAPath(paths: paths)
         guard FileManager.default.fileExists(atPath: ipaPath) else {
-            throw CLIParseError.invalidValue("Prebuilt Simulator driver IPA not found. Expected: assets/driver-sim.ipa")
+            throw CLIParseError.invalidValue("Prebuilt Simulator driver IPA not found at \(ipaPath)")
         }
 
         let extracted = try extractSimulatorApp(ipaPath: ipaPath, udid: udid, paths: paths)

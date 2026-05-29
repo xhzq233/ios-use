@@ -7,7 +7,7 @@ Run scripts from the repository root unless noted otherwise.
 | Script | Purpose |
 | --- | --- |
 | `scripts/build_swift_cli.sh [--debug]` | Build the Swift CLI and copy the single local binary to repo-root `./ios-use`. Release is the default. |
-| `scripts/build_driver.sh [--debug] [--simulator-only]` | Generate the Xcode project and build driver IPA artifacts under `assets/`. |
+| `scripts/build_driver.sh [--debug\|--release] [--simulator-only]` | Generate the Xcode project and build driver IPA artifacts. Debug is the default and writes `IOS_USE_HOME`, or cwd `.ios-use/` when unset; release writes `driver/build/`. |
 
 Local dev run standard:
 
@@ -38,8 +38,8 @@ bash scripts/ci_test.sh
 Run the full UI replay only when needed:
 
 ```bash
-bash scripts/ci_full_simulator.sh --driver-ipa assets/driver-sim.ipa
-bash scripts/ci_full_simulator.sh --driver-ipa assets/driver-sim.ipa --case FIND-1B
+bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa
+bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case FIND-1B
 ```
 
 GitHub CI uses `.github/workflows/ci.yml` for the default gate and runs script syntax, Swift CLI tests, driver unit tests, and artifact builds in parallel jobs. The full UI replay lives in `.github/workflows/simulator.yml` and is manual-only.

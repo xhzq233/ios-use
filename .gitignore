@@ -11,6 +11,7 @@ altsign-cli/altsign-cli
 altsign-cli/*.o
 altsign-cli/*.dSYM
 assets/
+.ios-use/
 .idea/
 .claude/
 .trae/

@@ -14,7 +14,7 @@ This benchmark compares `ios-use` against the full `Appium Server -> WebDriverAg
 Current benchmark runs require an explicit custom driver IPA. The script does not build driver artifacts itself:
 
 ```bash
-node scripts/benchmark_wda.js --driver-ipa assets/driver.ipa --iterations 3
+node scripts/benchmark_wda.js --driver-ipa .ios-use/driver.ipa --iterations 3
 ```
 
 ## Results

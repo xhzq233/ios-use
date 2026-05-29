@@ -18,14 +18,18 @@ enum AppManagementService {
         }
         let bundleID = try? extractBundleID(ipaPath: options.ipaPath)
         var responseFrames: [[String: Any]] = []
-        if let installerForTesting {
-            try installerForTesting(options.ipaPath, options.udid, bundleID)
-        } else {
-            try RealDevicePackageInstaller.installIpa(ipaPath: options.ipaPath, udid: options.udid, bundleID: bundleID) { response in
-                if options.verbose {
-                    responseFrames.append(response)
+        do {
+            if let installerForTesting {
+                try installerForTesting(options.ipaPath, options.udid, bundleID)
+            } else {
+                try RealDevicePackageInstaller.installIpa(ipaPath: options.ipaPath, udid: options.udid, bundleID: bundleID) { response in
+                    if options.verbose {
+                        responseFrames.append(response)
+                    }
                 }
             }
+        } catch {
+            throw errorWithVerboseResponses(error, frames: responseFrames, verbose: options.verbose)
         }
         let suffix = bundleID.map { " (\($0))" } ?? ""
         return verboseResponsePrefix(responseFrames) + "Installed IPA on \(options.udid)\(suffix)\n"
@@ -33,16 +37,20 @@ enum AppManagementService {
 
     static func uninstall(options: AppUninstallOptions) throws -> String {
         var responseFrames: [[String: Any]] = []
-        if let uninstallerForTesting {
-            try uninstallerForTesting(options.bundleID, options.udid)
-        } else {
-            try InstallationProxyClient.withClient(udid: options.udid) { client in
-                try client.uninstall(bundleID: options.bundleID) { response in
-                    if options.verbose {
-                        responseFrames.append(response)
+        do {
+            if let uninstallerForTesting {
+                try uninstallerForTesting(options.bundleID, options.udid)
+            } else {
+                try InstallationProxyClient.withClient(udid: options.udid) { client in
+                    try client.uninstall(bundleID: options.bundleID) { response in
+                        if options.verbose {
+                            responseFrames.append(response)
+                        }
                     }
                 }
             }
+        } catch {
+            throw errorWithVerboseResponses(error, frames: responseFrames, verbose: options.verbose)
         }
         return verboseResponsePrefix(responseFrames) + "Uninstalled \(options.bundleID) from \(options.udid)\n"
     }
@@ -51,6 +59,11 @@ enum AppManagementService {
         guard !frames.isEmpty else { return "" }
         let lines = frames.map { InstallationProxyClient.responseSummary($0) }
         return "installation_proxy responses:\n" + lines.joined(separator: "\n") + "\n"
+    }
+
+    private static func errorWithVerboseResponses(_ error: Error, frames: [[String: Any]], verbose: Bool) -> Error {
+        guard verbose, !frames.isEmpty else { return error }
+        return CLIParseError.invalidValue(verboseResponsePrefix(frames) + "\(error)")
     }
 
     static func list(options: AppsOptions) throws -> String {

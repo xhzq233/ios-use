@@ -63,10 +63,10 @@ jobs:
 
       - name: Run full local regression
         if: inputs.full_simulator && inputs.simulator_cases == ''
-        run: bash scripts/ci_full_simulator.sh --driver-ipa assets/driver-sim.ipa
+        run: bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa
 
       - name: Run selected Simulator command cases
         if: inputs.simulator_cases != ''
         env:
           IOS_USE_SIMULATOR_CASES: ${{ inputs.simulator_cases }}
-        run: bash scripts/ci_full_simulator.sh --driver-ipa assets/driver-sim.ipa --case "$IOS_USE_SIMULATOR_CASES"
+        run: bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case "$IOS_USE_SIMULATOR_CASES"
