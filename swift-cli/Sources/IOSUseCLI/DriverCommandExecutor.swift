@@ -96,23 +96,9 @@ enum DriverCommandExecutor {
             }
             return DriverCommandResult(stdout: "Pressed Home\n", payload: nil)
 
-        case .openURL(let url, let session):
-            let validatedURL = try OpenURLService.validatedURL(url)
-            if session.udid != nil || hostDeviceTypeHint != nil,
-               let result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: session.udid, deviceType: hostDeviceTypeHint, paths: paths) {
-                return DriverCommandResult(stdout: "\(result.message)\n", payload: nil)
-            }
-            if let result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: session, paths: paths) {
-                return DriverCommandResult(stdout: "\(result.message)\n", payload: nil)
-            }
-            throw CLIParseError.invalidValue("openURL requires a booted simulator, active driver, or USB real device")
-
         case .dismissAlert(let index):
             let payload = try requiredPayload(clientRunner { .alert(try $0.dismissAlert(index: index)) }, as: ForyAlertPayload.self)
             return DriverCommandResult(stdout: DriverOutput.formatAlert(payload), payload: .alert(payload))
-
-        case .oslog(let pattern, let flags, let timeout, let name, let clear, let bundleId, let session):
-            return DriverCommandResult(stdout: try oslog(pattern: pattern, flags: flags, timeout: timeout, name: name, clear: clear, bundleId: bundleId, session: session, paths: paths, hostDeviceTypeHint: hostDeviceTypeHint), payload: nil)
         }
     }
 
@@ -124,8 +110,6 @@ enum DriverCommandExecutor {
             _ = try resolveTarget(target, traits: traits, cindex: cindex)
         case .swipe(let to, let from, _, _, let traits, let cindex):
             _ = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
-        case .openURL(let url, _):
-            _ = try OpenURLService.validatedURL(url)
         default:
             break
         }
@@ -185,32 +169,6 @@ enum DriverCommandExecutor {
             throw CLIParseError.invalidValue("Invalid point pair: \"\(value)\"")
         }
         return ForyPoint(x: x, y: y)
-    }
-
-    private static func oslog(pattern: String?, flags: String?, timeout: Double?, name: String?, clear: Bool, bundleId: String?, session: SessionOptions, paths: IOSUsePaths, hostDeviceTypeHint: String?) throws -> String {
-        if clear {
-            if let udid = session.udid ?? SessionService.read(paths: paths)?.udid {
-                return OSLogService.clear(udid: udid)
-            }
-            return OSLogService.clear()
-        }
-        let activeDriver = SessionService.read(paths: paths)
-        let defaultUsbUdid = try session.udid == nil && activeDriver?.udid == nil
-            ? DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
-            : nil
-        guard let udid = session.udid ?? activeDriver?.udid ?? defaultUsbUdid else {
-            throw CLIParseError.invalidValue("oslog requires --udid, an active driver, or a connected USB device")
-        }
-        return try OSLogService.fetch(
-            udid: udid,
-            pattern: pattern,
-            flags: flags,
-            bundleId: bundleId,
-            timeout: timeout,
-            name: name,
-            paths: paths,
-            deviceTypeHint: hostDeviceTypeHint ?? (activeDriver?.udid == udid ? activeDriver?.deviceType : (defaultUsbUdid == udid ? "real" : nil))
-        )
     }
 
     private static func requiredPayload<T>(_ payload: DriverCommandPayload?, as type: T.Type) throws -> T {

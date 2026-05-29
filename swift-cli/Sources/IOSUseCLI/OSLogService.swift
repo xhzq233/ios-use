@@ -71,6 +71,10 @@ public enum OSLogService {
             simulator = true
         } else if deviceTypeHint == "real" {
             simulator = false
+        } else if (try? DeviceService.isUsbDeviceConnected(udid: udid)) == true {
+            simulator = false
+        } else if !DeviceService.looksLikeSimulatorUDID(udid) {
+            simulator = false
         } else {
             simulator = try DeviceService.listDevices(simulatorOnly: true, paths: paths).contains { $0.udid == udid }
         }
@@ -181,5 +185,33 @@ public enum OSLogService {
     private static func logTimestamp() -> String {
         ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: #"[:.]"#, with: "-", options: .regularExpression)
+    }
+}
+
+enum OSLogCommandService {
+    static func run(options: OSLogOptions, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil) throws -> String {
+        if options.clear {
+            if let udid = options.session.udid ?? SessionService.read(paths: paths)?.udid {
+                return OSLogService.clear(udid: udid)
+            }
+            return OSLogService.clear()
+        }
+        let activeDriver = SessionService.read(paths: paths)
+        let defaultUsbUdid = try options.session.udid == nil && activeDriver?.udid == nil
+            ? DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
+            : nil
+        guard let udid = options.session.udid ?? activeDriver?.udid ?? defaultUsbUdid else {
+            throw CLIParseError.invalidValue("oslog requires --udid, an active driver, or a connected USB device")
+        }
+        return try OSLogService.fetch(
+            udid: udid,
+            pattern: options.pattern,
+            flags: options.flags,
+            bundleId: options.bundleId,
+            timeout: options.timeout,
+            name: options.name,
+            paths: paths,
+            deviceTypeHint: hostDeviceTypeHint ?? (activeDriver?.udid == udid ? activeDriver?.deviceType : (defaultUsbUdid == udid ? "real" : nil))
+        )
     }
 }

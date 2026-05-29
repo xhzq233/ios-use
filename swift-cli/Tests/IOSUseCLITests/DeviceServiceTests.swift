@@ -5,7 +5,9 @@ final class DeviceServiceTests: XCTestCase {
     override func tearDown() {
         DeviceService.listDevicesOverrideForTesting = nil
         DeviceService.usbDeviceUdidsOverrideForTesting = nil
+        DeviceService.realDeviceResolverForTesting = nil
         DeviceService.resetCacheForTesting()
+        Shell.runOverrideForTesting = nil
         super.tearDown()
     }
 
@@ -74,6 +76,57 @@ final class DeviceServiceTests: XCTestCase {
         DeviceService.usbDeviceUdidsOverrideForTesting = { [] }
 
         XCTAssertEqual(try DeviceService.listDevices(simulatorOnly: false, paths: paths), [])
+    }
+
+    func testListRealDevicesUsesLockdownResolverWithoutXctrace() throws {
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": "/tmp/ios-use-device-lockdown-\(UUID().uuidString)"])
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-1"] }
+        DeviceService.realDeviceResolverForTesting = { udid in
+            IOSDevice(
+                name: "Test Phone",
+                version: "26.2",
+                udid: udid,
+                kind: .real,
+                metadata: IOSDeviceMetadata(productType: "iPhone18,3", productName: "iPhone", buildVersion: "23C55", batteryCurrentCapacity: 99, status: "paired")
+            )
+        }
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            if executable == "xcrun", arguments.first == "xctrace" {
+                XCTFail("real devices path must not call xctrace")
+            }
+            return ""
+        }
+
+        let devices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
+
+        XCTAssertEqual(devices.map(\.udid), ["REAL-1"])
+        XCTAssertEqual(devices.first?.name, "Test Phone")
+        XCTAssertEqual(
+            DeviceService.format(devices[0], configuredDevices: [:], verbose: true),
+            "Test Phone | iOS 26.2 | Device | UDID: REAL-1\n    product: iPhone | type: iPhone18,3 | build: 23C55 | battery: 99%"
+        )
+    }
+
+    func testListRealDevicesKeepsUnpairedDeviceVisible() throws {
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": "/tmp/ios-use-device-unpaired-\(UUID().uuidString)"])
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-UNPAIRED"] }
+        DeviceService.realDeviceResolverForTesting = { udid in
+            IOSDevice(
+                name: "Unknown",
+                version: "",
+                udid: udid,
+                kind: .real,
+                metadata: IOSDeviceMetadata(status: "pair required", detail: "No pair record found")
+            )
+        }
+
+        let devices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
+
+        XCTAssertEqual(devices.map(\.udid), ["REAL-UNPAIRED"])
+        XCTAssertEqual(
+            DeviceService.format(devices[0], configuredDevices: [:]),
+            "Unknown | iOS unknown | Device | UDID: REAL-UNPAIRED | pair required"
+        )
     }
 
     func testShellRunHandlesLargeStdoutWithoutPipeDeadlock() throws {

@@ -1,0 +1,240 @@
+import Foundation
+
+public enum ParsedCommand: Equatable, Sendable {
+    case devices(DeviceOptions)
+    case config(ConfigOptions)
+    case start(StartOptions)
+    case stop
+    case install(AppInstallOptions)
+    case uninstall(AppUninstallOptions)
+    case apps(AppsOptions)
+    case open(OpenURLOptions)
+    case oslog(OSLogOptions)
+    case driver(DriverAction)
+    case flow(FlowOptions)
+    case nslog(NSLogOptions)
+    case proxy(ProxyCommand)
+
+    public var commandName: String {
+        switch self {
+        case .devices: return "devices"
+        case .config: return "config"
+        case .start: return "start"
+        case .stop: return "stop"
+        case .install: return "install"
+        case .uninstall: return "uninstall"
+        case .apps: return "apps"
+        case .open: return "open"
+        case .oslog: return "oslog"
+        case .driver(let action): return action.name
+        case .flow: return "flow"
+        case .nslog: return "nslog"
+        case .proxy(let command): return "proxy \(command.subcommand)"
+        }
+    }
+}
+
+public struct DeviceOptions: Equatable, Sendable {
+    public var simulator = false
+    public var verbose = false
+
+    public init(simulator: Bool = false, verbose: Bool = false) {
+        self.simulator = simulator
+        self.verbose = verbose
+    }
+}
+
+public struct ConfigOptions: Equatable, Sendable {
+    public var udid: String?
+    public var list = false
+    public var simulator = false
+    public var appleId: String?
+    public var password: String?
+    public var verbose = false
+
+    public init(udid: String? = nil, list: Bool = false, simulator: Bool = false, appleId: String? = nil, password: String? = nil, verbose: Bool = false) {
+        self.udid = udid
+        self.list = list
+        self.simulator = simulator
+        self.appleId = appleId
+        self.password = password
+        self.verbose = verbose
+    }
+}
+
+public struct SessionOptions: Equatable, Sendable {
+    public var udid: String?
+    public var verbose = false
+
+    public init(udid: String? = nil, verbose: Bool = false) {
+        self.udid = udid
+        self.verbose = verbose
+    }
+}
+
+public struct StartOptions: Equatable, Sendable {
+    public var udid: String
+    public var verbose = false
+
+    public init(udid: String, verbose: Bool = false) {
+        self.udid = udid
+        self.verbose = verbose
+    }
+}
+
+public struct AppInstallOptions: Equatable, Sendable {
+    public var ipaPath: String
+    public var udid: String
+    public var verbose: Bool
+
+    public init(ipaPath: String, udid: String, verbose: Bool = false) {
+        self.ipaPath = ipaPath
+        self.udid = udid
+        self.verbose = verbose
+    }
+}
+
+public struct AppUninstallOptions: Equatable, Sendable {
+    public var bundleID: String
+    public var udid: String
+    public var verbose: Bool
+
+    public init(bundleID: String, udid: String, verbose: Bool = false) {
+        self.bundleID = bundleID
+        self.udid = udid
+        self.verbose = verbose
+    }
+}
+
+public struct AppsOptions: Equatable, Sendable {
+    public var udid: String
+    public var includeSystem: Bool
+    public var json: Bool
+
+    public init(udid: String, includeSystem: Bool = false, json: Bool = false) {
+        self.udid = udid
+        self.includeSystem = includeSystem
+        self.json = json
+    }
+}
+
+public struct OpenURLOptions: Equatable, Sendable {
+    public var url: String
+    public var session: SessionOptions
+
+    public init(url: String, session: SessionOptions = SessionOptions()) {
+        self.url = url
+        self.session = session
+    }
+}
+
+public struct OSLogOptions: Equatable, Sendable {
+    public var pattern: String?
+    public var flags: String?
+    public var timeout: Double?
+    public var name: String?
+    public var clear: Bool
+    public var bundleId: String?
+    public var session: SessionOptions
+
+    public init(pattern: String? = nil, flags: String? = nil, timeout: Double? = nil, name: String? = nil, clear: Bool = false, bundleId: String? = nil, session: SessionOptions = SessionOptions()) {
+        self.pattern = pattern
+        self.flags = flags
+        self.timeout = timeout
+        self.name = name
+        self.clear = clear
+        self.bundleId = bundleId
+        self.session = session
+    }
+}
+
+public enum DriverAction: Equatable, Sendable {
+    case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?)
+    case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?)
+    case input(label: String, content: String, traits: String?, cindex: Int32?)
+    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?)
+    case dom(raw: Bool, fresh: Bool)
+    case find(label: String, traits: String?, cindex: Int32?)
+    case screenshot(name: String?)
+    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?)
+    case activateApp(bundleId: String)
+    case terminateApp(bundleId: String)
+    case home
+    case dismissAlert(index: Int?)
+
+    public var name: String {
+        switch self {
+        case .tap: return "tap"
+        case .longPress: return "longpress"
+        case .input: return "input"
+        case .swipe: return "swipe"
+        case .dom: return "dom"
+        case .find: return "find"
+        case .screenshot: return "screenshot"
+        case .waitFor: return "waitFor"
+        case .activateApp: return "activateApp"
+        case .terminateApp: return "terminateApp"
+        case .home: return "home"
+        case .dismissAlert: return "dismissAlert"
+        }
+    }
+}
+
+public struct FlowOptions: Equatable, Sendable {
+    public var file: String
+    public var verbose = false
+    public var externalVars: [String: String] = [:]
+
+    public init(file: String, verbose: Bool = false, externalVars: [String: String] = [:]) {
+        self.file = file
+        self.verbose = verbose
+        self.externalVars = externalVars
+    }
+}
+
+public struct NSLogOptions: Equatable, Sendable {
+    public enum Command: Equatable, Sendable {
+        case stream
+        case start
+        case read
+        case stop
+    }
+
+    public var command: Command
+    public var name: String?
+    public var pattern: String?
+    public var flags = ""
+    public var timeout: Double?
+    public var clearAfterRead = false
+    public var last: Int?
+    public var captureMode: String?
+
+    public init(command: Command = .stream, name: String? = nil, pattern: String? = nil, flags: String = "", timeout: Double? = nil, clearAfterRead: Bool = false, last: Int? = nil, captureMode: String? = nil) {
+        self.command = command
+        self.name = name
+        self.pattern = pattern
+        self.flags = flags
+        self.timeout = timeout
+        self.clearAfterRead = clearAfterRead
+        self.last = last
+        self.captureMode = captureMode
+    }
+}
+
+public enum ProxyCommand: Equatable, Sendable {
+    case configca
+    case start(interfaceName: String?)
+    case read(filter: String?, raw: Bool, last: Int?)
+    case stop
+    case doctor
+
+    public var subcommand: String {
+        switch self {
+        case .configca: return "configca"
+        case .start: return "start"
+        case .read: return "read"
+        case .stop: return "stop"
+        case .doctor: return "doctor"
+        }
+    }
+}

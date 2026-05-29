@@ -2,6 +2,11 @@ import XCTest
 @testable import IOSUseCLI
 
 final class OSLogServiceTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        _ = OSLogService.clear()
+    }
+
     override func tearDown() {
         OSLogService.resetSimulatorLogCollectorForTesting()
         _ = OSLogService.clear()
