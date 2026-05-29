@@ -25,14 +25,14 @@ ios-use start <udid>          # 启动并选择当前要操作的设备
 - 如果 `ios-use devices` 显示 `driver update required`，必须重新执行 `ios-use config --udid <udid>`。
 - 首次配置真机时可能需要补 Apple ID，并触发 Apple 2FA 验证码输入。出现这类提示时，需要用户在终端手动运行：`ios-use config --udid <udid> --apple-id <your-apple-id> --password '<app-specific-password>'`
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
-- `start <udid>` 会启动已配置设备的 driver，并把它设为后续操作目标；`dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/flow/proxy configca/proxy start/proxy stop` 等命令必须先 start，且不再接受自己的 `--udid`
-- `open <url> [--udid <udid>]`、`install <ipa> [--udid <udid>]`、`uninstall <bundleId> [--udid <udid>]`、`apps [--udid <udid>]` 是 host-side 命令；省略 `--udid` 时使用当前 `driver.lock`，显式 `--udid` 优先
+- `start <udid>` 会启动已配置设备的 driver，并把它设为后续操作目标；`dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/flow/proxy configca/proxy start/proxy stop` 等命令必须先 start，且不再接受自己的 `--udid`；`proxy start --server` / `proxy stop --server` 只管理本机 mitmdump，不要求 start
+- `open <url> [--udid <udid>]` 是 host-side 命令；省略 `--udid` 时使用当前 `driver.lock`，显式 `--udid` 优先。`install <ipa>`、`uninstall <bundleId>`、`apps` 只支持 USB 真机，省略 `--udid` 时也必须已有 active 真机 lock
 - 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
 
 ## 2. 硬规则
 
 - 真机必须 USB 连接；只通过 Wi-Fi 连接的设备不可用
-- `devices` / `config` / `install` / `uninstall` / `apps` / `open` / `oslog` 可使用 `--udid`；其他需要操作屏幕或当前设备状态的命令、Flow、proxy configca/start/stop 不接受 `--udid`，目标就是最近一次 `start` 的设备
+- `devices` / `config` / `install` / `uninstall` / `apps` / `open` / `oslog` 可使用 `--udid`；其他需要操作屏幕或当前设备状态的命令、Flow、proxy configca/start/stop 不接受 `--udid`，目标就是最近一次 `start` 的设备；proxy 的 `--server` 子路径只操作本机服务
 - 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `start` / `stop` / `open` / `oslog` 不要求 Xcode CLI；Simulator 使用仍需要 Xcode / simctl。
 - 操作屏幕或当前设备状态前，先 `ios-use devices` 确认设备已连接且显示 `configured`，且没有 `driver update required`，然后运行 `ios-use start <udid>`
 - 同一设备上的 `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` 等 UI 命令必须串行执行；不要并发运行多个 UI 命令，否则容易读失败或误判页面状态
@@ -100,7 +100,7 @@ ios-use uninstall com.example.app
 ios-use uninstall com.example.app --udid <udid>
 ```
 
-这些命令直接走设备服务，不需要先 `start`。`install` 只安装已签名 IPA，不负责给任意 App 自动签名；卸载前确认 bundle ID，避免误删用户设备上的真实 App。
+这些命令直接走真机设备服务，不需要先 `start`，但省略 `--udid` 时需要 active 真机 lock。`install` 只安装已签名 IPA，不负责给任意 App 自动签名；卸载前确认 bundle ID，避免误删用户设备上的真实 App。Simulator app 安装/卸载不走这些顶层命令。
 
 ### 3.5 打开 URL 和关闭弹窗
 
@@ -241,7 +241,8 @@ ios-use proxy read --filter "~d okx.com" --raw
 
 ### 5.2 命令详解
 
-- `proxy configca [--mark-trusted]` — 生成 mitmproxy CA 并在设备上安装+信任；若过程中需要手动输入设备密码或手动信任证书，完成后运行 `ios-use proxy configca --mark-trusted`
+- `proxy configca` — 生成 mitmproxy CA 并在设备上安装+信任；若过程中需要手动输入设备密码或手动信任证书，完成后运行 `ios-use proxy configca --mark-trusted`
+- `proxy configca --mark-trusted` — 不 push CA、不执行安装 flow，只在已有当前 CA 文件时记录用户已人工信任
 - `proxy start [--server] [-i <interface>]` — 默认启动 mitmdump + 配置设备 Wi-Fi 代理，并把本次 `~/.ios-use/artifacts/proxy-*.mitm` 写为 last capture；`--server` 只启动本机 mitmdump，不配置设备
 - `proxy read [--filter <expression>] [--raw] [--last N]` — 只读取最近一次 `proxy start` 写入的 last capture；`proxy stop` 不会删除最后一次 capture，stop 后仍可继续 `proxy read`；`--last` 必须大于 0
 - `proxy stop [--server]` — 默认先清除设备 Wi-Fi 代理，再停止 mitmdump；`--server` 只停止本机 mitmdump，不清设备 Wi-Fi 代理

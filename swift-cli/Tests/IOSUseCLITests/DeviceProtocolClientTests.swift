@@ -1219,6 +1219,32 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(sleeps, [useconds_t(IOSUseProtocol.driverStartReadinessInitialDelayMicroseconds)])
     }
 
+    func testCoreDeviceDriverLifecycleCleansByBundleWhenPIDResolutionFails() throws {
+        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
+        let appService = FakeCoreDeviceAppService()
+        appService.launchOutput = .dictionary([:])
+        appService.processResults = [
+            .failure(CLIParseError.invalidValue("process list failed")),
+            .success([
+                CoreDeviceProcessToken(processIdentifier: 444, executable: "/containers/com.example.driver.xctrunner/IOSUseDriver-Runner")
+            ]),
+        ]
+        let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
+            startTunnel: { _ in session },
+            openAppService: { _ in appService },
+            authorizeDriver: { _, _, _ in XCTFail("pid resolution failure must happen before authorization") },
+            isDriverPortReachable: { _ in false },
+            sleep: { _ in }
+        ))
+
+        XCTAssertThrowsError(try lifecycle.launchDriver(udid: "REAL-UDID", bundleID: "com.example.driver.xctrunner")) { error in
+            XCTAssertTrue(String(describing: error).contains("process list failed"))
+        }
+        XCTAssertEqual(appService.signals.count, 1)
+        XCTAssertEqual(appService.signals.first?.0, 444)
+        XCTAssertEqual(appService.signals.first?.1, SIGKILL)
+    }
+
     func testCoreDeviceDriverLifecycleCleansLaunchedProcessWhenReadinessTimesOut() throws {
         let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
         let appService = FakeCoreDeviceAppService()
@@ -2093,6 +2119,7 @@ private final class FakeCoreDeviceAppService: CoreDeviceAppManaging {
     var launches: [(bundleID: String, terminateExisting: Bool, payloadURL: String?, activates: Bool?)] = []
     var launchOutput: RemoteXPCValue = .dictionary(["processIdentifier": .int64(222)])
     var processes: [CoreDeviceProcessToken] = []
+    var processResults: [Result<[CoreDeviceProcessToken], Error>] = []
     var signals: [(Int, Int32)] = []
     var signalError: Error?
     private(set) var closed = false
@@ -2112,7 +2139,10 @@ private final class FakeCoreDeviceAppService: CoreDeviceAppManaging {
     }
 
     func listProcesses() throws -> [CoreDeviceProcessToken] {
-        processes
+        if !processResults.isEmpty {
+            return try processResults.removeFirst().get()
+        }
+        return processes
     }
 
     func sendSignal(processIdentifier: Int, signal: Int) throws -> RemoteXPCValue {

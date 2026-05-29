@@ -96,7 +96,13 @@ final class CoreDeviceDriverLifecycle: CoreDeviceDriverLifecycleManaging {
             payloadURL: nil,
             activates: nil
         )
-        let pid = try resolveLaunchedDriverPID(launchOutput: launchOutput, appService: appService, bundleID: bundleID)
+        let pid: Int
+        do {
+            pid = try resolveLaunchedDriverPID(launchOutput: launchOutput, appService: appService, bundleID: bundleID)
+        } catch {
+            cleanupLaunchedDriver(bundleID: bundleID, udid: udid, appService: appService)
+            throw error
+        }
         appService.close()
         eventSink?("authorizing CoreDevice-launched driver pid=\(pid)")
         do {
@@ -192,6 +198,21 @@ final class CoreDeviceDriverLifecycle: CoreDeviceDriverLifecycleManaging {
             _ = waitUntilDriverPortUnreachable(udid: udid)
         } catch {
             eventSink?("cleanup after readiness timeout failed pid=\(pid): \(error)")
+        }
+    }
+
+    private func cleanupLaunchedDriver(bundleID: String, udid: String, appService: CoreDeviceAppManaging) {
+        eventSink?("driver pid resolution failed; cleaning launched bundle=\(bundleID)")
+        do {
+            let candidates = Self.driverProcessCandidates(in: try appService.listProcesses(), bundleID: bundleID)
+            for token in candidates {
+                _ = try appService.sendSignal(processIdentifier: token.processIdentifier, signal: Int(SIGKILL))
+            }
+            if !candidates.isEmpty {
+                _ = waitUntilDriverPortUnreachable(udid: udid)
+            }
+        } catch {
+            eventSink?("cleanup after pid resolution failure failed bundle=\(bundleID): \(error)")
         }
     }
 

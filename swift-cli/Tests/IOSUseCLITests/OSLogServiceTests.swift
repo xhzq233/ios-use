@@ -8,6 +8,7 @@ final class OSLogServiceTests: XCTestCase {
     }
 
     override func tearDown() {
+        RealDeviceOSLogService.collectorForTesting = nil
         OSLogService.resetSimulatorLogCollectorForTesting()
         _ = OSLogService.clear()
         super.tearDown()
@@ -65,6 +66,28 @@ final class OSLogServiceTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("matched=1"))
         XCTAssertTrue(result.stdout.contains("active-lock.log"))
+    }
+
+    func testOslogExplicitUnbootedSimulatorDoesNotFallbackToRealSyslog() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
+        let simulatorUdid = "00000000-0000-0000-0000-000000000001"
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            XCTAssertTrue(simulatorOnly)
+            return []
+        }
+        RealDeviceOSLogService.collectorForTesting = { _, _ in
+            XCTFail("explicit Simulator UDID must not fall back to real-device syslog")
+            return []
+        }
+        addTeardownBlock {
+            DeviceService.listDevicesOverrideForTesting = nil
+            DeviceService.resetCacheForTesting()
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--udid", simulatorUdid, "--timeout", "0"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("Simulator \(simulatorUdid) is not booted or not found"))
     }
 
     func testSimulatorFetchUsesTimestampDefaultNameAndRegexFlags() throws {
