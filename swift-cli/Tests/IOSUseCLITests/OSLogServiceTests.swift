@@ -26,14 +26,45 @@ final class OSLogServiceTests: XCTestCase {
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
-    func testOslogRejectsMissingUdidBeforeTouchingEnvironment() {
+    func testOslogRejectsMissingTargetBeforeTouchingUsbDevices() {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
-        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        DeviceService.listDevicesOverrideForTesting = { _, _ in
+            XCTFail("oslog without --udid or driver.lock must not auto-select a USB device")
+            return []
+        }
         addTeardownBlock { DeviceService.listDevicesOverrideForTesting = nil }
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog", "--name", "logs"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("connected USB device"))
+        XCTAssertTrue(result.stderr.contains("oslog requires --udid or an active driver"))
+    }
+
+    func testOslogUsesActiveDriverLockWhenUdidIsOmitted() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "SIM-LOCK",
+                deviceName: "iPhone",
+                deviceVersion: "26.0",
+                deviceType: "simulator",
+                startedAt: 1
+            ),
+            paths: paths
+        )
+        OSLogService.simulatorLogCollector = { udid, _, _ in
+            XCTAssertEqual(udid, "SIM-LOCK")
+            return ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: ready"]
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--pattern", "ready", "--timeout", "0", "--name", "active-lock"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("matched=1"))
+        XCTAssertTrue(result.stdout.contains("active-lock.log"))
     }
 
     func testSimulatorFetchUsesTimestampDefaultNameAndRegexFlags() throws {

@@ -12,7 +12,12 @@ enum AppManagementService {
     static var uninstallerForTesting: ((String, String) throws -> Void)?
     static var appsProviderForTesting: ((String, Bool) throws -> [AppInfo])?
 
-    static func install(options: AppInstallOptions) throws -> String {
+    static func install(options: AppInstallOptions, paths: IOSUsePaths) throws -> String {
+        let targetUdid = try SessionService.resolveTargetUdid(
+            explicitUdid: options.udid,
+            paths: paths,
+            missingMessage: "install requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+        )
         guard FileManager.default.fileExists(atPath: options.ipaPath) else {
             throw CLIParseError.invalidValue("IPA not found: \(options.ipaPath)")
         }
@@ -20,9 +25,9 @@ enum AppManagementService {
         var responseFrames: [[String: Any]] = []
         do {
             if let installerForTesting {
-                try installerForTesting(options.ipaPath, options.udid, bundleID)
+                try installerForTesting(options.ipaPath, targetUdid, bundleID)
             } else {
-                try RealDevicePackageInstaller.installIpa(ipaPath: options.ipaPath, udid: options.udid, bundleID: bundleID) { response in
+                try RealDevicePackageInstaller.installIpa(ipaPath: options.ipaPath, udid: targetUdid, bundleID: bundleID) { response in
                     if options.verbose {
                         responseFrames.append(response)
                     }
@@ -32,16 +37,21 @@ enum AppManagementService {
             throw errorWithVerboseResponses(error, frames: responseFrames, verbose: options.verbose)
         }
         let suffix = bundleID.map { " (\($0))" } ?? ""
-        return verboseResponsePrefix(responseFrames) + "Installed IPA on \(options.udid)\(suffix)\n"
+        return verboseResponsePrefix(responseFrames) + "Installed IPA on \(targetUdid)\(suffix)\n"
     }
 
-    static func uninstall(options: AppUninstallOptions) throws -> String {
+    static func uninstall(options: AppUninstallOptions, paths: IOSUsePaths) throws -> String {
+        let targetUdid = try SessionService.resolveTargetUdid(
+            explicitUdid: options.udid,
+            paths: paths,
+            missingMessage: "uninstall requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+        )
         var responseFrames: [[String: Any]] = []
         do {
             if let uninstallerForTesting {
-                try uninstallerForTesting(options.bundleID, options.udid)
+                try uninstallerForTesting(options.bundleID, targetUdid)
             } else {
-                try InstallationProxyClient.withClient(udid: options.udid) { client in
+                try InstallationProxyClient.withClient(udid: targetUdid) { client in
                     try client.uninstall(bundleID: options.bundleID) { response in
                         if options.verbose {
                             responseFrames.append(response)
@@ -52,7 +62,7 @@ enum AppManagementService {
         } catch {
             throw errorWithVerboseResponses(error, frames: responseFrames, verbose: options.verbose)
         }
-        return verboseResponsePrefix(responseFrames) + "Uninstalled \(options.bundleID) from \(options.udid)\n"
+        return verboseResponsePrefix(responseFrames) + "Uninstalled \(options.bundleID) from \(targetUdid)\n"
     }
 
     private static func verboseResponsePrefix(_ frames: [[String: Any]]) -> String {
@@ -66,12 +76,17 @@ enum AppManagementService {
         return CLIParseError.invalidValue(verboseResponsePrefix(frames) + "\(error)")
     }
 
-    static func list(options: AppsOptions) throws -> String {
+    static func list(options: AppsOptions, paths: IOSUsePaths) throws -> String {
+        let targetUdid = try SessionService.resolveTargetUdid(
+            explicitUdid: options.udid,
+            paths: paths,
+            missingMessage: "apps requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+        )
         let apps: [AppInfo]
         if let appsProviderForTesting {
-            apps = try appsProviderForTesting(options.udid, options.includeSystem)
+            apps = try appsProviderForTesting(targetUdid, options.includeSystem)
         } else {
-            apps = try InstallationProxyClient.withClient(udid: options.udid) { client in
+            apps = try InstallationProxyClient.withClient(udid: targetUdid) { client in
                 let raw = try client.browse(
                     includeSystem: options.includeSystem,
                     attributes: ["CFBundleIdentifier", "CFBundleDisplayName", "CFBundleName", "CFBundleShortVersionString", "ApplicationType"]
@@ -106,7 +121,7 @@ enum AppManagementService {
             return String(data: data, encoding: .utf8)! + "\n"
         }
         guard !sorted.isEmpty else {
-            return "No apps found on \(options.udid)\n"
+            return "No apps found on \(targetUdid)\n"
         }
         return sorted.map { app in
             var line = "\(app.bundleID)"

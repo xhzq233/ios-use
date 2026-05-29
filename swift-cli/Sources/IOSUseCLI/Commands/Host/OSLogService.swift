@@ -197,12 +197,11 @@ enum OSLogCommandService {
             return OSLogService.clear()
         }
         let activeDriver = SessionService.read(paths: paths)
-        let defaultUsbUdid = try options.session.udid == nil && activeDriver?.udid == nil
-            ? DeviceService.listDevices(simulatorOnly: false, paths: paths).first?.udid
-            : nil
-        guard let udid = options.session.udid ?? activeDriver?.udid ?? defaultUsbUdid else {
-            throw CLIParseError.invalidValue("oslog requires --udid, an active driver, or a connected USB device")
-        }
+        let udid = try SessionService.resolveTargetUdid(
+            explicitUdid: options.session.udid,
+            paths: paths,
+            missingMessage: "oslog requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+        )
         return try OSLogService.fetch(
             udid: udid,
             pattern: options.pattern,
@@ -211,7 +210,7 @@ enum OSLogCommandService {
             timeout: options.timeout,
             name: options.name,
             paths: paths,
-            deviceTypeHint: hostDeviceTypeHint ?? (activeDriver?.udid == udid ? activeDriver?.deviceType : (defaultUsbUdid == udid ? "real" : nil))
+            deviceTypeHint: hostDeviceTypeHint ?? (activeDriver?.udid == udid ? activeDriver?.deviceType : nil)
         )
     }
 }
