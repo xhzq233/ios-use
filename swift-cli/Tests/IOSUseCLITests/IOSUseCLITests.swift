@@ -110,7 +110,7 @@ final class IOSUseCLITests: XCTestCase {
         }
     }
 
-    func testInstallCommandIsHostOnlyAndDoesNotUseDriverLock() throws {
+    func testInstallCommandWithExplicitUdidIsHostOnlyAndDoesNotWriteDriverLock() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-install-host-only-\(UUID().uuidString)")
             .path
@@ -138,6 +138,54 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root]).driverLock))
     }
 
+    func testInstallCommandUsesActiveDriverLockWhenUdidIsOmitted() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-install-active-lock-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "LOCK-REAL", deviceType: "real", paths: paths)
+        let ipaPath = "\(root)/app.ipa"
+        try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app")
+        var installs: [(String, String, String?)] = []
+        AppManagementService.installerForTesting = { ipa, udid, bundleID in
+            installs.append((ipa, udid, bundleID))
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("install is host-only and must not create a driver client")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["install", ipaPath])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(installs.map(\.1), ["LOCK-REAL"])
+        XCTAssertTrue(result.stdout.contains("Installed IPA on LOCK-REAL"))
+    }
+
+    func testInstallCommandWithoutUdidOrDriverLockFailsBeforeInstaller() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-install-no-target-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let ipaPath = "\(root)/app.ipa"
+        try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app")
+        AppManagementService.installerForTesting = { _, _, _ in
+            XCTFail("install without a target must not call installation_proxy")
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["install", ipaPath])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("install requires --udid or an active driver"))
+    }
+
     func testAppsCommandJsonRendersProviderResults() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-apps-host-only-\(UUID().uuidString)")
@@ -162,7 +210,76 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains(#""applicationType" : "System""#))
     }
 
-    func testUninstallCommandIsHostOnlyAndDoesNotUseDriverLock() throws {
+    func testAppsCommandUsesActiveDriverLockWhenUdidIsOmitted() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-apps-active-lock-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "LOCK-REAL", deviceType: "real", paths: paths)
+        AppManagementService.appsProviderForTesting = { udid, includeSystem in
+            XCTAssertEqual(udid, "LOCK-REAL")
+            XCTAssertFalse(includeSystem)
+            return [
+                AppManagementService.AppInfo(bundleID: "com.example.app", displayName: "Example", version: "1", applicationType: "User")
+            ]
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("apps is host-only and must not create a driver client")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["apps"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("com.example.app | Example | 1 | User"))
+    }
+
+    func testAppsCommandExplicitUdidOverridesActiveDriverLock() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-apps-explicit-udid-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "LOCK-REAL", deviceType: "real", paths: paths)
+        AppManagementService.appsProviderForTesting = { udid, includeSystem in
+            XCTAssertEqual(udid, "EXPLICIT-REAL")
+            XCTAssertFalse(includeSystem)
+            return []
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["apps", "--udid", "EXPLICIT-REAL"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "No apps found on EXPLICIT-REAL\n")
+    }
+
+    func testAppsCommandWithoutUdidOrDriverLockFailsAtExecution() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-apps-no-target-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        AppManagementService.appsProviderForTesting = { _, _ in
+            XCTFail("apps without a target must not query installation_proxy")
+            return []
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["apps"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("apps requires --udid or an active driver"))
+    }
+
+    func testUninstallCommandWithExplicitUdidIsHostOnlyAndDoesNotWriteDriverLock() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-uninstall-host-only-\(UUID().uuidString)")
             .path
@@ -185,6 +302,51 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(uninstalls.map(\.0), ["com.example.app"])
         XCTAssertEqual(uninstalls.map(\.1), ["REAL-1"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root]).driverLock))
+    }
+
+    func testUninstallCommandUsesActiveDriverLockWhenUdidIsOmitted() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-uninstall-active-lock-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "LOCK-REAL", deviceType: "real", paths: paths)
+        var uninstalls: [(String, String)] = []
+        AppManagementService.uninstallerForTesting = { bundleID, udid in
+            uninstalls.append((bundleID, udid))
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("uninstall is host-only and must not create a driver client")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["uninstall", "com.example.app"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(uninstalls.map(\.0), ["com.example.app"])
+        XCTAssertEqual(uninstalls.map(\.1), ["LOCK-REAL"])
+        XCTAssertEqual(result.stdout, "Uninstalled com.example.app from LOCK-REAL\n")
+    }
+
+    func testUninstallCommandWithoutUdidOrDriverLockFailsBeforeInstaller() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-uninstall-no-target-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        AppManagementService.uninstallerForTesting = { _, _ in
+            XCTFail("uninstall without a target must not call installation_proxy")
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["uninstall", "com.example.app"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("uninstall requires --udid or an active driver"))
     }
 
     func testProxyDoctorReportsLocalProxyStatus() {
@@ -546,13 +708,65 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(shellCalls.isEmpty)
     }
 
-    func testOpenURLDefaultUsbRealDeviceUsesNativeLauncherWithoutDevicectl() throws {
+    func testOpenURLActiveRealDriverLockUsesNativeLauncherWithoutDevicectl() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-active-real-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-LOCK", deviceType: "real", paths: paths)
+        DeviceService.listDevicesOverrideForTesting = { _, _ in
+            XCTFail("active real-device open must not inspect USB devices")
+            return []
+        }
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { scheme, _ in
+            if scheme == "https" {
+                return OpenURLService.SchemeRegistry.LookupResult(registeredHandlers: ["com.apple.mobilesafari"], lookupFailed: false)
+            }
+            return nil
+        }
+        var nativeLaunches: [(String, String)] = []
+        OpenURLService.realDeviceURLLauncherForTesting = { url, udid in
+            nativeLaunches.append((url, udid))
+        }
+        var shellCalls: [(String, [String])] = []
+        Shell.runOverrideForTesting = { executable, arguments, _, _ in
+            if executable == "xcrun", arguments.contains("devicectl") {
+                XCTFail("real-device open must not call devicectl")
+            }
+            shellCalls.append((executable, arguments))
+            return ""
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { session in
+            XCTFail("open URL for active real device should not create a driver client, got session \(String(describing: session))")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            DeviceService.listDevicesOverrideForTesting = nil
+            DeviceService.resetCacheForTesting()
+            Shell.runOverrideForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+            OpenURLService.realDeviceURLLauncherForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("Opened URL: https://example.com (handler: com.apple.mobilesafari)"))
+        XCTAssertEqual(nativeLaunches.map(\.0), ["https://example.com"])
+        XCTAssertEqual(nativeLaunches.map(\.1), ["REAL-LOCK"])
+        XCTAssertTrue(shellCalls.isEmpty)
+    }
+
+    func testOpenURLDoesNotAutoSelectDefaultUsbRealDevice() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-open-url-default-real-\(UUID().uuidString)")
             .path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
-            XCTAssertFalse(simulatorOnly)
+        DeviceService.listDevicesOverrideForTesting = { _, _ in
+            XCTFail("open without --udid or driver.lock must not auto-select a USB device")
             return [IOSDevice(name: "iPhone", version: "26.0", udid: "REAL-DEFAULT", kind: .real)]
         }
         OpenURLService.SchemeRegistry.lookupOverrideForTesting = { scheme, _ in
@@ -589,10 +803,9 @@ final class IOSUseCLITests: XCTestCase {
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com"])
 
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("Opened URL: https://example.com (handler: com.apple.mobilesafari)"))
-        XCTAssertEqual(nativeLaunches.map(\.0), ["https://example.com"])
-        XCTAssertEqual(nativeLaunches.map(\.1), ["REAL-DEFAULT"])
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("open requires --udid or an active driver"))
+        XCTAssertTrue(nativeLaunches.isEmpty)
         XCTAssertTrue(shellCalls.isEmpty)
     }
 
@@ -621,7 +834,7 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["open", "https://example.com"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("openURL requires a booted simulator, active driver, or USB real device"))
+        XCTAssertTrue(result.stderr.contains("open requires --udid or an active driver"))
     }
 
     func testOpenURLSimulatorUnregisteredSchemeReportsError() {

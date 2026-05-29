@@ -26,8 +26,7 @@ ios-use start <udid>          # 启动并选择当前要操作的设备
 - 首次配置真机时可能需要补 Apple ID，并触发 Apple 2FA 验证码输入。出现这类提示时，需要用户在终端手动运行：`ios-use config --udid <udid> --apple-id <your-apple-id> --password '<app-specific-password>'`
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`
 - `start <udid>` 会启动已配置设备的 driver，并把它设为后续操作目标；`dom/find/tap/swipe/input/waitFor/screenshot/activateApp/terminateApp/home/dismissAlert/flow/proxy configca/proxy start/proxy stop` 等命令必须先 start，且不再接受自己的 `--udid`
-- `open <url>` 不要求先执行 `start`，仍可用 `--udid` 指定目标
-- `install <ipa> --udid <udid>`、`uninstall <bundleId> --udid <udid>`、`apps --udid <udid>` 是真机 host-side app 管理命令，不要求先执行 `start`
+- `open <url> [--udid <udid>]`、`install <ipa> [--udid <udid>]`、`uninstall <bundleId> [--udid <udid>]`、`apps [--udid <udid>]` 是 host-side 命令；省略 `--udid` 时使用当前 `driver.lock`，显式 `--udid` 优先
 - 安装路径默认 `$HOME/.local/bin`，不在 PATH 时脚本会提示
 
 ## 2. 硬规则
@@ -92,9 +91,12 @@ ios-use terminateApp com.apple.Preferences
 ### 3.4.1 管理真机 App
 
 ```bash
+ios-use apps
+ios-use apps --json
 ios-use apps --udid <udid>
-ios-use apps --udid <udid> --json
+ios-use install path/to/app.ipa
 ios-use install path/to/app.ipa --udid <udid>
+ios-use uninstall com.example.app
 ios-use uninstall com.example.app --udid <udid>
 ```
 
@@ -108,7 +110,7 @@ ios-use dismissAlert                # 默认点最后一个按钮
 ios-use dismissAlert --index 0      # 点第一个按钮
 ```
 
-`open <url>` 执行前会校验 URL 格式和 scheme 注册状态。成功输出 `Opened URL: <url>`；设备上无 App 注册该 scheme 时报错 `URL scheme "xxx" not registered on device`。真机已注册 scheme 时输出包含 handler 信息：`Opened URL: <url> (handler: <bundle IDs>)`，底层走原生 CoreDevice URL launch，不调用 `devicectl`。
+`open <url>` 执行前会校验 URL 格式和 scheme 注册状态。省略 `--udid` 时使用当前 `driver.lock`。成功输出 `Opened URL: <url>`；设备上无 App 注册该 scheme 时报错 `URL scheme "xxx" not registered on device`。真机已注册 scheme 时输出包含 handler 信息：`Opened URL: <url> (handler: <bundle IDs>)`，底层走原生 CoreDevice URL launch，不调用 `devicectl`。
 
 ### 3.6 跑 flow
 
@@ -200,6 +202,7 @@ ios-use swipe --dir back --distance 300
   - `--index <n>` 点击第几个按钮（0-based），不传则默认点最后一个
 
 - `oslog`
+  - 省略 `--udid` 时使用当前 `driver.lock`
   - 支持 `--timeout <seconds>`，会在窗口期内轮询匹配
   - `--pattern` 正则过滤，`--flags` 正则标志（`i`/`s`/`m`）
   - `--clear` 清空 buffer

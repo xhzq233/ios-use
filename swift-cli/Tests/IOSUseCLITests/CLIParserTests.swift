@@ -29,13 +29,28 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["install", "app.ipa", "--verbose"]),
+            .install(AppInstallOptions(ipaPath: "app.ipa", verbose: true))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["uninstall", "com.example.app", "--udid", "REAL-1", "--verbose"]),
             .uninstall(AppUninstallOptions(bundleID: "com.example.app", udid: "REAL-1", verbose: true))
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["uninstall", "com.example.app", "--verbose"]),
+            .uninstall(AppUninstallOptions(bundleID: "com.example.app", verbose: true))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["apps", "--udid", "REAL-1", "--system", "--json"]),
             .apps(AppsOptions(udid: "REAL-1", includeSystem: true, json: true))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["apps", "--system", "--json"]),
+            .apps(AppsOptions(includeSystem: true, json: true))
         )
     }
 
@@ -197,18 +212,6 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertThrowsError(try CLIParser.parse(["start"])) { error in
             XCTAssertEqual(error as? CLIParseError, .missingRequiredArgument("udid"))
-        }
-
-        XCTAssertThrowsError(try CLIParser.parse(["install", "app.ipa"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .missingRequiredOption("--udid"))
-        }
-
-        XCTAssertThrowsError(try CLIParser.parse(["uninstall", "com.example.app"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .missingRequiredOption("--udid"))
-        }
-
-        XCTAssertThrowsError(try CLIParser.parse(["apps"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .missingRequiredOption("--udid"))
         }
 
         let legacyOpenCommand = "open" + "URL"
