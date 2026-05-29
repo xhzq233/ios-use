@@ -238,10 +238,10 @@ ios-use proxy read --filter "~d okx.com" --raw
 
 ### 5.2 命令详解
 
-- `proxy configca` — 生成 mitmproxy CA 并在设备上安装+信任（一次性）
-- `proxy start [-i <interface>]` — 启动 mitmdump + 配置设备 Wi-Fi 代理，抓包保存为 `~/.ios-use/artifacts/proxy-*.mitm`
-- `proxy read [--filter <expression>] [--raw] [--last N]` — 读取最近一次抓包；`proxy stop` 后仍可读历史文件；`--last` 必须大于 0
-- `proxy stop` — 先清除设备 Wi-Fi 代理，再停止 mitmdump；若设备侧清理失败，会提示手动关闭 Wi-Fi 代理且不继续停止本地服务
+- `proxy configca [--mark-trusted]` — 生成 mitmproxy CA 并在设备上安装+信任；若过程中需要手动输入设备密码或手动信任证书，完成后运行 `ios-use proxy configca --mark-trusted`
+- `proxy start [--server] [-i <interface>]` — 默认启动 mitmdump + 配置设备 Wi-Fi 代理，并把本次 `~/.ios-use/artifacts/proxy-*.mitm` 写为 last capture；`--server` 只启动本机 mitmdump，不配置设备
+- `proxy read [--filter <expression>] [--raw] [--last N]` — 只读取最近一次 `proxy start` 写入的 last capture；`proxy stop` 不会删除最后一次 capture，stop 后仍可继续 `proxy read`；`--last` 必须大于 0
+- `proxy stop [--server]` — 默认先清除设备 Wi-Fi 代理，再停止 mitmdump；`--server` 只停止本机 mitmdump，不清设备 Wi-Fi 代理
 - `proxy doctor` — 诊断 proxy 环境
 
 网络前提：设备与 Mac 需要在同一 Wi-Fi/LAN，且设备能访问 Mac 的抓包端口。VPN、防火墙或隔离 Wi-Fi 可能导致抓不到流量或设备断网，排障先看 `proxy doctor`。
