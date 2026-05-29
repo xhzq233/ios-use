@@ -1,8 +1,12 @@
-import Darwin
 import Foundation
 
 enum RealDeviceOSLogService {
+    static var collectorForTesting: ((String, Double) throws -> [String])?
+
     static func collectSyslog(udid: String, timeoutSeconds: Double) throws -> [String] {
+        if let collectorForTesting {
+            return try collectorForTesting(udid, timeoutSeconds)
+        }
         debug("load pair record")
         let pairRecord = try PairRecord.load(udid: udid)
         debug("connect lockdown")
@@ -10,7 +14,6 @@ enum RealDeviceOSLogService {
 
         debug("connect syslog relay port \(service.port) ssl=\(service.enableServiceSSL)")
         let fd = try Usbmux.connect(udid: udid, port: service.port)
-        defer { Darwin.close(fd) }
         let stream: DeviceStream
         if service.enableServiceSSL {
             debug("enable syslog TLS")

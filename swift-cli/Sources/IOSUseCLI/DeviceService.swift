@@ -10,12 +10,32 @@ public struct IOSDevice: Equatable, Sendable {
     public let version: String
     public let udid: String
     public let kind: Kind
+    public let metadata: IOSDeviceMetadata?
 
-    public init(name: String, version: String, udid: String, kind: Kind) {
+    public init(name: String, version: String, udid: String, kind: Kind, metadata: IOSDeviceMetadata? = nil) {
         self.name = name
         self.version = version
         self.udid = udid
         self.kind = kind
+        self.metadata = metadata
+    }
+}
+
+public struct IOSDeviceMetadata: Equatable, Sendable {
+    public let productType: String?
+    public let productName: String?
+    public let buildVersion: String?
+    public let batteryCurrentCapacity: Int?
+    public let status: String?
+    public let detail: String?
+
+    public init(productType: String? = nil, productName: String? = nil, buildVersion: String? = nil, batteryCurrentCapacity: Int? = nil, status: String? = nil, detail: String? = nil) {
+        self.productType = productType
+        self.productName = productName
+        self.buildVersion = buildVersion
+        self.batteryCurrentCapacity = batteryCurrentCapacity
+        self.status = status
+        self.detail = detail
     }
 }
 
@@ -34,6 +54,7 @@ public enum DeviceService {
 
     static var listDevicesOverrideForTesting: ((Bool, IOSUsePaths) throws -> [IOSDevice])?
     static var usbDeviceUdidsOverrideForTesting: (() throws -> [String])?
+    static var realDeviceResolverForTesting: ((String) -> IOSDevice)?
     private static var listDevicesCache: [String: [IOSDevice]] = [:]
 
     public static func listDevices(simulatorOnly: Bool, paths: IOSUsePaths) throws -> [IOSDevice] {
@@ -46,16 +67,10 @@ public enum DeviceService {
         }
         let devices: [IOSDevice]
         if simulatorOnly {
-            let output = try Shell.run("xcrun", arguments: ["simctl", "list", "devices", "booted"])
-            devices = parseBootedSimulators(output)
+            devices = try SimulatorService.listBooted(paths: paths)
         } else {
             let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
-            guard !usbUdids.isEmpty else {
-                return []
-            }
-            let output = try Shell.run("xcrun", arguments: ["xctrace", "list", "devices"])
-            let realDevices = parseDeviceOutput(output).filter { $0.kind == .real }
-            devices = usbOnlyDevices(from: realDevices, usbUdids: usbUdids)
+            devices = usbUdids.map { loadRealDeviceInfo(udid: $0) }
         }
         listDevicesCache[cacheKey] = devices
         return devices
@@ -63,6 +78,42 @@ public enum DeviceService {
 
     static func resetCacheForTesting() {
         listDevicesCache.removeAll(keepingCapacity: true)
+    }
+
+    private static func loadRealDeviceInfo(udid: String) -> IOSDevice {
+        if let resolved = realDeviceResolverForTesting?(udid) {
+            return resolved
+        }
+        do {
+            let values = try LockdownSession.getValue(udid: udid)
+            let battery = try? LockdownSession.getValue(udid: udid, domain: "com.apple.mobile.battery", key: "BatteryCurrentCapacity")
+            let batteryCapacity = (battery?["BatteryCurrentCapacity"] as? Int)
+                ?? (battery?["Value"] as? Int)
+                ?? (battery?["BatteryCurrentCapacity"] as? NSNumber).map(\.intValue)
+                ?? (battery?["Value"] as? NSNumber).map(\.intValue)
+            return IOSDevice(
+                name: values["DeviceName"] as? String ?? "Unknown",
+                version: values["ProductVersion"] as? String ?? "",
+                udid: values["UniqueDeviceID"] as? String ?? udid,
+                kind: .real,
+                metadata: IOSDeviceMetadata(
+                    productType: values["ProductType"] as? String,
+                    productName: values["ProductName"] as? String,
+                    buildVersion: values["BuildVersion"] as? String,
+                    batteryCurrentCapacity: batteryCapacity,
+                    status: "paired",
+                    detail: nil
+                )
+            )
+        } catch {
+            return IOSDevice(
+                name: "Unknown",
+                version: "",
+                udid: udid,
+                kind: .real,
+                metadata: IOSDeviceMetadata(status: "pair required", detail: "\(error)")
+            )
+        }
     }
 
     static func usbOnlyDevices(from devices: [IOSDevice]) throws -> [IOSDevice] {
@@ -74,6 +125,10 @@ public enum DeviceService {
     static func isUsbDeviceConnected(udid: String) throws -> Bool {
         let usbUdids = try usbDeviceUdidsOverrideForTesting?() ?? Usbmux.listUsbDeviceUdids()
         return usbUdids.contains { normalizeUdid($0) == normalizeUdid(udid) }
+    }
+
+    static func looksLikeSimulatorUDID(_ udid: String) -> Bool {
+        UUID(uuidString: udid) != nil
     }
 
     private static func usbOnlyDevices(from devices: [IOSDevice], usbUdids: [String]) -> [IOSDevice] {
@@ -120,23 +175,7 @@ public enum DeviceService {
     }
 
     public static func parseBootedSimulators(_ output: String) -> [IOSDevice] {
-        var devices: [IOSDevice] = []
-        var currentVersion = ""
-
-        for line in output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
-            if line.hasPrefix("-- ") {
-                if let match = firstMatch(line, regex: Regexes.runtimeHeader) {
-                    currentVersion = match[1].replacingOccurrences(of: #"^iOS\s+"#, with: "", options: .regularExpression)
-                }
-                continue
-            }
-            guard let match = firstMatch(line, regex: Regexes.bootedSimulator) else {
-                continue
-            }
-            devices.append(IOSDevice(name: match[1].trimmingCharacters(in: .whitespacesAndNewlines), version: currentVersion, udid: match[2], kind: .simulator))
-        }
-
-        return devices
+        SimulatorService.parseBootedSimulators(output)
     }
 
     public static func configuredUdids(paths: IOSUsePaths) -> Set<String> {
@@ -162,7 +201,7 @@ public enum DeviceService {
         })
     }
 
-    public static func format(_ device: IOSDevice, configuredDevices: [String: ConfiguredDevice]) -> String {
+    public static func format(_ device: IOSDevice, configuredDevices: [String: ConfiguredDevice], verbose: Bool = false) -> String {
         let typeLabel = device.kind == .simulator ? "Simulator" : "Device"
         let version = device.version.isEmpty ? "unknown" : device.version
         let config = configuredDevices[device.udid]
@@ -170,13 +209,36 @@ public enum DeviceService {
         if let config, config.needsDriverUpdate {
             tag += " | driver update required: run ios-use config --udid \(device.udid)"
         }
-        return "\(device.name.isEmpty ? "Unknown" : device.name) | iOS \(version) | \(typeLabel) | UDID: \(device.udid)\(tag)"
+        if let status = device.metadata?.status, status != "paired" {
+            tag += " | \(status)"
+        }
+        var line = "\(device.name.isEmpty ? "Unknown" : device.name) | iOS \(version) | \(typeLabel) | UDID: \(device.udid)\(tag)"
+        if verbose, let metadata = device.metadata {
+            var parts: [String] = []
+            if let productName = metadata.productName, !productName.isEmpty {
+                parts.append("product: \(productName)")
+            }
+            if let productType = metadata.productType, !productType.isEmpty {
+                parts.append("type: \(productType)")
+            }
+            if let buildVersion = metadata.buildVersion, !buildVersion.isEmpty {
+                parts.append("build: \(buildVersion)")
+            }
+            if let battery = metadata.batteryCurrentCapacity {
+                parts.append("battery: \(battery)%")
+            }
+            if let detail = metadata.detail, !detail.isEmpty {
+                parts.append("detail: \(detail)")
+            }
+            if !parts.isEmpty {
+                line += "\n    " + parts.joined(separator: " | ")
+            }
+        }
+        return line
     }
 
     private enum Regexes {
         static let deviceLine = try! NSRegularExpression(pattern: #"^\s*(.+?)\s+(?:\((\d+\.\d+(?:\.\d+)?)\)\s+)?\(([0-9A-Fa-f-]+)\)\s*$"#)
-        static let runtimeHeader = try! NSRegularExpression(pattern: #"^--\s+(.+?)\s+--"#)
-        static let bootedSimulator = try! NSRegularExpression(pattern: #"^\s*(.+?)\s+\(([0-9A-Fa-f-]+)\)\s+\(Booted\)"#)
     }
 
     private static func firstMatch(_ text: String, regex: NSRegularExpression) -> [String]? {

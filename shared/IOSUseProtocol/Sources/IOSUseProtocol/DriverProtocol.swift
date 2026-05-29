@@ -16,6 +16,14 @@ public enum IOSUseProtocol {
     public static let driverConnectionHandoffPollMicroseconds = 1_000
     /// Accept-loop backoff for the driver TCP server.
     public static let driverAcceptPollIntervalMicroseconds = 50_000
+    /// Real-device start waits this long after the native launch/auth request before TCP readiness polling.
+    public static let driverStartReadinessInitialDelayMicroseconds = 400_000
+    /// Real-device start TCP readiness poll interval.
+    public static let driverStartReadinessPollIntervalMicroseconds = 100_000
+    /// Real-device start TCP readiness probe keeps an empty connection open briefly before shutdown/close.
+    public static let driverStartReadinessProbeHoldMicroseconds = 10_000
+    /// Real-device start TCP readiness timeout.
+    public static let driverStartReadinessTimeoutSeconds = 30.0
     /// Time to wait for a command to start on XCTest main thread.
     public static let commandTimeoutSeconds = 45
     /// Time to wait for a started command to complete before marking driver state unsafe.

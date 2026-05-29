@@ -42,7 +42,7 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", "SIM-1", "retouch://debug"])
     }
 
-    func testOpenStepUsesHostSideRealDeviceOpen() throws {
+    func testOpenStepRealDeviceUsesNativeLauncher() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("open.yaml", """
         name: open-url
@@ -57,14 +57,20 @@ final class FlowServiceTests: XCTestCase {
             }
             return nil
         }
-        var shellCalls: [(String, [String])] = []
+        var nativeLaunches: [(String, String)] = []
+        OpenURLService.realDeviceURLLauncherForTesting = { url, udid in
+            nativeLaunches.append((url, udid))
+        }
         Shell.runOverrideForTesting = { executable, arguments, _, _ in
-            shellCalls.append((executable, arguments))
+            if executable == "xcrun", arguments.contains("devicectl") {
+                XCTFail("real-device flow open must not call devicectl")
+            }
             return ""
         }
         addTeardownBlock {
             Shell.runOverrideForTesting = nil
             OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+            OpenURLService.realDeviceURLLauncherForTesting = nil
         }
 
         let result = try FlowService.runForTesting(
@@ -76,17 +82,8 @@ final class FlowServiceTests: XCTestCase {
         )
 
         XCTAssertTrue(result.stdout.contains("Step 1/1: open"))
-        XCTAssertEqual(shellCalls.count, 1)
-        XCTAssertEqual(shellCalls.first?.0, "xcrun")
-        XCTAssertEqual(shellCalls.first?.1, [
-            "devicectl",
-            "device",
-            "process",
-            "launch",
-            "--device", "REAL-1",
-            "--payload-url", "https://example.com",
-            "com.apple.springboard",
-        ])
+        XCTAssertEqual(nativeLaunches.map(\.0), ["https://example.com"])
+        XCTAssertEqual(nativeLaunches.map(\.1), ["REAL-1"])
     }
 
     func testRunFlowBindsDeclaredOutputsAndExternalVarsOverrideDefaults() throws {
