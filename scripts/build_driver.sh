@@ -5,17 +5,20 @@ set -euo pipefail
 # Build IOSUseDriver artifacts
 #
 # Usage:
-#   ./scripts/build_driver.sh        # Release build (fastest, no dSYM)
-#   ./scripts/build_driver.sh --debug # Debug build with dSYM for troubleshooting
-#   ./scripts/build_driver.sh --simulator-only # Build only assets/driver-sim.ipa
+#   ./scripts/build_driver.sh        # Debug build with dSYM to IOS_USE_HOME or cwd/.ios-use
+#   ./scripts/build_driver.sh --release # Release build to driver/build/
+#   ./scripts/build_driver.sh --simulator-only # Build only the simulator IPA for the selected mode
 # =============================================================================
 
-DEBUG_MODE=false
+BUILD_MODE="debug"
 SIMULATOR_ONLY=false
 for arg in "$@"; do
   case "$arg" in
     --debug)
-      DEBUG_MODE=true
+      BUILD_MODE="debug"
+      ;;
+    --release)
+      BUILD_MODE="release"
       ;;
     --simulator-only)
       SIMULATOR_ONLY=true
@@ -43,27 +46,30 @@ BUILD_DIR="$PROJECT_DIR/build"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 XCTEST_WRAPPER_PATH="$BUILD_DIR/IOSUseDriver-Runner.app"
 
-CLI_VERSION="$(sed -n 's/.*public static let version = "\(.*\)".*/\1/p' "$ROOT_DIR/swift-cli/Sources/IOSUseCLI/IOSUseCLI.swift" | head -1)"
+CLI_VERSION="$(find "$ROOT_DIR/swift-cli/Sources/IOSUseCLI" -name '*.swift' -print0 \
+  | xargs -0 sed -n 's/.*public static let version = "\(.*\)".*/\1/p' \
+  | head -1)"
 if [ -z "$CLI_VERSION" ]; then
   echo "[build] ERROR: failed to read IOSUseCLI.version"
   exit 1
 fi
 echo "[build] Driver version: $CLI_VERSION"
 
-# Release artifacts go to assets/ (ignored local build outputs).
-# Debug artifacts go to build/ (not tracked) to avoid accidental commits.
-if [ "$DEBUG_MODE" = true ]; then
+# Debug artifacts go to IOS_USE_HOME, or cwd/.ios-use when IOS_USE_HOME is unset.
+# Release artifacts stay under driver/build/ and are copied only by release packaging.
+if [ "$BUILD_MODE" = "debug" ]; then
   CONFIGURATION="Debug"
   DEBUG_INFO_FORMAT="dwarf-with-dsym"
-  IPA_OUTPUT="$BUILD_DIR/driver-debug.ipa"
-  SIM_IPA_OUTPUT="$BUILD_DIR/driver-sim-debug.ipa"
-  echo "[build] DEBUG mode: building with Debug configuration + dSYM (assets/ are not overwritten)"
+  DEBUG_IPA_ROOT="${IOS_USE_HOME:-$PWD/.ios-use}"
+  IPA_OUTPUT="$DEBUG_IPA_ROOT/driver.ipa"
+  SIM_IPA_OUTPUT="$DEBUG_IPA_ROOT/driver-sim.ipa"
+  echo "[build] DEBUG mode: building with Debug configuration + dSYM into $DEBUG_IPA_ROOT"
 else
   CONFIGURATION="Release"
   DEBUG_INFO_FORMAT="dwarf"
-  IPA_OUTPUT="$ROOT_DIR/assets/driver.ipa"
-  SIM_IPA_OUTPUT="$ROOT_DIR/assets/driver-sim.ipa"
-  echo "[build] RELEASE mode: building with Release configuration (no dSYM)"
+  IPA_OUTPUT="$BUILD_DIR/driver.ipa"
+  SIM_IPA_OUTPUT="$BUILD_DIR/driver-sim.ipa"
+  echo "[build] RELEASE mode: building with Release configuration into driver/build/"
 fi
 
 # Common xcodebuild flags.

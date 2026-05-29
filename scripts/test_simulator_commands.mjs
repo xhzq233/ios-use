@@ -1050,7 +1050,7 @@ function buildCases() {
     } },
     { id: 'CFG-1', run: () => runCaseContains('CFG-1', sim.udid, ['config', '--list']) },
     { id: 'CFG-7', run: runConfigDriverVersionCase },
-    { id: 'CFG-5', run: () => runCaseFailsContains('CFG-5', 'unknown option', ['config', '--ipa', path.join(rootDir, 'assets/driver-sim.ipa')]) },
+    { id: 'CFG-5', run: () => runCaseFailsContains('CFG-5', 'unknown option', ['config', '--ipa', path.join(rootDir, '.ios-use/driver-sim.ipa')]) },
     { id: 'CFG-6', run: () => runCaseFailsContains('CFG-6', 'unknown option', ['config', '--port', '8100']) },
     ...['CLI-1', 'CLI-2', 'CLI-3', 'DEV-7', 'CFG-8'].map(id => ({ id, run: runSwiftCLIUnitCases })),
     { id: 'START-1R', run: () => unsupportedCase('START-1R', 'real-device driver start path, not Simulator') },

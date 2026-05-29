@@ -1238,6 +1238,25 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(appService.signals.first?.1, SIGKILL)
     }
 
+    func testCoreDeviceDriverLifecycleCleansLaunchedProcessWhenAuthorizationFails() throws {
+        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
+        let appService = FakeCoreDeviceAppService()
+        let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
+            startTunnel: { _ in session },
+            openAppService: { _ in appService },
+            authorizeDriver: { _, _, _ in throw CLIParseError.invalidValue("auth failed") },
+            isDriverPortReachable: { _ in false },
+            sleep: { _ in }
+        ))
+
+        XCTAssertThrowsError(try lifecycle.launchDriver(udid: "REAL-UDID", bundleID: "com.example.driver.xctrunner")) { error in
+            XCTAssertTrue(String(describing: error).contains("auth failed"))
+        }
+        XCTAssertEqual(appService.signals.count, 1)
+        XCTAssertEqual(appService.signals.first?.0, 222)
+        XCTAssertEqual(appService.signals.first?.1, SIGKILL)
+    }
+
     func testCoreDeviceURLLauncherOpensSpringBoardWithPayloadURL() throws {
         let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
         let appService = FakeCoreDeviceAppService()
@@ -1574,6 +1593,21 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(Darwin.read(fds[1], &byte, 1), 0)
     }
 
+    func testUsbmuxDeviceIDAcceptsTopLevelAndPropertiesShapes() {
+        XCTAssertEqual(Usbmux.deviceID(from: [
+            "DeviceID": 7,
+            "Properties": [
+                "SerialNumber": "REAL-1",
+            ],
+        ]), 7)
+        XCTAssertEqual(Usbmux.deviceID(from: [
+            "Properties": [
+                "DeviceID": 8,
+                "SerialNumber": "REAL-2",
+            ],
+        ]), 8)
+    }
+
     func testInstallationProxyLookupRequestAndResponse() throws {
         let response: [String: Any] = [
             "LookupResult": [
@@ -1610,10 +1644,13 @@ final class DeviceProtocolClientTests: XCTestCase {
             ]),
         ])
         let client = InstallationProxyClient(stream: stream)
+        var observed: [[String: Any]] = []
 
-        XCTAssertThrowsError(try client.uninstall(bundleID: "com.example.app")) { error in
+        XCTAssertThrowsError(try client.uninstall(bundleID: "com.example.app") { observed.append($0) }) { error in
             XCTAssertTrue(String(describing: error).contains("signature invalid"))
         }
+        XCTAssertEqual(observed.compactMap { $0["Status"] as? String }, ["Installing"])
+        XCTAssertEqual(observed.compactMap { $0["Error"] as? String }, ["ApplicationVerificationFailed"])
         let request = try parseLengthPrefixedPlist(stream.writes[0])
         XCTAssertEqual(request["Command"] as? String, "Uninstall")
         XCTAssertEqual(request["ApplicationIdentifier"] as? String, "com.example.app")

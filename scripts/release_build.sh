@@ -18,15 +18,15 @@ if [ -n "${IOS_USE_RELEASE_VERSION:-}" ]; then
 fi
 
 echo "[release-build] Building driver IPAs..."
-bash "$ROOT_DIR/scripts/build_driver.sh"
+bash "$ROOT_DIR/scripts/build_driver.sh" --release
 
 echo "[release-build] Preparing release assets..."
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 cp "$ROOT_DIR/ios-use" "$RELEASE_DIR/ios-use-darwin-arm64"
 chmod +x "$RELEASE_DIR/ios-use-darwin-arm64"
-cp "$ROOT_DIR/assets/driver.ipa" "$RELEASE_DIR/driver.ipa"
-cp "$ROOT_DIR/assets/driver-sim.ipa" "$RELEASE_DIR/driver-sim.ipa"
+cp "$ROOT_DIR/driver/build/driver.ipa" "$RELEASE_DIR/driver.ipa"
+cp "$ROOT_DIR/driver/build/driver-sim.ipa" "$RELEASE_DIR/driver-sim.ipa"
 
 for asset in ios-use-darwin-arm64 driver.ipa driver-sim.ipa; do
   if [ ! -s "$RELEASE_DIR/$asset" ]; then

@@ -90,7 +90,7 @@ public enum OSLogService {
             )
         }
 
-        let timeoutSeconds = timeout.flatMap { $0 > 0 ? $0 : nil } ?? IOSUseProtocol.oslogDefaultCollectTimeoutSeconds
+        let timeoutSeconds = timeout ?? IOSUseProtocol.oslogDefaultCollectTimeoutSeconds
         let newLines = try RealDeviceOSLogService.collectSyslog(udid: udid, timeoutSeconds: timeoutSeconds)
         let bufferKey = "real:\(udid)"
         let totalLines = appendUnique(newLines, key: bufferKey)

@@ -111,12 +111,7 @@ final class InstallationProxyClient {
     }
 
     private func readPlistFrame(timeoutSeconds: Double) throws -> [String: Any] {
-        let header = try stream.readExact(byteCount: 4, timeoutSeconds: timeoutSeconds)
-        let size = Int(readUInt32BE(header, 0))
-        guard size > 0, size <= 100 * 1024 * 1024 else {
-            throw InstallationProxyError.invalidResponseSize(size)
-        }
-        let response = try parsePlist(try stream.readExact(byteCount: size, timeoutSeconds: timeoutSeconds))
+        let response = try readRawPlistFrame(timeoutSeconds: timeoutSeconds)
         if let error = response["Error"] {
             let description = response["ErrorDescription"].map { String(describing: $0) } ?? String(describing: error)
             throw InstallationProxyError.commandFailed("\(description); response: \(Self.responseSummary(response))")
@@ -124,10 +119,19 @@ final class InstallationProxyClient {
         return response
     }
 
+    private func readRawPlistFrame(timeoutSeconds: Double) throws -> [String: Any] {
+        let header = try stream.readExact(byteCount: 4, timeoutSeconds: timeoutSeconds)
+        let size = Int(readUInt32BE(header, 0))
+        guard size > 0, size <= 100 * 1024 * 1024 else {
+            throw InstallationProxyError.invalidResponseSize(size)
+        }
+        return try parsePlist(try stream.readExact(byteCount: size, timeoutSeconds: timeoutSeconds))
+    }
+
     private func runProgressCommand(_ body: [String: Any], responseObserver: (([String: Any]) -> Void)? = nil) throws {
         try sendPlistWithoutResponse(body)
         while true {
-            let response = try readPlistFrame(timeoutSeconds: 120)
+            let response = try readRawPlistFrame(timeoutSeconds: 120)
             responseObserver?(response)
             if let error = response["Error"] {
                 let description = response["ErrorDescription"].map { String(describing: $0) } ?? String(describing: error)

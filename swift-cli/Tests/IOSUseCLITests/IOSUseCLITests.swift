@@ -737,8 +737,9 @@ final class IOSUseCLITests: XCTestCase {
             return []
         }
         DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-LOG"] }
-        RealDeviceOSLogService.collectorForTesting = { udid, _ in
+        RealDeviceOSLogService.collectorForTesting = { udid, timeout in
             XCTAssertEqual(udid, "REAL-LOG")
+            XCTAssertEqual(timeout, 0)
             return ["May 29 ready com.example.app"]
         }
         Shell.runOverrideForTesting = { executable, _, _, _ in

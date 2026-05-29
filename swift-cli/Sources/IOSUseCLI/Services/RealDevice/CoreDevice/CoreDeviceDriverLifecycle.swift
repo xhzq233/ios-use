@@ -99,7 +99,12 @@ final class CoreDeviceDriverLifecycle: CoreDeviceDriverLifecycleManaging {
         let pid = try resolveLaunchedDriverPID(launchOutput: launchOutput, appService: appService, bundleID: bundleID)
         appService.close()
         eventSink?("authorizing CoreDevice-launched driver pid=\(pid)")
-        try dependencies.authorizeDriver(udid, pid, session)
+        do {
+            try dependencies.authorizeDriver(udid, pid, session)
+        } catch {
+            cleanupLaunchedDriver(pid: pid, udid: udid, session: session)
+            throw error
+        }
 
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         dependencies.sleep(useconds_t(IOSUseProtocol.driverStartReadinessInitialDelayMicroseconds))
