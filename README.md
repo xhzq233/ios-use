@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.1.0
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.2.0
 ```
 
 Intel Macs should compile locally instead:
