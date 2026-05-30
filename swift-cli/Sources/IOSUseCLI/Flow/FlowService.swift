@@ -51,10 +51,10 @@ public enum FlowService {
         let driver = RecoveringFlowDriver(paths: paths, verbose: options.verbose)
         defer { driver.close() }
         if let flowApp, !flowApp.isEmpty {
-            _ = try DriverCommandExecutor.execute(action: .terminateApp(bundleId: flowApp), paths: paths) { body in
+            _ = try DriverCommandExecutor.execute(action: .terminateApp(bundleId: flowApp), paths: paths, hostDeviceTypeHint: activeDriver.deviceType) { body in
                 try body(driver)
             }
-            _ = try DriverCommandExecutor.execute(action: .activateApp(bundleId: flowApp), paths: paths) { body in
+            _ = try DriverCommandExecutor.execute(action: .activateApp(bundleId: flowApp), paths: paths, hostDeviceTypeHint: activeDriver.deviceType) { body in
                 try body(driver)
             }
         }

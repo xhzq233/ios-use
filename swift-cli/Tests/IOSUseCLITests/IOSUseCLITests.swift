@@ -516,6 +516,55 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(lifecycle.launches.map(\.1), ["com.example.driver"])
     }
 
+    func testRealDeviceActivateAppUsesDriverClient() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-real-activate-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-ACTIVE", deviceType: "real", paths: paths)
+        var activatedBundleIDs: [String] = []
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(activateHandler: { bundleID in
+                activatedBundleIDs.append(bundleID)
+            })
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["activateApp", "com.apple.Preferences"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "App com.apple.Preferences activated\n")
+        XCTAssertEqual(activatedBundleIDs, ["com.apple.Preferences"])
+    }
+
+    func testRealDeviceTerminateAppUsesDriverClientAndSkipsMissingProcess() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-real-terminate-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-TERM", deviceType: "real", paths: paths)
+        var terminatedBundleIDs: [String] = []
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(terminateHandler: { bundleID in
+                terminatedBundleIDs.append(bundleID)
+                throw DriverClientError.driverError("Application is not running")
+            })
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["terminateApp", "com.apple.Preferences"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "App com.apple.Preferences not running, skipped terminate\n")
+        XCTAssertEqual(terminatedBundleIDs, ["com.apple.Preferences"])
+    }
+
     func testDriverCommandWithoutLockFailsBeforeClientOrDiscovery() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-driver-no-lock-\(UUID().uuidString)")
@@ -1198,13 +1247,23 @@ final class IOSUseCLITests: XCTestCase {
 
 private final class FakeDriverCommandClient: DriverCommandClient {
     private let domHandler: () throws -> ForyDomPayload
+    private let activateHandler: (String) throws -> Void
+    private let terminateHandler: (String) throws -> Void
 
     init(
         domHandler: @escaping () throws -> ForyDomPayload = {
             throw CLIParseError.invalidValue("unexpected dom")
+        },
+        activateHandler: @escaping (String) throws -> Void = { _ in
+            throw CLIParseError.invalidValue("unexpected activateApp")
+        },
+        terminateHandler: @escaping (String) throws -> Void = { _ in
+            throw CLIParseError.invalidValue("unexpected terminateApp")
         }
     ) {
         self.domHandler = domHandler
+        self.activateHandler = activateHandler
+        self.terminateHandler = terminateHandler
     }
 
     func close() {}
@@ -1242,11 +1301,11 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     }
 
     func activateApp(bundleId: String) throws {
-        throw CLIParseError.invalidValue("unexpected activateApp")
+        try activateHandler(bundleId)
     }
 
     func terminateApp(bundleId: String) throws {
-        throw CLIParseError.invalidValue("unexpected terminateApp")
+        try terminateHandler(bundleId)
     }
 
     func home() throws {

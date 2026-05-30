@@ -261,7 +261,7 @@ final class DeviceProtocolClientTests: XCTestCase {
         try connection.write(Data("!".utf8))
 
         XCTAssertEqual(response, Data("ok".utf8))
-        XCTAssertEqual(tunnel.writes.count, 5)
+        XCTAssertEqual(tunnel.writes.count, 6)
         let syn = try CoreDeviceIPv6TCPCodec.decodeSegment(tunnel.writes[0])
         XCTAssertEqual(syn.flags, CoreDeviceTCPFlags.syn)
         XCTAssertEqual(syn.sequenceNumber, 100)
@@ -275,7 +275,11 @@ final class DeviceProtocolClientTests: XCTestCase {
         let secondData = try CoreDeviceIPv6TCPCodec.decodeSegment(tunnel.writes[3])
         XCTAssertEqual(secondData.payload, Data("o".utf8))
         XCTAssertEqual(secondData.sequenceNumber, 105)
-        let piggybackAck = try CoreDeviceIPv6TCPCodec.decodeSegment(tunnel.writes[4])
+        let payloadAck = try CoreDeviceIPv6TCPCodec.decodeSegment(tunnel.writes[4])
+        XCTAssertEqual(payloadAck.flags, CoreDeviceTCPFlags.ack)
+        XCTAssertEqual(payloadAck.sequenceNumber, 106)
+        XCTAssertEqual(payloadAck.acknowledgmentNumber, 903)
+        let piggybackAck = try CoreDeviceIPv6TCPCodec.decodeSegment(tunnel.writes[5])
         XCTAssertEqual(piggybackAck.flags, CoreDeviceTCPFlags.psh | CoreDeviceTCPFlags.ack)
         XCTAssertEqual(piggybackAck.payload, Data("!".utf8))
         XCTAssertEqual(piggybackAck.sequenceNumber, 106)
@@ -1188,6 +1192,7 @@ final class DeviceProtocolClientTests: XCTestCase {
 
         XCTAssertEqual(openedHost, session.handshake.serverAddress)
         XCTAssertEqual(appService.launchedBundleIDs, ["com.example.driver.xctrunner"])
+        XCTAssertNil(appService.launches.first?.activates)
         XCTAssertEqual(events, ["authorize", "reachable", "reachable"])
         XCTAssertEqual(sleeps, [
             useconds_t(IOSUseProtocol.driverStartReadinessInitialDelayMicroseconds),
@@ -1208,7 +1213,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
             startTunnel: { _ in session },
             openAppService: { _ in appService },
-            authorizeDriver: { _, pid, _ in authorizedPids.append(pid) },
+            authorizeDriver: { _, pid, _ in
+                authorizedPids.append(pid)
+            },
             isDriverPortReachable: { _ in true },
             sleep: { sleeps.append($0) }
         ))
@@ -1232,7 +1239,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
             startTunnel: { _ in session },
             openAppService: { _ in appService },
-            authorizeDriver: { _, _, _ in XCTFail("pid resolution failure must happen before authorization") },
+            authorizeDriver: { _, _, _ in
+                XCTFail("pid resolution failure must happen before authorization")
+            },
             isDriverPortReachable: { _ in false },
             sleep: { _ in }
         ))
@@ -1318,7 +1327,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
             startTunnel: { _ in session },
             openAppService: { _ in appService },
-            authorizeDriver: { _, _, _ in XCTFail("terminate should not authorize") },
+            authorizeDriver: { _, _, _ in
+                XCTFail("terminate should not authorize")
+            },
             isDriverPortReachable: { _ in false },
             sleep: { _ in }
         ))
@@ -1342,7 +1353,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
             startTunnel: { _ in session },
             openAppService: { _ in appService },
-            authorizeDriver: { _, _, _ in XCTFail("terminate should not authorize") },
+            authorizeDriver: { _, _, _ in
+                XCTFail("terminate should not authorize")
+            },
             isDriverPortReachable: { _ in false },
             sleep: { _ in }
         ))
@@ -1364,7 +1377,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
             startTunnel: { _ in session },
             openAppService: { _ in appService },
-            authorizeDriver: { _, _, _ in XCTFail("terminate should not authorize") },
+            authorizeDriver: { _, _, _ in
+                XCTFail("terminate should not authorize")
+            },
             isDriverPortReachable: { _ in
                 reachabilityChecks += 1
                 return false
@@ -1387,7 +1402,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
             startTunnel: { _ in session },
             openAppService: { _ in appService },
-            authorizeDriver: { _, _, _ in XCTFail("terminate should not authorize") },
+            authorizeDriver: { _, _, _ in
+                XCTFail("terminate should not authorize")
+            },
             isDriverPortReachable: { _ in true },
             sleep: { _ in }
         ))
@@ -1407,7 +1424,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
             startTunnel: { _ in session },
             openAppService: { _ in appService },
-            authorizeDriver: { _, _, _ in XCTFail("terminate should not authorize") },
+            authorizeDriver: { _, _, _ in
+                XCTFail("terminate should not authorize")
+            },
             isDriverPortReachable: { _ in true },
             sleep: { _ in }
         ))
@@ -1429,7 +1448,9 @@ final class DeviceProtocolClientTests: XCTestCase {
         let lifecycle = CoreDeviceDriverLifecycle(dependencies: CoreDeviceDriverLifecycle.Dependencies(
             startTunnel: { _ in session },
             openAppService: { _ in appService },
-            authorizeDriver: { _, _, _ in XCTFail("terminate should not authorize") },
+            authorizeDriver: { _, _, _ in
+                XCTFail("terminate should not authorize")
+            },
             isDriverPortReachable: { _ in
                 reachabilityChecks += 1
                 return true

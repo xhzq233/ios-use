@@ -193,10 +193,16 @@ enum DriverLifecycleService {
         guard let fd = try? Usbmux.connect(udid: udid, port: Int(IOSUseProtocol.defaultDriverPort)) else {
             return false
         }
+        closeReadinessProbeSocket(fd)
+        return true
+    }
+
+    private static func closeReadinessProbeSocket(_ fd: Int32) {
+        var lingerOption = linger(l_onoff: 1, l_linger: 0)
+        _ = Darwin.setsockopt(fd, SOL_SOCKET, SO_LINGER, &lingerOption, UInt32(MemoryLayout<linger>.size))
         usleep(useconds_t(IOSUseProtocol.driverStartReadinessProbeHoldMicroseconds))
         _ = Darwin.shutdown(fd, SHUT_RDWR)
         Darwin.close(fd)
-        return true
     }
 
     private static func driverLogPath(paths: IOSUsePaths) -> String {

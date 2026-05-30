@@ -15,9 +15,15 @@ final class Codec {
     // MARK: - Read
 
     /// Read a single length-prefixed Fory frame and deserialize as ForyRequestFrame.
-    static func readFrame(_ fd: Int32) throws -> ForyRequestFrame {
+    static func readFrame(_ fd: Int32, onFirstByteRead: (() -> Void)? = nil) throws -> ForyRequestFrame {
+        var reportedFirstByte = false
+        let reportFirstByte = {
+            guard !reportedFirstByte else { return }
+            reportedFirstByte = true
+            onFirstByteRead?()
+        }
         var lenBuf = [UInt8](repeating: 0, count: 4)
-        try readExact(fd, into: &lenBuf, count: 4)
+        try readExact(fd, into: &lenBuf, count: 4, onBytesRead: reportFirstByte)
 
         let length = Int((UInt32(lenBuf[0]) << 24) | (UInt32(lenBuf[1]) << 16) | (UInt32(lenBuf[2]) << 8) | UInt32(lenBuf[3]))
         guard length > 0, length <= IOSUseProtocol.maxFrameSizeBytes else { throw FrameError.invalidLength }
@@ -25,13 +31,13 @@ final class Codec {
         var body = Data(count: length)
         try body.withUnsafeMutableBytes { buf in
             guard let base = buf.baseAddress else { throw FrameError.readFailed }
-            try readExact(fd, into: base, count: length)
+            try readExact(fd, into: base, count: length, onBytesRead: reportFirstByte)
         }
 
         return try sharedFory.deserialize(body, as: ForyRequestFrame.self)
     }
 
-    private static func readExact(_ fd: Int32, into ptr: UnsafeMutableRawPointer, count: Int) throws {
+    private static func readExact(_ fd: Int32, into ptr: UnsafeMutableRawPointer, count: Int, onBytesRead: (() -> Void)? = nil) throws {
         var offset = 0
         while offset < count {
             let n = Darwin.read(fd, ptr.advanced(by: offset), count - offset)
@@ -40,13 +46,14 @@ final class Codec {
                 throw FrameError.readFailed
             }
             if n == 0 { throw FrameError.readFailed }
+            onBytesRead?()
             offset += n
         }
     }
 
-    private static func readExact(_ fd: Int32, into buf: inout [UInt8], count: Int) throws {
+    private static func readExact(_ fd: Int32, into buf: inout [UInt8], count: Int, onBytesRead: (() -> Void)? = nil) throws {
         guard count > 0, buf.count >= count else { return }
-        try readExact(fd, into: &buf[0], count: count)
+        try readExact(fd, into: &buf[0], count: count, onBytesRead: onBytesRead)
     }
 
     // MARK: - Write
