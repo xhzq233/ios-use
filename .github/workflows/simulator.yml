@@ -70,3 +70,12 @@ jobs:
         env:
           IOS_USE_SIMULATOR_CASES: ${{ inputs.simulator_cases }}
         run: bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case "$IOS_USE_SIMULATOR_CASES"
+
+      - name: Upload Simulator artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-simulator-artifacts
+          if-no-files-found: ignore
+          path: |
+            ${{ env.HOME }}/.ios-use/test-homes/simulator-commands/artifacts/simulator-command-tests/**

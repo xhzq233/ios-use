@@ -4,6 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {
+  bridgeCase,
+  simulatorCaseIds,
+  simulatorCaseMetadataById,
+  shouldRunPrerequisiteConfig,
+  unsupportedCaseReasons,
+  validateCaseMetadataSchema,
+} from './simulator_case_registry.mjs';
+import { buildContactsCases } from './sim/cases/contacts.mjs';
+import { buildDeviceConfigCases } from './sim/cases/device-config.mjs';
+import { buildFlowCases } from './sim/cases/flow.mjs';
+import { buildHostBridgeCases } from './sim/cases/host-bridge.mjs';
+import {
+  buildSettingsAfterContactsCases,
+  buildSettingsBeforeContactsCases,
+} from './sim/cases/settings.mjs';
 
 const decoder = new TextDecoder();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -66,6 +82,22 @@ export function validateCaseFilter(caseIds, filterIds) {
   }
 }
 
+function validateCaseRegistry(caseIds) {
+  const expected = simulatorCaseIds.map(id => id.toUpperCase());
+  const actual = caseIds.map(id => id.toUpperCase());
+  const expectedSet = new Set(expected);
+  const actualSet = new Set(actual);
+  const missing = expected.filter(id => !actualSet.has(id));
+  const extra = actual.filter(id => !expectedSet.has(id));
+  const firstMismatchIndex = expected.findIndex((id, index) => id !== actual[index]);
+  if (missing.length === 0 && extra.length === 0 && firstMismatchIndex === -1 && expected.length === actual.length) return;
+
+  const order = firstMismatchIndex === -1
+    ? ''
+    : ` first order mismatch at ${firstMismatchIndex}: registry=${expected[firstMismatchIndex]} runner=${actual[firstMismatchIndex] ?? '<none>'};`;
+  throw new Error(`simulator case registry drift:${order} missing=${missing.join(',') || '<none>'}; extra=${extra.join(',') || '<none>'}`);
+}
+
 let sim;
 let iosHome = '';
 let artifactDir = '';
@@ -77,6 +109,13 @@ const emptyHomeName = 'empty-home';
 let passed = 0;
 let failed = 0;
 let skipped = 0;
+let bridged = 0;
+let unsupported = 0;
+const caseResults = [];
+const caseStartTimes = new Map();
+const recoveryEvents = [];
+let currentPhase = 'case';
+let currentCaseId = '';
 const simulatorDriverBundleId = 'com.iosuse.xcuidriver.xctrunner';
 const driverReadyTimeoutMs = 180_000;
 
@@ -137,7 +176,7 @@ function readFileIfExists(file) {
 
 function findProxyPrecheckReferences() {
   const files = [
-    'swift-cli/Sources/IOSUseCLI/ProxyService.swift',
+    'swift-cli/Sources/IOSUseCLI/Services/Proxy/ProxyService.swift',
     'swift-cli/Tests/IOSUseCLITests/ProxyServiceTests.swift',
   ];
   const forbidden = [
@@ -254,47 +293,169 @@ function selected(id) {
   return isCaseSelected(id, caseFilterIds);
 }
 
-function anySelected(ids) {
-  return ids.some(id => selected(id));
+function caseDurationMs(id) {
+  const startedAt = caseStartTimes.get(id);
+  if (startedAt === undefined) return undefined;
+  return Math.round(performance.now() - startedAt);
 }
 
-function recordPass(id) {
+function resultArtifacts(id) {
+  if (!artifactDir || !fs.existsSync(artifactDir)) return [];
+  return fs.readdirSync(artifactDir)
+    .filter(file => file === 'driver.log' || file.startsWith(`${id}.`) || file.startsWith(`${id}-`))
+    .sort()
+    .map(file => path.join(artifactDir, file));
+}
+
+function finishCase(id, status, fields = {}) {
+  const metadata = simulatorCaseMetadataById.get(id);
+  const result = {
+    id,
+    group: metadata?.group ?? null,
+    kind: metadata?.kind ?? null,
+    status,
+    phase: fields.phase ?? null,
+    setup: metadata?.setup ?? null,
+    assertion: metadata?.assertion ?? null,
+    coverage: metadata?.coverage ?? null,
+    durationMs: caseDurationMs(id) ?? null,
+    attempts: fields.attempts ?? 1,
+    reason: fields.reason ?? null,
+    details: fields.details ? String(fields.details).slice(0, 4000) : null,
+    artifacts: resultArtifacts(id),
+  };
+  caseResults.push(result);
+  writeCaseResults();
+  return result;
+}
+
+function writeCaseResults() {
+  if (!artifactDir) return;
+  writeFile(path.join(artifactDir, 'case-results.json'), `${JSON.stringify(caseResults, null, 2)}\n`);
+}
+
+function writeRecoveryEvents() {
+  if (!artifactDir) return;
+  writeFile(path.join(artifactDir, 'recovery-events.json'), `${JSON.stringify(recoveryEvents, null, 2)}\n`);
+}
+
+function recordRecovery(type, id, detail = '') {
+  const event = {
+    type,
+    caseId: id || currentCaseId || null,
+    phase: currentPhase,
+    detail,
+    at: new Date().toISOString(),
+  };
+  recoveryEvents.push(event);
+  writeRecoveryEvents();
+}
+
+async function withPhase(phase, work) {
+  const previous = currentPhase;
+  currentPhase = phase;
+  try {
+    return await work();
+  } finally {
+    currentPhase = previous;
+  }
+}
+
+function recordPass(id, fields = {}) {
   passed++;
+  finishCase(id, 'passed', fields);
   console.log(`[sim-test] PASS ${id}`);
 }
 
-function recordFail(id, details) {
+function recordFail(id, details, phase = currentPhase || 'case', fields = {}) {
   failed++;
+  finishCase(id, 'failed', { ...fields, phase, details });
   console.log(`[sim-test] FAIL ${id}`);
   if (details) process.stderr.write(details);
 }
 
 function recordSkip(id) {
   skipped++;
+  finishCase(id, 'skipped');
   if (caseFilterIds) return;
   console.log(`[sim-test] SKIP ${id}`);
 }
 
+function recordUnsupported(id, reason) {
+  unsupported++;
+  finishCase(id, 'unsupported', { reason });
+  console.log(`[sim-test] UNSUPPORTED ${id}: ${reason}`);
+}
+
+function recordBridged(id, source, reason) {
+  bridged++;
+  finishCase(id, 'bridged', { reason: `${source}: ${reason}` });
+  console.log(`[sim-test] BRIDGED ${id}: ${source}`);
+}
+
+async function runSetup(id, setup) {
+  if (!setup) return true;
+  try {
+    await withPhase('setup', async () => setup());
+    return true;
+  } catch (error) {
+    recordFail(id, `${error instanceof Error ? error.stack || error.message : String(error)}\n`, 'setup');
+    return false;
+  }
+}
+
+async function runCommand(id, args, out, err) {
+  try {
+    return await withPhase('command', async () => runCliToFiles(args, out, err));
+  } catch (error) {
+    recordFail(id, `${error instanceof Error ? error.stack || error.message : String(error)}\n`, 'command');
+    return null;
+  }
+}
+
 async function runCase(id, args, setup) {
   if (!selected(id)) return recordSkip(id);
-  await setup?.();
+  if (!await runSetup(id, setup)) return;
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')}`);
-  const res = runCliToFiles(args, out, err);
+  const res = await runCommand(id, args, out, err);
+  if (!res) return;
   if (res.code === 0) recordPass(id);
-  else recordFail(id, res.stderr || res.stdout);
+  else recordFail(id, res.stderr || res.stdout, 'command');
 }
 
 async function runCaseContains(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
-  await setup?.();
+  if (!await runSetup(id, setup)) return;
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')}`);
-  const res = runCliToFiles(args, out, err);
+  const res = await runCommand(id, args, out, err);
+  if (!res) return;
   if (res.code === 0 && res.stdout.includes(expected)) recordPass(id);
-  else recordFail(id, res.stdout + res.stderr);
+  else if (res.code !== 0) recordFail(id, res.stdout + res.stderr, 'command');
+  else recordFail(id, res.stdout + res.stderr, 'assertion');
+}
+
+async function runCaseContainsAndDomContains(id, expected, args, domExpected, setup) {
+  if (!selected(id)) return recordSkip(id);
+  if (!await runSetup(id, setup)) return;
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  const domOut = path.join(artifactDir, `${id}-dom.out`);
+  const domErr = path.join(artifactDir, `${id}-dom.err`);
+  console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')} + dom postcondition`);
+  const res = await runCommand(id, args, out, err);
+  if (!res) return;
+  if (res.code !== 0 || !res.stdout.includes(expected)) {
+    recordFail(id, res.stdout + res.stderr, res.code === 0 ? 'assertion' : 'command');
+    return;
+  }
+  const dom = await runCommand(id, ['dom', '--fresh'], domOut, domErr);
+  if (!dom) return;
+  if (dom.code === 0 && dom.stdout.includes(domExpected)) recordPass(id);
+  else recordFail(id, `${res.stdout}${res.stderr}${dom.stdout}${dom.stderr}`, dom.code === 0 ? 'assertion' : 'command');
 }
 
 function isTransientDriverFailure(output) {
@@ -303,68 +464,80 @@ function isTransientDriverFailure(output) {
 
 async function runCaseContainsRetryTransient(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
-  await setup?.();
+  if (!await runSetup(id, setup)) return;
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')}`);
-  let res = runCliToFiles(args, out, err);
+  let res = await runCommand(id, args, out, err);
+  if (!res) return;
+  let attempts = 1;
   if ((res.code !== 0 || !res.stdout.includes(expected)) && isTransientDriverFailure(`${res.stdout}\n${res.stderr}`)) {
     console.log(`[sim-test] ${id}: transient driver failure, rebuilding once before retry`);
+    recordRecovery('case-retry', id, 'transient driver failure');
     runCliToFiles(['config', '--simulator', '--udid', sim.udid], path.join(artifactDir, `${id}-reconfig.out`), path.join(artifactDir, `${id}-reconfig.err`));
     await waitForDriver();
-    await setup?.();
-    res = runCliToFiles(args, out, err);
+    attempts++;
+    if (!await runSetup(id, setup)) return;
+    res = await runCommand(id, args, out, err);
+    if (!res) return;
   }
-  if (res.code === 0 && res.stdout.includes(expected)) recordPass(id);
-  else recordFail(id, res.stdout + res.stderr);
+  if (res.code === 0 && res.stdout.includes(expected)) recordPass(id, { attempts });
+  else if (res.code !== 0) recordFail(id, res.stdout + res.stderr, 'command', { attempts });
+  else recordFail(id, res.stdout + res.stderr, 'assertion', { attempts });
 }
 
 async function runCaseMatches(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
-  await setup?.();
+  if (!await runSetup(id, setup)) return;
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')}`);
-  const res = runCliToFiles(args, out, err);
+  const res = await runCommand(id, args, out, err);
+  if (!res) return;
   if (res.code === 0 && expected.test(res.stdout)) recordPass(id);
-  else recordFail(id, res.stdout + res.stderr);
+  else if (res.code !== 0) recordFail(id, res.stdout + res.stderr, 'command');
+  else recordFail(id, res.stdout + res.stderr, 'assertion');
 }
 
 async function runCaseFailsContains(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
-  await setup?.();
+  if (!await runSetup(id, setup)) return;
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')} (expect fail)`);
-  const res = runCliToFiles(args, out, err);
+  const res = await runCommand(id, args, out, err);
+  if (!res) return;
   const haystack = `${res.stdout}\n${res.stderr}`.toLowerCase();
   if (res.code !== 0 && haystack.includes(expected.toLowerCase())) recordPass(id);
-  else recordFail(id, res.stdout + res.stderr);
+  else if (res.code === 0) recordFail(id, res.stdout + res.stderr, 'assertion');
+  else recordFail(id, res.stdout + res.stderr, 'assertion');
 }
 
 async function runCaseFailsMatches(id, expected, args, setup) {
   if (!selected(id)) return recordSkip(id);
-  await setup?.();
+  if (!await runSetup(id, setup)) return;
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')} (expect fail)`);
-  const res = runCliToFiles(args, out, err);
+  const res = await runCommand(id, args, out, err);
+  if (!res) return;
   if (res.code !== 0 && expected.test(`${res.stdout}\n${res.stderr}`)) recordPass(id);
-  else recordFail(id, res.stdout + res.stderr);
+  else recordFail(id, res.stdout + res.stderr, 'assertion');
 }
 
 async function runCaseFileExists(id, filePath, args, setup) {
   if (!selected(id)) return recordSkip(id);
-  await setup?.();
+  if (!await runSetup(id, setup)) return;
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use ${args.join(' ')}`);
-  const res = runCliToFiles(args, out, err);
+  const res = await runCommand(id, args, out, err);
+  if (!res) return;
   if (res.code === 0 && fs.existsSync(filePath) && fs.statSync(filePath).size > 0) {
     fs.copyFileSync(filePath, path.join(artifactDir, path.basename(filePath)));
     recordPass(id);
   } else {
-    recordFail(id, `${res.stdout}${res.stderr}[sim-test] missing file: ${filePath}\n`);
+    recordFail(id, `${res.stdout}${res.stderr}[sim-test] missing file: ${filePath}\n`, res.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -380,14 +553,14 @@ async function runAutoLabelFindCase() {
   const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
   const match = dom.stdout.match(/^\s+([^\s]+Applicationc\d*) \[CollectionView(?:,[^\]]*)?\](?: \(\d+,\d+,\d+,\d+\))?:/m);
   if (dom.code !== 0 || !match) {
-    return recordFail(id, dom.stdout + dom.stderr);
+    return recordFail(id, dom.stdout + dom.stderr, dom.code === 0 ? 'assertion' : 'command');
   }
   const autoLabel = match[1];
   const found = runCliToFiles(['find', autoLabel, '--traits', 'CollectionView'], findOut, findErr);
   if (found.code === 0 && found.stdout.includes(autoLabel)) {
     recordPass(id);
   } else {
-    recordFail(id, found.stdout + found.stderr);
+    recordFail(id, found.stdout + found.stderr, found.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -406,7 +579,7 @@ async function runDomPresentationCase() {
   if (res.code === 0 && hasAppHeader && hasScrollableDirection && hasLeafRect) {
     recordPass(id);
   } else {
-    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-12 expected app header, scroll direction container rect, and leaf rect\n`);
+    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-12 expected app header, scroll direction container rect, and leaf rect\n`, res.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -426,7 +599,7 @@ async function runDomPayloadShapeCase() {
   if (res.code === 0 && hasAppHeader && hasWindow && hasContainerRect && hasLeafRect) {
     recordPass(id);
   } else {
-    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-4 expected app/window plus container and leaf rects\n`);
+    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-4 expected app/window plus container and leaf rects\n`, res.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -440,7 +613,7 @@ async function runFindExactPreferredCase(id) {
   if (res.code === 0 && res.stdout.includes('Find "General":') && !/Find "General" \(\d+ matches\):/.test(res.stdout)) {
     recordPass(id);
   } else {
-    recordFail(id, res.stdout + res.stderr);
+    recordFail(id, res.stdout + res.stderr, res.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -456,7 +629,7 @@ async function runConfigDriverVersionCase() {
     const config = JSON.parse(fs.readFileSync(path.join(iosHome, 'config.json'), 'utf8'));
     entry = config.devices?.[sim.udid];
   } catch (error) {
-    return recordFail(id, `${devices.stdout}${devices.stderr}${error}\n`);
+    return recordFail(id, `${devices.stdout}${devices.stderr}${error}\n`, devices.code === 0 ? 'assertion' : 'command');
   }
   if (
     devices.code === 0 &&
@@ -467,7 +640,7 @@ async function runConfigDriverVersionCase() {
   ) {
     recordPass(id);
   } else {
-    recordFail(id, `${devices.stdout}${devices.stderr}${JSON.stringify(entry, null, 2)}\n`);
+    recordFail(id, `${devices.stdout}${devices.stderr}${JSON.stringify(entry, null, 2)}\n`, devices.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -485,7 +658,7 @@ async function runStartCreatesDriverLockCase() {
   try {
     lock = JSON.parse(readFileIfExists(path.join(iosHome, 'state/driver.lock')) || '{}');
   } catch (error) {
-    return recordFail(id, `${res.stdout}${res.stderr}${error}\n`);
+    return recordFail(id, `${res.stdout}${res.stderr}${error}\n`, res.code === 0 ? 'assertion' : 'command');
   }
   const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
   if (
@@ -497,7 +670,7 @@ async function runStartCreatesDriverLockCase() {
   ) {
     recordPass(id);
   } else {
-    recordFail(id, `${res.stdout}${res.stderr}${readFileIfExists(path.join(iosHome, 'state/driver.lock'))}\n${dom.stdout}${dom.stderr}`);
+    recordFail(id, `${res.stdout}${res.stderr}${readFileIfExists(path.join(iosHome, 'state/driver.lock'))}\n${dom.stdout}${dom.stderr}`, res.code === 0 && dom.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -516,7 +689,7 @@ async function runStopClearsDriverLockCase() {
   if (stop.code === 0 && !lockExists && sessionExists) {
     recordPass(id);
   } else {
-    recordFail(id, `${stop.stdout}${stop.stderr}[sim-test] lockExists=${lockExists} sessionExists=${sessionExists}\n`);
+    recordFail(id, `${stop.stdout}${stop.stderr}[sim-test] lockExists=${lockExists} sessionExists=${sessionExists}\n`, stop.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -579,6 +752,7 @@ async function waitForDriver() {
     const combined = res.stdout + res.stderr;
     if (!reconfigured && combined.includes('out of date')) {
       console.log('[sim-test] Driver version mismatch, reinstalling');
+      recordRecovery('driver-reconfig', currentCaseId, 'driver version mismatch');
       runCliToFiles(['config', '--simulator', '--udid', sim.udid], path.join(artifactDir, 'driver-reconfig.out'), path.join(artifactDir, 'driver-reconfig.err'));
       ensureDriverStarted('driver-reconfig-start');
       reconfigured = true;
@@ -595,6 +769,7 @@ async function waitForDriver() {
       consecutiveUnreachable = 0;
     }
     if (attempt % 5 === 0) {
+      recordRecovery('driver-relaunch', currentCaseId, `warmup attempt ${attempt}`);
       relaunchSimulatorDriver(attempt);
     }
     await sleep(2000);
@@ -663,6 +838,7 @@ async function ensureDriverReady() {
   if (probe.code === 0) return;
   recoveryCount++;
   console.log('[sim-test] Driver unavailable, reconfiguring simulator driver');
+  recordRecovery('driver-recover', currentCaseId, 'dom probe failed');
   runCliToFiles(
     ['config', '--simulator', '--udid', sim.udid],
     path.join(artifactDir, `driver-recover-${recoveryCount}.out`),
@@ -790,23 +966,26 @@ async function runInputAndVerifyDom(
   setup,
 ) {
   if (!selected(id)) return recordSkip(id);
-  await setup?.();
+  if (!await runSetup(id, setup)) return;
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   const domOut = path.join(artifactDir, `${id}-dom.out`);
   const domErr = path.join(artifactDir, `${id}-dom.err`);
   console.log(`[sim-test] RUN ${id}: ios-use input --label ${label} --content ${content} ${args.join(' ')}`);
+  let attempts = 1;
   let res = runCliToFiles(['input', '--label', label, '--content', content, ...args], out, err);
   if (res.code !== 0 && /not connected|connection refused|read timeout/i.test(`${res.stdout}\n${res.stderr}`)) {
     console.log(`[sim-test] ${id}: driver connection lost, rebuilding once and rerunning setup before retry`);
+    recordRecovery('case-retry', id, 'input driver connection lost');
     runCliToFiles(['config', '--simulator', '--udid', sim.udid], path.join(artifactDir, `${id}-reconfig.out`), path.join(artifactDir, `${id}-reconfig.err`));
     await waitForDriver();
-    await setup?.();
+    attempts++;
+    if (!await runSetup(id, setup)) return;
     res = runCliToFiles(['input', '--label', label, '--content', content, ...args], out, err);
   }
   const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
-  if (res.stdout.includes('Input') && dom.code === 0 && dom.stdout.includes(expected)) recordPass(id);
-  else recordFail(id, `${readFileIfExists(out)}${readFileIfExists(err)}${readFileIfExists(domOut)}${readFileIfExists(domErr)}`);
+  if (res.stdout.includes('Input') && dom.code === 0 && dom.stdout.includes(expected)) recordPass(id, { attempts });
+  else recordFail(id, `${readFileIfExists(out)}${readFileIfExists(err)}${readFileIfExists(domOut)}${readFileIfExists(domErr)}`, res.code === 0 ? 'assertion' : 'command', { attempts });
 }
 
 async function verifyContactsNameFields(id, suffix) {
@@ -825,8 +1004,12 @@ async function verifyContactsNameFields(id, suffix) {
 
 async function unsupportedCase(id, reason) {
   if (!selected(id)) return recordSkip(id);
-  skipped++;
-  console.log(`[sim-test] SKIP ${id}: ${reason}`);
+  const resolvedReason = reason ?? unsupportedCaseReasons.get(id);
+  if (!resolvedReason) {
+    recordFail(id, `unsupported case ${id} is missing a registry reason\n`, 'assertion');
+    return;
+  }
+  recordUnsupported(id, resolvedReason);
 }
 
 function writeFlowFixtures() {
@@ -934,7 +1117,7 @@ async function runDomPerfCase() {
     writeFile(path.join(artifactDir, `${id}.json`), JSON.stringify({ coldMs, warmMs }));
     recordPass(id);
   } else {
-    recordFail(id, `[sim-test] DOM perf outside guardrail: cold=${coldMs}ms warm=${warmMs}ms\n`);
+    recordFail(id, `[sim-test] DOM perf outside guardrail: cold=${coldMs}ms warm=${warmMs}ms\n`, cold.code === 0 && warm.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -944,38 +1127,24 @@ async function runProxyDoctorCase() {
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: ios-use proxy doctor`);
-  const res = runCliToFiles(['proxy', 'doctor'], out, err);
+  const res = await runCommand(id, ['proxy', 'doctor'], out, err);
+  if (!res) return;
   if (res.code === 0 && res.stdout.includes('Wi-Fi LAN IP') && res.stdout.includes('Proxy: not running') && !/SSID/i.test(`${res.stdout}\n${res.stderr}`)) recordPass(id);
-  else recordFail(id, res.stdout + res.stderr);
+  else recordFail(id, res.stdout + res.stderr, res.code === 0 ? 'assertion' : 'command');
 }
 
-async function runSwiftCLIUnitCases() {
-  const ids = [
-    'CLI-1', 'CLI-2', 'CLI-3',
-    'DEV-7', 'CFG-8',
-    'OU-3', 'OU-4', 'OU-5', 'OU-6',
-    'PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6',
-    'FLOW-24', 'FLOW-25', 'FLOW-26', 'FLOW-27',
-    'IN-7',
-    'NSL-1', 'NSL-2', 'NSL-5', 'NSL-6', 'NSL-7', 'NSL-8', 'NSL-10',
-    'OL-10', 'OL-11',
-  ];
-  if (!anySelected(ids)) {
-    ids.forEach(recordSkip);
-    return;
-  }
-  console.log('[sim-test] RUN Swift CLI unit coverage: bash scripts/test_swift_cli.sh');
-  const res = runExternalToFiles(['bash', 'scripts/test_swift_cli.sh'], path.join(artifactDir, 'swift-cli-unit.out'), path.join(artifactDir, 'swift-cli-unit.err'), { IOS_USE_HOME: iosHome });
-  const precheckHits = selected('PROXY-4') ? findProxyPrecheckReferences() : [];
-  if (selected('PROXY-4')) {
+async function runSwiftBridgeCase(id) {
+  if (!selected(id)) return recordSkip(id);
+  const bridge = bridgeCase(id);
+  if (id === 'PROXY-4') {
+    const precheckHits = findProxyPrecheckReferences();
     writeFile(path.join(artifactDir, 'PROXY-4-no-precheck.json'), JSON.stringify({ forbiddenReferences: precheckHits }, null, 2));
+    if (precheckHits.length > 0) {
+      recordFail(id, `proxy precheck references remain:\n${precheckHits.join('\n')}\n`, 'assertion');
+      return;
+    }
   }
-  for (const id of ids) {
-    if (!selected(id)) recordSkip(id);
-    else if (res.code !== 0) recordFail(id, res.stdout + res.stderr);
-    else if (id === 'PROXY-4' && precheckHits.length > 0) recordFail(id, `proxy precheck references remain:\n${precheckHits.join('\n')}\n`);
-    else recordPass(id);
-  }
+  recordBridged(id, bridge.source, bridge.reason);
 }
 
 async function runProxyReadMissingCaptureCase() {
@@ -999,384 +1168,96 @@ async function runProxyReadDoctorNoLockCase() {
     && !readText.includes('No active driver');
   ensureDriverStarted(`${id}-restore`);
   if (ok) recordPass(id);
-  else recordFail(id, stop.stdout + stop.stderr + doctor.stdout + doctor.stderr + read.stdout + read.stderr);
+  else recordFail(id, stop.stdout + stop.stderr + doctor.stdout + doctor.stderr + read.stdout + read.stderr, 'assertion');
 }
 
-async function runDriverUnitCases() {
-  const ids = [
-    'DOM-9', 'DOM-10', 'DOM-11',
-    'FIND-5A', 'FIND-5C', 'FIND-5D', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E',
-    'FIND-10', 'FIND-11', 'FIND-11B',
-    'SW-9B', 'SW-16',
-  ];
-  if (!anySelected(ids)) {
-    ids.forEach(recordSkip);
-    return;
-  }
-  console.log('[sim-test] RUN driver unit coverage: bash scripts/test_driver_unit.sh');
-  const res = runExternalToFiles(['bash', 'scripts/test_driver_unit.sh'], path.join(artifactDir, 'driver-unit.out'), path.join(artifactDir, 'driver-unit.err'), { IOS_USE_HOME: iosHome });
-  for (const id of ids) {
-    if (!selected(id)) recordSkip(id);
-    else if (res.code === 0) recordPass(id);
-    else recordFail(id, res.stdout + res.stderr);
-  }
+async function runDriverBridgeCase(id) {
+  if (!selected(id)) return recordSkip(id);
+  const bridge = bridgeCase(id);
+  recordBridged(id, bridge.source, bridge.reason);
 }
 
-function addCases(cases, defs) {
-  cases.push(...defs);
+function buildCaseContext() {
+  const settingsHome = async () => { await resetSettingsHome(); };
+  const generalPage = async () => { await openGeneralPage(); };
+  return {
+    artifactDir,
+    caseFilterIds,
+    discardContactIfNeeded,
+    emptyHomeName,
+    ensureDriverReady,
+    ensureDriverStarted,
+    findProxyPrecheckReferences,
+    flowDir,
+    fs,
+    generalPage,
+    iosHome,
+    iosUseCli,
+    openContactsDiscardAlert,
+    openContactsNewContact,
+    openGeneralPage,
+    openHomeScreenWithSafariIcon,
+    openSpringboardIconMenu,
+    path,
+    readDriverLockInfo,
+    readFileIfExists,
+    recordFail,
+    recordPass,
+    recordRecovery,
+    recordSkip,
+    resetSettingsHome,
+    rootDir,
+    runAutoLabelFindCase,
+    runCase,
+    runCaseContains,
+    runCaseContainsAndDomContains,
+    runCaseContainsRetryTransient,
+    runCaseFailsContains,
+    runCaseFailsMatches,
+    runCaseFileExists,
+    runCaseMatches,
+    runCli,
+    runCliToFiles,
+    runCommand,
+    runConfigDriverVersionCase,
+    runDomPayloadShapeCase,
+    runDomPerfCase,
+    runDomPresentationCase,
+    runDriverBridgeCase,
+    runExternalToFiles,
+    runFindExactPreferredCase,
+    runInputAndVerifyDom,
+    runProxyDoctorCase,
+    runProxyReadDoctorNoLockCase,
+    runProxyReadMissingCaptureCase,
+    runStartCreatesDriverLockCase,
+    runStopClearsDriverLockCase,
+    runStopWithoutDriverLockCase,
+    runSwiftBridgeCase,
+    selected,
+    settingsHome,
+    sim,
+    sleep,
+    stopDriverIfLocked,
+    unsupportedCase,
+    verifyContactsNameFields,
+    verifyExampleDomainOpened,
+    waitForDriver,
+    writeFile,
+  };
 }
 
 function buildCases() {
-  const cases = [];
-  const settingsHome = async () => { await resetSettingsHome(); };
-  const generalPage = async () => { await openGeneralPage(); };
-
-  addCases(cases, [
-    { id: 'DEV-2', run: () => runCaseContains('DEV-2', 'Simulator', ['devices', '--simulator']) },
-    { id: 'DEV-3', run: () => runCaseContains('DEV-3', 'Usage:', ['devices', '--help']) },
-    { id: 'DEV-1', run: () => runCaseMatches('DEV-1', /Device|No connected real devices/, ['devices']) },
-    { id: 'DEV-5', run: async () => {
-      if (!selected('DEV-5')) return recordSkip('DEV-5');
-      const out = path.join(artifactDir, 'DEV-5.out');
-      const err = path.join(artifactDir, 'DEV-5.err');
-      console.log('[sim-test] RUN DEV-5: ios-use devices --simulator (empty IOS_USE_HOME)');
-      const res = runExternalToFiles([iosUseCli, 'devices', '--simulator'], out, err, { IOS_USE_HOME: path.join(artifactDir, emptyHomeName) });
-      if (res.code === 0 && !res.stdout.includes('configured')) recordPass('DEV-5');
-      else recordFail('DEV-5', res.stdout + res.stderr);
-    } },
-    { id: 'CFG-4', run: async () => {
-      await runCase('CFG-4', ['config', '--simulator', '--udid', sim.udid]);
-      if (selected('CFG-4') || !caseFilterIds) await waitForDriver();
-    } },
-    { id: 'CFG-1', run: () => runCaseContains('CFG-1', sim.udid, ['config', '--list']) },
-    { id: 'CFG-7', run: runConfigDriverVersionCase },
-    { id: 'CFG-5', run: () => runCaseFailsContains('CFG-5', 'unknown option', ['config', '--ipa', path.join(rootDir, '.ios-use/driver-sim.ipa')]) },
-    { id: 'CFG-6', run: () => runCaseFailsContains('CFG-6', 'unknown option', ['config', '--port', '8100']) },
-    ...['CLI-1', 'CLI-2', 'CLI-3', 'DEV-7', 'CFG-8'].map(id => ({ id, run: runSwiftCLIUnitCases })),
-    { id: 'START-1R', run: () => unsupportedCase('START-1R', 'real-device driver start path, not Simulator') },
-    { id: 'START-2', run: async () => {
-      if (!selected('START-2')) return recordSkip('START-2');
-      stopDriverIfLocked('START-2-cleanup');
-      await runCaseFailsContains('START-2', 'config', ['start', '00000000-0000-0000-0000-000000000000']);
-    } },
-    { id: 'START-1', run: runStartCreatesDriverLockCase },
-    { id: 'START-3', run: async () => {
-      if (!selected('START-3')) return recordSkip('START-3');
-      ensureDriverStarted('START-3-existing');
-      await runCaseFailsContains('START-3', 'Driver already started', ['start', sim.udid]);
-    } },
-    { id: 'DEV-4', run: () => runCaseContains('DEV-4', 'configured', ['devices', '--simulator']) },
-    { id: 'DEV-6', run: () => runCaseMatches('DEV-6', /Simulator|Device/, ['devices', '--simulator']) },
-    { id: 'AA-1', run: async () => {
-      if (!selected('AA-1')) return recordSkip('AA-1');
-      console.log('[sim-test] RUN AA-1: ios-use home && sleep 1s && dom --fresh');
-      const home = runCliToFiles(['home'], path.join(artifactDir, 'AA-1-home.out'), path.join(artifactDir, 'AA-1-home.err'));
-      await sleep(1000);
-      const dom = runCliToFiles(['dom', '--fresh'], path.join(artifactDir, 'AA-1.out'), path.join(artifactDir, 'AA-1.err'));
-      if (home.code === 0 && dom.code === 0 && dom.stdout.includes('App: com.apple.springboard')) recordPass('AA-1');
-      else recordFail('AA-1', home.stdout + home.stderr + dom.stdout + dom.stderr);
-    } },
-    { id: 'AS-7', run: () => unsupportedCase('AS-7', 'host-only Flow/proxy lock behavior is covered by Swift unit tests') },
-    { id: 'AA-2', run: () => runCaseContains('AA-2', 'App com.apple.Preferences activated', ['activateApp', 'com.apple.Preferences']) },
-    { id: 'AA-3', run: async () => {
-      await runCaseContains('AA-3', 'activated', ['activateApp', 'com.apple.Preferences'], async () => {
-        runCliToFiles(['activateApp', 'com.apple.mobilesafari'], path.join(artifactDir, 'AA-3-safari.out'), path.join(artifactDir, 'AA-3-safari.err'));
-      });
-    } },
-  ]);
-
-  addCases(cases, [
-    { id: 'DOM-1', run: () => runCaseContains('DOM-1', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
-    { id: 'DOM-2', run: () => runCaseContains('DOM-2', 'Application', ['dom', '--raw', '--fresh'], settingsHome) },
-    { id: 'DOM-5', run: () => runCaseContains('DOM-5', 'Settings', ['dom', '--fresh'], settingsHome) },
-    { id: 'DOM-6', run: () => runCaseContains('DOM-6', 'Window:', ['dom', '--fresh'], settingsHome) },
-    { id: 'DOM-7', run: runDomPerfCase },
-    { id: 'DOM-8', run: () => runCaseContains('DOM-8', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
-    { id: 'FIND-1', run: () => runCaseContains('FIND-1', 'Find', ['find', 'General'], settingsHome) },
-    { id: 'FIND-2', run: () => runFindExactPreferredCase('FIND-2') },
-    { id: 'FIND-3', run: () => runCaseContains('FIND-3', 'Find', ['find', 'com.apple.settings.general', '--traits', 'Button'], settingsHome) },
-    { id: 'FIND-4', run: () => runCaseContains('FIND-4', 'Find', ['find', 'chevron', '--traits', 'Button,disabled'], generalPage) },
-    { id: 'FIND-5', run: () => runCaseMatches('FIND-5', /suggestions|Did you mean|General/, ['find', 'Generak'], settingsHome) },
-    { id: 'FIND-7', run: () => runCaseContains('FIND-7', 'Find', ['find', 'HomeScreen'], settingsHome) },
-    { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'com.apple.settings.search', '--traits', 'Button'], settingsHome) },
-    { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled'], generalPage) },
-    { id: 'FIND-12', run: runAutoLabelFindCase },
-    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Other "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
-    { id: 'FIND-10B', run: () => runCaseContains('FIND-10B', 'chevron.forward', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '-1'], settingsHome) },
-    { id: 'FIND-11A', run: () => runCaseFailsContains('FIND-11A', 'not found', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '99'], settingsHome) },
-    { id: 'FIND-1B', run: async () => {
-      await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'TextField'], async () => {
-        await openContactsNewContact();
-        const input = runCliToFiles(['input', '--label', 'First name', '--content', 'iosuse-find', '--traits', 'TextField'], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
-        if (input.code !== 0) {
-          throw new Error(`FIND-1B setup input failed\n${input.stdout}${input.stderr}`);
-        }
-      });
-      if (selected('FIND-1B')) await discardContactIfNeeded();
-    } },
-    { id: 'FIND-5B', run: () => runCaseFailsContains('FIND-5B', 'not found', ['find', '__ios_use_missing_label__'], settingsHome) },
-    { id: 'WF-1', run: () => runCaseContains('WF-1', 'waited=', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--timeout', '2'], settingsHome) },
-    { id: 'WF-2', run: () => runCaseFailsMatches('WF-2', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.3'], settingsHome) },
-    { id: 'WF-4', run: () => runCaseFailsMatches('WF-4', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.2'], settingsHome) },
-    { id: 'WF-5', run: () => runCaseContains('WF-5', 'General', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0', '--timeout', '2'], settingsHome) },
-  ]);
-
-  addCases(cases, [
-    { id: 'SC-2', run: async () => {
-      await runCase('SC-2', ['screenshot', '--name', 'sim_command_screenshot'], settingsHome);
-      if (selected('SC-2')) {
-        const screenshot = path.join(iosHome, 'artifacts/sim_command_screenshot.jpg');
-        if (fs.existsSync(screenshot) && fs.statSync(screenshot).size > 0) fs.copyFileSync(screenshot, path.join(artifactDir, 'sim_command_screenshot.jpg'));
-        else recordFail('SC-2', `[sim-test] FAIL SC-2 screenshot file missing: ${screenshot}\n`);
-      }
-    } },
-    { id: 'SC-1', run: async () => {
-      if (!selected('SC-1')) return recordSkip('SC-1');
-      await settingsHome();
-      console.log('[sim-test] RUN SC-1: ios-use screenshot smoke');
-      const out = path.join(artifactDir, 'SC-1.out');
-      const err = path.join(artifactDir, 'SC-1.err');
-      const name = 'sim_command_protocol_screenshot';
-      const res = runCliToFiles(['screenshot', '--name', name], out, err);
-      const screenshot = path.join(iosHome, 'artifacts', `${name}.jpg`);
-      if (res.code === 0 && fs.existsSync(screenshot) && fs.statSync(screenshot).size > 2) recordPass('SC-1');
-      else recordFail('SC-1', res.stdout + res.stderr);
-    } },
-  ]);
-
-  const tapCases = [
-    { id: 'TAP-1', run: () => runCaseContains('TAP-1', 'Tap', ['tap', 'com.apple.settings.general', '--traits', 'Button'], settingsHome) },
-    { id: 'TAP-5', run: () => runCaseContains('TAP-5', 'Tap', ['tap', 'com.apple.settings.general', '--offset', '10,10', '--traits', 'Button'], settingsHome) },
-    { id: 'TAP-6', run: () => runCaseContains('TAP-6', 'Tap', ['tap', 'com.apple.settings.general', '--offset-ratio', '0.5,0.5', '--traits', 'Button'], settingsHome) },
-    { id: 'TAP-7', run: () => runCaseContains('TAP-7', 'Tap', ['tap', 'com.apple.settings.general', '--offset-ratio', '0.5,', '--traits', 'Button'], settingsHome) },
-    { id: 'TAP-8', run: () => runCaseContains('TAP-8', 'Tap', ['tap', 'com.apple.settings.general', '--offset', ',10', '--traits', 'Button'], settingsHome) },
-    { id: 'TAP-2', run: () => runCaseContains('TAP-2', 'Tap', ['tap', 'About', '--traits', 'Cell'], generalPage) },
-    { id: 'TAP-9', run: () => runCaseFailsContains('TAP-9', 'offset requires element label', ['tap', '200,400', '--offset', '1,1'], generalPage) },
-    { id: 'TAP-10', run: () => runCaseContains('TAP-10', 'Tap', ['tap', 'About', '--offset', '500,500', '--traits', 'Cell'], generalPage) },
-    { id: 'TAP-12', run: async () => {
-      if (!selected('TAP-12')) return recordSkip('TAP-12');
-      await settingsHome();
-      const out = path.join(artifactDir, 'TAP-12.out');
-      const err = path.join(artifactDir, 'TAP-12.err');
-      console.log('[sim-test] RUN TAP-12: tap cindex child and verify navigation');
-      const tap = runCliToFiles(['tap', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], out, err);
-      const verify = runCliToFiles(['find', 'About', '--traits', 'Cell'], path.join(artifactDir, 'TAP-12-verify.out'), path.join(artifactDir, 'TAP-12-verify.err'));
-      if (tap.code === 0 && verify.code === 0) recordPass('TAP-12');
-      else recordFail('TAP-12', tap.stdout + tap.stderr + verify.stdout + verify.stderr);
-    } },
-    { id: 'TAP-13', run: () => runCaseFailsContains('TAP-13', 'point target does not support traits or cindex', ['tap', '200,400', '--cindex', '0'], settingsHome) },
-    { id: 'TAP-3', run: () => runCase('TAP-3', ['tap', '200,400'], generalPage) },
-    { id: 'TAP-4', run: () => runCaseFailsContains('TAP-4', 'not found', ['tap', '__ios_use_missing_label__'], settingsHome) },
+  const ctx = buildCaseContext();
+  return [
+    ...buildDeviceConfigCases(ctx),
+    ...buildSettingsBeforeContactsCases(ctx),
+    ...buildContactsCases(ctx),
+    ...buildSettingsAfterContactsCases(ctx),
+    ...buildFlowCases(ctx),
+    ...buildHostBridgeCases(ctx),
   ];
-  addCases(cases, tapCases);
-
-  const swipeCases = [
-    { id: 'SW-7B', run: () => runCaseMatches('SW-7B', /scrolls=\d+ direction=down/, ['swipe', '--distance', '200', '--dir', 'forth'], generalPage) },
-    { id: 'SW-10', run: () => runCaseFailsMatches('SW-10', /boundary.*direction=up/, ['swipe', '--distance', '200', '--dir', 'back'], async () => {
-      await generalPage();
-      runCli(['swipe', '--distance', '200', '--dir', 'back']);
-    }) },
-    { id: 'SW-12', run: () => runCaseFailsMatches('SW-12', /not found|suggestions/i, ['swipe', '--to', '__ios_use_missing_label__'], generalPage) },
-    { id: 'SW-13', run: () => runCaseContains('SW-13', 'scrolls=', ['swipe', '--to', 'Settings'], settingsHome) },
-    { id: 'SW-14', run: () => runCaseContains('SW-14', 'scrolls=', ['swipe', '--to', 'Settings'], settingsHome) },
-    { id: 'SW-15', run: () => runCaseContains('SW-15', 'scrolls=', ['swipe', '--to', 'Settings', '--from', 'com.apple.settings.general'], settingsHome) },
-    { id: 'SW-17', run: () => runCaseContains('SW-17', 'scrolls=', ['swipe', '--to', 'com.apple.settings.general', '--traits', 'Button'], settingsHome) },
-    { id: 'SW-1', run: () => runCaseContains('SW-1', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell'], generalPage) },
-    { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--to', 'Keyboard', '--dir', 'forth', '--traits', 'Cell'], generalPage) },
-    { id: 'SW-3', run: () => runCaseContains('SW-3', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell'], generalPage) },
-    { id: 'SW-3B', run: () => runCaseContains('SW-3B', 'Other "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
-    { id: 'SW-4', run: () => runCaseMatches('SW-4', /scrolls=\d+ direction=up/, ['swipe', '--to', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell'], async () => {
-      await generalPage();
-      runCliToFiles(['swipe', '--to', 'Keyboard', '--traits', 'Cell'], path.join(artifactDir, 'SW-4-setup.out'), path.join(artifactDir, 'SW-4-setup.err'));
-    }) },
-    { id: 'SW-5', run: () => runCaseContains('SW-5', 'scrolls=', ['swipe', '--to', 'About', '--from', '200,650', '--traits', 'Cell'], generalPage) },
-    { id: 'SW-6', run: () => runCaseContains('SW-6', 'scrolls=', ['swipe', '--to', '100,700'], generalPage) },
-    { id: 'SW-7', run: () => runCaseContains('SW-7', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth'], generalPage) },
-    { id: 'SW-8', run: () => runCaseContains('SW-8', 'scrolls=', ['swipe', '--distance', '200', '--dir', 'forth'], generalPage) },
-    { id: 'SW-9', run: () => runCaseMatches('SW-9', /scrolls=\d+ direction=down/, ['swipe', '--distance', '900', '--dir', 'forth'], generalPage) },
-    { id: 'SW-11', run: () => runCaseFailsMatches('SW-11', /boundary.*direction=down|not connected/i, ['swipe', '--distance', '200', '--dir', 'forth'], async () => {
-      await generalPage();
-      for (let i = 0; i < 6; i++) runCli(['swipe', '--distance', '900', '--dir', 'forth']);
-    }) },
-  ];
-  addCases(cases, swipeCases);
-
-  addCases(cases, [
-    { id: 'LP-1', run: () => runCaseContains('LP-1', 'Longpress', ['longpress', 'About', '--traits', 'Cell'], generalPage) },
-    { id: 'LP-2', run: () => runCaseContains('LP-2', 'Longpress', ['longpress', '200,400'], generalPage) },
-    { id: 'LP-3', run: () => runCaseContains('LP-3', 'Longpress', ['longpress', 'About', '--traits', 'Cell'], generalPage) },
-    { id: 'LP-4', run: () => runCaseContains('LP-4', 'Longpress', ['longpress', 'About', '--duration', '500', '--traits', 'Cell'], generalPage) },
-    { id: 'LP-5', run: () => runCaseContains('LP-5', 'Longpress', ['longpress', 'About', '--traits', 'Cell'], generalPage) },
-    { id: 'LP-6', run: () => runCaseContains('LP-6', 'Longpress', ['longpress', 'Safari', '--traits', 'Icon', '--duration', '900'], openHomeScreenWithSafariIcon) },
-    { id: 'DOM-5B', run: () => runCaseContains('DOM-5B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh'], () => openSpringboardIconMenu('DOM-5B')) },
-    { id: 'SW-16B', run: () => runCaseContains('SW-16B', 'com.apple.springboardhome.application-shortcut-item', ['dom', '--fresh'], () => openSpringboardIconMenu('SW-16B')) },
-  ]);
-
-  addCases(cases, [
-    { id: 'IN-1', run: async () => { await runInputAndVerifyDom('IN-1', 'First name', 'Alpha', 'First name=Alpha', [], openContactsNewContact); if (selected('IN-1')) await discardContactIfNeeded(); } },
-    { id: 'IN-2', run: async () => { await runInputAndVerifyDom('IN-2', 'Last name', 'Beta', 'Last name=Beta', ['--traits', 'TextField'], openContactsNewContact); if (selected('IN-2')) await discardContactIfNeeded(); } },
-    { id: 'IN-3', run: async () => { await runInputAndVerifyDom('IN-3', 'Alpha', 'More', 'First name=AlphaMore', ['--traits', 'TextField'], async () => { await openContactsNewContact(); runCliToFiles(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField'], path.join(artifactDir, 'IN-3-setup.out'), path.join(artifactDir, 'IN-3-setup.err')); }); if (selected('IN-3')) await discardContactIfNeeded(); } },
-    { id: 'IN-4', run: () => runCaseFailsMatches('IN-4', /not inputtable|not found|failed/i, ['input', '--label', 'General', '--content', 'Nope', '--traits', 'Button'], settingsHome) },
-    { id: 'IN-5', run: () => runInputAndVerifyDom('IN-5', 'Search', 'ZZZIOSUse', 'ZZZIOSUse', ['--traits', 'SearchField'], async () => {
-      runCli(['terminateApp', 'com.apple.MobileAddressBook']);
-      runCli(['activateApp', 'com.apple.MobileAddressBook']);
-      await sleep(1000);
-    }) },
-    { id: 'IN-6', run: async () => {
-      if (!selected('IN-6')) return recordSkip('IN-6');
-      console.log('[sim-test] RUN IN-6: input two Contacts fields with keyboard open');
-      const firstAttempt = await verifyContactsNameFields('IN-6', '');
-      if (!firstAttempt) {
-        await discardContactIfNeeded();
-        console.log('[sim-test] IN-6: retrying after rebuilding Contacts form');
-      }
-      const casePassed = firstAttempt || await verifyContactsNameFields('IN-6', '-retry');
-      if (casePassed) {
-        recordPass('IN-6');
-      } else {
-        const details = [
-          'IN-6.out',
-          'IN-6.err',
-          'IN-6-dom.out',
-          'IN-6-dom.err',
-          'IN-6-retry.out',
-          'IN-6-retry.err',
-          'IN-6-retry-dom.out',
-          'IN-6-retry-dom.err',
-        ].map(file => readFileIfExists(path.join(artifactDir, file))).join('');
-        recordFail('IN-6', details);
-      }
-      await discardContactIfNeeded();
-    } },
-    { id: 'DA-1', run: () => runCaseContains('DA-1', 'Alert dismissed', ['dismissAlert'], openContactsDiscardAlert) },
-    { id: 'DA-2', run: () => runCaseContains('DA-2', 'Alert dismissed', ['dismissAlert', '--index', '0'], openContactsDiscardAlert) },
-    { id: 'TAP-11', run: async () => {
-      if (!selected('TAP-11')) return recordSkip('TAP-11');
-      const out = path.join(artifactDir, 'TAP-11.out');
-      const err = path.join(artifactDir, 'TAP-11.err');
-      console.log('[sim-test] RUN TAP-11: waitFor Discard Changes then immediate tap');
-      await openContactsDiscardAlert();
-      const wait = runCli(['waitFor', '--label', 'Discard Changes', '--traits', 'Button', '--timeout', '3']);
-      const tap = runCli(['tap', 'Discard Changes', '--traits', 'Button']);
-      writeFile(out, wait.stdout + tap.stdout);
-      writeFile(err, wait.stderr + tap.stderr);
-      if (wait.code === 0 && tap.code === 0) recordPass('TAP-11');
-      else recordFail('TAP-11', wait.stdout + wait.stderr + tap.stdout + tap.stderr);
-    } },
-  ]);
-
-  addCases(cases, [
-    { id: 'TA-1', run: () => runCaseContains('TA-1', 'terminated', ['terminateApp', 'com.apple.Preferences'], settingsHome) },
-    { id: 'TA-2', run: () => runCaseContains('TA-2', 'terminated', ['terminateApp', 'com.apple.Preferences'], settingsHome) },
-    { id: 'AA-6', run: () => runCaseContains('AA-6', 'activated', ['activateApp', 'com.apple.Preferences']) },
-    { id: 'OU-1', run: async () => {
-      if (!selected('OU-1')) return recordSkip('OU-1');
-      console.log('[sim-test] RUN OU-1: open https://example.com and verify Safari DOM');
-      const open = runCliToFiles(['open', 'https://example.com', '--udid', sim.udid], path.join(artifactDir, 'OU-1.out'), path.join(artifactDir, 'OU-1.err'));
-      const verified = open.code === 0 && await verifyExampleDomainOpened('OU-1');
-      if (verified) recordPass('OU-1');
-      else recordFail('OU-1', open.stdout + open.stderr + readFileIfExists(path.join(artifactDir, 'OU-1-verify-dom.out')) + readFileIfExists(path.join(artifactDir, 'OU-1-verify-dom.err')));
-    } },
-    { id: 'OU-2', run: async () => {
-      if (!selected('OU-2')) return recordSkip('OU-2');
-      console.log('[sim-test] RUN OU-2: ios-use stop && open https://example.com --udid <sim> without recreating driver.lock');
-      const stopBefore = stopDriverIfLocked('OU-2-stop-before') ?? { code: 0, stdout: '', stderr: '' };
-      const open = runCliToFiles(['open', 'https://example.com', '--udid', sim.udid], path.join(artifactDir, 'OU-2.out'), path.join(artifactDir, 'OU-2.err'));
-      const lockAfterOpen = readDriverLockInfo();
-      const stopAfter = runCliToFiles(['stop'], path.join(artifactDir, 'OU-2-stop-after.out'), path.join(artifactDir, 'OU-2-stop-after.err'));
-      const verified = stopBefore.code === 0
-        && open.code === 0
-        && lockAfterOpen == null
-        && stopAfter.code !== 0
-        && `${stopAfter.stdout}\n${stopAfter.stderr}`.includes('No active driver');
-      if (verified) ensureDriverStarted('OU-2-restore');
-      if (verified) recordPass('OU-2');
-      else recordFail('OU-2', stopBefore.stdout + stopBefore.stderr + open.stdout + open.stderr + stopAfter.stdout + stopAfter.stderr);
-    } },
-    ...['OU-3', 'OU-4', 'OU-5', 'OU-6'].map(id => ({ id, run: runSwiftCLIUnitCases })),
-    { id: 'HOME-1', run: () => runCaseContains('HOME-1', 'Home', ['home']) },
-    { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
-    { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
-    { id: 'AA-4', run: () => runCaseContains('AA-4', 'activated', ['activateApp', 'com.apple.Preferences']) },
-    { id: 'AA-5', run: () => runCaseFailsMatches('AA-5', /app not found|state=unknown|not installed/i, ['activateApp', 'com.iosuse.invalid.bundle']) },
-    { id: 'AS-1', run: async () => { if (!selected('AS-1')) return recordSkip('AS-1'); stopDriverIfLocked('AS-1'); await runCaseFailsContains('AS-1', 'No active driver', ['dom', '--fresh']); } },
-    { id: 'AS-2', run: () => runCaseFailsMatches('AS-2', /unknown option '--udid'/i, ['dom', '--fresh', '--udid', '00000000-0000-0000-0000-000000000000']) },
-    { id: 'AS-3', run: () => runCaseContains('AS-3', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
-    { id: 'AS-4', run: () => unsupportedCase('AS-4', 'recoverable connect retry is covered by Swift unit tests') },
-    { id: 'AS-5', run: () => unsupportedCase('AS-5', 'post-send read/write failure is covered by Swift unit tests') },
-    { id: 'AS-6', run: () => unsupportedCase('AS-6', 'Flow single-client reuse is covered by Swift unit tests') },
-    { id: 'AS-8', run: runProxyReadDoctorNoLockCase },
-  ]);
-
-  const flow = (name) => path.join(flowDir, name);
-  const flowArgs = (name, ...args) => ['flow', flow(name), ...args];
-  const flowSetup = (setup) => async () => {
-    await ensureDriverReady();
-    await setup?.();
-  };
-  addCases(cases, [
-    { id: 'FLOW-1', run: () => runCaseContains('FLOW-1', 'Running flow', flowArgs('basic.yaml'), flowSetup(settingsHome)) },
-    { id: 'FLOW-2', run: () => runCaseFailsContains('FLOW-2', 'Flow file not found', flowArgs('missing-file.yaml'), flowSetup()) },
-    { id: 'FLOW-3', run: () => runCaseContainsRetryTransient('FLOW-3', 'Running flow', flowArgs('basic.yaml'), flowSetup(settingsHome)) },
-    { id: 'FLOW-4', run: () => runCaseContains('FLOW-4', 'Running flow', flowArgs('basic.yaml'), flowSetup(settingsHome)) },
-    { id: 'FLOW-6', run: () => runCaseContains('FLOW-6', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
-    { id: 'FLOW-7', run: () => runCaseContains('FLOW-7', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
-    { id: 'FLOW-8', run: () => runCaseContains('FLOW-8', 'Running flow', flowArgs('parent.yaml'), flowSetup(settingsHome)) },
-    { id: 'FLOW-9', run: () => runCaseFailsContains('FLOW-9', 'requested undeclared output', flowArgs('missing-output.yaml'), flowSetup()) },
-    { id: 'FLOW-10', run: () => runCaseFailsContains('FLOW-10', 'cycle detected', flowArgs('cycle-a.yaml'), flowSetup()) },
-    { id: 'FLOW-11', run: () => runCaseContains('FLOW-11', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
-    { id: 'FLOW-12', run: () => runCaseContains('FLOW-12', 'returnIf matched', flowArgs('return-null.yaml'), flowSetup()) },
-    { id: 'FLOW-13', run: () => runCaseFailsContains('FLOW-13', 'returnIf requires', flowArgs('invalid-return.yaml'), flowSetup()) },
-    { id: 'FLOW-14', run: () => runCaseContains('FLOW-14', 'Tap', flowArgs('tap-offset.yaml'), flowSetup(settingsHome)) },
-    { id: 'FLOW-15', run: () => runCaseContains('FLOW-15', 'oslog: matched=', flowArgs('oslog-timeout.yaml'), flowSetup()) },
-    { id: 'FLOW-16', run: () => unsupportedCase('FLOW-16', 'nslog flow timeout is intentionally excluded from Simulator command coverage') },
-    { id: 'FLOW-5', run: () => runCaseFileExists('FLOW-5', path.join(iosHome, 'artifacts/simulator-flow-smoke-screenshot.jpg'), flowArgs('standard-smoke.yaml'), flowSetup(settingsHome)) },
-    { id: 'FLOW-17', run: () => runCaseContains('FLOW-17', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
-    { id: 'FLOW-18', run: () => runCaseContains('FLOW-18', 'Running flow', flowArgs('sleep-default.yaml'), flowSetup(settingsHome)) },
-    { id: 'FLOW-19', run: () => runCaseContains('FLOW-19', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), async () => { runCli(['config', '--simulator', '--udid', sim.udid]); await waitForDriver(); await settingsHome(); }) },
-    { id: 'FLOW-20', run: () => runCaseContains('FLOW-20', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
-    { id: 'FLOW-21', run: () => runCaseContains('FLOW-21', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.search'), flowSetup(settingsHome)) },
-    { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general', '--verbose'), flowSetup(settingsHome)) },
-    { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
-    ...['FLOW-24', 'FLOW-25', 'FLOW-26', 'FLOW-27'].map(id => ({ id, run: runSwiftCLIUnitCases })),
-    { id: 'DOM-4', run: runDomPayloadShapeCase },
-  ]);
-
-  addCases(cases, [
-    { id: 'OL-2', run: () => runCaseContains('OL-2', 'cleared=', ['oslog', '--clear', '--udid', sim.udid]) },
-    { id: 'OL-1', run: () => runCaseFileExists('OL-1', path.join(iosHome, 'artifacts/oslog.log'), ['oslog', '--name', 'oslog', '--udid', sim.udid]) },
-    { id: 'OL-3', run: () => runCaseFileExists('OL-3', path.join(iosHome, 'artifacts/oslog-pattern.log'), ['oslog', '--name', 'oslog-pattern', '--pattern', '__ios_use_no_such_log_line__', '--udid', sim.udid]) },
-    { id: 'OL-4', run: () => runCaseFileExists('OL-4', path.join(iosHome, 'artifacts/oslog-flags.log'), ['oslog', '--name', 'oslog-flags', '--pattern', '__IOS_USE_NO_SUCH_LOG_LINE__', '--flags', 'i', '--udid', sim.udid]) },
-    { id: 'OL-5', run: () => runCaseFileExists('OL-5', path.join(iosHome, 'artifacts/custom-oslog-name.log'), ['oslog', '--name', 'custom-oslog-name', '--udid', sim.udid]) },
-    { id: 'OL-6', run: () => runCaseFileExists('OL-6', path.join(iosHome, 'artifacts/oslog-bundle.log'), ['oslog', '--name', 'oslog-bundle', '--bundle-id', 'com.apple.Preferences', '--udid', sim.udid]) },
-    { id: 'OL-7', run: () => runCaseFileExists('OL-7', path.join(iosHome, 'artifacts/oslog-global.log'), ['oslog', '--name', 'oslog-global', '--udid', sim.udid]) },
-    { id: 'OL-8', run: () => runCaseContains('OL-8', 'cleared=', ['oslog', '--clear', '--bundle-id', 'com.apple.Preferences', '--udid', sim.udid]) },
-    { id: 'OL-9', run: () => runCaseFileExists('OL-9', path.join(iosHome, 'artifacts/oslog-timeout.log'), ['oslog', '--name', 'oslog-timeout', '--pattern', '__ios_use_no_such_log_line__', '--timeout', '0.2', '--udid', sim.udid]) },
-    { id: 'NSL-3', run: () => runCaseFailsContains('NSL-3', 'nslog read', ['nslog', '--grep', 'ready']) },
-    { id: 'NSL-4', run: () => runCaseFailsContains('NSL-4', 'ios-use nslog start', ['nslog', 'read']) },
-    { id: 'CFG-2', run: () => unsupportedCase('CFG-2', 'real-device signing/install path, not Simulator') },
-    { id: 'CFG-3', run: () => unsupportedCase('CFG-3', 'Apple ID first-login signing path, not Simulator and must not touch local credentials') },
-    { id: 'STOP-1R', run: () => unsupportedCase('STOP-1R', 'real-device driver stop path, not Simulator') },
-    ...[
-      'DOM-9', 'DOM-10', 'DOM-11',
-      'FIND-5A', 'FIND-5C', 'FIND-5D', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E',
-      'FIND-10', 'FIND-11', 'FIND-11B',
-      'SW-9B', 'SW-16',
-    ].map(id => ({ id, run: runDriverUnitCases })),
-    { id: 'DOM-12', run: runDomPresentationCase },
-    { id: 'PROXY-1', run: runProxyDoctorCase },
-    ...['PROXY-2', 'PROXY-3', 'PROXY-4', 'PROXY-5', 'PROXY-5B', 'PROXY-6'].map(id => ({ id, run: runSwiftCLIUnitCases })),
-    { id: 'PROXY-7', run: runProxyReadMissingCaptureCase },
-    { id: 'STOP-1', run: runStopClearsDriverLockCase },
-    { id: 'STOP-2', run: runStopWithoutDriverLockCase },
-    { id: 'STOP-3', run: () => unsupportedCase('STOP-3', 'terminator failure is covered by Swift unit tests') },
-    ...['IN-7', 'OL-10', 'OL-11', 'NSL-1', 'NSL-2', 'NSL-5', 'NSL-6', 'NSL-7', 'NSL-8', 'NSL-10'].map(id => ({ id, run: runSwiftCLIUnitCases })),
-    { id: 'NSL-9', run: () => unsupportedCase('NSL-9', 'requires a real app integrated with NSLogger on a real device') },
-  ]);
-
-  return cases;
 }
-
 async function cleanup() {
   runCli(['stop']);
   const driverLog = path.join(iosHome, 'logs/driver.log');
@@ -1408,6 +1289,7 @@ async function main() {
   stateBackupDir = path.join(artifactDir, 'local-state-backup');
   ensureDir(artifactDir);
   ensureDir(path.join(artifactDir, emptyHomeName));
+  writeRecoveryEvents();
 
   console.log(`[sim-test] IOS_USE_HOME: ${iosHome}`);
   console.log(`[sim-test] Simulator: ${sim.name} | ${sim.runtime} | ${sim.state} | UDID: ${sim.udid}`);
@@ -1429,16 +1311,26 @@ async function main() {
   process.on('SIGTERM', () => { void safeCleanup().finally(() => process.exit(143)); });
 
   try {
+    validateCaseMetadataSchema();
     const cases = buildCases();
-    validateCaseFilter(cases.map(testCase => testCase.id), caseFilterIds);
-    await prerequisiteConfig();
-    const unitGroups = new Set();
+    const caseIds = cases.map(testCase => testCase.id);
+    validateCaseRegistry(caseIds);
+    validateCaseFilter(simulatorCaseIds, caseFilterIds);
+    if (shouldRunPrerequisiteConfig({ caseFilterIds })) {
+      await prerequisiteConfig();
+    }
     for (const testCase of cases) {
-      if ((testCase.run === runDriverUnitCases || testCase.run === runSwiftCLIUnitCases) && unitGroups.has(testCase.run)) {
-        continue;
+      currentCaseId = testCase.id;
+      currentPhase = 'case';
+      caseStartTimes.set(testCase.id, performance.now());
+      try {
+        await testCase.run();
+      } catch (error) {
+        recordFail(testCase.id, `${error instanceof Error ? error.stack || error.message : String(error)}\n`, currentPhase || 'case');
+      } finally {
+        currentCaseId = '';
+        currentPhase = 'case';
       }
-      if (testCase.run === runDriverUnitCases || testCase.run === runSwiftCLIUnitCases) unitGroups.add(testCase.run);
-      await testCase.run();
     }
 
     const summary = {
@@ -1449,6 +1341,9 @@ async function main() {
       passed,
       failed,
       skipped,
+      bridged,
+      unsupported,
+      recoveryEvents: recoveryEvents.length,
       artifacts: artifactDir,
     };
     writeFile(path.join(artifactDir, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
