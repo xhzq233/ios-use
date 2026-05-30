@@ -71,25 +71,7 @@ node scripts/benchmark.js --bench wda \
 ```
 
 Use `node scripts/benchmark.js --help` for the complete invocation contract, including presets, case selection, input labels, WDA/Appium options, baseline comparison, and driver identity checks.
-
-Benchmark case mapping is shared by `--bench ios-use` and `--bench wda`. The two benches run separately and write separate JSON reports; compare them by matching the same `case id`.
-
-| Case | Kind | ios-use Driver path | WDA/Appium path |
-| --- | --- | --- | --- |
-| `start_session` | lifecycle | `ios-use start <udid>` | Appium `POST /session` |
-| `start_and_activate_app` | lifecycle | `start <udid>` + `activateApp` | Appium session + activate app |
-| `dom_vs_source` | read | `dom` | WDA `GET /source` |
-| `find` | read | `find <label>` | WDA `POST /element` |
-| `wait_for` | read | `waitFor` | repeated WDA `POST /element` |
-| `screenshot` | read | `screenshot` | WDA `GET /screenshot` |
-| `tap_coord` | mutate | `tap x,y` | WDA pointer action |
-| `tap_label` | mutate | `tap <label>` | WDA find + click |
-| `longpress_coord` | mutate | `longpress x,y` | WDA pointer action |
-| `input` | mutate | `input --label <label>` | WDA find + click + keys |
-| `swipe_distance` | mutate | `swipe --distance 200 --dir forth` | WDA drag action |
-| `scroll_to_visible` | mutate | `swipe --to <label> --from <label>` | WDA mobile scroll loop |
-| `activate_app` | app | `activateApp` | WDA activate app |
-| `terminate_app` | app | `terminateApp` | WDA terminate app |
+Use `node scripts/benchmark.js --list-cases` to print the current case registry. Public benchmark setup and latest summary live in `docs/benchmark.md`.
 
 ## Release Artifacts
 

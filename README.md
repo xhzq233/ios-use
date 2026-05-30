@@ -40,7 +40,7 @@ It is **not** a WebDriver-compatible Appium server. If you need Selenium/Appium 
 
 Driving devices still requires Apple's tooling:
 
-- Real devices require USB and a full Xcode install.
+- Real devices require USB. Release usage does not require Xcode CLI tools such as `xctrace` or `devicectl`.
 - Simulators require a full Xcode install and the target Simulator runtime.
 - Real-device first setup requires Apple ID signing. A free Apple Developer account is enough.
 
@@ -130,17 +130,18 @@ ios-use flow flows/test_flow.yaml
 
 ## Performance Snapshot
 
-The benchmark below compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same real-device Settings scenario.
+The benchmark below compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same real-device Settings scenario. Lower is better.
 
 | Case | ios-use Avg | Appium+WDA Avg | Reduction |
 | --- | ---: | ---: | ---: |
-| `dom` | `13.5 ms` | `984.2 ms` | `98.6%` |
-| `find` | `15.7 ms` | `279.8 ms` | `94.4%` |
-| `waitFor` | `13.7 ms` | `277.2 ms` | `95.1%` |
-| `screenshot` | `45.5 ms` | `215.0 ms` | `78.8%` |
-| `tap_label` | `542.8 ms` | `1089.5 ms` | `50.2%` |
+| `start_session` | `1954.8 ms` | `10753.6 ms` | `81.8%` |
+| `dom_cached` | `20.7 ms` | `965.7 ms` | `97.9%` |
+| `find_hit` | `14.2 ms` | `285.3 ms` | `95.0%` |
+| `wait_for_present` | `14.0 ms` | `308.7 ms` | `95.5%` |
+| `tap_label` | `413.2 ms` | `1076.3 ms` | `61.6%` |
+| `scroll_to_visible` | `10799.2 ms` | `17050.9 ms` | `36.7%` |
 
-These are the operations that matter most to AI agents: refresh UI state, locate targets, wait for changes, and act. Full benchmark setup and results are in [docs/benchmark.md](docs/benchmark.md).
+These are the operations that matter most to AI agents: start a session, refresh UI state, locate targets, wait for changes, and act. Full benchmark setup and the complete 17-case table are in [docs/benchmark.md](docs/benchmark.md).
 
 ## Flow Example
 
@@ -171,14 +172,13 @@ ios-use flow settings.yaml
 | --- | --- | --- | --- |
 | `bash`, `curl`, `tar` | required | not needed after install | dev also uses them |
 | `swift` | only for `--build-from-source` | not needed after install | required for SwiftPM development |
-| `xcrun xctrace` | not needed | required for device discovery | not needed |
-| `xcrun devicectl` | not needed | required for install and launch | not needed |
 | `xcrun simctl` | not needed | not needed | required for Simulator config; dev build also uses it |
 | `unzip` | not needed | required during `config` | required during Simulator `config` |
 | `altsign-cli` | copied by installer if bundled | required for real-device signing | not needed |
 | `openssl` | not needed | required for real-device `oslog` TLS relay | not needed |
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
 | `mitmproxy` | not needed | proxy capture only | proxy capture only |
+| `node` | not needed | benchmark only | benchmark and full Simulator tests |
 | `xcodebuild`, `zip`, `mktemp` | not needed | not needed at runtime | required for `scripts/build_driver.sh` |
 | `appium`, `lsof` | not needed | not needed at runtime | benchmark only |
 
@@ -191,7 +191,7 @@ driver/                Swift XCTest driver
 flows/                 Example flows
 scripts/               Install, build, test, and benchmark utilities
 docs/                  Public documentation
-assets/                Prebuilt driver artifacts
+ios-use-skill/         Skill documentation installed for agent usage
 ```
 
 ## Development

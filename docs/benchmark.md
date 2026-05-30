@@ -1,42 +1,66 @@
 # Benchmark
 
-This benchmark compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same app scenario.
+This benchmark compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same real-device Settings scenario. Lower latency is better.
 
 ## Setup
 
 - App: `com.apple.Preferences`
 - Device: real iPhone over USB/usbmuxd
-- Custom side: Swift CLI + custom XCTest TCP driver
-- Baseline: Appium Server + WDA
-- Iterations: `3`
-- Report date: 2026-05-18
+- ios-use side: Swift CLI + custom XCTest TCP driver
+- Baseline side: Appium Server + WebDriverAgent
+- Iterations: `3` for command cases, `1` for cold `start_session`
+- Report date: 2026-05-30
+- Result: both sides completed 17 cases with 0 failures
 
-Current benchmark runs require an explicit custom driver IPA. The script does not build driver artifacts itself:
+The benchmark runner only measures. It does not build, sign, install, or run `config`; prepare the device and driver outside the benchmark first.
 
 ```bash
-node scripts/benchmark_wda.js --driver-ipa .ios-use/driver.ipa --iterations 3
+# ios-use
+node scripts/benchmark.js --bench ios-use \
+  --udid <device-udid> \
+  --driver-ipa .ios-use/driver.ipa \
+  --preset full \
+  --iterations 3
+
+# Appium/WDA
+node scripts/benchmark.js --bench wda \
+  --udid <device-udid> \
+  --wda-bundle-id <wda-runner-bundle-id> \
+  --preset full \
+  --iterations 3
 ```
+
+The two benches run separately and write separate JSON reports. Compare them by matching the same case id.
 
 ## Results
 
 | Case | ios-use Avg (ms) | Appium+WDA Avg (ms) | Reduction |
-| --- | ---: | ---: | --- |
-| `start_and_activate_app` | 3257.4 | 9622.1 | `66.1%` |
-| `dom` | 13.5 | 984.2 | `98.6%` |
-| `find` | 15.7 | 279.8 | `94.4%` |
-| `waitFor` | 13.7 | 277.2 | `95.1%` |
-| `screenshot` | 45.5 | 215.0 | `78.8%` |
-| `tap_coord` | 377.3 | 557.3 | `32.3%` |
-| `tap_label` | 542.8 | 1089.5 | `50.2%` |
-| `longpress_coord` | 819.9 | 967.4 | `15.2%` |
-| `input` | 1534.0 | 1760.8 | `12.9%` |
-| `swipe_distance` | 2062.5 | 2595.4 | `20.5%` |
-| `scroll_to_visible` | 10717.0 | 17123.0 | `37.4%` |
-| `activate_app` | 1213.7 | 2591.1 | `53.2%` |
-| `terminate_app` | 1141.4 | 1164.7 | `2.0%` |
+| --- | ---: | ---: | ---: |
+| `start_session` | 1954.8 | 10753.6 | 81.8% |
+| `dom_cached` | 20.7 | 965.7 | 97.9% |
+| `find_hit` | 14.2 | 285.3 | 95.0% |
+| `find_miss` | 17.7 | 204.9 | 91.4% |
+| `find_traits` | 15.8 | 299.7 | 94.7% |
+| `wait_for_present` | 14.0 | 308.7 | 95.5% |
+| `wait_for_timeout_2000ms` | 2270.2 | 2365.2 | 4.0% |
+| `screenshot` | 81.2 | 179.0 | 54.6% |
+| `tap_coord` | 424.6 | 556.3 | 23.7% |
+| `tap_label` | 413.2 | 1076.3 | 61.6% |
+| `tap_offset_ratio` | 415.0 | 947.8 | 56.2% |
+| `longpress_coord` | 828.7 | 1038.8 | 20.2% |
+| `input` | 1630.5 | 1717.6 | 5.1% |
+| `scroll_distance_semantic` | 2170.6 | 2620.3 | 17.2% |
+| `scroll_to_visible` | 10799.2 | 17050.9 | 36.7% |
+| `activate_app` | 78.6 | 1446.7 | 94.6% |
+| `terminate_app` | 1195.1 | 1144.0 | -4.5% |
 
-## Notes
+## Case Notes
 
-Numbers vary by device, app state, and whether the target page is already warm, but the shape is stable: `dom`, `find`, `waitFor`, `tap`, and screenshot are the operations that most improve AI-facing responsiveness.
+- `dom_cached`, `find_hit`, and `wait_for_present` represent the tight AI loop: observe the UI, locate a target, and wait for visible state.
+- `wait_for_timeout_2000ms` is intentionally dominated by a 2-second timeout on both sides.
+- `tap_label` and `tap_offset_ratio` are semantic actions: ios-use performs label lookup plus action in one CLI command; the WDA side performs the equivalent find/frame/action sequence.
+- `scroll_to_visible` is an end-to-end workflow case, not a raw gesture primitive.
+- `activate_app` and `terminate_app` are measured as app lifecycle commands after prepare puts the app in the expected state.
+- `terminate_app` is roughly parity in this run, with WDA slightly faster.
 
-In this run, the `input` custom average is calculated from two successful iterations; one prepare step failed with a transient driver TCP read error and is tracked separately from the latency comparison.
+Numbers vary by device, iOS version, app state, and whether the target page is already warm. The stable shape is that read-heavy agent operations and semantic actions avoid most of the Appium/WDA HTTP stack overhead.
