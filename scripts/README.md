@@ -50,7 +50,46 @@ GitHub CI uses `.github/workflows/ci.yml` for the default gate and runs script s
 | --- | --- |
 | `scripts/install.sh` | Install the release CLI, driver IPAs, skill, flows, and altsign helper. Use `--build-from-source` to compile locally. |
 | `scripts/release_build.sh` | Build and stage GitHub Release assets under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. |
-| `scripts/benchmark_wda.js --driver-ipa <path>` | Compare ios-use against Appium/WebDriverAgent on a real device; the caller chooses the custom driver IPA and the script records the copied IPA path plus configured `driverVersion`. `--custom-only` skips Appium/WDA. `--custom-simulator` is only valid with `--custom-only` for local Simulator runs. |
+| `scripts/benchmark.js --bench ios-use --udid <udid> --driver-ipa <path>` | Measure ios-use on a real device and write JSON only. The script never builds, signs, installs, or runs `config`; the device must already be prepared with a driver whose configured `driverVersion` matches the IPA version. |
+| `scripts/benchmark.js --bench wda --udid <udid> --wda-bundle-id <id>` | Measure Appium/WebDriverAgent on a real device and write JSON only. This is a separate WDA run, not an implicit ios-use comparison. |
+
+Benchmark quick examples:
+
+```bash
+# ios-use read-path benchmark; no build/sign/config happens inside the script.
+node scripts/benchmark.js --bench ios-use \
+  --udid 00008150-0015309E2EE3401C \
+  --driver-ipa .ios-use/driver.ipa \
+  --preset read \
+  --iterations 5
+
+# WDA read-path benchmark.
+node scripts/benchmark.js --bench wda \
+  --udid 00008150-0015309E2EE3401C \
+  --wda-bundle-id com.example.WebDriverAgentRunner.xctrunner \
+  --preset read
+```
+
+Use `node scripts/benchmark.js --help` for the complete invocation contract, including presets, case selection, input labels, WDA/Appium options, baseline comparison, and driver identity checks.
+
+Benchmark case mapping is shared by `--bench ios-use` and `--bench wda`. The two benches run separately and write separate JSON reports; compare them by matching the same `case id`.
+
+| Case | Kind | ios-use Driver path | WDA/Appium path |
+| --- | --- | --- | --- |
+| `start_session` | lifecycle | `ios-use start <udid>` | Appium `POST /session` |
+| `start_and_activate_app` | lifecycle | `start <udid>` + `activateApp` | Appium session + activate app |
+| `dom_vs_source` | read | `dom` | WDA `GET /source` |
+| `find` | read | `find <label>` | WDA `POST /element` |
+| `wait_for` | read | `waitFor` | repeated WDA `POST /element` |
+| `screenshot` | read | `screenshot` | WDA `GET /screenshot` |
+| `tap_coord` | mutate | `tap x,y` | WDA pointer action |
+| `tap_label` | mutate | `tap <label>` | WDA find + click |
+| `longpress_coord` | mutate | `longpress x,y` | WDA pointer action |
+| `input` | mutate | `input --label <label>` | WDA find + click + keys |
+| `swipe_distance` | mutate | `swipe --distance 200 --dir forth` | WDA drag action |
+| `scroll_to_visible` | mutate | `swipe --to <label> --from <label>` | WDA mobile scroll loop |
+| `activate_app` | app | `activateApp` | WDA activate app |
+| `terminate_app` | app | `terminateApp` | WDA terminate app |
 
 ## Release Artifacts
 
