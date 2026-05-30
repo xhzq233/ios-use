@@ -74,7 +74,8 @@ final class CoreDeviceAppService {
                 environment: environment,
                 payloadURL: payloadURL,
                 activates: activates
-            )
+            ),
+            timeoutSeconds: 30
         )
     }
 
@@ -98,8 +99,8 @@ final class CoreDeviceAppService {
         )
     }
 
-    func invoke(featureIdentifier: String, input: [String: RemoteXPCValue] = [:]) throws -> RemoteXPCValue {
-        let response = try client.sendReceiveRequest(coreDeviceRequest(featureIdentifier: featureIdentifier, input: input))
+    func invoke(featureIdentifier: String, input: [String: RemoteXPCValue] = [:], timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
+        let response = try client.sendReceiveRequest(coreDeviceRequest(featureIdentifier: featureIdentifier, input: input), timeoutSeconds: timeoutSeconds)
         guard let output = response.dictionaryValue?["CoreDevice.output"] else {
             throw CoreDeviceAppServiceError.missingOutputResponse(featureIdentifier, Self.describe(response))
         }
