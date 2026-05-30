@@ -18,20 +18,38 @@ const LOG_DIR = path.join(IOS_USE_HOME, 'logs');
 
 const DEFAULT_APP_BUNDLE = 'com.apple.Preferences';
 const DEFAULT_LABEL = '蓝牙';
+const DEFAULT_INPUT_BUNDLE = DEFAULT_APP_BUNDLE;
+const DEFAULT_INPUT_LABEL = '搜索';
+const DEFAULT_INPUT_TRAITS = 'SearchField';
+const DEFAULT_INPUT_CONTENT = '蓝牙';
+const SAFARI_INPUT_BUNDLE = 'com.apple.mobilesafari';
 const DEFAULT_ITERATIONS = 3;
 const DEFAULT_TIMEOUT_MS = 60000;
 const DEVICECTL_TIMEOUT_MS = Number(process.env.IOS_USE_BENCHMARK_DEVICECTL_TIMEOUT_MS || '30000');
 const WDA_SCREENSHOT_QUALITY = 1;
+const MISSING_LABEL = '__ios_use_benchmark_missing_label__';
+const FIND_TRAITS = 'StaticText';
+const WDA_FIND_TRAITS_TYPE = 'XCUIElementTypeStaticText';
+const WAIT_TIMEOUT_SECONDS = '2';
+const WAIT_TIMEOUT_MS = 2000;
+const DRIVER_STOP_SETTLE_MS = Number(process.env.IOS_USE_BENCHMARK_DRIVER_STOP_SETTLE_MS || '30000');
 
 const BENCHES = new Set(['ios-use', 'wda']);
 const PRESETS = {
   full: null,
-  read: ['dom_vs_source', 'find', 'wait_for', 'screenshot'],
-  lifecycle: ['start_session', 'start_and_activate_app'],
-  mutate: ['tap_coord', 'tap_label', 'longpress_coord', 'input', 'swipe_distance', 'scroll_to_visible'],
+  read: ['dom_cached', 'find_hit', 'find_miss', 'find_traits', 'wait_for_present', 'wait_for_timeout_2000ms', 'screenshot'],
+  lifecycle: ['start_session', 'activate_app', 'terminate_app'],
+  mutate: ['tap_coord', 'tap_label', 'tap_offset_ratio', 'longpress_coord', 'input', 'scroll_distance_semantic', 'scroll_to_visible'],
   app: ['activate_app', 'terminate_app'],
-  smoke: ['start_session', 'dom_vs_source', 'find', 'screenshot', 'tap_coord', 'activate_app'],
+  smoke: ['start_session', 'dom_cached', 'find_hit', 'screenshot', 'tap_coord', 'activate_app'],
 };
+
+const BASELINE_CASE_ALIASES = new Map([
+  ['dom_vs_source', 'dom_cached'],
+  ['find', 'find_hit'],
+  ['wait_for', 'wait_for_present'],
+  ['swipe_distance', 'scroll_distance_semantic'],
+]);
 
 let iosUseExecutable = '';
 let appiumProcess = null;
@@ -83,6 +101,15 @@ function commandExists(command) {
   }
 }
 
+function wdaElementTypeForTraits(traits) {
+  const normalized = String(traits || '').toLowerCase();
+  if (!normalized) return '';
+  if (normalized.includes('searchfield')) return 'XCUIElementTypeSearchField';
+  if (normalized.includes('textfield')) return 'XCUIElementTypeTextField';
+  if (normalized.includes('textview')) return 'XCUIElementTypeTextView';
+  return '';
+}
+
 function resolveIosUseBin(value) {
   const explicit = value || process.env.IOS_USE_BENCHMARK_IOS_USE_BIN || '';
   if (!explicit) {
@@ -123,8 +150,8 @@ function parseArgs(argv) {
     scrollToLabel: '开发者',
     inputBundleId: '',
     inputLabel: '',
-    inputTraits: 'SearchField',
-    inputContent: '蓝牙',
+    inputTraits: DEFAULT_INPUT_TRAITS,
+    inputContent: DEFAULT_INPUT_CONTENT,
     inputPrepareLabel: '',
     inputOpenUrl: '',
     wdaBundleId: process.env.WDA_BUNDLE_ID || '',
@@ -192,7 +219,7 @@ function parseArgs(argv) {
         args.inputTraits = argv[++i] || '';
         break;
       case '--input-content':
-        args.inputContent = argv[++i] || '蓝牙';
+        args.inputContent = argv[++i] || DEFAULT_INPUT_CONTENT;
         break;
       case '--input-prepare-label':
         args.inputPrepareLabel = argv[++i] || '';
@@ -261,10 +288,10 @@ function parseArgs(argv) {
     throw new Error('--input-open-url is only supported for --bench ios-use; WDA benchmark must prepare equivalent app state.');
   }
 
-  args.inputBundleId ||= args.bundleId;
-  args.inputLabel ||= args.searchLabel;
+  args.inputBundleId ||= DEFAULT_INPUT_BUNDLE;
+  args.inputLabel ||= DEFAULT_INPUT_LABEL;
   if (args.inputTraits.toLowerCase() === 'none') args.inputTraits = '';
-  args.inputPrepareLabel ||= args.inputBundleId === args.bundleId ? args.label : args.inputLabel;
+  args.inputPrepareLabel ||= args.inputLabel;
   return args;
 }
 
@@ -306,10 +333,10 @@ App/UI options:
   --label <text>             Anchor label for find/waitFor. Default: ${DEFAULT_LABEL}.
   --search-label <text>      SearchField label for input case. Default: 搜索.
   --scroll-to-label <text>   Target label for scroll_to_visible. Default: 开发者.
-  --input-bundle-id <id>     App for input case. Default: --bundle-id.
-  --input-label <text>       Input target label. Default: --search-label.
-  --input-traits <traits>    Input target traits. Default: SearchField; use none to disable.
-  --input-content <text>     Text for input case. Default: 蓝牙.
+  --input-bundle-id <id>     App for input case. Default: ${DEFAULT_INPUT_BUNDLE}.
+  --input-label <text>       Input target label. Default: ${DEFAULT_INPUT_LABEL}.
+  --input-traits <traits>    Input target traits. Default: ${DEFAULT_INPUT_TRAITS}; use none to disable.
+  --input-content <text>     Text for input case. Default: ${DEFAULT_INPUT_CONTENT}.
   --input-prepare-label <t>  Label to wait before input. Default: input label or anchor label.
   --input-open-url <url>     ios-use-only input preparation by URL.
 
@@ -439,28 +466,55 @@ function readDriverLock() {
   }
 }
 
-function customStopSessionQuiet() {
+function removeDriverLockQuiet() {
   try {
-    cli(['stop'], { allowFailure: true });
+    fs.rmSync(path.join(IOS_USE_HOME, 'state', 'driver.lock'), { force: true });
   } catch {
     // ignore cleanup failure
   }
 }
 
-function customEnsureDriverStarted(udid) {
-  const lock = readDriverLock();
-  if (lock?.udid === udid) return;
-  if (lock) cli(['stop'], { allowFailure: true });
-  cli(['start', udid], { capture: false });
+function customStopSessionQuiet() {
+  try {
+    return cli(['stop'], { allowFailure: true }).exitCode === 0;
+  } catch {
+    // ignore cleanup failure
+  }
+  return false;
 }
 
-function listDeviceProcesses(udid) {
-  const { stdout } = runSync('xcrun', [
+async function customKillDriverSessionQuiet(ctx) {
+  const stopped = customStopSessionQuiet();
+  if (!stopped) {
+    terminateCustomDriverProcesses(ctx.udid, { allowFailure: true });
+    await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner'], 8000, { allowFailure: true });
+  } else {
+    await sleep(500);
+  }
+  removeDriverLockQuiet();
+}
+
+async function customEnsureDriverStarted(ctx) {
+  const lock = readDriverLock();
+  if (lock?.udid === ctx.udid) return;
+  if (lock) cli(['stop'], { allowFailure: true });
+  terminateWdaProcesses(ctx.udid, { allowFailure: true });
+  await waitForProcessesGone(ctx.udid, ['WebDriverAgentRunner-Runner'], 8000, { allowFailure: true });
+  cli(['start', ctx.udid], { capture: false });
+}
+
+function listDeviceProcesses(udid, options = {}) {
+  const { stdout, stderr, exitCode } = runSync('xcrun', [
     'devicectl', 'device', 'info', 'processes',
     '--device', udid,
     '--quiet',
+    '--timeout', String(Math.ceil(DEVICECTL_TIMEOUT_MS / 1000)),
     '--json-output', '-',
-  ], { timeoutMs: DEVICECTL_TIMEOUT_MS });
+  ], { timeoutMs: DEVICECTL_TIMEOUT_MS, allowFailure: options.allowFailure === true });
+  if (exitCode !== 0) {
+    if (options.allowFailure) return [];
+    throw new Error(`devicectl process list failed (${exitCode})\n${stderr || stdout}`.trim());
+  }
   const parsed = JSON.parse(stdout);
   const processes = parsed?.result?.runningProcesses ?? parsed?.result?.processTokens ?? [];
   return Array.isArray(processes) ? processes : [];
@@ -472,13 +526,14 @@ function terminateProcessByPid(udid, pid) {
     '--device', udid,
     '--pid', String(pid),
     '--kill',
+    '--timeout', String(Math.ceil(DEVICECTL_TIMEOUT_MS / 1000)),
   ], { allowFailure: true, timeoutMs: DEVICECTL_TIMEOUT_MS });
 }
 
-function terminateProcessesByExecutableName(udid, executableNames) {
+function terminateProcessesByExecutableName(udid, executableNames, options = {}) {
   const targets = new Set(executableNames.filter(Boolean));
   if (targets.size === 0) return;
-  for (const processInfo of listDeviceProcesses(udid)) {
+  for (const processInfo of listDeviceProcesses(udid, options)) {
     const executable = String(processInfo?.executable || '');
     const basename = executable.split('/').pop() || '';
     if (targets.has(basename)) {
@@ -487,19 +542,19 @@ function terminateProcessesByExecutableName(udid, executableNames) {
   }
 }
 
-function terminateCustomDriverProcesses(udid) {
-  terminateProcessesByExecutableName(udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
+function terminateCustomDriverProcesses(udid, options = {}) {
+  terminateProcessesByExecutableName(udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner'], options);
 }
 
-function terminateWdaProcesses(udid) {
-  terminateProcessesByExecutableName(udid, ['WebDriverAgentRunner-Runner']);
+function terminateWdaProcesses(udid, options = {}) {
+  terminateProcessesByExecutableName(udid, ['WebDriverAgentRunner-Runner'], options);
 }
 
-async function waitForProcessesGone(udid, executableNames, timeoutMs = 8000) {
+async function waitForProcessesGone(udid, executableNames, timeoutMs = 8000, options = {}) {
   const targets = new Set(executableNames.filter(Boolean));
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const stillRunning = listDeviceProcesses(udid).some(processInfo => {
+    const stillRunning = listDeviceProcesses(udid, options).some(processInfo => {
       const executable = String(processInfo?.executable || '');
       const basename = executable.split('/').pop() || '';
       return targets.has(basename);
@@ -510,32 +565,50 @@ async function waitForProcessesGone(udid, executableNames, timeoutMs = 8000) {
 }
 
 async function customPrepareStopped(ctx) {
-  terminateWdaProcesses(ctx.udid);
-  await waitForProcessesGone(ctx.udid, ['WebDriverAgentRunner-Runner']);
-  customStopSessionQuiet();
-  terminateCustomDriverProcesses(ctx.udid);
-  await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
+  await customKillDriverSessionQuiet(ctx);
+  terminateWdaProcesses(ctx.udid, { allowFailure: true });
+  await waitForProcessesGone(ctx.udid, ['WebDriverAgentRunner-Runner'], 8000, { allowFailure: true });
+  await sleep(DRIVER_STOP_SETTLE_MS);
 }
 
 async function customPrepareAppSession(ctx, appBundle = ctx.bundleId, label = ctx.label) {
-  terminateWdaProcesses(ctx.udid);
-  await waitForProcessesGone(ctx.udid, ['WebDriverAgentRunner-Runner']);
-  customEnsureDriverStarted(ctx.udid);
+  await customEnsureDriverStarted(ctx);
   cli(['terminateApp', appBundle, '--udid', ctx.udid], { allowFailure: true });
   cli(['activateApp', appBundle, '--udid', ctx.udid]);
+  if (appBundle === ctx.bundleId) {
+    for (let i = 0; i < 3; i += 1) {
+      cli(['tap', 'BackButton', '--udid', ctx.udid], { allowFailure: true });
+    }
+  }
+  const initialWait = cli(['waitFor', '--label', label, '--timeout', '2', '--udid', ctx.udid], { allowFailure: true });
+  if (initialWait.exitCode !== 0 && appBundle === ctx.bundleId) {
+    cli(['swipe', '--to', label, '--from', ctx.scrollToLabel, '--udid', ctx.udid], { allowFailure: true });
+    for (let i = 0; i < 4; i += 1) {
+      const recovered = cli(['waitFor', '--label', label, '--timeout', '1', '--udid', ctx.udid], { allowFailure: true });
+      if (recovered.exitCode === 0) break;
+      cli(['swipe', '--dir', 'back', '--distance', '500', '--udid', ctx.udid], { allowFailure: true });
+    }
+  }
   cli(['waitFor', '--label', label, '--timeout', '8', '--udid', ctx.udid]);
 }
 
 async function customPrepareInputSession(ctx) {
-  terminateWdaProcesses(ctx.udid);
-  await waitForProcessesGone(ctx.udid, ['WebDriverAgentRunner-Runner']);
-  customEnsureDriverStarted(ctx.udid);
+  await customEnsureDriverStarted(ctx);
   cli(['terminateApp', ctx.inputBundleId, '--udid', ctx.udid], { allowFailure: true });
   if (ctx.inputOpenUrl) {
     cli(['open', ctx.inputOpenUrl, '--udid', ctx.udid]);
   } else {
     cli(['activateApp', ctx.inputBundleId, '--udid', ctx.udid]);
   }
+  if (ctx.inputBundleId === SAFARI_INPUT_BUNDLE) {
+    if (ctx.inputLabel !== 'TabBarItemTitle') {
+      cli(['tap', 'TabBarItemTitle', '--traits', DEFAULT_INPUT_TRAITS, '--udid', ctx.udid], { allowFailure: true });
+      cli(['tap', ctx.inputLabel, '--traits', ctx.inputTraits, '--udid', ctx.udid], { allowFailure: true });
+    } else {
+      cli(['tap', 'CancelBarItemButton', '--udid', ctx.udid], { allowFailure: true });
+    }
+  }
+  cli(['dom', '--fresh', '--udid', ctx.udid], { allowFailure: true });
   cli(['waitFor', '--label', ctx.inputPrepareLabel, '--timeout', '8', '--udid', ctx.udid]);
 }
 
@@ -754,6 +827,38 @@ class AppiumDriver {
     return await this.findElementUsing('-ios predicate string', predicate);
   }
 
+  async findInputElement(inputLabel, inputTraits = '') {
+    const wdaType = wdaElementTypeForTraits(inputTraits);
+    const escapedLabel = String(inputLabel).replace(/"/g, '\\"');
+    const predicates = [];
+    if (wdaType) {
+      predicates.push(`type == "${wdaType}" AND (name BEGINSWITH "${escapedLabel}" OR label CONTAINS "${escapedLabel}" OR value CONTAINS "${escapedLabel}")`);
+      predicates.push(`type == "${wdaType}"`);
+    }
+    predicates.push(`name == "${escapedLabel}" OR label == "${escapedLabel}" OR value == "${escapedLabel}"`);
+    let lastError;
+    for (const predicate of predicates) {
+      try {
+        return await this.findElementByPredicate(predicate);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error(`input element not found: ${inputLabel}`);
+  }
+
+  async waitForInputElement(inputLabel, inputTraits = '', timeoutMs = 8000, intervalMs = 500) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      try {
+        return await this.findInputElement(inputLabel, inputTraits);
+      } catch {
+        await sleep(intervalMs);
+      }
+    }
+    throw new Error(`Appium waitForInputElement timed out: ${inputLabel}`);
+  }
+
   async waitForElement(label, timeoutMs = 8000, intervalMs = 500) {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
@@ -843,6 +948,11 @@ class AppiumDriver {
     return await this.request('GET', '/window/rect');
   }
 
+  async getElementRect(elementId) {
+    await this.ensureSession();
+    return await this.request('GET', `/element/${elementId}/rect`);
+  }
+
   async activateApp(bundleId = this.ctx.bundleId) {
     await this.ensureSession();
     return await this.request('POST', '/appium/device/activate_app', { bundleId });
@@ -856,17 +966,17 @@ class AppiumDriver {
 
 async function appiumPrepareNoSession(ctx) {
   customStopSessionQuiet();
-  terminateCustomDriverProcesses(ctx.udid);
+  terminateCustomDriverProcesses(ctx.udid, { allowFailure: true });
   await ctx.appium.resetState();
-  await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
+  await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner'], 8000, { allowFailure: true });
   await sleep(2000);
 }
 
 async function appiumPrepareSettingsHome(ctx) {
   customStopSessionQuiet();
-  terminateCustomDriverProcesses(ctx.udid);
+  terminateCustomDriverProcesses(ctx.udid, { allowFailure: true });
   await ctx.appium.resetState();
-  await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
+  await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner'], 8000, { allowFailure: true });
   await sleep(1000);
   await ctx.appium.createSession();
   await ctx.appium.updateSettings({ screenshotQuality: WDA_SCREENSHOT_QUALITY });
@@ -876,14 +986,23 @@ async function appiumPrepareSettingsHome(ctx) {
     // ignore
   }
   await ctx.appium.activateApp(ctx.bundleId);
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const backId = await ctx.appium.findElement('BackButton');
+      await ctx.appium.clickElement(backId);
+      await sleep(300);
+    } catch {
+      break;
+    }
+  }
   await ctx.appium.waitForElement(ctx.label, 8000, 500);
 }
 
 async function appiumPrepareInputSession(ctx) {
   customStopSessionQuiet();
-  terminateCustomDriverProcesses(ctx.udid);
+  terminateCustomDriverProcesses(ctx.udid, { allowFailure: true });
   await ctx.appium.resetState();
-  await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner']);
+  await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner'], 8000, { allowFailure: true });
   await sleep(1000);
   await ctx.appium.createSession();
   await ctx.appium.updateSettings({ screenshotQuality: WDA_SCREENSHOT_QUALITY });
@@ -893,140 +1012,347 @@ async function appiumPrepareInputSession(ctx) {
     // ignore
   }
   await ctx.appium.activateApp(ctx.inputBundleId);
-  await ctx.appium.waitForElement(ctx.inputPrepareLabel, 8000, 500);
+  if (ctx.inputBundleId === ctx.bundleId) {
+    for (let i = 0; i < 3; i += 1) {
+      try {
+        const backId = await ctx.appium.findElement('BackButton');
+        await ctx.appium.clickElement(backId);
+        await sleep(300);
+      } catch {
+        break;
+      }
+    }
+  }
+  if (ctx.inputBundleId === SAFARI_INPUT_BUNDLE) {
+    if (ctx.inputLabel !== 'TabBarItemTitle') {
+      try {
+        const collapsedAddressId = await ctx.appium.findInputElement('TabBarItemTitle', DEFAULT_INPUT_TRAITS);
+        await ctx.appium.clickElement(collapsedAddressId);
+      } catch {
+        // Safari may already be focused in the address field.
+      }
+    } else {
+      try {
+        const cancelId = await ctx.appium.findElement('CancelBarItemButton');
+        await ctx.appium.clickElement(cancelId);
+      } catch {
+        // Safari may already be collapsed.
+      }
+    }
+  }
+  await ctx.appium.waitForInputElement(ctx.inputPrepareLabel, ctx.inputTraits, 8000, 500);
+}
+
+async function customPrepareDriverStarted(ctx) {
+  await customEnsureDriverStarted(ctx);
+}
+
+async function customPrepareAppTerminated(ctx) {
+  await customPrepareDriverStarted(ctx);
+  cli(['terminateApp', ctx.bundleId, '--udid', ctx.udid], { allowFailure: true });
+}
+
+async function appiumPrepareDriverStarted(ctx) {
+  customStopSessionQuiet();
+  terminateCustomDriverProcesses(ctx.udid, { allowFailure: true });
+  await waitForProcessesGone(ctx.udid, ['IOSUseDriver-Runner', 'IOSUseDriverXCTest-Runner'], 8000, { allowFailure: true });
+  await ctx.appium.ensureSession();
+  await ctx.appium.updateSettings({ screenshotQuality: WDA_SCREENSHOT_QUALITY });
+}
+
+async function appiumPrepareAppTerminated(ctx) {
+  await appiumPrepareDriverStarted(ctx);
+  try {
+    await ctx.appium.terminateApp(ctx.bundleId);
+  } catch {
+    // ignore; benchmark only needs the app not foregrounded before activate.
+  }
+}
+
+const PREPARE_STATES = {
+  driverStopped: {
+    iosUse: customPrepareStopped,
+    wda: appiumPrepareNoSession,
+  },
+  driverStarted: {
+    iosUse: customPrepareDriverStarted,
+    wda: appiumPrepareDriverStarted,
+  },
+  settingsRootWarm: {
+    iosUse: customPrepareAppSession,
+    wda: appiumPrepareSettingsHome,
+  },
+  settingsRootNoMatch: {
+    iosUse: customPrepareAppSession,
+    wda: appiumPrepareSettingsHome,
+  },
+  inputReady: {
+    iosUse: customPrepareInputSession,
+    wda: appiumPrepareInputSession,
+  },
+  appTerminated: {
+    iosUse: customPrepareAppTerminated,
+    wda: appiumPrepareAppTerminated,
+  },
+};
+
+function prepareStateStore(ctx, sideName) {
+  ctx.prepareState ??= {
+    iosUse: { current: null },
+    wda: { current: null },
+  };
+  return sideName === 'wda' ? ctx.prepareState.wda : ctx.prepareState.iosUse;
+}
+
+async function ensurePrepareState(ctx, sideName, stateName, { reusable = true, force = false } = {}) {
+  if (!stateName) {
+    return { state: null, reused: false };
+  }
+  const store = prepareStateStore(ctx, sideName);
+  if (!force && reusable && store.current === stateName) {
+    return { state: stateName, reused: true };
+  }
+  const state = PREPARE_STATES[stateName];
+  const prepare = sideName === 'wda' ? state?.wda : state?.iosUse;
+  if (!prepare) {
+    throw new Error(`Unknown benchmark prepare state: ${stateName}`);
+  }
+  await prepare(ctx);
+  store.current = reusable ? stateName : null;
+  return { state: stateName, reused: false };
+}
+
+function invalidatePrepareState(ctx, sideName) {
+  const store = prepareStateStore(ctx, sideName);
+  store.current = null;
 }
 
 function buildCases(ctx) {
   const centerX = 187;
   const topTapY = 80;
   const swipeDistance = 200;
+  const offsetRatio = '0.8,0.5';
 
   return [
     {
       id: 'start_session',
+      group: 'lifecycle',
       kind: 'lifecycle',
+      prepareState: 'driverStopped',
+      stateReusable: false,
+      invalidatesState: true,
       runs: 1,
       mapping: '`ios-use start <udid>` / Appium `POST /session`',
-      iosPrepare: async () => { await customPrepareStopped(ctx); },
+      notes: 'Cold driver/session startup after stopped-state prepare settles. This case has no old WDA baseline before the JSON benchmark rewrite.',
       iosRun: async () => { cli(['start', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareNoSession(ctx); },
       wdaRun: async () => { await ctx.appium.createSession(); },
     },
     {
-      id: 'start_and_activate_app',
-      kind: 'lifecycle',
-      runs: 1,
-      mapping: '`start <udid>` + `activateApp` / Appium session + activate app',
-      iosPrepare: async () => { await customPrepareStopped(ctx); },
-      iosRun: async () => {
-        cli(['start', ctx.udid]);
-        cli(['activateApp', ctx.bundleId, '--udid', ctx.udid]);
-      },
-      wdaPrepare: async () => { await appiumPrepareNoSession(ctx); },
-      wdaRun: async () => {
-        await ctx.appium.createSession();
-        await ctx.appium.activateApp(ctx.bundleId);
-      },
-    },
-    {
-      id: 'dom_vs_source',
+      id: 'dom_cached',
+      group: 'read',
       kind: 'read',
+      prepareState: 'settingsRootWarm',
+      stateReusable: true,
+      invalidatesState: false,
       runs: ctx.iterations,
       mapping: '`ios-use dom` / WDA `GET /source`',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Warm Settings root state; this is the default user-facing DOM path, not a cold snapshot profiling case.',
       iosRun: async () => { cli(['dom', '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => { await ctx.appium.source(); },
     },
     {
-      id: 'find',
+      id: 'find_hit',
+      group: 'read',
       kind: 'read',
+      prepareState: 'settingsRootWarm',
+      stateReusable: true,
+      invalidatesState: false,
       runs: ctx.iterations,
       mapping: '`ios-use find <label>` / WDA `POST /element`',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Positive element lookup on the configured anchor label.',
       iosRun: async () => { cli(['find', ctx.label, '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => { await ctx.appium.findElement(ctx.label); },
     },
     {
-      id: 'wait_for',
+      id: 'find_miss',
+      group: 'read',
       kind: 'read',
+      prepareState: 'settingsRootNoMatch',
+      stateReusable: true,
+      invalidatesState: false,
+      runs: ctx.iterations,
+      mapping: '`ios-use find <missing-label>` / WDA `POST /element` expected miss',
+      notes: 'Negative lookup path. The not-found error is the expected success condition.',
+      iosRun: async () => {
+        const result = cli(['find', MISSING_LABEL, '--udid', ctx.udid], { allowFailure: true });
+        if (result.exitCode === 0) {
+          throw new Error(`missing label unexpectedly found: ${MISSING_LABEL}`);
+        }
+      },
+      wdaRun: async () => {
+        try {
+          await ctx.appium.findElement(MISSING_LABEL);
+        } catch {
+          return;
+        }
+        throw new Error(`missing label unexpectedly found: ${MISSING_LABEL}`);
+      },
+    },
+    {
+      id: 'find_traits',
+      group: 'read',
+      kind: 'read',
+      prepareState: 'settingsRootWarm',
+      stateReusable: true,
+      invalidatesState: false,
+      runs: ctx.iterations,
+      mapping: '`ios-use find <label> --traits StaticText` / WDA predicate lookup',
+      notes: 'Positive lookup with type/trait filtering.',
+      iosRun: async () => { cli(['find', ctx.label, '--traits', FIND_TRAITS, '--udid', ctx.udid]); },
+      wdaRun: async () => { await ctx.appium.findElementByPredicate(`label == "${ctx.label}" AND type == "${WDA_FIND_TRAITS_TYPE}"`); },
+    },
+    {
+      id: 'wait_for_present',
+      group: 'read',
+      kind: 'read',
+      prepareState: 'settingsRootWarm',
+      stateReusable: true,
+      invalidatesState: false,
       runs: ctx.iterations,
       mapping: '`ios-use waitFor` / repeated WDA `POST /element`',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Present target path; usually first-hit polling.',
       iosRun: async () => { cli(['waitFor', '--label', ctx.label, '--timeout', '8', '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => { await ctx.appium.waitForElement(ctx.label, 8000, 500); },
     },
     {
-      id: 'screenshot',
+      id: 'wait_for_timeout_2000ms',
+      group: 'read',
       kind: 'read',
+      prepareState: 'settingsRootNoMatch',
+      stateReusable: true,
+      invalidatesState: false,
+      runs: ctx.iterations,
+      mapping: '`ios-use waitFor --timeout 2` / WDA repeated lookup until 2000ms timeout',
+      notes: 'Timeout path. The timeout error is the expected success condition.',
+      iosRun: async () => {
+        const result = cli(['waitFor', '--label', MISSING_LABEL, '--timeout', WAIT_TIMEOUT_SECONDS, '--udid', ctx.udid], { allowFailure: true });
+        if (result.exitCode === 0) {
+          throw new Error(`missing label unexpectedly appeared: ${MISSING_LABEL}`);
+        }
+      },
+      wdaRun: async () => {
+        try {
+          await ctx.appium.waitForElement(MISSING_LABEL, WAIT_TIMEOUT_MS, 250);
+        } catch {
+          return;
+        }
+        throw new Error(`missing label unexpectedly appeared: ${MISSING_LABEL}`);
+      },
+    },
+    {
+      id: 'screenshot',
+      group: 'read',
+      kind: 'read',
+      prepareState: 'settingsRootWarm',
+      stateReusable: true,
+      invalidatesState: false,
       runs: ctx.iterations,
       mapping: '`ios-use screenshot` / WDA `GET /screenshot`',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Warm Settings root screenshot path.',
       iosRun: async () => { cli(['screenshot', '--name', 'benchmark-ios-use', '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => { await ctx.appium.screenshotToFile('benchmark-wda-appium'); },
     },
     {
       id: 'tap_coord',
+      group: 'action',
       kind: 'mutate',
+      prepareState: 'settingsRootWarm',
+      stateReusable: true,
+      invalidatesState: false,
       runs: ctx.iterations,
       mapping: '`ios-use tap x,y` / WDA pointer action',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Coordinate tap on a stable inert top area.',
       iosRun: async () => { cli(['tap', `${centerX},${topTapY}`, '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => { await ctx.appium.tap(centerX, topTapY); },
     },
     {
       id: 'tap_label',
+      group: 'action',
       kind: 'mutate',
+      prepareState: 'settingsRootWarm',
+      stateReusable: false,
+      invalidatesState: true,
       runs: ctx.iterations,
       mapping: '`ios-use tap <label>` / WDA find + click',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Semantic label lookup plus action; this usually navigates, so prepare is not reused.',
       iosRun: async () => { cli(['tap', ctx.label, '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => {
         const elementId = await ctx.appium.findElement(ctx.label);
         await ctx.appium.clickElement(elementId);
       },
     },
     {
-      id: 'longpress_coord',
+      id: 'tap_offset_ratio',
+      group: 'action',
       kind: 'mutate',
+      prepareState: 'settingsRootWarm',
+      stateReusable: false,
+      invalidatesState: true,
+      runs: ctx.iterations,
+      mapping: '`ios-use tap <label> --offset-ratio 0.8,0.5` / WDA frame lookup + coordinate tap',
+      notes: 'Semantic offset-ratio action. WDA resolves the element rect and taps the equivalent coordinate.',
+      iosRun: async () => { cli(['tap', ctx.label, '--offset-ratio', offsetRatio, '--udid', ctx.udid]); },
+      wdaRun: async () => {
+        const elementId = await ctx.appium.findElement(ctx.label);
+        const rect = await ctx.appium.getElementRect(elementId);
+        await ctx.appium.tap(Math.round(rect.x + rect.width * 0.8), Math.round(rect.y + rect.height * 0.5));
+      },
+    },
+    {
+      id: 'longpress_coord',
+      group: 'action',
+      kind: 'mutate',
+      prepareState: 'settingsRootWarm',
+      stateReusable: true,
+      invalidatesState: false,
       runs: ctx.iterations,
       mapping: '`ios-use longpress x,y` / WDA pointer action',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Coordinate longpress on a stable inert top area.',
       iosRun: async () => { cli(['longpress', `${centerX},${topTapY}`, '--duration', '500', '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => { await ctx.appium.longPress(centerX, topTapY, 500); },
     },
     {
       id: 'input',
+      group: 'action',
       kind: 'mutate',
+      prepareState: 'inputReady',
+      stateReusable: false,
+      invalidatesState: true,
       runs: ctx.iterations,
       mapping: '`ios-use input --label <label>` / WDA find + click + keys',
-      iosPrepare: async () => { await customPrepareInputSession(ctx); },
+      notes: 'High-variance input path; keyboard and field contents are reset by prepare.',
       iosRun: async () => {
         const args = ['input', '--label', ctx.inputLabel, '--content', ctx.inputContent, '--udid', ctx.udid];
         if (ctx.inputTraits) args.splice(args.length - 2, 0, '--traits', ctx.inputTraits);
         cli(args);
       },
-      wdaPrepare: async () => { await appiumPrepareInputSession(ctx); },
       wdaRun: async () => {
-        const elementId = await ctx.appium.findElement(ctx.inputLabel);
+        const elementId = await ctx.appium.findInputElement(ctx.inputLabel, ctx.inputTraits);
         await ctx.appium.clickElement(elementId);
         await ctx.appium.keys(ctx.inputContent);
       },
     },
     {
-      id: 'swipe_distance',
+      id: 'scroll_distance_semantic',
+      group: 'scroll',
       kind: 'mutate',
+      prepareState: 'settingsRootWarm',
+      stateReusable: false,
+      invalidatesState: true,
       runs: ctx.iterations,
       mapping: '`ios-use swipe --distance 200 --dir forth` / WDA drag action',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Semantic distance scroll. Driver finds scrollable container and validates post-scroll state.',
       iosRun: async () => { cli(['swipe', '--distance', String(swipeDistance), '--dir', 'forth', '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => {
         const rect = await ctx.appium.getWindowRect();
         const x = Math.round((rect.width || rect.value?.width) / 2);
@@ -1037,12 +1363,15 @@ function buildCases(ctx) {
     },
     {
       id: 'scroll_to_visible',
+      group: 'scroll',
       kind: 'mutate',
+      prepareState: 'settingsRootWarm',
+      stateReusable: false,
+      invalidatesState: true,
       runs: ctx.iterations,
       mapping: '`ios-use swipe --to <label> --from <label>` / WDA mobile scroll loop',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'End-to-end scroll-until-visible workflow; not a primitive gesture benchmark.',
       iosRun: async () => { cli(['swipe', '--to', ctx.scrollToLabel, '--from', ctx.label, '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => {
         const maxScrolls = 10;
         const collectionViewId = await ctx.appium.findElementByPredicate(`type == 'XCUIElementTypeCollectionView'`);
@@ -1061,32 +1390,28 @@ function buildCases(ctx) {
     },
     {
       id: 'activate_app',
+      group: 'lifecycle',
       kind: 'app',
+      prepareState: 'appTerminated',
+      stateReusable: false,
+      invalidatesState: true,
       runs: ctx.iterations,
       mapping: '`ios-use activateApp` / WDA activate app',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
-      iosRun: async () => {
-        cli(['terminateApp', ctx.bundleId, '--udid', ctx.udid], { allowFailure: true });
-        cli(['activateApp', ctx.bundleId, '--udid', ctx.udid]);
-      },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
-      wdaRun: async () => {
-        try {
-          await ctx.appium.terminateApp(ctx.bundleId);
-        } catch {
-          // ignore
-        }
-        await ctx.appium.activateApp(ctx.bundleId);
-      },
+      notes: 'Prepare explicitly terminates the app; timed sample measures activate only.',
+      iosRun: async () => { cli(['activateApp', ctx.bundleId, '--udid', ctx.udid]); },
+      wdaRun: async () => { await ctx.appium.activateApp(ctx.bundleId); },
     },
     {
       id: 'terminate_app',
+      group: 'lifecycle',
       kind: 'app',
+      prepareState: 'settingsRootWarm',
+      stateReusable: false,
+      invalidatesState: true,
       runs: ctx.iterations,
       mapping: '`ios-use terminateApp` / WDA terminate app',
-      iosPrepare: async () => { await customPrepareAppSession(ctx); },
+      notes: 'Prepare ensures app is running/foreground; timed sample measures terminate only.',
       iosRun: async () => { cli(['terminateApp', ctx.bundleId, '--udid', ctx.udid]); },
-      wdaPrepare: async () => { await appiumPrepareSettingsHome(ctx); },
       wdaRun: async () => { await ctx.appium.terminateApp(ctx.bundleId); },
     },
   ];
@@ -1108,31 +1433,45 @@ function selectedCases(args, cases) {
   return cases.filter(item => selected.has(item.id));
 }
 
-async function measureCase(sideName, runs, prepareFn, runFn) {
+async function measureCase(ctx, testCase, sideName) {
   const samples = [];
   const errors = [];
+  const prepareEvents = [];
+  const runFn = sideName === 'wda' ? testCase.wdaRun : testCase.iosRun;
+  const prepareState = testCase.prepareState || null;
+  const stateReusable = testCase.stateReusable !== false;
   let fails = 0;
-  console.error(`[bench:${sideName}] x${runs}`);
-  for (let i = 0; i < runs; i += 1) {
+  console.error(`[bench:${sideName}] x${testCase.runs}`);
+  for (let i = 0; i < testCase.runs; i += 1) {
     try {
-      await prepareFn();
+      const event = await ensurePrepareState(ctx, sideName, prepareState, { reusable: stateReusable });
+      prepareEvents.push({ iteration: i + 1, ...event });
     } catch (error) {
       fails += 1;
       errors.push({ phase: 'prepare', message: error.message });
       console.error(`[bench:${sideName}] prepare fail: ${error.message}`);
+      invalidatePrepareState(ctx, sideName);
       continue;
     }
     const startedAt = nowNs();
     try {
       await runFn();
       samples.push(nsToMs(nowNs() - startedAt));
+      if (testCase.invalidatesState) {
+        invalidatePrepareState(ctx, sideName);
+      }
     } catch (error) {
       fails += 1;
       errors.push({ phase: 'run', message: error.message });
       console.error(`[bench:${sideName}] run fail: ${error.message}`);
+      invalidatePrepareState(ctx, sideName);
     }
   }
   return {
+    prepareState,
+    stateReusable,
+    stateReuseCount: prepareEvents.filter(event => event.reused).length,
+    prepareEvents,
     samples,
     fails,
     errors,
@@ -1194,14 +1533,18 @@ function validateDriverIdentity(args) {
   };
 }
 
+function normalizeBaselineCaseId(id) {
+  return BASELINE_CASE_ALIASES.get(id) || id;
+}
+
 function parseJsonBaseline(filePath) {
   const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   const rows = new Map();
   for (const row of payload.results || payload.rows || []) {
-    const id = row.id || row.case || row.name;
+    const rawId = row.id || row.case || row.name;
     const result = row.result || row.custom || row.customResult;
-    if (!id || !result) continue;
-    rows.set(id, {
+    if (!rawId || !result) continue;
+    rows.set(normalizeBaselineCaseId(rawId), {
       avg: result.avg,
       median: result.median,
       fails: result.fails,
@@ -1217,7 +1560,7 @@ function parseMarkdownBaseline(filePath) {
     if (!line.startsWith('| ')) continue;
     const cells = line.split('|').slice(1, -1).map(cell => cell.trim());
     if (cells.length < 7 || !/^-?\d+(\.\d+)?$/.test(cells[2])) continue;
-    rows.set(cells[0].replaceAll('`', ''), {
+    rows.set(normalizeBaselineCaseId(cells[0].replaceAll('`', '')), {
       avg: Number(cells[2]),
       median: Number(cells[3]),
       fails: Number(cells[6]),
@@ -1266,11 +1609,11 @@ function reproCommand(args, outputPath) {
   if (args.label !== DEFAULT_LABEL) parts.push('--label', args.label);
   if (args.searchLabel !== '搜索') parts.push('--search-label', args.searchLabel);
   if (args.scrollToLabel !== '开发者') parts.push('--scroll-to-label', args.scrollToLabel);
-  if (args.inputBundleId !== args.bundleId) parts.push('--input-bundle-id', args.inputBundleId);
-  if (args.inputLabel !== args.searchLabel) parts.push('--input-label', args.inputLabel);
-  if (args.inputTraits !== 'SearchField') parts.push('--input-traits', args.inputTraits || 'none');
-  if (args.inputContent !== '蓝牙') parts.push('--input-content', args.inputContent);
-  if (args.inputPrepareLabel !== (args.inputBundleId === args.bundleId ? args.label : args.inputLabel)) parts.push('--input-prepare-label', args.inputPrepareLabel);
+  if (args.inputBundleId !== DEFAULT_INPUT_BUNDLE) parts.push('--input-bundle-id', args.inputBundleId);
+  if (args.inputLabel !== DEFAULT_INPUT_LABEL) parts.push('--input-label', args.inputLabel);
+  if (args.inputTraits !== DEFAULT_INPUT_TRAITS) parts.push('--input-traits', args.inputTraits || 'none');
+  if (args.inputContent !== DEFAULT_INPUT_CONTENT) parts.push('--input-content', args.inputContent);
+  if (args.inputPrepareLabel !== args.inputLabel) parts.push('--input-prepare-label', args.inputPrepareLabel);
   if (args.inputOpenUrl) parts.push('--input-open-url', args.inputOpenUrl);
   if (args.wdaBundleId) parts.push('--wda-bundle-id', args.wdaBundleId);
   if (args.appiumHost !== '127.0.0.1') parts.push('--appium-host', args.appiumHost);
@@ -1301,9 +1644,13 @@ async function main() {
   if (args.listCases) {
     console.log(JSON.stringify(allCases.map(item => ({
       id: item.id,
+      group: item.group,
       kind: item.kind,
       runs: item.runs,
+      prepareState: item.prepareState || null,
+      stateReusable: item.stateReusable !== false,
       mapping: item.mapping,
+      notes: item.notes,
     })), null, 2));
     return;
   }
@@ -1324,19 +1671,22 @@ async function main() {
   try {
     for (const testCase of cases) {
       console.error(`\n[case] ${testCase.id} :: ${testCase.mapping}`);
-      const result = args.bench === 'ios-use'
-        ? await measureCase('ios-use', testCase.runs, testCase.iosPrepare, testCase.iosRun)
-        : await measureCase('wda', testCase.runs, testCase.wdaPrepare, testCase.wdaRun);
+      const sideName = args.bench === 'ios-use' ? 'ios-use' : 'wda';
+      const result = await measureCase(ctx, testCase, sideName);
       results.push({
         id: testCase.id,
+        group: testCase.group,
         kind: testCase.kind,
         runs: testCase.runs,
+        prepareState: testCase.prepareState || null,
+        stateReusable: testCase.stateReusable !== false,
         mapping: testCase.mapping,
+        notes: testCase.notes,
         result,
       });
     }
   } finally {
-    customStopSessionQuiet();
+    await customKillDriverSessionQuiet(ctx);
     if (ctx.appium) await ctx.appium.close();
     stopAppiumServer(ctx);
   }

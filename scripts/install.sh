@@ -250,10 +250,10 @@ fi
 
 echo "Installed ios-use to $TARGET_PATH"
 
-if ! xcrun --find xctrace >/dev/null 2>&1; then
+if ! xcrun --find simctl >/dev/null 2>&1; then
   echo ""
-  echo "⚠  Xcode not detected. Real device and Simulator commands require Xcode."
-  echo "   Install from Mac App Store or run: xcode-select --install"
+  echo "Note: Xcode not detected. Real-device release usage works without Xcode."
+  echo "   Simulator support and local driver builds require full Xcode."
 fi
 
 echo ""
