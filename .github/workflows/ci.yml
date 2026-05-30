@@ -41,7 +41,7 @@ jobs:
             bash -n "$script"
           done
           bash scripts/test_install.sh
-          node --check scripts/benchmark_wda.js
+          node --check scripts/benchmark.js
           node --check scripts/ios_use_test_simulator.js
           node --check scripts/test_simulator_commands.mjs
 
