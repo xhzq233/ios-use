@@ -50,9 +50,7 @@ final class CoreDeviceDriverLifecycle: CoreDeviceDriverLifecycleManaging {
                     guard let fd = try? Usbmux.connect(udid: udid, port: Int(IOSUseProtocol.defaultDriverPort)) else {
                         return false
                     }
-                    usleep(useconds_t(IOSUseProtocol.driverStartReadinessProbeHoldMicroseconds))
-                    _ = Darwin.shutdown(fd, SHUT_RDWR)
-                    Darwin.close(fd)
+                    CoreDeviceDriverLifecycle.closeReadinessProbeSocket(fd)
                     return true
                 },
                 sleep: { usleep($0) }
@@ -224,6 +222,14 @@ final class CoreDeviceDriverLifecycle: CoreDeviceDriverLifecycleManaging {
             dependencies.sleep(useconds_t(IOSUseProtocol.driverStartReadinessPollIntervalMicroseconds))
         }
         return false
+    }
+
+    private static func closeReadinessProbeSocket(_ fd: Int32) {
+        var lingerOption = linger(l_onoff: 1, l_linger: 0)
+        _ = Darwin.setsockopt(fd, SOL_SOCKET, SO_LINGER, &lingerOption, UInt32(MemoryLayout<linger>.size))
+        usleep(useconds_t(IOSUseProtocol.driverStartReadinessProbeHoldMicroseconds))
+        _ = Darwin.shutdown(fd, SHUT_RDWR)
+        Darwin.close(fd)
     }
 
     static func isDriverProcess(_ token: CoreDeviceProcessToken, bundleID: String?) -> Bool {

@@ -311,7 +311,7 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
                 if segment.sequenceNumber == receiveSequence {
                     inbound.append(segment.payload)
                     receiveSequence &+= UInt32(segment.payload.count)
-                    pendingAck = true
+                    try sendSegment(flags: CoreDeviceTCPFlags.ack)
                 }
             } else if segment.hasFin {
                 receiveSequence &+= 1
@@ -400,8 +400,13 @@ final class CoreDeviceDirectTunnelRuntime {
             do {
                 eventSink?("connecting RSD through userspace TCP")
                 let client = try session.connectRemoteXPCClient(port: handshake.serverRSDPort)
-                defer { client.close() }
-                session.peerInfo = try client.receivePeerInfo()
+                do {
+                    session.peerInfo = try client.receivePeerInfo()
+                    session.retainRemoteXPCClient(client)
+                } catch {
+                    client.close()
+                    throw error
+                }
                 eventSink?("RSD peer info received")
                 return session
             } catch {
@@ -425,11 +430,14 @@ protocol CoreDeviceLifecycleTunnelSession: AnyObject {
 }
 
 final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
+    private static let remoteXPCHandshakeTimeoutSeconds = 15.0
+
     let tunnel: CoreDeviceTunnel
     let handshake: CoreDeviceTunnelHandshake
     var peerInfo: RemoteXPCPeerInfo?
     private let eventSink: ((String) -> Void)?
     private var nextLocalPort: UInt16 = 49_152
+    private var retainedRemoteXPCClients: [RemoteXPCClient] = []
     private var closed = false
 
     var serverAddress: String { handshake.serverAddress }
@@ -447,7 +455,7 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         let stream = try connectServicePort(peerInfo.servicePort(serviceName))
         do {
             let client = RemoteXPCClient(stream: stream, eventSink: eventSink)
-            try client.completeClientHandshake()
+            try client.completeClientHandshake(timeoutSeconds: Self.remoteXPCHandshakeTimeoutSeconds)
             eventSink?("RemoteXPC client handshake sent to \(handshake.serverAddress):\(try peerInfo.servicePort(serviceName))")
             return client
         } catch {
@@ -460,7 +468,7 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         let stream = try connectServicePort(port)
         do {
             let client = RemoteXPCClient(stream: stream, eventSink: eventSink)
-            try client.completeClientHandshake()
+            try client.completeClientHandshake(timeoutSeconds: Self.remoteXPCHandshakeTimeoutSeconds)
             eventSink?("RemoteXPC client handshake sent to \(handshake.serverAddress):\(port)")
             return client
         } catch {
@@ -496,9 +504,17 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         }
     }
 
+    func retainRemoteXPCClient(_ client: RemoteXPCClient) {
+        retainedRemoteXPCClients.append(client)
+    }
+
     func close() {
         guard !closed else { return }
         closed = true
+        for client in retainedRemoteXPCClients {
+            client.close()
+        }
+        retainedRemoteXPCClients.removeAll()
         tunnel.close()
     }
 

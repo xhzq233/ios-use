@@ -23,6 +23,8 @@ import Fory
         set { connectionLock.sync { _running = newValue } }
     }
     private var activeConnections = 0
+    private var activeConnectionFD: Int32?
+    private var activeConnectionReceivedBytes = false
     private let connectionLock = DispatchQueue(label: "com.xcuidriver.connectionLock")
     private var acceptLoopSem: DispatchSemaphore?
 
@@ -106,7 +108,7 @@ import Fory
                 break
             }
 
-            let shouldAccept = reserveConnectionSlot()
+            let shouldAccept = reserveConnectionSlot(for: clientFD)
             if shouldAccept {
                 DispatchQueue.global().async {
                     self.handleConnection(clientFD)
@@ -118,12 +120,29 @@ import Fory
         }
     }
 
-    private func reserveConnectionSlot() -> Bool {
+    private func reserveConnectionSlot(for clientFD: Int32) -> Bool {
         let deadline = CFAbsoluteTimeGetCurrent() + Double(IOSUseProtocol.driverConnectionHandoffTimeoutMilliseconds) / IOSUseProtocol.millisecondsPerSecond
         while running {
+            let retiredPendingFD = connectionLock.sync { () -> Int32? in
+                if activeConnections >= maxConnections && !activeConnectionReceivedBytes {
+                    let pendingFD = activeConnectionFD
+                    activeConnectionFD = clientFD
+                    activeConnectionReceivedBytes = false
+                    activeConnections = maxConnections
+                    return pendingFD
+                }
+                return nil
+            }
+            if let retiredPendingFD {
+                _ = Darwin.shutdown(retiredPendingFD, SHUT_RDWR)
+                return true
+            }
+
             let didReserve = connectionLock.sync {
                 if activeConnections < maxConnections {
                     activeConnections += 1
+                    activeConnectionFD = clientFD
+                    activeConnectionReceivedBytes = false
                     return true
                 }
                 return false
@@ -142,12 +161,24 @@ import Fory
     private func handleConnection(_ fd: Int32) {
         defer {
             Darwin.close(fd)
-            connectionLock.sync { activeConnections -= 1 }
+            connectionLock.sync {
+                if activeConnectionFD == fd {
+                    activeConnections -= 1
+                    activeConnectionFD = nil
+                    activeConnectionReceivedBytes = false
+                }
+            }
         }
 
         while self.running {
                 do {
-                    let foryReq = try Codec.readFrame(fd)
+                    let foryReq = try Codec.readFrame(fd) {
+                        self.connectionLock.sync {
+                            if self.activeConnectionFD == fd {
+                                self.activeConnectionReceivedBytes = true
+                            }
+                        }
+                    }
                     let command = Command(rawValue: foryReq.command)
                     guard let command else {
                         let errFrame = ForyResponseFrame(ok: false, error: "unknown command: \(foryReq.command)")
