@@ -1,6 +1,7 @@
 name: "proxy: 关闭 Wi-Fi HTTP 代理"
 app: com.apple.Preferences
 steps:
+  - action: sleep
   - action: tap
     label: com.apple.settings.wifi
     comment: "进入无线局域网设置"
