@@ -80,6 +80,9 @@ final class CoreDeviceDriverLifecycle: CoreDeviceDriverLifecycleManaging {
             throw CLIParseError.invalidValue("CoreDevice tunnel did not return RSD peer info")
         }
         logPeerInfo(session.peerInfo)
+        if let info = session.peerInfo, info.services[CoreDeviceAppService.serviceName] == nil {
+            throw CLIParseError.invalidValue("CoreDevice appservice not available on this device. Try re-plugging the device, clearing trust, and re-pairing.")
+        }
         eventSink?("opening CoreDevice appservice")
         let appService = try dependencies.openAppService(session)
         defer { appService.close() }
@@ -148,6 +151,9 @@ final class CoreDeviceDriverLifecycle: CoreDeviceDriverLifecycleManaging {
             throw CLIParseError.invalidValue("CoreDevice tunnel did not return RSD peer info")
         }
         logPeerInfo(session.peerInfo)
+        if let info = session.peerInfo, info.services[CoreDeviceAppService.serviceName] == nil {
+            throw CLIParseError.invalidValue("CoreDevice appservice not available on this device. Try re-plugging the device, clearing trust, and re-pairing.")
+        }
         eventSink?("opening CoreDevice appservice")
         let appService = try dependencies.openAppService(session)
         defer { appService.close() }
