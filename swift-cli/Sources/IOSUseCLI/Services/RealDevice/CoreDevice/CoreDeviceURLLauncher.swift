@@ -42,6 +42,9 @@ final class CoreDeviceURLLauncher: RealDeviceURLLaunching {
         guard session.peerInfo != nil else {
             throw CLIParseError.invalidValue("CoreDevice tunnel did not return RSD peer info")
         }
+        if let info = session.peerInfo, info.services[CoreDeviceAppService.serviceName] == nil {
+            throw CLIParseError.invalidValue("CoreDevice appservice not available on this device. Try re-plugging the device, clearing trust, and re-pairing.")
+        }
         eventSink?("opening CoreDevice appservice")
         let appService = try dependencies.openAppService(session)
         defer { appService.close() }

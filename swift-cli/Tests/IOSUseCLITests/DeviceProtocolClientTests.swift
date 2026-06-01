@@ -1865,6 +1865,12 @@ final class DeviceProtocolClientTests: XCTestCase {
                 "OSVersion": .string("18.0"),
             ]),
             "Services": .dictionary([
+                "com.apple.coredevice.appservice": .dictionary([
+                    "Port": .uint64(54322),
+                    "Properties": .dictionary([
+                        "UsesRemoteXPC": .bool(true),
+                    ]),
+                ]),
                 "com.apple.instruments.dtservicehub": .dictionary([
                     "Port": .uint64(54321),
                     "Properties": .dictionary([
