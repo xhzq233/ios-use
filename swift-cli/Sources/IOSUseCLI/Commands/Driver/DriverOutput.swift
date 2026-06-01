@@ -9,8 +9,7 @@ public enum DriverOutput {
         let elements = presentationDomElements(payload.elements)
 
         var lines: [String] = []
-        lines.append("")
-        lines.append("App: \(payload.app), Window: \(Int(payload.windowSize.x))x\(Int(payload.windowSize.y))")
+        lines.append("App: \(payload.app)")
         lines.append("Elements:")
 
         var index = 0
@@ -113,8 +112,8 @@ public enum DriverOutput {
     }
 
     private static func inferPresentationScrollDirection(for element: ForyDomElement, children: [ForyDomElement]) -> String? {
-        guard element.traits.contains("ScrollView")
-            || element.traits.contains("CollectionView")
+        guard element.traits.contains("Scroll")
+            || element.traits.contains("Collection")
             || element.traits.contains("Table") else {
             return nil
         }
@@ -199,21 +198,6 @@ public enum DriverOutput {
     }
 
     public static func elementTypeName(_ raw: Int32) -> String {
-        switch raw {
-        case 7: return "Button"
-        case 8: return "Cell"
-        case 9: return "StaticText"
-        case 10: return "TextField"
-        case 11: return "SecureTextField"
-        case 12: return "TextView"
-        case 13: return "SearchField"
-        case 15: return "Icon"
-        case 17: return "Switch"
-        case 22: return "NavigationBar"
-        case 23: return "Table"
-        case 27: return "ScrollView"
-        case 28: return "WebView"
-        default: return "Other"
-        }
+        IOSUseElementTypes.displayName(rawType: raw)
     }
 }

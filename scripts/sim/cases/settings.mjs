@@ -6,7 +6,7 @@ export const settingsBeforeContactsCaseMetadata = [
   { id: 'DOM-1', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom shows Preferences app', coverage: 'simulator' },
   { id: 'DOM-2', group: 'settings', kind: 'dom-raw', setup: 'settings home', assertion: 'raw dom contains Application', coverage: 'simulator' },
   { id: 'DOM-5', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom contains Settings', coverage: 'simulator' },
-  { id: 'DOM-6', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom contains Window', coverage: 'simulator' },
+  { id: 'DOM-6', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom omits Window header', coverage: 'simulator' },
   { id: 'DOM-7', group: 'settings', kind: 'dom-perf', setup: 'settings home', assertion: 'cold and warm DOM stay under guardrails', coverage: 'simulator' },
   { id: 'DOM-8', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom shows Preferences app', coverage: 'simulator' },
   { id: 'FIND-1', group: 'settings', kind: 'find', setup: 'settings home', assertion: 'stdout contains Find', coverage: 'simulator' },
@@ -41,6 +41,7 @@ export const settingsBeforeContactsCaseMetadata = [
   { id: 'TAP-13', group: 'settings', kind: 'tap-error', setup: 'settings home', assertion: 'coordinate target rejects cindex', coverage: 'simulator' },
   { id: 'TAP-3', group: 'settings', kind: 'tap-coordinate', setup: 'general page', assertion: 'coordinate tap succeeds', coverage: 'simulator' },
   { id: 'TAP-4', group: 'settings', kind: 'tap-error', setup: 'settings home', assertion: 'missing label returns not found', coverage: 'simulator' },
+  { id: 'AS-9', group: 'settings', kind: 'post-dom-mutation', setup: 'settings home', assertion: 'tap --dom appends fresh DOM', coverage: 'simulator' },
   { id: 'SW-7B', group: 'settings', kind: 'swipe-distance', setup: 'general page', assertion: 'forth distance reports down direction', coverage: 'simulator' },
   { id: 'SW-10', group: 'settings', kind: 'swipe-error', setup: 'general page near top', assertion: 'back distance reports boundary', coverage: 'simulator' },
   { id: 'SW-12', group: 'settings', kind: 'swipe-error', setup: 'general page', assertion: 'missing target reports not found/suggestions', coverage: 'simulator' },
@@ -114,8 +115,10 @@ export function buildSettingsBeforeContactsCases(ctx) {
     runCli,
     runCliToFiles,
     runDomPerfCase,
+    runDomNoWindowHeaderCase,
     runFindExactPreferredCase,
     runInputAndVerifyDom,
+    runPostDomMutationCase,
     selected,
     settingsHome,
     generalPage,
@@ -144,7 +147,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'DOM-1', run: () => runCaseContains('DOM-1', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
     { id: 'DOM-2', run: () => runCaseContains('DOM-2', 'Application', ['dom', '--raw', '--fresh'], settingsHome) },
     { id: 'DOM-5', run: () => runCaseContains('DOM-5', 'Settings', ['dom', '--fresh'], settingsHome) },
-    { id: 'DOM-6', run: () => runCaseContains('DOM-6', 'Window:', ['dom', '--fresh'], settingsHome) },
+    { id: 'DOM-6', run: runDomNoWindowHeaderCase },
     { id: 'DOM-7', run: runDomPerfCase },
     { id: 'DOM-8', run: () => runCaseContains('DOM-8', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
     { id: 'FIND-1', run: () => runCaseContains('FIND-1', 'Find', ['find', 'General'], settingsHome) },
@@ -156,13 +159,13 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'com.apple.settings.search', '--traits', 'Button'], settingsHome) },
     { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled'], generalPage) },
     { id: 'FIND-12', run: runAutoLabelFindCase },
-    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Other "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
+    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', '- "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
     { id: 'FIND-10B', run: () => runCaseContains('FIND-10B', 'chevron.forward', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '-1'], settingsHome) },
     { id: 'FIND-11A', run: () => runCaseFailsContains('FIND-11A', 'not found', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '99'], settingsHome) },
     { id: 'FIND-1B', run: async () => {
-      await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'TextField'], async () => {
+      await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'Input'], async () => {
         await openContactsNewContact();
-        const input = runCliToFiles(['input', '--label', 'First name', '--content', 'iosuse-find', '--traits', 'TextField'], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
+        const input = runCliToFiles(['input', '--label', 'First name', '--content', 'iosuse-find', '--traits', 'Input'], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
         if (input.code !== 0) throw new Error(`FIND-1B setup input failed\n${input.stdout}${input.stderr}`);
       });
       if (selected('FIND-1B')) await discardContactIfNeeded();
@@ -214,6 +217,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'TAP-13', run: () => runCaseFailsContains('TAP-13', 'point target does not support traits or cindex', ['tap', '200,400', '--cindex', '0'], settingsHome) },
     { id: 'TAP-3', run: () => runCase('TAP-3', ['tap', '200,400'], generalPage) },
     { id: 'TAP-4', run: () => runCaseFailsContains('TAP-4', 'not found', ['tap', '__ios_use_missing_label__'], settingsHome) },
+    { id: 'AS-9', run: runPostDomMutationCase },
     { id: 'SW-7B', run: () => runCaseMatches('SW-7B', /scrolls=\d+ direction=down/, ['swipe', '--distance', '200', '--dir', 'forth'], generalPage) },
     { id: 'SW-10', run: () => runCaseFailsMatches('SW-10', /boundary.*direction=up/, ['swipe', '--distance', '200', '--dir', 'back'], async () => { await generalPage(); runCli(['swipe', '--distance', '200', '--dir', 'back']); }) },
     { id: 'SW-12', run: () => runCaseFailsMatches('SW-12', /not found|suggestions/i, ['swipe', '--to', '__ios_use_missing_label__'], generalPage) },
@@ -224,7 +228,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'SW-1', run: () => runCaseContains('SW-1', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell'], generalPage) },
     { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--to', 'Keyboard', '--dir', 'forth', '--traits', 'Cell'], generalPage) },
     { id: 'SW-3', run: () => runCaseContains('SW-3', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell'], generalPage) },
-    { id: 'SW-3B', run: () => runCaseContains('SW-3B', 'Other "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
+    { id: 'SW-3B', run: () => runCaseContains('SW-3B', '- "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
     { id: 'SW-4', run: () => runCaseMatches('SW-4', /scrolls=\d+ direction=up/, ['swipe', '--to', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell'], async () => { await generalPage(); runCliToFiles(['swipe', '--to', 'Keyboard', '--traits', 'Cell'], path.join(artifactDir, 'SW-4-setup.out'), path.join(artifactDir, 'SW-4-setup.err')); }) },
     { id: 'SW-5', run: () => runCaseContains('SW-5', 'scrolls=', ['swipe', '--to', 'About', '--from', '200,650', '--traits', 'Cell'], generalPage) },
     { id: 'SW-6', run: () => runCaseContains('SW-6', 'scrolls=', ['swipe', '--to', '100,700'], generalPage) },

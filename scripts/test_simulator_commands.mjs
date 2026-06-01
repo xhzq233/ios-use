@@ -551,12 +551,12 @@ async function runAutoLabelFindCase() {
   const findErr = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: dom auto label then find generated label`);
   const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
-  const match = dom.stdout.match(/^\s+([^\s]+Applicationc\d*) \[CollectionView(?:,[^\]]*)?\](?: \(\d+,\d+,\d+,\d+\))?:/m);
+  const match = dom.stdout.match(/^\s+([^\s]+Appc\d*) \[Collection(?:,[^\]]*)?\](?: \(\d+,\d+,\d+,\d+\))?:/m);
   if (dom.code !== 0 || !match) {
     return recordFail(id, dom.stdout + dom.stderr, dom.code === 0 ? 'assertion' : 'command');
   }
   const autoLabel = match[1];
-  const found = runCliToFiles(['find', autoLabel, '--traits', 'CollectionView'], findOut, findErr);
+  const found = runCliToFiles(['find', autoLabel, '--traits', 'Collection'], findOut, findErr);
   if (found.code === 0 && found.stdout.includes(autoLabel)) {
     recordPass(id);
   } else {
@@ -573,13 +573,44 @@ async function runDomPresentationCase() {
   console.log(`[sim-test] RUN ${id}: ios-use dom presentation shape`);
   const res = runCliToFiles(['dom', '--fresh'], out, err);
   const output = res.stdout;
-  const hasScrollableDirection = /^\s+\S+ \[(?:ScrollView|CollectionView|Table),(?:vertical|horizontal)(?:,[^\]]*)?\] \(\d+,\d+,\d+,\d+\):/m.test(output);
+  const hasScrollableDirection = /^\s+\S+ \[(?:Scroll|Collection|Table),(?:vertical|horizontal)(?:,[^\]]*)?\] \(\d+,\d+,\d+,\d+\):/m.test(output);
   const hasLeafRect = /^\s+- .+ \[[^\]]+\] \(\d+,\d+,\d+,\d+\)$/m.test(output);
   const hasAppHeader = output.includes('App: com.apple.Preferences');
   if (res.code === 0 && hasAppHeader && hasScrollableDirection && hasLeafRect) {
     recordPass(id);
   } else {
     recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-12 expected app header, scroll direction container rect, and leaf rect\n`, res.code === 0 ? 'assertion' : 'command');
+  }
+}
+
+async function runDomNoWindowHeaderCase() {
+  const id = 'DOM-6';
+  if (!selected(id)) return recordSkip(id);
+  await resetSettingsHome();
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  console.log(`[sim-test] RUN ${id}: ios-use dom omits Window header`);
+  const res = runCliToFiles(['dom', '--fresh'], out, err);
+  if (res.code === 0 && res.stdout.includes('App: com.apple.Preferences') && !res.stdout.includes('Window:')) {
+    recordPass(id);
+  } else {
+    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-6 expected App header without Window header\n`, res.code === 0 ? 'assertion' : 'command');
+  }
+}
+
+async function runPostDomMutationCase() {
+  const id = 'AS-9';
+  if (!selected(id)) return recordSkip(id);
+  await resetSettingsHome();
+  const out = path.join(artifactDir, `${id}.out`);
+  const err = path.join(artifactDir, `${id}.err`);
+  console.log(`[sim-test] RUN ${id}: ios-use tap ... --dom 0`);
+  const res = runCliToFiles(['tap', 'com.apple.settings.general', '--traits', 'Button', '--dom', '0'], out, err);
+  const output = `${res.stdout}\n${res.stderr}`;
+  if (res.code === 0 && output.includes('Tap') && output.includes('DOM after 0ms\nApp: com.apple.Preferences')) {
+    recordPass(id);
+  } else {
+    recordFail(id, `${output}[sim-test] AS-9 expected tap output followed by post DOM\n`, res.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -593,13 +624,13 @@ async function runDomPayloadShapeCase() {
   const res = runCliToFiles(['dom', '--fresh'], out, err);
   const output = res.stdout;
   const hasAppHeader = output.includes('App: com.apple.Preferences');
-  const hasWindow = /Window:\s*\d+x\d+/.test(output);
+  const hasNoWindowHeader = !/Window:\s*\d+x\d+/.test(output);
   const hasContainerRect = /^\s+\S+ \[[^\]]+\] \(\d+,\d+,\d+,\d+\):/m.test(output);
   const hasLeafRect = /^\s+- .+ \[[^\]]+\] \(\d+,\d+,\d+,\d+\)$/m.test(output);
-  if (res.code === 0 && hasAppHeader && hasWindow && hasContainerRect && hasLeafRect) {
+  if (res.code === 0 && hasAppHeader && hasNoWindowHeader && hasContainerRect && hasLeafRect) {
     recordPass(id);
   } else {
-    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-4 expected app/window plus container and leaf rects\n`, res.code === 0 ? 'assertion' : 'command');
+    recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-4 expected app header without Window header plus container and leaf rects\n`, res.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -879,7 +910,7 @@ async function openContactsNewContact() {
   await sleep(1000);
   runCli(['dismissAlert']);
 
-  const formVisible = () => runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '0.5']).code === 0;
+  const formVisible = () => runCli(['waitFor', '--label', 'Last name', '--traits', 'Input', '--timeout', '0.5']).code === 0;
   if (formVisible()) return;
 
   for (let i = 0; i < 3; i++) {
@@ -899,7 +930,7 @@ async function openContactsNewContact() {
     if (formVisible()) return;
   }
 
-  const finalWait = runCli(['waitFor', '--label', 'Last name', '--traits', 'TextField', '--timeout', '3']);
+  const finalWait = runCli(['waitFor', '--label', 'Last name', '--traits', 'Input', '--timeout', '3']);
   if (finalWait.code !== 0) {
     throw new Error(`failed to open Contacts New Contact form\n${finalWait.stdout}${finalWait.stderr}`);
   }
@@ -952,7 +983,7 @@ async function discardContactIfNeeded() {
 
 async function openContactsDiscardAlert() {
   await openContactsNewContact();
-  runCli(['input', '--label', 'First name', '--content', 'AlertTest', '--traits', 'TextField']);
+  runCli(['input', '--label', 'First name', '--content', 'AlertTest', '--traits', 'Input']);
   runCli(['tap', 'close', '--traits', 'Button']);
   await sleep(500);
 }
@@ -994,8 +1025,8 @@ async function verifyContactsNameFields(id, suffix) {
   const domOut = path.join(artifactDir, `${id}${suffix}-dom.out`);
   const domErr = path.join(artifactDir, `${id}${suffix}-dom.err`);
   await openContactsNewContact();
-  const first = runCli(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField']);
-  const last = runCli(['input', '--label', 'Last name', '--content', 'Beta', '--traits', 'TextField']);
+  const first = runCli(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'Input']);
+  const last = runCli(['input', '--label', 'Last name', '--content', 'Beta', '--traits', 'Input']);
   writeFile(out, first.stdout + last.stdout);
   writeFile(err, first.stderr + last.stderr);
   const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
@@ -1092,6 +1123,7 @@ steps:
 `);
   writeFile(path.join(flowDir, 'invalid-return.yaml'), 'name: simulator-invalid-return-flow\nsteps:\n  - action: returnIf\n    value: true\n    is: invalid\n');
   writeFile(path.join(flowDir, 'tap-offset.yaml'), 'name: simulator-tap-offset-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    offsetRatio: "0.5,"\n');
+  writeFile(path.join(flowDir, 'tap-dom.yaml'), 'name: simulator-tap-dom-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    dom: 0\n');
   writeFile(path.join(flowDir, 'sleep-default.yaml'), 'name: simulator-sleep-default-flow\napp: com.apple.Preferences\nsteps:\n  - action: sleep\n  - action: dom\n    fresh: true\n');
   writeFile(path.join(flowDir, 'dom-save.yaml'), 'name: simulator-dom-save-flow\napp: com.apple.Preferences\nsteps:\n  - action: dom\n    save: true\n    name: simulator-dom-save\n');
   writeFile(path.join(flowDir, 'oslog-timeout.yaml'), 'name: simulator-oslog-timeout-flow\napp: com.apple.Preferences\nsteps:\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    name: simulator-flow-oslog-timeout\n');
@@ -1220,6 +1252,7 @@ function buildCaseContext() {
     runCliToFiles,
     runCommand,
     runConfigDriverVersionCase,
+    runDomNoWindowHeaderCase,
     runDomPayloadShapeCase,
     runDomPerfCase,
     runDomPresentationCase,
@@ -1230,6 +1263,7 @@ function buildCaseContext() {
     runProxyDoctorCase,
     runProxyReadDoctorNoLockCase,
     runProxyReadMissingCaptureCase,
+    runPostDomMutationCase,
     runStartCreatesDriverLockCase,
     runStopClearsDriverLockCase,
     runStopWithoutDriverLockCase,

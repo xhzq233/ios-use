@@ -3,22 +3,33 @@ import XCTest
 import IOSUseProtocol
 
 final class DriverOutputTests: XCTestCase {
+    func testSharedElementTypesUseShortDisplayNames() {
+        XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 2), "App")
+        XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 48), "Text")
+        XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 49), "Input")
+        XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 45), "Input")
+        XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 46), "Scroll")
+        XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 32), "Collection")
+        XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 58), "Web")
+        XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 999), "-")
+    }
+
     func testFormatFindIncludesValueText() {
         let payload = ForyFindPayload(matches: [
             ForyFindMatch(
-                elemType: 10,
+                elemType: 49,
                 label: "First name",
                 rect: ForyRect(x: 1, y: 2, w: 3, h: 4),
-                traits: ["TextField"],
+                traits: ["Input"],
                 value: "Alpha",
-                ancestors: ["Application", "Table", "Cell[Name]"]
+                ancestors: ["App", "Table", "Cell[Name]"]
             )
         ])
 
         let output = DriverOutput.formatFind(label: "Alpha", payload: payload)
 
         XCTAssertTrue(output.contains("Find \"Alpha\""))
-        XCTAssertTrue(output.contains("[Application > Table > Cell[Name]] TextField \"First name=Alpha\" (1,2,3,4)"))
+        XCTAssertTrue(output.contains("[App > Table > Cell[Name]] Input \"First name=Alpha\" (1,2,3,4)"))
         XCTAssertFalse(output.contains("matches=1"))
     }
 
@@ -45,8 +56,8 @@ final class DriverOutputTests: XCTestCase {
             app: "com.apple.MobileAddressBook",
             windowSize: ForyPoint(x: 393, y: 852),
             elements: [
-                ForyDomElement(traits: ["TextField"], label: "First name", value: "Alpha", rect: ForyRect(x: 1, y: 2, w: 3, h: 4)),
-                ForyDomElement(traits: ["TextField"], label: "Last name", value: "Beta", rect: ForyRect(x: 5, y: 6, w: 7, h: 8))
+                ForyDomElement(traits: ["Input"], label: "First name", value: "Alpha", rect: ForyRect(x: 1, y: 2, w: 3, h: 4)),
+                ForyDomElement(traits: ["Input"], label: "Last name", value: "Beta", rect: ForyRect(x: 5, y: 6, w: 7, h: 8))
             ]
         )
 
@@ -63,7 +74,7 @@ final class DriverOutputTests: XCTestCase {
             elements: [
                 ForyDomElement(traits: ["NavigationBar"], childCount: 2, rect: ForyRect(x: 0, y: 44, w: 402, h: 60)),
                 ForyDomElement(traits: ["Button"], label: "Back", rect: ForyRect(x: 16, y: 54, w: 44, h: 44)),
-                ForyDomElement(traits: ["StaticText"], label: "Settings", rect: ForyRect(x: 156, y: 54, w: 132, h: 44)),
+                ForyDomElement(traits: ["Text"], label: "Settings", rect: ForyRect(x: 156, y: 54, w: 132, h: 44)),
                 ForyDomElement(traits: ["Table"], childCount: 1, rect: ForyRect(x: 0, y: 100, w: 402, h: 774)),
                 ForyDomElement(traits: ["Cell"], childCount: 1, label: "Wi-Fi", rect: ForyRect(x: 0, y: 100, w: 402, h: 44)),
                 ForyDomElement(traits: ["Switch"], value: "1", rect: ForyRect(x: 340, y: 10, w: 50, h: 30))
@@ -72,11 +83,14 @@ final class DriverOutputTests: XCTestCase {
 
         let output = DriverOutput.formatDom(payload)
 
+        XCTAssertFalse(output.hasPrefix("\n"))
+        XCTAssertTrue(output.contains("App: com.apple.Preferences"))
+        XCTAssertFalse(output.contains("Window:"))
         XCTAssertTrue(output.contains("""
 Elements:
   NavigationBar [NavigationBar] (0,44,402,60):
     - Back [Button] (16,54,44,44)
-    - Settings [StaticText] (156,54,132,44)
+    - Settings [Text] (156,54,132,44)
   Table [Table,vertical] (0,100,402,774):
     Wi-Fi [Cell] (0,100,402,44):
       - =1 [Switch] (340,10,50,30)
@@ -87,7 +101,7 @@ Elements:
         let payload = ForyDomPayload(
             app: "com.example",
             elements: [
-                ForyDomElement(traits: ["ScrollView"], childCount: 2),
+                ForyDomElement(traits: ["Scroll"], childCount: 2),
                 ForyDomElement(traits: ["Cell"], label: "First", rect: ForyRect(x: 0, y: 20, w: 320, h: 44)),
                 ForyDomElement(traits: ["Cell"], label: "Second", rect: ForyRect(x: 0, y: 120, w: 320, h: 44)),
             ]
@@ -95,34 +109,34 @@ Elements:
 
         let output = DriverOutput.formatDom(payload)
 
-        XCTAssertTrue(output.contains("ScrollView [ScrollView,vertical]:"))
-        XCTAssertEqual(payload.elements[0].traits, ["ScrollView"])
+        XCTAssertTrue(output.contains("Scroll [Scroll,vertical]:"))
+        XCTAssertEqual(payload.elements[0].traits, ["Scroll"])
     }
 
     func testPresentationDomElementsAddsHorizontalDirectionFromDirectChildren() {
         let elements = [
-            ForyDomElement(traits: ["CollectionView"], childCount: 2),
+            ForyDomElement(traits: ["Collection"], childCount: 2),
             ForyDomElement(traits: ["Cell"], childCount: 1, label: "A", rect: ForyRect(x: 10, y: 20, w: 80, h: 80)),
-            ForyDomElement(traits: ["StaticText"], label: "Nested A", rect: ForyRect(x: 10, y: 20, w: 80, h: 20)),
+            ForyDomElement(traits: ["Text"], label: "Nested A", rect: ForyRect(x: 10, y: 20, w: 80, h: 20)),
             ForyDomElement(traits: ["Cell"], childCount: 1, label: "B", rect: ForyRect(x: 140, y: 20, w: 80, h: 80)),
-            ForyDomElement(traits: ["StaticText"], label: "Nested B", rect: ForyRect(x: 140, y: 20, w: 80, h: 20)),
+            ForyDomElement(traits: ["Text"], label: "Nested B", rect: ForyRect(x: 140, y: 20, w: 80, h: 20)),
         ]
 
         let presentation = DriverOutput.presentationDomElements(elements)
 
-        XCTAssertEqual(presentation[0].traits, ["CollectionView", "horizontal"])
-        XCTAssertEqual(elements[0].traits, ["CollectionView"])
+        XCTAssertEqual(presentation[0].traits, ["Collection", "horizontal"])
+        XCTAssertEqual(elements[0].traits, ["Collection"])
     }
 
     func testPresentationDomElementsDoesNotAddDirectionForWebView() {
         let elements = [
-            ForyDomElement(traits: ["WebView"], childCount: 1),
-            ForyDomElement(traits: ["StaticText"], label: "Content", rect: ForyRect(x: 0, y: 100, w: 300, h: 40)),
+            ForyDomElement(traits: ["Web"], childCount: 1),
+            ForyDomElement(traits: ["Text"], label: "Content", rect: ForyRect(x: 0, y: 100, w: 300, h: 40)),
         ]
 
         let presentation = DriverOutput.presentationDomElements(elements)
 
-        XCTAssertEqual(presentation[0].traits, ["WebView"])
+        XCTAssertEqual(presentation[0].traits, ["Web"])
     }
 
     func testPresentationDomElementsDefaultsSingleChildScrollableToVertical() {
@@ -138,44 +152,44 @@ Elements:
 
     func testPresentationDomElementsDefaultsOverlappingChildrenToVertical() {
         let elements = [
-            ForyDomElement(traits: ["ScrollView"], childCount: 2, rect: ForyRect(x: 0, y: 0, w: 320, h: 640)),
+            ForyDomElement(traits: ["Scroll"], childCount: 2, rect: ForyRect(x: 0, y: 0, w: 320, h: 640)),
             ForyDomElement(traits: ["Cell"], label: "First", rect: ForyRect(x: 10, y: 20, w: 80, h: 80)),
             ForyDomElement(traits: ["Cell"], label: "Second", rect: ForyRect(x: 10, y: 20, w: 80, h: 80)),
         ]
 
         let presentation = DriverOutput.presentationDomElements(elements)
 
-        XCTAssertEqual(presentation[0].traits, ["ScrollView", "vertical"])
+        XCTAssertEqual(presentation[0].traits, ["Scroll", "vertical"])
     }
 
     func testPresentationDomElementsFallsBackToHorizontalFromContainerAspectRatio() {
         let elements = [
-            ForyDomElement(traits: ["ScrollView"], childCount: 1, rect: ForyRect(x: 0, y: 0, w: 500, h: 120)),
+            ForyDomElement(traits: ["Scroll"], childCount: 1, rect: ForyRect(x: 0, y: 0, w: 500, h: 120)),
             ForyDomElement(traits: ["Cell"], label: "Only", rect: ForyRect(x: 10, y: 20, w: 80, h: 80)),
         ]
 
         let presentation = DriverOutput.presentationDomElements(elements)
 
-        XCTAssertEqual(presentation[0].traits, ["ScrollView", "horizontal"])
+        XCTAssertEqual(presentation[0].traits, ["Scroll", "horizontal"])
     }
 
     func testPresentationDomElementsDefaultsMissingRectFallbackToVertical() {
         let elements = [
-            ForyDomElement(traits: ["ScrollView"], childCount: 0),
+            ForyDomElement(traits: ["Scroll"], childCount: 0),
         ]
 
         let presentation = DriverOutput.presentationDomElements(elements)
 
-        XCTAssertEqual(presentation[0].traits, ["ScrollView", "vertical"])
+        XCTAssertEqual(presentation[0].traits, ["Scroll", "vertical"])
     }
 
     func testFormatElementAndSwipe() {
         XCTAssertEqual(
-            DriverOutput.formatElement(ForyElementPayload(elemType: 7, label: "Add", rect: ForyRect(x: 1, y: 2, w: 3, h: 4))),
+            DriverOutput.formatElement(ForyElementPayload(elemType: 9, label: "Add", rect: ForyRect(x: 1, y: 2, w: 3, h: 4))),
             "Button \"Add\" (1,2,3,4)\n"
         )
         XCTAssertEqual(
-            DriverOutput.formatSwipe(ForySwipePayload(elemType: 8, label: "General", scrolls: 2, scrollDirection: "down")),
+            DriverOutput.formatSwipe(ForySwipePayload(elemType: 75, label: "General", scrolls: 2, scrollDirection: "down")),
             "Cell \"General\" scrolls=2 direction=down\n"
         )
     }

@@ -27,6 +27,7 @@ export const hostBridgeCaseMetadata = [
   { id: 'FIND-10', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
   { id: 'FIND-11', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
   { id: 'FIND-11B', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
+  { id: 'FIND-13', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
   { id: 'SW-9B', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
   { id: 'SW-16', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to driver unit tests', coverage: 'driver-unit', requiresPrerequisite: false },
   { id: 'DOM-12', group: 'host-bridge', kind: 'dom-presentation', setup: 'settings home', assertion: 'presentation shape has app, direction and rects', coverage: 'simulator' },
@@ -90,7 +91,7 @@ export function buildHostBridgeCases(ctx) {
     ...[
       'DOM-9', 'DOM-10', 'DOM-11',
       'FIND-5A', 'FIND-5C', 'FIND-5D', 'FIND-6', 'FIND-6B', 'FIND-6C', 'FIND-6D', 'FIND-6E',
-      'FIND-10', 'FIND-11', 'FIND-11B',
+      'FIND-10', 'FIND-11', 'FIND-11B', 'FIND-13',
       'SW-9B', 'SW-16',
     ].map(id => ({ id, run: () => runDriverBridgeCase(id) })),
     { id: 'DOM-12', run: runDomPresentationCase },

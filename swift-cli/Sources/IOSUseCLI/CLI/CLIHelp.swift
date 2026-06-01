@@ -164,39 +164,42 @@ enum CLIHelp {
             )
         case "tap":
             return driverHelp(
-                usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>]",
+                usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
                 summary: "Tap an element label or x,y coordinate.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
                     "--offset-ratio <x,y>  Ratio offset from target top-left",
                     "--traits <traits>     Comma-separated trait filter",
                     "--cindex <index>      Select the Nth cleaned child under a matched parent",
+                    "--dom [ms]            Return a fresh DOM after the mutation; default 200ms",
                 ]
             )
         case "longpress":
             return driverHelp(
-                usage: "ios-use longpress <target> [--duration <ms>] [--traits <traits>] [--cindex <index>]",
+                usage: "ios-use longpress <target> [--duration <ms>] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
                 summary: "Long press an element label or x,y coordinate.",
                 options: [
                     "--duration <ms>   Press duration in milliseconds",
                     "--traits <traits>  Comma-separated trait filter",
                     "--cindex <index>   Select the Nth cleaned child under a matched parent",
+                    "--dom [ms]         Return a fresh DOM after the mutation; default 200ms",
                 ]
             )
         case "input":
             return driverHelp(
-                usage: "ios-use input --label <label> --content <text> [--traits <traits>] [--cindex <index>]",
+                usage: "ios-use input --label <label> --content <text> [--traits <traits>] [--cindex <index>] [--dom [ms]]",
                 summary: "Input text into a field.",
                 options: [
                     "--label <label>    Target field label",
                     "--content <text>   Text to input",
                     "--traits <traits>  Comma-separated trait filter",
                     "--cindex <index>   Select the Nth cleaned child under a matched parent",
+                    "--dom [ms]         Return a fresh DOM after the mutation; default 200ms",
                 ]
             )
         case "swipe":
             return driverHelp(
-                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>]",
+                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
                 summary: "Scroll toward a target or by a fixed distance.",
                 options: [
                     "--to <label>       Target element",
@@ -205,6 +208,7 @@ enum CLIHelp {
                     "--distance <px>    Fixed distance in pixels",
                     "--traits <traits>  Comma-separated trait filter for --to",
                     "--cindex <index>   Select the Nth cleaned child under a matched --to parent",
+                    "--dom [ms]         Return a fresh DOM after the mutation; default 200ms",
                 ]
             )
         case "activateApp":
