@@ -416,6 +416,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.driverStartReadinessTimeoutSeconds, 30.0)
         XCTAssertEqual(IOSUseProtocol.commandTimeoutSeconds, 45)
         XCTAssertEqual(IOSUseProtocol.commandCompletionTimeoutSeconds, 120)
+        XCTAssertEqual(IOSUseProtocol.commandSocketReadTimeoutSeconds, 170)
         XCTAssertEqual(IOSUseProtocol.nsloggerDefaultPort, 50_000)
         XCTAssertEqual(IOSUseProtocol.proxyMitmdumpPort, 9080)
         XCTAssertEqual(IOSUseProtocol.springboardBundleId, "com.apple.springboard")
