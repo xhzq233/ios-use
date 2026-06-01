@@ -450,10 +450,10 @@ private let flowStepAllowedKeys: [String: Set<String>] = [
     "waitFor": ["label", "timeout", "traits", "cindex"],
     "find": ["label", "traits", "cindex", "outputs"],
     "dom": ["raw", "fresh", "candidates", "outputs"],
-    "tap": ["label", "offset", "offsetRatio", "traits", "cindex"],
-    "longpress": ["label", "duration", "traits", "cindex"],
-    "input": ["label", "content", "traits", "cindex"],
-    "swipe": ["dir", "from", "to", "distance", "traits", "cindex", "outputs"],
+    "tap": ["label", "offset", "offsetRatio", "traits", "cindex", "dom"],
+    "longpress": ["label", "duration", "traits", "cindex", "dom"],
+    "input": ["label", "content", "traits", "cindex", "dom"],
+    "swipe": ["dir", "from", "to", "distance", "traits", "cindex", "outputs", "dom"],
     "screenshot": ["name"],
     "activateApp": ["bundleId"],
     "terminateApp": ["bundleId"],
@@ -500,6 +500,7 @@ enum FlowLowering {
             args += try optionalStringArg("--offset-ratio", step["offsetRatio"], field: "tap.offsetRatio")
             args += try optionalStringArg("--traits", step["traits"], field: "tap.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "tap.cindex", allowNegative: true)
+            args += try optionalIntArg("--dom", step["dom"], field: "tap.dom", allowNegative: false)
             return args
 
         case "longpress":
@@ -508,12 +509,14 @@ enum FlowLowering {
             args += try optionalIntArg("--duration", step["duration"], field: "longpress.duration", allowNegative: false)
             args += try optionalStringArg("--traits", step["traits"], field: "longpress.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "longpress.cindex", allowNegative: true)
+            args += try optionalIntArg("--dom", step["dom"], field: "longpress.dom", allowNegative: false)
             return args
 
         case "input":
             var args = ["input", "--label", try requiredString(step["label"], field: "input.label"), "--content", try requiredString(step["content"], field: "input.content")]
             args += try optionalStringArg("--traits", step["traits"], field: "input.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "input.cindex", allowNegative: true)
+            args += try optionalIntArg("--dom", step["dom"], field: "input.dom", allowNegative: false)
             return args
 
         case "swipe":
@@ -524,6 +527,7 @@ enum FlowLowering {
             args += try optionalNumberArg("--distance", step["distance"], field: "swipe.distance")
             args += try optionalStringArg("--traits", step["traits"], field: "swipe.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "swipe.cindex", allowNegative: true)
+            args += try optionalIntArg("--dom", step["dom"], field: "swipe.dom", allowNegative: false)
             return args
 
         case "screenshot":
@@ -598,16 +602,19 @@ enum FlowLowering {
             try validateStringLike(step["offsetRatio"], field: "tap.offsetRatio")
             try validateStringLike(step["traits"], field: "tap.traits")
             try validateIntLike(step["cindex"], field: "tap.cindex", allowNegative: true)
+            try validateIntLike(step["dom"], field: "tap.dom", allowNegative: false)
         case "longpress":
             try validateStringLike(step["label"], field: "longpress.label", required: true)
             try validateIntLike(step["duration"], field: "longpress.duration", allowNegative: false)
             try validateStringLike(step["traits"], field: "longpress.traits")
             try validateIntLike(step["cindex"], field: "longpress.cindex", allowNegative: true)
+            try validateIntLike(step["dom"], field: "longpress.dom", allowNegative: false)
         case "input":
             try validateStringLike(step["label"], field: "input.label", required: true)
             try validateStringLike(step["content"], field: "input.content", required: true)
             try validateStringLike(step["traits"], field: "input.traits")
             try validateIntLike(step["cindex"], field: "input.cindex", allowNegative: true)
+            try validateIntLike(step["dom"], field: "input.dom", allowNegative: false)
         case "swipe":
             try validateStringLike(step["to"], field: "swipe.to")
             try validateStringLike(step["from"], field: "swipe.from")
@@ -615,6 +622,7 @@ enum FlowLowering {
             try validateNumberLike(step["distance"], field: "swipe.distance")
             try validateStringLike(step["traits"], field: "swipe.traits")
             try validateIntLike(step["cindex"], field: "swipe.cindex", allowNegative: true)
+            try validateIntLike(step["dom"], field: "swipe.dom", allowNegative: false)
         case "screenshot":
             try validateStringLike(step["name"], field: "screenshot.name")
         case "activateApp":

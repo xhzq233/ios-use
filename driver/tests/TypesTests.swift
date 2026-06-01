@@ -451,7 +451,7 @@ final class TypesTests: XCTestCase {
         let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
 
         XCTAssertEqual(elements.map { $0.node.label }, ["App", "Top", "Merged"])
-        XCTAssertEqual(elements.map { $0.traits.first }, ["Application", "Button", "Button"])
+        XCTAssertEqual(elements.map { $0.traits.first }, ["App", "Button", "Button"])
     }
 
     func testCleanTree_Rule4SameTypeMergePreservesDescendants() {
@@ -507,10 +507,10 @@ final class TypesTests: XCTestCase {
         assignAutoLabels(elements)
         let cs = makeCleanedSnapshot(elements)
 
-        XCTAssertEqual(displayName(for: elements[1].node), "SettingsApplicationc1")
-        XCTAssertEqual(serializeDomFlat(from: elements)[1].label, "SettingsApplicationc1")
+        XCTAssertEqual(displayName(for: elements[1].node), "SettingsAppc1")
+        XCTAssertEqual(serializeDomFlat(from: elements)[1].label, "SettingsAppc1")
 
-        switch rawFindInSnapshot(ForyTarget(label: "SettingsApplicationc1", traits: "Table"), cs: cs, visibility: .any) {
+        switch rawFindInSnapshot(ForyTarget(label: "SettingsAppc1", traits: "Table"), cs: cs, visibility: .any) {
         case .found(let found):
             XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.table.rawValue)
         default:
@@ -527,12 +527,12 @@ final class TypesTests: XCTestCase {
         assignAutoLabels(elements)
         let cs = makeCleanedSnapshot(elements)
 
-        XCTAssertEqual(displayName(for: elements[1].node), "AppApplication")
+        XCTAssertEqual(displayName(for: elements[1].node), "AppApp")
 
-        switch rawFindInSnapshot(ForyTarget(label: "AppApplication", traits: "Cell", cindex: -1), cs: cs, visibility: .any) {
+        switch rawFindInSnapshot(ForyTarget(label: "AppApp", traits: "Cell", cindex: -1), cs: cs, visibility: .any) {
         case .found(let found):
             XCTAssertEqual(displayName(for: found.node), "Open")
-            XCTAssertEqual(ancestorChainNames(found.node), ["Application[App]", "Cell[AppApplication]"])
+            XCTAssertEqual(ancestorChainNames(found.node), ["App[App]", "Cell[AppApp]"])
         default:
             XCTFail("expected auto-labeled cell to support cindex lookup")
         }
@@ -573,11 +573,11 @@ final class TypesTests: XCTestCase {
 
         XCTAssertEqual(elements.map { displayName(for: $0.node) }, [
             "App",
-            "AppApplicationc1",
+            "AppAppc1",
             "CollectionChild",
-            "AppApplicationc2",
+            "AppAppc2",
             "ScrollChild",
-            "AppApplicationc3",
+            "AppAppc3",
             "TableChild",
         ])
     }
@@ -586,6 +586,16 @@ final class TypesTests: XCTestCase {
 
     func testElementTypeName_OtherReturnsDash() {
         XCTAssertEqual(elementTypeName(.other), "-")
+    }
+
+    func testElementTypeName_UsesShortSharedNames() {
+        XCTAssertEqual(elementTypeName(.application), "App")
+        XCTAssertEqual(elementTypeName(.staticText), "Text")
+        XCTAssertEqual(elementTypeName(.textField), "Input")
+        XCTAssertEqual(elementTypeName(.searchField), "Input")
+        XCTAssertEqual(elementTypeName(.scrollView), "Scroll")
+        XCTAssertEqual(elementTypeName(.collectionView), "Collection")
+        XCTAssertEqual(elementTypeName(.webView), "Web")
     }
 
     // MARK: - resolveButtonIndex logic
@@ -711,13 +721,32 @@ final class TypesTests: XCTestCase {
         }
     }
 
+    func testRawFindInSnapshot_TraitFilter_UsesDisplayedShortTypeOnly() {
+        let input = makeElement(label: "搜索", type: .searchField)
+        let cs = makeCleanedSnapshot([input])
+
+        switch rawFindInSnapshot(ForyTarget(label: "搜索", traits: "Input"), cs: cs) {
+        case .found(let found):
+            XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.searchField.rawValue)
+        default:
+            XCTFail("expected displayed short type to match")
+        }
+
+        switch rawFindInSnapshot(ForyTarget(label: "搜索", traits: "SearchField"), cs: cs) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected old long type not to match")
+        }
+    }
+
     func testRawFindInSnapshot_MultiTraitAnd_MatchesAll() {
         let elem = makeElement(label: "设置", type: .button)
         let cs = makeCleanedSnapshot([elem])
 
-        switch rawFindInSnapshot(ForyTarget(label: "设置", traits: "button,statictext"), cs: cs) {
+        switch rawFindInSnapshot(ForyTarget(label: "设置", traits: "button,text"), cs: cs) {
         case .notFound:
-            break // expected: Button does not have StaticText trait
+            break // expected: Button does not have Text trait
         default:
             XCTFail("expected notFound when traits don't all match")
         }
@@ -938,12 +967,12 @@ final class TypesTests: XCTestCase {
         )
         let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: search, appFrame: CGRect(x: 0, y: 0, width: 393, height: 852)))])
 
-        switch rawFindInSnapshot(ForyTarget(label: "Search", traits: "SearchField"), cs: cs, visibility: .only) {
+        switch rawFindInSnapshot(ForyTarget(label: "Search", traits: "Input"), cs: cs, visibility: .only) {
         case .found(let found):
             XCTAssertEqual(found.node.frame.origin.x, 33)
             XCTAssertEqual(found.node.frame.origin.y, 781)
         default:
-            XCTFail("expected SearchField with empty visibleFrame to fallback to frame when frame is in bounds")
+            XCTFail("expected Input with empty visibleFrame to fallback to frame when frame is in bounds")
         }
     }
 

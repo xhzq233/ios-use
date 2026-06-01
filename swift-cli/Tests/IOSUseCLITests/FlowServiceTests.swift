@@ -111,7 +111,7 @@ final class FlowServiceTests: XCTestCase {
             outputs: found
         """)
         let driver = FakeFlowDriver()
-        driver.findPayload = ForyFindPayload(matches: [ForyFindMatch(elemType: 7, label: "InjectedLabel", value: "value")])
+        driver.findPayload = ForyFindPayload(matches: [ForyFindMatch(elemType: 9, label: "InjectedLabel", value: "value")])
 
         let result = try FlowService.runForTesting(file: parent.path, externalVars: ["label": "InjectedLabel"], paths: fixture.paths, driver: driver)
 
@@ -221,7 +221,7 @@ final class FlowServiceTests: XCTestCase {
             app: "com.example",
             windowSize: ForyPoint(x: 390, y: 844),
             elements: [
-                ForyDomElement(traits: ["ScrollView"], childCount: 2),
+                ForyDomElement(traits: ["Scroll"], childCount: 2),
                 ForyDomElement(traits: ["Cell"], label: "First", rect: ForyRect(x: 0, y: 100, w: 390, h: 44)),
                 ForyDomElement(traits: ["Cell"], label: "Second", rect: ForyRect(x: 0, y: 200, w: 390, h: 44)),
             ]
@@ -233,7 +233,7 @@ final class FlowServiceTests: XCTestCase {
         let dom = try XCTUnwrap(page["dom"] as? [String: Any])
         let elements = try XCTUnwrap(dom["elements"] as? [[String: Any]])
         let traits = try XCTUnwrap(elements.first?["traits"] as? [String])
-        XCTAssertEqual(traits, ["ScrollView", "vertical"])
+        XCTAssertEqual(traits, ["Scroll", "vertical"])
     }
 
     func testMissingTemplateValueFailsFast() throws {
@@ -368,7 +368,7 @@ final class FlowServiceTests: XCTestCase {
             cindex: -1
           - action: waitFor
             label: Ready
-            traits: StaticText
+            traits: Text
             cindex: 0
           - action: tap
             label: Settings
@@ -377,7 +377,7 @@ final class FlowServiceTests: XCTestCase {
           - action: input
             label: Name
             content: Alpha
-            traits: TextField
+            traits: Input
             cindex: 0
         """)
         let driver = FakeFlowDriver()
@@ -393,6 +393,29 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(driver.taps.first?.cindex, 1)
         XCTAssertEqual(driver.inputs.first?.label, "Name")
         XCTAssertEqual(driver.inputs.first?.cindex, 0)
+    }
+
+    func testFlowPostDomForHighFrequencyMutations() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("post-dom.yaml", """
+        name: post-dom-flow
+        steps:
+          - action: tap
+            label: Continue
+            dom: 0
+        """)
+        let driver = FakeFlowDriver()
+        driver.domPayload = ForyDomPayload(
+            app: "com.example",
+            elements: [ForyDomElement(traits: ["Text"], label: "Next")]
+        )
+
+        let result = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
+
+        XCTAssertEqual(driver.commands, ["tap", "dom"])
+        XCTAssertTrue(result.stdout.contains("DOM after 0ms"))
+        XCTAssertTrue(result.stdout.contains("App: com.example"))
+        XCTAssertTrue(result.stdout.contains("- Next [Text]"))
     }
 
     func testFlowRejectsCindexOnPointTarget() throws {
@@ -1134,7 +1157,7 @@ private final class FakeFlowDriver: FlowDriver {
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
         commands.append("swipe")
         swipes.append((to, from, distance, dir, traits, cindex))
-        return ForySwipePayload(elemType: 8, label: to.label, scrolls: 1, scrollDirection: "down")
+        return ForySwipePayload(elemType: 75, label: to.label, scrolls: 1, scrollDirection: "down")
     }
     func screenshot() throws -> Data {
         commands.append("screenshot")

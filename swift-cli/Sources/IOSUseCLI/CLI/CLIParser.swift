@@ -289,16 +289,18 @@ public enum CLIParser {
         var offsetRatio: String?
         var traits: String?
         var cindex: Int32?
+        var domAfterMs: Int?
         while let arg = parser.consume() {
             switch arg {
             case "--offset": offset = try parser.valueAllowingLeadingDash(for: arg)
             case "--offset-ratio": offsetRatio = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--dom": domAfterMs = try parseNonNegativeIntStrict(parser.optionalValueAllowingLeadingDash(defaultValue: "200"), label: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
+        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, domAfterMs: domAfterMs)
     }
 
     private static func parseLongPress(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -306,15 +308,17 @@ public enum CLIParser {
         var duration: Int?
         var traits: String?
         var cindex: Int32?
+        var domAfterMs: Int?
         while let arg = parser.consume() {
             switch arg {
             case "--duration": duration = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--dom": domAfterMs = try parseNonNegativeIntStrict(parser.optionalValueAllowingLeadingDash(defaultValue: "200"), label: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex)
+        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex, domAfterMs: domAfterMs)
     }
 
     private static func parseInput(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -322,16 +326,18 @@ public enum CLIParser {
         var content: String?
         var traits: String?
         var cindex: Int32?
+        var domAfterMs: Int?
         while let arg = parser.consume() {
             switch arg {
             case "--label": label = try parser.value(for: arg)
             case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--dom": domAfterMs = try parseNonNegativeIntStrict(parser.optionalValueAllowingLeadingDash(defaultValue: "200"), label: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .input(label: try require(label, option: "--label"), content: try require(content, option: "--content"), traits: traits, cindex: cindex)
+        return .input(label: try require(label, option: "--label"), content: try require(content, option: "--content"), traits: traits, cindex: cindex, domAfterMs: domAfterMs)
     }
 
     private static func parseSwipe(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -341,6 +347,7 @@ public enum CLIParser {
         var distance: Double?
         var traits: String?
         var cindex: Int32?
+        var domAfterMs: Int?
         while let arg = parser.consume() {
             switch arg {
             case "--to": to = try parser.value(for: arg)
@@ -352,10 +359,11 @@ public enum CLIParser {
             case "--distance": distance = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--dom": domAfterMs = try parseNonNegativeIntStrict(parser.optionalValueAllowingLeadingDash(defaultValue: "200"), label: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex)
+        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex, domAfterMs: domAfterMs)
     }
 
     private static func parseDom(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -604,6 +612,16 @@ private struct ArgumentParser {
         guard let value = consume() else {
             throw CLIParseError.missingOptionValue(option)
         }
+        return Self.stripInlinePrefix(value)
+    }
+
+    mutating func optionalValueAllowingLeadingDash(defaultValue: String) -> String {
+        guard index < arguments.count else { return defaultValue }
+        let value = arguments[index]
+        if value.hasPrefix("--"), !value.hasPrefix(Self.inlineValuePrefix) {
+            return defaultValue
+        }
+        index += 1
         return Self.stripInlinePrefix(value)
     }
 

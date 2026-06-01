@@ -40,33 +40,49 @@ enum DriverCommandExecutor {
             try data.write(to: URL(fileURLWithPath: path))
             return DriverCommandResult(stdout: "Screenshot saved: \(path)\n", payload: .screenshot(data))
 
-        case .tap(let target, let offset, let offsetRatio, let traits, let cindex):
+        case .tap(let target, let offset, let offsetRatio, let traits, let cindex, let domAfterMs):
             let params = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
                 .element(try $0.tap(target: params.target, traits: traits, cindex: cindex, offset: params.offset, ratio: params.ratio))
             }, as: ForyElementPayload.self)
-            return DriverCommandResult(stdout: "Tap\n\(DriverOutput.formatElement(payload))", payload: .element(payload))
+            return try appendPostDomIfNeeded(
+                DriverCommandResult(stdout: "Tap\n\(DriverOutput.formatElement(payload))", payload: .element(payload)),
+                domAfterMs: domAfterMs,
+                clientRunner: clientRunner
+            )
 
-        case .longPress(let target, let duration, let traits, let cindex):
+        case .longPress(let target, let duration, let traits, let cindex, let domAfterMs):
             let foryTarget = try resolveTarget(target, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
                 .element(try $0.longPress(target: foryTarget, durationMs: duration, traits: traits, cindex: cindex))
             }, as: ForyElementPayload.self)
-            return DriverCommandResult(stdout: "Longpress\n\(DriverOutput.formatElement(payload))", payload: .element(payload))
+            return try appendPostDomIfNeeded(
+                DriverCommandResult(stdout: "Longpress\n\(DriverOutput.formatElement(payload))", payload: .element(payload)),
+                domAfterMs: domAfterMs,
+                clientRunner: clientRunner
+            )
 
-        case .input(let label, let content, let traits, let cindex):
+        case .input(let label, let content, let traits, let cindex, let domAfterMs):
             _ = try clientRunner {
                 try $0.input(label: label, content: content, traits: traits, cindex: cindex)
                 return nil
             }
-            return DriverCommandResult(stdout: "Input \"\(content)\" into \"\(label)\"\n", payload: nil)
+            return try appendPostDomIfNeeded(
+                DriverCommandResult(stdout: "Input \"\(content)\" into \"\(label)\"\n", payload: nil),
+                domAfterMs: domAfterMs,
+                clientRunner: clientRunner
+            )
 
-        case .swipe(let to, let from, let dir, let distance, let traits, let cindex):
+        case .swipe(let to, let from, let dir, let distance, let traits, let cindex, let domAfterMs):
             let params = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
                 .swipe(try $0.swipe(to: params.to, from: params.from, distance: distance, dir: dir, traits: traits, cindex: cindex))
             }, as: ForySwipePayload.self)
-            return DriverCommandResult(stdout: DriverOutput.formatSwipe(payload), payload: .swipe(payload))
+            return try appendPostDomIfNeeded(
+                DriverCommandResult(stdout: DriverOutput.formatSwipe(payload), payload: .swipe(payload)),
+                domAfterMs: domAfterMs,
+                clientRunner: clientRunner
+            )
 
         case .activateApp(let bundleId):
             _ = try clientRunner {
@@ -104,15 +120,30 @@ enum DriverCommandExecutor {
 
     static func validate(action: DriverAction) throws {
         switch action {
-        case .tap(let target, let offset, let offsetRatio, let traits, let cindex):
+        case .tap(let target, let offset, let offsetRatio, let traits, let cindex, _):
             _ = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
-        case .longPress(let target, _, let traits, let cindex):
+        case .longPress(let target, _, let traits, let cindex, _):
             _ = try resolveTarget(target, traits: traits, cindex: cindex)
-        case .swipe(let to, let from, _, _, let traits, let cindex):
+        case .swipe(let to, let from, _, _, let traits, let cindex, _):
             _ = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
         default:
             break
         }
+    }
+
+    private static func appendPostDomIfNeeded(_ result: DriverCommandResult, domAfterMs: Int?, clientRunner: ClientRunner) throws -> DriverCommandResult {
+        guard let domAfterMs else { return result }
+        if domAfterMs > 0 {
+            Thread.sleep(forTimeInterval: Double(domAfterMs) / 1000.0)
+        }
+        let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: false, fresh: true)) }, as: ForyDomPayload.self)
+        var stdout = result.stdout
+        if !stdout.hasSuffix("\n") {
+            stdout += "\n"
+        }
+        stdout += "\nDOM after \(domAfterMs)ms\n"
+        stdout += DriverOutput.formatDom(payload)
+        return DriverCommandResult(stdout: stdout, payload: result.payload)
     }
 
     static func resolveTapParams(

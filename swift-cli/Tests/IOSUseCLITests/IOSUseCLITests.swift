@@ -454,11 +454,11 @@ final class IOSUseCLITests: XCTestCase {
             XCTAssertEqual(session.deviceType, "real")
             attempts += 1
             if attempts == 1 {
-                return FakeDriverCommandClient(domHandler: {
+                return FakeDriverCommandClient(domHandler: { _, _ in
                     throw DriverClientError.connectFailed(61)
                 })
             }
-            return FakeDriverCommandClient(domHandler: {
+            return FakeDriverCommandClient(domHandler: { _, _ in
                 ForyDomPayload(app: "com.example.app", windowSize: ForyPoint(x: 100, y: 200))
             })
         }
@@ -497,11 +497,11 @@ final class IOSUseCLITests: XCTestCase {
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             attempts += 1
             if attempts == 1 {
-                return FakeDriverCommandClient(domHandler: {
+                return FakeDriverCommandClient(domHandler: { _, _ in
                     throw DriverClientError.connectFailed(61)
                 })
             }
-            return FakeDriverCommandClient(domHandler: {
+            return FakeDriverCommandClient(domHandler: { _, _ in
                 ForyDomPayload(app: "com.example.app", windowSize: ForyPoint(x: 100, y: 200))
             })
         }
@@ -539,6 +539,43 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "App com.apple.Preferences activated\n")
         XCTAssertEqual(activatedBundleIDs, ["com.apple.Preferences"])
+    }
+
+    func testMutatingCommandCanAppendFreshDom() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-post-dom-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-POST-DOM", deviceType: "simulator", paths: paths)
+        var calls: [String] = []
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(
+                domHandler: { raw, fresh in
+                    calls.append("dom raw=\(raw) fresh=\(fresh)")
+                    return ForyDomPayload(
+                        app: "com.example",
+                        elements: [ForyDomElement(traits: ["Text"], label: "Ready", rect: ForyRect(x: 1, y: 2, w: 3, h: 4))]
+                    )
+                },
+                tapHandler: { target, _, _, _, _ in
+                    calls.append("tap \(target.label)")
+                    return ForyElementPayload(elemType: 9, label: target.label, rect: ForyRect(x: 10, y: 20, w: 30, h: 40))
+                }
+            )
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["tap", "Continue", "--dom", "0"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(calls, ["tap Continue", "dom raw=false fresh=true"])
+        XCTAssertTrue(result.stdout.contains("Tap\nButton \"Continue\" (10,20,30,40)"))
+        XCTAssertTrue(result.stdout.contains("DOM after 0ms\nApp: com.example"))
+        XCTAssertTrue(result.stdout.contains("App: com.example"))
+        XCTAssertTrue(result.stdout.contains("- Ready [Text] (1,2,3,4)"))
     }
 
     func testRealDeviceTerminateAppUsesDriverClientAndSkipsMissingProcess() throws {
@@ -604,7 +641,7 @@ final class IOSUseCLITests: XCTestCase {
             attempts += 1
             XCTAssertEqual(session.udid, "SIM-LOCK")
             XCTAssertEqual(session.deviceType, "simulator")
-            return FakeDriverCommandClient(domHandler: {
+            return FakeDriverCommandClient(domHandler: { _, _ in
                 throw DriverClientError.readFailed
             })
         }
@@ -1247,13 +1284,17 @@ final class IOSUseCLITests: XCTestCase {
 }
 
 private final class FakeDriverCommandClient: DriverCommandClient {
-    private let domHandler: () throws -> ForyDomPayload
+    private let domHandler: (Bool, Bool) throws -> ForyDomPayload
+    private let tapHandler: (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload
     private let activateHandler: (String) throws -> Void
     private let terminateHandler: (String) throws -> Void
 
     init(
-        domHandler: @escaping () throws -> ForyDomPayload = {
+        domHandler: @escaping (Bool, Bool) throws -> ForyDomPayload = { _, _ in
             throw CLIParseError.invalidValue("unexpected dom")
+        },
+        tapHandler: @escaping (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload = { _, _, _, _, _ in
+            throw CLIParseError.invalidValue("unexpected tap")
         },
         activateHandler: @escaping (String) throws -> Void = { _ in
             throw CLIParseError.invalidValue("unexpected activateApp")
@@ -1263,6 +1304,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         }
     ) {
         self.domHandler = domHandler
+        self.tapHandler = tapHandler
         self.activateHandler = activateHandler
         self.terminateHandler = terminateHandler
     }
@@ -1270,7 +1312,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     func close() {}
 
     func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload {
-        try domHandler()
+        try domHandler(raw, fresh)
     }
 
     func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload {
@@ -1286,7 +1328,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     }
 
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
-        throw CLIParseError.invalidValue("unexpected tap")
+        try tapHandler(target, traits, cindex, offset, ratio)
     }
 
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload {
