@@ -66,7 +66,7 @@ steps:
 - 先确认页面，再做动作：切页后先 `waitFor` 或 `dom`
 - 能用 label 就不用坐标；坐标只作兜底
 - 需要滚动到目标时，优先 `swipe --to` 对应的 flow 写法
-- 关键节点保留 `dom` / `oslog`，方便失败后定位
+- 快速 batch 操作可在 `tap` / `longpress` / `input` / `swipe` 上加 `dom: <ms>`，动作成功后追加 fresh DOM；关键节点也可保留独立 `dom` / `oslog`，方便失败后定位
 - 公共前置条件和公共收尾动作抽成 subflow，不要在多个 flow 里重复粘贴
 
 ## 5. 核心字段
@@ -241,7 +241,7 @@ steps:
 
 - 用于拿到结构化节点，常和 `outputs` 配合
 - 找不到或命中歧义时会直接失败
-- `traits` 支持逗号分隔多值，AND 语义（元素必须同时包含所有指定 trait）
+- `traits` 支持逗号分隔多值，AND 语义（元素必须同时包含所有指定 trait）；type trait 使用 DOM 展示短名，如 `Text`、`Input`、`Scroll`、`Collection`
 - `cindex` 支持按 DOM 中显示的顺序选择父元素的直接子元素，允许负数，`-1` 表示最后一个子元素
 
 ```yaml
@@ -264,7 +264,7 @@ steps:
 - 调试阶段建议多用
 - Flow 内需要消费 DOM 结果时使用 `outputs`
 - `dom.save` / `dom.print` / `dom.name` 不是合法 Flow 字段；需要落盘或人工查看时直接运行 CLI `ios-use dom`
-- Flow `dom.outputs` 的 DOM 结构和 `ios-use dom` 展示一致；`ScrollView` / `CollectionView` / `Table` 可能显示 `vertical` / `horizontal`，但这些方向不能作为 `traits` 过滤条件
+- Flow `dom.outputs` 的 DOM 结构和 `ios-use dom` 展示一致；`Scroll` / `Collection` / `Table` 可能显示 `vertical` / `horizontal`，但这些方向不能作为 `traits` 过滤条件
 
 ```yaml
 - action: dom
@@ -278,6 +278,7 @@ steps:
 - `outputs` 只支持 `find` / `dom` / `runFlow` / `swipe`
 - 字段类型严格：`raw: "true"`、`clear: 1`、`offset: {x: -50}` 都会失败
 - `offset` / `offsetRatio` 必须写成 CLI 同款字符串，例如 `offset: "-50,-50"` 或 `offsetRatio: "0.8,"`
+- `tap.dom` / `longpress.dom` / `input.dom` / `swipe.dom` 必须是非负整数，不支持 `dom: true`
 - 明确写死路径的 `runFlow.file` 子 flow 会和父 flow 一起提前检查
 
 ### 6.4 `swipe`
@@ -289,6 +290,7 @@ steps:
   - 方向自动推断，无需手动指定
 - 固定距离：通过 `dir + distance` 做纯距离滚动
 - `traits` / `cindex` 只作用于 `to`，不作用于 `from`
+- `dom: <ms>` 会在 swipe 成功后追加 fresh DOM
 
 ```yaml
 # 推荐：自动循环滚动到目标可见
@@ -296,6 +298,7 @@ steps:
   to: 开发者
   from: 蓝牙
   cindex: -1
+  dom: 200
 ```
 
 ```yaml

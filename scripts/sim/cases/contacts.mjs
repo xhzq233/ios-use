@@ -35,10 +35,10 @@ export function buildContactsCases(ctx) {
 
   return [
     { id: 'IN-1', run: async () => { await runInputAndVerifyDom('IN-1', 'First name', 'Alpha', 'First name=Alpha', [], openContactsNewContact); if (selected('IN-1')) await discardContactIfNeeded(); } },
-    { id: 'IN-2', run: async () => { await runInputAndVerifyDom('IN-2', 'Last name', 'Beta', 'Last name=Beta', ['--traits', 'TextField'], openContactsNewContact); if (selected('IN-2')) await discardContactIfNeeded(); } },
-    { id: 'IN-3', run: async () => { await runInputAndVerifyDom('IN-3', 'Alpha', 'More', 'First name=AlphaMore', ['--traits', 'TextField'], async () => { await openContactsNewContact(); runCliToFiles(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'TextField'], path.join(artifactDir, 'IN-3-setup.out'), path.join(artifactDir, 'IN-3-setup.err')); }); if (selected('IN-3')) await discardContactIfNeeded(); } },
+    { id: 'IN-2', run: async () => { await runInputAndVerifyDom('IN-2', 'Last name', 'Beta', 'Last name=Beta', ['--traits', 'Input'], openContactsNewContact); if (selected('IN-2')) await discardContactIfNeeded(); } },
+    { id: 'IN-3', run: async () => { await runInputAndVerifyDom('IN-3', 'Alpha', 'More', 'First name=AlphaMore', ['--traits', 'Input'], async () => { await openContactsNewContact(); runCliToFiles(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'Input'], path.join(artifactDir, 'IN-3-setup.out'), path.join(artifactDir, 'IN-3-setup.err')); }); if (selected('IN-3')) await discardContactIfNeeded(); } },
     { id: 'IN-4', run: () => runCaseFailsMatches('IN-4', /not inputtable|not found|failed/i, ['input', '--label', 'General', '--content', 'Nope', '--traits', 'Button'], settingsHome) },
-    { id: 'IN-5', run: () => runInputAndVerifyDom('IN-5', 'Search', 'ZZZIOSUse', 'ZZZIOSUse', ['--traits', 'SearchField'], async () => {
+    { id: 'IN-5', run: () => runInputAndVerifyDom('IN-5', 'Search', 'ZZZIOSUse', 'ZZZIOSUse', ['--traits', 'Input'], async () => {
       runCli(['terminateApp', 'com.apple.MobileAddressBook']);
       runCli(['activateApp', 'com.apple.MobileAddressBook']);
       await sleep(1000);

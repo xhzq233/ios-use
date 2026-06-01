@@ -66,30 +66,50 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["waitFor", "--label", "Ready", "--timeout", "1.5", "--traits", "StaticText", "--cindex", "0"]),
-            .driver(.waitFor(label: "Ready", timeout: 1.5, traits: "StaticText", cindex: 0))
+            try CLIParser.parse(["waitFor", "--label", "Ready", "--timeout", "1.5", "--traits", "Text", "--cindex", "0"]),
+            .driver(.waitFor(label: "Ready", timeout: 1.5, traits: "Text", cindex: 0))
         )
     }
 
     func testParsesDriverMutationCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["tap", "General", "--offset", "1,2", "--offset-ratio", ".5,.25", "--traits", "Cell", "--cindex", "2"]),
-            .driver(.tap(target: "General", offset: "1,2", offsetRatio: ".5,.25", traits: "Cell", cindex: 2))
+            .driver(.tap(target: "General", offset: "1,2", offsetRatio: ".5,.25", traits: "Cell", cindex: 2, domAfterMs: nil))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["longpress", "General", "--duration", "500", "--traits", "Icon", "--cindex", "-2"]),
-            .driver(.longPress(target: "General", duration: 500, traits: "Icon", cindex: -2))
+            .driver(.longPress(target: "General", duration: 500, traits: "Icon", cindex: -2, domAfterMs: nil))
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["input", "--label", "First name", "--content", "Alpha", "--traits", "TextField", "--cindex", "0"]),
-            .driver(.input(label: "First name", content: "Alpha", traits: "TextField", cindex: 0))
+            try CLIParser.parse(["input", "--label", "First name", "--content", "Alpha", "--traits", "Input", "--cindex", "0"]),
+            .driver(.input(label: "First name", content: "Alpha", traits: "Input", cindex: 0, domAfterMs: nil))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["swipe", "--to", "General", "--from", "Settings", "--dir", "forth", "--distance", "200", "--traits", "Cell", "--cindex", "-1"]),
-            .driver(.swipe(to: "General", from: "Settings", dir: "forth", distance: 200, traits: "Cell", cindex: -1))
+            .driver(.swipe(to: "General", from: "Settings", dir: "forth", distance: 200, traits: "Cell", cindex: -1, domAfterMs: nil))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["tap", "General", "--dom"]),
+            .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, domAfterMs: 200))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["longpress", "General", "--dom", "0"]),
+            .driver(.longPress(target: "General", duration: nil, traits: nil, cindex: nil, domAfterMs: 0))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["input", "--label", "First name", "--content", "Alpha", "--dom=300"]),
+            .driver(.input(label: "First name", content: "Alpha", traits: nil, cindex: nil, domAfterMs: 300))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["swipe", "--dir", "forth", "--distance", "200", "--dom", "--traits", "Cell"]),
+            .driver(.swipe(to: nil, from: nil, dir: "forth", distance: 200, traits: "Cell", cindex: nil, domAfterMs: 200))
         )
     }
 
@@ -259,17 +279,17 @@ final class CLIParserTests: XCTestCase {
     func testParsesDashPrefixedOptionValuesWhereSemanticallyValid() throws {
         XCTAssertEqual(
             try CLIParser.parse(["input", "--label", "First name", "--content", "-Alpha"]),
-            .driver(.input(label: "First name", content: "-Alpha", traits: nil, cindex: nil))
+            .driver(.input(label: "First name", content: "-Alpha", traits: nil, cindex: nil, domAfterMs: nil))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["tap", "General", "--offset", "-1,2", "--offset-ratio", "-.5,.25"]),
-            .driver(.tap(target: "General", offset: "-1,2", offsetRatio: "-.5,.25", traits: nil, cindex: nil))
+            .driver(.tap(target: "General", offset: "-1,2", offsetRatio: "-.5,.25", traits: nil, cindex: nil, domAfterMs: nil))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["tap", "General", "--cindex", "-1"]),
-            .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: -1))
+            .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: -1, domAfterMs: nil))
         )
 
         XCTAssertEqual(
@@ -293,6 +313,15 @@ final class CLIParserTests: XCTestCase {
         }
         XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--index", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--index must be non-negative"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--dom", "-1"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--dom must be non-negative"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--dom", "1.5"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid integer: \"1.5\""))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["home", "--dom"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--dom"))
         }
         XCTAssertThrowsError(try CLIParser.parse(["proxy", "read", "--last", "0"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--last must be greater than 0"))

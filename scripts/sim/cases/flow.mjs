@@ -22,6 +22,7 @@ export const flowCaseMetadata = [
   { id: 'FLOW-21', group: 'flow', kind: 'flow-target-label', setup: 'flow fixtures and settings home', assertion: 'stdout contains Running flow', coverage: 'simulator' },
   { id: 'FLOW-22', group: 'flow', kind: 'flow-verbose', setup: 'flow fixtures and settings home', assertion: 'stdout contains Running flow', coverage: 'simulator' },
   { id: 'FLOW-23', group: 'flow', kind: 'flow-basic', setup: 'flow fixtures and settings home', assertion: 'stdout contains Running flow', coverage: 'simulator' },
+  { id: 'FLOW-28', group: 'flow', kind: 'post-dom-mutation', setup: 'flow fixtures and settings home', assertion: 'tap.dom appends fresh DOM', coverage: 'simulator' },
   { id: 'FLOW-24', group: 'flow', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
   { id: 'FLOW-25', group: 'flow', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
   { id: 'FLOW-26', group: 'flow', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
@@ -80,6 +81,7 @@ export function buildFlowCases(ctx) {
     { id: 'FLOW-21', run: () => runCaseContains('FLOW-21', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.search'), flowSetup(settingsHome)) },
     { id: 'FLOW-22', run: () => runCaseContains('FLOW-22', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general', '--verbose'), flowSetup(settingsHome)) },
     { id: 'FLOW-23', run: () => runCaseContains('FLOW-23', 'Running flow', flowArgs('basic.yaml', '--targetLabel', 'com.apple.settings.general'), flowSetup(settingsHome)) },
+    { id: 'FLOW-28', run: () => runCaseContains('FLOW-28', 'DOM after 0ms\nApp: com.apple.Preferences', flowArgs('tap-dom.yaml'), flowSetup(settingsHome)) },
     ...['FLOW-24', 'FLOW-25', 'FLOW-26', 'FLOW-27'].map(id => ({ id, run: () => runSwiftBridgeCase(id) })),
     { id: 'DOM-4', run: runDomPayloadShapeCase },
   ];
