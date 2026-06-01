@@ -1815,7 +1815,7 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertThrowsError(try RealDevicePackageInstaller.validateInstalledApp(
             response: response,
             bundleID: "com.example.app",
-            expectedVersion: "1.2.0"
+            expectedVersion: "1.2.1"
         )) { error in
             XCTAssertTrue(String(describing: error).contains("does not match IPA version"))
         }
