@@ -28,6 +28,8 @@ public enum IOSUseProtocol {
     public static let commandTimeoutSeconds = 45
     /// Time to wait for a started command to complete before marking driver state unsafe.
     public static let commandCompletionTimeoutSeconds = 120
+    /// Host-side socket read timeout. Must cover the driver's start watchdog plus started-command completion watchdog.
+    public static let commandSocketReadTimeoutSeconds = commandTimeoutSeconds + commandCompletionTimeoutSeconds + 5
     /// Driver stop waits for the accept loop to exit for this many seconds.
     public static let serverStopTimeoutSeconds = 5
     /// TCP listen backlog for the driver server socket.
