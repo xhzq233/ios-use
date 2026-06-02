@@ -111,14 +111,19 @@ func getCleanedSnapshot() -> CleanedSnapshot? {
 /// Time complexity: O(n), where n is the number of nodes traversed by
 /// `cleanTree` while rebuilding the flat index.
 func rebuildCleanedSnapshot() -> CleanedSnapshot? {
+    let startedAt = CFAbsoluteTimeGetCurrent()
     guard let app = try? Session.shared.ensureActive() else { return nil }
-    guard let raw = SafeSnapshot(ofApp: app) else { return nil }
+    guard let raw = withPerf(stage: "SafeSnapshot", { SafeSnapshot(ofApp: app) }) else {
+        DriverPerf.append("[perf] \(#function).total failed=SafeSnapshot elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms")
+        return nil
+    }
 
     let elements = buildCleanElements(from: raw)
     assignAutoLabels(elements)
 
     let searchEntries = buildSearchEntries(from: elements)
     let searchCandidates = buildSearchCandidates(from: searchEntries)
+    DriverPerf.append("[perf] \(#function).total elements=\(elements.count) searchEntries=\(searchEntries.count) searchCandidates=\(searchCandidates.count) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms")
 
     return CleanedSnapshot(
         root: raw,
