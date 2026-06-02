@@ -141,13 +141,12 @@ private struct AutoLabelParentState {
     let element: SnapshotElement
     var remainingChildren: Int
     var nextChildIndex: Int
-    var nextSuffixByBaseLabel: [String: Int]
-    var emittedChildLabels: Set<String>
 }
 
 func assignAutoLabels(_ elements: [SnapshotElement]) {
     var parentStack: [AutoLabelParentState] = []
     parentStack.reserveCapacity(16)
+    var nextIndexByBaseLabel: [String: Int] = [:]
 
     for element in elements {
         while parentStack.last?.remainingChildren == 0 {
@@ -167,7 +166,7 @@ func assignAutoLabels(_ elements: [SnapshotElement]) {
             }
 
             if let baseLabel = element.node.displayLabel {
-                let displayLabel = dedupeChildLabel(baseLabel, parentStack: &parentStack)
+                let displayLabel = dedupeDisplayLabel(baseLabel, nextIndexByBaseLabel: &nextIndexByBaseLabel)
                 element.node.setDisplayLabelAliasIfNeeded(displayLabel)
             }
 
@@ -179,9 +178,7 @@ func assignAutoLabels(_ elements: [SnapshotElement]) {
             parentStack.append(AutoLabelParentState(
                 element: element,
                 remainingChildren: element.childCount,
-                nextChildIndex: 1,
-                nextSuffixByBaseLabel: [:],
-                emittedChildLabels: []
+                nextChildIndex: 1
             ))
         }
     }
@@ -213,17 +210,10 @@ private func makeAutoLabel(parent: SnapshotElement, childIndex: Int, parentChild
     return "\(parentPath)\(parentType)\(suffix)"
 }
 
-private func dedupeChildLabel(_ baseLabel: String, parentStack: inout [AutoLabelParentState]) -> String {
-    let parentIndex = parentStack.count - 1
-    var suffix = parentStack[parentIndex].nextSuffixByBaseLabel[baseLabel, default: 0]
-    var candidate = suffix == 0 ? baseLabel : "\(baseLabel)-\(suffix)"
-    while parentStack[parentIndex].emittedChildLabels.contains(candidate) {
-        suffix += 1
-        candidate = "\(baseLabel)-\(suffix)"
-    }
-    parentStack[parentIndex].nextSuffixByBaseLabel[baseLabel] = suffix + 1
-    parentStack[parentIndex].emittedChildLabels.insert(candidate)
-    return candidate
+private func dedupeDisplayLabel(_ baseLabel: String, nextIndexByBaseLabel: inout [String: Int]) -> String {
+    let nextIndex = nextIndexByBaseLabel[baseLabel, default: 0]
+    nextIndexByBaseLabel[baseLabel] = nextIndex + 1
+    return nextIndex == 0 ? baseLabel : "\(baseLabel)-\(nextIndex)"
 }
 
 private func buildSearchEntries(from elements: [SnapshotElement]) -> [SearchEntry] {

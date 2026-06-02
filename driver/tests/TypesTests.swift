@@ -559,6 +559,52 @@ final class TypesTests: XCTestCase {
         }
     }
 
+    func testAutoLabelDedupesDuplicateDisplayLabelsAcrossParents() {
+        let firstText = FakeRawSnapshot(label: "图片", elementType: .staticText)
+        let firstCell = FakeRawSnapshot(elementType: .cell, children: [firstText])
+        let secondText = FakeRawSnapshot(label: "图片", elementType: .staticText)
+        let secondCell = FakeRawSnapshot(elementType: .cell, children: [secondText])
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [firstCell, secondCell])
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+        assignAutoLabels(elements)
+        let cs = makeCleanedSnapshot(elements)
+
+        XCTAssertEqual(elements.map { displayName(for: $0.node) }, [
+            "App",
+            "AppAppc1",
+            "图片",
+            "AppAppc2",
+            "图片-1",
+        ])
+
+        switch rawFindInSnapshot(ForyTarget(label: "图片-1", traits: "Text"), cs: cs, visibility: .any) {
+        case .found(let found):
+            XCTAssertEqual(displayName(for: found.node), "图片-1")
+        default:
+            XCTFail("expected globally deduped alias to be searchable")
+        }
+    }
+
+    func testAutoLabelDedupesAutoLabelBaseAgainstRealDisplayLabel() {
+        let realLabel = FakeRawSnapshot(label: "AppAppc2", elementType: .button)
+        let tableChild = FakeRawSnapshot(label: "Child", elementType: .staticText)
+        let unnamedTable = FakeRawSnapshot(elementType: .table, children: [tableChild])
+        let app = FakeRawSnapshot(label: "App", elementType: .application, children: [realLabel, unnamedTable])
+        let elements = buildCleanElements(from: SafeSnapshot(raw: app, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))
+        assignAutoLabels(elements)
+        let cs = makeCleanedSnapshot(elements)
+
+        XCTAssertEqual(displayName(for: elements[1].node), "AppAppc2")
+        XCTAssertEqual(displayName(for: elements[2].node), "AppAppc2-1")
+
+        switch rawFindInSnapshot(ForyTarget(label: "AppAppc2-1", traits: "Table"), cs: cs, visibility: .any) {
+        case .found(let found):
+            XCTAssertEqual(found.node.elementType, XCUIElement.ElementType.table.rawValue)
+        default:
+            XCTFail("expected auto label colliding with real label to be deduped and searchable")
+        }
+    }
+
     func testAutoLabelsUseSortedSiblingOrder() {
         let tableChild = FakeRawSnapshot(label: "TableChild", elementType: .staticText)
         let table = FakeRawSnapshot(elementType: .table, frame: CGRect(x: 0, y: 300, width: 320, height: 80), children: [tableChild])
