@@ -130,8 +130,8 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["oslog", "--pattern", "ready", "--flags", "i", "--timeout", "3", "--name", "logs", "--clear", "--bundle-id", "com.demo"]),
-            .oslog(OSLogOptions(pattern: "ready", flags: "i", timeout: 3, name: "logs", clear: true, bundleId: "com.demo"))
+            try CLIParser.parse(["oslog", "--pattern", "ready", "--flags", "i", "--timeout", "3", "--clear", "--bundle-id", "com.demo"]),
+            .oslog(OSLogOptions(pattern: "ready", flags: "i", timeout: 3, clear: true, bundleId: "com.demo"))
         )
 
         XCTAssertEqual(

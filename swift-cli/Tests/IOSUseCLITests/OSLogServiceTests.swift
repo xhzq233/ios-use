@@ -34,7 +34,7 @@ final class OSLogServiceTests: XCTestCase {
             return []
         }
         addTeardownBlock { DeviceService.listDevicesOverrideForTesting = nil }
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog", "--name", "logs"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog"])
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stderr.contains("oslog requires --udid or an active driver"))
@@ -61,11 +61,10 @@ final class OSLogServiceTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: root)
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--pattern", "ready", "--timeout", "0", "--name", "active-lock"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--pattern", "ready", "--timeout", "0"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("matched=1"))
-        XCTAssertTrue(result.stdout.contains("active-lock.log"))
+        XCTAssertTrue(result.stdout.contains("ready"))
     }
 
     func testOslogExplicitUnbootedSimulatorDoesNotFallbackToRealSyslog() throws {
@@ -90,7 +89,7 @@ final class OSLogServiceTests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("Simulator \(simulatorUdid) is not booted or not found"))
     }
 
-    func testSimulatorFetchUsesTimestampDefaultNameAndRegexFlags() throws {
+    func testSimulatorFetchPrintsFilteredLinesAndRegexFlags() throws {
         let paths = IOSUsePaths.resolve(environment: [
             "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
         ])
@@ -107,18 +106,11 @@ final class OSLogServiceTests: XCTestCase {
             flags: "ig",
             bundleId: "com.example.Demo",
             timeout: 1,
-            name: nil,
             paths: paths
         )
 
-        XCTAssertTrue(output.contains("matched=1 total=2"))
-        XCTAssertTrue(output.contains("/artifacts/oslog-"))
-        let path = output.split(separator: "→").last?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let saved = try XCTUnwrap(path)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: saved))
-        let content = try String(contentsOfFile: saved)
-        XCTAssertTrue(content.contains("Alpha READY"))
-        XCTAssertFalse(content.contains("beta idle"))
+        XCTAssertTrue(output.contains("Alpha READY"))
+        XCTAssertFalse(output.contains("beta idle"))
     }
 
     func testSimulatorFetchRejectsInvalidRegexFlags() throws {
@@ -133,7 +125,6 @@ final class OSLogServiceTests: XCTestCase {
             flags: "z",
             bundleId: nil,
             timeout: 1,
-            name: "invalid",
             paths: paths
         )) { error in
             XCTAssertTrue(String(describing: error).contains("Invalid regex flag"))
@@ -155,12 +146,11 @@ final class OSLogServiceTests: XCTestCase {
             flags: nil,
             bundleId: nil,
             timeout: 1,
-            name: "hinted",
             paths: paths,
             deviceTypeHint: "simulator"
         )
 
-        XCTAssertTrue(output.contains("matched=1 total=1"))
+        XCTAssertTrue(output.contains("hinted"))
     }
 
     func testSimulatorFetchPollsUntilTimeoutForPattern() throws {
@@ -182,12 +172,11 @@ final class OSLogServiceTests: XCTestCase {
             flags: nil,
             bundleId: nil,
             timeout: 1,
-            name: "poll",
             paths: paths
         )
 
         XCTAssertGreaterThanOrEqual(calls, 2)
-        XCTAssertTrue(output.contains("matched=1 total=2"))
+        XCTAssertTrue(output.contains("ready"))
     }
 
     func testSimulatorFetchWithoutPatternDoesNotPoll() throws {
@@ -206,7 +195,6 @@ final class OSLogServiceTests: XCTestCase {
             flags: nil,
             bundleId: nil,
             timeout: 1,
-            name: "single",
             paths: paths
         )
 
@@ -227,12 +215,12 @@ final class OSLogServiceTests: XCTestCase {
             return lines
         }
 
-        _ = try OSLogService.fetchSimulator(udid: "SIM-1", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "one", paths: paths)
-        _ = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "two", paths: paths)
+        _ = try OSLogService.fetchSimulator(udid: "SIM-1", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
+        _ = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
 
         XCTAssertEqual(OSLogService.clear(udid: "SIM-1"), "  → oslog: cleared=1\n")
-        let output = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "two-again", paths: paths)
-        XCTAssertTrue(output.contains("matched=1 total=1"))
+        let output = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
+        XCTAssertTrue(output.contains("two"))
     }
 
     func testCLIClearWithUdidOnlyClearsThatDevice() throws {
@@ -242,34 +230,14 @@ final class OSLogServiceTests: XCTestCase {
             ["May 16 10:00:00 iPhone \(udid)(Demo)[1] <Notice>: \(udid)"]
         }
 
-        _ = try OSLogService.fetchSimulator(udid: "SIM-1", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "one", paths: paths)
-        _ = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "two", paths: paths)
+        _ = try OSLogService.fetchSimulator(udid: "SIM-1", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
+        _ = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--clear", "--udid", "SIM-1"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "  → oslog: cleared=1\n")
-        let output = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, name: "two-again", paths: paths)
-        XCTAssertTrue(output.contains("total=1"))
-    }
-
-    func testOutputNameCannotEscapeArtifactsDirectory() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        OSLogService.simulatorLogCollector = { _, _, _ in ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: ready"] }
-
-        let output = try OSLogService.fetchSimulator(
-            udid: "SIM-1",
-            pattern: nil,
-            flags: nil,
-            bundleId: nil,
-            timeout: 1,
-            name: "../outside",
-            paths: paths
-        )
-
-        XCTAssertTrue(output.contains("\(paths.artifacts)/outside.log"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(paths.artifacts)/outside.log"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: "\(root)/outside.log"))
+        let output = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
+        XCTAssertTrue(output.contains("SIM-2"))
     }
 }

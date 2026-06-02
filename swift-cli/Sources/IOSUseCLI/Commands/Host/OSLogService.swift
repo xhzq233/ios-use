@@ -29,7 +29,6 @@ public enum OSLogService {
         flags: String?,
         bundleId: String?,
         timeout: Double?,
-        name: String?,
         paths: IOSUsePaths
     ) throws -> String {
         let bufferKey = "simulator:\(udid)"
@@ -48,12 +47,7 @@ public enum OSLogService {
             }
             usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
         } while Date() < deadline
-        let content = lines.joined(separator: "\n") + "\n"
-
-        try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "oslog-\(logTimestamp())", extension: "log")
-        try content.write(toFile: path, atomically: true, encoding: .utf8)
-        return "  → oslog: matched=\(lines.count) total=\(totalLines.count) → \(path)\n"
+        return formatLogOutput(lines)
     }
 
     public static func fetch(
@@ -62,7 +56,6 @@ public enum OSLogService {
         flags: String?,
         bundleId: String?,
         timeout: Double?,
-        name: String?,
         paths: IOSUsePaths,
         deviceTypeHint: String? = nil
     ) throws -> String {
@@ -89,7 +82,6 @@ public enum OSLogService {
                 flags: flags,
                 bundleId: bundleId,
                 timeout: timeout,
-                name: name,
                 paths: paths
             )
         }
@@ -100,12 +92,7 @@ public enum OSLogService {
         let totalLines = appendUnique(newLines, key: bufferKey)
         var lines = bundleId.map { filterByBundleId(totalLines, bundleId: $0) } ?? totalLines
         lines = try filter(lines, pattern: pattern, flags: flags)
-        let content = lines.joined(separator: "\n") + "\n"
-
-        try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "oslog-\(logTimestamp())", extension: "log")
-        try content.write(toFile: path, atomically: true, encoding: .utf8)
-        return "  → oslog: matched=\(lines.count) total=\(totalLines.count) → \(path)\n"
+        return formatLogOutput(lines)
     }
 
     static func resetSimulatorLogCollectorForTesting() {
@@ -186,9 +173,9 @@ public enum OSLogService {
             .filter { !$0.isEmpty }
     }
 
-    private static func logTimestamp() -> String {
-        ISO8601DateFormatter().string(from: Date())
-            .replacingOccurrences(of: #"[:.]"#, with: "-", options: .regularExpression)
+    private static func formatLogOutput(_ lines: [String]) -> String {
+        guard !lines.isEmpty else { return "" }
+        return lines.joined(separator: "\n") + "\n"
     }
 
     private static func normalizeUdid(_ udid: String) -> String {
@@ -216,7 +203,6 @@ enum OSLogCommandService {
             flags: options.flags,
             bundleId: options.bundleId,
             timeout: options.timeout,
-            name: options.name,
             paths: paths,
             deviceTypeHint: hostDeviceTypeHint ?? (activeDriver?.udid == udid ? activeDriver?.deviceType : nil)
         )

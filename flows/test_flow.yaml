@@ -59,9 +59,8 @@ steps:
   - action: oslog
     pattern: Preferences
     flags: i
-    name: test-flow-settings-oslog
     bundleId: com.apple.Preferences
-    comment: "导出 Settings 过滤视图下的 oslog"
+    comment: "打印 Settings 过滤视图下的 oslog"
 
   - action: tap
     label: "100,400"
