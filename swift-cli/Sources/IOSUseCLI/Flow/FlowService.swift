@@ -460,7 +460,7 @@ private let flowStepAllowedKeys: [String: Set<String>] = [
     "home": [],
     "open": ["url"],
     "dismissAlert": ["index"],
-    "oslog": ["clear", "pattern", "flags", "bundleId", "timeout"],
+    "oslog": ["pattern", "flags", "process", "pid", "timeout"],
     "nslog": ["pattern", "flags", "timeout", "clearAfterRead", "name"],
     "runFlow": ["file", "vars", "outputs"],
     "returnIf": ["value", "is"],
@@ -555,10 +555,10 @@ enum FlowLowering {
 
         case "oslog":
             var args = ["oslog"]
-            args += try boolFlag("--clear", step["clear"], field: "oslog.clear")
             args += try optionalStringArg("--pattern", step["pattern"], field: "oslog.pattern")
             args += try optionalStringArg("--flags", step["flags"], field: "oslog.flags")
-            args += try optionalStringArg("--bundle-id", step["bundleId"], field: "oslog.bundleId")
+            args += try optionalStringArg("--process", step["process"], field: "oslog.process")
+            args += try optionalIntArg("--pid", step["pid"], field: "oslog.pid", allowNegative: false)
             args += try optionalNumberArg("--timeout", step["timeout"], field: "oslog.timeout")
             args += hostUdidArg(hostUdid)
             return args
@@ -635,10 +635,13 @@ enum FlowLowering {
         case "dismissAlert":
             try validateIntLike(step["index"], field: "dismissAlert.index", allowNegative: false)
         case "oslog":
-            try validateBoolLike(step["clear"], field: "oslog.clear")
             try validateStringLike(step["pattern"], field: "oslog.pattern")
             try validateStringLike(step["flags"], field: "oslog.flags")
-            try validateStringLike(step["bundleId"], field: "oslog.bundleId")
+            try validateStringLike(step["process"], field: "oslog.process")
+            try validateIntLike(step["pid"], field: "oslog.pid", allowNegative: false)
+            if !isNull(step["process"]), !isNull(step["pid"]) {
+                throw CLIParseError.invalidValue("oslog.process and oslog.pid are mutually exclusive")
+            }
             try validateNumberLike(step["timeout"], field: "oslog.timeout")
         case "nslog":
             try validateStringLike(step["pattern"], field: "nslog.pattern", required: true)

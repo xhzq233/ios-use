@@ -129,19 +129,27 @@ public struct OpenURLOptions: Equatable, Sendable {
 }
 
 public struct OSLogOptions: Equatable, Sendable {
+    public struct SourceFilter: Equatable, Sendable {
+        public var process: String?
+        public var pid: Int?
+
+        public init(process: String? = nil, pid: Int? = nil) {
+            self.process = process
+            self.pid = pid
+        }
+    }
+
     public var pattern: String?
     public var flags: String?
     public var timeout: Double?
-    public var clear: Bool
-    public var bundleId: String?
+    public var source: SourceFilter
     public var session: SessionOptions
 
-    public init(pattern: String? = nil, flags: String? = nil, timeout: Double? = nil, clear: Bool = false, bundleId: String? = nil, session: SessionOptions = SessionOptions()) {
+    public init(pattern: String? = nil, flags: String? = nil, timeout: Double? = nil, source: SourceFilter = SourceFilter(), session: SessionOptions = SessionOptions()) {
         self.pattern = pattern
         self.flags = flags
         self.timeout = timeout
-        self.clear = clear
-        self.bundleId = bundleId
+        self.source = source
         self.session = session
     }
 }

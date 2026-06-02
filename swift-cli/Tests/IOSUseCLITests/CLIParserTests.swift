@@ -130,8 +130,13 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["oslog", "--pattern", "ready", "--flags", "i", "--timeout", "3", "--clear", "--bundle-id", "com.demo"]),
-            .oslog(OSLogOptions(pattern: "ready", flags: "i", timeout: 3, clear: true, bundleId: "com.demo"))
+            try CLIParser.parse(["oslog", "--pattern", "ready", "--flags", "i", "--timeout", "3", "--process", "Demo"]),
+            .oslog(OSLogOptions(pattern: "ready", flags: "i", timeout: 3, source: .init(process: "Demo")))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["oslog", "--pid", "123"]),
+            .oslog(OSLogOptions(source: .init(pid: 123)))
         )
 
         XCTAssertEqual(
@@ -273,6 +278,22 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertThrowsError(try CLIParser.parse(["find", "General", "--verbose"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--verbose"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["oslog", "--process", "A", "--pid", "1"])) { error in
+            XCTAssertTrue(String(describing: error).contains("--process and --pid are mutually exclusive"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["oslog", "--process", "A", "--process", "B"])) { error in
+            XCTAssertTrue(String(describing: error).contains("--process can only be provided once"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["oslog", "--pid", "1", "--pid", "2"])) { error in
+            XCTAssertTrue(String(describing: error).contains("--pid can only be provided once"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["oslog", "--bundle-id", "com.example"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--bundle-id"))
         }
     }
 

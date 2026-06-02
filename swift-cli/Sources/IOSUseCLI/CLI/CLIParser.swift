@@ -464,20 +464,26 @@ public enum CLIParser {
         var pattern: String?
         var flags: String?
         var timeout: Double?
-        var clear = false
-        var bundleId: String?
+        var process: String?
+        var pid: Int?
         var session = SessionOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--pattern": pattern = try parser.valueAllowingLeadingDash(for: arg)
             case "--flags": flags = try parser.value(for: arg)
             case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--clear": clear = true
-            case "--bundle-id": bundleId = try parser.value(for: arg)
+            case "--process":
+                guard process == nil else { throw CLIParseError.invalidValue("--process can only be provided once") }
+                guard pid == nil else { throw CLIParseError.invalidValue("--process and --pid are mutually exclusive") }
+                process = try parser.value(for: arg)
+            case "--pid":
+                guard pid == nil else { throw CLIParseError.invalidValue("--pid can only be provided once") }
+                guard process == nil else { throw CLIParseError.invalidValue("--process and --pid are mutually exclusive") }
+                pid = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return OSLogOptions(pattern: pattern, flags: flags, timeout: timeout, clear: clear, bundleId: bundleId, session: session)
+        return OSLogOptions(pattern: pattern, flags: flags, timeout: timeout, source: .init(process: process, pid: pid), session: session)
     }
 
     private static func parseSession(_ arg: String, parser: inout ArgumentParser, session: inout SessionOptions) throws {

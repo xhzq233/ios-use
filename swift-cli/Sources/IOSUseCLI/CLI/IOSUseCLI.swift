@@ -177,7 +177,12 @@ public struct IOSUseCLI: Sendable {
 
     private func executeOSLog(_ options: OSLogOptions, hostDeviceTypeHint: String? = nil) -> CLIResult {
         do {
-            return CLIResult(exitCode: 0, stdout: try OSLogCommandService.run(options: options, paths: paths, hostDeviceTypeHint: hostDeviceTypeHint))
+            let stdout = try OSLogCommandService.run(options: options, paths: paths, hostDeviceTypeHint: hostDeviceTypeHint, outputSink: outputSink)
+            if let outputSink, !stdout.isEmpty {
+                outputSink(stdout)
+                return CLIResult(exitCode: 0)
+            }
+            return CLIResult(exitCode: 0, stdout: stdout)
         } catch {
             return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
         }
