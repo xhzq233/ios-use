@@ -16,6 +16,17 @@ final class ForyModelTests: XCTestCase {
         XCTAssertEqual(args.target.cindex, -1)
     }
 
+    func testForyRegistryCanSerializeResponseFrame() throws {
+        let fory = ForyRegistry.create()
+        let frame = ForyResponseFrame(ok: true, payload: Data([1, 2, 3]))
+
+        let encoded = try fory.serialize(frame)
+        let decoded = try fory.deserialize(encoded, as: ForyResponseFrame.self)
+
+        XCTAssertTrue(decoded.ok)
+        XCTAssertEqual(decoded.payload, Data([1, 2, 3]))
+    }
+
     func testForyTargetSerializesNilAndPositiveCindex() throws {
         let fory = ForyRegistry.create()
         let nilEncoded = try fory.serialize(ForyTarget(label: "General", traits: "Cell"))

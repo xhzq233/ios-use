@@ -116,7 +116,7 @@ final class LockedDriverClientSession {
 
     private func replaceClient(for info: SessionService.Info) -> DriverCommandClient {
         closeClient()
-        let next = DriverCommandExecution.clientFactoryForTesting?(info) ?? DriverClient(session: info)
+        let next = DriverCommandExecution.clientFactoryForTesting?(info) ?? DriverClient(session: info, paths: paths)
         client = next
         return next
     }
@@ -140,20 +140,23 @@ final class DriverClient: DriverCommandClient {
     private let port: UInt16
     private let udid: String?
     private let deviceType: String?
+    private let cliLogPath: String?
     private let fory = ForyRegistry.create()
     private var fd: Int32?
 
-    init(host: String = "127.0.0.1", port: UInt16 = IOSUseProtocol.defaultDriverPort, udid: String? = nil, deviceType: String? = nil) {
+    init(host: String = "127.0.0.1", port: UInt16 = IOSUseProtocol.defaultDriverPort, udid: String? = nil, deviceType: String? = nil, cliLogPath: String? = nil) {
         self.host = host
         self.port = port
         self.udid = udid
         self.deviceType = deviceType
+        self.cliLogPath = cliLogPath
     }
 
-    convenience init(session: SessionService.Info) {
+    convenience init(session: SessionService.Info, paths: IOSUsePaths? = nil) {
         self.init(
             udid: session.udid,
-            deviceType: session.deviceType
+            deviceType: session.deviceType,
+            cliLogPath: paths.map { CLILogService.logPath(paths: $0) }
         )
     }
 
@@ -241,23 +244,61 @@ final class DriverClient: DriverCommandClient {
     }
 
     private func sendRawPayload(command: String, payload: Data) throws -> Data {
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        var requestBytes = 0
+        var responseBytes = 0
+        var loggedResponse = false
         do {
             let fd = try connectedFD()
             let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
+            requestBytes = frameData.count
             try writeLengthPrefixed(fd, data: frameData)
             let responseData = try readLengthPrefixed(fd)
+            responseBytes = responseData.count
             let response = try fory.deserialize(responseData, as: ForyResponseFrame.self)
+            appendDriverCommandLog(
+                command: command,
+                ok: response.ok,
+                error: response.error,
+                requestBytes: requestBytes,
+                responseBytes: responseBytes,
+                elapsedMs: elapsedMilliseconds(since: startedAt)
+            )
+            loggedResponse = true
             guard response.ok else {
                 close()
                 throw DriverClientError.driverError(response.error)
             }
             return response.payload
         } catch {
+            if !loggedResponse {
+                appendDriverCommandLog(
+                    command: command,
+                    ok: false,
+                    error: "\(error)",
+                    requestBytes: requestBytes,
+                    responseBytes: responseBytes,
+                    elapsedMs: elapsedMilliseconds(since: startedAt)
+                )
+            }
             if shouldCloseConnection(after: error) {
                 close()
             }
             throw error
         }
+    }
+
+    private func appendDriverCommandLog(command: String, ok: Bool, error: String, requestBytes: Int, responseBytes: Int, elapsedMs: Int) {
+        guard let cliLogPath else { return }
+        let status = ok ? "ok=true" : "ok=false error=\(error)"
+        let lines = [
+            "[cli-command] command=\(command) \(status) requestBytes=\(requestBytes) responseBytes=\(responseBytes) elapsed=\(elapsedMs)ms"
+        ]
+        CLILogService.append(logPath: cliLogPath, lines)
+    }
+
+    private func elapsedMilliseconds(since startedAt: CFAbsoluteTime) -> Int {
+        Int((CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond)
     }
 
     private func connectedFD() throws -> Int32 {
