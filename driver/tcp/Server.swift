@@ -227,12 +227,15 @@ import Fory
             }
             do {
                 let startedAt = CFAbsoluteTimeGetCurrent()
-                NSLog("[driver] dispatch start command=\(command.rawValue)")
+                let startMessage = "[driver] dispatch start command=\(command.rawValue)"
+                NSLog(startMessage)
                 let response = try self.dispatchFory(payload, command: command)
-                NSLog("[driver] dispatch finish command=\(command.rawValue) ok=\(response.ok) elapsed=\(Int((CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond))ms")
+                let finishMessage = "[driver] dispatch finish command=\(command.rawValue) ok=\(response.ok) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms"
+                NSLog(finishMessage)
                 result = response
             } catch {
-                NSLog("[driver] dispatch error command=\(command.rawValue) error=\(error)")
+                let errorMessage = "[driver] dispatch error command=\(command.rawValue) error=\(error)"
+                NSLog(errorMessage)
                 dispatchError = error
             }
             sem.signal()

@@ -29,17 +29,23 @@ func rawFindInSnapshot(_ target: ForyTarget,
                        cs: CleanedSnapshot,
                        enableFuzzy: Bool = true,
                        visibility: RawFindVisibility = .only) -> FindResult {
+    let startedAt = CFAbsoluteTimeGetCurrent()
+    func finish(_ result: FindResult, detail: String) -> FindResult {
+        DriverPerf.append("[perf] \(#function).total query=\"\(target.label)\" visibility=\(visibility) \(detail) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms")
+        return result
+    }
+
     guard target.point == nil else {
-        return .notFound(suggestions: [])
+        return finish(.notFound(suggestions: []), detail: "result=notFound reason=pointTarget")
     }
 
     let query = target.label.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else {
-        return .notFound(suggestions: [])
+        return finish(.notFound(suggestions: []), detail: "result=notFound reason=emptyQuery")
     }
     let normalizedQuery = normalizeSearchText(query)
     guard !normalizedQuery.isEmpty else {
-        return .notFound(suggestions: [])
+        return finish(.notFound(suggestions: []), detail: "result=notFound reason=emptyNormalizedQuery")
     }
 
     let searchEntries = visibility == .only
@@ -63,11 +69,15 @@ func rawFindInSnapshot(_ target: ForyTarget,
 
     // 2. Fuzzy fallback when exact and contains both miss.
     if matches.isEmpty {
-        guard enableFuzzy else { return .notFound(suggestions: []) }
+        guard enableFuzzy else {
+            return finish(.notFound(suggestions: []), detail: "result=notFound entries=\(searchEntries.count) fuzzy=false")
+        }
         let candidates = visibility == .only ? searchCandidates(from: searchEntries) : cs.searchCandidates
         let suggestions = fuzzySuggestions(forNormalizedQuery: normalizedQuery, from: candidates)
-        if !suggestions.isEmpty { return .fuzzy(suggestions: suggestions) }
-        return .notFound(suggestions: [])
+        if !suggestions.isEmpty {
+            return finish(.fuzzy(suggestions: suggestions), detail: "result=fuzzy suggestions=\(suggestions.count) entries=\(searchEntries.count)")
+        }
+        return finish(.notFound(suggestions: []), detail: "result=notFound entries=\(searchEntries.count)")
     }
 
     // 3. Trait filter (AND semantics — element must contain all specified traits).
@@ -90,9 +100,13 @@ func rawFindInSnapshot(_ target: ForyTarget,
         matches = matches.filter { isVisibleWithEffectiveGeometry($0, in: cs.appFrame) }
     }
 
-    if matches.isEmpty { return .notFound(suggestions: []) }
-    if matches.count > 1 { return .ambiguous(matches: matches) }
-    return .found(matches[0])
+    if matches.isEmpty {
+        return finish(.notFound(suggestions: []), detail: "result=notFound entries=\(searchEntries.count)")
+    }
+    if matches.count > 1 {
+        return finish(.ambiguous(matches: matches), detail: "result=ambiguous matches=\(matches.count) entries=\(searchEntries.count)")
+    }
+    return finish(.found(matches[0]), detail: "result=found entries=\(searchEntries.count)")
 }
 
 /// Unified label search: exact(label/value) → contains(label/value) → fuzzy → trait filter.

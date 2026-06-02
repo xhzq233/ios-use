@@ -18,6 +18,8 @@
 		22FF865268ADCC2D9D816FA3 /* DriverProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5673E8F5A73863E5BFC1145 /* DriverProtocol.swift */; };
 		2487738D2D1AF684316C1E46 /* Swipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688FE3DE301B8593639EAB9B /* Swipe.swift */; };
 		25DE35CCD54476506D2B33E1 /* Swipe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 688FE3DE301B8593639EAB9B /* Swipe.swift */; };
+		2617C12F7FE92652A2B7E897 /* DriverPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222296EF65270A2108CC1622 /* DriverPerf.swift */; };
+		2A2204C88E4EE9C80378FF0B /* DriverPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222296EF65270A2108CC1622 /* DriverPerf.swift */; };
 		2A99D7083199D3C052817376 /* Proxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F60F451C114B1CD47F9A702 /* Proxy.swift */; };
 		2D30D40139893E650198A77E /* Proxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F60F451C114B1CD47F9A702 /* Proxy.swift */; };
 		3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35DDA5A7967522B295F5AEDB /* FindUtils.swift */; };
@@ -72,6 +74,7 @@
 		17BCFDE8A7DA91241BC86090 /* AppRegistry.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppRegistry.m; sourceTree = "<group>"; };
 		1FF2988F5EECDDB665288D5D /* ScrollMechanicsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollMechanicsTests.swift; sourceTree = "<group>"; };
 		20C7C30497334B1AEE198AC3 /* XCTestPrivate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = XCTestPrivate.m; sourceTree = "<group>"; };
+		222296EF65270A2108CC1622 /* DriverPerf.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverPerf.swift; sourceTree = "<group>"; };
 		35DDA5A7967522B295F5AEDB /* FindUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindUtils.swift; sourceTree = "<group>"; };
 		3FAD42B95F7C35F08F218C45 /* IOSUseDriverUnitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IOSUseDriverUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500F078718C032D73B2E9EDA /* AppRegistry.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppRegistry.h; sourceTree = "<group>"; };
@@ -147,6 +150,7 @@
 		8803E5B92E81995DE73A3C9B /* ui */ = {
 			isa = PBXGroup;
 			children = (
+				222296EF65270A2108CC1622 /* DriverPerf.swift */,
 				35DDA5A7967522B295F5AEDB /* FindUtils.swift */,
 				0AE99BB4D5AD93891B02F4CB /* Session.swift */,
 				15A0FF7257FB4C92EC6C889D /* SnapshotWalker.swift */,
@@ -313,6 +317,7 @@
 				40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */,
 				9B9DC8661A47D7EB2FF33C44 /* CodecTests.swift in Sources */,
 				48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */,
+				2617C12F7FE92652A2B7E897 /* DriverPerf.swift in Sources */,
 				22FF865268ADCC2D9D816FA3 /* DriverProtocol.swift in Sources */,
 				431ACF5CC685EAF0D8ABA2A4 /* ElementTypes.swift in Sources */,
 				3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */,
@@ -347,6 +352,7 @@
 				A2F46A49779B68AEAD78B0C2 /* AppRegistry.m in Sources */,
 				C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */,
 				EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */,
+				2A2204C88E4EE9C80378FF0B /* DriverPerf.swift in Sources */,
 				BB6FC10754570033C9A83E5B /* DriverProtocol.swift in Sources */,
 				0F225B1B7E968A537D411062 /* ElementTypes.swift in Sources */,
 				AF07412EEE37705E162B6743 /* Find.swift in Sources */,
