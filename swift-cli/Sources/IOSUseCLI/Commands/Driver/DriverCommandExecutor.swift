@@ -20,17 +20,30 @@ enum DriverCommandExecutor {
     typealias ClientRunner = ((DriverCommandClient) throws -> DriverCommandPayload?) throws -> DriverCommandPayload?
 
     static func execute(action: DriverAction, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil, clientRunner: ClientRunner) throws -> DriverCommandResult {
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        var ok = false
+        defer {
+            appendActionLog(
+                action: action.name,
+                ok: ok,
+                elapsedMs: Int((CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond),
+                paths: paths
+            )
+        }
         switch action {
         case .dom(let raw, let fresh):
             let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: raw, fresh: fresh)) }, as: ForyDomPayload.self)
+            ok = true
             return DriverCommandResult(stdout: DriverOutput.formatDom(payload), payload: .dom(payload))
 
         case .find(let label, let traits, let cindex):
             let payload = try requiredPayload(clientRunner { .find(try $0.find(label: label, traits: traits, cindex: cindex)) }, as: ForyFindPayload.self)
+            ok = true
             return DriverCommandResult(stdout: DriverOutput.formatFind(label: label, payload: payload), payload: .find(payload))
 
         case .waitFor(let label, let timeout, let traits, let cindex):
             let payload = try requiredPayload(clientRunner { .waitFor(try $0.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)) }, as: ForyWaitForPayload.self)
+            ok = true
             return DriverCommandResult(stdout: DriverOutput.formatWaitFor(label: label, payload: payload), payload: .waitFor(payload))
 
         case .screenshot(let name):
@@ -38,6 +51,7 @@ enum DriverCommandExecutor {
             try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
             let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "screenshot", extension: "jpg")
             try data.write(to: URL(fileURLWithPath: path))
+            ok = true
             return DriverCommandResult(stdout: "Screenshot saved: \(path)\n", payload: .screenshot(data))
 
         case .tap(let target, let offset, let offsetRatio, let traits, let cindex, let domAfterMs):
@@ -45,50 +59,59 @@ enum DriverCommandExecutor {
             let payload = try requiredPayload(clientRunner {
                 .element(try $0.tap(target: params.target, traits: traits, cindex: cindex, offset: params.offset, ratio: params.ratio))
             }, as: ForyElementPayload.self)
-            return try appendPostDomIfNeeded(
+            let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: "Tap\n\(DriverOutput.formatElement(payload))", payload: .element(payload)),
                 domAfterMs: domAfterMs,
                 clientRunner: clientRunner
             )
+            ok = true
+            return result
 
         case .longPress(let target, let duration, let traits, let cindex, let domAfterMs):
             let foryTarget = try resolveTarget(target, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
                 .element(try $0.longPress(target: foryTarget, durationMs: duration, traits: traits, cindex: cindex))
             }, as: ForyElementPayload.self)
-            return try appendPostDomIfNeeded(
+            let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: "Longpress\n\(DriverOutput.formatElement(payload))", payload: .element(payload)),
                 domAfterMs: domAfterMs,
                 clientRunner: clientRunner
             )
+            ok = true
+            return result
 
         case .input(let label, let content, let traits, let cindex, let domAfterMs):
             _ = try clientRunner {
                 try $0.input(label: label, content: content, traits: traits, cindex: cindex)
                 return nil
             }
-            return try appendPostDomIfNeeded(
+            let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: "Input \"\(content)\" into \"\(label)\"\n", payload: nil),
                 domAfterMs: domAfterMs,
                 clientRunner: clientRunner
             )
+            ok = true
+            return result
 
         case .swipe(let to, let from, let dir, let distance, let traits, let cindex, let domAfterMs):
             let params = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
                 .swipe(try $0.swipe(to: params.to, from: params.from, distance: distance, dir: dir, traits: traits, cindex: cindex))
             }, as: ForySwipePayload.self)
-            return try appendPostDomIfNeeded(
+            let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: DriverOutput.formatSwipe(payload), payload: .swipe(payload)),
                 domAfterMs: domAfterMs,
                 clientRunner: clientRunner
             )
+            ok = true
+            return result
 
         case .activateApp(let bundleId):
             _ = try clientRunner {
                 try $0.activateApp(bundleId: bundleId)
                 return nil
             }
+            ok = true
             return DriverCommandResult(stdout: "App \(bundleId) activated\n", payload: nil)
 
         case .terminateApp(let bundleId):
@@ -99,10 +122,12 @@ enum DriverCommandExecutor {
                 }
             } catch {
                 if IOSUseCLI.isAppNotRunningError(error) {
+                    ok = true
                     return DriverCommandResult(stdout: "App \(bundleId) not running, skipped terminate\n", payload: nil)
                 }
                 throw error
             }
+            ok = true
             return DriverCommandResult(stdout: "App \(bundleId) terminated\n", payload: nil)
 
         case .home:
@@ -110,10 +135,12 @@ enum DriverCommandExecutor {
                 try $0.home()
                 return nil
             }
+            ok = true
             return DriverCommandResult(stdout: "Pressed Home\n", payload: nil)
 
         case .dismissAlert(let index):
             let payload = try requiredPayload(clientRunner { .alert(try $0.dismissAlert(index: index)) }, as: ForyAlertPayload.self)
+            ok = true
             return DriverCommandResult(stdout: DriverOutput.formatAlert(payload), payload: .alert(payload))
         }
     }
@@ -144,6 +171,12 @@ enum DriverCommandExecutor {
         stdout += "\nDOM after \(domAfterMs)ms\n"
         stdout += DriverOutput.formatDom(payload)
         return DriverCommandResult(stdout: stdout, payload: result.payload)
+    }
+
+    private static func appendActionLog(action: String, ok: Bool, elapsedMs: Int, paths: IOSUsePaths) {
+        CLILogService.append(paths: paths, [
+            "[cli-action] action=\(action) ok=\(ok) elapsed=\(elapsedMs)ms"
+        ])
     }
 
     static func resolveTapParams(

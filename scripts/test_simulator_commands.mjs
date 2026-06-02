@@ -302,7 +302,7 @@ function caseDurationMs(id) {
 function resultArtifacts(id) {
   if (!artifactDir || !fs.existsSync(artifactDir)) return [];
   return fs.readdirSync(artifactDir)
-    .filter(file => file === 'driver.log' || file.startsWith(`${id}.`) || file.startsWith(`${id}-`))
+    .filter(file => file === 'cli.log' || file.startsWith(`${id}.`) || file.startsWith(`${id}-`))
     .sort()
     .map(file => path.join(artifactDir, file));
 }
@@ -1294,8 +1294,8 @@ function buildCases() {
 }
 async function cleanup() {
   runCli(['stop']);
-  const driverLog = path.join(iosHome, 'logs/driver.log');
-  if (fs.existsSync(driverLog)) fs.copyFileSync(driverLog, path.join(artifactDir, 'driver.log'));
+  const cliLog = path.join(iosHome, 'logs/cli.log');
+  if (fs.existsSync(cliLog)) fs.copyFileSync(cliLog, path.join(artifactDir, 'cli.log'));
   restoreLocalState();
   releaseRunLock();
 }

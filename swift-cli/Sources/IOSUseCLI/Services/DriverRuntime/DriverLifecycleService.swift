@@ -121,7 +121,7 @@ enum DriverLifecycleService {
                 }
                 usleep(useconds_t(IOSUseProtocol.driverStartReadinessPollIntervalMicroseconds))
             }
-            throw CLIParseError.invalidValue("Driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable on device \(udid). Check \(driverLogPath(paths: paths))")
+            throw CLIParseError.invalidValue("Driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable on device \(udid). Check \(CLILogService.logPath(paths: paths))")
         }
 
         try launchRealDriverDetached(
@@ -141,31 +141,18 @@ enum DriverLifecycleService {
         coreDeviceFactory: CoreDeviceLifecycleFactory?
     ) throws {
         try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true, attributes: nil)
-        let logPath = driverLogPath(paths: paths)
-        rotateDriverLogIfNeeded(logPath)
-        let separator = "\n--- session start \(ISO8601DateFormatter().string(from: Date())) ---\n"
-        if !FileManager.default.fileExists(atPath: logPath) {
-            FileManager.default.createFile(atPath: logPath, contents: nil)
-        }
-        if let handle = FileHandle(forWritingAtPath: logPath) {
-            _ = try? handle.seekToEnd()
-            if let data = separator.data(using: .utf8) {
-                try? handle.write(contentsOf: data)
-            }
-            try? handle.close()
-        }
 
         if verbose {
-            FileHandle.standardError.write(Data("Driver console log: \(logPath)\n".utf8))
+            FileHandle.standardError.write(Data("CLI log: \(CLILogService.logPath(paths: paths))\n".utf8))
         }
         do {
-            appendDriverLog(paths: paths, "Launching driver through CoreDevice appservice\n")
+            appendLifecycleLog(paths: paths, "Launching driver through CoreDevice appservice")
             try makeCoreDeviceDriverLifecycle(factory: coreDeviceFactory, eventSink: { event in
-                appendDriverLog(paths: paths, "[CoreDevice] \(event)\n")
+                appendLifecycleLog(paths: paths, "[CoreDevice] \(event)")
             }).launchDriver(udid: udid, bundleID: bundleId, timeoutSeconds: IOSUseProtocol.driverStartReadinessTimeoutSeconds)
-            appendDriverLog(paths: paths, "CoreDevice appservice launch completed\n")
+            appendLifecycleLog(paths: paths, "CoreDevice appservice launch completed")
         } catch {
-            appendDriverLog(paths: paths, "CoreDevice appservice launch failed: \(error)\n")
+            appendLifecycleLog(paths: paths, "CoreDevice appservice launch failed: \(error)")
             throw CLIParseError.invalidValue("Native real-device launch failed. CoreDevice: \(error)")
         }
     }
@@ -177,14 +164,14 @@ enum DriverLifecycleService {
     ) throws -> Bool {
         do {
             let bundleID = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid })?.bundleId
-            appendDriverLog(paths: paths, "Terminating driver through CoreDevice appservice\n")
+            appendLifecycleLog(paths: paths, "Terminating driver through CoreDevice appservice")
             let terminated = try makeCoreDeviceDriverLifecycle(factory: coreDeviceFactory, eventSink: { event in
-                appendDriverLog(paths: paths, "[CoreDevice] \(event)\n")
+                appendLifecycleLog(paths: paths, "[CoreDevice] \(event)")
             }).terminateDriver(udid: udid, bundleID: bundleID)
-            appendDriverLog(paths: paths, "CoreDevice appservice terminate completed terminated=\(terminated)\n")
+            appendLifecycleLog(paths: paths, "CoreDevice appservice terminate completed terminated=\(terminated)")
             return terminated
         } catch {
-            appendDriverLog(paths: paths, "CoreDevice appservice terminate failed: \(error)\n")
+            appendLifecycleLog(paths: paths, "CoreDevice appservice terminate failed: \(error)")
             throw CLIParseError.invalidValue("Native real-device terminate failed. CoreDevice: \(error)")
         }
     }
@@ -205,30 +192,8 @@ enum DriverLifecycleService {
         Darwin.close(fd)
     }
 
-    private static func driverLogPath(paths: IOSUsePaths) -> String {
-        "\(paths.logs)/driver.log"
-    }
-
-    private static func rotateDriverLogIfNeeded(_ logPath: String) {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: logPath),
-              let size = attrs[.size] as? NSNumber,
-              size.intValue > 2 * 1024 * 1024 else {
-            return
-        }
-        try? FileManager.default.removeItem(atPath: "\(logPath).1")
-        try? FileManager.default.moveItem(atPath: logPath, toPath: "\(logPath).1")
-    }
-
-    private static func appendDriverLog(paths: IOSUsePaths, _ message: String) {
-        let logPath = driverLogPath(paths: paths)
-        if !FileManager.default.fileExists(atPath: logPath) {
-            FileManager.default.createFile(atPath: logPath, contents: nil)
-        }
-        if let handle = FileHandle(forWritingAtPath: logPath) {
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: Data(message.utf8))
-            try? handle.close()
-        }
+    private static func appendLifecycleLog(paths: IOSUsePaths, _ message: String) {
+        CLILogService.append(paths: paths, ["[cli-lifecycle] \(message)"])
     }
 
     private static func makeCoreDeviceDriverLifecycle(

@@ -52,6 +52,28 @@ final class DriverClientTests: XCTestCase {
         XCTAssertEqual(args.target.cindex, -1)
     }
 
+    func testClientWritesCommandLogToCLILog() throws {
+        let payload = try ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))
+        let server = try FakeDriverServer(responses: [
+            ForyResponseFrame(ok: true, payload: payload),
+        ])
+        defer { server.stop() }
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-cli-log-\(UUID().uuidString)")
+        let logPath = tempRoot.appendingPathComponent("logs/cli.log").path
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+        let client = DriverClient(port: UInt16(server.port), cliLogPath: logPath)
+
+        _ = try client.dom(raw: false, fresh: true)
+
+        let log = try String(contentsOfFile: logPath, encoding: .utf8)
+        XCTAssertTrue(log.contains("[cli-command] command=dom ok=true"))
+        XCTAssertTrue(log.contains("requestBytes="))
+        XCTAssertTrue(log.contains("responseBytes="))
+        XCTAssertFalse(log.contains("[driver-perf]"))
+        XCTAssertFalse(log.contains("[driver-response]"))
+    }
+
     func testCloseSignalsEOFToServerPromptly() throws {
         let server = try FakeDriverServer(responseCount: 2)
         defer { server.stop() }
