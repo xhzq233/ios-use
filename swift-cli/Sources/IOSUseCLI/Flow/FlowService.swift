@@ -460,7 +460,7 @@ private let flowStepAllowedKeys: [String: Set<String>] = [
     "home": [],
     "open": ["url"],
     "dismissAlert": ["index"],
-    "oslog": ["clear", "pattern", "flags", "bundleId", "timeout", "name"],
+    "oslog": ["clear", "pattern", "flags", "bundleId", "timeout"],
     "nslog": ["pattern", "flags", "timeout", "clearAfterRead", "name"],
     "runFlow": ["file", "vars", "outputs"],
     "returnIf": ["value", "is"],
@@ -560,7 +560,6 @@ enum FlowLowering {
             args += try optionalStringArg("--flags", step["flags"], field: "oslog.flags")
             args += try optionalStringArg("--bundle-id", step["bundleId"], field: "oslog.bundleId")
             args += try optionalNumberArg("--timeout", step["timeout"], field: "oslog.timeout")
-            args += try optionalStringArg("--name", step["name"], field: "oslog.name")
             args += hostUdidArg(hostUdid)
             return args
 
@@ -641,7 +640,6 @@ enum FlowLowering {
             try validateStringLike(step["flags"], field: "oslog.flags")
             try validateStringLike(step["bundleId"], field: "oslog.bundleId")
             try validateNumberLike(step["timeout"], field: "oslog.timeout")
-            try validateStringLike(step["name"], field: "oslog.name")
         case "nslog":
             try validateStringLike(step["pattern"], field: "nslog.pattern", required: true)
             try validateStringLike(step["flags"], field: "nslog.flags")

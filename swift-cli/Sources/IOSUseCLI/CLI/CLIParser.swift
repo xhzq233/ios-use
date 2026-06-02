@@ -464,7 +464,6 @@ public enum CLIParser {
         var pattern: String?
         var flags: String?
         var timeout: Double?
-        var name: String?
         var clear = false
         var bundleId: String?
         var session = SessionOptions()
@@ -473,13 +472,12 @@ public enum CLIParser {
             case "--pattern": pattern = try parser.valueAllowingLeadingDash(for: arg)
             case "--flags": flags = try parser.value(for: arg)
             case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--name": name = try parser.value(for: arg)
             case "--clear": clear = true
             case "--bundle-id": bundleId = try parser.value(for: arg)
             default: try parseSession(arg, parser: &parser, session: &session)
             }
         }
-        return OSLogOptions(pattern: pattern, flags: flags, timeout: timeout, name: name, clear: clear, bundleId: bundleId, session: session)
+        return OSLogOptions(pattern: pattern, flags: flags, timeout: timeout, clear: clear, bundleId: bundleId, session: session)
     }
 
     private static func parseSession(_ arg: String, parser: inout ArgumentParser, session: inout SessionOptions) throws {
