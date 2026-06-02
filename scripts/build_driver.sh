@@ -8,10 +8,12 @@ set -euo pipefail
 #   ./scripts/build_driver.sh        # Debug build with dSYM to IOS_USE_HOME or cwd/.ios-use
 #   ./scripts/build_driver.sh --release # Release build to driver/build/
 #   ./scripts/build_driver.sh --simulator-only # Build only the simulator IPA for the selected mode
+#   ./scripts/build_driver.sh --debug-perf # Debug build with DEBUG_PERF driver timing enabled
 # =============================================================================
 
 BUILD_MODE="debug"
 SIMULATOR_ONLY=false
+DEBUG_PERF=false
 for arg in "$@"; do
   case "$arg" in
     --debug)
@@ -22,6 +24,10 @@ for arg in "$@"; do
       ;;
     --simulator-only)
       SIMULATOR_ONLY=true
+      ;;
+    --debug-perf)
+      BUILD_MODE="debug"
+      DEBUG_PERF=true
       ;;
     *)
       echo "[build] ERROR: unknown option $arg"
@@ -84,6 +90,13 @@ XCODE_COMMON=(
   CURRENT_PROJECT_VERSION="$CLI_VERSION"
   CODE_SIGNING_ALLOWED=NO
 )
+
+if [ "$DEBUG_PERF" = true ]; then
+  XCODE_COMMON+=(
+    'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) FORY_SWIFT_MACRO DEBUG_PERF'
+  )
+  echo "[build] DEBUG_PERF enabled"
+fi
 
 # Helper: package a .app into an IPA.
 package_ipa() {
