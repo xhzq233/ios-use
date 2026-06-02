@@ -132,16 +132,14 @@ public struct OSLogOptions: Equatable, Sendable {
     public var pattern: String?
     public var flags: String?
     public var timeout: Double?
-    public var name: String?
     public var clear: Bool
     public var bundleId: String?
     public var session: SessionOptions
 
-    public init(pattern: String? = nil, flags: String? = nil, timeout: Double? = nil, name: String? = nil, clear: Bool = false, bundleId: String? = nil, session: SessionOptions = SessionOptions()) {
+    public init(pattern: String? = nil, flags: String? = nil, timeout: Double? = nil, clear: Bool = false, bundleId: String? = nil, session: SessionOptions = SessionOptions()) {
         self.pattern = pattern
         self.flags = flags
         self.timeout = timeout
-        self.name = name
         self.clear = clear
         self.bundleId = bundleId
         self.session = session

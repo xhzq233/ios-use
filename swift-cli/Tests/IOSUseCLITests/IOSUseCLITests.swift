@@ -1093,11 +1093,10 @@ final class IOSUseCLITests: XCTestCase {
             Shell.runOverrideForTesting = nil
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--udid", "REAL-LOG", "--pattern", "ready", "--timeout", "0", "--name", "real-log"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--udid", "REAL-LOG", "--pattern", "ready", "--timeout", "0"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("matched=1"))
-        XCTAssertTrue(result.stdout.contains("real-log.log"))
+        XCTAssertTrue(result.stdout.contains("ready"))
     }
 
     func testDriverCommandNamesMatchWireCommands() {

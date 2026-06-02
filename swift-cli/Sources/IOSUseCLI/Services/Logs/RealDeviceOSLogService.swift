@@ -7,6 +7,14 @@ enum RealDeviceOSLogService {
         if let collectorForTesting {
             return try collectorForTesting(udid, timeoutSeconds)
         }
+        var lines: [String] = []
+        try streamSyslog(udid: udid, timeoutSeconds: timeoutSeconds) { line in
+            lines.append(line)
+        }
+        return lines
+    }
+
+    static func streamSyslog(udid: String, timeoutSeconds: Double? = nil, onLine: (String) throws -> Void) throws {
         debug("load pair record")
         let pairRecord = try PairRecord.load(udid: udid)
         debug("connect lockdown")
@@ -25,7 +33,7 @@ enum RealDeviceOSLogService {
         debug("send syslog start")
         try stream.write(Data("start".utf8))
         debug("read syslog lines")
-        return try readSyslogLines(stream: stream, timeoutSeconds: timeoutSeconds)
+        try readSyslogLines(stream: stream, timeoutSeconds: timeoutSeconds, onLine: onLine)
     }
 
     private static func startSyslogRelay(udid: String, pairRecord: PairRecord) throws -> LockdownService {
@@ -58,12 +66,11 @@ enum RealDeviceOSLogService {
         }
     }
 
-    private static func readSyslogLines(stream: DeviceStream, timeoutSeconds: Double) throws -> [String] {
-        let deadline = Date().addingTimeInterval(max(0, timeoutSeconds))
-        var lines: [String] = []
+    private static func readSyslogLines(stream: DeviceStream, timeoutSeconds: Double?, onLine: (String) throws -> Void) throws {
+        let deadline = timeoutSeconds.map { Date().addingTimeInterval(max(0, $0)) }
         var buffer = ""
-        while Date() < deadline {
-            let remaining = max(0, deadline.timeIntervalSinceNow)
+        while deadline.map({ Date() < $0 }) ?? true {
+            let remaining = deadline.map { max(0, $0.timeIntervalSinceNow) } ?? 0.25
             let chunk = try stream.readAvailable(maxBytes: 16 * 1024, timeoutSeconds: min(0.25, remaining))
             if chunk.isEmpty { continue }
             buffer += String(data: chunk, encoding: .utf8) ?? ""
@@ -71,12 +78,11 @@ enum RealDeviceOSLogService {
             buffer = parts.last ?? ""
             for line in parts.dropLast() {
                 let trimmed = cleanSyslogLine(line)
-                if !trimmed.isEmpty { lines.append(trimmed) }
+                if !trimmed.isEmpty { try onLine(trimmed) }
             }
         }
         let tail = cleanSyslogLine(buffer)
-        if !tail.isEmpty { lines.append(tail) }
-        return lines
+        if !tail.isEmpty { try onLine(tail) }
     }
 
     private static func cleanSyslogLine(_ line: String) -> String {
