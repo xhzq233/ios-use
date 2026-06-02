@@ -796,6 +796,19 @@ final class FlowServiceTests: XCTestCase {
             pattern: ready
             timeout: -1
         """)
+        let oslogProcessAndPid = try fixture.write("oslog-process-pid.yaml", """
+        name: oslog-process-pid
+        steps:
+          - action: oslog
+            process: Demo
+            pid: 123
+        """)
+        let oslogBundleId = try fixture.write("oslog-bundle-id.yaml", """
+        name: oslog-bundle-id
+        steps:
+          - action: oslog
+            bundleId: com.example
+        """)
 
         XCTAssertThrowsError(try FlowService.runForTesting(file: nonArrayCandidates.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
             XCTAssertTrue(String(describing: error).contains("dom.candidates must be a string array"))
@@ -806,6 +819,50 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertThrowsError(try FlowService.runForTesting(file: negativeOslogTimeout.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
             XCTAssertTrue(String(describing: error).contains("--timeout must be non-negative"))
         }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: oslogProcessAndPid.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
+            XCTAssertTrue(String(describing: error).contains("oslog.process and oslog.pid are mutually exclusive"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: oslogBundleId.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
+            XCTAssertTrue(String(describing: error).contains("oslog has unknown field \"bundleId\""))
+        }
+    }
+
+    func testFlowOslogLowersProcessAndPidFilters() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("oslog-source-filters.yaml", """
+        name: oslog-source-filters
+        steps:
+          - action: oslog
+            pattern: ready
+            flags: i
+            process: Demo
+            timeout: 0
+          - action: oslog
+            pattern: ready
+            pid: 123
+            timeout: 0
+        """)
+        var sources: [OSLogOptions.SourceFilter] = []
+        OSLogService.simulatorLogCollector = { _, _, source in
+            sources.append(source)
+            return ["May 16 10:00:00 iPhone Demo(Demo)[123] <Notice>: ready"]
+        }
+        addTeardownBlock {
+            OSLogService.resetSimulatorLogCollectorForTesting()
+        }
+
+        let result = try FlowService.runForTesting(
+            file: flow.path,
+            paths: fixture.paths,
+            driver: FakeFlowDriver(),
+            udid: "SIM-1",
+            deviceType: "simulator"
+        )
+
+        XCTAssertEqual(sources.count, 2)
+        XCTAssertEqual(sources[0], OSLogOptions.SourceFilter(process: "Demo"))
+        XCTAssertEqual(sources[1], OSLogOptions.SourceFilter(pid: 123))
+        XCTAssertTrue(result.stdout.contains("ready"))
     }
 
     func testUnsupportedFlowOutputsFail() throws {
@@ -915,7 +972,7 @@ final class FlowServiceTests: XCTestCase {
         name: host-only
         steps:
           - action: oslog
-            clear: true
+            timeout: 0
         """)
 
         XCTAssertThrowsError(try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)) { error in
@@ -930,19 +987,24 @@ final class FlowServiceTests: XCTestCase {
         name: host-only
         steps:
           - action: oslog
-            clear: true
+            pattern: ready
+            timeout: 0
         """)
+        OSLogService.simulatorLogCollector = { _, _, _ in
+            ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: ready"]
+        }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("host-only flow must not create a driver client")
             return FakeFlowDriver()
         }
         addTeardownBlock {
             IOSUseCLI.driverClientFactoryForTesting = nil
+            OSLogService.resetSimulatorLogCollectorForTesting()
         }
 
         let output = try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)
 
-        XCTAssertTrue(output.contains("oslog: cleared="))
+        XCTAssertTrue(output.contains("ready"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.paths.driverLock))
     }
 
