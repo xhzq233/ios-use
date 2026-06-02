@@ -217,15 +217,16 @@ ios-use proxy read --filter "~d example.com" --raw
 ### 9.1 `oslog`
 
 ```bash
-ios-use oslog --bundle-id com.example.app --timeout 5
+ios-use oslog --process IOSUseDriver-Runner --timeout 5
+ios-use oslog --pid 123 --timeout 5
 ios-use oslog --pattern "error|failed" --flags i --timeout 10
-ios-use oslog --clear
 ```
 
 - 省略 `--udid` 时使用当前 `driver.lock`。
+- 真机前台 stream 到超时，Simulator 在窗口期内轮询匹配。
 - `--timeout 0` 表示不等待。
-- `--bundle-id` 只过滤日志，不切 app。
-- 采集完成后会输出日志文件路径。
+- `--process <name>` 或 `--pid <pid>` 过滤单个日志来源，二者互斥，只过滤日志，不切 app。
+- 日志直接输出到 stdout，不写 artifact；需要落盘时自行重定向或使用 `tee`。
 
 ### 9.2 `nslog`
 

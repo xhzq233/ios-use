@@ -2,45 +2,32 @@ import Foundation
 import IOSUseProtocol
 
 public enum OSLogService {
-    private static var buffers: [String: [String]] = [:]
-    private static var seenLines: [String: Set<String>] = [:]
-    typealias SimulatorLogCollector = (_ udid: String, _ lastSec: Double, _ bundleId: String?) throws -> [String]
+    typealias SimulatorLogCollector = (_ udid: String, _ lastSec: Double, _ source: OSLogOptions.SourceFilter) throws -> [String]
     static var simulatorLogCollector: SimulatorLogCollector = collectSimulatorLog
-
-    public static func clear() -> String {
-        let cleared = buffers.values.reduce(0) { $0 + $1.count }
-        buffers.removeAll(keepingCapacity: true)
-        seenLines.removeAll(keepingCapacity: true)
-        return "  → oslog: cleared=\(cleared)\n"
-    }
-
-    public static func clear(udid: String) -> String {
-        let keys = ["real:\(udid)", "simulator:\(udid)"]
-        let cleared = keys.reduce(0) { total, key in
-            seenLines.removeValue(forKey: key)
-            return total + (buffers.removeValue(forKey: key)?.count ?? 0)
-        }
-        return "  → oslog: cleared=\(cleared)\n"
-    }
 
     public static func fetchSimulator(
         udid: String,
         pattern: String?,
         flags: String?,
-        bundleId: String?,
+        source: OSLogOptions.SourceFilter,
         timeout: Double?,
         paths: IOSUsePaths
     ) throws -> String {
-        let bufferKey = "simulator:\(udid)"
         let lastSec = timeout ?? IOSUseProtocol.oslogDefaultSimulatorLastSeconds
         let shouldPoll = timeout != nil && !(pattern ?? "").isEmpty
         let deadline = Date().addingTimeInterval(timeout ?? 0)
         var totalLines: [String] = []
+        var seenLines = Set<String>()
         var lines: [String] = []
         repeat {
-            let newLines = try simulatorLogCollector(udid, lastSec, bundleId)
-            totalLines = appendUnique(newLines, key: bufferKey)
-            lines = bundleId.map { filterByBundleId(totalLines, bundleId: $0) } ?? totalLines
+            let newLines = try simulatorLogCollector(udid, lastSec, source)
+            for line in newLines {
+                let normalized = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !seenLines.contains(normalized) else { continue }
+                seenLines.insert(normalized)
+                totalLines.append(line)
+            }
+            lines = filterBySource(totalLines, source: source)
             lines = try filter(lines, pattern: pattern, flags: flags)
             if !shouldPoll || !lines.isEmpty {
                 break
@@ -54,10 +41,11 @@ public enum OSLogService {
         udid: String,
         pattern: String?,
         flags: String?,
-        bundleId: String?,
+        source: OSLogOptions.SourceFilter,
         timeout: Double?,
         paths: IOSUsePaths,
-        deviceTypeHint: String? = nil
+        deviceTypeHint: String? = nil,
+        outputSink: ((String) -> Void)? = nil
     ) throws -> String {
         let simulator: Bool
         if deviceTypeHint == "simulator" {
@@ -80,68 +68,80 @@ public enum OSLogService {
                 udid: udid,
                 pattern: pattern,
                 flags: flags,
-                bundleId: bundleId,
+                source: source,
                 timeout: timeout,
                 paths: paths
             )
         }
 
-        let timeoutSeconds = timeout ?? IOSUseProtocol.oslogDefaultCollectTimeoutSeconds
-        let newLines = try RealDeviceOSLogService.collectSyslog(udid: udid, timeoutSeconds: timeoutSeconds)
-        let bufferKey = "real:\(udid)"
-        let totalLines = appendUnique(newLines, key: bufferKey)
-        var lines = bundleId.map { filterByBundleId(totalLines, bundleId: $0) } ?? totalLines
-        lines = try filter(lines, pattern: pattern, flags: flags)
-        return formatLogOutput(lines)
+        let regex = try patternRegex(pattern: pattern, flags: flags)
+        var output = ""
+        let emit: (String) -> Void = { line in
+            let rendered = line.hasSuffix("\n") ? line : "\(line)\n"
+            output += rendered
+            outputSink?(rendered)
+        }
+
+        if RealDeviceOSTraceService.collectorForTesting != nil {
+            let lines = try RealDeviceOSTraceService.collectActivity(udid: udid, timeoutSeconds: timeout, source: source)
+            for line in try filter(lines, regex: regex) {
+                emit(line)
+            }
+            return outputSink == nil ? output : ""
+        }
+
+        try RealDeviceOSTraceService.streamActivity(udid: udid, timeoutSeconds: timeout, source: source) { event in
+            if matches(event.rawLine, regex: regex) {
+                emit(event.rawLine)
+            }
+        }
+        return outputSink == nil ? output : ""
     }
 
     static func resetSimulatorLogCollectorForTesting() {
         simulatorLogCollector = collectSimulatorLog
     }
 
-    private static func appendUnique(_ lines: [String], key: String) -> [String] {
-        var buffer = buffers[key] ?? []
-        var seen = seenLines[key] ?? Set(buffer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
-        for line in lines {
-            let normalized = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !seen.contains(normalized) else { continue }
-            seen.insert(normalized)
-            buffer.append(line)
-        }
-        if buffer.count > IOSUseProtocol.oslogMaxBufferLines {
-            buffer = Array(buffer.suffix(IOSUseProtocol.oslogMaxBufferLines))
-            seen = Set(buffer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
-        }
-        buffers[key] = buffer
-        seenLines[key] = seen
-        return buffer
-    }
-
-    private static func filterByBundleId(_ lines: [String], bundleId: String) -> [String] {
-        guard !bundleId.isEmpty else { return lines }
-        let processRegex = try? NSRegularExpression(pattern: #"^\w+\s+\d+\s+\d+:\d+:\d+\s+\S+\s+([\w-]+)"#)
+    private static func filterBySource(_ lines: [String], source: OSLogOptions.SourceFilter) -> [String] {
+        guard source.process != nil || source.pid != nil else { return lines }
+        let processRegex = try? NSRegularExpression(pattern: #"^\S+\s+\d+\s+\d+:\d+:\d+(?:\.\d+)?\s+\S+\s+([\w.-]+)(?:\([^)]*\))?\[(\d+)\]"#)
         return lines.filter { line in
-            if let processRegex,
-               let found = processRegex.firstMatch(in: line, range: NSRange(line.startIndex..<line.endIndex, in: line)),
-               found.numberOfRanges > 1,
-               let range = Range(found.range(at: 1), in: line) {
-                let process = String(line[range])
-                if process == bundleId || bundleId.contains(process) || process.contains(bundleId) {
-                    return true
-                }
+            guard let processRegex,
+                  let found = processRegex.firstMatch(in: line, range: NSRange(line.startIndex..<line.endIndex, in: line)),
+                  found.numberOfRanges > 2,
+                  let processRange = Range(found.range(at: 1), in: line),
+                  let pidRange = Range(found.range(at: 2), in: line) else {
+                return false
             }
-            return line.contains(bundleId)
+            if let process = source.process, String(line[processRange]) != process {
+                return false
+            }
+            if let pid = source.pid, Int(line[pidRange]) != pid {
+                return false
+            }
+            return true
         }
     }
 
     private static func filter(_ lines: [String], pattern: String?, flags: String?) throws -> [String] {
-        guard let pattern, !pattern.isEmpty else { return lines }
+        try filter(lines, regex: patternRegex(pattern: pattern, flags: flags))
+    }
+
+    private static func filter(_ lines: [String], regex: NSRegularExpression?) throws -> [String] {
+        guard let regex else { return lines }
+        return lines.filter { matches($0, regex: regex) }
+    }
+
+    private static func patternRegex(pattern: String?, flags: String?) throws -> NSRegularExpression? {
+        guard let pattern, !pattern.isEmpty else { return nil }
         let options = try regexOptions(flags ?? "")
-        let regex = try NSRegularExpression(pattern: pattern, options: options)
-        return lines.filter { line in
-            let range = NSRange(line.startIndex..<line.endIndex, in: line)
-            return regex.firstMatch(in: line, range: range) != nil
-        }
+        return try NSRegularExpression(pattern: pattern, options: options)
+    }
+
+    private static func matches(_ line: String, regex: NSRegularExpression?) -> Bool {
+        guard let regex else { return true }
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        return regex.firstMatch(in: line, range: range) != nil
     }
 
     private static func regexOptions(_ flags: String) throws -> NSRegularExpression.Options {
@@ -163,8 +163,8 @@ public enum OSLogService {
         return options
     }
 
-    private static func collectSimulatorLog(udid: String, lastSec: Double, bundleId: String?) throws -> [String] {
-        _ = bundleId
+    private static func collectSimulatorLog(udid: String, lastSec: Double, source: OSLogOptions.SourceFilter) throws -> [String] {
+        _ = source
         let args = ["simctl", "spawn", udid, "log", "show", "--style", "compact", "--last", "\(lastSec)s"]
         let output = (try? Shell.run("xcrun", arguments: args)) ?? ""
         return output
@@ -184,13 +184,7 @@ public enum OSLogService {
 }
 
 enum OSLogCommandService {
-    static func run(options: OSLogOptions, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil) throws -> String {
-        if options.clear {
-            if let udid = options.session.udid ?? SessionService.read(paths: paths)?.udid {
-                return OSLogService.clear(udid: udid)
-            }
-            return OSLogService.clear()
-        }
+    static func run(options: OSLogOptions, paths: IOSUsePaths, hostDeviceTypeHint: String? = nil, outputSink: ((String) -> Void)? = nil) throws -> String {
         let activeDriver = SessionService.read(paths: paths)
         let udid = try SessionService.resolveTargetUdid(
             explicitUdid: options.session.udid,
@@ -201,10 +195,11 @@ enum OSLogCommandService {
             udid: udid,
             pattern: options.pattern,
             flags: options.flags,
-            bundleId: options.bundleId,
+            source: options.source,
             timeout: options.timeout,
             paths: paths,
-            deviceTypeHint: hostDeviceTypeHint ?? (activeDriver?.udid == udid ? activeDriver?.deviceType : nil)
+            deviceTypeHint: hostDeviceTypeHint ?? (activeDriver?.udid == udid ? activeDriver?.deviceType : nil),
+            outputSink: outputSink
         )
     }
 }

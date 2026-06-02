@@ -145,7 +145,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
       });
     } },
     { id: 'DOM-1', run: () => runCaseContains('DOM-1', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
-    { id: 'DOM-2', run: () => runCaseContains('DOM-2', 'Application', ['dom', '--raw', '--fresh'], settingsHome) },
+    { id: 'DOM-2', run: () => runCaseContains('DOM-2', '[App]', ['dom', '--raw', '--fresh'], settingsHome) },
     { id: 'DOM-5', run: () => runCaseContains('DOM-5', 'Settings', ['dom', '--fresh'], settingsHome) },
     { id: 'DOM-6', run: runDomNoWindowHeaderCase },
     { id: 'DOM-7', run: runDomPerfCase },
@@ -159,7 +159,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'com.apple.settings.search', '--traits', 'Button'], settingsHome) },
     { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled'], generalPage) },
     { id: 'FIND-12', run: runAutoLabelFindCase },
-    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', '- "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
+    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Text "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
     { id: 'FIND-10B', run: () => runCaseContains('FIND-10B', 'chevron.forward', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '-1'], settingsHome) },
     { id: 'FIND-11A', run: () => runCaseFailsContains('FIND-11A', 'not found', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '99'], settingsHome) },
     { id: 'FIND-1B', run: async () => {
@@ -228,7 +228,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'SW-1', run: () => runCaseContains('SW-1', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell'], generalPage) },
     { id: 'SW-2', run: () => runCaseContains('SW-2', 'scrolls=', ['swipe', '--to', 'Keyboard', '--dir', 'forth', '--traits', 'Cell'], generalPage) },
     { id: 'SW-3', run: () => runCaseContains('SW-3', 'scrolls=', ['swipe', '--to', 'Keyboard', '--traits', 'Cell'], generalPage) },
-    { id: 'SW-3B', run: () => runCaseContains('SW-3B', '- "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
+    { id: 'SW-3B', run: () => runCaseContains('SW-3B', 'Text "Search"', ['swipe', '--to', 'com.apple.settings.search', '--from', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
     { id: 'SW-4', run: () => runCaseMatches('SW-4', /scrolls=\d+ direction=up/, ['swipe', '--to', 'About', '--from', 'Keyboard', '--dir', 'back', '--traits', 'Cell'], async () => { await generalPage(); runCliToFiles(['swipe', '--to', 'Keyboard', '--traits', 'Cell'], path.join(artifactDir, 'SW-4-setup.out'), path.join(artifactDir, 'SW-4-setup.err')); }) },
     { id: 'SW-5', run: () => runCaseContains('SW-5', 'scrolls=', ['swipe', '--to', 'About', '--from', '200,650', '--traits', 'Cell'], generalPage) },
     { id: 'SW-6', run: () => runCaseContains('SW-6', 'scrolls=', ['swipe', '--to', '100,700'], generalPage) },

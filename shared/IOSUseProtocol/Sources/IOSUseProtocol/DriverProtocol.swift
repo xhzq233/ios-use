@@ -108,8 +108,6 @@ public enum IOSUseProtocol {
     public static let oslogDefaultCollectTimeoutSeconds = 5.0
     /// Simulator oslog default `log show --last` window.
     public static let oslogDefaultSimulatorLastSeconds = 10.0
-    /// Host-side oslog ring buffer cap.
-    public static let oslogMaxBufferLines = 5_000
     /// Legacy NSLogger TLS receiver port. Current host server binds an internal random port and publishes it via Bonjour.
     public static let nsloggerDefaultPort = 50_000
     /// Default NSLogger ring buffer capacity.

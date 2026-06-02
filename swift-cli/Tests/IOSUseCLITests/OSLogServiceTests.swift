@@ -2,29 +2,20 @@ import XCTest
 @testable import IOSUseCLI
 
 final class OSLogServiceTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        _ = OSLogService.clear()
-    }
-
     override func tearDown() {
         RealDeviceOSLogService.collectorForTesting = nil
+        RealDeviceOSTraceService.collectorForTesting = nil
         OSLogService.resetSimulatorLogCollectorForTesting()
-        _ = OSLogService.clear()
         super.tearDown()
     }
 
-    func testClearKeepsUserVisibleContract() {
-        XCTAssertEqual(OSLogService.clear(), "  → oslog: cleared=0\n")
-    }
-
-    func testOslogClearDoesNotRequireDriverSession() {
+    func testOslogClearIsRejected() {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog", "--clear"])
 
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "  → oslog: cleared=0\n")
-        XCTAssertTrue(result.stderr.isEmpty)
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stdout.isEmpty)
+        XCTAssertTrue(result.stderr.contains("unknown option '--clear'"))
     }
 
     func testOslogRejectsMissingTargetBeforeTouchingUsbDevices() {
@@ -74,8 +65,8 @@ final class OSLogServiceTests: XCTestCase {
             XCTAssertTrue(simulatorOnly)
             return []
         }
-        RealDeviceOSLogService.collectorForTesting = { _, _ in
-            XCTFail("explicit Simulator UDID must not fall back to real-device syslog")
+        RealDeviceOSTraceService.collectorForTesting = { _, _, _ in
+            XCTFail("explicit Simulator UDID must not fall back to real-device os_trace")
             return []
         }
         addTeardownBlock {
@@ -104,7 +95,7 @@ final class OSLogServiceTests: XCTestCase {
             udid: "SIM-1",
             pattern: "ready",
             flags: "ig",
-            bundleId: "com.example.Demo",
+            source: OSLogOptions.SourceFilter(process: "Demo"),
             timeout: 1,
             paths: paths
         )
@@ -123,7 +114,7 @@ final class OSLogServiceTests: XCTestCase {
             udid: "SIM-1",
             pattern: "ready",
             flags: "z",
-            bundleId: nil,
+            source: OSLogOptions.SourceFilter(),
             timeout: 1,
             paths: paths
         )) { error in
@@ -144,7 +135,7 @@ final class OSLogServiceTests: XCTestCase {
             udid: "SIM-HINT",
             pattern: "hinted",
             flags: nil,
-            bundleId: nil,
+            source: OSLogOptions.SourceFilter(),
             timeout: 1,
             paths: paths,
             deviceTypeHint: "simulator"
@@ -170,7 +161,7 @@ final class OSLogServiceTests: XCTestCase {
             udid: "SIM-POLL",
             pattern: "ready",
             flags: nil,
-            bundleId: nil,
+            source: OSLogOptions.SourceFilter(),
             timeout: 1,
             paths: paths
         )
@@ -193,7 +184,7 @@ final class OSLogServiceTests: XCTestCase {
             udid: "SIM-NO-POLL",
             pattern: nil,
             flags: nil,
-            bundleId: nil,
+            source: OSLogOptions.SourceFilter(),
             timeout: 1,
             paths: paths
         )
@@ -201,43 +192,90 @@ final class OSLogServiceTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
-    func testClearWithUdidOnlyClearsMatchingDeviceBuffer() throws {
+    func testSimulatorPollingDedupesWithinSingleCommandOnly() throws {
         let paths = IOSUsePaths.resolve(environment: [
             "IOS_USE_HOME": FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
         ])
-        var linesByUdid: [String: [String]] = [
-            "SIM-1": ["May 16 10:00:00 iPhone One(One)[1] <Notice>: one"],
-            "SIM-2": ["May 16 10:00:00 iPhone Two(Two)[2] <Notice>: two"],
-        ]
-        OSLogService.simulatorLogCollector = { udid, _, _ in
-            let lines = linesByUdid[udid] ?? []
-            linesByUdid[udid] = []
-            return lines
+        var calls = 0
+        OSLogService.simulatorLogCollector = { _, _, _ in
+            calls += 1
+            return [
+                "May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: booting",
+                "May 16 10:00:01 iPhone Demo(Demo)[1] <Notice>: ready",
+                "May 16 10:00:01 iPhone Demo(Demo)[1] <Notice>: ready",
+            ]
         }
 
-        _ = try OSLogService.fetchSimulator(udid: "SIM-1", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
-        _ = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
+        let first = try OSLogService.fetchSimulator(
+            udid: "SIM-DEDUPE",
+            pattern: "ready",
+            flags: nil,
+            source: OSLogOptions.SourceFilter(),
+            timeout: 1,
+            paths: paths
+        )
+        let second = try OSLogService.fetchSimulator(
+            udid: "SIM-DEDUPE",
+            pattern: "ready",
+            flags: nil,
+            source: OSLogOptions.SourceFilter(),
+            timeout: 1,
+            paths: paths
+        )
 
-        XCTAssertEqual(OSLogService.clear(udid: "SIM-1"), "  → oslog: cleared=1\n")
-        let output = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
-        XCTAssertTrue(output.contains("two"))
+        XCTAssertEqual(calls, 2)
+        XCTAssertEqual(first.split(separator: "\n").filter { $0.contains("ready") }.count, 1)
+        XCTAssertEqual(second.split(separator: "\n").filter { $0.contains("ready") }.count, 1)
     }
 
-    func testCLIClearWithUdidOnlyClearsThatDevice() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        OSLogService.simulatorLogCollector = { udid, _, _ in
-            ["May 16 10:00:00 iPhone \(udid)(Demo)[1] <Notice>: \(udid)"]
-        }
+    func testOSTracePacketParserFormatsProcessPidAndMessage() throws {
+        let processPath = Data("/path/IOSUseDriverRunner\0".utf8)
+        let imagePath = Data("/usr/lib/libswift.dylib\0".utf8)
+        let message = Data("[driver] ready\0".utf8)
+        var packet = Data(repeating: 0, count: 129)
+        packet[0] = 2
+        putUInt32LE(8, into: &packet, at: 1)
+        putUInt32LE(129, into: &packet, at: 5)
+        putUInt32LE(42, into: &packet, at: 9)
+        putUInt64LE(42, into: &packet, at: 13)
+        putUInt16LE(UInt16(processPath.count), into: &packet, at: 37)
+        putUInt64LE(1_717_000_000, into: &packet, at: 55)
+        putUInt32LE(123, into: &packet, at: 63)
+        packet[68] = 0x01
+        putUInt16LE(UInt16(imagePath.count), into: &packet, at: 107)
+        putUInt32LE(UInt32(message.count), into: &packet, at: 109)
+        packet.append(processPath)
+        packet.append(imagePath)
+        packet.append(message)
 
-        _ = try OSLogService.fetchSimulator(udid: "SIM-1", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
-        _ = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
+        let event = try XCTUnwrap(RealDeviceOSTraceService.parseEventPacket(packet))
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--clear", "--udid", "SIM-1"])
+        XCTAssertEqual(event.processName, "IOSUseDriverRunner")
+        XCTAssertEqual(event.pid, 42)
+        XCTAssertEqual(event.message, "[driver] ready")
+        XCTAssertTrue(event.rawLine.contains("IOSUseDriverRunner[42] <Info>: [driver] ready"))
+    }
 
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "  → oslog: cleared=1\n")
-        let output = try OSLogService.fetchSimulator(udid: "SIM-2", pattern: nil, flags: nil, bundleId: nil, timeout: 1, paths: paths)
-        XCTAssertTrue(output.contains("SIM-2"))
+    private func putUInt16LE(_ value: UInt16, into data: inout Data, at offset: Int) {
+        data[offset] = UInt8(value & 0xff)
+        data[offset + 1] = UInt8((value >> 8) & 0xff)
+    }
+
+    private func putUInt32LE(_ value: UInt32, into data: inout Data, at offset: Int) {
+        data[offset] = UInt8(value & 0xff)
+        data[offset + 1] = UInt8((value >> 8) & 0xff)
+        data[offset + 2] = UInt8((value >> 16) & 0xff)
+        data[offset + 3] = UInt8((value >> 24) & 0xff)
+    }
+
+    private func putUInt64LE(_ value: UInt64, into data: inout Data, at offset: Int) {
+        data[offset] = UInt8(value & 0xff)
+        data[offset + 1] = UInt8((value >> 8) & 0xff)
+        data[offset + 2] = UInt8((value >> 16) & 0xff)
+        data[offset + 3] = UInt8((value >> 24) & 0xff)
+        data[offset + 4] = UInt8((value >> 32) & 0xff)
+        data[offset + 5] = UInt8((value >> 40) & 0xff)
+        data[offset + 6] = UInt8((value >> 48) & 0xff)
+        data[offset + 7] = UInt8((value >> 56) & 0xff)
     }
 }

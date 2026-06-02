@@ -259,18 +259,18 @@ enum CLIHelp {
             return proxyHelp(arguments: rest)
         case "oslog":
             return """
-            Usage: ios-use oslog [--udid <udid>] [--pattern <regex>] [--flags <flags>] [--timeout <seconds>] [--bundle-id <bundleId>] [--clear] [--verbose]
+            Usage: ios-use oslog [--udid <udid>] [--process <name> | --pid <pid>] [--pattern <regex>] [--flags <flags>] [--timeout <seconds>] [--verbose]
 
-            Print or clear OSLog output.
+            Stream OSLog output.
             Fetch defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
               --udid <udid>          Target device or Simulator UDID; overrides active driver.lock
+              --process <name>       Filter by a single process/executable name
+              --pid <pid>            Filter by a single process id
               --pattern <regex>      Regex filter
               --flags <flags>        Regex flags: i, m, s
               --timeout <seconds>    Collection or polling timeout
-              --bundle-id <bundleId> Filter by bundle ID
-              --clear                Clear buffered oslog lines
               --verbose              Enable verbose output
 
             """

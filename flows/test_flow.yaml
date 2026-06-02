@@ -47,9 +47,9 @@ steps:
     comment: "验证 point swipe 路径"
 
   - action: oslog
-    clear: true
-    bundleId: com.apple.Preferences
-    comment: "清空 oslog 缓冲区"
+    pattern: "__ios_use_no_such_log_line__"
+    timeout: 0
+    comment: "验证 oslog host-side 路径"
 
   - action: swipe
     distance: 180
@@ -59,7 +59,7 @@ steps:
   - action: oslog
     pattern: Preferences
     flags: i
-    bundleId: com.apple.Preferences
+    process: Preferences
     comment: "打印 Settings 过滤视图下的 oslog"
 
   - action: tap

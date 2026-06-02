@@ -25,7 +25,6 @@ final class IOSUseCLITests: XCTestCase {
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
         RealDeviceOSLogService.collectorForTesting = nil
-        _ = OSLogService.clear()
         Shell.runOverrideForTesting = nil
         Shell.runResultOverrideForTesting = nil
         super.tearDown()
@@ -54,7 +53,8 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Usage: ios-use oslog"))
-        XCTAssertTrue(result.stdout.contains("--bundle-id <bundleId>"))
+        XCTAssertTrue(result.stdout.contains("--process <name>"))
+        XCTAssertTrue(result.stdout.contains("--pid <pid>"))
         XCTAssertFalse(result.stdout.contains("Usage: ios-use [--help]"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
@@ -1063,7 +1063,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(shellCalls.isEmpty)
     }
 
-    func testOSLogExplicitRealDeviceUsesSyslogWithoutSimulatorProbe() throws {
+    func testOSLogExplicitRealDeviceUsesOSTraceWithoutSimulatorProbe() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-oslog-real-\(UUID().uuidString)")
             .path
@@ -1073,10 +1073,11 @@ final class IOSUseCLITests: XCTestCase {
             return []
         }
         DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-LOG"] }
-        RealDeviceOSLogService.collectorForTesting = { udid, timeout in
+        RealDeviceOSTraceService.collectorForTesting = { udid, timeout, source in
             XCTAssertEqual(udid, "REAL-LOG")
             XCTAssertEqual(timeout, 0)
-            return ["May 29 ready com.example.app"]
+            XCTAssertEqual(source, OSLogOptions.SourceFilter())
+            return ["May 29 10:00:00 IOSUseDriverRunner[1] <Notice>: ready com.example.app"]
         }
         Shell.runOverrideForTesting = { executable, _, _, _ in
             if executable == "xcrun" {
@@ -1089,7 +1090,7 @@ final class IOSUseCLITests: XCTestCase {
             DeviceService.listDevicesOverrideForTesting = nil
             DeviceService.usbDeviceUdidsOverrideForTesting = nil
             DeviceService.resetCacheForTesting()
-            RealDeviceOSLogService.collectorForTesting = nil
+            RealDeviceOSTraceService.collectorForTesting = nil
             Shell.runOverrideForTesting = nil
         }
 
