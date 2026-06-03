@@ -826,6 +826,13 @@ final class FlowServiceTests: XCTestCase {
             pattern: ready
             timeout: -1
         """)
+        let zeroOslogTimeout = try fixture.write("oslog-zero-timeout.yaml", """
+        name: oslog-zero-timeout
+        steps:
+          - action: oslog
+            pattern: ready
+            timeout: 0
+        """)
         let oslogProcessAndPid = try fixture.write("oslog-process-pid.yaml", """
         name: oslog-process-pid
         steps:
@@ -847,7 +854,10 @@ final class FlowServiceTests: XCTestCase {
             XCTAssertTrue(String(describing: error).contains("dom.candidates must contain only non-empty strings"))
         }
         XCTAssertThrowsError(try FlowService.runForTesting(file: negativeOslogTimeout.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
-            XCTAssertTrue(String(describing: error).contains("--timeout must be non-negative"))
+            XCTAssertTrue(String(describing: error).contains("oslog.timeout must be greater than 0"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: zeroOslogTimeout.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
+            XCTAssertTrue(String(describing: error).contains("oslog.timeout must be greater than 0"))
         }
         XCTAssertThrowsError(try FlowService.runForTesting(file: oslogProcessAndPid.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
             XCTAssertTrue(String(describing: error).contains("oslog.process and oslog.pid are mutually exclusive"))
@@ -866,11 +876,11 @@ final class FlowServiceTests: XCTestCase {
             pattern: ready
             flags: i
             process: Demo
-            timeout: 0
+            timeout: 1
           - action: oslog
             pattern: ready
             pid: 123
-            timeout: 0
+            timeout: 1
         """)
         var sources: [OSLogOptions.SourceFilter] = []
         OSLogService.simulatorLogCollector = { _, _, source in
@@ -1002,7 +1012,7 @@ final class FlowServiceTests: XCTestCase {
         name: host-only
         steps:
           - action: oslog
-            timeout: 0
+            timeout: 1
         """)
 
         XCTAssertThrowsError(try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)) { error in
@@ -1018,7 +1028,7 @@ final class FlowServiceTests: XCTestCase {
         steps:
           - action: oslog
             pattern: ready
-            timeout: 0
+            timeout: 1
         """)
         OSLogService.simulatorLogCollector = { _, _, _ in
             ["May 16 10:00:00 iPhone Demo(Demo)[1] <Notice>: ready"]

@@ -473,7 +473,7 @@ public enum CLIParser {
             switch arg {
             case "--pattern": pattern = try parser.valueAllowingLeadingDash(for: arg)
             case "--flags": flags = try parser.value(for: arg)
-            case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--timeout": timeout = try parsePositiveDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--process":
                 guard process == nil else { throw CLIParseError.invalidValue("--process can only be provided once") }
                 guard pid == nil else { throw CLIParseError.invalidValue("--process and --pid are mutually exclusive") }
@@ -543,6 +543,14 @@ public enum CLIParser {
         let parsed = try parseDoubleStrict(value, label: label)
         guard parsed >= 0 else {
             throw CLIParseError.invalidValue("\(label) must be non-negative")
+        }
+        return parsed
+    }
+
+    private static func parsePositiveDoubleStrict(_ value: String, label: String) throws -> Double {
+        let parsed = try parseDoubleStrict(value, label: label)
+        guard parsed > 0 else {
+            throw CLIParseError.invalidValue("\(label) must be greater than 0")
         }
         return parsed
     }
