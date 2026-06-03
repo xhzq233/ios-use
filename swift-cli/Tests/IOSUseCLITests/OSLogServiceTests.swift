@@ -52,7 +52,7 @@ final class OSLogServiceTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: root)
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--pattern", "ready", "--timeout", "0"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--pattern", "ready", "--timeout", "1"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("ready"))
@@ -74,7 +74,7 @@ final class OSLogServiceTests: XCTestCase {
             DeviceService.resetCacheForTesting()
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--udid", simulatorUdid, "--timeout", "0"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--udid", simulatorUdid, "--timeout", "1"])
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stderr.contains("Simulator \(simulatorUdid) is not booted or not found"))

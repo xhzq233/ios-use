@@ -145,8 +145,8 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["oslog", "--timeout", "0", "--udid", "DEVICE-1"]),
-            .oslog(OSLogOptions(timeout: 0, session: SessionOptions(udid: "DEVICE-1")))
+            try CLIParser.parse(["oslog", "--timeout", "1", "--udid", "DEVICE-1"]),
+            .oslog(OSLogOptions(timeout: 1, session: SessionOptions(udid: "DEVICE-1")))
         )
     }
 
@@ -299,6 +299,10 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertThrowsError(try CLIParser.parse(["oslog", "--bundle-id", "com.example"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--bundle-id"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["oslog", "--timeout", "0"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be greater than 0"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["input", "--label", "Name", "--content", "Alpha"])) { error in

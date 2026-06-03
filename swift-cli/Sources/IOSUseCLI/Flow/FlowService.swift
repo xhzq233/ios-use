@@ -644,7 +644,7 @@ enum FlowLowering {
             if !isNull(step["process"]), !isNull(step["pid"]) {
                 throw CLIParseError.invalidValue("oslog.process and oslog.pid are mutually exclusive")
             }
-            try validateNumberLike(step["timeout"], field: "oslog.timeout")
+            try validatePositiveNumberLike(step["timeout"], field: "oslog.timeout")
         case "nslog":
             try validateStringLike(step["pattern"], field: "nslog.pattern", required: true)
             try validateStringLike(step["flags"], field: "nslog.flags")
@@ -745,6 +745,14 @@ enum FlowLowering {
     private static func validateNumberLike(_ value: Any?, field: String) throws {
         guard !isNull(value), !containsTemplate(value) else { return }
         _ = try numberString(value, field: field)
+    }
+
+    private static func validatePositiveNumberLike(_ value: Any?, field: String) throws {
+        guard !isNull(value), !containsTemplate(value) else { return }
+        let string = try numberString(value, field: field)
+        guard let parsed = Double(string), parsed > 0 else {
+            throw CLIParseError.invalidValue("\(field) must be greater than 0")
+        }
     }
 
     private static func validateIntLike(_ value: Any?, field: String, allowNegative: Bool) throws {

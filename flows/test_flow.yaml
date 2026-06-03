@@ -48,7 +48,7 @@ steps:
 
   - action: oslog
     pattern: "__ios_use_no_such_log_line__"
-    timeout: 0
+    timeout: 0.2
     comment: "验证 oslog host-side 路径"
 
   - action: swipe
