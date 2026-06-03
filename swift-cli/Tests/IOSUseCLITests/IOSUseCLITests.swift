@@ -1075,7 +1075,7 @@ final class IOSUseCLITests: XCTestCase {
         DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-LOG"] }
         RealDeviceOSTraceService.collectorForTesting = { udid, timeout, source in
             XCTAssertEqual(udid, "REAL-LOG")
-            XCTAssertEqual(timeout, 0)
+            XCTAssertEqual(timeout, 1)
             XCTAssertEqual(source, OSLogOptions.SourceFilter())
             return ["May 29 10:00:00 IOSUseDriverRunner[1] <Notice>: ready com.example.app"]
         }
@@ -1094,7 +1094,7 @@ final class IOSUseCLITests: XCTestCase {
             Shell.runOverrideForTesting = nil
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--udid", "REAL-LOG", "--pattern", "ready", "--timeout", "0"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--udid", "REAL-LOG", "--pattern", "ready", "--timeout", "1"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("ready"))

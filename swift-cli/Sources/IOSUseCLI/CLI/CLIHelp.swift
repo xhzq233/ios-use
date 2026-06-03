@@ -270,7 +270,7 @@ enum CLIHelp {
               --pid <pid>            Filter by a single process id
               --pattern <regex>      Regex filter
               --flags <flags>        Regex flags: i, m, s
-              --timeout <seconds>    Collection or polling timeout
+              --timeout <seconds>    Collection or polling timeout; must be greater than 0
               --verbose              Enable verbose output
 
             """

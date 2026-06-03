@@ -224,7 +224,7 @@ ios-use oslog --pattern "error|failed" --flags i --timeout 10
 
 - 省略 `--udid` 时使用当前 `driver.lock`。
 - 真机前台 stream 到超时，Simulator 在窗口期内轮询匹配。
-- `--timeout 0` 表示不等待。
+- `--timeout` 必须大于 0；`0` 不合法。
 - `--process <name>` 或 `--pid <pid>` 过滤单个日志来源，二者互斥，只过滤日志，不切 app。
 - 日志直接输出到 stdout，不写 artifact；需要落盘时自行重定向或使用 `tee`。
 
