@@ -12,6 +12,12 @@ if grep -Eq 'date -u \+%Y%m%d%H%M%S|rev-parse --short=12' "$ROOT_DIR/scripts/bui
   exit 1
 fi
 
+echo "[swift-cli] Checking driver logging API..."
+if find "$ROOT_DIR/driver" \( -name '*.swift' -o -name '*.m' -o -name '*.mm' -o -name '*.h' \) -print0 | xargs -0 grep -n 'NSLog('; then
+  echo "[swift-cli] ERROR: driver logs must use DriverLog/os_log so ios-use oslog and idevicesyslog can observe them" >&2
+  exit 1
+fi
+
 echo "[swift-cli] Checking installed-style CLI invocation..."
 swift build --package-path "$ROOT_DIR/swift-cli"
 
