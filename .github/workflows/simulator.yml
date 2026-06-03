@@ -46,7 +46,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: swift-cli/.build
-          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-swift-cli-${{ hashFiles('swift-cli/Package.swift', 'swift-cli/Package.resolved', 'swift-cli/Sources/**/*.swift', 'swift-cli/Tests/**/*.swift', 'shared/IOSUseProtocol/Package.swift', 'shared/IOSUseProtocol/Sources/**/*.swift') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-swift-cli-
 
