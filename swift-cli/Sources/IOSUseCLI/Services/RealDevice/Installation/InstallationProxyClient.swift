@@ -198,6 +198,39 @@ enum RealDevicePackageInstaller {
         }
     }
 
+    static func installPackage(
+        packagePath: String,
+        kind: AppManagementService.AppPackageKind,
+        udid: String,
+        bundleID: String?,
+        responseObserver: (([String: Any]) -> Void)? = nil
+    ) throws {
+        switch kind {
+        case .ipa:
+            try installIpa(ipaPath: packagePath, udid: udid, bundleID: bundleID, responseObserver: responseObserver)
+        case .app:
+            try withTemporaryIpaFromApp(appPath: packagePath) { ipaPath in
+                try installIpa(ipaPath: ipaPath, udid: udid, bundleID: bundleID, responseObserver: responseObserver)
+            }
+        }
+    }
+
+    static func withTemporaryIpaFromApp<T>(appPath: String, _ body: (String) throws -> T) throws -> T {
+        let appURL = URL(fileURLWithPath: appPath, isDirectory: true)
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-app-ipa-\(UUID().uuidString)", isDirectory: true)
+        let payloadURL = tmpURL.appendingPathComponent("Payload", isDirectory: true)
+        let stagedAppURL = payloadURL.appendingPathComponent(appURL.lastPathComponent, isDirectory: true)
+        let ipaURL = tmpURL.appendingPathComponent("app.ipa")
+        try FileManager.default.createDirectory(at: payloadURL, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: appURL, to: stagedAppURL)
+        _ = try Shell.run("zip", arguments: ["-qry", ipaURL.path, "Payload"], cwd: tmpURL.path)
+        defer {
+            try? FileManager.default.removeItem(at: tmpURL)
+        }
+        return try body(ipaURL.path)
+    }
+
     static func installationProxyPackagePath(forAfcPath path: String) -> String {
         path.split(separator: "/", omittingEmptySubsequences: true).joined(separator: "/")
     }
