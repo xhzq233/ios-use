@@ -3,7 +3,7 @@ import Foundation
 enum DriverPerf {
     static func append(_ message: String) {
         #if DEBUG_PERF
-        NSLog(message)
+        DriverLog.info(message)
         #endif
     }
 

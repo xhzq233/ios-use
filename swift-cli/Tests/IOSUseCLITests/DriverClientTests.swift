@@ -52,6 +52,23 @@ final class DriverClientTests: XCTestCase {
         XCTAssertEqual(args.target.cindex, -1)
     }
 
+    func testClientSerializesDomWaitQuiescence() throws {
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(ForyDomPayload())
+        let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: payload)])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+
+        _ = try client.dom(raw: false, fresh: true, waitQuiescence: true)
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        XCTAssertEqual(request.command, DriverCommand.dom.rawValue)
+        let args = try fory.deserialize(request.payload, as: ForyDomArgs.self)
+        XCTAssertFalse(args.raw)
+        XCTAssertTrue(args.fresh)
+        XCTAssertTrue(args.waitQuiescence)
+    }
+
     func testClientWritesCommandLogToCLILog() throws {
         let payload = try ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))
         let server = try FakeDriverServer(responses: [

@@ -22,6 +22,7 @@
 		2A2204C88E4EE9C80378FF0B /* DriverPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222296EF65270A2108CC1622 /* DriverPerf.swift */; };
 		2A99D7083199D3C052817376 /* Proxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F60F451C114B1CD47F9A702 /* Proxy.swift */; };
 		2D30D40139893E650198A77E /* Proxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F60F451C114B1CD47F9A702 /* Proxy.swift */; };
+		2EBAF8649B90EB21D7A50ED1 /* DriverLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D2B90E83BBAE04E8408D34 /* DriverLog.swift */; };
 		3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35DDA5A7967522B295F5AEDB /* FindUtils.swift */; };
 		3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DDB97D9F6B1FB7C45A9A1 /* Find.swift */; };
 		40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
@@ -39,6 +40,7 @@
 		81CD91B7F77CDB0EB872969C /* TypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */; };
 		935AEEC19759B9C9EC78FB3F /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AE99BB4D5AD93891B02F4CB /* Session.swift */; };
 		947BDE121DDB75E2D244D1BF /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 17BCFDE8A7DA91241BC86090 /* AppRegistry.m */; };
+		97C07497EF37EE56BCEE988A /* Quiescence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD5EF928C9D1CB107908D28 /* Quiescence.swift */; };
 		9B2D14D04A8484C749189950 /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C773A75C11E5CE2360A4FB4 /* Input.swift */; };
 		9B9DC8661A47D7EB2FF33C44 /* CodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABACD4A116F231BF1D16712 /* CodecTests.swift */; };
 		A2F46A49779B68AEAD78B0C2 /* AppRegistry.m in Sources */ = {isa = PBXBuildFile; fileRef = 17BCFDE8A7DA91241BC86090 /* AppRegistry.m */; };
@@ -54,12 +56,14 @@
 		BB6FC10754570033C9A83E5B /* DriverProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5673E8F5A73863E5BFC1145 /* DriverProtocol.swift */; };
 		C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
 		C17AD8E6E19EB9DF22D2E31E /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
+		C53710C5F3D909BEC3D85696 /* Quiescence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD5EF928C9D1CB107908D28 /* Quiescence.swift */; };
 		CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C773A75C11E5CE2360A4FB4 /* Input.swift */; };
 		D285AAC468646BCF5AE7FD77 /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */; };
 		D4BEF7290917234083FDE8F7 /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */; };
 		DBC049498CB7F7EC52F82C1E /* Fory in Frameworks */ = {isa = PBXBuildFile; productRef = A7A16F95F6EFE334D2178CD8 /* Fory */; };
 		E1690C6B99691CCDC27F4FD6 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71A0AC56CC6B8335709D4A71 /* App.swift */; };
 		EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
+		EFE1D91B69F3B440931AEBB9 /* DriverLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D2B90E83BBAE04E8408D34 /* DriverLog.swift */; };
 		F23939ACC634CC69D0D7C5E0 /* XCTestPrivate.m in Sources */ = {isa = PBXBuildFile; fileRef = 20C7C30497334B1AEE198AC3 /* XCTestPrivate.m */; };
 		F84D2C040ACBA005CD67B912 /* XCTestPrivate.m in Sources */ = {isa = PBXBuildFile; fileRef = 20C7C30497334B1AEE198AC3 /* XCTestPrivate.m */; };
 		FEF28DB6B6ACFD3BCFAE0D1C /* ScrollMechanics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65984823BF87C6EFC8233743 /* ScrollMechanics.swift */; };
@@ -88,9 +92,11 @@
 		71A0AC56CC6B8335709D4A71 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		7C5B4B608C890EFE8841A177 /* Dom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dom.swift; sourceTree = "<group>"; };
 		7C773A75C11E5CE2360A4FB4 /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input.swift; sourceTree = "<group>"; };
+		86D2B90E83BBAE04E8408D34 /* DriverLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverLog.swift; sourceTree = "<group>"; };
 		8A018728001BB6A88192EAFD /* ServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTests.swift; sourceTree = "<group>"; };
 		90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypesTests.swift; sourceTree = "<group>"; };
+		9BD5EF928C9D1CB107908D28 /* Quiescence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Quiescence.swift; sourceTree = "<group>"; };
 		9DE69CDBA7F414F7325EFBD0 /* Codec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Codec.swift; sourceTree = "<group>"; };
 		A7314D09B4E47FB05DDAAF58 /* Screen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screen.swift; sourceTree = "<group>"; };
 		AABACD4A116F231BF1D16712 /* CodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecTests.swift; sourceTree = "<group>"; };
@@ -150,6 +156,7 @@
 		8803E5B92E81995DE73A3C9B /* ui */ = {
 			isa = PBXGroup;
 			children = (
+				86D2B90E83BBAE04E8408D34 /* DriverLog.swift */,
 				222296EF65270A2108CC1622 /* DriverPerf.swift */,
 				35DDA5A7967522B295F5AEDB /* FindUtils.swift */,
 				0AE99BB4D5AD93891B02F4CB /* Session.swift */,
@@ -170,6 +177,7 @@
 				577DDB97D9F6B1FB7C45A9A1 /* Find.swift */,
 				7C773A75C11E5CE2360A4FB4 /* Input.swift */,
 				0F60F451C114B1CD47F9A702 /* Proxy.swift */,
+				9BD5EF928C9D1CB107908D28 /* Quiescence.swift */,
 				FA8EE69CD9E44A379094C75D /* RawPointer.swift */,
 				A7314D09B4E47FB05DDAAF58 /* Screen.swift */,
 				65984823BF87C6EFC8233743 /* ScrollMechanics.swift */,
@@ -317,6 +325,7 @@
 				40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */,
 				9B9DC8661A47D7EB2FF33C44 /* CodecTests.swift in Sources */,
 				48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */,
+				2EBAF8649B90EB21D7A50ED1 /* DriverLog.swift in Sources */,
 				2617C12F7FE92652A2B7E897 /* DriverPerf.swift in Sources */,
 				22FF865268ADCC2D9D816FA3 /* DriverProtocol.swift in Sources */,
 				431ACF5CC685EAF0D8ABA2A4 /* ElementTypes.swift in Sources */,
@@ -325,6 +334,7 @@
 				D4BEF7290917234083FDE8F7 /* ForyModels.swift in Sources */,
 				CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */,
 				2A99D7083199D3C052817376 /* Proxy.swift in Sources */,
+				C53710C5F3D909BEC3D85696 /* Quiescence.swift in Sources */,
 				71116604C00B45958024BAE0 /* RawPointer.swift in Sources */,
 				C17AD8E6E19EB9DF22D2E31E /* Screen.swift in Sources */,
 				1C91F8F5B711B3F109EAA537 /* ScrollMechanics.swift in Sources */,
@@ -352,6 +362,7 @@
 				A2F46A49779B68AEAD78B0C2 /* AppRegistry.m in Sources */,
 				C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */,
 				EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */,
+				EFE1D91B69F3B440931AEBB9 /* DriverLog.swift in Sources */,
 				2A2204C88E4EE9C80378FF0B /* DriverPerf.swift in Sources */,
 				BB6FC10754570033C9A83E5B /* DriverProtocol.swift in Sources */,
 				0F225B1B7E968A537D411062 /* ElementTypes.swift in Sources */,
@@ -360,6 +371,7 @@
 				D285AAC468646BCF5AE7FD77 /* ForyModels.swift in Sources */,
 				9B2D14D04A8484C749189950 /* Input.swift in Sources */,
 				2D30D40139893E650198A77E /* Proxy.swift in Sources */,
+				97C07497EF37EE56BCEE988A /* Quiescence.swift in Sources */,
 				816428CB1210BC8502D0CC55 /* RawPointer.swift in Sources */,
 				A77C65F2623A196E0C66EB99 /* RunnerTests.swift in Sources */,
 				ADB402EBA304FD6F23411372 /* Screen.swift in Sources */,

@@ -9,6 +9,10 @@ enum DomCommands {
         let app = try Session.shared.ensureActive()
         let bundleId = app.value(forKey: "bundleID") as? String ?? ""
 
+        if args.waitQuiescence {
+            Quiescence.wait(app: app, command: "dom")
+        }
+
         // --raw mode: format the pre-clean snapshot as an indented string.
         if args.raw {
             invalidateSnapshot()
@@ -29,7 +33,7 @@ enum DomCommands {
         }
 
         // --fresh mode: invalidate cache before taking snapshot.
-        if args.fresh {
+        if args.fresh || args.waitQuiescence {
             invalidateSnapshot()
         }
 

@@ -52,7 +52,7 @@ enum AlertCommands {
         let tappedLabel = targetButton.label
         targetButton.tap()
         let appId = app.value(forKey: "bundleID") as? String ?? "unknown"
-        NSLog("[alert] dismissed: tapped '\(tappedLabel)' (index \(index)) in \(appId)")
+        DriverLog.info("[alert] dismissed: tapped '\(tappedLabel)' (index \(index)) in \(appId)")
 
         let payload = ForyAlertPayload(dismissed: true, text: alertText, button: tappedLabel, reason: "")
         return try? Codec.foryOK(payload)

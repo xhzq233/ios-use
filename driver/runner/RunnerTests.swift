@@ -5,13 +5,13 @@ final class IOSUseDriver: XCTestCase {
         super.setUp()
         continueAfterFailure = true
         // #region debug-point xctest-entry-setup
-        NSLog("[debug][xctest-entry-setup] IOSUseDriver setUp invoked")
+        DriverLog.info("[debug][xctest-entry-setup] IOSUseDriver setUp invoked")
         // #endregion
     }
 
     func testDaemon() throws {
         // #region debug-point xctest-entry-testRun
-        NSLog("[debug][xctest-entry-testRun] IOSUseDriver testRun invoked")
+        DriverLog.info("[debug][xctest-entry-testRun] IOSUseDriver testRun invoked")
         // #endregion
         let server = DriverServer.shared
 

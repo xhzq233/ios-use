@@ -10,7 +10,7 @@ import Fory
         do {
             try server.start()
         } catch {
-            NSLog("[driver] constructor start failed: \(error)")
+            DriverLog.error("[driver] constructor start failed: \(error)")
         }
     }
 
@@ -32,7 +32,7 @@ import Fory
 
     func start(port: UInt16? = nil) throws {
         let port = port ?? defaultPort
-        NSLog("[driver] server start v3 (fory)")
+        DriverLog.info("[driver] server start v3 (fory)")
 
         guard !running else {
             throw DriverError.serverError("server already running")
@@ -69,7 +69,7 @@ import Fory
         }
 
         running = true
-        NSLog("[driver] listening on port \(port)")
+        DriverLog.info("[driver] listening on port \(port)")
 
         acceptLoopSem = DispatchSemaphore(value: 0)
         DispatchQueue.global().async { [weak self] in
@@ -104,7 +104,7 @@ import Fory
             }
             guard clientFD >= 0 else {
                 if errno == EINTR { continue }
-                if running { NSLog("[driver] accept error: \(errno)") }
+                if running { DriverLog.error("[driver] accept error: \(errno)") }
                 break
             }
 
@@ -114,7 +114,7 @@ import Fory
                     self.handleConnection(clientFD)
                 }
             } else {
-                NSLog("[driver] connection limit reached (\(maxConnections)), rejecting new connection")
+                DriverLog.error("[driver] connection limit reached (\(maxConnections)), rejecting new connection")
                 Darwin.close(clientFD)
             }
         }
@@ -228,14 +228,14 @@ import Fory
             do {
                 let startedAt = CFAbsoluteTimeGetCurrent()
                 let startMessage = "[driver] dispatch start command=\(command.rawValue)"
-                NSLog(startMessage)
+                DriverLog.info(startMessage)
                 let response = try self.dispatchFory(payload, command: command)
                 let finishMessage = "[driver] dispatch finish command=\(command.rawValue) ok=\(response.ok) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms"
-                NSLog(finishMessage)
+                DriverLog.info(finishMessage)
                 result = response
             } catch {
                 let errorMessage = "[driver] dispatch error command=\(command.rawValue) error=\(error)"
-                NSLog(errorMessage)
+                DriverLog.error(errorMessage)
                 dispatchError = error
             }
             sem.signal()

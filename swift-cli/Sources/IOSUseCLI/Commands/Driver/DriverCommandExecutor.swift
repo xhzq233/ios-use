@@ -31,8 +31,8 @@ enum DriverCommandExecutor {
             )
         }
         switch action {
-        case .dom(let raw, let fresh):
-            let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: raw, fresh: fresh)) }, as: ForyDomPayload.self)
+        case .dom(let raw, let fresh, let waitQuiescence):
+            let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence)) }, as: ForyDomPayload.self)
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatDom(payload), payload: .dom(payload))
 
@@ -54,33 +54,33 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(stdout: "Screenshot saved: \(path)\n", payload: .screenshot(data))
 
-        case .tap(let target, let offset, let offsetRatio, let traits, let cindex, let domAfterMs):
+        case .tap(let target, let offset, let offsetRatio, let traits, let cindex, let postDom):
             let params = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
                 .element(try $0.tap(target: params.target, traits: traits, cindex: cindex, offset: params.offset, ratio: params.ratio))
             }, as: ForyElementPayload.self)
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: "Tap\n\(DriverOutput.formatElement(payload))", payload: .element(payload)),
-                domAfterMs: domAfterMs,
+                postDom: postDom,
                 clientRunner: clientRunner
             )
             ok = true
             return result
 
-        case .longPress(let target, let duration, let traits, let cindex, let domAfterMs):
+        case .longPress(let target, let duration, let traits, let cindex, let postDom):
             let foryTarget = try resolveTarget(target, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
                 .element(try $0.longPress(target: foryTarget, durationMs: duration, traits: traits, cindex: cindex))
             }, as: ForyElementPayload.self)
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: "Longpress\n\(DriverOutput.formatElement(payload))", payload: .element(payload)),
-                domAfterMs: domAfterMs,
+                postDom: postDom,
                 clientRunner: clientRunner
             )
             ok = true
             return result
 
-        case .input(let tap, let content, let traits, let cindex, let domAfterMs):
+        case .input(let tap, let content, let traits, let cindex, let postDom):
             let tapTarget = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
             _ = try clientRunner {
                 try $0.input(tap: tapTarget, content: content)
@@ -89,20 +89,20 @@ enum DriverCommandExecutor {
             let targetDescription = tap.map { " after tapping \"\($0)\"" } ?? ""
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: "Input \"\(content)\"\(targetDescription)\n", payload: nil),
-                domAfterMs: domAfterMs,
+                postDom: postDom,
                 clientRunner: clientRunner
             )
             ok = true
             return result
 
-        case .swipe(let to, let from, let dir, let distance, let traits, let cindex, let domAfterMs):
+        case .swipe(let to, let from, let dir, let distance, let traits, let cindex, let postDom):
             let params = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
             let payload = try requiredPayload(clientRunner {
                 .swipe(try $0.swipe(to: params.to, from: params.from, distance: distance, dir: dir, traits: traits, cindex: cindex))
             }, as: ForySwipePayload.self)
             let result = try appendPostDomIfNeeded(
                 DriverCommandResult(stdout: DriverOutput.formatSwipe(payload), payload: .swipe(payload)),
-                domAfterMs: domAfterMs,
+                postDom: postDom,
                 clientRunner: clientRunner
             )
             ok = true
@@ -162,17 +162,27 @@ enum DriverCommandExecutor {
         }
     }
 
-    private static func appendPostDomIfNeeded(_ result: DriverCommandResult, domAfterMs: Int?, clientRunner: ClientRunner) throws -> DriverCommandResult {
-        guard let domAfterMs else { return result }
-        if domAfterMs > 0 {
-            Thread.sleep(forTimeInterval: Double(domAfterMs) / 1000.0)
+    private static func appendPostDomIfNeeded(_ result: DriverCommandResult, postDom: PostDomMode?, clientRunner: ClientRunner) throws -> DriverCommandResult {
+        guard let postDom else { return result }
+        let title: String
+        let waitQuiescence: Bool
+        switch postDom {
+        case .afterQuiescence:
+            title = "DOM after quiescence"
+            waitQuiescence = true
+        case .afterMilliseconds(let domAfterMs):
+            if domAfterMs > 0 {
+                Thread.sleep(forTimeInterval: Double(domAfterMs) / 1000.0)
+            }
+            title = "DOM after \(domAfterMs)ms"
+            waitQuiescence = false
         }
-        let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: false, fresh: true)) }, as: ForyDomPayload.self)
+        let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence)) }, as: ForyDomPayload.self)
         var stdout = result.stdout
         if !stdout.hasSuffix("\n") {
             stdout += "\n"
         }
-        stdout += "\nDOM after \(domAfterMs)ms\n"
+        stdout += "\n\(title)\n"
         stdout += DriverOutput.formatDom(payload)
         return DriverCommandResult(stdout: stdout, payload: result.payload)
     }

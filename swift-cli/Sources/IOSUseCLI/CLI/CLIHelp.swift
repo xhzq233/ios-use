@@ -129,11 +129,12 @@ enum CLIHelp {
             """
         case "dom":
             return driverHelp(
-                usage: "ios-use dom [--raw] [--fresh]",
+                usage: "ios-use dom [--raw] [--fresh] [--wait-quiescence]",
                 summary: "Print the current UI element tree.",
                 options: [
-                    "--raw        Print raw snapshot text",
-                    "--fresh      Ignore cached snapshot and rebuild",
+                    "--raw               Print raw snapshot text; cannot be combined with other dom options",
+                    "--fresh             Ignore cached snapshot and rebuild",
+                    "--wait-quiescence   Wait until the UI is idle before returning a fresh DOM",
                 ]
             )
         case "find":
@@ -171,7 +172,7 @@ enum CLIHelp {
                     "--offset-ratio <x,y>  Ratio offset from target top-left",
                     "--traits <traits>     Comma-separated trait filter",
                     "--cindex <index>      Select the Nth cleaned child under a matched parent",
-                    "--dom [ms]            Return a fresh DOM after the mutation; default 200ms",
+                    "--dom [ms]            Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",
                 ]
             )
         case "longpress":
@@ -182,7 +183,7 @@ enum CLIHelp {
                     "--duration <ms>   Press duration in milliseconds",
                     "--traits <traits>  Comma-separated trait filter",
                     "--cindex <index>   Select the Nth cleaned child under a matched parent",
-                    "--dom [ms]         Return a fresh DOM after the mutation; default 200ms",
+                    "--dom [ms]         Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",
                 ]
             )
         case "input":
@@ -194,7 +195,7 @@ enum CLIHelp {
                     "--content <text>   Text to input",
                     "--traits <traits>  Comma-separated trait filter for label tap target",
                     "--cindex <index>   Select the Nth cleaned child under a label tap target",
-                    "--dom [ms]         Return a fresh DOM after the mutation; default 200ms",
+                    "--dom [ms]         Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",
                 ]
             )
         case "swipe":
@@ -208,7 +209,7 @@ enum CLIHelp {
                     "--distance <px>    Fixed distance in pixels",
                     "--traits <traits>  Comma-separated trait filter for --to",
                     "--cindex <index>   Select the Nth cleaned child under a matched --to parent",
-                    "--dom [ms]         Return a fresh DOM after the mutation; default 200ms",
+                    "--dom [ms]         Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",
                 ]
             )
         case "activateApp":

@@ -78,6 +78,7 @@ ios-use dom
 ios-use dom
 ios-use dom --raw
 ios-use dom --fresh
+ios-use dom --wait-quiescence
 ios-use find "蓝牙"
 ios-use waitFor --label "蓝牙" --timeout 8
 ```
@@ -99,6 +100,9 @@ ios-use input --tap "搜索" --content "蓝牙"
 ios-use tap "通用" --dom
 ios-use input --tap "搜索" --content "蓝牙" --dom 300
 ```
+
+裸 `--dom` 会等待界面平静后返回 fresh DOM；显式 `--dom <ms>` 会等待指定毫秒后返回 fresh DOM。
+显式毫秒值必须不小于 `100`；需要立即跟进页面状态时用裸 `--dom`。
 
 ### 5.4 App、URL 和弹窗
 
@@ -133,6 +137,8 @@ ios-use uninstall com.example.app --udid <udid>
 - `ios-use dom` 输出 clean tree。
 - `ios-use dom --raw` 输出原始界面树文本，排查 DOM 异常时使用。
 - `ios-use dom --fresh` 忽略缓存重新获取。
+- `ios-use dom --wait-quiescence` 等待界面平静后返回 fresh clean DOM。
+- `dom --raw` 只能单独使用，不能和 `--fresh` / `--wait-quiescence` 组合。
 - DOM type 使用短名，例如 `Text`、`Input`、`Scroll`、`Collection`。
 - 展示层追加的 `vertical` / `horizontal` 只用于阅读，不要当成 `find/tap/waitFor/swipe --traits` 的可过滤 trait。
 

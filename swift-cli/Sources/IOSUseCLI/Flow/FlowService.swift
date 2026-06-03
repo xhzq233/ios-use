@@ -500,7 +500,7 @@ enum FlowLowering {
             args += try optionalStringArg("--offset-ratio", step["offsetRatio"], field: "tap.offsetRatio")
             args += try optionalStringArg("--traits", step["traits"], field: "tap.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "tap.cindex", allowNegative: true)
-            args += try optionalIntArg("--dom", step["dom"], field: "tap.dom", allowNegative: false)
+            args += try optionalPostDomArg("--dom", step["dom"], field: "tap.dom")
             return args
 
         case "longpress":
@@ -509,7 +509,7 @@ enum FlowLowering {
             args += try optionalIntArg("--duration", step["duration"], field: "longpress.duration", allowNegative: false)
             args += try optionalStringArg("--traits", step["traits"], field: "longpress.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "longpress.cindex", allowNegative: true)
-            args += try optionalIntArg("--dom", step["dom"], field: "longpress.dom", allowNegative: false)
+            args += try optionalPostDomArg("--dom", step["dom"], field: "longpress.dom")
             return args
 
         case "input":
@@ -518,7 +518,7 @@ enum FlowLowering {
             args += ["--content", try requiredString(step["content"], field: "input.content")]
             args += try optionalStringArg("--traits", step["traits"], field: "input.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "input.cindex", allowNegative: true)
-            args += try optionalIntArg("--dom", step["dom"], field: "input.dom", allowNegative: false)
+            args += try optionalPostDomArg("--dom", step["dom"], field: "input.dom")
             return args
 
         case "swipe":
@@ -529,7 +529,7 @@ enum FlowLowering {
             args += try optionalNumberArg("--distance", step["distance"], field: "swipe.distance")
             args += try optionalStringArg("--traits", step["traits"], field: "swipe.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "swipe.cindex", allowNegative: true)
-            args += try optionalIntArg("--dom", step["dom"], field: "swipe.dom", allowNegative: false)
+            args += try optionalPostDomArg("--dom", step["dom"], field: "swipe.dom")
             return args
 
         case "screenshot":
@@ -603,19 +603,19 @@ enum FlowLowering {
             try validateStringLike(step["offsetRatio"], field: "tap.offsetRatio")
             try validateStringLike(step["traits"], field: "tap.traits")
             try validateIntLike(step["cindex"], field: "tap.cindex", allowNegative: true)
-            try validateIntLike(step["dom"], field: "tap.dom", allowNegative: false)
+            try validatePostDomLike(step["dom"], field: "tap.dom")
         case "longpress":
             try validateStringLike(step["label"], field: "longpress.label", required: true)
             try validateIntLike(step["duration"], field: "longpress.duration", allowNegative: false)
             try validateStringLike(step["traits"], field: "longpress.traits")
             try validateIntLike(step["cindex"], field: "longpress.cindex", allowNegative: true)
-            try validateIntLike(step["dom"], field: "longpress.dom", allowNegative: false)
+            try validatePostDomLike(step["dom"], field: "longpress.dom")
         case "input":
             try validateStringLike(step["tap"], field: "input.tap")
             try validateStringLike(step["content"], field: "input.content", required: true)
             try validateStringLike(step["traits"], field: "input.traits")
             try validateIntLike(step["cindex"], field: "input.cindex", allowNegative: true)
-            try validateIntLike(step["dom"], field: "input.dom", allowNegative: false)
+            try validatePostDomLike(step["dom"], field: "input.dom")
         case "swipe":
             try validateStringLike(step["to"], field: "swipe.to")
             try validateStringLike(step["from"], field: "swipe.from")
@@ -623,7 +623,7 @@ enum FlowLowering {
             try validateNumberLike(step["distance"], field: "swipe.distance")
             try validateStringLike(step["traits"], field: "swipe.traits")
             try validateIntLike(step["cindex"], field: "swipe.cindex", allowNegative: true)
-            try validateIntLike(step["dom"], field: "swipe.dom", allowNegative: false)
+            try validatePostDomLike(step["dom"], field: "swipe.dom")
         case "screenshot":
             try validateStringLike(step["name"], field: "screenshot.name")
         case "activateApp":
@@ -673,6 +673,16 @@ enum FlowLowering {
     private static func optionalIntArg(_ flag: String, _ value: Any?, field: String, allowNegative: Bool) throws -> [String] {
         guard !isNull(value) else { return [] }
         return [flag, try intString(value, field: field, allowNegative: allowNegative)]
+    }
+
+    private static func optionalPostDomArg(_ flag: String, _ value: Any?, field: String) throws -> [String] {
+        guard !isNull(value) else { return [] }
+        let string = try intString(value, field: field, allowNegative: false)
+        let milliseconds = Int(string) ?? 0
+        guard milliseconds >= IOSUseProtocol.minimumPostDomMilliseconds else {
+            throw CLIParseError.invalidValue("\(field) must be at least \(IOSUseProtocol.minimumPostDomMilliseconds)ms")
+        }
+        return [flag, String(milliseconds)]
     }
 
     private static func boolFlag(_ flag: String, _ value: Any?, field: String) throws -> [String] {
@@ -758,6 +768,15 @@ enum FlowLowering {
     private static func validateIntLike(_ value: Any?, field: String, allowNegative: Bool) throws {
         guard !isNull(value), !containsTemplate(value) else { return }
         _ = try intString(value, field: field, allowNegative: allowNegative)
+    }
+
+    private static func validatePostDomLike(_ value: Any?, field: String) throws {
+        guard !isNull(value), !containsTemplate(value) else { return }
+        let string = try intString(value, field: field, allowNegative: false)
+        let milliseconds = Int(string) ?? 0
+        guard milliseconds >= IOSUseProtocol.minimumPostDomMilliseconds else {
+            throw CLIParseError.invalidValue("\(field) must be at least \(IOSUseProtocol.minimumPostDomMilliseconds)ms")
+        }
     }
 
     private static func validateBoolLike(_ value: Any?, field: String) throws {
@@ -1403,8 +1422,8 @@ private final class RecoveringFlowDriver: FlowDriver {
         try run { try $0.find(label: label, traits: traits, cindex: cindex) }
     }
 
-    func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload {
-        try run { try $0.dom(raw: raw, fresh: fresh) }
+    func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
+        try run { try $0.dom(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence) }
     }
 
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {

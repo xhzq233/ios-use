@@ -261,11 +261,16 @@ enum SwipeCommands {
         let vertical = axis == .vertical
         let scrollUpwards = vertical ? vector.dy > 0 : vector.dx > 0
         let axisName = vertical ? "vertical" : "horizontal"
-        NSLog("[point-swipe] to=(%.1f,%.1f) axis=%@ rawVector=(%.1f,%.1f) vector=(%.1f,%.1f)",
-              p.x, p.y,
-              axisName,
-              rawVector.dx, rawVector.dy,
-              vector.dx, vector.dy)
+        DriverLog.info(String(
+            format: "[point-swipe] to=(%.1f,%.1f) axis=%@ rawVector=(%.1f,%.1f) vector=(%.1f,%.1f)",
+            p.x,
+            p.y,
+            axisName,
+            rawVector.dx,
+            rawVector.dy,
+            vector.dx,
+            vector.dy
+        ))
         return try performDirectScroll(scrollView: scrollView,
                                    responseNode: scrollView,
                                    vector: vector,
@@ -371,7 +376,7 @@ enum SwipeCommands {
                                             app: XCUIApplication) throws -> ForyResponseFrame {
         let segments = scrollSegments(for: vector, scrollFrame: scrollView.frame)
         guard !segments.isEmpty else {
-            NSLog("[point-swipe] too small to scroll vector=(%.1f,%.1f)", vector.dx, vector.dy)
+            DriverLog.info(String(format: "[point-swipe] too small to scroll vector=(%.1f,%.1f)", vector.dx, vector.dy))
             return try tooSmallToScrollResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         }
 
@@ -385,7 +390,7 @@ enum SwipeCommands {
            let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) {
             let nowFrames = collectVisibleCellFrames(freshScrollView)
             if nowFrames == prevFrames {
-                NSLog("[point-swipe] hit boundary after %d segment(s)", segmentCount)
+                DriverLog.info("[point-swipe] hit boundary after \(segmentCount) segment(s)")
                 return try boundaryResponse(vertical: vertical, scrollUpwards: scrollUpwards)
             }
 

@@ -1,5 +1,6 @@
 #import "XCTestPrivate.h"
 #import <objc/message.h>
+#import <os/log.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static const NSUInteger XCMaxTextAbbrLen = 12;
@@ -72,7 +73,7 @@ void XCPressAndDrag(XCUICoordinate *start, XCUICoordinate *end,
         SEL fallbackSel = NSSelectorFromString(@"pressForDuration:thenDragToCoordinate:");
         NSMethodSignature *fallbackSig = [start methodSignatureForSelector:fallbackSel];
         if (!fallbackSig || ![start respondsToSelector:fallbackSel]) {
-            NSLog(@"[driver] XCPressAndDrag: neither private nor public press-drag API available");
+            os_log(OS_LOG_DEFAULT, "%{public}@", @"[driver] XCPressAndDrag: neither private nor public press-drag API available");
             return;
         }
         NSInvocation *inv = [NSInvocation invocationWithMethodSignature:fallbackSig];
@@ -146,7 +147,7 @@ static id<FBXCAccessibilityElement> DetectionPointElement(void)
                                     if (nil == error) {
                                         onScreenElement = element;
                                     } else {
-                                        NSLog(@"Cannot request the screen point at %@", NSStringFromCGPoint(point));
+                                        os_log(OS_LOG_DEFAULT, "Cannot request the screen point at %{public}@", NSStringFromCGPoint(point));
                                     }
                                     dispatch_semaphore_signal(sem);
                                 }];
@@ -195,7 +196,7 @@ XCUIApplication *GetActiveApplication(void)
     if (activeApplicationElements.count > 1) {
         id<FBXCAccessibilityElement> currentElement = DetectionPointElement();
         if (nil == currentElement) {
-            NSLog(@"Cannot precisely detect the current application. Will use the system's recently active one");
+            os_log(OS_LOG_DEFAULT, "%{public}@", @"Cannot precisely detect the current application. Will use the system's recently active one");
         } else {
             for (id<FBXCAccessibilityElement> appElement in activeApplicationElements) {
                 if (appElement.processIdentifier == currentElement.processIdentifier) {
@@ -211,11 +212,11 @@ XCUIApplication *GetActiveApplication(void)
         if (nil != application) {
             return application;
         }
-        NSLog(@"Cannot translate the active process identifier into an application object");
+        os_log(OS_LOG_DEFAULT, "%{public}@", @"Cannot translate the active process identifier into an application object");
     }
 
     if (activeApplicationElements.count > 0) {
-        NSLog(@"Getting the most recent active application (out of %@ total items)", @(activeApplicationElements.count));
+        os_log(OS_LOG_DEFAULT, "Getting the most recent active application (out of %{public}@ total items)", @(activeApplicationElements.count));
         for (id<FBXCAccessibilityElement> appElement in activeApplicationElements) {
             XCUIApplication *application = ApplicationWithPID(appElement.processIdentifier);
             if (nil != application) {
@@ -224,7 +225,7 @@ XCUIApplication *GetActiveApplication(void)
         }
     }
 
-    NSLog(@"Cannot retrieve any active applications. Assuming the system application is the active one");
+    os_log(OS_LOG_DEFAULT, "%{public}@", @"Cannot retrieve any active applications. Assuming the system application is the active one");
     id<FBXCAccessibilityElement> systemApplication = [AccessibilityClient() performSelector:NSSelectorFromString(@"systemApplication")];
     return ApplicationWithPID(systemApplication.processIdentifier);
 }

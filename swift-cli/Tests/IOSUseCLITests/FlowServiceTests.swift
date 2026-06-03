@@ -402,7 +402,7 @@ final class FlowServiceTests: XCTestCase {
         steps:
           - action: tap
             label: Continue
-            dom: 0
+            dom: 100
         """)
         let driver = FakeFlowDriver()
         driver.domPayload = ForyDomPayload(
@@ -413,9 +413,24 @@ final class FlowServiceTests: XCTestCase {
         let result = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
 
         XCTAssertEqual(driver.commands, ["tap", "dom"])
-        XCTAssertTrue(result.stdout.contains("DOM after 0ms"))
+        XCTAssertTrue(result.stdout.contains("DOM after 100ms"))
         XCTAssertTrue(result.stdout.contains("App: com.example"))
         XCTAssertTrue(result.stdout.contains("- Next [Text]"))
+    }
+
+    func testFlowRejectsPostDomBelowMinimum() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("bad-post-dom.yaml", """
+        name: bad-post-dom
+        steps:
+          - action: tap
+            label: Continue
+            dom: 0
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("tap.dom must be at least 100ms"))
+        }
     }
 
     func testFlowRejectsCindexOnPointTarget() throws {
@@ -1237,7 +1252,7 @@ private final class FakeFlowDriver: FlowDriver {
         }
         return findPayload
     }
-    func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload {
+    func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
         commands.append("dom")
         domCalls += 1
         return domPayload

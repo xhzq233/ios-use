@@ -36,6 +36,8 @@ public enum IOSUseProtocol {
     public static let listenBacklog: Int32 = 5
     /// Shared conversion for elapsed-time log formatting.
     public static let millisecondsPerSecond = 1000.0
+    /// Minimum explicit `--dom <ms>` delay. Bare `--dom` uses quiescence instead.
+    public static let minimumPostDomMilliseconds = 100
 
     // MARK: Driver UI semantics
 
