@@ -123,12 +123,13 @@ ios-use apps
 ios-use apps --json
 ios-use apps --udid <udid>
 ios-use install path/to/app.ipa
+ios-use install path/to/App.app
 ios-use install path/to/app.ipa --udid <udid>
 ios-use uninstall com.example.app
 ios-use uninstall com.example.app --udid <udid>
 ```
 
-这些命令直接走真机设备服务，不需要先 `start`，但省略 `--udid` 时需要 active 真机 lock。`install` 只安装已签名 IPA，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
+这些命令直接走真机设备服务，不需要先 `start`，但省略 `--udid` 时需要 active 真机 lock。`install` 只接受已签名 `.ipa` 或 `.app`，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
 
 ## 6. 常用命令速查
 

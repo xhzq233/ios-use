@@ -13,6 +13,7 @@ enum AppManagementService {
     static var appsProviderForTesting: ((String, Bool) throws -> [AppInfo])?
 
     static func install(options: AppInstallOptions, paths: IOSUsePaths) throws -> String {
+        let packageKind = try AppPackageKind(path: options.ipaPath)
         let targetUdid = try resolveRealDeviceTargetUdid(
             explicitUdid: options.udid,
             paths: paths,
@@ -20,15 +21,15 @@ enum AppManagementService {
             missingMessage: "install requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
         )
         guard FileManager.default.fileExists(atPath: options.ipaPath) else {
-            throw CLIParseError.invalidValue("IPA not found: \(options.ipaPath)")
+            throw CLIParseError.invalidValue("App package not found: \(options.ipaPath)")
         }
-        let bundleID = try? extractBundleID(ipaPath: options.ipaPath)
+        let bundleID = try? extractBundleID(packagePath: options.ipaPath, kind: packageKind)
         var responseFrames: [[String: Any]] = []
         do {
             if let installerForTesting {
                 try installerForTesting(options.ipaPath, targetUdid, bundleID)
             } else {
-                try RealDevicePackageInstaller.installIpa(ipaPath: options.ipaPath, udid: targetUdid, bundleID: bundleID) { response in
+                try RealDevicePackageInstaller.installPackage(packagePath: options.ipaPath, kind: packageKind, udid: targetUdid, bundleID: bundleID) { response in
                     if options.verbose {
                         responseFrames.append(response)
                     }
@@ -38,7 +39,7 @@ enum AppManagementService {
             throw errorWithVerboseResponses(error, frames: responseFrames, verbose: options.verbose)
         }
         let suffix = bundleID.map { " (\($0))" } ?? ""
-        return verboseResponsePrefix(responseFrames) + "Installed IPA on \(targetUdid)\(suffix)\n"
+        return verboseResponsePrefix(responseFrames) + "Installed \(packageKind.displayName) on \(targetUdid)\(suffix)\n"
     }
 
     static func uninstall(options: AppUninstallOptions, paths: IOSUsePaths) throws -> String {
@@ -166,7 +167,38 @@ enum AppManagementService {
         return targetUdid
     }
 
-    static func extractBundleID(ipaPath: String) throws -> String {
+    enum AppPackageKind: Equatable {
+        case ipa
+        case app
+
+        init(path: String) throws {
+            let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+            switch ext {
+            case "ipa": self = .ipa
+            case "app": self = .app
+            default:
+                throw CLIParseError.invalidValue("install supports .ipa and .app packages only: \(path)")
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .ipa: return "IPA"
+            case .app: return "app"
+            }
+        }
+    }
+
+    static func extractBundleID(packagePath: String, kind: AppPackageKind) throws -> String {
+        switch kind {
+        case .ipa:
+            return try extractBundleIDFromIpa(ipaPath: packagePath)
+        case .app:
+            return try extractBundleIDFromApp(appPath: packagePath)
+        }
+    }
+
+    private static func extractBundleIDFromIpa(ipaPath: String) throws -> String {
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-ipa-info-\(UUID().uuidString)", isDirectory: true)
             .path
@@ -178,7 +210,11 @@ enum AppManagementService {
         guard let appEntry = appEntries.first else {
             throw CLIParseError.invalidValue("No .app found in IPA")
         }
-        return try Shell.run("plutil", arguments: ["-extract", "CFBundleIdentifier", "raw", "-o", "-", "\(payloadDir)/\(appEntry)/Info.plist"])
+        return try extractBundleIDFromApp(appPath: "\(payloadDir)/\(appEntry)")
+    }
+
+    private static func extractBundleIDFromApp(appPath: String) throws -> String {
+        try Shell.run("plutil", arguments: ["-extract", "CFBundleIdentifier", "raw", "-o", "-", "\(appPath)/Info.plist"])
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
