@@ -92,9 +92,9 @@ enum CLIHelp {
             """
         case "install":
             return """
-            Usage: ios-use install <ipa> [--udid <udid>] [--verbose]
+            Usage: ios-use install <ipa|app> [--udid <udid>] [--verbose]
 
-            Install a signed IPA on a USB real device using AFC and installation_proxy.
+            Install a signed IPA or .app bundle on a USB real device using AFC and installation_proxy.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:

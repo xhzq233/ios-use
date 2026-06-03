@@ -34,6 +34,11 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["install", "Demo.app", "--udid", "REAL-1"]),
+            .install(AppInstallOptions(ipaPath: "Demo.app", udid: "REAL-1"))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["uninstall", "com.example.app", "--udid", "REAL-1", "--verbose"]),
             .uninstall(AppUninstallOptions(bundleID: "com.example.app", udid: "REAL-1", verbose: true))
         )

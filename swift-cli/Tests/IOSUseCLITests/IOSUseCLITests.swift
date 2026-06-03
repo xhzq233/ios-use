@@ -166,6 +166,73 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Installed IPA on LOCK-REAL"))
     }
 
+    func testInstallCommandAcceptsAppBundleAndExtractsBundleID() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-install-app-bundle-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let appPath = "\(root)/Demo.app"
+        try makeMinimalApp(path: appPath, bundleID: "com.example.demo")
+        var installs: [(String, String, String?)] = []
+        AppManagementService.installerForTesting = { package, udid, bundleID in
+            installs.append((package, udid, bundleID))
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["install", appPath, "--udid", "REAL-1"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(installs.map(\.0), [appPath])
+        XCTAssertEqual(installs.map(\.1), ["REAL-1"])
+        XCTAssertEqual(installs.map(\.2), ["com.example.demo"])
+        XCTAssertTrue(result.stdout.contains("Installed app on REAL-1 (com.example.demo)"))
+    }
+
+    func testAppBundlePackagingBuildsPayloadIpa() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-package-app-bundle-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let appPath = "\(root)/Demo.app"
+        try makeMinimalApp(path: appPath, bundleID: "com.example.demo")
+        var generatedIpaPath: String?
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        try RealDevicePackageInstaller.withTemporaryIpaFromApp(appPath: appPath) { ipaPath in
+            generatedIpaPath = ipaPath
+            XCTAssertTrue(FileManager.default.fileExists(atPath: ipaPath))
+            let entries = try Shell.run("unzip", arguments: ["-Z1", ipaPath])
+            XCTAssertTrue(entries.contains("Payload/Demo.app/Info.plist"))
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: generatedIpaPath ?? ""))
+    }
+
+    func testInstallCommandRejectsUnsupportedPackageExtensionBeforeTargetResolution() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-install-unsupported-extension-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let zipPath = "\(root)/Demo.zip"
+        FileManager.default.createFile(atPath: zipPath, contents: Data(), attributes: nil)
+        AppManagementService.installerForTesting = { _, _, _ in
+            XCTFail("unsupported package extension must fail before installation")
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["install", zipPath])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("install supports .ipa and .app packages only"))
+        XCTAssertFalse(result.stderr.contains("install requires --udid"))
+    }
+
     func testInstallCommandWithoutUdidOrDriverLockFailsBeforeInstaller() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-install-no-target-\(UUID().uuidString)")
@@ -1290,15 +1357,19 @@ final class IOSUseCLITests: XCTestCase {
             .appendingPathComponent("ios-use-test-ipa-\(UUID().uuidString)", isDirectory: true)
             .path
         let appPath = "\(tmp)/Payload/App.app"
-        try FileManager.default.createDirectory(atPath: appPath, withIntermediateDirectories: true)
+        try makeMinimalApp(path: appPath, bundleID: bundleID)
+        defer { try? FileManager.default.removeItem(atPath: tmp) }
+        _ = try Shell.run("zip", arguments: ["-r", "-q", path, "Payload"], cwd: tmp)
+    }
+
+    private func makeMinimalApp(path: String, bundleID: String) throws {
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         let plist: [String: Any] = [
             "CFBundleIdentifier": bundleID,
             "CFBundleExecutable": "App",
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-        try data.write(to: URL(fileURLWithPath: "\(appPath)/Info.plist"))
-        defer { try? FileManager.default.removeItem(atPath: tmp) }
-        _ = try Shell.run("zip", arguments: ["-r", "-q", path, "Payload"], cwd: tmp)
+        try data.write(to: URL(fileURLWithPath: "\(path)/Info.plist"))
     }
 
     private func writeDriverLock(udid: String, deviceType: String, paths: IOSUsePaths) throws {
