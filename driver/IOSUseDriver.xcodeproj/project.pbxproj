@@ -30,6 +30,7 @@
 		47E166A3CA2BC186D06626FC /* SessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */; };
 		48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		4C1335951DE9BCB1ACEB1105 /* Touch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */; };
+		51248ACA0D90ED122AEB37EC /* DriverAutostart.m in Sources */ = {isa = PBXBuildFile; fileRef = 852629FB93B5740DEE6287C1 /* DriverAutostart.m */; };
 		563B2CE6B340E53A14814EFB /* Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = D394439301E45CC69DD7CB41 /* Server.swift */; };
 		5C78D96B9AE1C0C47419D5E5 /* SnapshotWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A0FF7257FB4C92EC6C889D /* SnapshotWalker.swift */; };
 		6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
@@ -56,6 +57,7 @@
 		BB6FC10754570033C9A83E5B /* DriverProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5673E8F5A73863E5BFC1145 /* DriverProtocol.swift */; };
 		C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
 		C17AD8E6E19EB9DF22D2E31E /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
+		C3BE136B5D6036BE31F675D4 /* DriverLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A14585AA526AC30DC0A8515 /* DriverLogTests.swift */; };
 		C53710C5F3D909BEC3D85696 /* Quiescence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BD5EF928C9D1CB107908D28 /* Quiescence.swift */; };
 		CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C773A75C11E5CE2360A4FB4 /* Input.swift */; };
 		D285AAC468646BCF5AE7FD77 /* ForyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */; };
@@ -92,9 +94,11 @@
 		71A0AC56CC6B8335709D4A71 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		7C5B4B608C890EFE8841A177 /* Dom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dom.swift; sourceTree = "<group>"; };
 		7C773A75C11E5CE2360A4FB4 /* Input.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Input.swift; sourceTree = "<group>"; };
+		852629FB93B5740DEE6287C1 /* DriverAutostart.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = DriverAutostart.m; sourceTree = "<group>"; };
 		86D2B90E83BBAE04E8408D34 /* DriverLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverLog.swift; sourceTree = "<group>"; };
 		8A018728001BB6A88192EAFD /* ServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerTests.swift; sourceTree = "<group>"; };
 		90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
+		9A14585AA526AC30DC0A8515 /* DriverLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriverLogTests.swift; sourceTree = "<group>"; };
 		9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypesTests.swift; sourceTree = "<group>"; };
 		9BD5EF928C9D1CB107908D28 /* Quiescence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Quiescence.swift; sourceTree = "<group>"; };
 		9DE69CDBA7F414F7325EFBD0 /* Codec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Codec.swift; sourceTree = "<group>"; };
@@ -192,6 +196,7 @@
 			isa = PBXGroup;
 			children = (
 				AABACD4A116F231BF1D16712 /* CodecTests.swift */,
+				9A14585AA526AC30DC0A8515 /* DriverLogTests.swift */,
 				1FF2988F5EECDDB665288D5D /* ScrollMechanicsTests.swift */,
 				8A018728001BB6A88192EAFD /* ServerTests.swift */,
 				90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */,
@@ -233,6 +238,7 @@
 		F42F3EE744127D54BBE82917 /* runner */ = {
 			isa = PBXGroup;
 			children = (
+				852629FB93B5740DEE6287C1 /* DriverAutostart.m */,
 				F9FD7632270F764367EC208B /* Info.plist */,
 				E3E262BB01AF4133E6AF8C75 /* RunnerTests.swift */,
 			);
@@ -326,6 +332,7 @@
 				9B9DC8661A47D7EB2FF33C44 /* CodecTests.swift in Sources */,
 				48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */,
 				2EBAF8649B90EB21D7A50ED1 /* DriverLog.swift in Sources */,
+				C3BE136B5D6036BE31F675D4 /* DriverLogTests.swift in Sources */,
 				2617C12F7FE92652A2B7E897 /* DriverPerf.swift in Sources */,
 				22FF865268ADCC2D9D816FA3 /* DriverProtocol.swift in Sources */,
 				431ACF5CC685EAF0D8ABA2A4 /* ElementTypes.swift in Sources */,
@@ -362,6 +369,7 @@
 				A2F46A49779B68AEAD78B0C2 /* AppRegistry.m in Sources */,
 				C1050A56F030240E3ADD10D2 /* Codec.swift in Sources */,
 				EBF5189D81837B2E68FC0772 /* Dom.swift in Sources */,
+				51248ACA0D90ED122AEB37EC /* DriverAutostart.m in Sources */,
 				EFE1D91B69F3B440931AEBB9 /* DriverLog.swift in Sources */,
 				2A2204C88E4EE9C80378FF0B /* DriverPerf.swift in Sources */,
 				BB6FC10754570033C9A83E5B /* DriverProtocol.swift in Sources */,
