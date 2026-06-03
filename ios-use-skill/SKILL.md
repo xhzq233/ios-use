@@ -90,14 +90,14 @@ ios-use tap "亮度" --offset-ratio 0.8,
 ios-use longpress "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use swipe --dir forth --distance 300
-ios-use input --label "搜索" --content "蓝牙"
+ios-use input --tap "搜索" --content "蓝牙"
 ```
 
 动作后需要立即确认页面状态时，可在支持的动作上加 `--dom [ms]`：
 
 ```bash
 ios-use tap "通用" --dom
-ios-use input --label "搜索" --content "蓝牙" --dom 300
+ios-use input --tap "搜索" --content "蓝牙" --dom 300
 ```
 
 ### 5.4 App、URL 和弹窗
@@ -163,8 +163,8 @@ ios-use uninstall com.example.app --udid <udid>
 
 ### 6.5 `input`
 
-- `ios-use input --label "搜索" --content "蓝牙"`。
-- 不需要先 `tap` 输入框，命令会自动切换焦点再输入。
+- `ios-use input --tap "搜索" --content "蓝牙"`，或键盘已弹出后 `ios-use input --content "蓝牙"`。
+- `--tap` 只用于输入前聚焦；不传 `--tap` 时要求键盘已可见。
 - 不隐式 clear。
 - 支持 `--traits` / `--cindex` / `--dom [ms]`。
 

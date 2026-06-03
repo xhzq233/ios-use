@@ -240,22 +240,16 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    // MARK: - canProceedWithTyping
+    // MARK: - input keyboard gate
 
-    func testCanProceedWithTyping_InitialLookupRequiresTargetFocus() {
-        XCTAssertFalse(canProceedWithTyping(
-            targetHasKeyboardFocus: false,
-            keyboardVisible: true,
-            phase: .initialLookup
-        ))
+    func testCanInputWithoutTapRequiresVisibleKeyboard() {
+        XCTAssertFalse(canInputWithoutTap(keyboardVisible: false))
+        XCTAssertTrue(canInputWithoutTap(keyboardVisible: true))
     }
 
-    func testCanProceedWithTyping_AfterTapAllowsKeyboardVisibleFallback() {
-        XCTAssertTrue(canProceedWithTyping(
-            targetHasKeyboardFocus: false,
-            keyboardVisible: true,
-            phase: .afterTapAttempt
-        ))
+    func testCanInputAfterTapRequiresVisibleKeyboard() {
+        XCTAssertFalse(canInputAfterTap(keyboardVisible: false))
+        XCTAssertTrue(canInputAfterTap(keyboardVisible: true))
     }
 
     // MARK: - Double.sanitized
