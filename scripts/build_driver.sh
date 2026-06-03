@@ -14,6 +14,7 @@ set -euo pipefail
 BUILD_MODE="debug"
 SIMULATOR_ONLY=false
 DEBUG_PERF=false
+BUILD_STARTED_AT="$(date +%s)"
 for arg in "$@"; do
   case "$arg" in
     --debug)
@@ -42,7 +43,10 @@ PROJECT_DIR="$ROOT_DIR/driver"
 # Regenerate Xcode project from project.yml
 if command -v xcodegen &>/dev/null; then
   echo "[build] Regenerating Xcode project..."
+  STEP_STARTED_AT="$(date +%s)"
   (cd "$PROJECT_DIR" && xcodegen generate --quiet)
+  STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
+  printf '[build] Xcode project generation completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 else
   echo "[build] ERROR: xcodegen not found. Install via: brew install xcodegen"
   exit 1
@@ -148,11 +152,14 @@ if [ "$SIMULATOR_ONLY" != true ]; then
   echo "[build] Building IOSUseDriver for iOS (no signing)..."
   rm -rf "$XCTEST_WRAPPER_PATH"
 
+  STEP_STARTED_AT="$(date +%s)"
   xcodebuild build-for-testing \
     "${XCODE_COMMON[@]}" \
     -destination 'generic/platform=iOS' \
     -skipMacroValidation \
     | tail -5
+  STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
+  printf '[build] iOS device xcodebuild completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 
   if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
     echo "[build] ERROR: xctest wrapper app not found in $BUILD_DIR"
@@ -164,6 +171,7 @@ if [ "$SIMULATOR_ONLY" != true ]; then
   # Strip XC frameworks and libXCTestSwiftSupport.dylib for iOS 17+ compatibility.
   # On iOS 17+, device already has these frameworks / dylibs.
   echo "[build] Stripping XC frameworks..."
+  STEP_STARTED_AT="$(date +%s)"
   STRIPPED=0
   if [ -d "$XCTEST_WRAPPER_PATH/Frameworks" ]; then
     for fw in "$XCTEST_WRAPPER_PATH/Frameworks"/XC*.framework; do
@@ -183,9 +191,14 @@ if [ "$SIMULATOR_ONLY" != true ]; then
     fi
   fi
   echo "[build] Stripped $STRIPPED XC framework(s) / dylib(s)"
+  STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
+  printf '[build] iOS device strip completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 
   echo "[build] Packaging device IPA..."
+  STEP_STARTED_AT="$(date +%s)"
   package_ipa "$XCTEST_WRAPPER_PATH" "$IPA_OUTPUT"
+  STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
+  printf '[build] iOS device packaging completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 else
   echo "[build] SIMULATOR ONLY mode: skipping iOS device IPA"
 fi
@@ -197,11 +210,14 @@ fi
 echo "[build] Building IOSUseDriver for Simulator..."
 rm -rf "$XCTEST_WRAPPER_PATH"
 
+STEP_STARTED_AT="$(date +%s)"
 xcodebuild build-for-testing \
   "${XCODE_COMMON[@]}" \
   -destination 'generic/platform=iOS Simulator' \
   -skipMacroValidation \
   | tail -5
+STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
+printf '[build] Simulator xcodebuild completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 
 if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
   echo "[build] ERROR: Simulator xctest wrapper app not found in $BUILD_DIR"
@@ -212,4 +228,9 @@ stamp_driver_version "$XCTEST_WRAPPER_PATH"
 
 # Package Simulator IPA
 echo "[build] Packaging simulator IPA..."
+STEP_STARTED_AT="$(date +%s)"
 package_ipa "$XCTEST_WRAPPER_PATH" "$SIM_IPA_OUTPUT"
+STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
+printf '[build] Simulator packaging completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
+TOTAL_ELAPSED=$(($(date +%s) - BUILD_STARTED_AT))
+printf '[build] Total completed in %dm%02ds\n' "$((TOTAL_ELAPSED / 60))" "$((TOTAL_ELAPSED % 60))"
