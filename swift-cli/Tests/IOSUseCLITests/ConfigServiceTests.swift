@@ -577,7 +577,62 @@ final class ConfigServiceTests: XCTestCase {
         )
     }
 
-    func testRealDeviceConfigSkipsInstallWhenCurrentDriverAlreadyInstalled() throws {
+    func testRealDeviceConfigRejectsSignedIpaWhenXCTestBundleIdIsClobbered() throws {
+        let root = try temporaryRoot()
+        let workspace = try temporaryRoot()
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
+        let oldCwd = FileManager.default.currentDirectoryPath
+        XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(workspace))
+        addTeardownBlock {
+            _ = FileManager.default.changeCurrentDirectoryPath(oldCwd)
+        }
+
+        let altsign = "\(root)/altsign-cli/altsign-cli"
+        try FileManager.default.createDirectory(atPath: "\(root)/altsign-cli", withIntermediateDirectories: true)
+        try "#!/bin/sh\nexit 0\n".write(toFile: altsign, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
+        try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
+
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            if simulatorOnly {
+                XCTFail("real device config must not inspect Simulator devices")
+                return []
+            }
+            return [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-CONFIG-CLOBBERED", kind: .real)]
+        }
+        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
+            if executable == altsign, arguments == ["list"] {
+                return "Using cached session for user@example.com\n"
+            }
+            return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
+        }
+        ConfigService.altsignRunnerForTesting = { _, arguments in
+            let outputIndex = try XCTUnwrap(arguments.firstIndex(of: "--output"))
+            let inputIndex = try XCTUnwrap(arguments.firstIndex(of: "--ipa"))
+            let output = arguments[arguments.index(after: outputIndex)]
+            let input = arguments[arguments.index(after: inputIndex)]
+            try FileManager.default.copyItem(atPath: input, toPath: output)
+            try self.rewriteXCTestBundleId(in: output, bundleId: "com.ios-use.driver.user-example-com.xctrunner")
+        }
+        ConfigService.realDeviceInstallerForTesting = { _, _, _ in
+            XCTFail("clobbered XCTest bundle id must fail before install")
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["config", "--udid", "REAL-CONFIG-CLOBBERED"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("Signed driver IPA XCTest bundle id mismatch"))
+        XCTAssertTrue(result.stderr.contains("expected: com.ios-use.driver.user-example-com"))
+        XCTAssertFalse(result.stdout.contains("Device config complete"))
+        XCTAssertEqual(
+            ConfigService.listEntries(paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])),
+            []
+        )
+    }
+
+    func testRealDeviceConfigRefreshesInstallWhenCurrentDriverAlreadyInstalled() throws {
         let root = try temporaryRoot()
         let workspace = try temporaryRoot()
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
@@ -624,14 +679,18 @@ final class ConfigServiceTests: XCTestCase {
             XCTAssertEqual(bundleId, "com.ios-use.driver.user-example-com.xctrunner")
             return IOSUseCLI.version
         }
-        ConfigService.realDeviceInstallerForTesting = { _, _, _ in
-            XCTFail("current installed driver should not be reinstalled")
+        var installs: [(String, String, String)] = []
+        ConfigService.realDeviceInstallerForTesting = { signedIpa, udid, bundleId in
+            installs.append((signedIpa, udid, bundleId))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: signedIpa))
         }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["config", "--udid", "REAL-CONFIG"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("Driver already installed on device"))
+        XCTAssertEqual(installs.map(\.1), ["REAL-CONFIG"])
+        XCTAssertEqual(installs.map(\.2), ["com.ios-use.driver.user-example-com.xctrunner"])
+        XCTAssertTrue(result.stdout.contains("Driver refreshed on device"))
         XCTAssertEqual(
             ConfigService.listEntries(paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])),
             [DeviceConfigEntry(udid: "REAL-CONFIG", bundleId: "com.ios-use.driver.user-example-com.xctrunner", driverVersion: IOSUseCLI.version)]
@@ -724,6 +783,23 @@ final class ConfigServiceTests: XCTestCase {
         ], path: "\(appPath)/Info.plist")
         try writePlist(["CFBundleIdentifier": "com.iosuse.xcuidriver"], path: "\(xctestPath)/Info.plist")
         _ = try runProcess(executable: "zip", arguments: ["-r", "-q", path, "Payload"], cwd: tmp, combineStderr: false)
+    }
+
+    private func rewriteXCTestBundleId(in ipaPath: String, bundleId: String) throws {
+        let tmp = try temporaryRoot()
+        _ = try runProcess(executable: "unzip", arguments: ["-q", "-o", ipaPath, "-d", tmp], cwd: nil, combineStderr: false)
+        let payloadDir = "\(tmp)/Payload"
+        let appEntry = try XCTUnwrap(FileManager.default.contentsOfDirectory(atPath: payloadDir).first { $0.hasSuffix(".app") })
+        let pluginsDir = "\(payloadDir)/\(appEntry)/PlugIns"
+        let xctestEntry = try XCTUnwrap(FileManager.default.contentsOfDirectory(atPath: pluginsDir).first { $0.hasSuffix(".xctest") })
+        _ = try runProcess(
+            executable: "plutil",
+            arguments: ["-replace", "CFBundleIdentifier", "-string", bundleId, "\(pluginsDir)/\(xctestEntry)/Info.plist"],
+            cwd: nil,
+            combineStderr: false
+        )
+        try FileManager.default.removeItem(atPath: ipaPath)
+        _ = try runProcess(executable: "zip", arguments: ["-r", "-q", ipaPath, "Payload"], cwd: tmp, combineStderr: false)
     }
 
     private func writePlist(_ plist: [String: Any], path: String) throws {

@@ -72,16 +72,17 @@ public enum ConfigService {
         guard FileManager.default.fileExists(atPath: signedIpa) else {
             throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
         }
+        try verifySignedDriverIpa(signedIpa, runnerBundleId: bundleId, xctestBundleId: xctestBundleId)
         let installedVersion = try currentInstalledDriverVersion(udid: udid, bundleId: bundleId)
         let installMessage: String
-        if installedVersion == IOSUseCLI.version {
-            installMessage = "Driver already installed on device"
+        if let realDeviceInstallerForTesting {
+            try realDeviceInstallerForTesting(signedIpa, udid, bundleId)
         } else {
-            if let realDeviceInstallerForTesting {
-                try realDeviceInstallerForTesting(signedIpa, udid, bundleId)
-            } else {
-                try RealDevicePackageInstaller.installIpa(ipaPath: signedIpa, udid: udid, bundleID: bundleId)
-            }
+            try RealDevicePackageInstaller.installIpa(ipaPath: signedIpa, udid: udid, bundleID: bundleId)
+        }
+        if installedVersion == IOSUseCLI.version {
+            installMessage = "Driver refreshed on device"
+        } else {
             installMessage = "Driver installed to device"
         }
 
@@ -253,6 +254,46 @@ public enum ConfigService {
         let current = try Shell.run("plutil", arguments: ["-extract", "CFBundleIdentifier", "raw", "-o", "-", plistPath]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard current == oldId, current != newId else { return }
         _ = try Shell.run("plutil", arguments: ["-replace", "CFBundleIdentifier", "-string", newId, plistPath])
+    }
+
+    private static func verifySignedDriverIpa(_ ipaPath: String, runnerBundleId: String, xctestBundleId: String) throws {
+        let ids = try readDriverBundleIds(from: ipaPath)
+        guard ids.runnerBundleId == runnerBundleId else {
+            throw CLIParseError.invalidValue("Signed driver IPA runner bundle id mismatch (found: \(ids.runnerBundleId); expected: \(runnerBundleId)). Update altsign-cli and rerun `ios-use config`.")
+        }
+        guard ids.xctestBundleIds.contains(xctestBundleId) else {
+            let found = ids.xctestBundleIds.isEmpty ? "(none)" : ids.xctestBundleIds.joined(separator: ", ")
+            throw CLIParseError.invalidValue("Signed driver IPA XCTest bundle id mismatch (found: \(found); expected: \(xctestBundleId)). Update altsign-cli and rerun `ios-use config`.")
+        }
+    }
+
+    private static func readDriverBundleIds(from ipaPath: String) throws -> (runnerBundleId: String, xctestBundleIds: [String]) {
+        let tmpDir = "\(FileManager.default.temporaryDirectory.path)/ios-use-signed-ipa-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: tmpDir) }
+
+        _ = try Shell.run("unzip", arguments: ["-q", "-o", ipaPath, "-d", tmpDir])
+        let payloadDir = "\(tmpDir)/Payload"
+        let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
+        guard let appEntry = appEntries.first else {
+            throw CLIParseError.invalidValue("Signed driver IPA does not contain a runner .app bundle.")
+        }
+        let appPath = "\(payloadDir)/\(appEntry)"
+        let runnerBundleId = try bundleIdentifier(plistPath: "\(appPath)/Info.plist")
+
+        var xctestBundleIds: [String] = []
+        let pluginsDir = "\(appPath)/PlugIns"
+        if let plugins = try? FileManager.default.contentsOfDirectory(atPath: pluginsDir) {
+            for plugin in plugins where plugin.hasSuffix(".xctest") {
+                xctestBundleIds.append(try bundleIdentifier(plistPath: "\(pluginsDir)/\(plugin)/Info.plist"))
+            }
+        }
+        return (runnerBundleId, xctestBundleIds.sorted())
+    }
+
+    private static func bundleIdentifier(plistPath: String) throws -> String {
+        try Shell.run("plutil", arguments: ["-extract", "CFBundleIdentifier", "raw", "-o", "-", plistPath])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func saveConfig(udid: String, bundleId: String, driverVersion: String, paths: IOSUsePaths) throws {
