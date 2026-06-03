@@ -375,7 +375,7 @@ final class FlowServiceTests: XCTestCase {
             traits: Cell
             cindex: 1
           - action: input
-            label: Name
+            tap: Name
             content: Alpha
             traits: Input
             cindex: 0
@@ -391,7 +391,7 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(driver.waits.first?.cindex, 0)
         XCTAssertEqual(driver.taps.first?.target.label, "Settings")
         XCTAssertEqual(driver.taps.first?.cindex, 1)
-        XCTAssertEqual(driver.inputs.first?.label, "Name")
+        XCTAssertEqual(driver.inputs.first?.tap?.label, "Name")
         XCTAssertEqual(driver.inputs.first?.cindex, 0)
     }
 
@@ -430,6 +430,36 @@ final class FlowServiceTests: XCTestCase {
 
         XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
             XCTAssertTrue(String(describing: error).contains("point target does not support traits or cindex"))
+        }
+    }
+
+    func testFlowRejectsInputTraitsWithoutTap() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("bad-input-traits.yaml", """
+        name: bad-input-traits
+        steps:
+          - action: input
+            content: Alpha
+            traits: Input
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("--traits or --cindex require --tap with a label target"))
+        }
+    }
+
+    func testFlowRejectsInputLegacyLabelField() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("bad-input-label.yaml", """
+        name: bad-input-label
+        steps:
+          - action: input
+            label: Name
+            content: Alpha
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("input has unknown field \"label\""))
         }
     }
 
@@ -1155,7 +1185,7 @@ private final class FakeFlowDriver: FlowDriver {
     var findLabels: [String] = []
     var finds: [(label: String, traits: String?, cindex: Int32?)] = []
     var waits: [(label: String, timeout: Double?, traits: String?, cindex: Int32?)] = []
-    var inputs: [(label: String, content: String, traits: String?, cindex: Int32?)] = []
+    var inputs: [(tap: ForyTarget?, content: String, traits: String?, cindex: Int32?)] = []
     var activatedApps: [String] = []
     var terminatedApps: [String] = []
     var terminateError: Error?
@@ -1212,9 +1242,9 @@ private final class FakeFlowDriver: FlowDriver {
         longPresses.append((target, durationMs, traits, cindex))
         return ForyElementPayload(label: target.label)
     }
-    func input(label: String, content: String, traits: String?, cindex: Int32?) throws {
+    func input(tap: ForyTarget?, content: String) throws {
         commands.append("input")
-        inputs.append((label, content, traits, cindex))
+        inputs.append((tap, content, tap?.traits.isEmpty == true ? nil : tap?.traits, tap?.cindex))
     }
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {
         commands.append("swipe")

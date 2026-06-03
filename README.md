@@ -103,7 +103,7 @@ When upgrading `ios-use`, run `ios-use devices` after installation. If a device 
 | `find` | Locate elements by label/value text and optional traits. |
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
-| `input` | Focus a text field by label and type content. |
+| `input` | Type into the current keyboard focus, optionally tapping a target first. |
 | `screenshot` | Capture a visual fallback when DOM is not enough. |
 | `flow` | Run a YAML automation flow. |
 | `oslog` / `nslog` | Capture system logs or app-side NSLogger output. |
@@ -118,7 +118,7 @@ ios-use dom
 ios-use find "蓝牙"
 ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
-ios-use input --label "搜索" --content "蓝牙"
+ios-use input --tap "搜索" --content "蓝牙"
 ios-use screenshot --name settings-home
 ```
 

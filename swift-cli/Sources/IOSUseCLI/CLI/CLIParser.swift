@@ -322,14 +322,15 @@ public enum CLIParser {
     }
 
     private static func parseInput(_ parser: inout ArgumentParser) throws -> DriverAction {
-        var label: String?
+        var tap: String?
         var content: String?
         var traits: String?
         var cindex: Int32?
         var domAfterMs: Int?
         while let arg = parser.consume() {
             switch arg {
-            case "--label": label = try parser.value(for: arg)
+            case "--tap": tap = try parser.value(for: arg)
+            case "--label": throw CLIParseError.invalidValue("input --label was replaced by --tap <target>")
             case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
@@ -337,7 +338,8 @@ public enum CLIParser {
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .input(label: try require(label, option: "--label"), content: try require(content, option: "--content"), traits: traits, cindex: cindex, domAfterMs: domAfterMs)
+        _ = try DriverCommandExecutor.resolveInputTapTarget(tap, traits: traits, cindex: cindex)
+        return .input(tap: tap, content: try require(content, option: "--content"), traits: traits, cindex: cindex, domAfterMs: domAfterMs)
     }
 
     private static func parseSwipe(_ parser: inout ArgumentParser) throws -> DriverAction {

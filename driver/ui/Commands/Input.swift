@@ -1,125 +1,94 @@
 import XCTest
 import Fory
 
-// MARK: - Input command (doc 1.2, 6.3 — find label → prepare → type)
+// MARK: - Input command
 
 enum InputCommands {
 
-    /// doc 6.3 — two-step typing:
-    ///   1) prepare: tap the target to grab keyboard focus when missing.
-    ///   2) type:    synthesize text via WDA-style FBTypeText event path.
+    /// Type into the current keyboard focus. When a tap target is provided,
+    /// tap it first to focus an input and require the keyboard to become visible.
     static func input(_ args: ForyInputArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
 
-        // Locate the target via rawFind.
-        let elem: SnapshotElement
-        switch rawFind(args.target, visibility: .only) {
-        case .found(let e): elem = e
-        case .ambiguous(let matches): return ambiguityResponse(args.target.label, matches: matches)
-        case .fuzzy(let s):
-            return notFoundResponse(args.target.label,
-                                    suggestions: s,
-                                    hint: "Try adding --traits, or verify the active app before typing")
-        case .notFound(let s):
-            return notFoundResponse(args.target.label,
-                                    suggestions: s,
-                                    hint: "Try adding --traits, or verify the active app before typing")
+        let targetSummary: ForyElementSummary
+        if hasTapTarget(args.target) {
+            switch tapInputTarget(args.target, app: app) {
+            case .success(let summary):
+                targetSummary = summary
+            case .failure(let response):
+                return response
+            }
+        } else {
+            guard canInputWithoutTap(keyboardVisible: keyboardVisible(in: app)) else {
+                return Codec.foryError("input: keyboard is not visible; pass --tap <target> or focus an input first")
+            }
+            targetSummary = ForyElementSummary()
         }
 
-        let editableSnapshot = preferredInputSnapshot(around: elem.node)
-
-        // STEP 1 — prepare: prefer an editable ancestor, but allow keyboard-visible
-        // cases where XCTest doesn't expose hasKeyboardFocus reliably.
-        guard prepareForInput(editableSnapshot, fallback: elem.node, app: app) else {
-            return Codec.foryError("input: failed to focus '\(args.target.label)' for typing")
-        }
-
-        // STEP 2 — type text.
         guard typeText(args.content) else {
-            return Codec.foryError("input: failed to type text into '\(args.target.label)'")
+            return Codec.foryError("input: failed to type text")
         }
-        let payload = ForyElementPayload(
-            element: makeForyElementSummary(elem.node)
-        )
+        let payload = ForyElementPayload(element: targetSummary)
         return try Codec.foryOK(payload)
     }
 }
 
-enum InputPreparationPhase {
-    case initialLookup
-    case afterTapAttempt
+private enum InputTapResult {
+    case success(ForyElementSummary)
+    case failure(ForyResponseFrame)
 }
 
-private func hasKeyboardFocus(_ snapshot: SafeSnapshot) -> Bool {
-    if snapshot.hasKeyboardFocus { return true }
-    return snapshot.allDescendants.contains { $0.hasKeyboardFocus }
+private func hasTapTarget(_ target: ForyTarget) -> Bool {
+    target.point != nil || !target.label.isEmpty
 }
 
 private func keyboardVisible(in app: XCUIApplication) -> Bool {
     !app.keyboards.allElementsBoundByIndex.isEmpty
 }
 
-private func isEditableElementType(_ type: UInt) -> Bool {
-    switch XCUIElement.ElementType(rawValue: type) ?? .other {
-    case .textField, .secureTextField, .searchField, .textView:
-        return true
-    default:
-        return false
-    }
+func canInputWithoutTap(keyboardVisible: Bool) -> Bool {
+    keyboardVisible
 }
 
-private func preferredInputSnapshot(around node: SafeSnapshot) -> SafeSnapshot {
-    var current: SafeSnapshot? = node
-    while let snapshot = current {
-        if isEditableElementType(UInt(snapshot.elementType)) {
-            return snapshot
-        }
-        current = snapshot.parent
-    }
-    return node
+func canInputAfterTap(keyboardVisible: Bool) -> Bool {
+    keyboardVisible
 }
 
-func canProceedWithTyping(targetHasKeyboardFocus: Bool, keyboardVisible: Bool, phase: InputPreparationPhase) -> Bool {
-    if targetHasKeyboardFocus { return true }
-    return phase == .afterTapAttempt && keyboardVisible
-}
-
-private func canProceedWithTyping(_ snapshot: SafeSnapshot, app: XCUIApplication, phase: InputPreparationPhase) -> Bool {
-    canProceedWithTyping(
-        targetHasKeyboardFocus: hasKeyboardFocus(snapshot),
-        keyboardVisible: keyboardVisible(in: app),
-        phase: phase
-    )
-}
-
-private func prepareForInput(_ target: SafeSnapshot, fallback: SafeSnapshot, app: XCUIApplication) -> Bool {
-    if canProceedWithTyping(target, app: app, phase: .initialLookup) {
-        return true
+private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) -> InputTapResult {
+    let summary: ForyElementSummary
+    if let point = target.point {
+        guard RawPointer.perform(app: app, event: .tap(CGPoint(x: CGFloat(point.x), y: CGFloat(point.y)))) == nil else {
+            return .failure(Codec.foryError("input: failed to tap point '\(point.x),\(point.y)'"))
+        }
+        summary = ForyElementSummary(rect: ForyRect(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()), w: 0, h: 0))
+    } else {
+        let elem: SnapshotElement
+        switch rawFind(target, visibility: .only) {
+        case .found(let e): elem = e
+        case .ambiguous(let matches): return .failure(ambiguityResponse(target.label, matches: matches))
+        case .fuzzy(let s):
+            return .failure(notFoundResponse(target.label,
+                                             suggestions: s,
+                                             hint: "Try adding --traits, or verify the active app before typing"))
+        case .notFound(let s):
+            return .failure(notFoundResponse(target.label,
+                                             suggestions: s,
+                                             hint: "Try adding --traits, or verify the active app before typing"))
+        }
+        guard tapSnapshotCenter(elem.node, app: app) else {
+            return .failure(Codec.foryError("input: failed to tap '\(target.label)'"))
+        }
+        summary = makeForyElementSummary(elem.node)
     }
 
-    let candidates = SnapshotMatchesElement(target.raw, fallback.raw) ? [target] : [target, fallback]
-    for candidate in candidates {
-        guard tapSnapshotCenter(candidate, app: app) else { continue }
-        Thread.sleep(forTimeInterval: IOSUseProtocol.inputPostTapFocusSettleSeconds)
-        invalidateSnapshot()
-        if let refreshed = refreshedInputSnapshot(matching: target),
-           canProceedWithTyping(refreshed, app: app, phase: .afterTapAttempt) {
-            return true
-        }
-        if !SnapshotMatchesElement(candidate.raw, target.raw),
-           let refreshedFallback = refreshedInputSnapshot(matching: candidate),
-           canProceedWithTyping(refreshedFallback, app: app, phase: .afterTapAttempt) {
-            return true
-        }
-        if canProceedWithTyping(targetHasKeyboardFocus: false,
-                                keyboardVisible: keyboardVisible(in: app),
-                                phase: .afterTapAttempt) {
-            return true
-        }
-    }
+    Thread.sleep(forTimeInterval: IOSUseProtocol.inputPostTapFocusSettleSeconds)
     invalidateSnapshot()
-    return false
+    guard canInputAfterTap(keyboardVisible: keyboardVisible(in: app)) else {
+        let targetDescription = target.point.map { "\($0.x),\($0.y)" } ?? target.label
+        return .failure(Codec.foryError("input: failed to focus '\(targetDescription)'; keyboard is not visible after tap"))
+    }
+    return .success(summary)
 }
 
 private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication) -> Bool {
@@ -127,19 +96,6 @@ private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication) -
     guard !frame.isEmpty else { return false }
     let point = CGPoint(x: frame.midX, y: frame.midY)
     return RawPointer.perform(app: app, event: .tap(point)) == nil
-}
-
-private func refreshedInputSnapshot(matching target: SafeSnapshot) -> SafeSnapshot? {
-    guard let cleaned = rebuildCleanedSnapshot() else { return nil }
-    if SnapshotMatchesElement(cleaned.root.raw, target.raw) {
-        return cleaned.root
-    }
-    for node in cleaned.root.allDescendants {
-        if SnapshotMatchesElement(node.raw, target.raw) {
-            return node
-        }
-    }
-    return nil
 }
 
 private func typeText(_ text: String) -> Bool {

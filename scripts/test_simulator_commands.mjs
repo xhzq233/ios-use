@@ -983,7 +983,7 @@ async function discardContactIfNeeded() {
 
 async function openContactsDiscardAlert() {
   await openContactsNewContact();
-  runCli(['input', '--label', 'First name', '--content', 'AlertTest', '--traits', 'Input']);
+  runCli(['input', '--tap', 'First name', '--content', 'AlertTest', '--traits', 'Input']);
   runCli(['tap', 'close', '--traits', 'Button']);
   await sleep(500);
 }
@@ -1002,9 +1002,9 @@ async function runInputAndVerifyDom(
   const err = path.join(artifactDir, `${id}.err`);
   const domOut = path.join(artifactDir, `${id}-dom.out`);
   const domErr = path.join(artifactDir, `${id}-dom.err`);
-  console.log(`[sim-test] RUN ${id}: ios-use input --label ${label} --content ${content} ${args.join(' ')}`);
+  console.log(`[sim-test] RUN ${id}: ios-use input --tap ${label} --content ${content} ${args.join(' ')}`);
   let attempts = 1;
-  let res = runCliToFiles(['input', '--label', label, '--content', content, ...args], out, err);
+  let res = runCliToFiles(['input', '--tap', label, '--content', content, ...args], out, err);
   if (res.code !== 0 && /not connected|connection refused|read timeout/i.test(`${res.stdout}\n${res.stderr}`)) {
     console.log(`[sim-test] ${id}: driver connection lost, rebuilding once and rerunning setup before retry`);
     recordRecovery('case-retry', id, 'input driver connection lost');
@@ -1012,7 +1012,7 @@ async function runInputAndVerifyDom(
     await waitForDriver();
     attempts++;
     if (!await runSetup(id, setup)) return;
-    res = runCliToFiles(['input', '--label', label, '--content', content, ...args], out, err);
+    res = runCliToFiles(['input', '--tap', label, '--content', content, ...args], out, err);
   }
   const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
   if (res.stdout.includes('Input') && dom.code === 0 && dom.stdout.includes(expected)) recordPass(id, { attempts });

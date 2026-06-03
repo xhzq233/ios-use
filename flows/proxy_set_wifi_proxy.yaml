@@ -50,12 +50,12 @@ steps:
     timeout: 3
 
   - action: input
-    label: 服务器
+    tap: 服务器
     content: "${server}"
     comment: "填入代理服务器地址"
 
   - action: input
-    label: 端口
+    tap: 端口
     content: "${port}"
     comment: "填入代理端口"
 
