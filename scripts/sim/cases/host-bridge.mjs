@@ -1,6 +1,6 @@
 export const hostBridgeCaseMetadata = [
   { id: 'OL-2', group: 'host-bridge', kind: 'oslog-error', setup: 'simulator target', assertion: 'deprecated clear option is rejected', coverage: 'simulator', requiresPrerequisite: false },
-  { id: 'OL-1', group: 'host-bridge', kind: 'oslog', setup: 'simulator target', assertion: 'global oslog command succeeds', coverage: 'simulator', requiresPrerequisite: false },
+  { id: 'OL-1', group: 'host-bridge', kind: 'oslog-error', setup: 'simulator target', assertion: 'zero timeout is rejected', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'OL-3', group: 'host-bridge', kind: 'oslog-pattern', setup: 'simulator target', assertion: 'pattern timeout command succeeds', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'OL-4', group: 'host-bridge', kind: 'oslog-flags', setup: 'simulator target', assertion: 'regex flag command succeeds', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'OL-5', group: 'host-bridge', kind: 'oslog-process', setup: 'simulator target', assertion: 'process filter command succeeds', coverage: 'simulator', requiresPrerequisite: false },
@@ -72,7 +72,7 @@ export function buildHostBridgeCases(ctx) {
 
   return [
     { id: 'OL-2', run: () => runCaseFailsContains('OL-2', 'unknown option', ['oslog', '--clear', '--udid', sim.udid]) },
-    { id: 'OL-1', run: () => runCase('OL-1', ['oslog', '--timeout', '0', '--udid', sim.udid]) },
+    { id: 'OL-1', run: () => runCaseFailsContains('OL-1', '--timeout must be greater than 0', ['oslog', '--timeout', '0', '--udid', sim.udid]) },
     { id: 'OL-3', run: () => runCase('OL-3', ['oslog', '--pattern', '__ios_use_no_such_log_line__', '--timeout', '0.2', '--udid', sim.udid]) },
     { id: 'OL-4', run: () => runCase('OL-4', ['oslog', '--pattern', '__IOS_USE_NO_SUCH_LOG_LINE__', '--flags', 'i', '--timeout', '0.2', '--udid', sim.udid]) },
     { id: 'OL-5', run: () => runCase('OL-5', ['oslog', '--process', 'Preferences', '--pattern', '__ios_use_no_such_log_line__', '--timeout', '0.2', '--udid', sim.udid]) },

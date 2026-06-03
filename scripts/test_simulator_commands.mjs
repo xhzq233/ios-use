@@ -30,6 +30,16 @@ let driverIpaPath = '';
 const testIosUseHome = process.env.IOS_USE_TEST_HOME ?? path.join(os.homedir(), '.ios-use/test-homes/simulator-commands');
 const iosUseCli = process.env.IOS_USE_TEST_CLI ?? path.join(rootDir, 'ios-use');
 
+function usage() {
+  return `Usage: node scripts/test_simulator_commands.mjs --driver-ipa <path> [options]
+
+Options:
+  --driver-ipa <path>   Simulator driver IPA to install for the test run.
+  --skip-build          Skip rebuilding the local Swift CLI before running cases.
+  --case <ids>          Comma-separated case IDs to run, for example DOM-13,AS-9.
+  -h, --help            Show this help.
+`;
+}
 
 export function parseCaseFilter(value) {
   const ids = value
@@ -53,6 +63,8 @@ export function parseRunnerArgs(argv) {
     const arg = argv[i];
     if (arg === '--skip-build') {
       parsedSkipBuild = true;
+    } else if (arg === '--help' || arg === '-h') {
+      return { help: true, skipBuild: parsedSkipBuild, caseFilterIds: parsedCaseFilterIds, driverIpaPath: parsedDriverIpaPath };
     } else if (arg === '--case') {
       const value = argv[++i];
       if (!value) throw new Error('--case requires a value');
@@ -604,13 +616,13 @@ async function runPostDomMutationCase() {
   await resetSettingsHome();
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
-  console.log(`[sim-test] RUN ${id}: ios-use tap ... --dom 0`);
-  const res = runCliToFiles(['tap', 'com.apple.settings.general', '--traits', 'Button', '--dom', '0'], out, err);
+  console.log(`[sim-test] RUN ${id}: ios-use tap ... --dom`);
+  const res = runCliToFiles(['tap', 'com.apple.settings.general', '--traits', 'Button', '--dom'], out, err);
   const output = `${res.stdout}\n${res.stderr}`;
-  if (res.code === 0 && output.includes('Tap') && output.includes('DOM after 0ms\nApp: com.apple.Preferences')) {
+  if (res.code === 0 && output.includes('Tap') && output.includes('DOM after quiescence\nApp: com.apple.Preferences')) {
     recordPass(id);
   } else {
-    recordFail(id, `${output}[sim-test] AS-9 expected tap output followed by post DOM\n`, res.code === 0 ? 'assertion' : 'command');
+    recordFail(id, `${output}[sim-test] AS-9 expected tap output followed by quiescence post DOM\n`, res.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -1123,7 +1135,8 @@ steps:
 `);
   writeFile(path.join(flowDir, 'invalid-return.yaml'), 'name: simulator-invalid-return-flow\nsteps:\n  - action: returnIf\n    value: true\n    is: invalid\n');
   writeFile(path.join(flowDir, 'tap-offset.yaml'), 'name: simulator-tap-offset-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    offsetRatio: "0.5,"\n');
-  writeFile(path.join(flowDir, 'tap-dom.yaml'), 'name: simulator-tap-dom-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    dom: 0\n');
+  writeFile(path.join(flowDir, 'tap-dom.yaml'), 'name: simulator-tap-dom-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    dom: 100\n');
+  writeFile(path.join(flowDir, 'tap-dom-zero.yaml'), 'name: simulator-tap-dom-zero-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    dom: 0\n');
   writeFile(path.join(flowDir, 'sleep-default.yaml'), 'name: simulator-sleep-default-flow\napp: com.apple.Preferences\nsteps:\n  - action: sleep\n  - action: dom\n    fresh: true\n');
   writeFile(path.join(flowDir, 'dom-save.yaml'), 'name: simulator-dom-save-flow\napp: com.apple.Preferences\nsteps:\n  - action: dom\n    save: true\n    name: simulator-dom-save\n');
   writeFile(path.join(flowDir, 'oslog-timeout.yaml'), 'name: simulator-oslog-timeout-flow\napp: com.apple.Preferences\nsteps:\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    process: Preferences\n    timeout: 0.2\n');
@@ -1302,6 +1315,10 @@ async function cleanup() {
 
 async function main() {
   const parsedArgs = parseRunnerArgs(process.argv.slice(2));
+  if (parsedArgs.help) {
+    process.stdout.write(usage());
+    return;
+  }
   skipBuild = parsedArgs.skipBuild;
   caseFilterIds = parsedArgs.caseFilterIds;
   driverIpaPath = parsedArgs.driverIpaPath;
