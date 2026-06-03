@@ -41,7 +41,7 @@ enum DriverClientError: Error, CustomStringConvertible {
 
 protocol DriverCommandClient: AnyObject {
     func close()
-    func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload
+    func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload
     func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload
     func screenshot() throws -> Data
@@ -172,8 +172,8 @@ final class DriverClient: DriverCommandClient {
         }
     }
 
-    func dom(raw: Bool, fresh: Bool) throws -> ForyDomPayload {
-        try send(DomCommand.self, args: ForyDomArgs(raw: raw, fresh: fresh))
+    func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool = false) throws -> ForyDomPayload {
+        try send(DomCommand.self, args: ForyDomArgs(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence))
     }
 
     func find(label: String, traits: String?, cindex: Int32? = nil) throws -> ForyFindPayload {

@@ -262,10 +262,12 @@ public struct ForyTerminateAppArgs {
 public struct ForyDomArgs {
     public var raw: Bool = false
     public var fresh: Bool = false
+    public var waitQuiescence: Bool = false
 
-    public init(raw: Bool = false, fresh: Bool = false) {
+    public init(raw: Bool = false, fresh: Bool = false, waitQuiescence: Bool = false) {
         self.raw = raw
         self.fresh = fresh
+        self.waitQuiescence = waitQuiescence
     }
 }
 

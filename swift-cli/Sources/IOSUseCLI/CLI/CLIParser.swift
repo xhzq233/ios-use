@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 public enum CLIParser {
     public static func parse(_ arguments: [String]) throws -> ParsedCommand {
@@ -289,18 +290,18 @@ public enum CLIParser {
         var offsetRatio: String?
         var traits: String?
         var cindex: Int32?
-        var domAfterMs: Int?
+        var postDom: PostDomMode?
         while let arg = parser.consume() {
             switch arg {
             case "--offset": offset = try parser.valueAllowingLeadingDash(for: arg)
             case "--offset-ratio": offsetRatio = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": domAfterMs = try parseNonNegativeIntStrict(parser.optionalValueAllowingLeadingDash(defaultValue: "200"), label: arg)
+            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, domAfterMs: domAfterMs)
+        return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, postDom: postDom)
     }
 
     private static func parseLongPress(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -308,17 +309,17 @@ public enum CLIParser {
         var duration: Int?
         var traits: String?
         var cindex: Int32?
-        var domAfterMs: Int?
+        var postDom: PostDomMode?
         while let arg = parser.consume() {
             switch arg {
             case "--duration": duration = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": domAfterMs = try parseNonNegativeIntStrict(parser.optionalValueAllowingLeadingDash(defaultValue: "200"), label: arg)
+            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex, domAfterMs: domAfterMs)
+        return .longPress(target: target, duration: duration, traits: traits, cindex: cindex, postDom: postDom)
     }
 
     private static func parseInput(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -326,7 +327,7 @@ public enum CLIParser {
         var content: String?
         var traits: String?
         var cindex: Int32?
-        var domAfterMs: Int?
+        var postDom: PostDomMode?
         while let arg = parser.consume() {
             switch arg {
             case "--tap": tap = try parser.value(for: arg)
@@ -334,12 +335,12 @@ public enum CLIParser {
             case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": domAfterMs = try parseNonNegativeIntStrict(parser.optionalValueAllowingLeadingDash(defaultValue: "200"), label: arg)
+            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
         _ = try DriverCommandExecutor.resolveInputTapTarget(tap, traits: traits, cindex: cindex)
-        return .input(tap: tap, content: try require(content, option: "--content"), traits: traits, cindex: cindex, domAfterMs: domAfterMs)
+        return .input(tap: tap, content: try require(content, option: "--content"), traits: traits, cindex: cindex, postDom: postDom)
     }
 
     private static func parseSwipe(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -349,7 +350,7 @@ public enum CLIParser {
         var distance: Double?
         var traits: String?
         var cindex: Int32?
-        var domAfterMs: Int?
+        var postDom: PostDomMode?
         while let arg = parser.consume() {
             switch arg {
             case "--to": to = try parser.value(for: arg)
@@ -361,24 +362,40 @@ public enum CLIParser {
             case "--distance": distance = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--dom": domAfterMs = try parseNonNegativeIntStrict(parser.optionalValueAllowingLeadingDash(defaultValue: "200"), label: arg)
+            case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex, domAfterMs: domAfterMs)
+        return .swipe(to: to, from: from, dir: dir, distance: distance, traits: traits, cindex: cindex, postDom: postDom)
     }
 
     private static func parseDom(_ parser: inout ArgumentParser) throws -> DriverAction {
         var raw = false
         var fresh = false
+        var waitQuiescence = false
         while let arg = parser.consume() {
             switch arg {
             case "--raw": raw = true
             case "--fresh": fresh = true
+            case "--wait-quiescence": waitQuiescence = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .dom(raw: raw, fresh: fresh)
+        if raw && (fresh || waitQuiescence) {
+            throw CLIParseError.invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence")
+        }
+        return .dom(raw: raw, fresh: fresh || waitQuiescence, waitQuiescence: waitQuiescence)
+    }
+
+    private static func parsePostDomMode(_ parser: inout ArgumentParser, option: String) throws -> PostDomMode {
+        guard let value = parser.optionalValueAllowingLeadingDash() else {
+            return .afterQuiescence
+        }
+        let milliseconds = try parseNonNegativeIntStrict(value, label: option)
+        guard milliseconds >= IOSUseProtocol.minimumPostDomMilliseconds else {
+            throw CLIParseError.invalidValue("\(option) must be at least \(IOSUseProtocol.minimumPostDomMilliseconds)ms")
+        }
+        return .afterMilliseconds(milliseconds)
     }
 
     private static func parseFind(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -629,11 +646,11 @@ private struct ArgumentParser {
         return Self.stripInlinePrefix(value)
     }
 
-    mutating func optionalValueAllowingLeadingDash(defaultValue: String) -> String {
-        guard index < arguments.count else { return defaultValue }
+    mutating func optionalValueAllowingLeadingDash() -> String? {
+        guard index < arguments.count else { return nil }
         let value = arguments[index]
         if value.hasPrefix("--"), !value.hasPrefix(Self.inlineValuePrefix) {
-            return defaultValue
+            return nil
         }
         index += 1
         return Self.stripInlinePrefix(value)
