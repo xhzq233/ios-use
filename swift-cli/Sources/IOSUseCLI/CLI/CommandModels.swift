@@ -154,12 +154,17 @@ public struct OSLogOptions: Equatable, Sendable {
     }
 }
 
+public enum PostDomMode: Equatable, Sendable {
+    case afterQuiescence
+    case afterMilliseconds(Int)
+}
+
 public enum DriverAction: Equatable, Sendable {
-    case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, domAfterMs: Int?)
-    case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, domAfterMs: Int?)
-    case input(tap: String?, content: String, traits: String?, cindex: Int32?, domAfterMs: Int?)
-    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, domAfterMs: Int?)
-    case dom(raw: Bool, fresh: Bool)
+    case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
+    case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
+    case input(tap: String?, content: String, traits: String?, cindex: Int32?, postDom: PostDomMode?)
+    case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
+    case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool)
     case find(label: String, traits: String?, cindex: Int32?)
     case screenshot(name: String?)
     case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?)

@@ -24,10 +24,10 @@ enum ProxyCommands {
                 return Codec.foryError("failed to bind CA server on port \(port)")
             }
             serverFd = fd
-            NSLog("[proxy] CA server listening on port %d", Int(port))
+            DriverLog.info("[proxy] CA server listening on port \(Int(port))")
         }
 
-        NSLog("[proxy] CA pushed (%d bytes), server on :%d%@", certData.count, Int(IOSUseProtocol.proxyCAPort), IOSUseProtocol.proxyCAPath)
+        DriverLog.info("[proxy] CA pushed (\(certData.count) bytes), server on :\(Int(IOSUseProtocol.proxyCAPort))\(IOSUseProtocol.proxyCAPath)")
         let payload = ForyProxyPayload(status: "pushed")
         return try Codec.foryOK(payload)
     }

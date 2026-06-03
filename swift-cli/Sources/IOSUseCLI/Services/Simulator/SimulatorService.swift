@@ -151,7 +151,7 @@ enum SimulatorService {
         for _ in 0..<50 {
             let driver = DriverClient()
             defer { driver.close() }
-            if (try? driver.dom(raw: false, fresh: false)) != nil {
+            if (try? driver.dom(raw: false, fresh: false, waitQuiescence: false)) != nil {
                 return
             }
             usleep(200_000)

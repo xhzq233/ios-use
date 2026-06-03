@@ -19,37 +19,37 @@ func shouldLaunchViaLaunchServices(state: XCUIApplication.State) -> Bool {
 
 enum App {
     static func activateApp(bundleId: String) throws -> XCUIApplication {
-        NSLog("[app] activate called with bundleId=\(bundleId)")
+        DriverLog.info("[app] activate called with bundleId=\(bundleId)")
         let app = XCUIApplication(bundleIdentifier: bundleId)
         let state = app.state
-        NSLog("[app] app state=\(state.rawValue) (0=unknown,1=notRunning,2=suspended,3=background,4=foreground)")
+        DriverLog.info("[app] app state=\(state.rawValue) (0=unknown,1=notRunning,2=suspended,3=background,4=foreground)")
 
         if shouldLaunchViaLaunchServices(state: state) {
-            NSLog("[app] launching app via LaunchServices...")
+            DriverLog.info("[app] launching app via LaunchServices...")
             guard OpenApplicationWithBundleId(bundleId) else {
-                NSLog("[app] ERROR: LaunchServices could not open bundleId=\(bundleId)")
+                DriverLog.error("[app] ERROR: LaunchServices could not open bundleId=\(bundleId)")
                 throw DriverError.appNotFound(bundleId)
             }
-            NSLog("[app] openApplicationWithBundleID() returned")
+            DriverLog.info("[app] openApplicationWithBundleID() returned")
         } else {
-            NSLog("[app] app already in foreground, skipping activate")
+            DriverLog.info("[app] app already in foreground, skipping activate")
         }
 
         try waitForForeground(app, bundleId: bundleId)
         Session.shared.cache(app: app)
-        NSLog("[app] activate completed, final state=\(app.state.rawValue)")
+        DriverLog.info("[app] activate completed, final state=\(app.state.rawValue)")
         return app
     }
 
     static func terminateApp(bundleId: String) throws {
-        NSLog("[app] terminate called with bundleId=\(bundleId)")
+        DriverLog.info("[app] terminate called with bundleId=\(bundleId)")
         let app = XCUIApplication(bundleIdentifier: bundleId)
         app.terminate()
         try waitForTermination(app)
     }
 
     private static func waitForForeground(_ app: XCUIApplication, bundleId: String?) throws {
-        NSLog("[app] waiting for app to enter foreground...")
+        DriverLog.info("[app] waiting for app to enter foreground...")
         let deadline = CFAbsoluteTimeGetCurrent() + IOSUseProtocol.appForegroundTimeoutSeconds
         var state = app.state
         while state != .runningForeground && CFAbsoluteTimeGetCurrent() < deadline {
@@ -57,14 +57,14 @@ enum App {
             state = app.state
         }
         guard state == .runningForeground else {
-            NSLog("[app] ERROR: app failed to enter foreground, state=\(state.rawValue)")
+            DriverLog.error("[app] ERROR: app failed to enter foreground, state=\(state.rawValue)")
             throw foregroundWaitFailureError(state: state, bundleId: bundleId)
         }
-        NSLog("[app] foreground wait completed, state=\(state.rawValue)")
+        DriverLog.info("[app] foreground wait completed, state=\(state.rawValue)")
     }
 
     private static func waitForTermination(_ app: XCUIApplication) throws {
-        NSLog("[app] waiting for app to terminate...")
+        DriverLog.info("[app] waiting for app to terminate...")
         let deadline = CFAbsoluteTimeGetCurrent() + IOSUseProtocol.appTerminationTimeoutSeconds
         var state = app.state
         while state != .notRunning && state != .unknown && CFAbsoluteTimeGetCurrent() < deadline {
@@ -72,10 +72,10 @@ enum App {
             state = app.state
         }
         guard state == .notRunning || state == .unknown else {
-            NSLog("[app] ERROR: app failed to terminate, state=\(state.rawValue)")
+            DriverLog.error("[app] ERROR: app failed to terminate, state=\(state.rawValue)")
             throw terminationWaitFailureError(state: state)
         }
-        NSLog("[app] terminate completed, state=\(state.rawValue)")
+        DriverLog.info("[app] terminate completed, state=\(state.rawValue)")
     }
 }
 

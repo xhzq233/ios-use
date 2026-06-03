@@ -40,6 +40,16 @@ final class ForyModelTests: XCTestCase {
         XCTAssertEqual(positiveDecoded.cindex, 2)
     }
 
+    func testForyDomArgsSerializesWaitQuiescence() throws {
+        let fory = ForyRegistry.create()
+        let encoded = try fory.serialize(ForyDomArgs(raw: false, fresh: true, waitQuiescence: true))
+        let decoded = try fory.deserialize(encoded, as: ForyDomArgs.self)
+
+        XCTAssertFalse(decoded.raw)
+        XCTAssertTrue(decoded.fresh)
+        XCTAssertTrue(decoded.waitQuiescence)
+    }
+
     func testForyRegistryCanSerializeProxyCAPushArgs() throws {
         let fory = ForyRegistry.create()
         let encoded = try fory.serialize(ForyProxyCAPushArgs(caBase64: "abc123"))

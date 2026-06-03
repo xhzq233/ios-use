@@ -58,6 +58,41 @@ final class OSLogServiceTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("ready"))
     }
 
+    func testRealDeviceOslogUsesActiveDriverLockAndStreamsMatchedLines() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-real-active-\(UUID().uuidString)").path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "REAL-LOCK",
+                deviceName: "iPhone",
+                deviceVersion: "26.2",
+                deviceType: "real",
+                startedAt: 1
+            ),
+            paths: paths
+        )
+        RealDeviceOSTraceService.collectorForTesting = { udid, timeout, source in
+            XCTAssertEqual(udid, "REAL-LOCK")
+            XCTAssertEqual(timeout, 2)
+            XCTAssertEqual(source, OSLogOptions.SourceFilter())
+            return [
+                "Jun 3 13:41:47.968098 IOSUseDriver-Runner[15655] <Info>: [quiescence] wait start command=dom",
+                "Jun 3 13:41:48.075256 IOSUseDriver-Runner[15655] <Info>: [quiescence] wait finish command=dom elapsed=107ms",
+                "Jun 3 13:41:48.100000 SpringBoard[35] <Info>: ignored",
+            ]
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["oslog", "--pattern", "\\[quiescence\\].*elapsed", "--timeout", "2"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("[quiescence] wait finish command=dom elapsed=107ms"))
+        XCTAssertFalse(result.stdout.contains("wait start"))
+        XCTAssertFalse(result.stdout.contains("SpringBoard"))
+    }
+
     func testOslogExplicitUnbootedSimulatorDoesNotFallbackToRealSyslog() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
         let simulatorUdid = "00000000-0000-0000-0000-000000000001"
