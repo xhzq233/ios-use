@@ -452,7 +452,7 @@ private let flowStepAllowedKeys: [String: Set<String>] = [
     "dom": ["raw", "fresh", "candidates", "outputs"],
     "tap": ["label", "offset", "offsetRatio", "traits", "cindex", "dom"],
     "longpress": ["label", "duration", "traits", "cindex", "dom"],
-    "input": ["label", "content", "traits", "cindex", "dom"],
+    "input": ["tap", "content", "traits", "cindex", "dom"],
     "swipe": ["dir", "from", "to", "distance", "traits", "cindex", "outputs", "dom"],
     "screenshot": ["name"],
     "activateApp": ["bundleId"],
@@ -513,7 +513,9 @@ enum FlowLowering {
             return args
 
         case "input":
-            var args = ["input", "--label", try requiredString(step["label"], field: "input.label"), "--content", try requiredString(step["content"], field: "input.content")]
+            var args = ["input"]
+            args += try optionalStringArg("--tap", step["tap"], field: "input.tap")
+            args += ["--content", try requiredString(step["content"], field: "input.content")]
             args += try optionalStringArg("--traits", step["traits"], field: "input.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "input.cindex", allowNegative: true)
             args += try optionalIntArg("--dom", step["dom"], field: "input.dom", allowNegative: false)
@@ -609,7 +611,7 @@ enum FlowLowering {
             try validateIntLike(step["cindex"], field: "longpress.cindex", allowNegative: true)
             try validateIntLike(step["dom"], field: "longpress.dom", allowNegative: false)
         case "input":
-            try validateStringLike(step["label"], field: "input.label", required: true)
+            try validateStringLike(step["tap"], field: "input.tap")
             try validateStringLike(step["content"], field: "input.content", required: true)
             try validateStringLike(step["traits"], field: "input.traits")
             try validateIntLike(step["cindex"], field: "input.cindex", allowNegative: true)
@@ -1405,8 +1407,8 @@ private final class RecoveringFlowDriver: FlowDriver {
         try run { try $0.longPress(target: target, durationMs: durationMs, traits: traits, cindex: cindex) }
     }
 
-    func input(label: String, content: String, traits: String?, cindex: Int32?) throws {
-        try run { try $0.input(label: label, content: content, traits: traits, cindex: cindex) }
+    func input(tap: ForyTarget?, content: String) throws {
+        try run { try $0.input(tap: tap, content: content) }
     }
 
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload {

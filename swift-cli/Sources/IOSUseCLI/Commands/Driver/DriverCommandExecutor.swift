@@ -80,13 +80,15 @@ enum DriverCommandExecutor {
             ok = true
             return result
 
-        case .input(let label, let content, let traits, let cindex, let domAfterMs):
+        case .input(let tap, let content, let traits, let cindex, let domAfterMs):
+            let tapTarget = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
             _ = try clientRunner {
-                try $0.input(label: label, content: content, traits: traits, cindex: cindex)
+                try $0.input(tap: tapTarget, content: content)
                 return nil
             }
+            let targetDescription = tap.map { " after tapping \"\($0)\"" } ?? ""
             let result = try appendPostDomIfNeeded(
-                DriverCommandResult(stdout: "Input \"\(content)\" into \"\(label)\"\n", payload: nil),
+                DriverCommandResult(stdout: "Input \"\(content)\"\(targetDescription)\n", payload: nil),
                 domAfterMs: domAfterMs,
                 clientRunner: clientRunner
             )
@@ -151,6 +153,8 @@ enum DriverCommandExecutor {
             _ = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
         case .longPress(let target, _, let traits, let cindex, _):
             _ = try resolveTarget(target, traits: traits, cindex: cindex)
+        case .input(let tap, _, let traits, let cindex, _):
+            _ = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
         case .swipe(let to, let from, _, _, let traits, let cindex, _):
             _ = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
         default:
@@ -202,6 +206,16 @@ enum DriverCommandExecutor {
         let toTarget = try resolveTarget(to, traits: traits, cindex: cindex)
         let fromTarget = try resolveTarget(from)
         return (toTarget, fromTarget)
+    }
+
+    static func resolveInputTapTarget(_ tap: String?, traits: String?, cindex: Int32?) throws -> ForyTarget? {
+        guard let tap, !tap.isEmpty else {
+            if traits != nil || cindex != nil {
+                throw CLIParseError.invalidValue("--traits or --cindex require --tap with a label target")
+            }
+            return nil
+        }
+        return try resolveTarget(tap, traits: traits, cindex: cindex)
     }
 
     static func resolveTarget(_ value: String?, traits: String? = nil, cindex: Int32? = nil) throws -> ForyTarget {

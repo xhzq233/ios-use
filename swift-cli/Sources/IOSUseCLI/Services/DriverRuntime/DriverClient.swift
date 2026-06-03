@@ -47,7 +47,7 @@ protocol DriverCommandClient: AnyObject {
     func screenshot() throws -> Data
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
-    func input(label: String, content: String, traits: String?, cindex: Int32?) throws
+    func input(tap: ForyTarget?, content: String) throws
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
@@ -199,8 +199,8 @@ final class DriverClient: DriverCommandClient {
         return try send(LongPressCommand.self, args: ForyLongPressArgs(target: target.withLookup(traits: traits, cindex: cindex), duration: durationSeconds))
     }
 
-    func input(label: String, content: String, traits: String?, cindex: Int32? = nil) throws {
-        _ = try sendRaw(InputCommand.self, args: ForyInputArgs(target: ForyTarget(label: label, traits: traits ?? "", cindex: cindex), content: content))
+    func input(tap: ForyTarget?, content: String) throws {
+        _ = try sendRaw(InputCommand.self, args: ForyInputArgs(target: tap ?? ForyTarget(), content: content))
     }
 
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {

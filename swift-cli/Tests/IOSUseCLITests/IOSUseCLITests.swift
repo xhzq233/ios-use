@@ -1335,7 +1335,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected longPress")
     }
 
-    func input(label: String, content: String, traits: String?, cindex: Int32?) throws {
+    func input(tap: ForyTarget?, content: String) throws {
         throw CLIParseError.invalidValue("unexpected input")
     }
 

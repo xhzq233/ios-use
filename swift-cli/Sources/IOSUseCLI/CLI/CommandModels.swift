@@ -157,7 +157,7 @@ public struct OSLogOptions: Equatable, Sendable {
 public enum DriverAction: Equatable, Sendable {
     case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, domAfterMs: Int?)
     case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, domAfterMs: Int?)
-    case input(label: String, content: String, traits: String?, cindex: Int32?, domAfterMs: Int?)
+    case input(tap: String?, content: String, traits: String?, cindex: Int32?, domAfterMs: Int?)
     case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, domAfterMs: Int?)
     case dom(raw: Bool, fresh: Bool)
     case find(label: String, traits: String?, cindex: Int32?)

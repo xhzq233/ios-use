@@ -1329,10 +1329,10 @@ function buildCases(ctx) {
       stateReusable: false,
       invalidatesState: true,
       runs: ctx.iterations,
-      mapping: '`ios-use input --label <label>` / WDA find + click + keys',
+      mapping: '`ios-use input --tap <target>` / WDA find + click + keys',
       notes: 'High-variance input path; keyboard and field contents are reset by prepare.',
       iosRun: async () => {
-        const args = ['input', '--label', ctx.inputLabel, '--content', ctx.inputContent, '--udid', ctx.udid];
+        const args = ['input', '--tap', ctx.inputLabel, '--content', ctx.inputContent, '--udid', ctx.udid];
         if (ctx.inputTraits) args.splice(args.length - 2, 0, '--traits', ctx.inputTraits);
         cli(args);
       },

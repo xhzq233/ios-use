@@ -187,13 +187,13 @@ enum CLIHelp {
             )
         case "input":
             return driverHelp(
-                usage: "ios-use input --label <label> --content <text> [--traits <traits>] [--cindex <index>] [--dom [ms]]",
-                summary: "Input text into a field.",
+                usage: "ios-use input [--tap <target>] --content <text> [--traits <traits>] [--cindex <index>] [--dom [ms]]",
+                summary: "Input text into the current keyboard focus, optionally tapping a target first.",
                 options: [
-                    "--label <label>    Target field label",
+                    "--tap <target>     Optional label or x,y target to tap before typing",
                     "--content <text>   Text to input",
-                    "--traits <traits>  Comma-separated trait filter",
-                    "--cindex <index>   Select the Nth cleaned child under a matched parent",
+                    "--traits <traits>  Comma-separated trait filter for label tap target",
+                    "--cindex <index>   Select the Nth cleaned child under a label tap target",
                     "--dom [ms]         Return a fresh DOM after the mutation; default 200ms",
                 ]
             )

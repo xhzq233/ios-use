@@ -83,8 +83,8 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["input", "--label", "First name", "--content", "Alpha", "--traits", "Input", "--cindex", "0"]),
-            .driver(.input(label: "First name", content: "Alpha", traits: "Input", cindex: 0, domAfterMs: nil))
+            try CLIParser.parse(["input", "--tap", "First name", "--content", "Alpha", "--traits", "Input", "--cindex", "0"]),
+            .driver(.input(tap: "First name", content: "Alpha", traits: "Input", cindex: 0, domAfterMs: nil))
         )
 
         XCTAssertEqual(
@@ -103,8 +103,13 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["input", "--label", "First name", "--content", "Alpha", "--dom=300"]),
-            .driver(.input(label: "First name", content: "Alpha", traits: nil, cindex: nil, domAfterMs: 300))
+            try CLIParser.parse(["input", "--tap", "First name", "--content", "Alpha", "--dom=300"]),
+            .driver(.input(tap: "First name", content: "Alpha", traits: nil, cindex: nil, domAfterMs: 300))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["input", "--content", "Alpha"]),
+            .driver(.input(tap: nil, content: "Alpha", traits: nil, cindex: nil, domAfterMs: nil))
         )
 
         XCTAssertEqual(
@@ -295,12 +300,24 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parse(["oslog", "--bundle-id", "com.example"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--bundle-id"))
         }
+
+        XCTAssertThrowsError(try CLIParser.parse(["input", "--label", "Name", "--content", "Alpha"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("input --label was replaced by --tap <target>"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["input", "--content", "Alpha", "--traits", "Input"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--traits or --cindex require --tap with a label target"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["input", "--tap", "100,200", "--content", "Alpha", "--traits", "Input"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("point target does not support traits or cindex"))
+        }
     }
 
     func testParsesDashPrefixedOptionValuesWhereSemanticallyValid() throws {
         XCTAssertEqual(
-            try CLIParser.parse(["input", "--label", "First name", "--content", "-Alpha"]),
-            .driver(.input(label: "First name", content: "-Alpha", traits: nil, cindex: nil, domAfterMs: nil))
+            try CLIParser.parse(["input", "--tap", "First name", "--content", "-Alpha"]),
+            .driver(.input(tap: "First name", content: "-Alpha", traits: nil, cindex: nil, domAfterMs: nil))
         )
 
         XCTAssertEqual(
