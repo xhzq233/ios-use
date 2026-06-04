@@ -19,13 +19,17 @@ final class XCTestManagerSession {
     }
 
     func openDaemonConnection() throws -> XCTestManagerDaemonClient {
+        XCTestManagerDaemonClient(channel: try openDaemonChannel())
+    }
+
+    func openDaemonChannel() throws -> DTXChannelClient {
         let code = nextChannelCode
         nextChannelCode += 1
         try control.requestChannel(
             code: code,
             identifier: DVTInstrumentsContract.XCTestManagerDaemon.proxyServiceIdentifier
         )
-        return XCTestManagerDaemonClient(invoker: control.invoker(channelCode: code))
+        return control.channel(code: code)
     }
 
     func close() {

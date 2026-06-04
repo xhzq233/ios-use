@@ -32,7 +32,12 @@ enum DriverSessionStore {
             deviceName: raw["deviceName"] as? String ?? "",
             deviceVersion: raw["deviceVersion"] as? String ?? "",
             deviceType: deviceType,
-            startedAt: startedAt
+            startedAt: startedAt,
+            holderPid: raw["holderPid"] as? Int,
+            runnerPid: raw["runnerPid"] as? Int,
+            startMode: raw["startMode"] as? String,
+            sessionIdentifier: raw["sessionIdentifier"] as? String,
+            bundleId: raw["bundleId"] as? String
         )
     }
 
@@ -44,13 +49,28 @@ enum DriverSessionStore {
     }
 
     static func write(info: SessionService.Info, paths: IOSUsePaths) throws {
-        let root: [String: Any] = [
+        var root: [String: Any] = [
             "udid": info.udid,
             "deviceName": info.deviceName,
             "deviceVersion": info.deviceVersion,
             "deviceType": info.deviceType,
             "startedAt": info.startedAt,
         ]
+        if let holderPid = info.holderPid {
+            root["holderPid"] = holderPid
+        }
+        if let runnerPid = info.runnerPid {
+            root["runnerPid"] = runnerPid
+        }
+        if let startMode = info.startMode {
+            root["startMode"] = startMode
+        }
+        if let sessionIdentifier = info.sessionIdentifier {
+            root["sessionIdentifier"] = sessionIdentifier
+        }
+        if let bundleId = info.bundleId {
+            root["bundleId"] = bundleId
+        }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])

@@ -44,7 +44,7 @@ final class PlainDeviceStream: DeviceStream {
         var buffer = [UInt8](repeating: 0, count: maxBytes)
         let n = Darwin.read(fd, &buffer, maxBytes)
         if n > 0 { return Data(buffer.prefix(n)) }
-        if n == 0 { return Data() }
+        if n == 0 { throw CLIParseError.invalidValue("device stream closed") }
         if errno == EINTR || errno == EAGAIN { return Data() }
         throw CLIParseError.invalidValue("device read failed: errno \(errno)")
     }

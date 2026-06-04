@@ -24,6 +24,8 @@ final class IOSUseCLITests: XCTestCase {
         SessionService.coreDeviceLifecycleFactoryForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
+        DriverLifecycleService.holderLauncherForTesting = nil
+        DriverLifecycleService.holderTerminatorForTesting = nil
         RealDeviceOSLogService.collectorForTesting = nil
         Shell.runOverrideForTesting = nil
         Shell.runResultOverrideForTesting = nil
