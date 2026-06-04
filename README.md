@@ -1,12 +1,12 @@
 # ios-use
 
-> Fast iOS UI automation from the terminal, powered by a lightweight XCTest TCP driver.
+> iOS UI automation built for AI agents — deeply optimized DOM tree + target-based command semantics.
 
 [![Release](https://img.shields.io/github/v/release/xhzq233/ios-use?sort=semver)](https://github.com/xhzq233/ios-use/releases)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20iOS-lightgrey.svg)](#dependency-matrix)
 
-`ios-use` drives real iPhones and Simulators directly from a Swift CLI. It avoids the usual Appium Server -> WebDriverAgent HTTP stack, so agents and scripts can inspect UI state, find labels, tap, swipe, capture logs, and run YAML flows with much lower overhead.
+`ios-use` drives real iPhones and Simulators directly from a Swift CLI. It exposes a structured, noise-free DOM and target-based actions (tap by label, not coordinates), so AI agents can reliably inspect UI state, make decisions, and execute — without vision token overhead or pixel guessing.
 
 ![ios-use demo](docs/media/demo.gif)
 
@@ -26,17 +26,39 @@ After `start`, screen-driving commands target the selected device. To switch dev
 
 ## Why ios-use
 
-- **Built for tight agent loops**: `dom` and `find` are cheap enough to call before actions instead of guessing UI state.
-- **No automation server to run**: no Appium server, no WDA checkout, no iproxy process, no separate WebDriver bridge.
-- **Label-first actions**: tap, input, waitFor, and swipe can target visible UI text before falling back to coordinates.
+- **Deeply optimized DOM tree**: the accessibility snapshot is restructured for agent consumption: flat, noise-free, with stable labels and semantic grouping. `dom` and `find` are cheap enough for tight observe-act loops.
+- **Target-based command semantics**: actions can target label/value text instead of raw coordinates. The driver resolves element frames internally, while coordinate and offset modes remain available for visual-only controls.
+- **Single binary, zero infrastructure**: no separate server process, no port forwarding, no extra bridge to maintain.
 - **Real device and Simulator support**: real devices connect through usbmuxd; Simulators connect over `localhost`.
 - **Flows, logs, and proxy capture included**: YAML flows, OSLog, NSLogger, and HTTP/HTTPS proxy capture are first-class CLI workflows.
 
+## AX-First, Vision-Aware Architecture
+
+Modern multimodal models do not usually allocate tokens linearly with every screenshot pixel. Vision encoders resize, patch, and pool images, which means model providers trade off clarity, scale, latency, and token budget. That tradeoff is still painful for UI automation: small text and dense controls can be misread, coordinate reasoning is slower, and visual prompts consume far more context than structured UI state.
+
+`ios-use` makes AX the primary channel and keeps screenshots as a fallback:
+
+| Channel | What it provides | Best use |
+| --- | --- | --- |
+| **AX (Accessibility Tree)** | OS-reported text/value, element types, traits, hierarchy, and frames from XCTest snapshots. | Fast semantic state and target resolution. |
+| **Screenshot** | Spatial layout, colors, visual-only controls, and custom-rendered UI. | Fallback when AX is incomplete or ambiguous. |
+
+**How they work together:**
+
+1. **DOM-first targeting** - Most actions use label/value text. The driver resolves coordinates internally, so the LLM does not need to guess pixel positions for standard UI.
+2. **Vision fallback** - When AX is incomplete (for example, a custom-drawn icon), the LLM can inspect a screenshot and pass raw coordinates.
+3. **Offset hybrid** — Combine both: anchor on a known label, then apply a relative offset to hit an adjacent unlabeled control.
+4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom`, or use `dom` / `waitFor` to confirm success at the semantic level.
+
+This means:
+
+- **Text models** can drive standard apps using DOM alone, without paying vision latency or visual-token costs on every step.
+- **Vision models** can reserve screenshots for the cases where AX does not expose enough information, combining precise DOM text with visual spatial reasoning.
+- The framework itself is **model-agnostic**: it exposes a CLI/JSON interface that any agent can call.
+
 ## What It Is
 
-`ios-use` is a command-line automation tool for macOS users who want direct iOS UI control.
-
-It is **not** a WebDriver-compatible Appium server. If you need Selenium/Appium protocol compatibility, use Appium. If you want a small CLI that an AI agent or local script can call repeatedly, `ios-use` is optimized for that path.
+`ios-use` is a command-line automation tool for macOS users who want direct iOS UI control — optimized for AI agents and local scripts that call it repeatedly in tight loops.
 
 Driving devices still requires Apple's tooling:
 
