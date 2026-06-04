@@ -1031,7 +1031,7 @@ final class FlowServiceTests: XCTestCase {
         """)
 
         XCTAssertThrowsError(try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)) { error in
-            XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
+            XCTAssertTrue(String(describing: error).contains("ios-use start"))
         }
     }
 

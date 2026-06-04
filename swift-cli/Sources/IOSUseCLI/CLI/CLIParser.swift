@@ -92,8 +92,7 @@ public enum CLIParser {
     }
 
     private static func parseStart(_ parser: inout ArgumentParser) throws -> StartOptions {
-        let udid = try parser.requiredPositional("udid")
-        var options = StartOptions(udid: udid)
+        var options = StartOptions()
         while let arg = parser.consume() {
             switch arg {
             case "--verbose": options.verbose = true
@@ -101,7 +100,10 @@ public enum CLIParser {
                 if arg.hasPrefix("-") {
                     throw CLIParseError.unknownOption(arg)
                 }
-                throw CLIParseError.unexpectedArgument(arg)
+                guard options.udid == nil else {
+                    throw CLIParseError.unexpectedArgument(arg)
+                }
+                options.udid = arg
             }
         }
         return options

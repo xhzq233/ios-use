@@ -178,7 +178,7 @@ public struct IOSUseCLI: Sendable {
                 result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
             }
             guard let result else {
-                throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start <UDID>` first.")
+                throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start` first.")
             }
             return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
         } catch {

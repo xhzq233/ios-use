@@ -73,10 +73,10 @@ public struct SessionOptions: Equatable, Sendable {
 }
 
 public struct StartOptions: Equatable, Sendable {
-    public var udid: String
+    public var udid: String?
     public var verbose = false
 
-    public init(udid: String, verbose: Bool = false) {
+    public init(udid: String? = nil, verbose: Bool = false) {
         self.udid = udid
         self.verbose = verbose
     }

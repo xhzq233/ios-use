@@ -723,7 +723,7 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("No active driver. Run `ios-use start <UDID>` first."))
+        XCTAssertTrue(result.stderr.contains("No active driver. Run `ios-use start` first."))
         XCTAssertFalse(FileManager.default.fileExists(atPath: "\(root)/state/session.json"))
     }
 

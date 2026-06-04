@@ -77,7 +77,7 @@ enum OpenURLService {
         let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: session.udid,
             paths: paths,
-            missingMessage: "open requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+            missingMessage: "open requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
         if activeDriver?.udid == targetUdid {
             if activeDriver?.deviceType == "simulator" {
