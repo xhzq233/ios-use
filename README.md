@@ -8,7 +8,9 @@
 
 `ios-use` drives real iPhones and Simulators directly from a Swift CLI. It exposes a structured, noise-free DOM and target-based actions (tap by label, not coordinates), so AI agents can reliably inspect UI state, make decisions, and execute — without vision token overhead or pixel guessing.
 
-![ios-use demo](docs/media/demo.gif)
+
+https://github.com/user-attachments/assets/50de69c3-dce7-474d-8ec4-008b81cdefde
+
 
 ## Quick Start
 
