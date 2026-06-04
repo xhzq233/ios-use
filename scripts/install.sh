@@ -12,7 +12,7 @@ SECONDARY_TARGET_DIR="$HOME/bin"
 GITHUB_REPO="${IOS_USE_GITHUB_REPO:-xhzq233/ios-use}"
 CLI_VERSION=""
 ALTSIGN_REPO="xhzq233/altsign-cli"
-ALTSIGN_VERSION="v0.1.2"
+ALTSIGN_VERSION="v0.1.1"
 BOOTSTRAP_DIR=""
 ROOT_DIR=""
 PRINT_PATH_ONLY=0
@@ -200,23 +200,13 @@ install_binary() {
   fi
 
   # altsign-cli: GitHub Release
-  local alt_dir="$HOME/.ios-use/altsign-cli"
-  local alt_bin="$alt_dir/altsign-cli"
-  local alt_version_file="$alt_dir/version"
-  local installed_alt_version=""
-  if [[ -f "$alt_version_file" ]]; then
-    installed_alt_version="$(tr -d '[:space:]' < "$alt_version_file")"
-  fi
-  if [[ ! -x "$alt_bin" || "$installed_alt_version" != "$ALTSIGN_VERSION" ]]; then
+  local alt_bin="$HOME/.ios-use/altsign-cli/altsign-cli"
+  if [[ ! -x "$alt_bin" ]]; then
     echo "Downloading altsign-cli ${ALTSIGN_VERSION}..."
-    mkdir -p "$alt_dir"
-    local alt_tmp="${alt_bin}.tmp.$$"
-    rm -f "$alt_tmp"
+    mkdir -p "$HOME/.ios-use/altsign-cli"
     curl -fsSL "https://github.com/${ALTSIGN_REPO}/releases/download/${ALTSIGN_VERSION}/altsign-cli" \
-      -o "$alt_tmp"
-    chmod +x "$alt_tmp"
-    mv "$alt_tmp" "$alt_bin"
-    printf '%s\n' "$ALTSIGN_VERSION" > "$alt_version_file"
+      -o "$alt_bin"
+    chmod +x "$alt_bin"
   fi
 }
 
