@@ -46,7 +46,7 @@ final class ProxyServiceTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try ProxyService.start(interfaceName: nil, paths: paths)) { error in
-            XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
+            XCTAssertTrue(String(describing: error).contains("ios-use start"))
         }
     }
 
@@ -124,7 +124,7 @@ final class ProxyServiceTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
 
         XCTAssertThrowsError(try ProxyService.configCA(paths: paths)) { error in
-            XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
+            XCTAssertTrue(String(describing: error).contains("ios-use start"))
         }
         XCTAssertFalse(FileManager.default.fileExists(atPath: "\(root)/mitmproxy/mitmproxy-ca-cert.pem"))
     }
@@ -144,7 +144,7 @@ final class ProxyServiceTests: XCTestCase {
         try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: statePath))
 
         XCTAssertThrowsError(try ProxyService.stop(paths: paths)) { error in
-            XCTAssertTrue(String(describing: error).contains("ios-use start <UDID>"))
+            XCTAssertTrue(String(describing: error).contains("ios-use start"))
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: statePath))
     }

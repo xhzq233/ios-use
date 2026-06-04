@@ -184,7 +184,7 @@ final class ConfigServiceTests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("No active driver. Run `ios-use start <UDID>` first."))
+        XCTAssertTrue(result.stderr.contains("No active driver. Run `ios-use start` first."))
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.session))
         XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/state/nslog.lock"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
@@ -364,6 +364,40 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(lock.deviceType, "real")
         XCTAssertEqual(lock.deviceName, "Phone")
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
+    }
+
+    func testStartWithoutUdidDefaultsToFirstConnectedRealDevice() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-FIRST":{"bundleId":"com.example.first","driverVersion":"\(IOSUseCLI.version)"},"REAL-SECOND":{"bundleId":"com.example.second","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-FIRST", "REAL-SECOND"] }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            if simulatorOnly {
+                XCTFail("start without udid must not inspect Simulator devices")
+                return []
+            }
+            return [
+                IOSDevice(name: "First Phone", version: "26.0", udid: "REAL-FIRST", kind: .real),
+                IOSDevice(name: "Second Phone", version: "26.0", udid: "REAL-SECOND", kind: .real),
+            ]
+        }
+        var launched: [(String, String)] = []
+        SessionService.realDriverReachableForTesting = { _ in !launched.isEmpty }
+        SessionService.realDriverLauncherForTesting = { udid, bundleId in launched.append((udid, bundleId)) }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "Driver started for REAL-FIRST\n")
+        XCTAssertEqual(launched.map(\.0), ["REAL-FIRST"])
+        XCTAssertEqual(launched.map(\.1), ["com.example.first"])
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.udid, "REAL-FIRST")
+        XCTAssertEqual(lock.deviceType, "real")
+        XCTAssertEqual(lock.deviceName, "First Phone")
     }
 
     func testStartCommandUsesNativeXCTestLifecycleByDefaultWithoutDevicectl() throws {
@@ -603,7 +637,14 @@ final class ConfigServiceTests: XCTestCase {
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
 
-        var result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "SIM-MISSING"])
+        DeviceService.usbDeviceUdidsOverrideForTesting = { [] }
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        var result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start"])
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("No --udid and no USB real devices detected."))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
+
+        result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "SIM-MISSING"])
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stderr.contains("No signing config found for device SIM-MISSING"))
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))

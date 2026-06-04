@@ -103,10 +103,11 @@ public enum SessionService {
         DriverSessionStore.clearDriverLock(paths: paths)
     }
 
-    public static func start(udid: String, paths: IOSUsePaths, verbose: Bool) throws -> String {
+    public static func start(udid requestedUdid: String?, paths: IOSUsePaths, verbose: Bool) throws -> String {
         if let current = try readDriverLockInfo(paths: paths) {
             throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
         }
+        let udid = try resolveStartUdid(requestedUdid, paths: paths)
         let info = try resolveDriverInfo(udid: udid, paths: paths)
         try writeDriverLock(info: info, paths: paths)
         var launchedInfo: Info?
@@ -156,6 +157,16 @@ public enum SessionService {
 
     public static func resolveDriverInfo(udid: String, paths: IOSUsePaths) throws -> Info {
         try DriverLifecycleService.resolveDriverInfo(udid: udid, paths: paths)
+    }
+
+    private static func resolveStartUdid(_ requestedUdid: String?, paths: IOSUsePaths) throws -> String {
+        if let requestedUdid, !requestedUdid.isEmpty {
+            return requestedUdid
+        }
+        guard let device = try DeviceService.listDevices(simulatorOnly: false, paths: paths).first(where: { $0.kind == .real }) else {
+            throw CLIParseError.invalidValue("No --udid and no USB real devices detected.")
+        }
+        return device.udid
     }
 
     static func launchDriver(for info: Info, paths: IOSUsePaths, verbose: Bool) throws -> DriverLifecycleService.LaunchMetadata? {

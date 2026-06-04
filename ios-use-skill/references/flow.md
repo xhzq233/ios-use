@@ -76,7 +76,7 @@ steps:
 - `vars` 是 Flow 的输入
 - 顶层 `vars` 是默认值；CLI 外部变量可以覆盖同名默认值
 - CLI 外部变量写法：`ios-use flow <file> --targetLabel 蓝牙 --timeout 5`
-- `--verbose` 是 flow 命令自身选项，不进入 `vars`；Flow 不支持 `--udid`，目标就是最近一次 `ios-use start <udid>` 的设备
+- `--verbose` 是 flow 命令自身选项，不进入 `vars`；Flow 不支持 `--udid`，目标就是最近一次 `ios-use start` 的设备
 - 普通字符串字段支持模板替换，例如 `${vars.targetLabel}`
 - 整段 `${...}` 可以传对象或数组原值，不只限于字符串
 - 执行前会先检查整份 flow；能提前发现的错误会在任何 step 执行前失败
@@ -402,7 +402,7 @@ steps:
 2. 把稳定可复用的前置过程抽成 subflow
 3. 用 `vars` 传输入，用 `outputs` 传回结果
 4. 在关键节点保留 `dom` / `oslog`
-5. 先运行 `ios-use start <udid>` 选择目标设备；`flow --udid <udid>` 不再支持
+5. 先运行 `ios-use start` 选择目标设备；多设备或 Simulator 用 `ios-use start <udid>`；`flow --udid <udid>` 不再支持
 6. 运行 `ios-use flow your-flow.yaml`
 7. 如果失败，回到 `SKILL.md` 的 CLI 工作流逐步单步复现
 

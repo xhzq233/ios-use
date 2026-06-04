@@ -18,7 +18,7 @@ enum AppManagementService {
             explicitUdid: options.udid,
             paths: paths,
             command: "install",
-            missingMessage: "install requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+            missingMessage: "install requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
         guard FileManager.default.fileExists(atPath: options.ipaPath) else {
             throw CLIParseError.invalidValue("App package not found: \(options.ipaPath)")
@@ -47,7 +47,7 @@ enum AppManagementService {
             explicitUdid: options.udid,
             paths: paths,
             command: "uninstall",
-            missingMessage: "uninstall requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+            missingMessage: "uninstall requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
         var responseFrames: [[String: Any]] = []
         do {
@@ -84,7 +84,7 @@ enum AppManagementService {
             explicitUdid: options.udid,
             paths: paths,
             command: "apps",
-            missingMessage: "apps requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+            missingMessage: "apps requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
         let apps: [AppInfo]
         if let appsProviderForTesting {

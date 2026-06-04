@@ -43,7 +43,7 @@ enum DriverSessionStore {
 
     static func requireInfo(paths: IOSUsePaths) throws -> SessionService.Info {
         guard let info = try readInfo(paths: paths) else {
-            throw CLIParseError.invalidValue("No active driver. Run `ios-use start <UDID>` first.")
+            throw CLIParseError.invalidValue("No active driver. Run `ios-use start` first.")
         }
         return info
     }

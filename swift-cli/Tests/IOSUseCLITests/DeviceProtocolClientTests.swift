@@ -1898,6 +1898,12 @@ final class DeviceProtocolClientTests: XCTestCase {
         }
     }
 
+    func testXCTestExecCallbackListenerTreatsTimedOutAsIdleTimeout() {
+        XCTAssertTrue(XCTestExecCallbackListener.isIdleTimeout(CLIParseError.invalidValue("CoreDevice TCP connection timed out")))
+        XCTAssertTrue(XCTestExecCallbackListener.isIdleTimeout(CLIParseError.invalidValue("device read timeout")))
+        XCTAssertFalse(XCTestExecCallbackListener.isIdleTimeout(CLIParseError.invalidValue("device stream closed")))
+    }
+
     func testUsbmuxDeviceIDAcceptsTopLevelAndPropertiesShapes() {
         XCTAssertEqual(Usbmux.deviceID(from: [
             "DeviceID": 7,

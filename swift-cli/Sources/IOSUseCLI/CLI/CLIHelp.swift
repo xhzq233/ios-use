@@ -75,9 +75,10 @@ enum CLIHelp {
             """
         case "start":
             return """
-            Usage: ios-use start <udid> [--verbose]
+            Usage: ios-use start [udid] [--verbose]
 
             Start the configured driver and record the active driver lock.
+            Defaults to the first connected USB real device when udid is omitted.
 
             Options:
               --verbose    Enable verbose output
@@ -315,7 +316,7 @@ enum CLIHelp {
             "",
             summary,
             "",
-            "Requires an active driver.lock. Run `ios-use start <UDID>` first.",
+            "Requires an active driver.lock. Run `ios-use start` first.",
         ]
         if !options.isEmpty {
             lines += ["", "Options:"]
@@ -349,7 +350,7 @@ enum CLIHelp {
             If iOS requires manual passcode/trust steps, finish them on the device
             and then run with --mark-trusted to record manual confirmation.
 
-            Requires an active driver.lock. Run `ios-use start <UDID>` first.
+            Requires an active driver.lock. Run `ios-use start` first.
 
             Options:
               --mark-trusted    Record that the current CA was manually trusted
