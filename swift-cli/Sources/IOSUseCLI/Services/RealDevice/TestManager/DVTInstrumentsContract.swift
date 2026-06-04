@@ -167,6 +167,23 @@ enum DTXMessageEncoder {
         )
     }
 
+    static func rawObjectReply(
+        identifier: UInt32,
+        conversationIndex: UInt32,
+        channelCode: Int32,
+        payload: Data
+    ) throws -> DTXEncodedMessage {
+        try encode(
+            identifier: identifier,
+            conversationIndex: conversationIndex,
+            channelCode: channelCode,
+            kind: .object,
+            transportFlags: 0,
+            payload: payload,
+            aux: Data()
+        )
+    }
+
     static func okReply(
         identifier: UInt32,
         conversationIndex: UInt32,
@@ -298,6 +315,31 @@ enum DVTInstrumentsContract {
             "dtxproxy:\(ideServiceIdentifier):\(serviceIdentifier)"
         }
 
+        static let defaultExecCapabilities: [String: Int] = [
+            "XCTIssue capability": 1,
+            "daemon container sandbox extension": 1,
+            "delayed attachment transfer": 1,
+            "expected failure test capability": 1,
+            "request diagnostics for specific devices": 1,
+            "skipped test capability": 1,
+            "test case run configurations": 1,
+            "test iterations": 1,
+            "test timeout capability": 1,
+            "ubiquitous test identifiers": 1,
+        ]
+
+        static func initiateSession(sessionIdentifier: UUID) throws -> DVTInvocation {
+            try DVTInvocation(
+                serviceIdentifier: serviceIdentifier,
+                selector: "_IDE_initiateSessionWithIdentifier:capabilities:",
+                arguments: [
+                    .archived(NSUUID(uuidString: sessionIdentifier.uuidString)!),
+                    .primitiveBuffer(try XCTestCapabilitiesPayload.encode(defaultExecCapabilities)),
+                ],
+                expectsReply: true
+            )
+        }
+
         static func initiateControlSession(productMajorVersion: Int) throws -> DVTInvocation? {
             if productMajorVersion >= 17 {
                 return try DVTInvocation(
@@ -340,6 +382,52 @@ enum DVTInstrumentsContract {
                 selector: "_IDE_initiateControlSessionForTestProcessID:",
                 arguments: [.archived(pid)],
                 expectsReply: true
+            )
+        }
+
+        static func startExecutingTestPlan() throws -> DVTInvocation {
+            try DVTInvocation(
+                serviceIdentifier: serviceIdentifier,
+                selector: "_IDE_startExecutingTestPlanWithProtocolVersion:",
+                arguments: [.archived(xcodeVersion)],
+                expectsReply: false
+            )
+        }
+    }
+
+    enum ProcessControl {
+        static let serviceIdentifier = "com.apple.instruments.server.services.processcontrol"
+
+        static func launch(
+            bundleID: String,
+            environment: [String: String],
+            arguments: [String],
+            killExisting: Bool,
+            startSuspended: Bool
+        ) throws -> DVTInvocation {
+            try DVTInvocation(
+                serviceIdentifier: serviceIdentifier,
+                selector: "launchSuspendedProcessWithDevicePath:bundleIdentifier:environment:arguments:options:",
+                arguments: [
+                    .archived(""),
+                    .archived(bundleID),
+                    .archived(environment),
+                    .archived(arguments),
+                    .archived([
+                        "KillExisting": killExisting,
+                        "StartSuspendedKey": startSuspended,
+                    ]),
+                ],
+                expectsReply: true
+            )
+        }
+
+        static func kill(pid: Int) throws -> DVTInvocation {
+            try DVTInvocation(
+                serviceIdentifier: serviceIdentifier,
+                selector: "killPid:",
+                arguments: [.archived(pid)],
+                expectsReply: false
             )
         }
     }

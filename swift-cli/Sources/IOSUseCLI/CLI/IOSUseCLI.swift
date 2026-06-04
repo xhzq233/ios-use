@@ -19,6 +19,17 @@ public struct IOSUseCLI: Sendable {
     }
 
     public func run(arguments: [String]) -> CLIResult {
+        if arguments.first == XCTestSessionHolderService.commandName {
+            do {
+                return CLIResult(
+                    exitCode: 0,
+                    stdout: try XCTestSessionHolderService.run(arguments: Array(arguments.dropFirst()), paths: paths)
+                )
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        }
+
         if let immediate = CLIHelp.immediateResult(arguments: arguments) {
             return immediate
         }

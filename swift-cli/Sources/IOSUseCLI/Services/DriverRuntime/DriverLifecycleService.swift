@@ -4,6 +4,27 @@ import IOSUseProtocol
 
 enum DriverLifecycleService {
     typealias CoreDeviceLifecycleFactory = (((String) -> Void)?) -> CoreDeviceDriverLifecycleManaging
+    struct LaunchMetadata: Equatable {
+        let holderPid: Int?
+        let runnerPid: Int?
+        let startMode: String?
+        let sessionIdentifier: String?
+        let bundleId: String?
+    }
+
+    enum HolderTerminationResult: Equatable {
+        case notApplicable
+        case terminated
+        case alreadyStopped
+        case refused
+
+        var cleanedHostState: Bool {
+            self == .terminated || self == .alreadyStopped
+        }
+    }
+
+    static var holderLauncherForTesting: ((String, String, IOSUsePaths, Bool) throws -> LaunchMetadata)?
+    static var holderTerminatorForTesting: ((SessionService.Info, IOSUsePaths) -> HolderTerminationResult)?
 
     static func resolveDriverInfo(udid: String, paths: IOSUsePaths) throws -> SessionService.Info {
         guard let configEntry = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid }) else {
@@ -50,7 +71,7 @@ enum DriverLifecycleService {
         realReachable: ((String) -> Bool)?,
         realLauncher: ((String, String) throws -> Void)?,
         coreDeviceFactory: CoreDeviceLifecycleFactory?
-    ) throws {
+    ) throws -> LaunchMetadata? {
         try ConfigService.assertDriverInstallCurrent(udid: info.udid, paths: paths)
         switch info.deviceType {
         case "simulator":
@@ -60,8 +81,9 @@ enum DriverLifecycleService {
                 isReachable: simulatorReachable,
                 launcher: simulatorLauncher
             )
+            return nil
         case "real":
-            try ensureRealDriverRunning(
+            return try ensureRealDriverRunning(
                 udid: info.udid,
                 paths: paths,
                 verbose: verbose,
@@ -90,9 +112,19 @@ enum DriverLifecycleService {
         if let realTerminator {
             terminated = try realTerminator(info.udid)
         } else {
-            terminated = try terminateRealDriverProcesses(udid: info.udid, paths: paths, coreDeviceFactory: coreDeviceFactory)
+            do {
+                terminated = try terminateRealDriverProcesses(udid: info.udid, paths: paths, coreDeviceFactory: coreDeviceFactory)
+            } catch {
+                let holderResult = terminateHolderProcessIfNeeded(info: info, paths: paths)
+                if holderResult.cleanedHostState {
+                    appendLifecycleLog(paths: paths, "CoreDevice terminate failed after holder cleanup: \(error)")
+                    return "Driver holder stopped on host\nDevice cleanup skipped: \(error)\n"
+                }
+                throw error
+            }
         }
-        return terminated ? "Driver app terminated on device\n" : "Driver app was not running on device\n"
+        let holderResult = terminateHolderProcessIfNeeded(info: info, paths: paths)
+        return (terminated || holderResult == .terminated) ? "Driver app terminated on device\n" : "Driver app was not running on device\n"
     }
 
     private static func ensureRealDriverRunning(
@@ -102,7 +134,7 @@ enum DriverLifecycleService {
         isReachableOverride: ((String) -> Bool)?,
         launcherOverride: ((String, String) throws -> Void)?,
         coreDeviceFactory: CoreDeviceLifecycleFactory?
-    ) throws {
+    ) throws -> LaunchMetadata? {
         let isReachable = isReachableOverride ?? { targetUdid in
             isDriverPortReachable(udid: targetUdid)
         }
@@ -117,14 +149,14 @@ enum DriverLifecycleService {
             let deadline = Date().addingTimeInterval(IOSUseProtocol.driverStartReadinessTimeoutSeconds)
             while Date() < deadline {
                 if isReachable(udid) {
-                    return
+                    return nil
                 }
                 usleep(useconds_t(IOSUseProtocol.driverStartReadinessPollIntervalMicroseconds))
             }
             throw CLIParseError.invalidValue("Driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable on device \(udid). Check \(CLILogService.logPath(paths: paths))")
         }
 
-        try launchRealDriverDetached(
+        return try launchRealDriverDetached(
             udid: udid,
             bundleId: bundleId,
             paths: paths,
@@ -139,22 +171,120 @@ enum DriverLifecycleService {
         paths: IOSUsePaths,
         verbose: Bool,
         coreDeviceFactory: CoreDeviceLifecycleFactory?
-    ) throws {
+    ) throws -> LaunchMetadata? {
         try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true, attributes: nil)
 
         if verbose {
             FileHandle.standardError.write(Data("CLI log: \(CLILogService.logPath(paths: paths))\n".utf8))
         }
-        do {
-            appendLifecycleLog(paths: paths, "Launching driver through CoreDevice appservice")
-            try makeCoreDeviceDriverLifecycle(factory: coreDeviceFactory, eventSink: { event in
-                appendLifecycleLog(paths: paths, "[CoreDevice] \(event)")
-            }).launchDriver(udid: udid, bundleID: bundleId, timeoutSeconds: IOSUseProtocol.driverStartReadinessTimeoutSeconds)
-            appendLifecycleLog(paths: paths, "CoreDevice appservice launch completed")
-        } catch {
-            appendLifecycleLog(paths: paths, "CoreDevice appservice launch failed: \(error)")
-            throw CLIParseError.invalidValue("Native real-device launch failed. CoreDevice: \(error)")
+        if let holderLauncherForTesting {
+            return try holderLauncherForTesting(udid, bundleId, paths, verbose)
         }
+        do {
+            appendLifecycleLog(paths: paths, "Launching driver through native XCTest lifecycle")
+            if coreDeviceFactory != nil {
+                try makeCoreDeviceDriverLifecycle(factory: coreDeviceFactory, eventSink: { event in
+                    appendLifecycleLog(paths: paths, "[XCTest] \(event)")
+                }).launchDriver(udid: udid, bundleID: bundleId, timeoutSeconds: IOSUseProtocol.driverStartReadinessTimeoutSeconds)
+                appendLifecycleLog(paths: paths, "Native XCTest launch completed")
+                return nil
+            }
+            let metadata = try launchRealDriverHolder(udid: udid, bundleId: bundleId, paths: paths, verbose: verbose)
+            appendLifecycleLog(paths: paths, "Native XCTest holder launch completed holderPid=\(metadata.holderPid ?? -1) runnerPid=\(metadata.runnerPid ?? -1)")
+            return metadata
+        } catch {
+            appendLifecycleLog(paths: paths, "Native XCTest launch failed: \(error)")
+            throw CLIParseError.invalidValue("Native real-device launch failed. XCTest: \(error)")
+        }
+    }
+
+    private static func launchRealDriverHolder(
+        udid: String,
+        bundleId: String,
+        paths: IOSUsePaths,
+        verbose: Bool
+    ) throws -> LaunchMetadata {
+        let stateDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
+        try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true, attributes: nil)
+        let readyFile = "\(stateDir)/xctest-holder-\(UUID().uuidString).json"
+        try? FileManager.default.removeItem(atPath: readyFile)
+
+        let logPath = "\(paths.logs)/driver-holder.log"
+        _ = FileManager.default.createFile(atPath: logPath, contents: nil)
+        let logHandle = try FileHandle(forWritingTo: URL(fileURLWithPath: logPath))
+        _ = try? logHandle.seekToEnd()
+        defer { try? logHandle.close() }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: try currentExecutablePath())
+        var arguments = [
+            XCTestSessionHolderService.commandName,
+            "--udid", udid,
+            "--bundle-id", bundleId,
+            "--ready-file", readyFile,
+        ]
+        if verbose {
+            arguments.append("--verbose")
+        }
+        process.arguments = arguments
+        process.environment = ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new }
+        process.standardOutput = logHandle
+        process.standardError = logHandle
+        appendLifecycleLog(paths: paths, "Starting XCTest holder process")
+        try process.run()
+
+        do {
+            return try waitForHolderReadiness(
+                process: process,
+                readyFile: readyFile,
+                udid: udid,
+                bundleId: bundleId,
+                paths: paths
+            )
+        } catch {
+            terminateProcess(pid: process.processIdentifier, force: true)
+            throw error
+        }
+    }
+
+    private static func waitForHolderReadiness(
+        process: Process,
+        readyFile: String,
+        udid: String,
+        bundleId: String,
+        paths: IOSUsePaths
+    ) throws -> LaunchMetadata {
+        let timeout = IOSUseProtocol.driverStartReadinessTimeoutSeconds + 30
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let readiness = readHolderReadiness(path: readyFile) {
+                try? FileManager.default.removeItem(atPath: readyFile)
+                if readiness.status == "ready" {
+                    return LaunchMetadata(
+                        holderPid: readiness.holderPid ?? Int(process.processIdentifier),
+                        runnerPid: readiness.runnerPid,
+                        startMode: "full-xctest",
+                        sessionIdentifier: readiness.sessionIdentifier,
+                        bundleId: bundleId
+                    )
+                }
+                let message = readiness.error ?? "holder reported \(readiness.status)"
+                throw CLIParseError.invalidValue(message)
+            }
+            if !process.isRunning {
+                let status = process.terminationStatus
+                throw CLIParseError.invalidValue("XCTest holder exited before readiness with status \(status). Check \(paths.logs)/driver-holder.log")
+            }
+            usleep(100_000)
+        }
+        throw CLIParseError.invalidValue("Timed out waiting for XCTest holder readiness. Check \(paths.logs)/driver-holder.log")
+    }
+
+    private static func readHolderReadiness(path: String) -> XCTestSessionHolderReadiness? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(XCTestSessionHolderReadiness.self, from: data)
     }
 
     private static func terminateRealDriverProcesses(
@@ -174,6 +304,27 @@ enum DriverLifecycleService {
             appendLifecycleLog(paths: paths, "CoreDevice appservice terminate failed: \(error)")
             throw CLIParseError.invalidValue("Native real-device terminate failed. CoreDevice: \(error)")
         }
+    }
+
+    private static func terminateHolderProcessIfNeeded(info: SessionService.Info, paths: IOSUsePaths) -> HolderTerminationResult {
+        if let holderTerminatorForTesting {
+            return holderTerminatorForTesting(info, paths)
+        }
+        guard info.startMode == "full-xctest", let holderPid = info.holderPid, holderPid > 0 else {
+            return .notApplicable
+        }
+        let pid = Int32(holderPid)
+        guard processAlive(pid: pid) else {
+            appendLifecycleLog(paths: paths, "XCTest holder pid=\(holderPid) was not running")
+            return .alreadyStopped
+        }
+        guard isExpectedHolderProcess(pid: pid, udid: info.udid) else {
+            appendLifecycleLog(paths: paths, "Refusing to terminate pid=\(holderPid); command does not match XCTest holder for \(info.udid)")
+            return .refused
+        }
+        appendLifecycleLog(paths: paths, "Terminating XCTest holder pid=\(holderPid)")
+        terminateProcess(pid: pid, force: true)
+        return .terminated
     }
 
     private static func isDriverPortReachable(udid: String) -> Bool {
@@ -196,6 +347,78 @@ enum DriverLifecycleService {
         CLILogService.append(paths: paths, ["[cli-lifecycle] \(message)"])
     }
 
+    private static func currentExecutablePath() throws -> String {
+        if let path = Bundle.main.executableURL?.path,
+           FileManager.default.isExecutableFile(atPath: path) {
+            return path
+        }
+        guard let arg0 = ProcessInfo.processInfo.arguments.first, !arg0.isEmpty else {
+            throw CLIParseError.invalidValue("Unable to resolve current ios-use executable path")
+        }
+        if arg0.hasPrefix("/") {
+            return arg0
+        }
+        let path = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(arg0)
+            .standardized
+            .path
+        guard FileManager.default.isExecutableFile(atPath: path) else {
+            throw CLIParseError.invalidValue("Unable to resolve current ios-use executable path from \(arg0)")
+        }
+        return path
+    }
+
+    private static func processAlive(pid: Int32) -> Bool {
+        guard pid > 0 else { return false }
+        return Darwin.kill(pid, 0) == 0
+    }
+
+    private static func terminateProcess(pid: Int32, force: Bool) {
+        guard pid > 0 else { return }
+        _ = Darwin.kill(pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if !processAlive(pid: pid) {
+                return
+            }
+            usleep(100_000)
+        }
+        if force, processAlive(pid: pid) {
+            _ = Darwin.kill(pid, SIGKILL)
+        }
+    }
+
+    private static func isExpectedHolderProcess(pid: Int32, udid: String) -> Bool {
+        guard let command = processCommand(pid: pid) else {
+            return false
+        }
+        return command.contains(XCTestSessionHolderService.commandName)
+            && command.contains("--udid")
+            && command.contains(udid)
+    }
+
+    private static func processCommand(pid: Int32) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["ps", "-p", String(pid), "-o", "command="]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private static func makeCoreDeviceDriverLifecycle(
         factory: CoreDeviceLifecycleFactory?,
         eventSink: ((String) -> Void)?
@@ -203,6 +426,6 @@ enum DriverLifecycleService {
         if let factory {
             return factory(eventSink)
         }
-        return CoreDeviceDriverLifecycle(eventSink: eventSink)
+        return RealDeviceXCTestDriverLifecycle(eventSink: eventSink)
     }
 }

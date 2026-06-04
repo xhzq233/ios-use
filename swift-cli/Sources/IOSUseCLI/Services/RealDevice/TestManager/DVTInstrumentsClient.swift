@@ -162,6 +162,8 @@ enum DTXMessageDecoder {
 final class DTXStreamTransport {
     private let stream: DeviceStream
     private var nextIdentifier: UInt32
+    private let stateLock = NSLock()
+    private let writeLock = NSLock()
 
     init(stream: DeviceStream, firstIdentifier: UInt32 = 1) {
         self.stream = stream
@@ -169,8 +171,7 @@ final class DTXStreamTransport {
     }
 
     func dispatch(channelCode: Int32, invocation: DVTInvocation) throws -> Any? {
-        let identifier = nextIdentifier
-        nextIdentifier += 1
+        let identifier = reserveIdentifier()
         let message = try DTXMessageEncoder.dispatch(
             identifier: identifier,
             channelCode: channelCode,
@@ -178,7 +179,7 @@ final class DTXStreamTransport {
             arguments: invocation.arguments,
             expectsReply: invocation.expectsReply
         )
-        try stream.write(message.wireData)
+        try write(message.wireData)
         guard invocation.expectsReply else {
             return nil
         }
@@ -202,45 +203,77 @@ final class DTXStreamTransport {
         }
     }
 
+    func readMessage(timeoutSeconds: Double = 10) throws -> DTXDecodedMessage {
+        try DTXMessageDecoder.readMessage(from: stream, timeoutSeconds: timeoutSeconds)
+    }
+
+    func sendRawObjectReply(to message: DTXDecodedMessage, payload: Data = Data()) throws {
+        let reply = try DTXMessageEncoder.rawObjectReply(
+            identifier: message.identifier,
+            conversationIndex: message.conversationIndex + 1,
+            channelCode: message.channelCode,
+            payload: payload
+        )
+        try write(reply.wireData)
+    }
+
     private func readReply(for identifier: UInt32) throws -> DTXDecodedMessage {
         while true {
-            let message = try DTXMessageDecoder.readMessage(from: stream)
-            if message.identifier == identifier {
-                return message
-            }
-            if try handleControlDispatch(message) {
+            let message = try readMessage()
+            if try handleIncomingDispatch(message) {
                 continue
+            }
+            if message.identifier == identifier, message.conversationIndex != 0 {
+                return message
             }
             throw DVTClientError.invalidReply("received unrelated DTX message id \(message.identifier) while waiting for \(identifier)")
         }
     }
 
-    private func handleControlDispatch(_ message: DTXDecodedMessage) throws -> Bool {
-        guard message.channelCode == DVTInstrumentsContract.Control.channelCode,
-              message.kind == .dispatch else {
+    private func handleIncomingDispatch(_ message: DTXDecodedMessage) throws -> Bool {
+        guard message.kind == .dispatch else {
             return false
         }
         let selector = try Self.unarchivePayload(message.payload) as? String
-        guard selector == "_notifyOfPublishedCapabilities:" else {
-            return false
+        if message.channelCode == DVTInstrumentsContract.Control.channelCode,
+           selector == "_notifyOfPublishedCapabilities:" {
+            if message.transportFlags & DTXTransportFlag.expectsReply != 0 {
+                let ack = try DTXMessageEncoder.okReply(
+                    identifier: message.identifier,
+                    conversationIndex: message.conversationIndex + 1,
+                    channelCode: message.channelCode
+                )
+                try write(ack.wireData)
+            }
+            return true
         }
+
         if message.transportFlags & DTXTransportFlag.expectsReply != 0 {
-            let ack = try DTXMessageEncoder.okReply(
-                identifier: message.identifier,
-                conversationIndex: message.conversationIndex + 1,
-                channelCode: message.channelCode
-            )
-            try stream.write(ack.wireData)
+            try sendRawObjectReply(to: message)
         }
         return true
     }
 
-    private static func unarchivePayload(_ data: Data) throws -> Any? {
+    static func unarchivePayload(_ data: Data) throws -> Any? {
         guard !data.isEmpty else { return nil }
         let unarchiver = try NSKeyedUnarchiver(forReadingFrom: data)
         unarchiver.requiresSecureCoding = false
         defer { unarchiver.finishDecoding() }
         return unarchiver.decodeObject(forKey: NSKeyedArchiveRootObjectKey)
+    }
+
+    private func reserveIdentifier() -> UInt32 {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        let identifier = nextIdentifier
+        nextIdentifier += 1
+        return identifier
+    }
+
+    private func write(_ data: Data) throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        try stream.write(data)
     }
 }
 
@@ -300,12 +333,49 @@ final class DTXControlChannelClient {
     func invoker(channelCode: Int32) -> DTXStreamInvoker {
         DTXStreamInvoker(transport: transport, channelCode: channelCode)
     }
+
+    func channel(code: Int32) -> DTXChannelClient {
+        DTXChannelClient(transport: transport, channelCode: code)
+    }
+}
+
+final class DTXChannelClient: DVTInvoking {
+    let channelCode: Int32
+    private let transport: DTXStreamTransport
+
+    init(transport: DTXStreamTransport, channelCode: Int32) {
+        self.transport = transport
+        self.channelCode = channelCode
+    }
+
+    func invoke(_ invocation: DVTInvocation) throws -> Any? {
+        try transport.dispatch(channelCode: channelCode, invocation: invocation)
+    }
+
+    func readMessage(timeoutSeconds: Double = 10) throws -> DTXDecodedMessage {
+        try transport.readMessage(timeoutSeconds: timeoutSeconds)
+    }
+
+    func sendRawObjectReply(to message: DTXDecodedMessage, payload: Data = Data()) throws {
+        try transport.sendRawObjectReply(to: message, payload: payload)
+    }
+
+    func siblingChannel(code: Int32) -> DTXChannelClient {
+        DTXChannelClient(transport: transport, channelCode: code)
+    }
 }
 
 final class XCTestManagerDaemonClient {
+    let channel: DTXChannelClient?
     private let invoker: DVTInvoking
 
+    init(channel: DTXChannelClient) {
+        self.channel = channel
+        self.invoker = channel
+    }
+
     init(invoker: DVTInvoking) {
+        self.channel = nil
         self.invoker = invoker
     }
 
@@ -328,6 +398,15 @@ final class XCTestManagerDaemonClient {
             return value.boolValue
         }
         throw DVTClientError.invalidReply("authorize test session expected boolean, got \(String(describing: reply))")
+    }
+
+    func initiateExecSession(sessionIdentifier: UUID) throws {
+        _ = try invoker.invoke(DVTInstrumentsContract.XCTestManagerDaemon.initiateSession(sessionIdentifier: sessionIdentifier))
+    }
+
+    func startExecutingTestPlan() throws {
+        let target = channel?.siblingChannel(code: -1) ?? invoker
+        _ = try target.invoke(DVTInstrumentsContract.XCTestManagerDaemon.startExecutingTestPlan())
     }
 }
 
