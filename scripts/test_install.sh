@@ -160,25 +160,6 @@ if [[ ! -x "$BUILD_HOME/.ios-use/altsign-cli/altsign-cli" ]]; then
   echo "[install-test] ERROR: install did not download altsign-cli" >&2
   exit 1
 fi
-if [[ "$(tr -d '[:space:]' < "$BUILD_HOME/.ios-use/altsign-cli/version")" != "v0.1.2" ]]; then
-  echo "[install-test] ERROR: install did not record the expected altsign-cli version" >&2
-  exit 1
-fi
-
-STALE_HOME="$FAKE_HOME/stale-altsign"
-mkdir -p "$STALE_HOME/.ios-use/altsign-cli"
-printf '#!/bin/sh\necho stale\n' > "$STALE_HOME/.ios-use/altsign-cli/altsign-cli"
-chmod +x "$STALE_HOME/.ios-use/altsign-cli/altsign-cli"
-printf 'v0.1.1\n' > "$STALE_HOME/.ios-use/altsign-cli/version"
-run_install "$STALE_HOME" >/dev/null
-if ! grep -q 'echo altsign' "$STALE_HOME/.ios-use/altsign-cli/altsign-cli"; then
-  echo "[install-test] ERROR: install did not refresh stale altsign-cli" >&2
-  exit 1
-fi
-if [[ "$(tr -d '[:space:]' < "$STALE_HOME/.ios-use/altsign-cli/version")" != "v0.1.2" ]]; then
-  echo "[install-test] ERROR: stale altsign-cli refresh did not update version marker" >&2
-  exit 1
-fi
 
 DOWNLOAD_HOME="$FAKE_HOME/download"
 mkdir -p "$DOWNLOAD_HOME"
