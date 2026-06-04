@@ -35,7 +35,7 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 ```bash
 ios-use devices
 ios-use config --udid <udid>
-ios-use start <udid>
+ios-use start
 ```
 
 - `devices` 用来查看设备列表、UDID 和配置状态。
@@ -46,7 +46,8 @@ ios-use start <udid>
 
 ## 3. 目标设备与命令边界
 
-- `start <udid>` 会启动已配置设备的 driver，并把它设为后续 driver-backed 命令的目标。
+- `start` 会启动第一个 USB 真机的 driver；多台真机或要启动 Simulator 时，用 `start <udid>` 明确指定。
+- 启动后，该设备会成为后续 driver-backed 命令的目标。
 - 切换设备时先 `ios-use stop`，再 `ios-use start <new-udid>`。
 - `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `activateApp` / `terminateApp` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
 - `devices` / `config` / `install` / `uninstall` / `apps` / `open` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
@@ -67,7 +68,7 @@ ios-use start <udid>
 
 ```bash
 ios-use devices
-ios-use start <udid>
+ios-use start
 ios-use activateApp com.apple.Preferences
 ios-use dom
 ```
@@ -193,7 +194,7 @@ ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 
 关键边界：
 
-- Flow 目标就是最近一次 `ios-use start <udid>` 的设备，不支持 `--udid`。
+- Flow 目标就是最近一次 `ios-use start` 的设备，不支持 `--udid`。
 - 写 flow 前先用 CLI 手动跑通每一步，再组装成 YAML。
 - Flow 执行前会先检查整份 YAML；未知字段、明显类型错误和可提前发现的 subflow 错误会在任何设备动作前失败。
 - Flow 中坐标、offset、offsetRatio 都写成和 CLI 参数一致的字符串。
@@ -258,7 +259,7 @@ ios-use nslog stop
 ```bash
 ios-use devices
 ios-use config --udid <udid>
-ios-use start <udid>
+ios-use start
 ```
 
 行为和预期不一致：

@@ -189,7 +189,7 @@ enum OSLogCommandService {
         let udid = try SessionService.resolveTargetUdid(
             explicitUdid: options.session.udid,
             paths: paths,
-            missingMessage: "oslog requires --udid or an active driver. Run `ios-use start <UDID>` or pass `--udid <UDID>`."
+            missingMessage: "oslog requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`."
         )
         return try OSLogService.fetch(
             udid: udid,

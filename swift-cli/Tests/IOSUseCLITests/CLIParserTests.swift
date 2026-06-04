@@ -24,6 +24,16 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["start"]),
+            .start(StartOptions())
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["start", "--verbose"]),
+            .start(StartOptions(verbose: true))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["install", "app.ipa", "--udid", "REAL-1", "--verbose"]),
             .install(AppInstallOptions(ipaPath: "app.ipa", udid: "REAL-1", verbose: true))
         )
@@ -250,8 +260,8 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--ipa"))
         }
 
-        XCTAssertThrowsError(try CLIParser.parse(["start"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .missingRequiredArgument("udid"))
+        XCTAssertThrowsError(try CLIParser.parse(["start", "SIM-1", "SIM-2"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unexpectedArgument("SIM-2"))
         }
 
         let legacyOpenCommand = "open" + "URL"

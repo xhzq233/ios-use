@@ -79,7 +79,7 @@ final class XCTestExecCallbackListener {
                 if shouldStop {
                     return
                 }
-                if Self.isTimeout(error) {
+                if Self.isIdleTimeout(error) {
                     continue
                 }
                 recordError(error)
@@ -129,7 +129,9 @@ final class XCTestExecCallbackListener {
         semaphore.signal()
     }
 
-    private static func isTimeout(_ error: Error) -> Bool {
-        String(describing: error).localizedCaseInsensitiveContains("timeout")
+    static func isIdleTimeout(_ error: Error) -> Bool {
+        let message = String(describing: error)
+        return message.localizedCaseInsensitiveContains("timeout")
+            || message.localizedCaseInsensitiveContains("timed out")
     }
 }
