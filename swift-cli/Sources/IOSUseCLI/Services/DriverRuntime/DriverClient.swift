@@ -89,8 +89,15 @@ final class LockedDriverClientSession {
             }
             didRecoverConnectFailure = true
             closeClient()
-            try SessionService.launchDriver(for: lock, paths: paths, verbose: verbose)
-            return try body(replaceClient(for: lock))
+            let recoveredLock: SessionService.Info
+            if let metadata = try SessionService.launchDriver(for: lock, paths: paths, verbose: verbose) {
+                recoveredLock = lock.applying(metadata)
+                try SessionService.writeDriverLock(info: recoveredLock, paths: paths)
+            } else {
+                recoveredLock = lock
+            }
+            info = recoveredLock
+            return try body(replaceClient(for: recoveredLock))
         }
     }
 

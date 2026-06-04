@@ -7,13 +7,49 @@ public enum SessionService {
         public let deviceVersion: String
         public let deviceType: String
         public let startedAt: Int
+        public let holderPid: Int?
+        public let runnerPid: Int?
+        public let startMode: String?
+        public let sessionIdentifier: String?
+        public let bundleId: String?
 
-        public init(udid: String, deviceName: String, deviceVersion: String, deviceType: String, startedAt: Int = Int(Date().timeIntervalSince1970 * 1000)) {
+        public init(
+            udid: String,
+            deviceName: String,
+            deviceVersion: String,
+            deviceType: String,
+            startedAt: Int = Int(Date().timeIntervalSince1970 * 1000),
+            holderPid: Int? = nil,
+            runnerPid: Int? = nil,
+            startMode: String? = nil,
+            sessionIdentifier: String? = nil,
+            bundleId: String? = nil
+        ) {
             self.udid = udid
             self.deviceName = deviceName
             self.deviceVersion = deviceVersion
             self.deviceType = deviceType
             self.startedAt = startedAt
+            self.holderPid = holderPid
+            self.runnerPid = runnerPid
+            self.startMode = startMode
+            self.sessionIdentifier = sessionIdentifier
+            self.bundleId = bundleId
+        }
+
+        func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
+            Info(
+                udid: udid,
+                deviceName: deviceName,
+                deviceVersion: deviceVersion,
+                deviceType: deviceType,
+                startedAt: startedAt,
+                holderPid: metadata.holderPid,
+                runnerPid: metadata.runnerPid,
+                startMode: metadata.startMode,
+                sessionIdentifier: metadata.sessionIdentifier,
+                bundleId: metadata.bundleId ?? bundleId
+            )
         }
     }
 
@@ -73,9 +109,23 @@ public enum SessionService {
         }
         let info = try resolveDriverInfo(udid: udid, paths: paths)
         try writeDriverLock(info: info, paths: paths)
+        var launchedInfo: Info?
         do {
-            try launchDriver(for: info, paths: paths, verbose: verbose)
+            if let metadata = try launchDriver(for: info, paths: paths, verbose: verbose) {
+                let updated = info.applying(metadata)
+                launchedInfo = updated
+                try writeDriverLock(info: updated, paths: paths)
+            }
         } catch {
+            if let launchedInfo {
+                _ = try? DriverLifecycleService.terminateDriver(
+                    for: launchedInfo,
+                    paths: paths,
+                    simulatorTerminator: simulatorDriverTerminatorForTesting,
+                    realTerminator: realDriverTerminatorForTesting,
+                    coreDeviceFactory: coreDeviceLifecycleFactoryForTesting
+                )
+            }
             clearDriverLock(paths: paths)
             throw error
         }
@@ -108,7 +158,7 @@ public enum SessionService {
         try DriverLifecycleService.resolveDriverInfo(udid: udid, paths: paths)
     }
 
-    public static func launchDriver(for info: Info, paths: IOSUsePaths, verbose: Bool) throws {
+    static func launchDriver(for info: Info, paths: IOSUsePaths, verbose: Bool) throws -> DriverLifecycleService.LaunchMetadata? {
         try DriverLifecycleService.launchDriver(
             for: info,
             paths: paths,
