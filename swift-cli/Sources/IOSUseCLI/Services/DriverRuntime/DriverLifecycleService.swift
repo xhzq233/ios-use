@@ -263,7 +263,7 @@ enum DriverLifecycleService {
             let bundleID = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid })?.bundleId
             appendLifecycleLog(paths: paths, "Terminating driver through CoreDevice appservice")
             let terminated = try makeCoreDeviceDriverLifecycle(factory: coreDeviceFactory, eventSink: { event in
-                appendLifecycleLog(paths: paths, "[CoreDevice] \(event)")
+                appendCoreDeviceLog(paths: paths, event)
             }).terminateDriver(udid: udid, bundleID: bundleID)
             appendLifecycleLog(paths: paths, "CoreDevice appservice terminate completed terminated=\(terminated)")
             return terminated
@@ -300,6 +300,21 @@ enum DriverLifecycleService {
 
     private static func appendLifecycleLog(paths: IOSUsePaths, _ message: String) {
         CLILogService.append(paths: paths, ["[cli-lifecycle] \(message)"])
+    }
+
+    private static func appendCoreDeviceLog(paths: IOSUsePaths, _ event: String) {
+        CLILogService.appendCoreDevice(paths: paths, ["[CoreDevice] \(event)"])
+        guard shouldMirrorCoreDeviceEventToCLILog(event) else { return }
+        appendLifecycleLog(paths: paths, "[CoreDevice] \(event)")
+    }
+
+    private static func shouldMirrorCoreDeviceEventToCLILog(_ event: String) -> Bool {
+        if event.hasPrefix("TCP ") ||
+            event.hasPrefix("RemoteXPC ") ||
+            event.hasPrefix("RSD services:") {
+            return false
+        }
+        return true
     }
 
     private static func currentExecutablePath() throws -> String {

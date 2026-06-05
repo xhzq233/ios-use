@@ -151,6 +151,8 @@ private extension ForyTarget {
 
 final class DriverClient: DriverCommandClient {
     static var usbmuxConnectorForTesting: ((String, Int) throws -> Int32)?
+    private static let connectionCounterLock = NSLock()
+    private static var nextConnectionID = 1
 
     private let host: String
     private let port: UInt16
@@ -160,6 +162,7 @@ final class DriverClient: DriverCommandClient {
     private let socketTimeoutSeconds: Int
     private let fory = ForyRegistry.create()
     private var fd: Int32?
+    private var connectionID: Int?
 
     init(
         host: String = "127.0.0.1",
@@ -196,9 +199,11 @@ final class DriverClient: DriverCommandClient {
 
     func close() {
         if let fd {
+            appendDriverConnectionLog(event: "close", connectionID: connectionID, fd: fd)
             _ = Darwin.shutdown(fd, SHUT_RDWR)
             Darwin.close(fd)
             self.fd = nil
+            self.connectionID = nil
         }
     }
 
@@ -279,17 +284,20 @@ final class DriverClient: DriverCommandClient {
         var responseBytes = 0
         var loggedResponse = false
         var didUseConnection = false
+        var commandConnectionID: Int?
         do {
             let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
             requestBytes = frameData.count
             let fd = try connectedFD()
             didUseConnection = true
+            commandConnectionID = connectionID
             try writeLengthPrefixed(fd, data: frameData)
             let responseData = try readLengthPrefixed(fd)
             responseBytes = responseData.count
             let response = try fory.deserialize(responseData, as: ForyResponseFrame.self)
             appendDriverCommandLog(
                 command: command,
+                connectionID: commandConnectionID,
                 ok: response.ok,
                 error: response.error,
                 requestBytes: requestBytes,
@@ -308,6 +316,7 @@ final class DriverClient: DriverCommandClient {
             if !loggedResponse {
                 appendDriverCommandLog(
                     command: command,
+                    connectionID: commandConnectionID,
                     ok: false,
                     error: "\(error)",
                     requestBytes: requestBytes,
@@ -322,13 +331,33 @@ final class DriverClient: DriverCommandClient {
         }
     }
 
-    private func appendDriverCommandLog(command: String, ok: Bool, error: String, requestBytes: Int, responseBytes: Int, elapsedMs: Int) {
+    private func appendDriverCommandLog(
+        command: String,
+        connectionID: Int?,
+        ok: Bool,
+        error: String,
+        requestBytes: Int,
+        responseBytes: Int,
+        elapsedMs: Int
+    ) {
         guard let cliLogPath else { return }
         let status = ok ? "ok=true" : "ok=false error=\(error)"
+        let connection = connectionID.map { " connectionId=\($0)" } ?? ""
         let lines = [
-            "[cli-command] command=\(command) \(status) requestBytes=\(requestBytes) responseBytes=\(responseBytes) elapsed=\(elapsedMs)ms"
+            "[cli-command] command=\(command) \(status)\(connection) requestBytes=\(requestBytes) responseBytes=\(responseBytes) elapsed=\(elapsedMs)ms"
         ]
         CLILogService.append(logPath: cliLogPath, lines)
+    }
+
+    private func appendDriverConnectionLog(
+        event: String,
+        connectionID: Int?,
+        fd: Int32
+    ) {
+        guard let cliLogPath, let connectionID else { return }
+        CLILogService.append(logPath: cliLogPath, [
+            "[cli-driver-connection] id=\(connectionID) event=\(event) fd=\(fd)"
+        ])
     }
 
     private func elapsedMilliseconds(since startedAt: CFAbsoluteTime) -> Int {
@@ -341,7 +370,17 @@ final class DriverClient: DriverCommandClient {
         }
         let newFD = try connect()
         fd = newFD
+        connectionID = Self.allocateConnectionID()
+        appendDriverConnectionLog(event: "open", connectionID: connectionID, fd: newFD)
         return newFD
+    }
+
+    private static func allocateConnectionID() -> Int {
+        connectionCounterLock.lock()
+        defer { connectionCounterLock.unlock() }
+        let id = nextConnectionID
+        nextConnectionID += 1
+        return id
     }
 
     private func shouldCloseConnection(after error: Error) -> Bool {

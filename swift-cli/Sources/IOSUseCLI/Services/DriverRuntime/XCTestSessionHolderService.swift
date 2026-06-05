@@ -23,7 +23,7 @@ enum XCTestSessionHolderService {
         let options = try parse(arguments)
         try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
         let log: (String) -> Void = { message in
-            CLILogService.append(paths: paths, ["[xctest-holder] \(message)"])
+            CLILogService.appendHolder(paths: paths, ["[xctest-holder] \(message)"])
         }
 
         var activeSession: RealDeviceXCTestActiveSession?
