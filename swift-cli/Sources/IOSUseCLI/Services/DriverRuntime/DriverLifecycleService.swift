@@ -3,7 +3,6 @@ import Foundation
 import IOSUseProtocol
 
 enum DriverLifecycleService {
-    typealias CoreDeviceLifecycleFactory = (((String) -> Void)?) -> CoreDeviceDriverLifecycleManaging
     struct LaunchMetadata: Equatable {
         let holderPid: Int?
         let runnerPid: Int?
@@ -17,9 +16,6 @@ enum DriverLifecycleService {
         case alreadyStopped
         case refused
 
-        var cleanedHostState: Bool {
-            self == .terminated || self == .alreadyStopped
-        }
     }
 
     static var holderLauncherForTesting: ((String, String, IOSUsePaths, Bool) throws -> LaunchMetadata)?
@@ -95,31 +91,31 @@ enum DriverLifecycleService {
         for info: SessionService.Info,
         paths: IOSUsePaths,
         simulatorTerminator: ((String) throws -> Bool)?,
-        realTerminator: ((String) throws -> Bool)?,
-        coreDeviceFactory: CoreDeviceLifecycleFactory?
+        realTerminator: ((String) throws -> Bool)?
     ) throws -> String {
         if info.deviceType == "simulator" {
             let terminated = try SimulatorService.terminateDriver(udid: info.udid, terminator: simulatorTerminator)
             return terminated ? "Driver app terminated on simulator\n" : "Driver app was not running on simulator\n"
         }
 
-        let terminated: Bool
         if let realTerminator {
-            terminated = try realTerminator(info.udid)
-        } else {
-            do {
-                terminated = try terminateRealDriverProcesses(udid: info.udid, paths: paths, coreDeviceFactory: coreDeviceFactory)
-            } catch {
-                let holderResult = terminateHolderProcessIfNeeded(info: info, paths: paths)
-                if holderResult.cleanedHostState {
-                    appendLifecycleLog(paths: paths, "CoreDevice terminate failed after holder cleanup: \(error)")
-                    return "Driver holder stopped on host\nDevice cleanup skipped: \(error)\n"
-                }
-                throw error
-            }
+            let terminated = try realTerminator(info.udid)
+            let holderResult = terminateHolderProcessIfNeeded(info: info, paths: paths)
+            return (terminated || holderResult == .terminated) ? "Driver app terminated on device\n" : "Driver app was not running on device\n"
         }
+
         let holderResult = terminateHolderProcessIfNeeded(info: info, paths: paths)
-        return (terminated || holderResult == .terminated) ? "Driver app terminated on device\n" : "Driver app was not running on device\n"
+        switch holderResult {
+        case .terminated:
+            return "Driver app terminated on device\n"
+        case .alreadyStopped:
+            return "Driver app was not running on device\n"
+        case .notApplicable:
+            appendLifecycleLog(paths: paths, "No XCTest holder pid recorded; skipping device-side terminate")
+            return "Driver app was not running on device\n"
+        case .refused:
+            throw CLIParseError.invalidValue("Refused to stop XCTest holder because driver.lock points at an unexpected host process.")
+        }
     }
 
     private static func ensureRealDriverRunning(
@@ -254,25 +250,6 @@ enum DriverLifecycleService {
         return try? JSONDecoder().decode(XCTestSessionHolderReadiness.self, from: data)
     }
 
-    private static func terminateRealDriverProcesses(
-        udid: String,
-        paths: IOSUsePaths,
-        coreDeviceFactory: CoreDeviceLifecycleFactory?
-    ) throws -> Bool {
-        do {
-            let bundleID = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid })?.bundleId
-            appendLifecycleLog(paths: paths, "Terminating driver through CoreDevice appservice")
-            let terminated = try makeCoreDeviceDriverLifecycle(factory: coreDeviceFactory, eventSink: { event in
-                appendCoreDeviceLog(paths: paths, event)
-            }).terminateDriver(udid: udid, bundleID: bundleID)
-            appendLifecycleLog(paths: paths, "CoreDevice appservice terminate completed terminated=\(terminated)")
-            return terminated
-        } catch {
-            appendLifecycleLog(paths: paths, "CoreDevice appservice terminate failed: \(error)")
-            throw CLIParseError.invalidValue("Native real-device terminate failed. CoreDevice: \(error)")
-        }
-    }
-
     static func terminateFullXCTestHolderIfNeeded(info: SessionService.Info, paths: IOSUsePaths) -> HolderTerminationResult {
         terminateHolderProcessIfNeeded(info: info, paths: paths)
     }
@@ -300,21 +277,6 @@ enum DriverLifecycleService {
 
     private static func appendLifecycleLog(paths: IOSUsePaths, _ message: String) {
         CLILogService.append(paths: paths, ["[cli-lifecycle] \(message)"])
-    }
-
-    private static func appendCoreDeviceLog(paths: IOSUsePaths, _ event: String) {
-        CLILogService.appendCoreDevice(paths: paths, ["[CoreDevice] \(event)"])
-        guard shouldMirrorCoreDeviceEventToCLILog(event) else { return }
-        appendLifecycleLog(paths: paths, "[CoreDevice] \(event)")
-    }
-
-    private static func shouldMirrorCoreDeviceEventToCLILog(_ event: String) -> Bool {
-        if event.hasPrefix("TCP ") ||
-            event.hasPrefix("RemoteXPC ") ||
-            event.hasPrefix("RSD services:") {
-            return false
-        }
-        return true
     }
 
     private static func currentExecutablePath() throws -> String {
@@ -395,13 +357,4 @@ enum DriverLifecycleService {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private static func makeCoreDeviceDriverLifecycle(
-        factory: CoreDeviceLifecycleFactory?,
-        eventSink: ((String) -> Void)?
-    ) -> CoreDeviceDriverLifecycleManaging {
-        if let factory {
-            return factory(eventSink)
-        }
-        return CoreDeviceDriverLifecycle(eventSink: eventSink)
-    }
 }
