@@ -1,5 +1,9 @@
 import Foundation
 
+private enum XCTestCallbackTrace {
+    static let enabled = ProcessInfo.processInfo.environment["IOS_USE_COREDEVICE_TRACE"] == "1"
+}
+
 struct XCTestExecCallbackListenerFailure: Error, CustomStringConvertible {
     enum Phase: Equatable {
         case waitingForConfiguration
@@ -152,7 +156,7 @@ final class XCTestExecCallbackListener {
             return
         }
         let selector = try DTXStreamTransport.unarchivePayload(message.payload) as? String
-        if let selector {
+        if XCTestCallbackTrace.enabled, let selector {
             eventSink?("exec callback \(selector)")
         }
 

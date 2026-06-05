@@ -36,6 +36,16 @@ struct CoreDeviceTunnelHandshake: Equatable {
     let clientMTU: Int
 }
 
+protocol IPv6PacketIO: AnyObject {
+    func readIPv6Packet(timeoutSeconds: Double) throws -> Data
+    func writeIPv6Packet(_ packet: Data) throws
+    func close()
+}
+
+protocol CoreDeviceTunnel: IPv6PacketIO {
+    func requestHandshake(mtu: Int) throws -> CoreDeviceTunnelHandshake
+}
+
 enum CDTunnelPacket {
     static let magic = Data("CDTunnel".utf8)
     static let requestedMTU = 16_000
@@ -184,6 +194,8 @@ final class CoreDeviceTunnelClient {
         stream.close()
     }
 }
+
+extension CoreDeviceTunnelClient: CoreDeviceTunnel {}
 
 private func uint16BE(_ value: UInt16) -> Data {
     Data([
