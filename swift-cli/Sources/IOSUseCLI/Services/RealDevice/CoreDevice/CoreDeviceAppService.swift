@@ -1,9 +1,11 @@
+import Darwin
 import Foundation
 
 enum CoreDeviceAppServiceError: Error, CustomStringConvertible, Equatable {
     case missingOutput(String)
     case missingOutputResponse(String, String)
     case invalidProcessToken(String)
+    case missingProcessIdentifier(String)
 
     var description: String {
         switch self {
@@ -13,6 +15,8 @@ enum CoreDeviceAppServiceError: Error, CustomStringConvertible, Equatable {
             return "CoreDevice appservice response missing CoreDevice.output for \(feature): \(response)"
         case .invalidProcessToken(let detail):
             return "CoreDevice appservice invalid process token: \(detail)"
+        case .missingProcessIdentifier(let detail):
+            return "CoreDevice appservice response missing process identifier: \(detail)"
         }
     }
 }
@@ -64,6 +68,32 @@ final class CoreDeviceAppService {
         payloadURL: String? = nil,
         activates: Bool? = nil
     ) throws -> RemoteXPCValue {
+        try launchApplication(
+            bundleID: bundleID,
+            arguments: arguments,
+            terminateExisting: terminateExisting,
+            startSuspended: startSuspended,
+            environment: environment,
+            payloadURL: payloadURL,
+            activates: activates,
+            standardIOIdentifier: nil,
+            platformSpecificOptions: [:],
+            activeUser: false
+        )
+    }
+
+    func launchApplication(
+        bundleID: String,
+        arguments: [String] = [],
+        terminateExisting: Bool = true,
+        startSuspended: Bool = false,
+        environment: [String: String] = [:],
+        payloadURL: String? = nil,
+        activates: Bool? = nil,
+        standardIOIdentifier: UUID? = nil,
+        platformSpecificOptions: [String: Any] = [:],
+        activeUser: Bool = false
+    ) throws -> RemoteXPCValue {
         try invoke(
             featureIdentifier: "com.apple.coredevice.feature.launchapplication",
             input: Self.launchApplicationInput(
@@ -73,10 +103,35 @@ final class CoreDeviceAppService {
                 startSuspended: startSuspended,
                 environment: environment,
                 payloadURL: payloadURL,
-                activates: activates
+                activates: activates,
+                standardIOIdentifier: standardIOIdentifier,
+                platformSpecificOptions: platformSpecificOptions,
+                activeUser: activeUser
             ),
             timeoutSeconds: 30
         )
+    }
+
+    func launchXCTestRunner(
+        bundleID: String,
+        arguments: [String] = [],
+        environment: [String: String],
+        standardIOIdentifier: UUID?
+    ) throws -> Int {
+        let output = try launchApplication(
+            bundleID: bundleID,
+            arguments: arguments,
+            terminateExisting: true,
+            startSuspended: false,
+            environment: environment,
+            standardIOIdentifier: standardIOIdentifier,
+            platformSpecificOptions: Self.xcuiRunnerPlatformSpecificOptions(),
+            activeUser: true
+        )
+        guard let pid = Self.extractProcessIdentifier(from: output) else {
+            throw CoreDeviceAppServiceError.missingProcessIdentifier(Self.describe(output))
+        }
+        return pid
     }
 
     func listProcesses() throws -> [CoreDeviceProcessToken] {
@@ -97,6 +152,10 @@ final class CoreDeviceAppService {
                 "signal": .int64(Int64(signal)),
             ]
         )
+    }
+
+    func kill(processIdentifier: Int) throws {
+        _ = try sendSignal(processIdentifier: processIdentifier, signal: Int(SIGKILL))
     }
 
     func invoke(featureIdentifier: String, input: [String: RemoteXPCValue] = [:], timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
@@ -135,18 +194,20 @@ final class CoreDeviceAppService {
         startSuspended: Bool = false,
         environment: [String: String] = [:],
         payloadURL: String? = nil,
-        activates: Bool? = nil
+        activates: Bool? = nil,
+        standardIOIdentifier: UUID? = nil,
+        platformSpecificOptions: [String: Any] = [:],
+        activeUser: Bool = false
     ) -> [String: RemoteXPCValue] {
         var options: [String: RemoteXPCValue] = [
             "arguments": .array(arguments.map { .string($0) }),
             "environmentVariables": .dictionary(environment.mapValues { .string($0) }),
-            "platformSpecificOptions": .data(emptyPlistData()),
+            "platformSpecificOptions": .data(plistData(platformSpecificOptions)),
             "standardIOUsesPseudoterminals": .bool(true),
             "startStopped": .bool(startSuspended),
             "terminateExisting": .bool(terminateExisting),
-            "user": .dictionary([
-                "shortName": .string("mobile"),
-            ]),
+            "user": activeUser ? .dictionary(["active": .bool(true)]) : .dictionary(["shortName": .string("mobile")]),
+            "workingDirectory": .null,
         ]
         if let payloadURL {
             options["payloadURL"] = remoteURL(payloadURL)
@@ -162,7 +223,15 @@ final class CoreDeviceAppService {
                 ]),
             ]),
             "options": .dictionary(options),
-            "standardIOIdentifiers": .dictionary([:]),
+            "standardIOIdentifiers": standardIOIdentifiers(standardIOIdentifier),
+        ]
+    }
+
+    static func xcuiRunnerPlatformSpecificOptions() -> [String: Any] {
+        [
+            "ActivateSuspended": NSNumber(value: UInt64(1)),
+            "StartSuspendedKey": NSNumber(value: UInt64(0)),
+            "__ActivateSuspended": NSNumber(value: UInt64(1)),
         ]
     }
 
@@ -256,12 +325,23 @@ final class CoreDeviceAppService {
         }
     }
 
-    private static func emptyPlistData() -> Data {
+    private static func plistData(_ object: [String: Any]) -> Data {
         (try? PropertyListSerialization.data(
-            fromPropertyList: [:],
+            fromPropertyList: object,
             format: .xml,
             options: 0
         )) ?? Data()
+    }
+
+    private static func standardIOIdentifiers(_ identifier: UUID?) -> RemoteXPCValue {
+        guard let identifier else {
+            return .dictionary([:])
+        }
+        return .dictionary([
+            "standardInput": .uuid(identifier),
+            "standardOutput": .uuid(identifier),
+            "standardError": .uuid(identifier),
+        ])
     }
 
     private static func remoteURL(_ url: String) -> RemoteXPCValue {

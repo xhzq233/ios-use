@@ -1,6 +1,10 @@
 import Darwin
 import Foundation
 
+private enum RemoteXPCTrace {
+    static let enabled = ProcessInfo.processInfo.environment["IOS_USE_COREDEVICE_TRACE"] == "1"
+}
+
 enum RemoteXPCError: Error, CustomStringConvertible, Equatable {
     case truncated
     case invalidLength(String)
@@ -353,20 +357,6 @@ enum RemoteXPCHTTP2 {
             connectionPreface,
             settingsFrame(),
             windowUpdateFrame(streamID: 0, increment: defaultWindowIncrement),
-            headersFrame(streamID: rootStreamID),
-            dataFrame(streamID: rootStreamID, payload: try RemoteXPCWrapper.encodeDictionary([:])),
-            dataFrame(
-                streamID: rootStreamID,
-                payload: RemoteXPCWrapper.encodeEmpty(messageID: 0, flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.rootChannelHandshake)
-            ),
-            headersFrame(streamID: replyStreamID),
-            dataFrame(
-                streamID: replyStreamID,
-                payload: RemoteXPCWrapper.encodeEmpty(
-                    messageID: 0,
-                    flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.initHandshake
-                )
-            ),
         ]
     }
 
@@ -520,8 +510,9 @@ final class RemoteXPCClient {
     private let stream: DeviceStream
     private let eventSink: ((String) -> Void)?
     private let acknowledgeSettings: Bool
-    private var pendingData = Data()
+    private var pendingDataByStream: [Int: Data] = [:]
     private var nextRootMessageID: UInt64 = 0
+    private var openedStreams: Set<Int> = []
 
     init(stream: DeviceStream, eventSink: ((String) -> Void)? = nil, acknowledgeSettings: Bool = true) {
         self.stream = stream
@@ -533,7 +524,6 @@ final class RemoteXPCClient {
         for chunk in try RemoteXPCHTTP2.clientHandshakeChunks() {
             try stream.write(chunk)
         }
-        nextRootMessageID = 1
     }
 
     func completeClientHandshake(timeoutSeconds: Double = 3) throws {
@@ -545,83 +535,85 @@ final class RemoteXPCClient {
         if acknowledgeSettings && frame.flags & RemoteXPCHTTP2.flagAck == 0 {
             try stream.write(RemoteXPCHTTP2.settingsFrame(ack: true))
         }
+        try initializeXPCConnection(timeoutSeconds: timeoutSeconds)
+        nextRootMessageID = 1
+    }
+
+    private func initializeXPCConnection(timeoutSeconds: Double) throws {
+        try writeXPCMessage(
+            streamID: RemoteXPCHTTP2.rootStreamID,
+            payload: try RemoteXPCWrapper.encode(
+                messageID: 0,
+                flags: RemoteXPCFlags.alwaysSet,
+                payload: .dictionary([:])
+            )
+        )
+        _ = try readMessage(streamID: RemoteXPCHTTP2.rootStreamID, timeoutSeconds: timeoutSeconds)
+
+        try writeXPCMessage(
+            streamID: RemoteXPCHTTP2.replyStreamID,
+            payload: RemoteXPCWrapper.encodeEmpty(
+                messageID: 0,
+                flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.initHandshake
+            )
+        )
+        _ = try readMessage(streamID: RemoteXPCHTTP2.replyStreamID, timeoutSeconds: timeoutSeconds)
+
+        try writeXPCMessage(
+            streamID: RemoteXPCHTTP2.rootStreamID,
+            payload: RemoteXPCWrapper.encodeEmpty(
+                messageID: 0,
+                flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.rootChannelHandshake
+            )
+        )
+        _ = try readMessage(streamID: RemoteXPCHTTP2.rootStreamID, timeoutSeconds: timeoutSeconds)
     }
 
     func sendReceiveRequest(_ request: [String: RemoteXPCValue], timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
         try sendRequest(request, wantingReply: true)
-        return try receiveResponse(timeoutSeconds: timeoutSeconds)
+        return try receivePayload(streamID: RemoteXPCHTTP2.replyStreamID, timeoutSeconds: timeoutSeconds)
     }
 
     func sendRequest(_ request: [String: RemoteXPCValue], wantingReply: Bool = false) throws {
         let messageID = nextRootMessageID
-        try stream.write(RemoteXPCHTTP2.dataFrame(
+        try writeXPCMessage(
             streamID: RemoteXPCHTTP2.rootStreamID,
             payload: try RemoteXPCWrapper.encodeDictionary(
                 request,
                 messageID: messageID,
                 wantingReply: wantingReply
             )
-        ))
+        )
         nextRootMessageID = messageID + 1
     }
 
     func receiveResponse(timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
+        try receivePayload(streamID: RemoteXPCHTTP2.replyStreamID, timeoutSeconds: timeoutSeconds)
+    }
+
+    private func receivePayload(streamID: Int, timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
         while true {
-            let frame = try readFrame(timeoutSeconds: timeoutSeconds)
-            if frame.type != RemoteXPCHTTP2.frameData {
-                eventSink?("RemoteXPC frame type=\(frame.type) flags=0x\(String(frame.flags, radix: 16)) stream=\(frame.streamID) bytes=\(frame.payload.count)")
-            }
-            switch frame.type {
-            case RemoteXPCHTTP2.frameSettings:
-                if acknowledgeSettings && frame.flags & RemoteXPCHTTP2.flagAck == 0 {
-                    try stream.write(RemoteXPCHTTP2.settingsFrame(ack: true))
-                }
-                continue
-            case RemoteXPCHTTP2.frameGoAway:
-                throw CLIParseError.invalidValue("RemoteXPC received GOAWAY")
-            case RemoteXPCHTTP2.frameRstStream:
-                throw CLIParseError.invalidValue("RemoteXPC received RST_STREAM for stream \(frame.streamID)")
-            case RemoteXPCHTTP2.frameData:
-                eventSink?("RemoteXPC DATA stream=\(frame.streamID) bytes=\(frame.payload.count) prefix=\(Self.hexPrefix(frame.payload))")
-                pendingData.append(frame.payload)
-                while true {
-                    let message: RemoteXPCMessage
-                    let consumed: Int
-                    do {
-                        (message, consumed) = try RemoteXPCWrapper.decodePrefix(pendingData)
-                    } catch RemoteXPCError.truncated {
-                        if pendingData.count >= 16 {
-                            let expected = Int(readUInt64LE(pendingData, 8)) + 24
-                            eventSink?("RemoteXPC wrapper truncated pending=\(pendingData.count) expected=\(expected)")
-                        } else {
-                            eventSink?("RemoteXPC wrapper truncated pending=\(pendingData.count)")
-                        }
-                        break
-                    }
-                    pendingData.removeFirst(consumed)
-                    eventSink?("RemoteXPC wrapper stream=\(frame.streamID) id=\(message.messageID) flags=0x\(String(message.flags, radix: 16)) payload=\(message.payload != nil) pending=\(pendingData.count)")
-                    if frame.streamID == RemoteXPCHTTP2.rootStreamID {
-                        nextRootMessageID = max(nextRootMessageID, message.messageID + 1)
-                    }
-                    guard let payload = message.payload else {
-                        continue
-                    }
-                    if payload.isEmptyDictionary {
-                        eventSink?("RemoteXPC skipped empty dictionary payload")
-                        continue
-                    }
-                    return payload
-                }
-            default:
+            let message = try readMessage(streamID: streamID, timeoutSeconds: timeoutSeconds)
+            guard let payload = message.payload else {
                 continue
             }
+            if payload.isEmptyDictionary {
+                if RemoteXPCTrace.enabled {
+                    eventSink?("RemoteXPC skipped empty dictionary payload")
+                }
+                continue
+            }
+            return payload
         }
     }
 
     func receivePeerInfo(timeoutSeconds: Double = 10) throws -> RemoteXPCPeerInfo {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
-            let value = try receiveResponse(timeoutSeconds: max(0, deadline.timeIntervalSinceNow))
+            let value = try receivePayload(
+                streamID: RemoteXPCHTTP2.rootStreamID,
+                timeoutSeconds: max(0, deadline.timeIntervalSinceNow)
+            )
             if Self.mayBePeerInfo(value) {
                 return try RemoteXPCPeerInfo.decode(value)
             }
@@ -640,6 +632,77 @@ final class RemoteXPCClient {
         let length = (Int(bytes[0]) << 16) | (Int(bytes[1]) << 8) | Int(bytes[2])
         let payload = length == 0 ? Data() : try stream.readExact(byteCount: length, timeoutSeconds: timeoutSeconds)
         return try RemoteXPCHTTP2.decodeFrame(header + payload)
+    }
+
+    private func writeXPCMessage(streamID: Int, payload: Data) throws {
+        if !openedStreams.contains(streamID) {
+            try stream.write(RemoteXPCHTTP2.headersFrame(streamID: streamID))
+            openedStreams.insert(streamID)
+        }
+        try stream.write(RemoteXPCHTTP2.dataFrame(streamID: streamID, payload: payload))
+    }
+
+    private func readMessage(streamID: Int, timeoutSeconds: Double) throws -> RemoteXPCMessage {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if let message = try popPendingMessage(streamID: streamID) {
+                return message
+            }
+            let frame = try readFrame(timeoutSeconds: max(0, deadline.timeIntervalSinceNow))
+            if RemoteXPCTrace.enabled, frame.type != RemoteXPCHTTP2.frameData {
+                eventSink?("RemoteXPC frame type=\(frame.type) flags=0x\(String(frame.flags, radix: 16)) stream=\(frame.streamID) bytes=\(frame.payload.count)")
+            }
+            switch frame.type {
+            case RemoteXPCHTTP2.frameSettings:
+                if acknowledgeSettings && frame.flags & RemoteXPCHTTP2.flagAck == 0 {
+                    try stream.write(RemoteXPCHTTP2.settingsFrame(ack: true))
+                }
+            case RemoteXPCHTTP2.frameGoAway:
+                throw CLIParseError.invalidValue("RemoteXPC received GOAWAY")
+            case RemoteXPCHTTP2.frameRstStream:
+                throw CLIParseError.invalidValue("RemoteXPC received RST_STREAM for stream \(frame.streamID)")
+            case RemoteXPCHTTP2.frameData:
+                if RemoteXPCTrace.enabled {
+                    eventSink?("RemoteXPC DATA stream=\(frame.streamID) bytes=\(frame.payload.count) prefix=\(Self.hexPrefix(frame.payload))")
+                }
+                var pending = pendingDataByStream[frame.streamID] ?? Data()
+                pending.append(frame.payload)
+                pendingDataByStream[frame.streamID] = pending
+            default:
+                continue
+            }
+        }
+        throw CoreDeviceTCPError.connectionTimeout
+    }
+
+    private func popPendingMessage(streamID: Int) throws -> RemoteXPCMessage? {
+        guard var pending = pendingDataByStream[streamID], !pending.isEmpty else {
+            return nil
+        }
+        let message: RemoteXPCMessage
+        let consumed: Int
+        do {
+            (message, consumed) = try RemoteXPCWrapper.decodePrefix(pending)
+        } catch RemoteXPCError.truncated {
+            if RemoteXPCTrace.enabled {
+                if pending.count >= 16 {
+                    let expected = Int(readUInt64LE(pending, 8)) + 24
+                    eventSink?("RemoteXPC wrapper truncated stream=\(streamID) pending=\(pending.count) expected=\(expected)")
+                } else {
+                    eventSink?("RemoteXPC wrapper truncated stream=\(streamID) pending=\(pending.count)")
+                }
+            }
+            return nil
+        }
+        pending.removeFirst(consumed)
+        pendingDataByStream[streamID] = pending.isEmpty ? nil : pending
+        if RemoteXPCTrace.enabled {
+            eventSink?("RemoteXPC wrapper stream=\(streamID) id=\(message.messageID) flags=0x\(String(message.flags, radix: 16)) payload=\(message.payload != nil) pending=\(pending.count)")
+        }
+        if streamID == RemoteXPCHTTP2.rootStreamID {
+            nextRootMessageID = max(nextRootMessageID, message.messageID + 1)
+        }
+        return message
     }
 
     private static func hexPrefix(_ data: Data, count: Int = 24) -> String {

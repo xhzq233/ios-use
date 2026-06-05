@@ -500,10 +500,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.maxDriverConnections, 1)
         XCTAssertEqual(IOSUseProtocol.driverConnectionHandoffTimeoutMilliseconds, 250)
         XCTAssertEqual(IOSUseProtocol.driverConnectionHandoffPollMicroseconds, 1_000)
-        XCTAssertEqual(IOSUseProtocol.driverStartReadinessInitialDelayMicroseconds, 400_000)
-        XCTAssertEqual(IOSUseProtocol.driverStartReadinessPollIntervalMicroseconds, 100_000)
-        XCTAssertEqual(IOSUseProtocol.driverStartReadinessProbeHoldMicroseconds, 10_000)
-        XCTAssertEqual(IOSUseProtocol.driverStartReadinessTimeoutSeconds, 30.0)
+        XCTAssertEqual(IOSUseProtocol.simulatorDriverStartPollIntervalMicroseconds, 100_000)
         XCTAssertEqual(IOSUseProtocol.commandTimeoutSeconds, 45)
         XCTAssertEqual(IOSUseProtocol.commandCompletionTimeoutSeconds, 120)
         XCTAssertEqual(IOSUseProtocol.commandSocketReadTimeoutSeconds, 170)
@@ -1009,7 +1006,7 @@ final class IOSUseCLITests: XCTestCase {
             DriverClient.usbmuxConnectorForTesting = nil
         }
 
-        let client = DriverClient(udid: "REAL-CMD", deviceType: "real")
+        let client = DriverClient(udid: "REAL-CMD", deviceType: "real", realDeviceConnectRetryTimeoutSeconds: 0)
 
         XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
             let driverError = error as? DriverClientError
@@ -1026,7 +1023,7 @@ final class IOSUseCLITests: XCTestCase {
             DriverClient.usbmuxConnectorForTesting = nil
         }
 
-        let client = DriverClient(udid: "REAL-CMD", deviceType: "real")
+        let client = DriverClient(udid: "REAL-CMD", deviceType: "real", realDeviceConnectRetryTimeoutSeconds: 0)
 
         XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
             let driverError = error as? DriverClientError

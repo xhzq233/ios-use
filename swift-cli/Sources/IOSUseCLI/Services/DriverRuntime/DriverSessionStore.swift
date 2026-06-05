@@ -37,7 +37,8 @@ enum DriverSessionStore {
             runnerPid: raw["runnerPid"] as? Int,
             startMode: raw["startMode"] as? String,
             sessionIdentifier: raw["sessionIdentifier"] as? String,
-            bundleId: raw["bundleId"] as? String
+            bundleId: raw["bundleId"] as? String,
+            controlSocketPath: raw["controlSocketPath"] as? String
         )
     }
 
@@ -67,6 +68,9 @@ enum DriverSessionStore {
         }
         if let bundleId = info.bundleId {
             root["bundleId"] = bundleId
+        }
+        if let controlSocketPath = info.controlSocketPath {
+            root["controlSocketPath"] = controlSocketPath
         }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)

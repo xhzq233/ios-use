@@ -2,21 +2,13 @@ import Darwin
 import Foundation
 import IOSUseProtocol
 
-struct XCTestSessionHolderReadiness: Codable, Equatable {
-    let status: String
-    let holderPid: Int?
-    let runnerPid: Int?
-    let sessionIdentifier: String?
-    let error: String?
-}
-
 enum XCTestSessionHolderService {
     static let commandName = "__xctest-session-holder"
 
     private struct Options {
         let udid: String
         let bundleId: String
-        let readyFile: String
+        let controlSocket: String
     }
 
     static func run(arguments: [String], paths: IOSUsePaths) throws -> String {
@@ -27,32 +19,38 @@ enum XCTestSessionHolderService {
         }
 
         var activeSession: RealDeviceXCTestActiveSession?
+        let controlState = XCTestSessionHolderControlState(
+            holderPid: Int(Darwin.getpid()),
+            bundleId: options.bundleId,
+            controlSocketPath: options.controlSocket
+        )
+        let controlServer = XCTestSessionHolderControlServer(
+            socketPath: options.controlSocket,
+            state: controlState,
+            eventSink: log
+        )
+        try controlServer.start()
+        defer { controlServer.stop() }
+
         do {
             log("starting holder udid=\(options.udid) bundleId=\(options.bundleId)")
             let lifecycle = RealDeviceXCTestDriverLifecycle(eventSink: log)
             let startedSession = try lifecycle.startDriverSession(
                 udid: options.udid,
-                bundleID: options.bundleId,
-                timeoutSeconds: IOSUseProtocol.driverStartReadinessTimeoutSeconds
+                bundleID: options.bundleId
             )
             activeSession = startedSession
-            try writeReadiness(
-                XCTestSessionHolderReadiness(
-                    status: "ready",
-                    holderPid: Int(Darwin.getpid()),
-                    runnerPid: startedSession.runnerPid,
-                    sessionIdentifier: startedSession.sessionIdentifier.uuidString,
-                    error: nil
-                ),
-                path: options.readyFile
+            controlState.markReady(
+                runnerPid: startedSession.runnerPid,
+                sessionIdentifier: startedSession.sessionIdentifier.uuidString
             )
-            log("holder ready runnerPid=\(startedSession.runnerPid) session=\(startedSession.sessionIdentifier.uuidString)")
+            log("holder start result runnerPid=\(startedSession.runnerPid) session=\(startedSession.sessionIdentifier.uuidString)")
 
             let interruptMonitor = InterruptMonitor(onInterrupt: {
                 log("holder interrupted")
             })
             interruptMonitor.start()
-            while !interruptMonitor.interrupted {
+            while !interruptMonitor.interrupted && !controlState.shouldStop {
                 let startupFailure = startedSession.startupFailure
                 let postConfigurationFailure = startupFailure == nil ? startedSession.takePostConfigurationFailure() : nil
                 if let stopMessage = holderStopMessage(
@@ -66,21 +64,27 @@ enum XCTestSessionHolderService {
             }
             interruptMonitor.stop()
             startedSession.close(killRunner: true)
+            clearDriverLockIfCurrent(
+                paths: paths,
+                options: options,
+                runnerPid: startedSession.runnerPid,
+                sessionIdentifier: startedSession.sessionIdentifier.uuidString
+            )
             activeSession = nil
+            controlState.markStopped()
             log("holder stopped")
             return ""
         } catch {
+            controlState.markFailed(error)
             activeSession?.close(killRunner: true)
-            try? writeReadiness(
-                XCTestSessionHolderReadiness(
-                    status: "error",
-                    holderPid: Int(Darwin.getpid()),
-                    runnerPid: nil,
-                    sessionIdentifier: nil,
-                    error: String(describing: error)
-                ),
-                path: options.readyFile
-            )
+            if let activeSession {
+                clearDriverLockIfCurrent(
+                    paths: paths,
+                    options: options,
+                    runnerPid: activeSession.runnerPid,
+                    sessionIdentifier: activeSession.sessionIdentifier.uuidString
+                )
+            }
             log("holder failed: \(error)")
             throw error
         }
@@ -88,7 +92,7 @@ enum XCTestSessionHolderService {
 
     static func holderStopMessage(startupFailure: Error?, postConfigurationFailure: Error?) -> String? {
         if let startupFailure {
-            return "holder startup session failed after readiness: \(startupFailure)"
+            return "holder startup session failed after start result: \(startupFailure)"
         }
         if let postConfigurationFailure {
             return "XCTest session ended after configuration; stopping holder: \(postConfigurationFailure)"
@@ -99,7 +103,7 @@ enum XCTestSessionHolderService {
     private static func parse(_ arguments: [String]) throws -> Options {
         var udid: String?
         var bundleId: String?
-        var readyFile: String?
+        var controlSocket: String?
         var index = 0
 
         while index < arguments.count {
@@ -113,10 +117,10 @@ enum XCTestSessionHolderService {
                 index += 1
                 guard index < arguments.count else { throw CLIParseError.missingOptionValue("--bundle-id") }
                 bundleId = arguments[index]
-            case "--ready-file":
+            case "--control-socket":
                 index += 1
-                guard index < arguments.count else { throw CLIParseError.missingOptionValue("--ready-file") }
-                readyFile = arguments[index]
+                guard index < arguments.count else { throw CLIParseError.missingOptionValue("--control-socket") }
+                controlSocket = arguments[index]
             case "--verbose":
                 break
             default:
@@ -130,14 +134,46 @@ enum XCTestSessionHolderService {
 
         guard let udid, !udid.isEmpty else { throw CLIParseError.missingRequiredOption("--udid") }
         guard let bundleId, !bundleId.isEmpty else { throw CLIParseError.missingRequiredOption("--bundle-id") }
-        guard let readyFile, !readyFile.isEmpty else { throw CLIParseError.missingRequiredOption("--ready-file") }
-        return Options(udid: udid, bundleId: bundleId, readyFile: readyFile)
+        guard let controlSocket, !controlSocket.isEmpty else { throw CLIParseError.missingRequiredOption("--control-socket") }
+        return Options(udid: udid, bundleId: bundleId, controlSocket: controlSocket)
     }
 
-    private static func writeReadiness(_ readiness: XCTestSessionHolderReadiness, path: String) throws {
-        let directory = URL(fileURLWithPath: path).deletingLastPathComponent().path
-        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true, attributes: nil)
-        let data = try JSONEncoder().encode(readiness)
-        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    private static func clearDriverLockIfCurrent(
+        paths: IOSUsePaths,
+        options: Options,
+        runnerPid: Int,
+        sessionIdentifier: String
+    ) {
+        guard let info = try? DriverSessionStore.readInfo(paths: paths),
+              driverLockMatchesCurrentHolder(
+                info: info,
+                udid: options.udid,
+                bundleId: options.bundleId,
+                holderPid: Int(Darwin.getpid()),
+                runnerPid: runnerPid,
+                sessionIdentifier: sessionIdentifier,
+                controlSocketPath: options.controlSocket
+              ) else {
+            return
+        }
+        try? DriverSessionStore.removeDriverLock(paths: paths)
+    }
+
+    static func driverLockMatchesCurrentHolder(
+        info: SessionService.Info,
+        udid: String,
+        bundleId: String,
+        holderPid: Int,
+        runnerPid: Int,
+        sessionIdentifier: String,
+        controlSocketPath: String
+    ) -> Bool {
+        info.deviceType == "real"
+            && info.udid == udid
+            && info.bundleId == bundleId
+            && info.holderPid == holderPid
+            && info.runnerPid == runnerPid
+            && info.sessionIdentifier == sessionIdentifier
+            && info.controlSocketPath == controlSocketPath
     }
 }

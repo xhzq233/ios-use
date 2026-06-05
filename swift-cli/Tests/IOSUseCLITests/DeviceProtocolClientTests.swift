@@ -7,7 +7,6 @@ import IOSUseProtocol
 final class DeviceProtocolClientTests: XCTestCase {
     override func tearDown() {
         RemoteServiceDiscoveryClient.resetTestingOverrides()
-        CoreDeviceTunnelInterfaceConfigurator.resetTestingOverrides()
         super.tearDown()
     }
 
@@ -83,108 +82,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try client.writeIPv6Packet(Data([0x60]))) { error in
-            XCTAssertEqual(error as? CDTunnelError, .invalidIPv6Packet)
-        }
-    }
-
-    func testCoreDeviceTunnelBridgePumpsPacketsInBothDirections() throws {
-        let devicePacket = ipv6Packet(body: Data([0x01]))
-        let interfacePacket = ipv6Packet(body: Data([0x02, 0x03]))
-        let device = FakeIPv6PacketIO(reads: [devicePacket])
-        let networkInterface = FakeIPv6PacketIO(reads: [interfacePacket])
-        let bridge = CoreDeviceTunnelBridge(device: device, networkInterface: networkInterface)
-
-        try bridge.pumpDeviceToInterfaceOnce()
-        try bridge.pumpInterfaceToDeviceOnce()
-        bridge.close()
-
-        XCTAssertEqual(networkInterface.writes, [devicePacket])
-        XCTAssertEqual(device.writes, [interfacePacket])
-        XCTAssertEqual(bridge.stats.deviceToInterfacePackets, 1)
-        XCTAssertEqual(bridge.stats.interfaceToDevicePackets, 1)
-        XCTAssertEqual(bridge.stats.deviceToInterfaceBytes, devicePacket.count)
-        XCTAssertEqual(bridge.stats.interfaceToDeviceBytes, interfacePacket.count)
-        XCTAssertTrue(device.closed)
-        XCTAssertTrue(networkInterface.closed)
-    }
-
-    func testCoreDeviceTunnelBridgeRejectsMalformedPacketsBeforeForwarding() throws {
-        var invalid = ipv6Packet(body: Data())
-        invalid[0] = 0x40
-        let device = FakeIPv6PacketIO(reads: [invalid])
-        let networkInterface = FakeIPv6PacketIO(reads: [])
-        let bridge = CoreDeviceTunnelBridge(device: device, networkInterface: networkInterface)
-
-        XCTAssertThrowsError(try bridge.pumpDeviceToInterfaceOnce()) { error in
-            XCTAssertEqual(error as? CDTunnelError, .invalidIPv6Packet)
-        }
-        XCTAssertTrue(networkInterface.writes.isEmpty)
-        XCTAssertEqual(bridge.stats, CoreDeviceTunnelBridgeStats())
-    }
-
-    func testCoreDeviceTunnelInterfaceConfigBuildsIfconfigArguments() {
-        let handshake = CoreDeviceTunnelHandshake(
-            serverAddress: "fd7b:e5b:6f53::1",
-            serverRSDPort: 58_783,
-            clientAddress: "fd7b:e5b:6f53::2",
-            clientMTU: 16_000
-        )
-        let config = CoreDeviceTunnelInterfaceConfig(interfaceName: "utun9", handshake: handshake)
-
-        XCTAssertEqual(CoreDeviceTunnelInterfaceConfigurator.ifconfigArguments(for: config), [
-            "utun9",
-            "inet6",
-            "fd7b:e5b:6f53::2",
-            "fd7b:e5b:6f53::1",
-            "prefixlen",
-            "128",
-            "mtu",
-            "16000",
-            "up",
-        ])
-    }
-
-    func testCoreDeviceTunnelInterfaceConfiguratorAppliesIfconfig() throws {
-        let handshake = CoreDeviceTunnelHandshake(
-            serverAddress: "fd7b:e5b:6f53::1",
-            serverRSDPort: 58_783,
-            clientAddress: "fd7b:e5b:6f53::2",
-            clientMTU: 16_000
-        )
-        let config = CoreDeviceTunnelInterfaceConfig(interfaceName: "utun9", handshake: handshake)
-        var command: String?
-        var arguments: [String]?
-        CoreDeviceTunnelInterfaceConfigurator.shellRunnerForTesting = { cmd, args in
-            command = cmd
-            arguments = args
-            return ""
-        }
-
-        try CoreDeviceTunnelInterfaceConfigurator.apply(config)
-
-        XCTAssertEqual(command, "ifconfig")
-        XCTAssertEqual(arguments, CoreDeviceTunnelInterfaceConfigurator.ifconfigArguments(for: config))
-    }
-
-    func testMacOSUtunInterfaceEncodesAndDecodesIPv6Frames() throws {
-        let packet = ipv6Packet(body: Data([0x0a, 0x0b]))
-
-        let frame = try MacOSUtunInterface.encodeUtunFrame(ipv6Packet: packet)
-        let decoded = try MacOSUtunInterface.decodeUtunFrame(frame)
-
-        XCTAssertEqual(frame.prefix(4), MacOSUtunInterface.loopbackHeader)
-        XCTAssertEqual(decoded, packet)
-    }
-
-    func testMacOSUtunInterfaceRejectsInvalidFramesAndPackets() throws {
-        let packet = ipv6Packet(body: Data())
-        XCTAssertThrowsError(try MacOSUtunInterface.decodeUtunFrame(Data([0, 0, 0, 2]) + packet)) { error in
-            XCTAssertEqual(error as? CoreDeviceTunnelBridgeError, .invalidUtunFrame)
-        }
-
-        var invalid = packet
-        invalid[0] = 0x40
-        XCTAssertThrowsError(try MacOSUtunInterface.encodeUtunFrame(ipv6Packet: invalid)) { error in
             XCTAssertEqual(error as? CDTunnelError, .invalidIPv6Packet)
         }
     }
@@ -383,7 +280,7 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(decoded.payload, .dictionary(payload))
     }
 
-    func testRemoteXPCHTTP2ClientHandshakeFrames() throws {
+    func testRemoteXPCHTTP2ClientHandshakeFramesMatchGoIOSHTTPSetup() throws {
         var handshake = try RemoteXPCHTTP2.encodeClientHandshake()
         XCTAssertEqual(Data(handshake.prefix(RemoteXPCHTTP2.connectionPreface.count)), RemoteXPCHTTP2.connectionPreface)
         handshake.removeFirst(RemoteXPCHTTP2.connectionPreface.count)
@@ -393,34 +290,16 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(frames.map(\.type), [
             RemoteXPCHTTP2.frameSettings,
             RemoteXPCHTTP2.frameWindowUpdate,
-            RemoteXPCHTTP2.frameHeaders,
-            RemoteXPCHTTP2.frameData,
-            RemoteXPCHTTP2.frameData,
-            RemoteXPCHTTP2.frameHeaders,
-            RemoteXPCHTTP2.frameData,
         ])
-        XCTAssertEqual(frames[2].streamID, RemoteXPCHTTP2.rootStreamID)
-        XCTAssertEqual(frames[2].flags, RemoteXPCHTTP2.flagEndHeaders)
-        XCTAssertEqual(frames[5].streamID, RemoteXPCHTTP2.replyStreamID)
-
-        let firstRootMessage = try RemoteXPCWrapper.decode(frames[3].payload)
-        XCTAssertEqual(firstRootMessage.payload, .dictionary([:]))
-
-        let replyChannelMessage = try RemoteXPCWrapper.decode(frames[6].payload)
-        XCTAssertNil(replyChannelMessage.payload)
-        XCTAssertEqual(replyChannelMessage.flags & RemoteXPCFlags.initHandshake, RemoteXPCFlags.initHandshake)
+        XCTAssertEqual(frames[0].streamID, 0)
+        XCTAssertEqual(frames[1].streamID, 0)
     }
 
-    func testRemoteXPCHTTP2ClientHandshakeMatchesPymobiledevice3ReferenceBytes() throws {
+    func testRemoteXPCHTTP2ClientHandshakeMatchesGoIOSHTTPReferenceBytes() throws {
         let expectedHex = """
         505249202a20485454502f322e300d0a0d0a534d0d0a0d0a\
         00000c040000000000000300000064000400100000\
-        000004080000000000000f0001\
-        000000010400000001\
-        00002c000000000001920bb0290100000014000000000000000000000000000000423713420500000000f000000400000000000000\
-        000018000000000001920bb0290102000000000000000000000000000000000000\
-        000000010400000003\
-        000018000000000003920bb0290100400000000000000000000000000000000000
+        000004080000000000000f0001
         """.split(separator: "\n").joined()
         XCTAssertEqual(try RemoteXPCHTTP2.encodeClientHandshake().hexString, expectedHex)
         XCTAssertEqual(RemoteXPCHTTP2.settingsFrame(ack: true).hexString, "000000040100000000")
@@ -536,27 +415,40 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual((try unarchiveDTXArgument(startPlan.arguments[0]) as? NSNumber)?.intValue, 36)
     }
 
-    func testDVTProcessControlLaunchContractMatchesAppiumRemoteXPC() throws {
-        let invocation = try DVTInstrumentsContract.ProcessControl.launch(
+    func testCoreDeviceAppServiceBuildsXCTestRunnerLaunchRequestWithStdIO() throws {
+        let stdioID = try XCTUnwrap(UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF"))
+        let input = CoreDeviceAppService.launchApplicationInput(
             bundleID: "com.example.driver.xctrunner",
-            environment: ["XCTestManagerVariant": "DDI"],
             arguments: ["-Arg"],
-            killExisting: true,
-            startSuspended: false
+            terminateExisting: true,
+            startSuspended: false,
+            environment: ["XCTestManagerVariant": "DDI"],
+            standardIOIdentifier: stdioID,
+            platformSpecificOptions: CoreDeviceAppService.xcuiRunnerPlatformSpecificOptions(),
+            activeUser: true
         )
 
-        XCTAssertEqual(invocation.serviceIdentifier, "com.apple.instruments.server.services.processcontrol")
-        XCTAssertEqual(invocation.selector, "launchSuspendedProcessWithDevicePath:bundleIdentifier:environment:arguments:options:")
-        XCTAssertTrue(invocation.expectsReply)
-        XCTAssertEqual(try unarchiveDTXArgument(invocation.arguments[0]) as? String, "")
-        XCTAssertEqual(try unarchiveDTXArgument(invocation.arguments[1]) as? String, "com.example.driver.xctrunner")
-        let env = try XCTUnwrap(try unarchiveDTXArgument(invocation.arguments[2]) as? NSDictionary)
-        XCTAssertEqual(env["XCTestManagerVariant"] as? String, "DDI")
-        let arguments = try XCTUnwrap(try unarchiveDTXArgument(invocation.arguments[3]) as? NSArray)
-        XCTAssertEqual(arguments as? [String], ["-Arg"])
-        let options = try XCTUnwrap(try unarchiveDTXArgument(invocation.arguments[4]) as? NSDictionary)
-        XCTAssertEqual((options["KillExisting"] as? NSNumber)?.boolValue, true)
-        XCTAssertEqual((options["StartSuspendedKey"] as? NSNumber)?.boolValue, false)
+        let options = try XCTUnwrap(input["options"]?.dictionaryValue)
+        XCTAssertEqual(options["arguments"], .array([.string("-Arg")]))
+        XCTAssertEqual(options["environmentVariables"], .dictionary(["XCTestManagerVariant": .string("DDI")]))
+        XCTAssertEqual(options["terminateExisting"], .bool(true))
+        XCTAssertEqual(options["startStopped"], .bool(false))
+        XCTAssertEqual(options["user"], .dictionary(["active": .bool(true)]))
+        XCTAssertEqual(
+            input["standardIOIdentifiers"],
+            .dictionary([
+                "standardInput": .uuid(stdioID),
+                "standardOutput": .uuid(stdioID),
+                "standardError": .uuid(stdioID),
+            ])
+        )
+        guard case .data(let plistData) = try XCTUnwrap(options["platformSpecificOptions"]) else {
+            return XCTFail("platformSpecificOptions must be plist data")
+        }
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: NSNumber])
+        XCTAssertEqual(plist["ActivateSuspended"], NSNumber(value: UInt64(1)))
+        XCTAssertEqual(plist["StartSuspendedKey"], NSNumber(value: UInt64(0)))
+        XCTAssertEqual(plist["__ActivateSuspended"], NSNumber(value: UInt64(1)))
     }
 
     func testXCTestConfigurationPayloadEncodesPrivateClassNamesWithoutRegisteringRuntimeClasses() throws {
@@ -629,10 +521,16 @@ final class DeviceProtocolClientTests: XCTestCase {
                     "UsesRemoteXPC": .bool(false),
                 ]),
             ]),
-            DVTInstrumentsContract.Provider.rsdServiceName: .dictionary([
-                "Port": .uint64(62002),
+            CoreDeviceOpenStdIOSocket.serviceName: .dictionary([
+                "Port": .uint64(62003),
                 "Properties": .dictionary([
                     "UsesRemoteXPC": .bool(false),
+                ]),
+            ]),
+            CoreDeviceAppService.serviceName: .dictionary([
+                "Port": .uint64(62004),
+                "Properties": .dictionary([
+                    "UsesRemoteXPC": .bool(true),
                 ]),
             ]),
         ]))
@@ -648,11 +546,8 @@ final class DeviceProtocolClientTests: XCTestCase {
                 expectsReply: true
             ).wireData,
         ])
-        let instrumentsStream = FakeDeviceStream(reads: [
-            try dtxServerCapabilities().wireData,
-            try DTXMessageEncoder.okReply(identifier: 2, conversationIndex: 1, channelCode: 0).wireData,
-            try DTXMessageEncoder.objectReply(identifier: 3, conversationIndex: 1, channelCode: 1, object: NSNumber(value: 333)).wireData,
-        ])
+        let stdioID = try XCTUnwrap(UUID(uuidString: "10203040-5060-7080-90A0-B0C0D0E0F001"))
+        let stdioStream = FakeDeviceStream(reads: [uuidData(stdioID)])
         let controlStream = FakeDeviceStream(reads: [
             try dtxServerCapabilities().wireData,
             try DTXMessageEncoder.okReply(identifier: 2, conversationIndex: 1, channelCode: 0).wireData,
@@ -666,21 +561,12 @@ final class DeviceProtocolClientTests: XCTestCase {
                 expectsReply: true
             ).wireData,
         ])
-        let execTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
+        let tunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
             peerInfo: peerInfo,
-            streams: [execStream]
+            streams: [execStream, stdioStream, controlStream]
         )
-        let processTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
-            peerInfo: peerInfo,
-            streams: [instrumentsStream]
-        )
-        let controlTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
-            peerInfo: peerInfo,
-            streams: [controlStream]
-        )
-        var tunnels = [execTunnel, processTunnel, controlTunnel]
-        var reachabilityChecks = 0
-        var sleeps: [useconds_t] = []
+        var tunnels = [tunnel]
+        let appService = FakeXCTestRunnerAppService(pid: 333)
         let lifecycle = RealDeviceXCTestDriverLifecycle(dependencies: RealDeviceXCTestDriverLifecycle.Dependencies(
             startTunnel: { udid in
                 XCTAssertEqual(udid, "REAL-XCTEST")
@@ -699,31 +585,40 @@ final class DeviceProtocolClientTests: XCTestCase {
             },
             productMajorVersion: { _ in 17 },
             makeSessionIdentifier: { sessionID },
-            isDriverPortReachable: { _ in
-                reachabilityChecks += 1
-                return reachabilityChecks >= 2
+            openAppService: { tunnelSession in
+                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(tunnel))
+                return appService
             },
-            sleep: { sleeps.append($0) }
+            openStdIOSocket: { tunnelSession in
+                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(tunnel))
+                return try CoreDeviceOpenStdIOSocket.connect(session: tunnelSession)
+            }
         ))
 
-        let activeSession = try lifecycle.startDriverSession(udid: "REAL-XCTEST", bundleID: "com.example.driver.xctrunner", timeoutSeconds: 2)
+        let activeSession = try lifecycle.startDriverSession(udid: "REAL-XCTEST", bundleID: "com.example.driver.xctrunner")
         XCTAssertTrue(waitUntil { controlStream.writes.count == 5 })
         activeSession.close(killRunner: false)
 
         XCTAssertTrue(tunnels.isEmpty)
-        XCTAssertEqual(execTunnel.requestedServices, [DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName])
-        XCTAssertEqual(processTunnel.requestedServices, [DVTInstrumentsContract.Provider.rsdServiceName])
-        XCTAssertEqual(controlTunnel.requestedServices, [DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName])
-        XCTAssertTrue(execTunnel.closed)
-        XCTAssertTrue(processTunnel.closed)
-        XCTAssertTrue(controlTunnel.closed)
-        XCTAssertTrue(execStream.closed)
-        XCTAssertTrue(instrumentsStream.closed)
-        XCTAssertTrue(controlStream.closed)
-        XCTAssertEqual(sleeps, [
-            useconds_t(IOSUseProtocol.driverStartReadinessInitialDelayMicroseconds),
-            useconds_t(IOSUseProtocol.driverStartReadinessPollIntervalMicroseconds),
+        XCTAssertEqual(tunnel.requestedServices, [
+            DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
+            CoreDeviceOpenStdIOSocket.serviceName,
+            DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
         ])
+        XCTAssertTrue(tunnel.closed)
+        XCTAssertTrue(execStream.closed)
+        XCTAssertTrue(stdioStream.closed)
+        XCTAssertTrue(controlStream.closed)
+        XCTAssertTrue(appService.closed)
+        XCTAssertTrue(appService.killedProcessIdentifiers.isEmpty)
+        XCTAssertEqual(appService.launches.count, 1)
+        XCTAssertEqual(appService.launches.first?.bundleID, "com.example.driver.xctrunner")
+        XCTAssertEqual(appService.launches.first?.standardIOIdentifier, stdioID)
+        XCTAssertEqual(appService.launches.first?.environment["XCTestSessionIdentifier"], sessionID.uuidString.uppercased())
+        XCTAssertEqual(
+            appService.launches.first?.environment["XCTestBundlePath"],
+            "/private/var/containers/Bundle/Application/UUID/IOSUseDriver-Runner.app/PlugIns/IOSUseDriver.xctest"
+        )
         let execSelectors = selectorNames(in: execStream.writes)
         XCTAssertEqual(execSelectors, [
             "_notifyOfPublishedCapabilities:",
@@ -744,8 +639,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(controlIdleAck.identifier, 10)
         XCTAssertEqual(controlIdleAck.kind, .ok)
 
-        let launch = try DTXMessageDecoder.readMessage(from: FakeDeviceStream(reads: [instrumentsStream.writes[2]]))
-        XCTAssertEqual(try unarchiveDTXBuffer(launch.payload) as? String, "launchSuspendedProcessWithDevicePath:bundleIdentifier:environment:arguments:options:")
         let controlSelectors = selectorNames(in: controlStream.writes)
         XCTAssertEqual(controlSelectors, [
             "_notifyOfPublishedCapabilities:",
@@ -773,17 +666,19 @@ final class DeviceProtocolClientTests: XCTestCase {
                 return 16
             },
             makeSessionIdentifier: { UUID() },
-            isDriverPortReachable: { _ in
-                XCTFail("iOS < 17 guard must run before port readiness checks")
-                return false
+            openAppService: { _ in
+                XCTFail("iOS < 17 guard must run before AppService")
+                throw CLIParseError.invalidValue("unexpected appservice")
             },
-            sleep: { _ in XCTFail("iOS < 17 guard must run before sleeps") }
+            openStdIOSocket: { _ in
+                XCTFail("iOS < 17 guard must run before openstdio")
+                throw CLIParseError.invalidValue("unexpected openstdio")
+            }
         ))
 
         XCTAssertThrowsError(try lifecycle.startDriverSession(
             udid: "REAL-IOS16",
-            bundleID: "com.example.driver.xctrunner",
-            timeoutSeconds: 2
+            bundleID: "com.example.driver.xctrunner"
         )) { error in
             XCTAssertTrue(String(describing: error).contains("requires iOS 17 or later"))
         }
@@ -1049,9 +944,10 @@ final class DeviceProtocolClientTests: XCTestCase {
             payload: remotePeerInfoValue()
         )
         let split = 13
-        let frames = RemoteXPCHTTP2.settingsFrame()
-            + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: Data(wrapper.prefix(split)))
-            + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: Data(wrapper.dropFirst(split)))
+        let frames = remoteXPCInitializationResponses(
+            additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: Data(wrapper.prefix(split)))
+                + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: Data(wrapper.dropFirst(split)))
+        )
         let stream = FakeDeviceStream(reads: [frames])
         let client = RemoteXPCClient(stream: stream)
 
@@ -1059,15 +955,14 @@ final class DeviceProtocolClientTests: XCTestCase {
         let peerInfo = try client.receivePeerInfo()
 
         XCTAssertEqual(peerInfo.uniqueDeviceID, "00008110-001234")
-        XCTAssertEqual(stream.writes.count, try RemoteXPCHTTP2.clientHandshakeChunks().count + 1)
+        XCTAssertEqual(stream.writes.count, try RemoteXPCHTTP2.clientHandshakeChunks().count + 6)
         XCTAssertEqual(stream.writes[0], RemoteXPCHTTP2.connectionPreface)
-        let ackFrame = try RemoteXPCHTTP2.decodeFrame(stream.writes.last!)
+        let ackFrame = try RemoteXPCHTTP2.decodeFrame(stream.writes[try RemoteXPCHTTP2.clientHandshakeChunks().count])
         XCTAssertEqual(ackFrame.type, RemoteXPCHTTP2.frameSettings)
         XCTAssertEqual(ackFrame.flags, RemoteXPCHTTP2.flagAck)
     }
 
     func testRemoteXPCClientSendReceiveRequestUsesRootMessageIDAfterHandshake() throws {
-        let emptyDictionary = try RemoteXPCWrapper.encodeDictionary([:], messageID: 0)
         let response = try RemoteXPCWrapper.encode(
             messageID: 1,
             flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
@@ -1078,9 +973,9 @@ final class DeviceProtocolClientTests: XCTestCase {
             ])
         )
         let stream = FakeDeviceStream(reads: [
-            RemoteXPCHTTP2.settingsFrame()
-                + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: emptyDictionary)
-                + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: response),
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
+            ),
         ])
         let client = RemoteXPCClient(stream: stream)
 
@@ -1090,7 +985,7 @@ final class DeviceProtocolClientTests: XCTestCase {
         ])
 
         XCTAssertEqual(output.dictionaryValue?["CoreDevice.output"]?.dictionaryValue?["ok"], .bool(true))
-        XCTAssertEqual(stream.writes.count, try RemoteXPCHTTP2.clientHandshakeChunks().count + 2)
+        XCTAssertEqual(stream.writes.count, try RemoteXPCHTTP2.clientHandshakeChunks().count + 7)
         XCTAssertEqual(stream.writes[0], RemoteXPCHTTP2.connectionPreface)
         let ackFrame = try RemoteXPCHTTP2.decodeFrame(stream.writes[try RemoteXPCHTTP2.clientHandshakeChunks().count])
         XCTAssertEqual(ackFrame.type, RemoteXPCHTTP2.frameSettings)
@@ -1231,8 +1126,9 @@ final class DeviceProtocolClientTests: XCTestCase {
             ])
         )
         let stream = FakeDeviceStream(reads: [
-            RemoteXPCHTTP2.settingsFrame()
-                + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: response),
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
+            ),
         ])
         let client = RemoteXPCClient(stream: stream)
         try client.completeClientHandshake()
@@ -1283,8 +1179,9 @@ final class DeviceProtocolClientTests: XCTestCase {
             ])
         )
         let stream = FakeDeviceStream(reads: [
-            RemoteXPCHTTP2.settingsFrame()
-                + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: response),
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
+            ),
         ])
         let client = RemoteXPCClient(stream: stream)
         try client.completeClientHandshake()
@@ -1317,8 +1214,9 @@ final class DeviceProtocolClientTests: XCTestCase {
             ])
         )
         let stream = FakeDeviceStream(reads: [
-            RemoteXPCHTTP2.settingsFrame()
-                + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: response),
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
+            ),
         ])
         let client = RemoteXPCClient(stream: stream)
         try client.completeClientHandshake()
@@ -1361,8 +1259,9 @@ final class DeviceProtocolClientTests: XCTestCase {
             payload: remotePeerInfoValue()
         )
         let stream = FakeDeviceStream(reads: [
-            RemoteXPCHTTP2.settingsFrame()
-                + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: response),
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: response)
+            ),
         ])
         var requestedHost: String?
         var requestedPort: Int?
@@ -1379,121 +1278,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(peerInfo.uniqueDeviceID, "00008110-001234")
         XCTAssertTrue(stream.closed)
         XCTAssertTrue(stream.writes[0].starts(with: RemoteXPCHTTP2.connectionPreface))
-    }
-
-    func testCoreDeviceTunnelRuntimeStartsBridgeAndFetchesPeerInfo() throws {
-        let handshake = CoreDeviceTunnelHandshake(
-            serverAddress: "fd7b:e5b:6f53::1",
-            serverRSDPort: 58_783,
-            clientAddress: "fd7b:e5b:6f53::2",
-            clientMTU: 16_000
-        )
-        let devicePacket = ipv6Packet(body: Data([0x10]))
-        let interfacePacket = ipv6Packet(body: Data([0x20]))
-        let tunnel = FakeCoreDeviceTunnel(handshake: handshake, reads: [devicePacket])
-        let networkInterface = FakeNamedIPv6PacketIO(interfaceName: "utun42", reads: [interfacePacket])
-        var openedUDID: String?
-        var appliedConfig: CoreDeviceTunnelInterfaceConfig?
-        var rsdHost: String?
-        var rsdPort: Int?
-        let runtime = CoreDeviceTunnelRuntime(
-            dependencies: CoreDeviceTunnelRuntime.Dependencies(
-                openTunnel: {
-                    openedUDID = $0
-                    return tunnel
-                },
-                openInterface: { networkInterface },
-                configureInterface: {
-                    appliedConfig = $0
-                },
-                connectRSD: { host, port in
-                    rsdHost = host
-                    rsdPort = port
-                    return try RemoteXPCPeerInfo.decode(self.remotePeerInfoValue())
-                }
-            ),
-            bridgeReadTimeoutSeconds: 0.001
-        )
-
-        let session = try runtime.start(udid: "REAL-UDID", mtu: 12_000)
-
-        XCTAssertEqual(openedUDID, "REAL-UDID")
-        XCTAssertEqual(tunnel.requestedMTU, 12_000)
-        XCTAssertEqual(appliedConfig?.interfaceName, "utun42")
-        XCTAssertEqual(appliedConfig?.clientAddress, handshake.clientAddress)
-        XCTAssertEqual(rsdHost, handshake.serverAddress)
-        XCTAssertEqual(rsdPort, handshake.serverRSDPort)
-        XCTAssertEqual(session.peerInfo?.uniqueDeviceID, "00008110-001234")
-        XCTAssertTrue(waitUntil {
-            networkInterface.writes.contains(devicePacket) && tunnel.writes.contains(interfacePacket)
-        })
-        XCTAssertNil(session.bridgeErrorDescription)
-
-        session.close()
-        XCTAssertTrue(session.waitForPacketBridgeToStop())
-        XCTAssertTrue(tunnel.isClosed)
-        XCTAssertTrue(networkInterface.isClosed)
-    }
-
-    func testCoreDeviceTunnelRuntimeClosesResourcesWhenInterfaceConfigurationFails() throws {
-        let handshake = CoreDeviceTunnelHandshake(
-            serverAddress: "fd7b:e5b:6f53::1",
-            serverRSDPort: 58_783,
-            clientAddress: "fd7b:e5b:6f53::2",
-            clientMTU: 16_000
-        )
-        let tunnel = FakeCoreDeviceTunnel(handshake: handshake, reads: [])
-        let networkInterface = FakeNamedIPv6PacketIO(interfaceName: "utun42", reads: [])
-        var didConnectRSD = false
-        let runtime = CoreDeviceTunnelRuntime(
-            dependencies: CoreDeviceTunnelRuntime.Dependencies(
-                openTunnel: { _ in tunnel },
-                openInterface: { networkInterface },
-                configureInterface: { _ in
-                    throw CLIParseError.invalidValue("ifconfig failed")
-                },
-                connectRSD: { _, _ in
-                    didConnectRSD = true
-                    return try RemoteXPCPeerInfo.decode(self.remotePeerInfoValue())
-                }
-            ),
-            bridgeReadTimeoutSeconds: 0.001
-        )
-
-        XCTAssertThrowsError(try runtime.start(udid: "REAL-UDID")) { error in
-            XCTAssertTrue(String(describing: error).contains("ifconfig failed"))
-        }
-        XCTAssertFalse(didConnectRSD)
-        XCTAssertTrue(tunnel.isClosed)
-        XCTAssertTrue(networkInterface.isClosed)
-    }
-
-    func testCoreDeviceTunnelRuntimeClosesSessionWhenRSDConnectFails() throws {
-        let handshake = CoreDeviceTunnelHandshake(
-            serverAddress: "fd7b:e5b:6f53::1",
-            serverRSDPort: 58_783,
-            clientAddress: "fd7b:e5b:6f53::2",
-            clientMTU: 16_000
-        )
-        let tunnel = FakeCoreDeviceTunnel(handshake: handshake, reads: [])
-        let networkInterface = FakeNamedIPv6PacketIO(interfaceName: "utun42", reads: [])
-        let runtime = CoreDeviceTunnelRuntime(
-            dependencies: CoreDeviceTunnelRuntime.Dependencies(
-                openTunnel: { _ in tunnel },
-                openInterface: { networkInterface },
-                configureInterface: { _ in },
-                connectRSD: { _, _ in
-                    throw CLIParseError.invalidValue("RSD unavailable")
-                }
-            ),
-            bridgeReadTimeoutSeconds: 0.001
-        )
-
-        XCTAssertThrowsError(try runtime.start(udid: "REAL-UDID")) { error in
-            XCTAssertTrue(String(describing: error).contains("RSD unavailable"))
-        }
-        XCTAssertTrue(tunnel.isClosed)
-        XCTAssertTrue(networkInterface.isClosed)
     }
 
     func testCoreDeviceURLLauncherOpensSpringBoardWithPayloadURL() throws {
@@ -1513,7 +1297,7 @@ final class DeviceProtocolClientTests: XCTestCase {
 
         try launcher.open(url: "https://example.com", udid: "REAL-UDID")
 
-        XCTAssertEqual(openedHost, session.handshake.serverAddress)
+        XCTAssertEqual(openedHost, session.serverAddress)
         XCTAssertEqual(appService.launchedBundleIDs, ["com.apple.springboard"])
         XCTAssertEqual(appService.launches.first?.payloadURL, "https://example.com")
         XCTAssertEqual(appService.launches.first?.activates, true)
@@ -1936,24 +1720,8 @@ final class DeviceProtocolClientTests: XCTestCase {
         ])
     }
 
-    private func makeTunnelSession(peerInfo: RemoteXPCPeerInfo) throws -> CoreDeviceTunnelSession {
-        let handshake = CoreDeviceTunnelHandshake(
-            serverAddress: "fd7b:e5b:6f53::1",
-            serverRSDPort: 58_783,
-            clientAddress: "fd7b:e5b:6f53::2",
-            clientMTU: 16_000
-        )
-        let session = CoreDeviceTunnelSession(
-            handshake: handshake,
-            interfaceConfig: CoreDeviceTunnelInterfaceConfig(interfaceName: "utun42", handshake: handshake),
-            bridge: CoreDeviceTunnelBridge(
-                device: FakeIPv6PacketIO(reads: []),
-                networkInterface: FakeIPv6PacketIO(reads: [])
-            ),
-            bridgeReadTimeoutSeconds: 0.001
-        )
-        session.peerInfo = peerInfo
-        return session
+    private func makeTunnelSession(peerInfo: RemoteXPCPeerInfo) throws -> FakeCoreDeviceLifecycleTunnelSession {
+        FakeCoreDeviceLifecycleTunnelSession(stream: FakeDeviceStream(reads: []), peerInfo: peerInfo)
     }
 
     private func http2Frames(_ data: Data) throws -> [RemoteXPCHTTP2Frame] {
@@ -1969,6 +1737,16 @@ final class DeviceProtocolClientTests: XCTestCase {
         return frames
     }
 
+    private func remoteXPCInitializationResponses(additional: Data = Data()) -> Data {
+        let rootAck = RemoteXPCWrapper.encodeEmpty(messageID: 0, flags: RemoteXPCFlags.alwaysSet)
+        let replyAck = RemoteXPCWrapper.encodeEmpty(messageID: 0, flags: RemoteXPCFlags.alwaysSet)
+        return RemoteXPCHTTP2.settingsFrame()
+            + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: rootAck)
+            + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: replyAck)
+            + RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.rootStreamID, payload: rootAck)
+            + additional
+    }
+
     private func waitUntil(timeoutSeconds: Double = 1, _ condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
@@ -1978,6 +1756,11 @@ final class DeviceProtocolClientTests: XCTestCase {
             usleep(5_000)
         }
         return condition()
+    }
+
+    private func uuidData(_ uuid: UUID) -> Data {
+        var value = uuid.uuid
+        return withUnsafeBytes(of: &value) { Data($0) }
     }
 }
 
@@ -2290,51 +2073,43 @@ private final class FakeCoreDeviceAppService: CoreDeviceAppManaging {
     }
 }
 
-private final class FakeNamedIPv6PacketIO: NamedIPv6PacketIO {
-    let interfaceName: String
-    private let lock = NSLock()
-    private var reads: [Data]
-    private var writesStorage: [Data] = []
-    private var closed = false
-
-    var writes: [Data] {
-        lock.lock()
-        defer { lock.unlock() }
-        return writesStorage
+private final class FakeXCTestRunnerAppService: XCTestRunnerAppServicing {
+    struct Launch: Equatable {
+        let bundleID: String
+        let arguments: [String]
+        let environment: [String: String]
+        let standardIOIdentifier: UUID?
     }
 
-    var isClosed: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return closed
+    let pid: Int
+    private(set) var launches: [Launch] = []
+    private(set) var killedProcessIdentifiers: [Int] = []
+    private(set) var closed = false
+
+    init(pid: Int) {
+        self.pid = pid
     }
 
-    init(interfaceName: String, reads: [Data]) {
-        self.interfaceName = interfaceName
-        self.reads = reads
+    func launchXCTestRunner(
+        bundleID: String,
+        arguments: [String],
+        environment: [String: String],
+        standardIOIdentifier: UUID?
+    ) throws -> Int {
+        launches.append(Launch(
+            bundleID: bundleID,
+            arguments: arguments,
+            environment: environment,
+            standardIOIdentifier: standardIOIdentifier
+        ))
+        return pid
     }
 
-    func readIPv6Packet(timeoutSeconds: Double) throws -> Data {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !reads.isEmpty else {
-            if closed {
-                throw CLIParseError.invalidValue("fake interface closed")
-            }
-            throw DeviceStreamError.timeout("fake interface read")
-        }
-        return reads.removeFirst()
-    }
-
-    func writeIPv6Packet(_ packet: Data) throws {
-        lock.lock()
-        writesStorage.append(packet)
-        lock.unlock()
+    func kill(processIdentifier: Int) throws {
+        killedProcessIdentifiers.append(processIdentifier)
     }
 
     func close() {
-        lock.lock()
         closed = true
-        lock.unlock()
     }
 }
