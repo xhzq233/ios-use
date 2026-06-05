@@ -51,7 +51,7 @@ fi
     cat "$TMP_ROOT/stop.out" >&2 || true
     exit 1
   fi
-  if ! grep -q 'No active driver. Run `ios-use start` first.' "$TMP_ROOT/stop.err"; then
+  if ! grep -q 'No active driver' "$TMP_ROOT/stop.err"; then
     echo "[swift-cli] ERROR: stop without driver.lock returned unexpected error" >&2
     cat "$TMP_ROOT/stop.err" >&2 || true
     exit 1

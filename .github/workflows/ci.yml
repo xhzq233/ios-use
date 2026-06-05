@@ -58,7 +58,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-swift-cli-
 
-      - name: Run Swift CLI unit tests
+      - name: Run Swift CLI tests and smoke checks
         run: bash scripts/test_swift_cli.sh
 
   driver-unit-tests:

@@ -24,7 +24,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | --- | --- |
 | `scripts/ci_test.sh [--skip-builds] [--skip-driver-sim-build]` | Main local Swift-only gate: script syntax checks, Swift CLI tests, driver tests, Swift CLI Release build, and Simulator driver build. Release CI uses `--skip-builds` to avoid duplicate artifact builds. |
 | `scripts/ci_full_simulator.sh --driver-ipa <path> [--case CASES]` | Main full Simulator regression entry. Builds the Swift CLI, uses the caller-selected Simulator driver IPA, and runs the Node Simulator command matrix. |
-| `scripts/test_swift_cli.sh` | Run Swift CLI unit tests. |
+| `scripts/test_swift_cli.sh` | Run Swift CLI unit tests plus installed-style CLI/nslog smoke checks and static driver log/version-stamp guards. |
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
 | `scripts/test_simulator_commands.mjs` | Node-based Simulator command case runner used by full Simulator validation. |
 | `scripts/ios_use_test_simulator.js` | Shared helper used by driver unit tests and Simulator command tests to create/boot the fixed `IOSUseTest` Simulator. |
@@ -42,7 +42,7 @@ bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa
 bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case FIND-1B
 ```
 
-GitHub CI uses `.github/workflows/ci.yml` for the default gate and runs script syntax, Swift CLI tests, driver unit tests, and artifact builds in parallel jobs. The full UI replay lives in `.github/workflows/simulator.yml` and is manual-only.
+GitHub CI uses `.github/workflows/ci.yml` for the default gate and runs script syntax, Swift CLI tests/smoke checks, and driver unit tests in parallel jobs. The full UI replay lives in `.github/workflows/simulator.yml` and is manual-only.
 
 ## Install And Benchmark
 
