@@ -4,6 +4,21 @@ protocol RealDeviceURLLaunching {
     func open(url: String, udid: String) throws
 }
 
+protocol CoreDeviceAppManaging {
+    func launchApplication(
+        bundleID: String,
+        arguments: [String],
+        terminateExisting: Bool,
+        startSuspended: Bool,
+        environment: [String: String],
+        payloadURL: String?,
+        activates: Bool?
+    ) throws -> RemoteXPCValue
+    func close()
+}
+
+extension CoreDeviceAppService: CoreDeviceAppManaging {}
+
 final class CoreDeviceURLLauncher: RealDeviceURLLaunching {
     struct Dependencies {
         var startTunnel: (String) throws -> CoreDeviceLifecycleTunnelSession
