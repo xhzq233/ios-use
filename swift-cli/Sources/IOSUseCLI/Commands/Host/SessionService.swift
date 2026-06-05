@@ -12,6 +12,7 @@ public enum SessionService {
         public let startMode: String?
         public let sessionIdentifier: String?
         public let bundleId: String?
+        public let controlSocketPath: String?
 
         public init(
             udid: String,
@@ -23,7 +24,8 @@ public enum SessionService {
             runnerPid: Int? = nil,
             startMode: String? = nil,
             sessionIdentifier: String? = nil,
-            bundleId: String? = nil
+            bundleId: String? = nil,
+            controlSocketPath: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
@@ -35,6 +37,7 @@ public enum SessionService {
             self.startMode = startMode
             self.sessionIdentifier = sessionIdentifier
             self.bundleId = bundleId
+            self.controlSocketPath = controlSocketPath
         }
 
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
@@ -48,7 +51,8 @@ public enum SessionService {
                 runnerPid: metadata.runnerPid,
                 startMode: startMode,
                 sessionIdentifier: metadata.sessionIdentifier,
-                bundleId: metadata.bundleId ?? bundleId
+                bundleId: metadata.bundleId ?? bundleId,
+                controlSocketPath: metadata.controlSocketPath ?? controlSocketPath
             )
         }
     }

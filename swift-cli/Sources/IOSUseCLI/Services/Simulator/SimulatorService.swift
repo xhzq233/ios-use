@@ -84,7 +84,7 @@ enum SimulatorService {
             if isReachable() {
                 return
             }
-            usleep(useconds_t(IOSUseProtocol.driverStartReadinessPollIntervalMicroseconds))
+            usleep(useconds_t(IOSUseProtocol.simulatorDriverStartPollIntervalMicroseconds))
         }
         throw CLIParseError.invalidValue("Simulator driver launched but port \(IOSUseProtocol.defaultDriverPort) did not become reachable for \(udid)")
     }

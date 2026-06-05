@@ -163,6 +163,8 @@ final class DriverClient: DriverCommandClient {
     private let deviceType: String?
     private let cliLogPath: String?
     private let socketTimeoutSeconds: Int
+    private let realDeviceConnectRetryTimeoutSeconds: Double
+    private let realDeviceConnectRetryPollMicroseconds: useconds_t
     private let fory = ForyRegistry.create()
     private var fd: Int32?
     private var connectionID: Int?
@@ -173,7 +175,9 @@ final class DriverClient: DriverCommandClient {
         udid: String? = nil,
         deviceType: String? = nil,
         cliLogPath: String? = nil,
-        socketTimeoutSeconds: Int = IOSUseProtocol.commandSocketReadTimeoutSeconds
+        socketTimeoutSeconds: Int = IOSUseProtocol.commandSocketReadTimeoutSeconds,
+        realDeviceConnectRetryTimeoutSeconds: Double = IOSUseProtocol.realDeviceDriverConnectRetryTimeoutSeconds,
+        realDeviceConnectRetryPollMicroseconds: useconds_t = useconds_t(IOSUseProtocol.realDeviceDriverConnectRetryPollMicroseconds)
     ) {
         self.host = host
         self.port = port
@@ -181,6 +185,8 @@ final class DriverClient: DriverCommandClient {
         self.deviceType = deviceType
         self.cliLogPath = cliLogPath
         self.socketTimeoutSeconds = socketTimeoutSeconds
+        self.realDeviceConnectRetryTimeoutSeconds = realDeviceConnectRetryTimeoutSeconds
+        self.realDeviceConnectRetryPollMicroseconds = realDeviceConnectRetryPollMicroseconds
     }
 
     convenience init(
@@ -397,26 +403,7 @@ final class DriverClient: DriverCommandClient {
 
     private func connect() throws -> Int32 {
         if deviceType == "real", let udid {
-            do {
-                let connector = Self.usbmuxConnectorForTesting ?? { try Usbmux.connect(udid: $0, port: $1) }
-                let fd = try connector(udid, Int(port))
-                configureSocket(fd)
-                return fd
-            } catch let error as DriverClientError {
-                throw error
-            } catch let error as UsbmuxError {
-                switch error {
-                case .connectFailed:
-                    throw DriverClientError.connectFailedMessage(error.description, recoverable: true)
-                default:
-                    throw DriverClientError.connectFailedMessage(error.description, recoverable: false)
-                }
-            } catch {
-                throw DriverClientError.connectFailedMessage(
-                    String(describing: error),
-                    recoverable: false
-                )
-            }
+            return try connectRealDevice(udid: udid)
         }
 
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
@@ -440,6 +427,43 @@ final class DriverClient: DriverCommandClient {
             throw DriverClientError.connectFailed(err)
         }
         return fd
+    }
+
+    private func connectRealDevice(udid: String) throws -> Int32 {
+        let deadline = Date().addingTimeInterval(max(0, realDeviceConnectRetryTimeoutSeconds))
+        while true {
+            do {
+                return try connectRealDeviceOnce(udid: udid)
+            } catch let error as DriverClientError {
+                guard error.isRecoverableConnectFailure, Date() < deadline else {
+                    throw error
+                }
+                usleep(realDeviceConnectRetryPollMicroseconds)
+            }
+        }
+    }
+
+    private func connectRealDeviceOnce(udid: String) throws -> Int32 {
+        do {
+            let connector = Self.usbmuxConnectorForTesting ?? { try Usbmux.connect(udid: $0, port: $1) }
+            let fd = try connector(udid, Int(port))
+            configureSocket(fd)
+            return fd
+        } catch let error as DriverClientError {
+            throw error
+        } catch let error as UsbmuxError {
+            switch error {
+            case .connectFailed:
+                throw DriverClientError.connectFailedMessage(error.description, recoverable: true)
+            default:
+                throw DriverClientError.connectFailedMessage(error.description, recoverable: false)
+            }
+        } catch {
+            throw DriverClientError.connectFailedMessage(
+                String(describing: error),
+                recoverable: false
+            )
+        }
     }
 
     private func configureSocket(_ fd: Int32) {

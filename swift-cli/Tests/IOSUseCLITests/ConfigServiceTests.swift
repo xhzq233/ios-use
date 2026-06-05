@@ -149,7 +149,8 @@ final class ConfigServiceTests: XCTestCase {
                 holderPid: 456,
                 runnerPid: 789,
                 sessionIdentifier: "SESSION-1",
-                bundleId: "com.example.driver.xctrunner"
+                bundleId: "com.example.driver.xctrunner",
+                controlSocketPath: "\(root)/state/xctest-holder.sock"
             ),
             paths: paths
         )
@@ -161,8 +162,10 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNil(lock.startMode)
         XCTAssertEqual(lock.sessionIdentifier, "SESSION-1")
         XCTAssertEqual(lock.bundleId, "com.example.driver.xctrunner")
+        XCTAssertEqual(lock.controlSocketPath, "\(root)/state/xctest-holder.sock")
         let raw = try String(contentsOfFile: paths.driverLock, encoding: .utf8)
         XCTAssertFalse(raw.contains("startMode"))
+        XCTAssertTrue(raw.contains("controlSocketPath"))
     }
 
     func testDriverLockReadsLegacyStartModeForCompatibility() throws {

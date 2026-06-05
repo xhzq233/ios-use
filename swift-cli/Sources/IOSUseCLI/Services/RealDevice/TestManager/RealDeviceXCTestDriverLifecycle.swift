@@ -7,15 +7,28 @@ struct XCTestRunnerInstallInfo: Equatable {
     let testBundlePath: String
 }
 
+protocol XCTestRunnerAppServicing: AnyObject {
+    func launchXCTestRunner(
+        bundleID: String,
+        arguments: [String],
+        environment: [String: String],
+        standardIOIdentifier: UUID?
+    ) throws -> Int
+    func kill(processIdentifier: Int) throws
+    func close()
+}
+
+extension CoreDeviceAppService: XCTestRunnerAppServicing {}
+
 final class RealDeviceXCTestActiveSession {
     let sessionIdentifier: UUID
     let runnerPid: Int
 
-    private let processControl: DVTProcessControlClient
+    private let appService: XCTestRunnerAppServicing
+    private let stdioSocket: CoreDeviceOpenStdIOSocket?
     private let listener: XCTestExecCallbackListener
     private let controlListener: DTXConnectionIdleListener?
     private let execSession: XCTestManagerSession
-    private let instrumentsSession: DVTInstrumentsSession
     private let controlSession: XCTestManagerSession
     private let tunnels: [CoreDeviceLifecycleTunnelSession]
     private let eventSink: ((String) -> Void)?
@@ -25,22 +38,22 @@ final class RealDeviceXCTestActiveSession {
     init(
         sessionIdentifier: UUID,
         runnerPid: Int,
-        processControl: DVTProcessControlClient,
+        appService: XCTestRunnerAppServicing,
+        stdioSocket: CoreDeviceOpenStdIOSocket?,
         listener: XCTestExecCallbackListener,
         controlListener: DTXConnectionIdleListener?,
         execSession: XCTestManagerSession,
-        instrumentsSession: DVTInstrumentsSession,
         controlSession: XCTestManagerSession,
         tunnels: [CoreDeviceLifecycleTunnelSession],
         eventSink: ((String) -> Void)?
     ) {
         self.sessionIdentifier = sessionIdentifier
         self.runnerPid = runnerPid
-        self.processControl = processControl
+        self.appService = appService
+        self.stdioSocket = stdioSocket
         self.listener = listener
         self.controlListener = controlListener
         self.execSession = execSession
-        self.instrumentsSession = instrumentsSession
         self.controlSession = controlSession
         self.tunnels = tunnels
         self.eventSink = eventSink
@@ -57,15 +70,16 @@ final class RealDeviceXCTestActiveSession {
 
         if killRunner {
             eventSink?("closing XCTest session; killing runner pid=\(runnerPid)")
-            try? processControl.kill(pid: runnerPid)
+            try? appService.kill(processIdentifier: runnerPid)
         } else {
             eventSink?("closing XCTest session; leaving runner pid=\(runnerPid)")
         }
+        stdioSocket?.close()
         controlListener?.stop()
         listener.stop()
         controlSession.close()
         execSession.close()
-        instrumentsSession.close()
+        appService.close()
         for tunnel in tunnels {
             tunnel.close()
         }
@@ -99,8 +113,8 @@ final class RealDeviceXCTestDriverLifecycle {
         var resolveRunnerInfo: (String, String) throws -> XCTestRunnerInstallInfo
         var productMajorVersion: (String) throws -> Int
         var makeSessionIdentifier: () -> UUID
-        var isDriverPortReachable: (String) -> Bool
-        var sleep: (useconds_t) -> Void
+        var openAppService: (CoreDeviceLifecycleTunnelSession) throws -> XCTestRunnerAppServicing
+        var openStdIOSocket: (CoreDeviceLifecycleTunnelSession) throws -> CoreDeviceOpenStdIOSocket
 
         static let live = live(eventSink: nil)
 
@@ -119,14 +133,12 @@ final class RealDeviceXCTestDriverLifecycle {
                     return major
                 },
                 makeSessionIdentifier: { UUID() },
-                isDriverPortReachable: { udid in
-                    guard let fd = try? Usbmux.connect(udid: udid, port: Int(IOSUseProtocol.defaultDriverPort)) else {
-                        return false
-                    }
-                    RealDeviceXCTestDriverLifecycle.closeReadinessProbeSocket(fd)
-                    return true
+                openAppService: { session in
+                    CoreDeviceAppService(client: try session.connectRemoteXPCService(CoreDeviceAppService.serviceName))
                 },
-                sleep: { usleep($0) }
+                openStdIOSocket: { session in
+                    try CoreDeviceOpenStdIOSocket.connect(session: session)
+                }
             )
         }
 
@@ -164,7 +176,7 @@ final class RealDeviceXCTestDriverLifecycle {
         self.init(dependencies: .live(eventSink: eventSink), eventSink: eventSink)
     }
 
-    func startDriverSession(udid: String, bundleID: String, timeoutSeconds: Double = 30) throws -> RealDeviceXCTestActiveSession {
+    func startDriverSession(udid: String, bundleID: String) throws -> RealDeviceXCTestActiveSession {
         let productMajorVersion = try dependencies.productMajorVersion(udid)
         eventSink?("testmanagerd product major version=\(productMajorVersion)")
         guard productMajorVersion >= 17 else {
@@ -175,17 +187,23 @@ final class RealDeviceXCTestDriverLifecycle {
         eventSink?("resolved test bundle=\(runnerInfo.testBundlePath)")
 
         var launchedPid: Int?
-        var processControl: DVTProcessControlClient?
+        var appService: XCTestRunnerAppServicing?
+        var stdioSocket: CoreDeviceOpenStdIOSocket?
         var listener: XCTestExecCallbackListener?
         var controlListener: DTXConnectionIdleListener?
         var execSession: XCTestManagerSession?
-        var instrumentsSession: DVTInstrumentsSession?
         var controlSession: XCTestManagerSession?
         var execTunnel: CoreDeviceLifecycleTunnelSession?
-        var processTunnel: CoreDeviceLifecycleTunnelSession?
-        var controlTunnel: CoreDeviceLifecycleTunnelSession?
         do {
-            let openedExecTunnel = try startValidatedTunnel(udid: udid, logPeerInfo: true)
+            let openedExecTunnel = try startValidatedTunnel(
+                udid: udid,
+                requiredServices: [
+                    DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
+                    CoreDeviceAppService.serviceName,
+                    CoreDeviceOpenStdIOSocket.serviceName,
+                ],
+                logPeerInfo: true
+            )
             execTunnel = openedExecTunnel
 
             eventSink?("opening XCTest exec session")
@@ -201,29 +219,28 @@ final class RealDeviceXCTestDriverLifecycle {
             eventSink?("initiating XCTest exec session id=\(sessionIdentifier.uuidString)")
             try execDaemon.initiateExecSession(sessionIdentifier: sessionIdentifier)
 
-            let openedProcessTunnel = try startValidatedTunnel(udid: udid, logPeerInfo: false)
-            processTunnel = openedProcessTunnel
+            eventSink?("opening CoreDevice AppService")
+            let openedAppService = try dependencies.openAppService(openedExecTunnel)
+            appService = openedAppService
 
-            eventSink?("opening DVT ProcessControl")
-            let openedInstrumentsSession = DVTInstrumentsSession(stream: try openedProcessTunnel.connectService(DVTInstrumentsContract.Provider.rsdServiceName))
-            instrumentsSession = openedInstrumentsSession
-            try openedInstrumentsSession.connect()
-            processControl = try openedInstrumentsSession.openProcessControl()
+            eventSink?("opening CoreDevice openstdio socket")
+            let openedStdIOSocket = try dependencies.openStdIOSocket(openedExecTunnel)
+            stdioSocket = openedStdIOSocket
+            openedStdIOSocket.startDraining(eventSink: eventSink)
 
             let environment = Self.launchEnvironment(
                 testBundlePath: runnerInfo.testBundlePath,
                 sessionIdentifier: sessionIdentifier
             )
-            eventSink?("launching XCTest runner through DVT ProcessControl")
-            let pid = abs(try processControl!.launch(
+            eventSink?("launching XCTest runner through CoreDevice AppService")
+            let pid = try openedAppService.launchXCTestRunner(
                 bundleID: bundleID,
-                environment: environment,
                 arguments: [],
-                killExisting: true,
-                startSuspended: false
-            ))
+                environment: environment,
+                standardIOIdentifier: openedStdIOSocket.identifier
+            )
             launchedPid = pid
-            eventSink?("ProcessControl launched runner pid=\(pid)")
+            eventSink?("AppService launched runner pid=\(pid)")
 
             let configuration = try XCTestConfigurationPayload(
                 testBundlePath: runnerInfo.testBundlePath,
@@ -237,11 +254,8 @@ final class RealDeviceXCTestDriverLifecycle {
             listener = openedListener
             openedListener.start()
 
-            let openedControlTunnel = try startValidatedTunnel(udid: udid, logPeerInfo: false)
-            controlTunnel = openedControlTunnel
-
             eventSink?("opening XCTest control session")
-            let openedControlSession = XCTestManagerSession(stream: try openedControlTunnel.connectService(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName))
+            let openedControlSession = XCTestManagerSession(stream: try openedExecTunnel.connectService(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName))
             controlSession = openedControlSession
             try openedControlSession.connect()
             let controlDaemon = try openedControlSession.openDaemonConnection()
@@ -267,57 +281,57 @@ final class RealDeviceXCTestDriverLifecycle {
             eventSink?("starting XCTest test plan")
             try execDaemon.startExecutingTestPlan()
 
-            try waitForDriverReadiness(udid: udid, timeoutSeconds: timeoutSeconds)
-            eventSink?("driver port became reachable")
-            guard let processControl,
+            guard let appService,
                   let listener,
                   let execSession,
-                  let instrumentsSession,
                   let controlSession,
-                  let execTunnel,
-                  let processTunnel,
-                  let controlTunnel else {
+                  let execTunnel else {
                 throw CLIParseError.invalidValue("XCTest active session was incomplete after launch")
             }
             return RealDeviceXCTestActiveSession(
                 sessionIdentifier: sessionIdentifier,
                 runnerPid: pid,
-                processControl: processControl,
+                appService: appService,
+                stdioSocket: stdioSocket,
                 listener: listener,
                 controlListener: controlListener,
                 execSession: execSession,
-                instrumentsSession: instrumentsSession,
                 controlSession: controlSession,
-                tunnels: [execTunnel, processTunnel, controlTunnel],
+                tunnels: [execTunnel],
                 eventSink: eventSink
             )
         } catch {
             if let pid = launchedPid {
                 eventSink?("XCTest start failed; cleaning launched pid=\(pid)")
-                try? processControl?.kill(pid: pid)
-                _ = waitUntilDriverPortUnreachable(udid: udid)
+                try? appService?.kill(processIdentifier: pid)
             }
+            stdioSocket?.close()
             listener?.stop()
             controlListener?.stop()
             controlSession?.close()
             execSession?.close()
-            instrumentsSession?.close()
-            for tunnel in [execTunnel, processTunnel, controlTunnel].compactMap({ $0 }) {
+            appService?.close()
+            for tunnel in [execTunnel].compactMap({ $0 }) {
                 tunnel.close()
             }
-            for tunnel in [execTunnel, processTunnel, controlTunnel].compactMap({ $0 }) {
+            for tunnel in [execTunnel].compactMap({ $0 }) {
                 _ = tunnel.waitForClose(timeoutSeconds: 1)
             }
             throw error
         }
     }
 
-    private func validateRequiredServices(_ peerInfo: RemoteXPCPeerInfo) throws {
-        _ = try peerInfo.servicePort(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName)
-        _ = try peerInfo.servicePort(DVTInstrumentsContract.Provider.rsdServiceName)
+    private func validateRequiredServices(_ serviceNames: [String], peerInfo: RemoteXPCPeerInfo) throws {
+        for serviceName in serviceNames {
+            _ = try peerInfo.servicePort(serviceName)
+        }
     }
 
-    private func startValidatedTunnel(udid: String, logPeerInfo shouldLogPeerInfo: Bool) throws -> CoreDeviceLifecycleTunnelSession {
+    private func startValidatedTunnel(
+        udid: String,
+        requiredServices: [String],
+        logPeerInfo shouldLogPeerInfo: Bool
+    ) throws -> CoreDeviceLifecycleTunnelSession {
         let tunnel = try dependencies.startTunnel(udid)
         do {
             guard let peerInfo = tunnel.peerInfo else {
@@ -326,7 +340,7 @@ final class RealDeviceXCTestDriverLifecycle {
             if shouldLogPeerInfo {
                 logPeerInfo(peerInfo)
             }
-            try validateRequiredServices(peerInfo)
+            try validateRequiredServices(requiredServices, peerInfo: peerInfo)
             return tunnel
         } catch {
             tunnel.close()
@@ -335,36 +349,17 @@ final class RealDeviceXCTestDriverLifecycle {
         }
     }
 
-    private func waitForDriverReadiness(udid: String, timeoutSeconds: Double) throws {
-        let deadline = Date().addingTimeInterval(timeoutSeconds)
-        dependencies.sleep(useconds_t(IOSUseProtocol.driverStartReadinessInitialDelayMicroseconds))
-        while Date() < deadline {
-            if dependencies.isDriverPortReachable(udid) {
-                return
-            }
-            dependencies.sleep(useconds_t(IOSUseProtocol.driverStartReadinessPollIntervalMicroseconds))
-        }
-        throw CLIParseError.invalidValue("XCTest started driver but port \(IOSUseProtocol.defaultDriverPort) did not become reachable on device \(udid)")
-    }
-
-    private func waitUntilDriverPortUnreachable(udid: String) -> Bool {
-        for _ in 0..<10 {
-            if !dependencies.isDriverPortReachable(udid) {
-                return true
-            }
-            dependencies.sleep(useconds_t(IOSUseProtocol.driverStartReadinessPollIntervalMicroseconds))
-        }
-        return false
-    }
-
     private func logPeerInfo(_ peerInfo: RemoteXPCPeerInfo) {
         let serviceNames = peerInfo.services.keys.sorted()
         eventSink?("RSD services: \(serviceNames.joined(separator: ", "))")
         if let testmanager = peerInfo.services[DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName] {
             eventSink?("testmanagerd port=\(testmanager.port)")
         }
-        if let instruments = peerInfo.services[DVTInstrumentsContract.Provider.rsdServiceName] {
-            eventSink?("instruments dtservicehub port=\(instruments.port)")
+        if let appservice = peerInfo.services[CoreDeviceAppService.serviceName] {
+            eventSink?("appservice port=\(appservice.port)")
+        }
+        if let openstdio = peerInfo.services[CoreDeviceOpenStdIOSocket.serviceName] {
+            eventSink?("openstdio port=\(openstdio.port)")
         }
     }
 
@@ -386,11 +381,4 @@ final class RealDeviceXCTestDriverLifecycle {
         ]
     }
 
-    private static func closeReadinessProbeSocket(_ fd: Int32) {
-        var lingerOption = linger(l_onoff: 1, l_linger: 0)
-        _ = Darwin.setsockopt(fd, SOL_SOCKET, SO_LINGER, &lingerOption, UInt32(MemoryLayout<linger>.size))
-        usleep(useconds_t(IOSUseProtocol.driverStartReadinessProbeHoldMicroseconds))
-        _ = Darwin.shutdown(fd, SHUT_RDWR)
-        Darwin.close(fd)
-    }
 }

@@ -1,5 +1,9 @@
 import Foundation
 
+private enum DTXIdleTrace {
+    static let enabled = ProcessInfo.processInfo.environment["IOS_USE_COREDEVICE_TRACE"] == "1"
+}
+
 struct DTXConnectionIdleListenerFailure: Error, CustomStringConvertible {
     let name: String
     let underlying: Error
@@ -78,7 +82,7 @@ final class DTXConnectionIdleListener {
             return
         }
         let selector = try DTXStreamTransport.unarchivePayload(message.payload) as? String
-        if let selector {
+        if DTXIdleTrace.enabled, let selector {
             eventSink?("\(name) idle callback \(selector)")
         }
         if message.transportFlags & DTXTransportFlag.expectsReply != 0 {

@@ -370,42 +370,6 @@ enum DVTInstrumentsContract {
         }
     }
 
-    enum ProcessControl {
-        static let serviceIdentifier = "com.apple.instruments.server.services.processcontrol"
-
-        static func launch(
-            bundleID: String,
-            environment: [String: String],
-            arguments: [String],
-            killExisting: Bool,
-            startSuspended: Bool
-        ) throws -> DVTInvocation {
-            try DVTInvocation(
-                serviceIdentifier: serviceIdentifier,
-                selector: "launchSuspendedProcessWithDevicePath:bundleIdentifier:environment:arguments:options:",
-                arguments: [
-                    .archived(""),
-                    .archived(bundleID),
-                    .archived(environment),
-                    .archived(arguments),
-                    .archived([
-                        "KillExisting": killExisting,
-                        "StartSuspendedKey": startSuspended,
-                    ]),
-                ],
-                expectsReply: true
-            )
-        }
-
-        static func kill(pid: Int) throws -> DVTInvocation {
-            try DVTInvocation(
-                serviceIdentifier: serviceIdentifier,
-                selector: "killPid:",
-                arguments: [.archived(pid)],
-                expectsReply: false
-            )
-        }
-    }
 }
 
 private func uint16LE(_ value: UInt16) -> Data {

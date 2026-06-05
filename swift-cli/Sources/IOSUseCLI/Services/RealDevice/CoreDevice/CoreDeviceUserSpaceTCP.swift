@@ -1,6 +1,10 @@
 import Darwin
 import Foundation
 
+private enum CoreDeviceTCPTrace {
+    static let enabled = ProcessInfo.processInfo.environment["IOS_USE_COREDEVICE_TRACE"] == "1"
+}
+
 enum CoreDeviceTCPError: Error, CustomStringConvertible, Equatable {
     case invalidIPv6Address(String)
     case invalidIPv6Packet(String)
@@ -289,6 +293,7 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
             try? sendSegment(flags: CoreDeviceTCPFlags.fin | CoreDeviceTCPFlags.ack)
             sendSequence &+= 1
         }
+        (tunnel as? CoreDeviceRoutedIPv6PacketIO)?.close()
         closed = true
         connected = false
     }
@@ -343,10 +348,14 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
                   segment.destinationAddress == localAddress,
                   segment.sourcePort == remotePort,
                   segment.destinationPort == localPort else {
-                eventSink?("TCP ignored packet srcPort=\(segment.sourcePort) dstPort=\(segment.destinationPort) flags=0x\(String(segment.flags, radix: 16)) bytes=\(segment.payload.count)")
+                if CoreDeviceTCPTrace.enabled {
+                    eventSink?("TCP ignored packet srcPort=\(segment.sourcePort) dstPort=\(segment.destinationPort) flags=0x\(String(segment.flags, radix: 16)) bytes=\(segment.payload.count)")
+                }
                 return nil
             }
-            eventSink?("TCP received flags=0x\(String(segment.flags, radix: 16)) seq=\(segment.sequenceNumber) ack=\(segment.acknowledgmentNumber) bytes=\(segment.payload.count)")
+            if CoreDeviceTCPTrace.enabled {
+                eventSink?("TCP received flags=0x\(String(segment.flags, radix: 16)) seq=\(segment.sequenceNumber) ack=\(segment.acknowledgmentNumber) bytes=\(segment.payload.count)")
+            }
             return segment
         } catch CoreDeviceTCPError.invalidIPv6Packet {
             return nil
@@ -372,13 +381,227 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
             flags: flags,
             payload: payload
         )
-        eventSink?("TCP send flags=0x\(String(flags, radix: 16)) seq=\(sendSequence) ack=\(receiveSequence) bytes=\(payload.count)")
+        if CoreDeviceTCPTrace.enabled {
+            eventSink?("TCP send flags=0x\(String(flags, radix: 16)) seq=\(sendSequence) ack=\(receiveSequence) bytes=\(payload.count)")
+        }
         try tunnel.writeIPv6Packet(packet)
         if flags & CoreDeviceTCPFlags.ack != 0 {
             pendingAck = false
         }
     }
 
+}
+
+private final class CoreDeviceDirectTunnelPacketRouter {
+    private let tunnel: CoreDeviceTunnel
+    private let eventSink: ((String) -> Void)?
+    private let routeLock = NSLock()
+    private let writeLock = NSLock()
+    private var routes: [UInt16: CoreDeviceRoutedIPv6PacketIO] = [:]
+    private var started = false
+    private var closed = false
+    private var failure: Error?
+
+    init(tunnel: CoreDeviceTunnel, eventSink: ((String) -> Void)?) {
+        self.tunnel = tunnel
+        self.eventSink = eventSink
+    }
+
+    func openRoute(localPort: UInt16) -> CoreDeviceRoutedIPv6PacketIO {
+        routeLock.lock()
+        defer { routeLock.unlock() }
+        let route = CoreDeviceRoutedIPv6PacketIO(localPort: localPort, router: self)
+        routes[localPort] = route
+        if let failure {
+            route.fail(failure)
+        } else if closed {
+            route.closeFromRouter()
+        } else if !started {
+            started = true
+            startReader()
+        }
+        return route
+    }
+
+    func unregister(localPort: UInt16) {
+        routeLock.lock()
+        routes.removeValue(forKey: localPort)
+        routeLock.unlock()
+    }
+
+    func writeIPv6Packet(_ packet: Data) throws {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        try tunnel.writeIPv6Packet(packet)
+    }
+
+    func close() {
+        let currentRoutes: [CoreDeviceRoutedIPv6PacketIO]
+        routeLock.lock()
+        if closed {
+            routeLock.unlock()
+            return
+        }
+        closed = true
+        currentRoutes = Array(routes.values)
+        routes.removeAll()
+        routeLock.unlock()
+
+        for route in currentRoutes {
+            route.closeFromRouter()
+        }
+    }
+
+    private func startReader() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.readLoop()
+        }
+    }
+
+    private func readLoop() {
+        while true {
+            if isClosed {
+                return
+            }
+            do {
+                let packet = try tunnel.readIPv6Packet(timeoutSeconds: 1)
+                try dispatch(packet)
+            } catch CoreDeviceTCPError.connectionTimeout {
+                continue
+            } catch let error as DeviceStreamError where error.isTimeout {
+                continue
+            } catch {
+                if isClosed {
+                    return
+                }
+                failAll(error)
+                return
+            }
+        }
+    }
+
+    private var isClosed: Bool {
+        routeLock.lock()
+        defer { routeLock.unlock() }
+        return closed
+    }
+
+    private func dispatch(_ packet: Data) throws {
+        let segment: CoreDeviceTCPSegment
+        do {
+            segment = try CoreDeviceIPv6TCPCodec.decodeSegment(packet)
+        } catch CoreDeviceTCPError.invalidIPv6Packet {
+            return
+        } catch CoreDeviceTCPError.invalidTCPPacket {
+            return
+        }
+
+        routeLock.lock()
+        let route = routes[segment.destinationPort]
+        routeLock.unlock()
+
+        guard let route else {
+            if CoreDeviceTCPTrace.enabled {
+                eventSink?("TCP router ignored packet srcPort=\(segment.sourcePort) dstPort=\(segment.destinationPort) flags=0x\(String(segment.flags, radix: 16)) bytes=\(segment.payload.count)")
+            }
+            return
+        }
+        route.enqueue(packet)
+    }
+
+    private func failAll(_ error: Error) {
+        let currentRoutes: [CoreDeviceRoutedIPv6PacketIO]
+        routeLock.lock()
+        if failure == nil {
+            failure = error
+        }
+        currentRoutes = Array(routes.values)
+        routeLock.unlock()
+
+        for route in currentRoutes {
+            route.fail(error)
+        }
+    }
+}
+
+private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
+    private let localPort: UInt16
+    private weak var router: CoreDeviceDirectTunnelPacketRouter?
+    private let condition = NSCondition()
+    private var packets: [Data] = []
+    private var closed = false
+    private var failure: Error?
+
+    init(localPort: UInt16, router: CoreDeviceDirectTunnelPacketRouter) {
+        self.localPort = localPort
+        self.router = router
+    }
+
+    func readIPv6Packet(timeoutSeconds: Double) throws -> Data {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        condition.lock()
+        defer { condition.unlock() }
+
+        while packets.isEmpty, failure == nil, !closed {
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining <= 0 {
+                throw CoreDeviceTCPError.connectionTimeout
+            }
+            condition.wait(until: Date().addingTimeInterval(remaining))
+        }
+
+        if !packets.isEmpty {
+            return packets.removeFirst()
+        }
+        if let failure {
+            throw failure
+        }
+        throw CoreDeviceTCPError.connectionClosed
+    }
+
+    func writeIPv6Packet(_ packet: Data) throws {
+        guard let router else {
+            throw CoreDeviceTCPError.connectionClosed
+        }
+        try router.writeIPv6Packet(packet)
+    }
+
+    func close() {
+        condition.lock()
+        if closed {
+            condition.unlock()
+            return
+        }
+        closed = true
+        condition.broadcast()
+        condition.unlock()
+        router?.unregister(localPort: localPort)
+    }
+
+    fileprivate func enqueue(_ packet: Data) {
+        condition.lock()
+        if !closed {
+            packets.append(packet)
+            condition.signal()
+        }
+        condition.unlock()
+    }
+
+    fileprivate func fail(_ error: Error) {
+        condition.lock()
+        if failure == nil {
+            failure = error
+        }
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    fileprivate func closeFromRouter() {
+        condition.lock()
+        closed = true
+        condition.broadcast()
+        condition.unlock()
+    }
 }
 
 final class CoreDeviceDirectTunnelRuntime {
@@ -411,7 +634,7 @@ final class CoreDeviceDirectTunnelRuntime {
                 let client = try session.connectRemoteXPCClient(port: handshake.serverRSDPort)
                 do {
                     session.peerInfo = try client.receivePeerInfo()
-                    session.retainRemoteXPCClient(client)
+                    client.close()
                 } catch {
                     client.close()
                     throw error
@@ -445,8 +668,8 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
     let handshake: CoreDeviceTunnelHandshake
     var peerInfo: RemoteXPCPeerInfo?
     private let eventSink: ((String) -> Void)?
+    private let packetRouter: CoreDeviceDirectTunnelPacketRouter
     private var nextLocalPort: UInt16 = 49_152
-    private var retainedRemoteXPCClients: [RemoteXPCClient] = []
     private var closed = false
 
     var serverAddress: String { handshake.serverAddress }
@@ -455,6 +678,7 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         self.tunnel = tunnel
         self.handshake = handshake
         self.eventSink = eventSink
+        self.packetRouter = CoreDeviceDirectTunnelPacketRouter(tunnel: tunnel, eventSink: eventSink)
     }
 
     func connectRemoteXPCService(_ serviceName: String) throws -> RemoteXPCClient {
@@ -495,11 +719,12 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
 
     private func connectServicePort(_ port: Int) throws -> CoreDeviceUserSpaceTCPConnection {
         eventSink?("opening userspace TCP \(handshake.serverAddress):\(port)")
+        let localPort = allocateLocalPort()
         let stream = try CoreDeviceUserSpaceTCPConnection(
-            tunnel: tunnel,
+            tunnel: packetRouter.openRoute(localPort: localPort),
             localAddress: handshake.clientAddress,
             remoteAddress: handshake.serverAddress,
-            localPort: allocateLocalPort(),
+            localPort: localPort,
             remotePort: port,
             eventSink: eventSink
         )
@@ -513,17 +738,10 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         }
     }
 
-    func retainRemoteXPCClient(_ client: RemoteXPCClient) {
-        retainedRemoteXPCClients.append(client)
-    }
-
     func close() {
         guard !closed else { return }
         closed = true
-        for client in retainedRemoteXPCClients {
-            client.close()
-        }
-        retainedRemoteXPCClients.removeAll()
+        packetRouter.close()
         tunnel.close()
     }
 
