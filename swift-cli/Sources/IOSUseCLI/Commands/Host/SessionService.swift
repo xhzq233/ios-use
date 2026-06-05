@@ -46,7 +46,7 @@ public enum SessionService {
                 startedAt: startedAt,
                 holderPid: metadata.holderPid,
                 runnerPid: metadata.runnerPid,
-                startMode: metadata.startMode,
+                startMode: startMode,
                 sessionIdentifier: metadata.sessionIdentifier,
                 bundleId: metadata.bundleId ?? bundleId
             )
@@ -56,8 +56,6 @@ public enum SessionService {
     static var simulatorDriverReachableForTesting: (() -> Bool)?
     static var simulatorDriverLauncherForTesting: ((String) throws -> Void)?
     static var simulatorDriverTerminatorForTesting: ((String) throws -> Bool)?
-    static var realDriverReachableForTesting: ((String) -> Bool)?
-    static var realDriverLauncherForTesting: ((String, String) throws -> Void)?
     static var realDriverTerminatorForTesting: ((String) throws -> Bool)?
     static var coreDeviceLifecycleFactoryForTesting: ((((String) -> Void)?) -> CoreDeviceDriverLifecycleManaging)?
 
@@ -175,10 +173,7 @@ public enum SessionService {
             paths: paths,
             verbose: verbose,
             simulatorReachable: simulatorDriverReachableForTesting,
-            simulatorLauncher: simulatorDriverLauncherForTesting,
-            realReachable: realDriverReachableForTesting,
-            realLauncher: realDriverLauncherForTesting,
-            coreDeviceFactory: coreDeviceLifecycleFactoryForTesting
+            simulatorLauncher: simulatorDriverLauncherForTesting
         )
     }
 }

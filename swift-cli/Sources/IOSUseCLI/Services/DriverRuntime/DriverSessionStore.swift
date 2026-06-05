@@ -62,9 +62,6 @@ enum DriverSessionStore {
         if let runnerPid = info.runnerPid {
             root["runnerPid"] = runnerPid
         }
-        if let startMode = info.startMode {
-            root["startMode"] = startMode
-        }
         if let sessionIdentifier = info.sessionIdentifier {
             root["sessionIdentifier"] = sessionIdentifier
         }

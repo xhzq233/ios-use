@@ -8,6 +8,34 @@ protocol DeviceStream {
     func close()
 }
 
+enum DeviceStreamError: Error, CustomStringConvertible, Equatable {
+    case timeout(String)
+    case closed(String)
+    case readFailed(String, errno: Int32)
+    case writeFailed(String, errno: Int32)
+    case writeFailedWithError(String)
+
+    var description: String {
+        switch self {
+        case .timeout(let context):
+            return "\(context) timeout"
+        case .closed(let context):
+            return "\(context) closed"
+        case .readFailed(let context, let errno):
+            return "\(context) read failed: errno \(errno)"
+        case .writeFailed(let context, let errno):
+            return "\(context) write failed: errno \(errno)"
+        case .writeFailedWithError(let detail):
+            return "stream write failed: \(detail)"
+        }
+    }
+
+    var isTimeout: Bool {
+        if case .timeout = self { return true }
+        return false
+    }
+}
+
 final class PlainDeviceStream: DeviceStream {
     let fd: Int32
     private let ownsFD: Bool
@@ -33,7 +61,7 @@ final class PlainDeviceStream: DeviceStream {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while out.count < byteCount {
             let chunk = try readAvailable(maxBytes: byteCount - out.count, timeoutSeconds: max(0, deadline.timeIntervalSinceNow))
-            if chunk.isEmpty { throw CLIParseError.invalidValue("device read timeout") }
+            if chunk.isEmpty { throw DeviceStreamError.timeout("device read") }
             out.append(chunk)
         }
         return out
@@ -44,9 +72,9 @@ final class PlainDeviceStream: DeviceStream {
         var buffer = [UInt8](repeating: 0, count: maxBytes)
         let n = Darwin.read(fd, &buffer, maxBytes)
         if n > 0 { return Data(buffer.prefix(n)) }
-        if n == 0 { throw CLIParseError.invalidValue("device stream closed") }
+        if n == 0 { throw DeviceStreamError.closed("device stream") }
         if errno == EINTR || errno == EAGAIN { return Data() }
-        throw CLIParseError.invalidValue("device read failed: errno \(errno)")
+        throw DeviceStreamError.readFailed("device", errno: errno)
     }
 
     func close() {
@@ -166,7 +194,7 @@ final class OpenSSLDeviceStream: DeviceStream {
         do {
             try input.write(contentsOf: data)
         } catch {
-            throw CLIParseError.invalidValue("TLS write failed: \(error)")
+            throw DeviceStreamError.writeFailedWithError("TLS \(error)")
         }
     }
 
@@ -175,7 +203,7 @@ final class OpenSSLDeviceStream: DeviceStream {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while out.count < byteCount {
             let chunk = try readAvailable(maxBytes: byteCount - out.count, timeoutSeconds: max(0, deadline.timeIntervalSinceNow))
-            if chunk.isEmpty { throw CLIParseError.invalidValue("TLS read timeout") }
+            if chunk.isEmpty { throw DeviceStreamError.timeout("TLS read") }
             out.append(chunk)
         }
         return out

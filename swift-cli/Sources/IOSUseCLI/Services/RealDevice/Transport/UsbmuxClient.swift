@@ -1,6 +1,32 @@
 import Darwin
 import Foundation
 
+enum UsbmuxError: Error, CustomStringConvertible, Equatable {
+    case socketOpenFailed
+    case socketPathTooLong
+    case daemonConnectFailed(errno: Int32)
+    case listDevicesMissing
+    case deviceNotFound(String)
+    case connectFailed(response: String)
+
+    var description: String {
+        switch self {
+        case .socketOpenFailed:
+            return "failed to open usbmux socket"
+        case .socketPathTooLong:
+            return "usbmux socket path too long"
+        case .daemonConnectFailed(let errno):
+            return "failed to connect usbmuxd: errno \(errno)"
+        case .listDevicesMissing:
+            return "usbmux ListDevices returned no devices"
+        case .deviceNotFound(let udid):
+            return "Device \(udid) not found via usbmux. USB connection is required."
+        case .connectFailed(let response):
+            return "usbmux Connect failed: \(response)"
+        }
+    }
+}
+
 enum Usbmux {
     struct Device: Equatable {
         let serialNumber: String
@@ -48,14 +74,14 @@ enum Usbmux {
 
     static func openSocket() throws -> Int32 {
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw CLIParseError.invalidValue("failed to open usbmux socket") }
+        guard fd >= 0 else { throw UsbmuxError.socketOpenFailed }
         setSocketNoSigPipe(fd)
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let path = Array("/var/run/usbmuxd".utf8CString)
         guard path.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
             Darwin.close(fd)
-            throw CLIParseError.invalidValue("usbmux socket path too long")
+            throw UsbmuxError.socketPathTooLong
         }
         withUnsafeMutablePointer(to: &addr.sun_path) { pointer in
             pointer.withMemoryRebound(to: CChar.self, capacity: path.count) { dst in
@@ -71,7 +97,7 @@ enum Usbmux {
         guard result == 0 else {
             let err = errno
             Darwin.close(fd)
-            throw CLIParseError.invalidValue("failed to connect usbmuxd: errno \(err)")
+            throw UsbmuxError.daemonConnectFailed(errno: err)
         }
         return fd
     }
@@ -85,7 +111,7 @@ enum Usbmux {
                 "ClientVersionString": "1.0",
             ], tag: 0)
             guard let devices = list["DeviceList"] as? [[String: Any]] else {
-                throw CLIParseError.invalidValue("usbmux ListDevices returned no devices")
+                throw UsbmuxError.listDevicesMissing
             }
             let normalized = udid.replacingOccurrences(of: "-", with: "").lowercased()
             let match = devices.first { device in
@@ -95,7 +121,7 @@ enum Usbmux {
             }
             guard let match,
                   let deviceID = Self.deviceID(from: match) else {
-                throw CLIParseError.invalidValue("Device \(udid) not found via usbmux. USB connection is required.")
+                throw UsbmuxError.deviceNotFound(udid)
             }
             let response = try request(fd: fd, payload: [
                 "MessageType": "Connect",
@@ -105,7 +131,7 @@ enum Usbmux {
                 "PortNumber": swap16(port),
             ], tag: 1)
             guard (response["Number"] as? Int) == 0 else {
-                throw CLIParseError.invalidValue("usbmux Connect failed: \(plistResponseSummary(response))")
+                throw UsbmuxError.connectFailed(response: plistResponseSummary(response))
             }
             return fd
         } catch {
