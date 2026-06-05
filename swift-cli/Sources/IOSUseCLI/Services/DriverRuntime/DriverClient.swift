@@ -278,11 +278,12 @@ final class DriverClient: DriverCommandClient {
         var requestBytes = 0
         var responseBytes = 0
         var loggedResponse = false
+        var didUseConnection = false
         do {
-            let fd = try connectedFD()
-            defer { close() }
             let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
             requestBytes = frameData.count
+            let fd = try connectedFD()
+            didUseConnection = true
             try writeLengthPrefixed(fd, data: frameData)
             let responseData = try readLengthPrefixed(fd)
             responseBytes = responseData.count
@@ -297,7 +298,9 @@ final class DriverClient: DriverCommandClient {
             )
             loggedResponse = true
             guard response.ok else {
-                close()
+                if response.error.hasPrefix("[FATAL]") {
+                    close()
+                }
                 throw DriverClientError.driverError(response.error)
             }
             return response.payload
@@ -311,6 +314,9 @@ final class DriverClient: DriverCommandClient {
                     responseBytes: responseBytes,
                     elapsedMs: elapsedMilliseconds(since: startedAt)
                 )
+            }
+            if didUseConnection && shouldCloseConnection(after: error) {
+                close()
             }
             throw error
         }
@@ -336,6 +342,15 @@ final class DriverClient: DriverCommandClient {
         let newFD = try connect()
         fd = newFD
         return newFD
+    }
+
+    private func shouldCloseConnection(after error: Error) -> Bool {
+        switch error {
+        case DriverClientError.driverError(let message):
+            return message.hasPrefix("[FATAL]")
+        default:
+            return true
+        }
     }
 
     private func connect() throws -> Int32 {

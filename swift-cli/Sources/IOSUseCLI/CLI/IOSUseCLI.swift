@@ -201,21 +201,15 @@ public struct IOSUseCLI: Sendable {
 
     private func executeDriver(_ action: DriverAction) -> CLIResult {
         do {
+            let session = LockedDriverClientSession(paths: paths)
+            defer { session.close() }
             let result = try DriverCommandExecutor.execute(action: action, paths: paths) { body in
-                try withLockedDriverClient(body)
+                try session.run(body)
             }
             return CLIResult(exitCode: 0, stdout: result.stdout)
         } catch {
             return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
         }
-    }
-
-    private func withLockedDriverClient<T>(_ body: (DriverCommandClient) throws -> T) throws -> T {
-        try DriverCommandExecution.withLockedClient(paths: paths, body)
-    }
-
-    private static func isRecoverableDriverConnectFailure(_ error: Error) -> Bool {
-        (error as? DriverClientError)?.isRecoverableConnectFailure == true
     }
 
     static func isAppNotRunningError(_ error: Error) -> Bool {
