@@ -25,6 +25,7 @@ import Fory
     private var activeConnections = 0
     private var activeConnectionFD: Int32?
     private var activeConnectionReceivedBytes = false
+    private var nextConnectionID = 1
     private let connectionLock = DispatchQueue(label: "com.xcuidriver.connectionLock")
     private var acceptLoopSem: DispatchSemaphore?
 
@@ -110,8 +111,10 @@ import Fory
 
             let shouldAccept = reserveConnectionSlot(for: clientFD)
             if shouldAccept {
+                let connectionID = allocateConnectionID()
+                DriverLog.info("[driver-connection] id=\(connectionID) event=accept fd=\(clientFD)")
                 DispatchQueue.global().async {
-                    self.handleConnection(clientFD)
+                    self.handleConnection(clientFD, connectionID: connectionID)
                 }
             } else {
                 DriverLog.error("[driver] connection limit reached (\(maxConnections)), rejecting new connection")
@@ -158,8 +161,17 @@ import Fory
         return false
     }
 
-    private func handleConnection(_ fd: Int32) {
+    private func allocateConnectionID() -> Int {
+        connectionLock.sync {
+            let id = nextConnectionID
+            nextConnectionID += 1
+            return id
+        }
+    }
+
+    private func handleConnection(_ fd: Int32, connectionID: Int) {
         defer {
+            DriverLog.info("[driver-connection] id=\(connectionID) event=close fd=\(fd)")
             Darwin.close(fd)
             connectionLock.sync {
                 if activeConnectionFD == fd {
@@ -183,6 +195,7 @@ import Fory
                     guard let command else {
                         let errFrame = ForyResponseFrame(ok: false, error: "unknown command: \(foryReq.command)")
                         try Codec.writeResponseFrame(fd, frame: errFrame)
+                        DriverLog.info("[driver-connection] id=\(connectionID) command=\(foryReq.command) ok=false")
                         continue
                     }
 
@@ -191,14 +204,18 @@ import Fory
 
                     if !foryResp.ok && foryResp.error.hasPrefix("[FATAL]") {
                         try Codec.writeResponseFrame(fd, frame: foryResp)
+                        DriverLog.info("[driver-connection] id=\(connectionID) command=\(foryReq.command) ok=false fatal=true")
                         break
                     }
                     try Codec.writeResponseFrame(fd, frame: foryResp)
+                    DriverLog.info("[driver-connection] id=\(connectionID) command=\(foryReq.command) ok=\(foryResp.ok)")
                 } catch FrameError.readFailed {
+                    DriverLog.info("[driver-connection] id=\(connectionID) event=eof fd=\(fd)")
                     break
                 } catch {
                     let errFrame = ForyResponseFrame(ok: false, error: "\(error)")
                     _ = try? Codec.writeResponseFrame(fd, frame: errFrame)
+                    DriverLog.error("[driver-connection] id=\(connectionID) event=error fd=\(fd) error=\(error)")
                     break
                 }
         }
