@@ -53,12 +53,14 @@ enum XCTestSessionHolderService {
             })
             interruptMonitor.start()
             while !interruptMonitor.interrupted {
-                if let startupFailure = startedSession.startupFailure {
-                    log("holder startup session failed after readiness: \(startupFailure)")
+                let startupFailure = startedSession.startupFailure
+                let postConfigurationFailure = startupFailure == nil ? startedSession.takePostConfigurationFailure() : nil
+                if let stopMessage = holderStopMessage(
+                    startupFailure: startupFailure,
+                    postConfigurationFailure: postConfigurationFailure
+                ) {
+                    log(stopMessage)
                     break
-                }
-                if let postConfigurationFailure = startedSession.takePostConfigurationFailure() {
-                    log("exec callback listener ended after configuration; keeping runner alive: \(postConfigurationFailure)")
                 }
                 RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.25))
             }
@@ -82,6 +84,16 @@ enum XCTestSessionHolderService {
             log("holder failed: \(error)")
             throw error
         }
+    }
+
+    static func holderStopMessage(startupFailure: Error?, postConfigurationFailure: Error?) -> String? {
+        if let startupFailure {
+            return "holder startup session failed after readiness: \(startupFailure)"
+        }
+        if let postConfigurationFailure {
+            return "XCTest session ended after configuration; stopping holder: \(postConfigurationFailure)"
+        }
+        return nil
     }
 
     private static func parse(_ arguments: [String]) throws -> Options {
