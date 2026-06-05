@@ -126,6 +126,9 @@ final class LockedDriverClientSession {
         if holderResult != .notApplicable {
             CLILogService.append(paths: paths, ["[cli-lifecycle] XCTest holder cleanup before relaunch: \(holderResult)"])
         }
+        if let failure = DriverLifecycleService.holderTerminationFailureMessage(result: holderResult, info: lock) {
+            throw CLIParseError.invalidValue(failure)
+        }
         let recoveredLock: SessionService.Info
         if let metadata = try SessionService.launchDriver(for: lock, paths: paths, verbose: verbose) {
             recoveredLock = lock.applying(metadata)

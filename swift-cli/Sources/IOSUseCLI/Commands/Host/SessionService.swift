@@ -116,14 +116,21 @@ public enum SessionService {
             }
         } catch {
             if let launchedInfo {
-                _ = try? DriverLifecycleService.terminateDriver(
-                    for: launchedInfo,
-                    paths: paths,
-                    simulatorTerminator: simulatorDriverTerminatorForTesting,
-                    realTerminator: realDriverTerminatorForTesting
-                )
+                do {
+                    _ = try DriverLifecycleService.terminateDriver(
+                        for: launchedInfo,
+                        paths: paths,
+                        simulatorTerminator: simulatorDriverTerminatorForTesting,
+                        realTerminator: realDriverTerminatorForTesting
+                    )
+                    clearDriverLock(paths: paths)
+                } catch let cleanupError {
+                    try? writeDriverLock(info: launchedInfo, paths: paths)
+                    throw CLIParseError.invalidValue("Driver start failed after holder launch, and cleanup failed: \(cleanupError). The active driver lock was preserved when possible. Original error: \(error)")
+                }
+            } else {
+                clearDriverLock(paths: paths)
             }
-            clearDriverLock(paths: paths)
             throw error
         }
         return "Driver started for \(udid)\n"

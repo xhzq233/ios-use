@@ -26,6 +26,8 @@ final class IOSUseCLITests: XCTestCase {
         DriverLifecycleService.holderTerminatorForTesting = nil
         DriverLifecycleService.processAliveForTesting = nil
         DriverLifecycleService.holderProcessValidatorForTesting = nil
+        DriverLifecycleService.signalSenderForTesting = nil
+        DriverLifecycleService.processExitWaiterForTesting = nil
         RealDeviceOSLogService.collectorForTesting = nil
         Shell.runOverrideForTesting = nil
         Shell.runResultOverrideForTesting = nil
@@ -734,6 +736,65 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(holderLaunches.map(\.0), ["REAL-XCTEST-HUNG"])
         XCTAssertEqual(holderLaunches.map(\.1), ["com.example.driver"])
         XCTAssertEqual(clientSessions.map(\.holderPid), [333, 555])
+    }
+
+    func testDriverCommandDoesNotRelaunchWhenStaleHolderCannotBeStopped() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-stuck-xctest-recover-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try """
+        {"devices":{"REAL-XCTEST-STUCK":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "REAL-XCTEST-STUCK",
+                deviceName: "Phone",
+                deviceVersion: "26.0",
+                deviceType: "real",
+                startedAt: 1,
+                holderPid: 777,
+                runnerPid: 888,
+                startMode: "full-xctest",
+                sessionIdentifier: "STUCK",
+                bundleId: "com.example.driver"
+            ),
+            paths: paths
+        )
+
+        DriverLifecycleService.processAliveForTesting = { pid in pid == 777 }
+        DriverLifecycleService.holderProcessValidatorForTesting = { pid, udid in
+            pid == 777 && udid == "REAL-XCTEST-STUCK"
+        }
+        var signals: [(Int32, Int32)] = []
+        DriverLifecycleService.signalSenderForTesting = { pid, signal in
+            signals.append((pid, signal))
+            return 0
+        }
+        DriverLifecycleService.processExitWaiterForTesting = { _, _ in false }
+        DriverLifecycleService.holderLauncherForTesting = { _, _, _, _ in
+            XCTFail("must not relaunch a new holder when stale holder cleanup fails")
+            return DriverLifecycleService.LaunchMetadata(holderPid: 999, runnerPid: 1000, sessionIdentifier: "BAD", bundleId: "com.example.driver")
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(domHandler: { _, _, _ in
+                throw DriverClientError.connectFailed(61)
+            })
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("Failed to stop XCTest holder pid=777"))
+        XCTAssertEqual(signals.map(\.0), [777, 777])
+        XCTAssertEqual(signals.map(\.1), [SIGTERM, SIGKILL])
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.holderPid, 777)
+        XCTAssertEqual(lock.sessionIdentifier, "STUCK")
     }
 
     func testRealDeviceActivateAppUsesDriverClient() throws {
