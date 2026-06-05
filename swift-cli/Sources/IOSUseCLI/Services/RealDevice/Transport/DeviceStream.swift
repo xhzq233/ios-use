@@ -248,8 +248,12 @@ final class OpenSSLDeviceStream: DeviceStream {
         try? input.close()
         if process.isRunning {
             process.terminate()
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [process] in
-                if process.isRunning { process.interrupt() }
+            if !Self.waitForProcessExit(process, timeoutSeconds: 1) {
+                process.interrupt()
+            }
+            if !Self.waitForProcessExit(process, timeoutSeconds: 1) {
+                Darwin.kill(process.processIdentifier, SIGKILL)
+                _ = Self.waitForProcessExit(process, timeoutSeconds: 1)
             }
         }
         proxy.close()
@@ -277,6 +281,14 @@ final class OpenSSLDeviceStream: DeviceStream {
         condition.lock()
         condition.broadcast()
         condition.unlock()
+    }
+
+    private static func waitForProcessExit(_ process: Process, timeoutSeconds: Double) -> Bool {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while process.isRunning, Date() < deadline {
+            usleep(50_000)
+        }
+        return !process.isRunning
     }
 
     private static func debug(_ message: String) {

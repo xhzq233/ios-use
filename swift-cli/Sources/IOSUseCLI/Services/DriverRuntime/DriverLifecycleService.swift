@@ -15,6 +15,7 @@ enum DriverLifecycleService {
         case terminated
         case alreadyStopped
         case refused
+        case failed
 
     }
 
@@ -22,6 +23,8 @@ enum DriverLifecycleService {
     static var holderTerminatorForTesting: ((SessionService.Info, IOSUsePaths) -> HolderTerminationResult)?
     static var processAliveForTesting: ((Int32) -> Bool)?
     static var holderProcessValidatorForTesting: ((Int32, String) -> Bool)?
+    static var signalSenderForTesting: ((Int32, Int32) -> Int32)?
+    static var processExitWaiterForTesting: ((Int32, Double) -> Bool)?
 
     static func resolveDriverInfo(udid: String, paths: IOSUsePaths) throws -> SessionService.Info {
         guard let configEntry = ConfigService.listEntries(paths: paths).first(where: { $0.udid == udid }) else {
@@ -101,6 +104,9 @@ enum DriverLifecycleService {
         if let realTerminator {
             let terminated = try realTerminator(info.udid)
             let holderResult = terminateHolderProcessIfNeeded(info: info, paths: paths)
+            if let failure = holderTerminationFailureMessage(result: holderResult, info: info) {
+                throw CLIParseError.invalidValue(failure)
+            }
             return (terminated || holderResult == .terminated) ? "Driver app terminated on device\n" : "Driver app was not running on device\n"
         }
 
@@ -114,7 +120,9 @@ enum DriverLifecycleService {
             appendLifecycleLog(paths: paths, "No XCTest holder pid recorded; skipping device-side terminate")
             return "Driver app was not running on device\n"
         case .refused:
-            throw CLIParseError.invalidValue("Refused to stop XCTest holder because driver.lock points at an unexpected host process.")
+            throw CLIParseError.invalidValue(holderTerminationFailureMessage(result: holderResult, info: info) ?? "Refused to stop XCTest holder.")
+        case .failed:
+            throw CLIParseError.invalidValue(holderTerminationFailureMessage(result: holderResult, info: info) ?? "Failed to stop XCTest holder.")
         }
     }
 
@@ -206,7 +214,9 @@ enum DriverLifecycleService {
                 paths: paths
             )
         } catch {
-            terminateProcess(pid: process.processIdentifier, force: true)
+            if !terminateProcess(pid: process.processIdentifier, force: true) {
+                appendLifecycleLog(paths: paths, "XCTest holder pid=\(process.processIdentifier) did not exit after failed launch cleanup")
+            }
             throw error
         }
     }
@@ -271,8 +281,23 @@ enum DriverLifecycleService {
             return .refused
         }
         appendLifecycleLog(paths: paths, "Terminating XCTest holder pid=\(holderPid)")
-        terminateProcess(pid: pid, force: true)
+        guard terminateProcess(pid: pid, force: true) else {
+            appendLifecycleLog(paths: paths, "XCTest holder pid=\(holderPid) did not exit after SIGTERM/SIGKILL")
+            return .failed
+        }
         return .terminated
+    }
+
+    static func holderTerminationFailureMessage(result: HolderTerminationResult, info: SessionService.Info) -> String? {
+        switch result {
+        case .refused:
+            return "Refused to stop XCTest holder because driver.lock points at an unexpected host process."
+        case .failed:
+            let pid = info.holderPid.map(String.init) ?? "(missing)"
+            return "Failed to stop XCTest holder pid=\(pid); driver.lock was left in place for manual cleanup."
+        case .notApplicable, .terminated, .alreadyStopped:
+            return nil
+        }
     }
 
     private static func appendLifecycleLog(paths: IOSUsePaths, _ message: String) {
@@ -308,19 +333,39 @@ enum DriverLifecycleService {
         return Darwin.kill(pid, 0) == 0
     }
 
-    private static func terminateProcess(pid: Int32, force: Bool) {
-        guard pid > 0 else { return }
-        _ = Darwin.kill(pid, SIGTERM)
-        let deadline = Date().addingTimeInterval(2)
+    @discardableResult
+    private static func terminateProcess(pid: Int32, force: Bool) -> Bool {
+        guard pid > 0 else { return true }
+        _ = sendSignal(pid: pid, signal: SIGTERM)
+        if waitForProcessExit(pid: pid, timeoutSeconds: 15) {
+            return true
+        }
+        guard force else {
+            return false
+        }
+        _ = sendSignal(pid: pid, signal: SIGKILL)
+        return waitForProcessExit(pid: pid, timeoutSeconds: 2)
+    }
+
+    private static func waitForProcessExit(pid: Int32, timeoutSeconds: Double) -> Bool {
+        if let processExitWaiterForTesting {
+            return processExitWaiterForTesting(pid, timeoutSeconds)
+        }
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
             if !processAlive(pid: pid) {
-                return
+                return true
             }
             usleep(100_000)
         }
-        if force, processAlive(pid: pid) {
-            _ = Darwin.kill(pid, SIGKILL)
+        return !processAlive(pid: pid)
+    }
+
+    private static func sendSignal(pid: Int32, signal: Int32) -> Int32 {
+        if let signalSenderForTesting {
+            return signalSenderForTesting(pid, signal)
         }
+        return Darwin.kill(pid, signal)
     }
 
     static func isExpectedHolderProcess(pid: Int32, udid: String) -> Bool {
