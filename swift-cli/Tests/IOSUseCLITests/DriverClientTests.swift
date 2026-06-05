@@ -93,8 +93,10 @@ final class DriverClientTests: XCTestCase {
     }
 
     func testClientWritesCommandLogToCLILog() throws {
-        let payload = try ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(ForyDomPayload(app: "fake"))
         let server = try FakeDriverServer(responses: [
+            ForyResponseFrame(ok: true, payload: payload),
             ForyResponseFrame(ok: true, payload: payload),
         ])
         defer { server.stop() }
@@ -106,11 +108,30 @@ final class DriverClientTests: XCTestCase {
         defer { client.close() }
 
         _ = try client.dom(raw: false, fresh: true)
+        _ = try client.dom(raw: true, fresh: false)
+        client.close()
 
         let log = try String(contentsOfFile: logPath, encoding: .utf8)
+        XCTAssertTrue(log.contains("[cli-driver-connection] id="))
+        XCTAssertTrue(log.contains("event=open"))
+        XCTAssertTrue(log.contains("event=close"))
         XCTAssertTrue(log.contains("[cli-command] command=dom ok=true"))
+        XCTAssertTrue(log.contains("command=dom ok=true connectionId="))
         XCTAssertTrue(log.contains("requestBytes="))
         XCTAssertTrue(log.contains("responseBytes="))
+        let commandLines = log.split(separator: "\n").filter {
+            $0.contains("[cli-command] command=dom ok=true connectionId=")
+        }
+        XCTAssertEqual(commandLines.count, 2)
+        let connectionIDs = Set(commandLines.compactMap { line -> String? in
+            guard let range = line.range(of: "connectionId=") else { return nil }
+            return line[range.upperBound...].split(separator: " ").first.map(String.init)
+        })
+        XCTAssertEqual(connectionIDs.count, 1)
+        if let connectionID = connectionIDs.first {
+            XCTAssertTrue(log.contains("[cli-driver-connection] id=\(connectionID) event=open"))
+            XCTAssertTrue(log.contains("[cli-driver-connection] id=\(connectionID) event=close"))
+        }
         XCTAssertFalse(log.contains("[driver-perf]"))
         XCTAssertFalse(log.contains("[driver-response]"))
     }
