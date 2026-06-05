@@ -1,4 +1,5 @@
 import XCTest
+import Darwin
 import IOSUseProtocol
 @testable import IOSUseCLI
 
@@ -19,13 +20,13 @@ final class IOSUseCLITests: XCTestCase {
         AppManagementService.installerForTesting = nil
         AppManagementService.uninstallerForTesting = nil
         AppManagementService.appsProviderForTesting = nil
-        SessionService.realDriverLauncherForTesting = nil
-        SessionService.realDriverReachableForTesting = nil
         SessionService.coreDeviceLifecycleFactoryForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
         DriverLifecycleService.holderLauncherForTesting = nil
         DriverLifecycleService.holderTerminatorForTesting = nil
+        DriverLifecycleService.processAliveForTesting = nil
+        DriverLifecycleService.holderProcessValidatorForTesting = nil
         RealDeviceOSLogService.collectorForTesting = nil
         Shell.runOverrideForTesting = nil
         Shell.runResultOverrideForTesting = nil
@@ -112,6 +113,17 @@ final class IOSUseCLITests: XCTestCase {
         }
     }
 
+    func testDriverDeploymentTargetsStayAtIOS17() throws {
+        let repoRoot = repositoryRootForTest()
+        let driverProject = try String(contentsOf: repoRoot.appendingPathComponent("driver/project.yml"))
+        let sharedPackage = try String(contentsOf: repoRoot.appendingPathComponent("shared/IOSUseProtocol/Package.swift"))
+
+        XCTAssertTrue(driverProject.contains("iOS: \"17.0\""))
+        XCTAssertFalse(driverProject.contains("iOS: \"16.0\""))
+        XCTAssertTrue(sharedPackage.contains(".iOS(.v17)"))
+        XCTAssertFalse(sharedPackage.contains(".iOS(.v16)"))
+    }
+
     func testInstallCommandWithExplicitUdidIsHostOnlyAndDoesNotWriteDriverLock() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-install-host-only-\(UUID().uuidString)")
@@ -138,6 +150,14 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(installs.map(\.1), ["REAL-1"])
         XCTAssertEqual(installs.map(\.2), ["com.example.app"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root]).driverLock))
+    }
+
+    private func repositoryRootForTest() -> URL {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<4 {
+            url.deleteLastPathComponent()
+        }
+        return url
     }
 
     func testInstallCommandUsesActiveDriverLockWhenUdidIsOmitted() throws {
@@ -511,12 +531,15 @@ final class IOSUseCLITests: XCTestCase {
             XCTFail("direct driver command must not inspect USB devices")
             return []
         }
-        var launched: [(String, String)] = []
-        SessionService.realDriverLauncherForTesting = { udid, bundleId in
-            launched.append((udid, bundleId))
-        }
-        SessionService.realDriverReachableForTesting = { _ in
-            !launched.isEmpty
+        var holderLaunches: [(String, String)] = []
+        DriverLifecycleService.holderLauncherForTesting = { udid, bundleId, _, _ in
+            holderLaunches.append((udid, bundleId))
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 111,
+                runnerPid: 222,
+                sessionIdentifier: "RECOVERED",
+                bundleId: bundleId
+            )
         }
         var attempts = 0
         IOSUseCLI.driverClientFactoryForTesting = { session in
@@ -541,13 +564,13 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("App: com.example.app"))
         XCTAssertEqual(attempts, 2)
-        XCTAssertEqual(launched.map(\.0), ["REAL-CMD"])
-        XCTAssertEqual(launched.map(\.1), ["com.example.driver"])
+        XCTAssertEqual(holderLaunches.map(\.0), ["REAL-CMD"])
+        XCTAssertEqual(holderLaunches.map(\.1), ["com.example.driver"])
     }
 
-    func testDriverCommandReconnectRecoveryUsesCoreDeviceDefaultWithoutXcode() throws {
+    func testDriverCommandReconnectRecoveryUsesXCTestHolderDefaultWithoutXcode() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-use-driver-core-retry-\(UUID().uuidString)")
+            .appendingPathComponent("ios-use-driver-holder-retry-\(UUID().uuidString)")
             .path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -555,8 +578,16 @@ final class IOSUseCLITests: XCTestCase {
         {"devices":{"REAL-CORE-CMD":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
         try writeDriverLock(udid: "REAL-CORE-CMD", deviceType: "real", paths: paths)
-        let lifecycle = FakeIOSUseCLICoreDeviceLifecycle()
-        SessionService.coreDeviceLifecycleFactoryForTesting = { _ in lifecycle }
+        var holderLaunches: [(String, String)] = []
+        DriverLifecycleService.holderLauncherForTesting = { udid, bundleId, _, _ in
+            holderLaunches.append((udid, bundleId))
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 111,
+                runnerPid: 222,
+                sessionIdentifier: "RECOVERED",
+                bundleId: bundleId
+            )
+        }
         Shell.runOverrideForTesting = { executable, _, _, _ in
             if executable == "xcrun" {
                 XCTFail("real reconnect recovery default path must not call xcrun/devicectl")
@@ -583,8 +614,127 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(attempts, 2)
-        XCTAssertEqual(lifecycle.launches.map(\.0), ["REAL-CORE-CMD"])
-        XCTAssertEqual(lifecycle.launches.map(\.1), ["com.example.driver"])
+        XCTAssertEqual(holderLaunches.map(\.0), ["REAL-CORE-CMD"])
+        XCTAssertEqual(holderLaunches.map(\.1), ["com.example.driver"])
+    }
+
+    func testDriverCommandDoesNotPreflightStaleXCTestHolderBeforeCommand() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-stale-xctest-recover-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try """
+        {"devices":{"REAL-XCTEST-CMD":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "REAL-XCTEST-CMD",
+                deviceName: "Phone",
+                deviceVersion: "26.0",
+                deviceType: "real",
+                startedAt: 1,
+                holderPid: 999_999,
+                runnerPid: 123,
+                startMode: "full-xctest",
+                sessionIdentifier: "STALE",
+                bundleId: "com.example.driver"
+            ),
+            paths: paths
+        )
+        DriverLifecycleService.holderLauncherForTesting = { _, _, _, _ in
+            XCTFail("direct command must not preflight or relaunch before sending the target command")
+            throw CLIParseError.invalidValue("unexpected relaunch")
+        }
+        var clientSessions: [SessionService.Info] = []
+        IOSUseCLI.driverClientFactoryForTesting = { session in
+            clientSessions.append(session)
+            return FakeDriverCommandClient(domHandler: { _, _, _ in
+                ForyDomPayload(app: "com.example.app", windowSize: ForyPoint(x: 100, y: 200))
+            })
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("App: com.example.app"))
+        XCTAssertEqual(clientSessions.map(\.holderPid), [999_999])
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.holderPid, 999_999)
+        XCTAssertEqual(lock.sessionIdentifier, "STALE")
+    }
+
+    func testDriverCommandRecoversXCTestHolderOnConnectFailureOnly() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-unresponsive-xctest-recover-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try """
+        {"devices":{"REAL-XCTEST-HUNG":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        let staleInfo = SessionService.Info(
+            udid: "REAL-XCTEST-HUNG",
+            deviceName: "Phone",
+            deviceVersion: "26.0",
+            deviceType: "real",
+            startedAt: 1,
+            holderPid: 333,
+            runnerPid: 444,
+            startMode: "full-xctest",
+            sessionIdentifier: "HUNG",
+            bundleId: "com.example.driver"
+        )
+        try SessionService.writeDriverLock(info: staleInfo, paths: paths)
+
+        DriverLifecycleService.processAliveForTesting = { pid in pid == 333 }
+        DriverLifecycleService.holderProcessValidatorForTesting = { pid, udid in
+            pid == 333 && udid == "REAL-XCTEST-HUNG"
+        }
+        var terminated: [SessionService.Info] = []
+        DriverLifecycleService.holderTerminatorForTesting = { info, _ in
+            terminated.append(info)
+            return .terminated
+        }
+        var holderLaunches: [(String, String)] = []
+        DriverLifecycleService.holderLauncherForTesting = { udid, bundleId, _, _ in
+            holderLaunches.append((udid, bundleId))
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 555,
+                runnerPid: 666,
+                sessionIdentifier: "RECOVERED-HUNG",
+                bundleId: bundleId
+            )
+        }
+        var clientSessions: [SessionService.Info] = []
+        var attempts = 0
+        IOSUseCLI.driverClientFactoryForTesting = { session in
+            clientSessions.append(session)
+            attempts += 1
+            if attempts == 1 {
+                return FakeDriverCommandClient(domHandler: { _, _, _ in
+                    throw DriverClientError.connectFailed(61)
+                })
+            }
+            return FakeDriverCommandClient(domHandler: { _, _, _ in
+                ForyDomPayload(app: "com.example.app", windowSize: ForyPoint(x: 100, y: 200))
+            })
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("App: com.example.app"))
+        XCTAssertEqual(terminated.map(\.holderPid), [333])
+        XCTAssertEqual(holderLaunches.map(\.0), ["REAL-XCTEST-HUNG"])
+        XCTAssertEqual(holderLaunches.map(\.1), ["com.example.driver"])
+        XCTAssertEqual(clientSessions.map(\.holderPid), [333, 555])
     }
 
     func testRealDeviceActivateAppUsesDriverClient() throws {
@@ -763,7 +913,7 @@ final class IOSUseCLITests: XCTestCase {
 
     func testRealDeviceUsbmuxConnectFailureIsRecoverable() {
         DriverClient.usbmuxConnectorForTesting = { _, _ in
-            throw CLIParseError.invalidValue("usbmux Connect failed with code 2")
+            throw UsbmuxError.connectFailed(response: "code 2")
         }
         addTeardownBlock {
             DriverClient.usbmuxConnectorForTesting = nil
@@ -774,13 +924,13 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
             let driverError = error as? DriverClientError
             XCTAssertEqual(driverError?.isRecoverableConnectFailure, true)
-            XCTAssertTrue(String(describing: error).contains("usbmux Connect failed with code 2"))
+            XCTAssertTrue(String(describing: error).contains("usbmux Connect failed: code 2"))
         }
     }
 
     func testRealDeviceMissingFromUsbmuxIsNotRecoverable() {
         DriverClient.usbmuxConnectorForTesting = { _, _ in
-            throw CLIParseError.invalidValue("Device REAL-CMD not found via usbmux. USB connection is required.")
+            throw UsbmuxError.deviceNotFound("REAL-CMD")
         }
         addTeardownBlock {
             DriverClient.usbmuxConnectorForTesting = nil
@@ -1208,6 +1358,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(commands.contains("find"))
         XCTAssertTrue(commands.contains("waitFor"))
         XCTAssertTrue(commands.contains("dismissAlert"))
+        XCTAssertFalse(commands.contains("health"))
         XCTAssertEqual(commands.count, 13)
     }
 
@@ -1470,12 +1621,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
 }
 
 private final class FakeIOSUseCLICoreDeviceLifecycle: CoreDeviceDriverLifecycleManaging {
-    var launches: [(String, String, Double)] = []
     var terminations: [(String, String?)] = []
-
-    func launchDriver(udid: String, bundleID: String, timeoutSeconds: Double) throws {
-        launches.append((udid, bundleID, timeoutSeconds))
-    }
 
     func terminateDriver(udid: String, bundleID: String?) throws -> Bool {
         terminations.append((udid, bundleID))

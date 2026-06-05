@@ -53,9 +53,12 @@ enum XCTestSessionHolderService {
             })
             interruptMonitor.start()
             while !interruptMonitor.interrupted {
-                if let terminalError = startedSession.terminalError {
-                    log("holder session ended: \(terminalError)")
+                if let startupFailure = startedSession.startupFailure {
+                    log("holder startup session failed after readiness: \(startupFailure)")
                     break
+                }
+                if let postConfigurationFailure = startedSession.takePostConfigurationFailure() {
+                    log("exec callback listener ended after configuration; keeping runner alive: \(postConfigurationFailure)")
                 }
                 RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.25))
             }

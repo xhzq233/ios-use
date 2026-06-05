@@ -13,6 +13,7 @@ final class RealDeviceXCTestActiveSession {
 
     private let processControl: DVTProcessControlClient
     private let listener: XCTestExecCallbackListener
+    private let controlListener: DTXConnectionIdleListener?
     private let execSession: XCTestManagerSession
     private let instrumentsSession: DVTInstrumentsSession
     private let controlSession: XCTestManagerSession
@@ -26,6 +27,7 @@ final class RealDeviceXCTestActiveSession {
         runnerPid: Int,
         processControl: DVTProcessControlClient,
         listener: XCTestExecCallbackListener,
+        controlListener: DTXConnectionIdleListener?,
         execSession: XCTestManagerSession,
         instrumentsSession: DVTInstrumentsSession,
         controlSession: XCTestManagerSession,
@@ -36,6 +38,7 @@ final class RealDeviceXCTestActiveSession {
         self.runnerPid = runnerPid
         self.processControl = processControl
         self.listener = listener
+        self.controlListener = controlListener
         self.execSession = execSession
         self.instrumentsSession = instrumentsSession
         self.controlSession = controlSession
@@ -58,6 +61,7 @@ final class RealDeviceXCTestActiveSession {
         } else {
             eventSink?("closing XCTest session; leaving runner pid=\(runnerPid)")
         }
+        controlListener?.stop()
         listener.stop()
         controlSession.close()
         execSession.close()
@@ -70,8 +74,18 @@ final class RealDeviceXCTestActiveSession {
         }
     }
 
-    var terminalError: Error? {
-        listener.terminalError
+    var startupFailure: Error? {
+        listener.startupFailure
+    }
+
+    func takePostConfigurationFailure() -> Error? {
+        if let failure = listener.takePostConfigurationFailure() {
+            return failure
+        }
+        if let failure = controlListener?.takeFailure() {
+            return failure
+        }
+        return nil
     }
 
     deinit {
@@ -79,7 +93,7 @@ final class RealDeviceXCTestActiveSession {
     }
 }
 
-final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
+final class RealDeviceXCTestDriverLifecycle {
     struct Dependencies {
         var startTunnel: (String) throws -> CoreDeviceLifecycleTunnelSession
         var resolveRunnerInfo: (String, String) throws -> XCTestRunnerInstallInfo
@@ -87,7 +101,6 @@ final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
         var makeSessionIdentifier: () -> UUID
         var isDriverPortReachable: (String) -> Bool
         var sleep: (useconds_t) -> Void
-        var terminateFallback: (String, String?) throws -> Bool
 
         static let live = live(eventSink: nil)
 
@@ -113,10 +126,7 @@ final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
                     RealDeviceXCTestDriverLifecycle.closeReadinessProbeSocket(fd)
                     return true
                 },
-                sleep: { usleep($0) },
-                terminateFallback: { udid, bundleID in
-                    try CoreDeviceDriverLifecycle(eventSink: eventSink).terminateDriver(udid: udid, bundleID: bundleID)
-                }
+                sleep: { usleep($0) }
             )
         }
 
@@ -154,14 +164,12 @@ final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
         self.init(dependencies: .live(eventSink: eventSink), eventSink: eventSink)
     }
 
-    func launchDriver(udid: String, bundleID: String, timeoutSeconds: Double = 30) throws {
-        let activeSession = try startDriverSession(udid: udid, bundleID: bundleID, timeoutSeconds: timeoutSeconds)
-        activeSession.close(killRunner: false)
-    }
-
     func startDriverSession(udid: String, bundleID: String, timeoutSeconds: Double = 30) throws -> RealDeviceXCTestActiveSession {
         let productMajorVersion = try dependencies.productMajorVersion(udid)
         eventSink?("testmanagerd product major version=\(productMajorVersion)")
+        guard productMajorVersion >= 17 else {
+            throw CLIParseError.invalidValue("Real-device start requires iOS 17 or later; device \(udid) reported iOS \(productMajorVersion).")
+        }
         let runnerInfo = try dependencies.resolveRunnerInfo(udid, bundleID)
         eventSink?("resolved runner app=\(runnerInfo.appPath)")
         eventSink?("resolved test bundle=\(runnerInfo.testBundlePath)")
@@ -169,6 +177,7 @@ final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
         var launchedPid: Int?
         var processControl: DVTProcessControlClient?
         var listener: XCTestExecCallbackListener?
+        var controlListener: DTXConnectionIdleListener?
         var execSession: XCTestManagerSession?
         var instrumentsSession: DVTInstrumentsSession?
         var controlSession: XCTestManagerSession?
@@ -242,6 +251,16 @@ final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
             guard try controlDaemon.authorizeTestSession(productMajorVersion: productMajorVersion, pid: pid) else {
                 throw CLIParseError.invalidValue("testmanagerd authorization returned false for pid \(pid)")
             }
+            guard let controlChannel = controlDaemon.channel else {
+                throw CLIParseError.invalidValue("XCTest control daemon channel was not available")
+            }
+            let openedControlListener = DTXConnectionIdleListener(
+                name: "xctest-control",
+                channel: controlChannel,
+                eventSink: eventSink
+            )
+            controlListener = openedControlListener
+            openedControlListener.start()
 
             eventSink?("waiting for XCTest runner ready/configuration reply")
             try openedListener.waitUntilConfigurationSent(timeoutSeconds: 20)
@@ -265,6 +284,7 @@ final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
                 runnerPid: pid,
                 processControl: processControl,
                 listener: listener,
+                controlListener: controlListener,
                 execSession: execSession,
                 instrumentsSession: instrumentsSession,
                 controlSession: controlSession,
@@ -278,6 +298,7 @@ final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
                 _ = waitUntilDriverPortUnreachable(udid: udid)
             }
             listener?.stop()
+            controlListener?.stop()
             controlSession?.close()
             execSession?.close()
             instrumentsSession?.close()
@@ -289,10 +310,6 @@ final class RealDeviceXCTestDriverLifecycle: CoreDeviceDriverLifecycleManaging {
             }
             throw error
         }
-    }
-
-    func terminateDriver(udid: String, bundleID: String?) throws -> Bool {
-        try dependencies.terminateFallback(udid, bundleID)
     }
 
     private func validateRequiredServices(_ peerInfo: RemoteXPCPeerInfo) throws {

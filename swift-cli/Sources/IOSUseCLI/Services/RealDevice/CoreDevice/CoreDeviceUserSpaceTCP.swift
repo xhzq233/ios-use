@@ -313,6 +313,8 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
                     receiveSequence &+= UInt32(segment.payload.count)
                     try sendSegment(flags: CoreDeviceTCPFlags.ack)
                 }
+            } else if isKeepAliveProbe(segment) {
+                try sendSegment(flags: CoreDeviceTCPFlags.ack)
             } else if segment.hasFin {
                 receiveSequence &+= 1
                 try sendSegment(flags: CoreDeviceTCPFlags.ack)
@@ -322,6 +324,15 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
                 }
             }
         }
+    }
+
+    private func isKeepAliveProbe(_ segment: CoreDeviceTCPSegment) -> Bool {
+        segment.hasAck
+            && !segment.hasSyn
+            && !segment.hasFin
+            && !segment.hasRst
+            && segment.payload.isEmpty
+            && segment.sequenceNumber == receiveSequence &- 1
     }
 
     private func readMatchingSegment(timeoutSeconds: Double) throws -> CoreDeviceTCPSegment? {
@@ -341,10 +352,11 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
             return nil
         } catch CoreDeviceTCPError.invalidTCPPacket {
             return nil
+        } catch CoreDeviceTCPError.connectionTimeout {
+            return nil
+        } catch let error as DeviceStreamError where error.isTimeout {
+            return nil
         } catch {
-            if Self.isTimeout(error) {
-                return nil
-            }
             throw error
         }
     }
@@ -367,9 +379,6 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
         }
     }
 
-    private static func isTimeout(_ error: Error) -> Bool {
-        String(describing: error).localizedCaseInsensitiveContains("timeout")
-    }
 }
 
 final class CoreDeviceDirectTunnelRuntime {

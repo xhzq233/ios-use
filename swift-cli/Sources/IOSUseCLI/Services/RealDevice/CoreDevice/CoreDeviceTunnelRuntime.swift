@@ -207,7 +207,13 @@ final class CoreDeviceTunnelSession {
     }
 
     private static func isIdleTimeout(_ error: Error) -> Bool {
-        String(describing: error).localizedCaseInsensitiveContains("timeout")
+        if case CoreDeviceTCPError.connectionTimeout = error {
+            return true
+        }
+        if let streamError = error as? DeviceStreamError {
+            return streamError.isTimeout
+        }
+        return false
     }
 }
 

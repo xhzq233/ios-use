@@ -5,7 +5,7 @@ import IOSUseProtocol
 @testable import IOSUseCLI
 
 final class DriverClientTests: XCTestCase {
-    func testClientReusesConnectionWithinInstance() throws {
+    func testClientUsesFreshConnectionForEachCommandWithinInstance() throws {
         let server = try FakeDriverServer(responseCount: 2)
         defer { server.stop() }
         let client = DriverClient(port: UInt16(server.port))
@@ -13,7 +13,7 @@ final class DriverClientTests: XCTestCase {
         _ = try client.dom(raw: false, fresh: false)
         _ = try client.dom(raw: true, fresh: true)
 
-        XCTAssertEqual(server.acceptCount, 1)
+        XCTAssertEqual(server.acceptCount, 2)
         XCTAssertEqual(server.requestCommands, ["dom", "dom"])
     }
 
@@ -91,13 +91,12 @@ final class DriverClientTests: XCTestCase {
         XCTAssertFalse(log.contains("[driver-response]"))
     }
 
-    func testCloseSignalsEOFToServerPromptly() throws {
+    func testCommandCompletionClosesConnectionPromptly() throws {
         let server = try FakeDriverServer(responseCount: 2)
         defer { server.stop() }
         let client = DriverClient(port: UInt16(server.port))
 
         _ = try client.dom(raw: false, fresh: false)
-        client.close()
 
         XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
     }

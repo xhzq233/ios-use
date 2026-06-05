@@ -1,7 +1,7 @@
 export const contactsCaseMetadata = [
   { id: 'IN-1', group: 'contacts', kind: 'input', setup: 'new contact form', assertion: 'dom contains first name value', coverage: 'simulator' },
   { id: 'IN-2', group: 'contacts', kind: 'input-traits', setup: 'new contact form', assertion: 'dom contains last name value', coverage: 'simulator' },
-  { id: 'IN-3', group: 'contacts', kind: 'input-existing-value', setup: 'new contact form with first name', assertion: 'dom contains appended first name value', coverage: 'simulator' },
+  { id: 'IN-3', group: 'contacts', kind: 'input-focused', setup: 'new contact form with focused first name', assertion: 'input without --tap appends to focused field while keyboard is visible', coverage: 'simulator' },
   { id: 'IN-4', group: 'contacts', kind: 'input-error', setup: 'settings home', assertion: 'non-input target fails', coverage: 'simulator' },
   { id: 'IN-5', group: 'contacts', kind: 'input-search', setup: 'Contacts app search field', assertion: 'dom contains search content', coverage: 'simulator' },
   { id: 'IN-6', group: 'contacts', kind: 'input-keyboard-open', setup: 'new contact form', assertion: 'dom contains two edited fields', coverage: 'simulator' },
@@ -36,8 +36,27 @@ export function buildContactsCases(ctx) {
   return [
     { id: 'IN-1', run: async () => { await runInputAndVerifyDom('IN-1', 'First name', 'Alpha', 'First name=Alpha', [], openContactsNewContact); if (selected('IN-1')) await discardContactIfNeeded(); } },
     { id: 'IN-2', run: async () => { await runInputAndVerifyDom('IN-2', 'Last name', 'Beta', 'Last name=Beta', ['--traits', 'Input'], openContactsNewContact); if (selected('IN-2')) await discardContactIfNeeded(); } },
-    { id: 'IN-3', run: async () => { await runInputAndVerifyDom('IN-3', 'Alpha', 'More', 'First name=AlphaMore', ['--traits', 'Input'], async () => { await openContactsNewContact(); runCliToFiles(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'Input'], path.join(artifactDir, 'IN-3-setup.out'), path.join(artifactDir, 'IN-3-setup.err')); }); if (selected('IN-3')) await discardContactIfNeeded(); } },
-    { id: 'IN-4', run: () => runCaseFailsMatches('IN-4', /not inputtable|not found|failed/i, ['input', '--label', 'General', '--content', 'Nope', '--traits', 'Button'], settingsHome) },
+    { id: 'IN-3', run: async () => {
+      if (!selected('IN-3')) return recordSkip('IN-3');
+      await openContactsNewContact();
+      const setup = runCliToFiles(['input', '--tap', 'First name', '--content', 'Alpha', '--traits', 'Input'], path.join(artifactDir, 'IN-3-setup.out'), path.join(artifactDir, 'IN-3-setup.err'));
+      if (setup.code !== 0) {
+        recordFail('IN-3', setup.stdout + setup.stderr, 'setup');
+        await discardContactIfNeeded();
+        return;
+      }
+      const out = path.join(artifactDir, 'IN-3.out');
+      const err = path.join(artifactDir, 'IN-3.err');
+      const domOut = path.join(artifactDir, 'IN-3-dom.out');
+      const domErr = path.join(artifactDir, 'IN-3-dom.err');
+      console.log('[sim-test] RUN IN-3: ios-use input --content More with keyboard visible');
+      const res = runCliToFiles(['input', '--content', 'More'], out, err);
+      const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
+      if (res.code === 0 && dom.code === 0 && dom.stdout.includes('First name=AlphaMore')) recordPass('IN-3');
+      else recordFail('IN-3', `${res.stdout}${res.stderr}${dom.stdout}${dom.stderr}`, res.code === 0 && dom.code === 0 ? 'assertion' : 'command');
+      await discardContactIfNeeded();
+    } },
+    { id: 'IN-4', run: () => runCaseFailsMatches('IN-4', /not inputtable|not found|keyboard|failed/i, ['input', '--tap', 'General', '--content', 'Nope', '--traits', 'Button'], settingsHome) },
     { id: 'IN-5', run: () => runInputAndVerifyDom('IN-5', 'Search', 'ZZZIOSUse', 'ZZZIOSUse', ['--traits', 'Input'], async () => {
       runCli(['terminateApp', 'com.apple.MobileAddressBook']);
       runCli(['activateApp', 'com.apple.MobileAddressBook']);

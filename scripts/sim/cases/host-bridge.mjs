@@ -1,4 +1,6 @@
 export const hostBridgeCaseMetadata = [
+  { id: 'HELP-1', group: 'host-bridge', kind: 'help', setup: 'none', assertion: 'top-level help short-circuits and prints usage', coverage: 'simulator', requiresPrerequisite: false },
+  { id: 'HELP-2', group: 'host-bridge', kind: 'help', setup: 'none', assertion: 'selected driver command help short-circuits and prints command usage', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'OL-2', group: 'host-bridge', kind: 'oslog-error', setup: 'simulator target', assertion: 'deprecated clear option is rejected', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'OL-1', group: 'host-bridge', kind: 'oslog-error', setup: 'simulator target', assertion: 'zero timeout is rejected', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'OL-3', group: 'host-bridge', kind: 'oslog-pattern', setup: 'simulator target', assertion: 'pattern timeout command succeeds', coverage: 'simulator', requiresPrerequisite: false },
@@ -57,7 +59,13 @@ export const hostBridgeCaseMetadata = [
 
 export function buildHostBridgeCases(ctx) {
   const {
+    artifactDir,
+    path,
+    recordFail,
+    recordPass,
+    recordSkip,
     runCase,
+    runCaseContains,
     runCaseFailsContains,
     runDriverBridgeCase,
     runDomPresentationCase,
@@ -66,11 +74,28 @@ export function buildHostBridgeCases(ctx) {
     runStopClearsDriverLockCase,
     runStopWithoutDriverLockCase,
     runSwiftBridgeCase,
+    runCliToFiles,
+    selected,
     sim,
     unsupportedCase,
   } = ctx;
 
   return [
+    { id: 'HELP-1', run: () => runCaseContains('HELP-1', 'Usage: ios-use [--help] [--version] <command>', ['--help']) },
+    { id: 'HELP-2', run: () => {
+      if (!selected('HELP-2')) return recordSkip('HELP-2');
+      console.log('[sim-test] RUN HELP-2: ios-use dom/input --help');
+      const dom = runCliToFiles(['dom', '--help'], path.join(artifactDir, 'HELP-2-dom.out'), path.join(artifactDir, 'HELP-2-dom.err'));
+      const input = runCliToFiles(['input', '--help'], path.join(artifactDir, 'HELP-2-input.out'), path.join(artifactDir, 'HELP-2-input.err'));
+      const output = `${dom.stdout}${dom.stderr}${input.stdout}${input.stderr}`;
+      if (
+        dom.code === 0
+        && input.code === 0
+        && dom.stdout.includes('Usage: ios-use dom')
+        && input.stdout.includes('Usage: ios-use input')
+      ) recordPass('HELP-2');
+      else recordFail('HELP-2', output, dom.code === 0 && input.code === 0 ? 'assertion' : 'command');
+    } },
     { id: 'OL-2', run: () => runCaseFailsContains('OL-2', 'unknown option', ['oslog', '--clear', '--udid', sim.udid]) },
     { id: 'OL-1', run: () => runCaseFailsContains('OL-1', '--timeout must be greater than 0', ['oslog', '--timeout', '0', '--udid', sim.udid]) },
     { id: 'OL-3', run: () => runCase('OL-3', ['oslog', '--pattern', '__ios_use_no_such_log_line__', '--timeout', '0.2', '--udid', sim.udid]) },

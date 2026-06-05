@@ -217,6 +217,15 @@ final class DTXStreamTransport {
         try write(reply.wireData)
     }
 
+    func sendAckReply(to message: DTXDecodedMessage) throws {
+        let reply = try DTXMessageEncoder.okReply(
+            identifier: message.identifier,
+            conversationIndex: message.conversationIndex + 1,
+            channelCode: message.channelCode
+        )
+        try write(reply.wireData)
+    }
+
     private func readReply(for identifier: UInt32) throws -> DTXDecodedMessage {
         while true {
             let message = try readMessage()
@@ -249,7 +258,7 @@ final class DTXStreamTransport {
         }
 
         if message.transportFlags & DTXTransportFlag.expectsReply != 0 {
-            try sendRawObjectReply(to: message)
+            try sendAckReply(to: message)
         }
         return true
     }
@@ -360,6 +369,10 @@ final class DTXChannelClient: DVTInvoking {
         try transport.sendRawObjectReply(to: message, payload: payload)
     }
 
+    func sendAckReply(to message: DTXDecodedMessage) throws {
+        try transport.sendAckReply(to: message)
+    }
+
     func siblingChannel(code: Int32) -> DTXChannelClient {
         DTXChannelClient(transport: transport, channelCode: code)
     }
@@ -380,10 +393,7 @@ final class XCTestManagerDaemonClient {
     }
 
     func initiateControlSession(productMajorVersion: Int) throws -> Any? {
-        guard let invocation = try DVTInstrumentsContract.XCTestManagerDaemon.initiateControlSession(productMajorVersion: productMajorVersion) else {
-            return nil
-        }
-        return try invoker.invoke(invocation)
+        try invoker.invoke(DVTInstrumentsContract.XCTestManagerDaemon.initiateControlSession(productMajorVersion: productMajorVersion))
     }
 
     func authorizeTestSession(productMajorVersion: Int, pid: Int) throws -> Bool {

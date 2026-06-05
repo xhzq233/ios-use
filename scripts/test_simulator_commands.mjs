@@ -1037,8 +1037,8 @@ async function verifyContactsNameFields(id, suffix) {
   const domOut = path.join(artifactDir, `${id}${suffix}-dom.out`);
   const domErr = path.join(artifactDir, `${id}${suffix}-dom.err`);
   await openContactsNewContact();
-  const first = runCli(['input', '--label', 'First name', '--content', 'Alpha', '--traits', 'Input']);
-  const last = runCli(['input', '--label', 'Last name', '--content', 'Beta', '--traits', 'Input']);
+  const first = runCli(['input', '--tap', 'First name', '--content', 'Alpha', '--traits', 'Input']);
+  const last = runCli(['input', '--tap', 'Last name', '--content', 'Beta', '--traits', 'Input']);
   writeFile(out, first.stdout + last.stdout);
   writeFile(err, first.stderr + last.stderr);
   const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);

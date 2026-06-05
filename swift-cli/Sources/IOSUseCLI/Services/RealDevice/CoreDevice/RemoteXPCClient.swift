@@ -770,7 +770,7 @@ final class OwnedFDDeviceStream: DeviceStream {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while out.count < byteCount {
             let chunk = try readAvailable(maxBytes: byteCount - out.count, timeoutSeconds: max(0, deadline.timeIntervalSinceNow))
-            if chunk.isEmpty { throw CLIParseError.invalidValue("RSD TCP read timeout") }
+            if chunk.isEmpty { throw DeviceStreamError.timeout("RSD TCP read") }
             out.append(chunk)
         }
         return out
@@ -781,9 +781,9 @@ final class OwnedFDDeviceStream: DeviceStream {
         var buffer = [UInt8](repeating: 0, count: maxBytes)
         let n = Darwin.read(fd, &buffer, maxBytes)
         if n > 0 { return Data(buffer.prefix(n)) }
-        if n == 0 { throw CLIParseError.invalidValue("RSD TCP stream closed") }
+        if n == 0 { throw DeviceStreamError.closed("RSD TCP stream") }
         if errno == EINTR || errno == EAGAIN { return Data() }
-        throw CLIParseError.invalidValue("RSD TCP read failed: errno \(errno)")
+        throw DeviceStreamError.readFailed("RSD TCP", errno: errno)
     }
 
     func close() {

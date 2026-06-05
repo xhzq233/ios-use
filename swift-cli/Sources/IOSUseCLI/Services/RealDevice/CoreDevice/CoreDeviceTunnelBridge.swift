@@ -200,7 +200,7 @@ final class MacOSUtunInterface: IPv6PacketIO {
 
     func readIPv6Packet(timeoutSeconds: Double) throws -> Data {
         guard waitForReadable(fd: fd, timeoutSeconds: timeoutSeconds) else {
-            throw CLIParseError.invalidValue("utun read timeout")
+            throw DeviceStreamError.timeout("utun read")
         }
         var buffer = [UInt8](repeating: 0, count: CDTunnelIPv6Packet.maxPacketSize + Self.loopbackHeader.count)
         let count = Darwin.read(fd, &buffer, buffer.count)
@@ -208,12 +208,12 @@ final class MacOSUtunInterface: IPv6PacketIO {
             return try Self.decodeUtunFrame(Data(buffer.prefix(count)))
         }
         if count == 0 {
-            throw CLIParseError.invalidValue("utun closed")
+            throw DeviceStreamError.closed("utun")
         }
         if errno == EINTR || errno == EAGAIN {
-            throw CLIParseError.invalidValue("utun read interrupted")
+            throw DeviceStreamError.timeout("utun read")
         }
-        throw CLIParseError.invalidValue("utun read failed: errno \(errno)")
+        throw DeviceStreamError.readFailed("utun", errno: errno)
     }
 
     func writeIPv6Packet(_ packet: Data) throws {
