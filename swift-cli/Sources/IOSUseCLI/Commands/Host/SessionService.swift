@@ -57,7 +57,6 @@ public enum SessionService {
     static var simulatorDriverLauncherForTesting: ((String) throws -> Void)?
     static var simulatorDriverTerminatorForTesting: ((String) throws -> Bool)?
     static var realDriverTerminatorForTesting: ((String) throws -> Bool)?
-    static var coreDeviceLifecycleFactoryForTesting: ((((String) -> Void)?) -> CoreDeviceDriverLifecycleManaging)?
 
     public static func clear(paths: IOSUsePaths) {
         DriverSessionStore.clear(paths: paths)
@@ -121,8 +120,7 @@ public enum SessionService {
                     for: launchedInfo,
                     paths: paths,
                     simulatorTerminator: simulatorDriverTerminatorForTesting,
-                    realTerminator: realDriverTerminatorForTesting,
-                    coreDeviceFactory: coreDeviceLifecycleFactoryForTesting
+                    realTerminator: realDriverTerminatorForTesting
                 )
             }
             clearDriverLock(paths: paths)
@@ -137,8 +135,7 @@ public enum SessionService {
             for: current,
             paths: paths,
             simulatorTerminator: simulatorDriverTerminatorForTesting,
-            realTerminator: realDriverTerminatorForTesting,
-            coreDeviceFactory: coreDeviceLifecycleFactoryForTesting
+            realTerminator: realDriverTerminatorForTesting
         )
         do {
             try DriverSessionStore.removeDriverLock(paths: paths)

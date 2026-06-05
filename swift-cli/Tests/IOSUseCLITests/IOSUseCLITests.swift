@@ -20,7 +20,6 @@ final class IOSUseCLITests: XCTestCase {
         AppManagementService.installerForTesting = nil
         AppManagementService.uninstallerForTesting = nil
         AppManagementService.appsProviderForTesting = nil
-        SessionService.coreDeviceLifecycleFactoryForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
         DriverLifecycleService.holderLauncherForTesting = nil
@@ -1647,14 +1646,5 @@ private final class FakeDriverCommandClient: DriverCommandClient {
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
         throw CLIParseError.invalidValue("unexpected proxyCAPush")
-    }
-}
-
-private final class FakeIOSUseCLICoreDeviceLifecycle: CoreDeviceDriverLifecycleManaging {
-    var terminations: [(String, String?)] = []
-
-    func terminateDriver(udid: String, bundleID: String?) throws -> Bool {
-        terminations.append((udid, bundleID))
-        return true
     }
 }

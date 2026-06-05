@@ -9,10 +9,6 @@ enum CLILogService {
         "\(paths.logs)/xctest-holder.log"
     }
 
-    static func coreDeviceLogPath(paths: IOSUsePaths) -> String {
-        "\(paths.logs)/coredevice.log"
-    }
-
     static func append(paths: IOSUsePaths, _ lines: [String]) {
         guard !lines.isEmpty else { return }
         append(logPath: logPath(paths: paths), lines)
@@ -21,11 +17,6 @@ enum CLILogService {
     static func appendHolder(paths: IOSUsePaths, _ lines: [String]) {
         guard !lines.isEmpty else { return }
         append(logPath: holderLogPath(paths: paths), lines)
-    }
-
-    static func appendCoreDevice(paths: IOSUsePaths, _ lines: [String]) {
-        guard !lines.isEmpty else { return }
-        append(logPath: coreDeviceLogPath(paths: paths), lines)
     }
 
     static func append(logPath: String, _ lines: [String]) {
