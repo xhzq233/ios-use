@@ -5,19 +5,20 @@ import IOSUseProtocol
 @testable import IOSUseCLI
 
 final class DriverClientTests: XCTestCase {
-    func testClientUsesFreshConnectionForEachCommandWithinInstance() throws {
+    func testClientReusesConnectionWithinInstance() throws {
         let server = try FakeDriverServer(responseCount: 2)
         defer { server.stop() }
         let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
 
         _ = try client.dom(raw: false, fresh: false)
         _ = try client.dom(raw: true, fresh: true)
 
-        XCTAssertEqual(server.acceptCount, 2)
+        XCTAssertEqual(server.acceptCount, 1)
         XCTAssertEqual(server.requestCommands, ["dom", "dom"])
     }
 
-    func testClientReconnectsAfterDriverError() throws {
+    func testClientKeepsConnectionAfterNonFatalDriverError() throws {
         let okPayload = try ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))
         let server = try FakeDriverServer(responses: [
             ForyResponseFrame(ok: false, error: "driver rejected request"),
@@ -25,9 +26,29 @@ final class DriverClientTests: XCTestCase {
         ])
         defer { server.stop() }
         let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
 
         XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
             XCTAssertTrue(String(describing: error).contains("driver rejected request"))
+        }
+        _ = try client.dom(raw: true, fresh: true)
+
+        XCTAssertEqual(server.acceptCount, 1)
+        XCTAssertEqual(server.requestCommands, ["dom", "dom"])
+    }
+
+    func testClientClosesConnectionAfterFatalDriverError() throws {
+        let okPayload = try ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))
+        let server = try FakeDriverServer(responses: [
+            ForyResponseFrame(ok: false, error: "[FATAL] main thread stuck"),
+            ForyResponseFrame(ok: true, payload: okPayload),
+        ])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
+            XCTAssertTrue(String(describing: error).contains("[FATAL] main thread stuck"))
         }
         _ = try client.dom(raw: true, fresh: true)
 
@@ -41,6 +62,7 @@ final class DriverClientTests: XCTestCase {
         let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: payload)])
         defer { server.stop() }
         let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
 
         _ = try client.find(label: "General", traits: "Cell", cindex: -1)
 
@@ -58,6 +80,7 @@ final class DriverClientTests: XCTestCase {
         let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: payload)])
         defer { server.stop() }
         let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
 
         _ = try client.dom(raw: false, fresh: true, waitQuiescence: true)
 
@@ -80,6 +103,7 @@ final class DriverClientTests: XCTestCase {
         let logPath = tempRoot.appendingPathComponent("logs/cli.log").path
         defer { try? FileManager.default.removeItem(at: tempRoot) }
         let client = DriverClient(port: UInt16(server.port), cliLogPath: logPath)
+        defer { client.close() }
 
         _ = try client.dom(raw: false, fresh: true)
 
@@ -91,18 +115,21 @@ final class DriverClientTests: XCTestCase {
         XCTAssertFalse(log.contains("[driver-response]"))
     }
 
-    func testCommandCompletionClosesConnectionPromptly() throws {
+    func testExplicitCloseSignalsEOFToServerPromptly() throws {
         let server = try FakeDriverServer(responseCount: 2)
         defer { server.stop() }
         let client = DriverClient(port: UInt16(server.port))
 
         _ = try client.dom(raw: false, fresh: false)
 
+        XCTAssertFalse(server.waitForDisconnect(timeout: 0.1))
+        client.close()
+
         XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
     }
 }
 
-private final class FakeDriverServer {
+final class FakeDriverServer {
     let port: Int
     private let listenFD: Int32
     private let responses: [ForyResponseFrame]

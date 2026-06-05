@@ -72,6 +72,23 @@ final class ServerTests: XCTestCase {
         }
     }
 
+    func testSameConnectionHandlesMultipleRequestResponseCycles() throws {
+        DriverServer.shared.stop()
+        let port = try Self.freePort()
+        try DriverServer.shared.start(port: port)
+
+        let fd = try Self.connect(port: port)
+        defer { Darwin.close(fd) }
+
+        let first = try Self.sendRequestAndReadResponse(fd: fd, command: "unitUnknownFirst")
+        let second = try Self.sendRequestAndReadResponse(fd: fd, command: "unitUnknownSecond")
+
+        XCTAssertFalse(first.ok)
+        XCTAssertTrue(first.error.contains("unknown command"))
+        XCTAssertFalse(second.ok)
+        XCTAssertTrue(second.error.contains("unknown command"))
+    }
+
     func testPendingInitialConnectionIsReplacedByNextClient() throws {
         DriverServer.shared.stop()
         let port = try Self.freePort()

@@ -1021,6 +1021,40 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(client.commands, ["tap", "dom", "swipe"])
     }
 
+    func testProductionFlowDriverBackedStepsReuseOneTCPConnection() throws {
+        let fixture = try FlowFixture()
+        try writeDriverLock(udid: "SIM-FLOW-TCP", deviceType: "simulator", paths: fixture.paths)
+        let flow = try fixture.write("driver-backed-tcp.yaml", """
+        name: driver-backed-tcp
+        steps:
+          - action: tap
+            label: General
+          - action: dom
+          - action: swipe
+            to: 10,20
+            from: General
+        """)
+        let fory = ForyRegistry.create()
+        let server = try FakeDriverServer(responses: [
+            ForyResponseFrame(ok: true, payload: try fory.serialize(ForyElementPayload(label: "General"))),
+            ForyResponseFrame(ok: true, payload: try fory.serialize(ForyDomPayload(app: "com.example"))),
+            ForyResponseFrame(ok: true, payload: try fory.serialize(ForySwipePayload(label: "10,20", scrolls: 1, scrollDirection: "forth"))),
+        ])
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            DriverClient(port: UInt16(server.port))
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            server.stop()
+        }
+
+        _ = try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)
+
+        XCTAssertEqual(server.acceptCount, 1)
+        XCTAssertEqual(server.requestCommands, ["tap", "dom", "swipe"])
+        XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
+    }
+
     func testFlowRequiresActiveDriverLockBeforeRunning() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("host-only.yaml", """

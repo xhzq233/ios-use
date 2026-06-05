@@ -829,6 +829,36 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("DOM after quiescence\nApp: com.example"))
     }
 
+    func testMutatingCommandPostDomReusesOneTCPConnection() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-post-dom-tcp-reuse-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-POST-DOM-TCP", deviceType: "simulator", paths: paths)
+        let fory = ForyRegistry.create()
+        let server = try FakeDriverServer(responses: [
+            ForyResponseFrame(ok: true, payload: try fory.serialize(ForyElementPayload(elemType: 9, label: "Continue", rect: ForyRect(x: 10, y: 20, w: 30, h: 40)))),
+            ForyResponseFrame(ok: true, payload: try fory.serialize(ForyDomPayload(app: "com.example"))),
+        ])
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            DriverClient(port: UInt16(server.port))
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            server.stop()
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["tap", "Continue", "--dom", "100"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("Tap\nButton \"Continue\" (10,20,30,40)"))
+        XCTAssertTrue(result.stdout.contains("DOM after 100ms\nApp: com.example"))
+        XCTAssertEqual(server.acceptCount, 1)
+        XCTAssertEqual(server.requestCommands, ["tap", "dom"])
+        XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
+    }
+
     func testRealDeviceTerminateAppUsesDriverClientAndSkipsMissingProcess() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-real-terminate-\(UUID().uuidString)")
