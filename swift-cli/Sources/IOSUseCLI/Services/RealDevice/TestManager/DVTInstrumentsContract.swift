@@ -259,9 +259,7 @@ struct DVTInvocation: Equatable {
 
 enum DVTInstrumentsContract {
     enum Provider {
-        static let secureServiceName = "com.apple.instruments.remoteserver.DVTSecureSocketProxy"
         static let rsdServiceName = "com.apple.instruments.dtservicehub"
-        static let oldServiceName = "com.apple.instruments.remoteserver"
         static let terminationCallbackCapability = "com.apple.instruments.client.processcontrol.capability.terminationCallback"
 
         static let capabilities: [String: Int] = [
@@ -304,9 +302,7 @@ enum DVTInstrumentsContract {
     }
 
     enum XCTestManagerDaemon {
-        static let secureServiceName = "com.apple.testmanagerd.lockdown.secure"
         static let rsdServiceName = "com.apple.dt.testmanagerd.remote"
-        static let oldServiceName = "com.apple.testmanagerd.lockdown"
         static let ideServiceIdentifier = "XCTestManager_IDEInterface"
         static let serviceIdentifier = "XCTestManager_DaemonConnectionInterface"
         static let xcodeVersion = 36
@@ -340,46 +336,25 @@ enum DVTInstrumentsContract {
             )
         }
 
-        static func initiateControlSession(productMajorVersion: Int) throws -> DVTInvocation? {
-            if productMajorVersion >= 17 {
-                return try DVTInvocation(
-                    serviceIdentifier: serviceIdentifier,
-                    selector: "_IDE_initiateControlSessionWithCapabilities:",
-                    arguments: [.archived([String: Any]())],
-                    expectsReply: true
-                )
-            }
-            if productMajorVersion >= 11 {
-                return try DVTInvocation(
-                    serviceIdentifier: serviceIdentifier,
-                    selector: "_IDE_initiateControlSessionWithProtocolVersion:",
-                    arguments: [.archived(xcodeVersion)],
-                    expectsReply: true
-                )
-            }
-            return nil
-        }
-
-        static func authorizeTestSession(productMajorVersion: Int, pid: Int) throws -> DVTInvocation {
-            if productMajorVersion >= 12 {
-                return try DVTInvocation(
-                    serviceIdentifier: serviceIdentifier,
-                    selector: "_IDE_authorizeTestSessionWithProcessID:",
-                    arguments: [.archived(pid)],
-                    expectsReply: true
-                )
-            }
-            if productMajorVersion >= 10 {
-                return try DVTInvocation(
-                    serviceIdentifier: serviceIdentifier,
-                    selector: "_IDE_initiateControlSessionForTestProcessID:protocolVersion:",
-                    arguments: [.archived(pid), .archived(xcodeVersion)],
-                    expectsReply: true
-                )
+        static func initiateControlSession(productMajorVersion: Int) throws -> DVTInvocation {
+            guard productMajorVersion >= 17 else {
+                throw CLIParseError.invalidValue("Real-device start requires iOS 17 or later; device reported iOS \(productMajorVersion).")
             }
             return try DVTInvocation(
                 serviceIdentifier: serviceIdentifier,
-                selector: "_IDE_initiateControlSessionForTestProcessID:",
+                selector: "_IDE_initiateControlSessionWithCapabilities:",
+                arguments: [.archived([String: Any]())],
+                expectsReply: true
+            )
+        }
+
+        static func authorizeTestSession(productMajorVersion: Int, pid: Int) throws -> DVTInvocation {
+            guard productMajorVersion >= 17 else {
+                throw CLIParseError.invalidValue("Real-device start requires iOS 17 or later; device reported iOS \(productMajorVersion).")
+            }
+            return try DVTInvocation(
+                serviceIdentifier: serviceIdentifier,
+                selector: "_IDE_authorizeTestSessionWithProcessID:",
                 arguments: [.archived(pid)],
                 expectsReply: true
             )

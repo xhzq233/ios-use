@@ -1,5 +1,43 @@
 import Foundation
 
+struct XCTestExecCallbackListenerFailure: Error, CustomStringConvertible {
+    enum Phase: Equatable {
+        case waitingForConfiguration
+        case afterConfiguration
+    }
+
+    enum Reason: Equatable {
+        case transportEnded
+        case protocolError
+    }
+
+    let phase: Phase
+    let reason: Reason
+    let underlying: Error
+
+    var description: String {
+        "XCTest exec callback listener \(reasonDescription) during \(phaseDescription): \(underlying)"
+    }
+
+    private var phaseDescription: String {
+        switch phase {
+        case .waitingForConfiguration:
+            return "startup"
+        case .afterConfiguration:
+            return "post-configuration hold"
+        }
+    }
+
+    private var reasonDescription: String {
+        switch reason {
+        case .transportEnded:
+            return "transport ended"
+        case .protocolError:
+            return "protocol error"
+        }
+    }
+}
+
 final class XCTestExecCallbackListener {
     private static let runnerReadySelector = "_XCT_testRunnerReadyWithCapabilities:"
 
@@ -11,7 +49,8 @@ final class XCTestExecCallbackListener {
     private let lock = NSLock()
     private var stopped = false
     private var configurationSent = false
-    private var listenerError: Error?
+    private var listenerFailure: XCTestExecCallbackListenerFailure?
+    private var postConfigurationFailureReported = false
 
     init(channel: DTXChannelClient, configurationPayload: Data, eventSink: ((String) -> Void)? = nil) {
         self.channel = channel
@@ -48,8 +87,24 @@ final class XCTestExecCallbackListener {
         throw CLIParseError.invalidValue("Timed out waiting for XCTest runner ready callback")
     }
 
-    var terminalError: Error? {
-        currentError
+    var startupFailure: Error? {
+        guard let failure = currentFailure,
+              failure.phase == .waitingForConfiguration else {
+            return nil
+        }
+        return failure
+    }
+
+    func takePostConfigurationFailure() -> XCTestExecCallbackListenerFailure? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let failure = listenerFailure,
+              failure.phase == .afterConfiguration,
+              !postConfigurationFailureReported else {
+            return nil
+        }
+        postConfigurationFailureReported = true
+        return failure
     }
 
     private var shouldStop: Bool {
@@ -59,9 +114,13 @@ final class XCTestExecCallbackListener {
     }
 
     private var currentError: Error? {
+        currentFailure
+    }
+
+    private var currentFailure: XCTestExecCallbackListenerFailure? {
         lock.lock()
         defer { lock.unlock() }
-        return listenerError
+        return listenerFailure
     }
 
     private var isConfigurationSent: Bool {
@@ -82,7 +141,7 @@ final class XCTestExecCallbackListener {
                 if Self.isIdleTimeout(error) {
                     continue
                 }
-                recordError(error)
+                recordFailure(error)
                 return
             }
         }
@@ -105,7 +164,7 @@ final class XCTestExecCallbackListener {
         }
 
         if message.transportFlags & DTXTransportFlag.expectsReply != 0 {
-            try channel.sendRawObjectReply(to: message)
+            try channel.sendAckReply(to: message)
         }
     }
 
@@ -120,18 +179,44 @@ final class XCTestExecCallbackListener {
         lock.unlock()
     }
 
-    private func recordError(_ error: Error) {
+    private func recordFailure(_ error: Error) {
         lock.lock()
-        if listenerError == nil {
-            listenerError = error
+        if listenerFailure == nil {
+            listenerFailure = XCTestExecCallbackListenerFailure(
+                phase: configurationSent ? .afterConfiguration : .waitingForConfiguration,
+                reason: Self.failureReason(for: error),
+                underlying: error
+            )
         }
         lock.unlock()
         semaphore.signal()
     }
 
     static func isIdleTimeout(_ error: Error) -> Bool {
-        let message = String(describing: error)
-        return message.localizedCaseInsensitiveContains("timeout")
-            || message.localizedCaseInsensitiveContains("timed out")
+        if case CoreDeviceTCPError.connectionTimeout = error {
+            return true
+        }
+        if let streamError = error as? DeviceStreamError {
+            return streamError.isTimeout
+        }
+        return false
+    }
+
+    private static func failureReason(for error: Error) -> XCTestExecCallbackListenerFailure.Reason {
+        if case CoreDeviceTCPError.connectionReset = error {
+            return .transportEnded
+        }
+        if case CoreDeviceTCPError.connectionClosed = error {
+            return .transportEnded
+        }
+        if let streamError = error as? DeviceStreamError {
+            switch streamError {
+            case .closed, .readFailed, .writeFailed, .writeFailedWithError:
+                return .transportEnded
+            case .timeout:
+                return .protocolError
+            }
+        }
+        return .protocolError
     }
 }

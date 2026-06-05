@@ -42,11 +42,11 @@ ios-use start
 - 设备未显示 `configured`，或显示 `driver update required`，先重新执行 `ios-use config --udid <udid>`。
 - 首次配置真机可能需要 Apple ID 和 2FA。出现这类交互时，让用户在终端手动运行带账号参数的 `config` 命令。
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`。
-- 真机必须 USB 连接；只通过 Wi-Fi 连接的设备不可用。
+- 真机必须 USB 连接且系统版本为 iOS 17+；只通过 Wi-Fi 连接的设备不可用。
 
 ## 3. 目标设备与命令边界
 
-- `start` 会启动第一个 USB 真机的 driver；多台真机或要启动 Simulator 时，用 `start <udid>` 明确指定。
+- `start` 会启动第一个 USB 真机的 driver；真机要求 iOS 17+。多台真机或要启动 Simulator 时，用 `start <udid>` 明确指定。
 - 启动后，该设备会成为后续 driver-backed 命令的目标。
 - 切换设备时先 `ios-use stop`，再 `ios-use start <new-udid>`。
 - `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `activateApp` / `terminateApp` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。

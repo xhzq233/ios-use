@@ -88,15 +88,7 @@ final class LockedDriverClientSession {
                 throw error
             }
             didRecoverConnectFailure = true
-            closeClient()
-            let recoveredLock: SessionService.Info
-            if let metadata = try SessionService.launchDriver(for: lock, paths: paths, verbose: verbose) {
-                recoveredLock = lock.applying(metadata)
-                try SessionService.writeDriverLock(info: recoveredLock, paths: paths)
-            } else {
-                recoveredLock = lock
-            }
-            info = recoveredLock
+            let recoveredLock = try relaunchDriver(for: lock)
             return try body(replaceClient(for: recoveredLock))
         }
     }
@@ -128,6 +120,23 @@ final class LockedDriverClientSession {
         return next
     }
 
+    private func relaunchDriver(for lock: SessionService.Info) throws -> SessionService.Info {
+        closeClient()
+        let holderResult = DriverLifecycleService.terminateFullXCTestHolderIfNeeded(info: lock, paths: paths)
+        if holderResult != .notApplicable {
+            CLILogService.append(paths: paths, ["[cli-lifecycle] XCTest holder cleanup before relaunch: \(holderResult)"])
+        }
+        let recoveredLock: SessionService.Info
+        if let metadata = try SessionService.launchDriver(for: lock, paths: paths, verbose: verbose) {
+            recoveredLock = lock.applying(metadata)
+            try SessionService.writeDriverLock(info: recoveredLock, paths: paths)
+        } else {
+            recoveredLock = lock
+        }
+        info = recoveredLock
+        return recoveredLock
+    }
+
     private func closeClient() {
         client?.close()
         client = nil
@@ -148,22 +157,36 @@ final class DriverClient: DriverCommandClient {
     private let udid: String?
     private let deviceType: String?
     private let cliLogPath: String?
+    private let socketTimeoutSeconds: Int
     private let fory = ForyRegistry.create()
     private var fd: Int32?
 
-    init(host: String = "127.0.0.1", port: UInt16 = IOSUseProtocol.defaultDriverPort, udid: String? = nil, deviceType: String? = nil, cliLogPath: String? = nil) {
+    init(
+        host: String = "127.0.0.1",
+        port: UInt16 = IOSUseProtocol.defaultDriverPort,
+        udid: String? = nil,
+        deviceType: String? = nil,
+        cliLogPath: String? = nil,
+        socketTimeoutSeconds: Int = IOSUseProtocol.commandSocketReadTimeoutSeconds
+    ) {
         self.host = host
         self.port = port
         self.udid = udid
         self.deviceType = deviceType
         self.cliLogPath = cliLogPath
+        self.socketTimeoutSeconds = socketTimeoutSeconds
     }
 
-    convenience init(session: SessionService.Info, paths: IOSUsePaths? = nil) {
+    convenience init(
+        session: SessionService.Info,
+        paths: IOSUsePaths? = nil,
+        socketTimeoutSeconds: Int = IOSUseProtocol.commandSocketReadTimeoutSeconds
+    ) {
         self.init(
             udid: session.udid,
             deviceType: session.deviceType,
-            cliLogPath: paths.map { CLILogService.logPath(paths: $0) }
+            cliLogPath: paths.map { CLILogService.logPath(paths: $0) },
+            socketTimeoutSeconds: socketTimeoutSeconds
         )
     }
 
@@ -257,6 +280,7 @@ final class DriverClient: DriverCommandClient {
         var loggedResponse = false
         do {
             let fd = try connectedFD()
+            defer { close() }
             let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
             requestBytes = frameData.count
             try writeLengthPrefixed(fd, data: frameData)
@@ -288,9 +312,6 @@ final class DriverClient: DriverCommandClient {
                     elapsedMs: elapsedMilliseconds(since: startedAt)
                 )
             }
-            if shouldCloseConnection(after: error) {
-                close()
-            }
             throw error
         }
     }
@@ -317,19 +338,6 @@ final class DriverClient: DriverCommandClient {
         return newFD
     }
 
-    private func shouldCloseConnection(after error: Error) -> Bool {
-        switch error {
-        case DriverClientError.readFailed,
-             DriverClientError.writeFailed,
-             DriverClientError.invalidFrameLength,
-             DriverClientError.maxFrameSizeExceeded,
-             DriverClientError.driverError:
-            return true
-        default:
-            return false
-        }
-    }
-
     private func connect() throws -> Int32 {
         if deviceType == "real", let udid {
             do {
@@ -339,11 +347,17 @@ final class DriverClient: DriverCommandClient {
                 return fd
             } catch let error as DriverClientError {
                 throw error
+            } catch let error as UsbmuxError {
+                switch error {
+                case .connectFailed:
+                    throw DriverClientError.connectFailedMessage(error.description, recoverable: true)
+                default:
+                    throw DriverClientError.connectFailedMessage(error.description, recoverable: false)
+                }
             } catch {
-                let message = String(describing: error)
                 throw DriverClientError.connectFailedMessage(
-                    message,
-                    recoverable: message.contains("usbmux Connect failed")
+                    String(describing: error),
+                    recoverable: false
                 )
             }
         }
@@ -376,7 +390,7 @@ final class DriverClient: DriverCommandClient {
         Darwin.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
         var noSigPipe: Int32 = 1
         Darwin.setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-        var timeout = timeval(tv_sec: time_t(IOSUseProtocol.commandSocketReadTimeoutSeconds), tv_usec: 0)
+        var timeout = timeval(tv_sec: time_t(socketTimeoutSeconds), tv_usec: 0)
         Darwin.setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         Darwin.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     }

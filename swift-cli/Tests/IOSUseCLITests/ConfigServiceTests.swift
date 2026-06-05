@@ -20,8 +20,6 @@ final class ConfigServiceTests: XCTestCase {
         SessionService.simulatorDriverReachableForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverTerminatorForTesting = nil
-        SessionService.realDriverReachableForTesting = nil
-        SessionService.realDriverLauncherForTesting = nil
         SessionService.realDriverTerminatorForTesting = nil
         SessionService.coreDeviceLifecycleFactoryForTesting = nil
         DriverLifecycleService.holderLauncherForTesting = nil
@@ -134,7 +132,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNil(SessionService.read(paths: paths))
     }
 
-    func testDriverLockPreservesXCTestHolderMetadata() throws {
+    func testDriverLockWritesXCTestHolderMetadataWithoutStartMode() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try SessionService.writeDriverLock(
@@ -146,7 +144,6 @@ final class ConfigServiceTests: XCTestCase {
                 startedAt: 123,
                 holderPid: 456,
                 runnerPid: 789,
-                startMode: "full-xctest",
                 sessionIdentifier: "SESSION-1",
                 bundleId: "com.example.driver.xctrunner"
             ),
@@ -157,9 +154,36 @@ final class ConfigServiceTests: XCTestCase {
 
         XCTAssertEqual(lock.holderPid, 456)
         XCTAssertEqual(lock.runnerPid, 789)
-        XCTAssertEqual(lock.startMode, "full-xctest")
+        XCTAssertNil(lock.startMode)
         XCTAssertEqual(lock.sessionIdentifier, "SESSION-1")
         XCTAssertEqual(lock.bundleId, "com.example.driver.xctrunner")
+        let raw = try String(contentsOfFile: paths.driverLock, encoding: .utf8)
+        XCTAssertFalse(raw.contains("startMode"))
+    }
+
+    func testDriverLockReadsLegacyStartModeForCompatibility() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path, withIntermediateDirectories: true)
+        try """
+        {
+          "udid": "REAL-HOLDER",
+          "deviceName": "Phone",
+          "deviceVersion": "26.2",
+          "deviceType": "real",
+          "startedAt": 123,
+          "holderPid": 456,
+          "runnerPid": 789,
+          "startMode": "full-xctest",
+          "sessionIdentifier": "SESSION-1",
+          "bundleId": "com.example.driver.xctrunner"
+        }
+        """.write(toFile: paths.driverLock, atomically: true, encoding: .utf8)
+
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+
+        XCTAssertEqual(lock.startMode, "full-xctest")
+        XCTAssertEqual(lock.holderPid, 456)
     }
 
     func testStopWithoutDriverLockFailsWithoutDiscoveryOrStateCleanup() throws {
@@ -350,19 +374,28 @@ final class ConfigServiceTests: XCTestCase {
             }
             return [IOSDevice(name: "Phone", version: "26.0", udid: "REAL-START", kind: .real)]
         }
-        var launched: [(String, String)] = []
-        SessionService.realDriverReachableForTesting = { _ in !launched.isEmpty }
-        SessionService.realDriverLauncherForTesting = { udid, bundleId in launched.append((udid, bundleId)) }
+        var holderLaunches: [(String, String)] = []
+        DriverLifecycleService.holderLauncherForTesting = { udid, bundleId, _, _ in
+            holderLaunches.append((udid, bundleId))
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 101,
+                runnerPid: 202,
+                sessionIdentifier: "SESSION-START",
+                bundleId: bundleId
+            )
+        }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-START"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(launched.map(\.0), ["REAL-START"])
-        XCTAssertEqual(launched.map(\.1), ["com.example.driver"])
+        XCTAssertEqual(holderLaunches.map(\.0), ["REAL-START"])
+        XCTAssertEqual(holderLaunches.map(\.1), ["com.example.driver"])
         let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
         XCTAssertEqual(lock.udid, "REAL-START")
         XCTAssertEqual(lock.deviceType, "real")
         XCTAssertEqual(lock.deviceName, "Phone")
+        XCTAssertEqual(lock.holderPid, 101)
+        XCTAssertNil(lock.startMode)
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
     }
 
@@ -384,16 +417,23 @@ final class ConfigServiceTests: XCTestCase {
                 IOSDevice(name: "Second Phone", version: "26.0", udid: "REAL-SECOND", kind: .real),
             ]
         }
-        var launched: [(String, String)] = []
-        SessionService.realDriverReachableForTesting = { _ in !launched.isEmpty }
-        SessionService.realDriverLauncherForTesting = { udid, bundleId in launched.append((udid, bundleId)) }
+        var holderLaunches: [(String, String)] = []
+        DriverLifecycleService.holderLauncherForTesting = { udid, bundleId, _, _ in
+            holderLaunches.append((udid, bundleId))
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 303,
+                runnerPid: 404,
+                sessionIdentifier: "SESSION-FIRST",
+                bundleId: bundleId
+            )
+        }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "Driver started for REAL-FIRST\n")
-        XCTAssertEqual(launched.map(\.0), ["REAL-FIRST"])
-        XCTAssertEqual(launched.map(\.1), ["com.example.first"])
+        XCTAssertEqual(holderLaunches.map(\.0), ["REAL-FIRST"])
+        XCTAssertEqual(holderLaunches.map(\.1), ["com.example.first"])
         let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
         XCTAssertEqual(lock.udid, "REAL-FIRST")
         XCTAssertEqual(lock.deviceType, "real")
@@ -415,9 +455,16 @@ final class ConfigServiceTests: XCTestCase {
             }
             return [IOSDevice(name: "Phone", version: "26.0", udid: "REAL-NATIVE", kind: .real)]
         }
-        let lifecycle = FakeCoreDeviceDriverLifecycle()
-        SessionService.coreDeviceLifecycleFactoryForTesting = { _ in lifecycle }
-        SessionService.realDriverReachableForTesting = { _ in !lifecycle.launches.isEmpty }
+        var holderLaunches: [(String, String)] = []
+        DriverLifecycleService.holderLauncherForTesting = { udid, bundleId, _, _ in
+            holderLaunches.append((udid, bundleId))
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 505,
+                runnerPid: 606,
+                sessionIdentifier: "SESSION-NATIVE",
+                bundleId: bundleId
+            )
+        }
         Shell.runOverrideForTesting = { executable, _, _, _ in
             if executable == "xcrun" {
                 XCTFail("real start default path must not call xcrun/devicectl")
@@ -428,12 +475,13 @@ final class ConfigServiceTests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-NATIVE"])
 
         XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(lifecycle.launches.map(\.0), ["REAL-NATIVE"])
-        XCTAssertEqual(lifecycle.launches.map(\.1), ["com.example.driver"])
-        XCTAssertEqual(lifecycle.launches.map(\.2), [IOSUseProtocol.driverStartReadinessTimeoutSeconds])
+        XCTAssertEqual(holderLaunches.map(\.0), ["REAL-NATIVE"])
+        XCTAssertEqual(holderLaunches.map(\.1), ["com.example.driver"])
         let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
         XCTAssertEqual(lock.udid, "REAL-NATIVE")
         XCTAssertEqual(lock.deviceType, "real")
+        XCTAssertEqual(lock.holderPid, 505)
+        XCTAssertNil(lock.startMode)
     }
 
     func testStartCommandRecordsNativeXCTestHolderMetadata() throws {
@@ -459,7 +507,6 @@ final class ConfigServiceTests: XCTestCase {
             return DriverLifecycleService.LaunchMetadata(
                 holderPid: 111,
                 runnerPid: 222,
-                startMode: "full-xctest",
                 sessionIdentifier: "SESSION-2",
                 bundleId: bundleId
             )
@@ -471,9 +518,11 @@ final class ConfigServiceTests: XCTestCase {
         let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
         XCTAssertEqual(lock.holderPid, 111)
         XCTAssertEqual(lock.runnerPid, 222)
-        XCTAssertEqual(lock.startMode, "full-xctest")
+        XCTAssertNil(lock.startMode)
         XCTAssertEqual(lock.sessionIdentifier, "SESSION-2")
         XCTAssertEqual(lock.bundleId, "com.example.driver")
+        let rawLock = try String(contentsOfFile: paths.driverLock, encoding: .utf8)
+        XCTAssertFalse(rawLock.contains("startMode"))
     }
 
     func testStartFailsWhenNativeXCTestLifecycleFailsWithoutFallback() throws {
@@ -491,10 +540,9 @@ final class ConfigServiceTests: XCTestCase {
             }
             return [IOSDevice(name: "Phone", version: "26.0", udid: "REAL-CORE-FAIL", kind: .real)]
         }
-        let core = FakeCoreDeviceDriverLifecycle()
-        core.launchError = CLIParseError.invalidValue("core unavailable")
-        SessionService.coreDeviceLifecycleFactoryForTesting = { _ in core }
-        SessionService.realDriverReachableForTesting = { _ in false }
+        DriverLifecycleService.holderLauncherForTesting = { _, _, _, _ in
+            throw CLIParseError.invalidValue("holder unavailable")
+        }
         Shell.runOverrideForTesting = { executable, _, _, _ in
             if executable == "xcrun" {
                 XCTFail("real start failure path must not call xcrun/devicectl")
@@ -506,7 +554,7 @@ final class ConfigServiceTests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stderr.contains("Native real-device launch failed. XCTest:"))
-        XCTAssertEqual(core.launches.map(\.0), ["REAL-CORE-FAIL"])
+        XCTAssertTrue(result.stderr.contains("holder unavailable"))
         XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
     }
 
@@ -948,18 +996,9 @@ final class ConfigServiceTests: XCTestCase {
 }
 
 private final class FakeCoreDeviceDriverLifecycle: CoreDeviceDriverLifecycleManaging {
-    var launches: [(String, String, Double)] = []
     var terminations: [(String, String?)] = []
     var terminateResult = false
-    var launchError: Error?
     var terminateError: Error?
-
-    func launchDriver(udid: String, bundleID: String, timeoutSeconds: Double) throws {
-        launches.append((udid, bundleID, timeoutSeconds))
-        if let launchError {
-            throw launchError
-        }
-    }
 
     func terminateDriver(udid: String, bundleID: String?) throws -> Bool {
         terminations.append((udid, bundleID))

@@ -4,7 +4,7 @@ export const settingsBeforeContactsCaseMetadata = [
   { id: 'AA-2', group: 'settings', kind: 'activate-app', setup: 'active driver', assertion: 'stdout plus Settings DOM postcondition', coverage: 'simulator' },
   { id: 'AA-3', group: 'settings', kind: 'activate-app', setup: 'Safari foreground', assertion: 'stdout reports Preferences activated', coverage: 'simulator' },
   { id: 'DOM-1', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom shows Preferences app', coverage: 'simulator' },
-  { id: 'DOM-2', group: 'settings', kind: 'dom-raw', setup: 'settings home', assertion: 'raw dom contains Application', coverage: 'simulator' },
+  { id: 'DOM-2', group: 'settings', kind: 'dom-raw', setup: 'settings home', assertion: 'raw dom contains App marker', coverage: 'simulator' },
   { id: 'DOM-5', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom contains Settings', coverage: 'simulator' },
   { id: 'DOM-6', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom omits Window header', coverage: 'simulator' },
   { id: 'DOM-7', group: 'settings', kind: 'dom-perf', setup: 'settings home', assertion: 'cold and warm DOM stay under guardrails', coverage: 'simulator' },
@@ -148,7 +148,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
       });
     } },
     { id: 'DOM-1', run: () => runCaseContains('DOM-1', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
-    { id: 'DOM-2', run: () => runCaseContains('DOM-2', '[App]', ['dom', '--raw', '--fresh'], settingsHome) },
+    { id: 'DOM-2', run: () => runCaseContains('DOM-2', '[App]', ['dom', '--raw'], settingsHome) },
     { id: 'DOM-5', run: () => runCaseContains('DOM-5', 'Settings', ['dom', '--fresh'], settingsHome) },
     { id: 'DOM-6', run: runDomNoWindowHeaderCase },
     { id: 'DOM-7', run: runDomPerfCase },
@@ -169,7 +169,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'FIND-1B', run: async () => {
       await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'Input'], async () => {
         await openContactsNewContact();
-        const input = runCliToFiles(['input', '--label', 'First name', '--content', 'iosuse-find', '--traits', 'Input'], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
+        const input = runCliToFiles(['input', '--tap', 'First name', '--content', 'iosuse-find', '--traits', 'Input'], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
         if (input.code !== 0) throw new Error(`FIND-1B setup input failed\n${input.stdout}${input.stderr}`);
       });
       if (selected('FIND-1B')) await discardContactIfNeeded();
