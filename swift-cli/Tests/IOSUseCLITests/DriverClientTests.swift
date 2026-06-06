@@ -149,35 +149,24 @@ final class DriverClientTests: XCTestCase {
         XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
     }
 
-    func testRealDeviceConnectRetriesBeforeSendingRequest() throws {
-        let payload = try ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))
-        let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: payload)])
-        defer { server.stop() }
+    func testRealDeviceConnectDoesNotRetryBeforeSendingRequest() throws {
         var attempts = 0
         DriverClient.usbmuxConnectorForTesting = { _, _ in
             attempts += 1
-            if attempts < 3 {
-                throw UsbmuxError.connectFailed(response: "driver not listening yet")
-            }
-            return try TCPConnector.connect(host: "127.0.0.1", port: server.port)
+            throw UsbmuxError.connectFailed(response: "driver not listening yet")
         }
         addTeardownBlock {
             DriverClient.usbmuxConnectorForTesting = nil
         }
 
-        let client = DriverClient(
-            udid: "REAL-CMD",
-            deviceType: "real",
-            realDeviceConnectRetryTimeoutSeconds: 1,
-            realDeviceConnectRetryPollMicroseconds: 1_000
-        )
+        let client = DriverClient(udid: "REAL-CMD", deviceType: "real")
         defer { client.close() }
 
-        _ = try client.dom(raw: false, fresh: false)
+        XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
+            XCTAssertTrue(String(describing: error).contains("driver not listening yet"))
+        }
 
-        XCTAssertEqual(attempts, 3)
-        XCTAssertEqual(server.acceptCount, 1)
-        XCTAssertEqual(server.requestCommands, ["dom"])
+        XCTAssertEqual(attempts, 1)
     }
 }
 

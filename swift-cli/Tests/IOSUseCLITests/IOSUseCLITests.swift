@@ -513,9 +513,12 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.driverConnectionHandoffTimeoutMilliseconds, 250)
         XCTAssertEqual(IOSUseProtocol.driverConnectionHandoffPollMicroseconds, 1_000)
         XCTAssertEqual(IOSUseProtocol.simulatorDriverStartPollIntervalMicroseconds, 100_000)
-        XCTAssertEqual(IOSUseProtocol.commandTimeoutSeconds, 45)
-        XCTAssertEqual(IOSUseProtocol.commandCompletionTimeoutSeconds, 120)
-        XCTAssertEqual(IOSUseProtocol.commandSocketReadTimeoutSeconds, 170)
+        XCTAssertEqual(IOSUseProtocol.commandTimeoutSeconds, 10)
+        XCTAssertEqual(IOSUseProtocol.commandSocketReadTimeoutSeconds, 12)
+        XCTAssertEqual(IOSUseProtocol.realDeviceDriverReadinessInitialDelayMicroseconds, 200_000)
+        XCTAssertEqual(IOSUseProtocol.realDeviceDriverReadinessPollMicroseconds, 40_000)
+        XCTAssertEqual(IOSUseProtocol.realDeviceDriverReadinessPostSuccessDelayMicroseconds, 10_000)
+        XCTAssertEqual(IOSUseProtocol.realDeviceDriverReadinessTimeoutSeconds, 10.0)
         XCTAssertEqual(IOSUseProtocol.minimumPostDomMilliseconds, 100)
         XCTAssertEqual(IOSUseProtocol.nsloggerDefaultPort, 50_000)
         XCTAssertEqual(IOSUseProtocol.proxyMitmdumpPort, 9080)
@@ -1052,7 +1055,7 @@ final class IOSUseCLITests: XCTestCase {
             DriverClient.usbmuxConnectorForTesting = nil
         }
 
-        let client = DriverClient(udid: "REAL-CMD", deviceType: "real", realDeviceConnectRetryTimeoutSeconds: 0)
+        let client = DriverClient(udid: "REAL-CMD", deviceType: "real")
 
         XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
             let driverError = error as? DriverClientError
@@ -1069,7 +1072,7 @@ final class IOSUseCLITests: XCTestCase {
             DriverClient.usbmuxConnectorForTesting = nil
         }
 
-        let client = DriverClient(udid: "REAL-CMD", deviceType: "real", realDeviceConnectRetryTimeoutSeconds: 0)
+        let client = DriverClient(udid: "REAL-CMD", deviceType: "real")
 
         XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
             let driverError = error as? DriverClientError

@@ -4,6 +4,9 @@ import IOSUseProtocol
 
 enum XCTestSessionHolderService {
     static let commandName = "__xctest-session-holder"
+    static var driverReadinessConnectorForTesting: ((String, Int) throws -> Int32)?
+    static var driverReadinessSleeperForTesting: ((useconds_t) -> Void)?
+    static var driverReadinessTimeoutSecondsForTesting: Double?
 
     private struct Options {
         let udid: String
@@ -40,6 +43,7 @@ enum XCTestSessionHolderService {
                 bundleID: options.bundleId
             )
             activeSession = startedSession
+            try waitForDriverReadiness(udid: options.udid, log: log)
             controlState.markReady(
                 runnerPid: startedSession.runnerPid,
                 sessionIdentifier: startedSession.sessionIdentifier.uuidString
@@ -98,6 +102,45 @@ enum XCTestSessionHolderService {
             return "XCTest session ended after configuration; stopping holder: \(postConfigurationFailure)"
         }
         return nil
+    }
+
+    static func waitForDriverReadiness(udid: String, log: (String) -> Void) throws {
+        let connector = driverReadinessConnectorForTesting ?? { try Usbmux.connect(udid: $0, port: $1) }
+        let sleeper = driverReadinessSleeperForTesting ?? { _ = Darwin.usleep($0) }
+        let timeout = driverReadinessTimeoutSecondsForTesting ?? IOSUseProtocol.realDeviceDriverReadinessTimeoutSeconds
+        let initialDelay = useconds_t(IOSUseProtocol.realDeviceDriverReadinessInitialDelayMicroseconds)
+        let pollDelay = useconds_t(IOSUseProtocol.realDeviceDriverReadinessPollMicroseconds)
+        let postSuccessDelay = useconds_t(IOSUseProtocol.realDeviceDriverReadinessPostSuccessDelayMicroseconds)
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        let deadline = Date().addingTimeInterval(max(0, timeout))
+        var attempts = 0
+        var lastError: Error?
+
+        log("waiting for driver TCP readiness port=\(IOSUseProtocol.defaultDriverPort) initialDelayMs=\(initialDelay / 1_000) pollMs=\(pollDelay / 1_000) timeoutSeconds=\(timeout)")
+        sleeper(initialDelay)
+
+        while true {
+            attempts += 1
+            do {
+                let fd = try connector(udid, Int(IOSUseProtocol.defaultDriverPort))
+                _ = Darwin.shutdown(fd, SHUT_RDWR)
+                Darwin.close(fd)
+                let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond)
+                log("driver TCP readiness confirmed attempts=\(attempts) elapsed=\(elapsedMs)ms")
+                sleeper(postSuccessDelay)
+                return
+            } catch {
+                lastError = error
+                if Date() >= deadline {
+                    break
+                }
+                sleeper(pollDelay)
+            }
+        }
+
+        let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond)
+        let detail = lastError.map { " lastError=\($0)" } ?? ""
+        throw CLIParseError.invalidValue("Driver TCP readiness timed out after \(elapsedMs)ms attempts=\(attempts)\(detail)")
     }
 
     private static func parse(_ arguments: [String]) throws -> Options {

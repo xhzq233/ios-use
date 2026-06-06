@@ -265,14 +265,8 @@ import Fory
                 cancelled = true
             }
             cancelLock.unlock()
-            if !commandStarted {
-                return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after \(IOSUseProtocol.commandTimeoutSeconds)s (XCTest main thread may be blocked or crashed)")
-            }
-
-            let completionWaitResult = sem.wait(timeout: .now() + .seconds(IOSUseProtocol.commandCompletionTimeoutSeconds))
-            if completionWaitResult == .timedOut {
-                return ForyResponseFrame(ok: false, error: "[FATAL] Command started on the XCTest main thread but did not finish within 120s; driver state may be inconsistent")
-            }
+            let detail = commandStarted ? "after starting on the XCTest main thread" : "before starting on the XCTest main thread"
+            return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after \(IOSUseProtocol.commandTimeoutSeconds)s \(detail)")
         }
 
         if let error = dispatchError {
