@@ -404,8 +404,8 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(waits.map(\.0), [4242, 4242])
         let firstWait = try XCTUnwrap(waits.first)
         let lastWait = try XCTUnwrap(waits.last)
-        XCTAssertGreaterThanOrEqual(firstWait.1, 15)
-        XCTAssertGreaterThanOrEqual(lastWait.1, 2)
+        XCTAssertEqual(firstWait.1, IOSUseProtocol.XCConstants.xctestProcessTerminateWaitSeconds)
+        XCTAssertEqual(lastWait.1, IOSUseProtocol.XCConstants.xctestProcessKillWaitSeconds)
     }
 
     func testStopClearsStaleSimulatorDriverLockWhenAppAlreadyStopped() throws {
