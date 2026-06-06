@@ -3,7 +3,6 @@ import XCTest
 
 final class OSLogServiceTests: XCTestCase {
     override func tearDown() {
-        RealDeviceOSLogService.collectorForTesting = nil
         RealDeviceOSTraceService.collectorForTesting = nil
         OSLogService.resetSimulatorLogCollectorForTesting()
         super.tearDown()

@@ -29,7 +29,6 @@ final class ConfigServiceTests: XCTestCase {
         DriverLifecycleService.signalSenderForTesting = nil
         DriverLifecycleService.processExitWaiterForTesting = nil
         IOSUseCLI.driverClientFactoryForTesting = nil
-        RealDeviceOSLogService.collectorForTesting = nil
         super.tearDown()
     }
 

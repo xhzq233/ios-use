@@ -1492,6 +1492,83 @@ final class DeviceProtocolClientTests: XCTestCase {
         }
     }
 
+    func testLockdownConnectToServiceUsesTLSWhenServiceRequiresSSL() throws {
+        let pairRecord = PairRecord(
+            hostID: "HOST",
+            systemBUID: "BUID",
+            hostPrivateKey: Data("key".utf8),
+            hostCertificate: Data("cert".utf8)
+        )
+        let connection = LockdownServiceConnection(
+            pairRecord: pairRecord,
+            service: LockdownService(port: 12_345, enableServiceSSL: true)
+        )
+        let expectedStream = FakeDeviceStream(reads: [])
+        var connected: (udid: String, port: Int)?
+        var tlsInputs: (fd: Int32, hostID: String)?
+
+        let stream = try LockdownSession.connectToStartedService(
+            connection,
+            udid: "REAL-UDID",
+            usbmuxConnect: { udid, port in
+                connected = (udid, port)
+                return 42
+            },
+            tlsStreamFactory: { fd, record in
+                tlsInputs = (fd, record.hostID)
+                return expectedStream
+            },
+            plainStreamFactory: { _ in
+                XCTFail("plain stream must not be used when EnableServiceSSL is true")
+                return FakeDeviceStream(reads: [])
+            }
+        )
+
+        XCTAssertEqual(connected?.udid, "REAL-UDID")
+        XCTAssertEqual(connected?.port, 12_345)
+        XCTAssertEqual(tlsInputs?.fd, 42)
+        XCTAssertEqual(tlsInputs?.hostID, "HOST")
+        XCTAssertTrue((stream as? FakeDeviceStream) === expectedStream)
+    }
+
+    func testLockdownConnectToServiceUsesPlainStreamWhenServiceDoesNotRequireSSL() throws {
+        let pairRecord = PairRecord(
+            hostID: "HOST",
+            systemBUID: "BUID",
+            hostPrivateKey: Data("key".utf8),
+            hostCertificate: Data("cert".utf8)
+        )
+        let connection = LockdownServiceConnection(
+            pairRecord: pairRecord,
+            service: LockdownService(port: 12_346, enableServiceSSL: false)
+        )
+        let expectedStream = FakeDeviceStream(reads: [])
+        var connected: (udid: String, port: Int)?
+        var plainFD: Int32?
+
+        let stream = try LockdownSession.connectToStartedService(
+            connection,
+            udid: "REAL-UDID",
+            usbmuxConnect: { udid, port in
+                connected = (udid, port)
+                return 43
+            },
+            tlsStreamFactory: { _, _ in
+                XCTFail("TLS stream must not be used when EnableServiceSSL is false")
+                return FakeDeviceStream(reads: [])
+            },
+            plainStreamFactory: { fd in
+                plainFD = fd
+                return expectedStream
+            }
+        )
+
+        XCTAssertEqual(connected?.udid, "REAL-UDID")
+        XCTAssertEqual(connected?.port, 12_346)
+        XCTAssertEqual(plainFD, 43)
+        XCTAssertTrue((stream as? FakeDeviceStream) === expectedStream)
+    }
+
     func testPlainDeviceStreamCloseClosesOwnedSocket() throws {
         var fds = [Int32](repeating: -1, count: 2)
         XCTAssertEqual(Darwin.socketpair(AF_UNIX, SOCK_STREAM, 0, &fds), 0)
