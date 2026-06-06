@@ -16,8 +16,14 @@ public enum IOSUseProtocol {
     public static let driverConnectionHandoffPollMicroseconds = 1_000
     /// Accept-loop backoff for the driver TCP server.
     public static let driverAcceptPollIntervalMicroseconds = 50_000
+    /// Maximum time Simulator start waits for the driver TCP port after `simctl launch`.
+    public static let simulatorDriverStartTimeoutSeconds = 10.0
     /// Simulator start port polling interval after `simctl launch`.
     public static let simulatorDriverStartPollIntervalMicroseconds = 100_000
+    /// Maximum time Simulator config waits for the installed driver to answer after launch.
+    public static let simulatorDriverConfigureProbeTimeoutSeconds = 10.0
+    /// Simulator config probe polling interval after installing and launching the driver.
+    public static let simulatorDriverConfigureProbePollMicroseconds = 200_000
     /// Time to wait from receiving a command until a driver response is ready.
     public static let commandTimeoutSeconds = 10
     /// Host-side socket read timeout. Must outlive the driver command watchdog long enough to receive the fatal frame.
@@ -118,6 +124,14 @@ public enum IOSUseProtocol {
     public static let nsloggerMaxReceiveBufferBytes = 1024 * 1024
     /// Legacy stale-lock age retained for compatibility with older lock files.
     public static let nslogLockStaleMilliseconds = 60 * 60 * 1000
+    /// Foreground nslog command event-loop tick while streaming logs.
+    public static let nslogForegroundRunLoopIntervalSeconds = 0.1
+    /// Timeout while the nslog daemon child writes its capture lock.
+    public static let nslogCaptureStartTimeoutSeconds = 3.0
+    /// Poll interval while waiting for the nslog daemon child to write its capture lock.
+    public static let nslogCaptureStartPollMicroseconds = 50_000
+    /// Poll interval while waiting for nslog child process exit.
+    public static let nslogProcessExitPollMicroseconds = 50_000
     /// Flow waits this long for app-side NSLogger client connection.
     public static let flowNSLogConnectTimeoutMilliseconds = 15_000
     /// Flow NSLogger connection polling interval.
@@ -128,6 +142,8 @@ public enum IOSUseProtocol {
     public static let proxyMitmdumpPort = 9080
     /// Grace period before killing mitmdump with SIGKILL.
     public static let proxyProcessGraceMilliseconds = 3_000
+    /// Poll interval while waiting for mitmdump to exit after SIGTERM.
+    public static let proxyProcessExitPollMicroseconds = 100_000
     /// Timeout while waiting for mitmdump port readiness.
     public static let proxyWaitPortTimeoutMilliseconds = 5_000
     /// Poll interval while waiting for mitmdump port readiness.
@@ -136,6 +152,10 @@ public enum IOSUseProtocol {
     public static let mitmproxyCAGenerationTimeoutMilliseconds = 10_000
     /// Poll interval while waiting for mitmproxy CA generation.
     public static let mitmproxyCAGenerationPollMilliseconds = 200
+    /// Timeout for os_trace_relay StartActivity acknowledgement.
+    public static let osTraceActivityStartTimeoutSeconds = 5.0
+    /// Short read slice used while streaming os_trace_relay activity.
+    public static let osTraceActivityReadPollSeconds = 0.25
 }
 
 public enum DriverCommand: String, CaseIterable, Sendable {
