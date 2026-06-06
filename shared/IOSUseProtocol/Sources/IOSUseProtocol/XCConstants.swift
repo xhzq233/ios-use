@@ -12,14 +12,14 @@ public extension IOSUseProtocol {
 
         public static let minimumRealDeviceIOSMajorVersion = 17
         public static let xctestHolderRunLoopIntervalSeconds = 0.25
-        public static let xctestHolderStartResultTimeoutSeconds = 60.0
+        public static let xctestHolderStartResultTimeoutSeconds = 10.0
         public static let xctestHolderStartPollMicroseconds = 100_000
         public static let xctestHolderControlListenBacklog: Int32 = 8
-        public static let xctestHolderControlReadTimeoutSeconds = 30.0
-        public static let xctestHolderControlReadPollSeconds = 0.2
+        public static let xctestHolderControlReadTimeoutSeconds = 5.0
+        public static let xctestHolderControlReadPollSeconds = 0.05
         public static let xctestHolderStopRequestTimeoutSeconds = 5.0
-        public static let xctestHolderStopWaitTimeoutSeconds = 15.0
-        public static let xctestProcessTerminateWaitSeconds = 15.0
+        public static let xctestHolderStopWaitTimeoutSeconds = 10.0
+        public static let xctestProcessTerminateWaitSeconds = 10.0
         public static let xctestProcessKillWaitSeconds = 2.0
         public static let xctestProcessExitPollMicroseconds = 100_000
         public static let xctestTunnelCloseTimeoutSeconds = 1.0

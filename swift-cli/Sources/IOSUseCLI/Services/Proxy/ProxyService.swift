@@ -611,7 +611,7 @@ public enum ProxyService {
         let deadline = Date().addingTimeInterval(Double(IOSUseProtocol.proxyProcessGraceMilliseconds) / 1000.0)
         while Date() < deadline {
             if !processAlive(pid) { return }
-            usleep(100_000)
+            usleep(useconds_t(IOSUseProtocol.proxyProcessExitPollMicroseconds))
         }
         if processAlive(pid) { _ = kill(pid, SIGKILL) }
     }

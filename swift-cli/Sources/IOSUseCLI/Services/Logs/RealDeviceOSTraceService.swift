@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 struct OSLogEvent: Equatable {
     var rawLine: String
@@ -39,12 +40,18 @@ enum RealDeviceOSTraceService {
         ]
         options["Pid"] = resolvedPID.map { Int64($0) } ?? Int64(0x0FFFFFFFF)
         try sendPlist(options, stream: stream)
-        try checkRequestSuccessful(try readPlist(stream: stream, timeoutSeconds: 5), request: "StartActivity")
+        try checkRequestSuccessful(
+            try readPlist(stream: stream, timeoutSeconds: IOSUseProtocol.osTraceActivityStartTimeoutSeconds),
+            request: "StartActivity"
+        )
 
         let deadline = timeoutSeconds.map { Date().addingTimeInterval(max(0, $0)) }
         while deadline.map({ Date() < $0 }) ?? true {
-            let remaining = deadline.map { max(0, $0.timeIntervalSinceNow) } ?? 0.25
-            guard let frame = try readMessageFrame(stream: stream, timeoutSeconds: min(0.25, remaining)) else {
+            let remaining = deadline.map { max(0, $0.timeIntervalSinceNow) } ?? IOSUseProtocol.osTraceActivityReadPollSeconds
+            guard let frame = try readMessageFrame(
+                stream: stream,
+                timeoutSeconds: min(IOSUseProtocol.osTraceActivityReadPollSeconds, remaining)
+            ) else {
                 continue
             }
             guard let event = parseEventPacket(frame) else { continue }

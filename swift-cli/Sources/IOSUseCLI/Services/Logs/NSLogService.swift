@@ -55,7 +55,7 @@ public enum NSLogService {
         defer { interruptMonitor.stop() }
 
         while server.isRunning && !interruptMonitor.interrupted {
-            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(IOSUseProtocol.nslogForegroundRunLoopIntervalSeconds))
         }
         if foreground {
             try interruptMonitor.throwIfInterrupted()
@@ -358,7 +358,7 @@ public enum NSLogService {
     }
 
     private static func waitForCapture(pid: Int32, logFile: String, fallbackName: String?, paths: IOSUsePaths) throws -> NSLogCaptureTarget {
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(IOSUseProtocol.nslogCaptureStartTimeoutSeconds)
         while Date() < deadline {
             if let record = readLock(paths: paths), record.pid == pid {
                 return NSLogCaptureTarget(
@@ -371,7 +371,7 @@ public enum NSLogService {
                     port: record.port
                 )
             }
-            usleep(50_000)
+            usleep(useconds_t(IOSUseProtocol.nslogCaptureStartPollMicroseconds))
         }
         throw CLIParseError.invalidValue("Timed out waiting for NSLogger capture to start")
     }
@@ -501,7 +501,7 @@ public enum NSLogService {
             if !processAlive(pid) {
                 return
             }
-            usleep(50_000)
+            usleep(useconds_t(IOSUseProtocol.nslogProcessExitPollMicroseconds))
         }
     }
 }

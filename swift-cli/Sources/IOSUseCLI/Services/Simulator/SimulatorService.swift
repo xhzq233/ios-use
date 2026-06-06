@@ -79,7 +79,7 @@ enum SimulatorService {
             return
         }
         try launch(udid)
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(IOSUseProtocol.simulatorDriverStartTimeoutSeconds)
         while Date() < deadline {
             if isReachable() {
                 return
@@ -173,13 +173,14 @@ enum SimulatorService {
     }
 
     private static func waitForDriver() {
-        for _ in 0..<50 {
+        let deadline = Date().addingTimeInterval(IOSUseProtocol.simulatorDriverConfigureProbeTimeoutSeconds)
+        while Date() < deadline {
             let driver = DriverClient()
             defer { driver.close() }
             if (try? driver.dom(raw: false, fresh: false, waitQuiescence: false)) != nil {
                 return
             }
-            usleep(200_000)
+            usleep(useconds_t(IOSUseProtocol.simulatorDriverConfigureProbePollMicroseconds))
         }
     }
 

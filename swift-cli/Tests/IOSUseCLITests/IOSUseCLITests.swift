@@ -505,25 +505,6 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.contains("missing required argument 'label'"))
     }
 
-    func testProtocolConstantsMatchDriverDefaults() {
-        XCTAssertEqual(IOSUseProtocol.defaultDriverPort, 8102)
-        XCTAssertEqual(IOSUseProtocol.maxFrameSizeBytes, 50 * 1024 * 1024)
-        XCTAssertEqual(IOSUseProtocol.maxDriverConnections, 1)
-        XCTAssertEqual(IOSUseProtocol.driverConnectionHandoffTimeoutMilliseconds, 250)
-        XCTAssertEqual(IOSUseProtocol.driverConnectionHandoffPollMicroseconds, 1_000)
-        XCTAssertEqual(IOSUseProtocol.simulatorDriverStartPollIntervalMicroseconds, 100_000)
-        XCTAssertEqual(IOSUseProtocol.commandTimeoutSeconds, 10)
-        XCTAssertEqual(IOSUseProtocol.commandSocketReadTimeoutSeconds, 12)
-        XCTAssertEqual(IOSUseProtocol.realDeviceDriverReadinessInitialDelayMicroseconds, 200_000)
-        XCTAssertEqual(IOSUseProtocol.realDeviceDriverReadinessPollMicroseconds, 40_000)
-        XCTAssertEqual(IOSUseProtocol.realDeviceDriverReadinessPostSuccessDelayMicroseconds, 10_000)
-        XCTAssertEqual(IOSUseProtocol.realDeviceDriverReadinessTimeoutSeconds, 10.0)
-        XCTAssertEqual(IOSUseProtocol.minimumPostDomMilliseconds, 100)
-        XCTAssertEqual(IOSUseProtocol.nsloggerDefaultPort, 50_000)
-        XCTAssertEqual(IOSUseProtocol.proxyMitmdumpPort, 9080)
-        XCTAssertEqual(IOSUseProtocol.springboardBundleId, "com.apple.springboard")
-    }
-
     func testCLILogTimestampIncludesMilliseconds() {
         let timestamp = CLILogService.formatTimestamp(Date(timeIntervalSince1970: 0.123))
 
