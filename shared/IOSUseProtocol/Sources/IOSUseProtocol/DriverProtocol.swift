@@ -18,16 +18,18 @@ public enum IOSUseProtocol {
     public static let driverAcceptPollIntervalMicroseconds = 50_000
     /// Simulator start port polling interval after `simctl launch`.
     public static let simulatorDriverStartPollIntervalMicroseconds = 100_000
-    /// Real-device driver TCP connect retry budget after XCTest start returns but the driver socket is still opening.
-    public static let realDeviceDriverConnectRetryTimeoutSeconds = 2.0
-    /// Real-device driver TCP connect retry poll interval.
-    public static let realDeviceDriverConnectRetryPollMicroseconds = 100_000
-    /// Time to wait for a command to start on XCTest main thread.
-    public static let commandTimeoutSeconds = 45
-    /// Time to wait for a started command to complete before marking driver state unsafe.
-    public static let commandCompletionTimeoutSeconds = 120
-    /// Host-side socket read timeout. Must cover the driver's start watchdog plus started-command completion watchdog.
-    public static let commandSocketReadTimeoutSeconds = commandTimeoutSeconds + commandCompletionTimeoutSeconds + 5
+    /// Time to wait from receiving a command until a driver response is ready.
+    public static let commandTimeoutSeconds = 10
+    /// Host-side socket read timeout. Must outlive the driver command watchdog long enough to receive the fatal frame.
+    public static let commandSocketReadTimeoutSeconds = commandTimeoutSeconds + 2
+    /// Initial delay before holder probes real-device driver TCP readiness after XCTest start returns.
+    public static let realDeviceDriverReadinessInitialDelayMicroseconds = 200_000
+    /// Poll interval while holder waits for real-device driver TCP readiness.
+    public static let realDeviceDriverReadinessPollMicroseconds = 40_000
+    /// Delay after a successful holder readiness probe before returning `start`.
+    public static let realDeviceDriverReadinessPostSuccessDelayMicroseconds = 10_000
+    /// Maximum time holder waits for the driver TCP port to accept connections after XCTest start returns.
+    public static let realDeviceDriverReadinessTimeoutSeconds = 10.0
     /// Driver stop waits for the accept loop to exit for this many seconds.
     public static let serverStopTimeoutSeconds = 5
     /// TCP listen backlog for the driver server socket.

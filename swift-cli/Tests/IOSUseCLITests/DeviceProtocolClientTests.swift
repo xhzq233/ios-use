@@ -561,31 +561,20 @@ final class DeviceProtocolClientTests: XCTestCase {
                 expectsReply: true
             ).wireData,
         ])
-        let execTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
+        let coreDeviceTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
             peerInfo: peerInfo,
-            streams: [execStream]
+            streams: [stdioStream, execStream, controlStream]
         )
-        let appServiceTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
-            peerInfo: peerInfo,
-            streams: []
-        )
-        let stdioTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
-            peerInfo: peerInfo,
-            streams: [stdioStream]
-        )
-        let controlTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
-            peerInfo: peerInfo,
-            streams: [controlStream]
-        )
-        var tunnels = [execTunnel, appServiceTunnel, stdioTunnel, controlTunnel]
+        var startTunnelCount = 0
         let appService = FakeXCTestRunnerAppService(pid: 333)
         let lifecycle = RealDeviceXCTestDriverLifecycle(dependencies: RealDeviceXCTestDriverLifecycle.Dependencies(
             startTunnel: { udid in
                 XCTAssertEqual(udid, "REAL-XCTEST")
-                guard !tunnels.isEmpty else {
-                    throw CLIParseError.invalidValue("fake tunnel underflow")
+                guard startTunnelCount == 0 else {
+                    throw CLIParseError.invalidValue("unexpected extra tunnel")
                 }
-                return tunnels.removeFirst()
+                startTunnelCount += 1
+                return coreDeviceTunnel
             },
             resolveRunnerInfo: { udid, bundleID in
                 XCTAssertEqual(udid, "REAL-XCTEST")
@@ -598,11 +587,11 @@ final class DeviceProtocolClientTests: XCTestCase {
             productMajorVersion: { _ in 17 },
             makeSessionIdentifier: { sessionID },
             openAppService: { tunnelSession in
-                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(appServiceTunnel))
+                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(coreDeviceTunnel))
                 return appService
             },
             openStdIOSocket: { tunnelSession in
-                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(stdioTunnel))
+                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(coreDeviceTunnel))
                 return try CoreDeviceOpenStdIOSocket.connect(session: tunnelSession)
             }
         ))
@@ -611,21 +600,13 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertTrue(waitUntil { controlStream.writes.count == 5 })
         activeSession.close(killRunner: false)
 
-        XCTAssertTrue(tunnels.isEmpty)
-        XCTAssertEqual(execTunnel.requestedServices, [
-            DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
-        ])
-        XCTAssertEqual(appServiceTunnel.requestedServices, [])
-        XCTAssertEqual(stdioTunnel.requestedServices, [
+        XCTAssertEqual(startTunnelCount, 1)
+        XCTAssertEqual(coreDeviceTunnel.requestedServices, [
             CoreDeviceOpenStdIOSocket.serviceName,
-        ])
-        XCTAssertEqual(controlTunnel.requestedServices, [
+            DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
             DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
         ])
-        XCTAssertTrue(execTunnel.closed)
-        XCTAssertTrue(appServiceTunnel.closed)
-        XCTAssertTrue(stdioTunnel.closed)
-        XCTAssertTrue(controlTunnel.closed)
+        XCTAssertTrue(coreDeviceTunnel.closed)
         XCTAssertTrue(execStream.closed)
         XCTAssertTrue(stdioStream.closed)
         XCTAssertTrue(controlStream.closed)

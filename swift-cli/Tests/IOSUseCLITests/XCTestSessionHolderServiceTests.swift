@@ -1,3 +1,5 @@
+import Darwin
+import IOSUseProtocol
 import XCTest
 @testable import IOSUseCLI
 
@@ -110,6 +112,76 @@ final class XCTestSessionHolderServiceTests: XCTestCase {
         )
 
         XCTAssertNil(message)
+    }
+
+    func testDriverReadinessPollsUntilTCPConnectSucceeds() throws {
+        var attempts = 0
+        var sleeps: [useconds_t] = []
+        var logs: [String] = []
+        var peerFD: Int32?
+        XCTestSessionHolderService.driverReadinessConnectorForTesting = { _, port in
+            XCTAssertEqual(port, Int(IOSUseProtocol.defaultDriverPort))
+            attempts += 1
+            if attempts < 3 {
+                throw UsbmuxError.connectFailed(response: "not ready")
+            }
+            var fds = [Int32](repeating: 0, count: 2)
+            guard socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0 else {
+                throw CLIParseError.invalidValue("socketpair failed: \(errno)")
+            }
+            peerFD = fds[1]
+            return fds[0]
+        }
+        XCTestSessionHolderService.driverReadinessSleeperForTesting = { sleeps.append($0) }
+        XCTestSessionHolderService.driverReadinessTimeoutSecondsForTesting = 1
+        addTeardownBlock {
+            XCTestSessionHolderService.driverReadinessConnectorForTesting = nil
+            XCTestSessionHolderService.driverReadinessSleeperForTesting = nil
+            XCTestSessionHolderService.driverReadinessTimeoutSecondsForTesting = nil
+            if let peerFD {
+                Darwin.close(peerFD)
+            }
+        }
+
+        try XCTestSessionHolderService.waitForDriverReadiness(udid: "REAL-1") {
+            logs.append($0)
+        }
+
+        XCTAssertEqual(attempts, 3)
+        XCTAssertEqual(sleeps, [
+            IOSUseProtocol.realDeviceDriverReadinessInitialDelayMicroseconds,
+            IOSUseProtocol.realDeviceDriverReadinessPollMicroseconds,
+            IOSUseProtocol.realDeviceDriverReadinessPollMicroseconds,
+            IOSUseProtocol.realDeviceDriverReadinessPostSuccessDelayMicroseconds,
+        ].map(useconds_t.init))
+        XCTAssertTrue(logs.contains { $0.contains("waiting for driver TCP readiness") })
+        XCTAssertTrue(logs.contains { $0.contains("driver TCP readiness confirmed attempts=3") })
+    }
+
+    func testDriverReadinessFailsAfterSingleAttemptWhenTimeoutIsZero() {
+        var attempts = 0
+        var sleeps: [useconds_t] = []
+        XCTestSessionHolderService.driverReadinessConnectorForTesting = { _, _ in
+            attempts += 1
+            throw UsbmuxError.connectFailed(response: "still not ready")
+        }
+        XCTestSessionHolderService.driverReadinessSleeperForTesting = { sleeps.append($0) }
+        XCTestSessionHolderService.driverReadinessTimeoutSecondsForTesting = 0
+        addTeardownBlock {
+            XCTestSessionHolderService.driverReadinessConnectorForTesting = nil
+            XCTestSessionHolderService.driverReadinessSleeperForTesting = nil
+            XCTestSessionHolderService.driverReadinessTimeoutSecondsForTesting = nil
+        }
+
+        XCTAssertThrowsError(try XCTestSessionHolderService.waitForDriverReadiness(udid: "REAL-1") { _ in }) { error in
+            XCTAssertTrue(String(describing: error).contains("Driver TCP readiness timed out"))
+            XCTAssertTrue(String(describing: error).contains("still not ready"))
+        }
+
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(sleeps, [
+            IOSUseProtocol.realDeviceDriverReadinessInitialDelayMicroseconds,
+        ].map(useconds_t.init))
     }
 }
 

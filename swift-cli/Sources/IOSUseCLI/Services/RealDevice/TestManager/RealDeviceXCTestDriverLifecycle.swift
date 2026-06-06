@@ -193,12 +193,9 @@ final class RealDeviceXCTestDriverLifecycle {
         var controlListener: DTXConnectionIdleListener?
         var execSession: XCTestManagerSession?
         var controlSession: XCTestManagerSession?
-        var execTunnel: CoreDeviceLifecycleTunnelSession?
-        var appServiceTunnel: CoreDeviceLifecycleTunnelSession?
-        var stdioTunnel: CoreDeviceLifecycleTunnelSession?
-        var controlTunnel: CoreDeviceLifecycleTunnelSession?
+        var coreDeviceTunnel: CoreDeviceLifecycleTunnelSession?
         do {
-            let openedExecTunnel = try startValidatedTunnel(
+            let openedTunnel = try startValidatedTunnel(
                 udid: udid,
                 requiredServices: [
                     DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
@@ -207,32 +204,20 @@ final class RealDeviceXCTestDriverLifecycle {
                 ],
                 logPeerInfo: true
             )
-            execTunnel = openedExecTunnel
+            coreDeviceTunnel = openedTunnel
 
             let sessionIdentifier = dependencies.makeSessionIdentifier()
             eventSink?("opening CoreDevice AppService")
-            let openedAppServiceTunnel = try startValidatedTunnel(
-                udid: udid,
-                requiredServices: [CoreDeviceAppService.serviceName],
-                logPeerInfo: false
-            )
-            appServiceTunnel = openedAppServiceTunnel
-            let openedAppService = try dependencies.openAppService(openedAppServiceTunnel)
+            let openedAppService = try dependencies.openAppService(openedTunnel)
             appService = openedAppService
 
             eventSink?("opening CoreDevice openstdio socket")
-            let openedStdIOTunnel = try startValidatedTunnel(
-                udid: udid,
-                requiredServices: [CoreDeviceOpenStdIOSocket.serviceName],
-                logPeerInfo: false
-            )
-            stdioTunnel = openedStdIOTunnel
-            let openedStdIOSocket = try dependencies.openStdIOSocket(openedStdIOTunnel)
+            let openedStdIOSocket = try dependencies.openStdIOSocket(openedTunnel)
             stdioSocket = openedStdIOSocket
             openedStdIOSocket.startDraining(eventSink: eventSink)
 
             eventSink?("opening XCTest exec session")
-            let openedExecSession = XCTestManagerSession(stream: try openedExecTunnel.connectService(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName))
+            let openedExecSession = XCTestManagerSession(stream: try openedTunnel.connectService(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName))
             execSession = openedExecSession
             try openedExecSession.connect()
             let execDaemon = try openedExecSession.openDaemonConnection()
@@ -270,13 +255,7 @@ final class RealDeviceXCTestDriverLifecycle {
             openedListener.start()
 
             eventSink?("opening XCTest control session")
-            let openedControlTunnel = try startValidatedTunnel(
-                udid: udid,
-                requiredServices: [DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName],
-                logPeerInfo: false
-            )
-            controlTunnel = openedControlTunnel
-            let openedControlSession = XCTestManagerSession(stream: try openedControlTunnel.connectService(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName))
+            let openedControlSession = XCTestManagerSession(stream: try openedTunnel.connectService(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName))
             controlSession = openedControlSession
             try openedControlSession.connect()
             let controlDaemon = try openedControlSession.openDaemonConnection()
@@ -306,10 +285,7 @@ final class RealDeviceXCTestDriverLifecycle {
                   let listener,
                   let execSession,
                   let controlSession,
-                  let execTunnel,
-                  let appServiceTunnel,
-                  let stdioTunnel,
-                  let controlTunnel else {
+                  let coreDeviceTunnel else {
                 throw CLIParseError.invalidValue("XCTest active session was incomplete after launch")
             }
             return RealDeviceXCTestActiveSession(
@@ -321,7 +297,7 @@ final class RealDeviceXCTestDriverLifecycle {
                 controlListener: controlListener,
                 execSession: execSession,
                 controlSession: controlSession,
-                tunnels: [execTunnel, appServiceTunnel, stdioTunnel, controlTunnel],
+                tunnels: [coreDeviceTunnel],
                 eventSink: eventSink
             )
         } catch {
@@ -335,7 +311,7 @@ final class RealDeviceXCTestDriverLifecycle {
             controlSession?.close()
             execSession?.close()
             appService?.close()
-            let openedTunnels = [execTunnel, appServiceTunnel, stdioTunnel, controlTunnel].compactMap { $0 }
+            let openedTunnels = [coreDeviceTunnel].compactMap { $0 }
             for tunnel in openedTunnels {
                 tunnel.close()
             }
