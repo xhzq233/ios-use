@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 private enum XCTestCallbackTrace {
     static let enabled = ProcessInfo.processInfo.environment["IOS_USE_COREDEVICE_TRACE"] == "1"
@@ -136,7 +137,7 @@ final class XCTestExecCallbackListener {
     private func run() {
         while !shouldStop {
             do {
-                let message = try channel.readMessage(timeoutSeconds: 1)
+                let message = try channel.readMessage(timeoutSeconds: IOSUseProtocol.XCConstants.xctestCallbackReadTimeoutSeconds)
                 try handle(message)
             } catch {
                 if shouldStop {

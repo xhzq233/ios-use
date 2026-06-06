@@ -7,10 +7,10 @@ enum AlertCommands {
 
     /// Dismiss system alert on SpringBoard or current app.
     static func dismissAlert(_ args: ForyDismissAlertArgs?) throws -> ForyResponseFrame {
-        let index = args.map { Int($0.index) } ?? -1
+        let index = args.map { Int($0.index) } ?? Int(IOSUseProtocol.XCConstants.defaultAlertButtonIndex)
 
         // 1. Check SpringBoard for system alerts
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let springboard = XCUIApplication(bundleIdentifier: IOSUseProtocol.springboardBundleId)
         if let result = tryDismissAlert(in: springboard, index: index) {
             return result
         }

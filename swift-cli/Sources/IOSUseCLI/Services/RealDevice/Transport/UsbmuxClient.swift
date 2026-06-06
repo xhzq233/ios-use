@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
 
 enum UsbmuxError: Error, CustomStringConvertible, Equatable {
     case socketOpenFailed
@@ -49,24 +50,25 @@ enum Usbmux {
         let fd = try openSocket()
         defer { Darwin.close(fd) }
         let list = try request(fd: fd, payload: [
-            "MessageType": "ListDevices",
-            "ProgName": "ios-use",
-            "ClientVersionString": "1.0",
-        ], tag: 0)
+            "MessageType": IOSUseProtocol.XCConstants.usbmuxListDevicesMessageType,
+            "ProgName": IOSUseProtocol.XCConstants.usbmuxProgramName,
+            "ClientVersionString": IOSUseProtocol.XCConstants.usbmuxClientVersion,
+        ], tag: IOSUseProtocol.XCConstants.usbmuxListDevicesTag)
         guard let devices = list["DeviceList"] as? [[String: Any]] else {
             return []
         }
         return devices.compactMap { device in
             guard let props = device["Properties"] as? [String: Any],
                   let serial = props["SerialNumber"] as? String else { return nil }
-            if let connectionType = props["ConnectionType"] as? String, connectionType != "USB" {
+            if let connectionType = props["ConnectionType"] as? String,
+               connectionType != IOSUseProtocol.XCConstants.usbmuxUSBConnectionType {
                 return nil
             }
             let deviceID = Self.deviceID(from: device) ?? 0
             return Device(
                 serialNumber: serial,
                 deviceID: deviceID,
-                connectionType: props["ConnectionType"] as? String ?? "USB",
+                connectionType: props["ConnectionType"] as? String ?? IOSUseProtocol.XCConstants.usbmuxUSBConnectionType,
                 properties: props
             )
         }
@@ -78,7 +80,7 @@ enum Usbmux {
         setSocketNoSigPipe(fd)
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
-        let path = Array("/var/run/usbmuxd".utf8CString)
+        let path = Array(IOSUseProtocol.XCConstants.usbmuxSocketPath.utf8CString)
         guard path.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
             Darwin.close(fd)
             throw UsbmuxError.socketPathTooLong
@@ -106,10 +108,10 @@ enum Usbmux {
         let fd = try openSocket()
         do {
             let list = try request(fd: fd, payload: [
-                "MessageType": "ListDevices",
-                "ProgName": "ios-use",
-                "ClientVersionString": "1.0",
-            ], tag: 0)
+                "MessageType": IOSUseProtocol.XCConstants.usbmuxListDevicesMessageType,
+                "ProgName": IOSUseProtocol.XCConstants.usbmuxProgramName,
+                "ClientVersionString": IOSUseProtocol.XCConstants.usbmuxClientVersion,
+            ], tag: IOSUseProtocol.XCConstants.usbmuxListDevicesTag)
             guard let devices = list["DeviceList"] as? [[String: Any]] else {
                 throw UsbmuxError.listDevicesMissing
             }
@@ -124,12 +126,12 @@ enum Usbmux {
                 throw UsbmuxError.deviceNotFound(udid)
             }
             let response = try request(fd: fd, payload: [
-                "MessageType": "Connect",
-                "ProgName": "ios-use",
-                "ClientVersionString": "1.0",
+                "MessageType": IOSUseProtocol.XCConstants.usbmuxConnectMessageType,
+                "ProgName": IOSUseProtocol.XCConstants.usbmuxProgramName,
+                "ClientVersionString": IOSUseProtocol.XCConstants.usbmuxClientVersion,
                 "DeviceID": deviceID,
                 "PortNumber": swap16(port),
-            ], tag: 1)
+            ], tag: IOSUseProtocol.XCConstants.usbmuxConnectTag)
             guard (response["Number"] as? Int) == 0 else {
                 throw UsbmuxError.connectFailed(response: plistResponseSummary(response))
             }
@@ -143,18 +145,27 @@ enum Usbmux {
     static func request(fd: Int32, payload: [String: Any], tag: UInt32) throws -> [String: Any] {
         let body = try serializePlist(payload)
         var frame = Data()
-        frame.append(uint32LE(UInt32(16 + body.count)))
-        frame.append(uint32LE(1))
-        frame.append(uint32LE(8))
+        frame.append(uint32LE(UInt32(IOSUseProtocol.XCConstants.usbmuxFrameHeaderByteCount + body.count)))
+        frame.append(uint32LE(IOSUseProtocol.XCConstants.usbmuxProtocolVersion))
+        frame.append(uint32LE(IOSUseProtocol.XCConstants.usbmuxPlistMessageType))
         frame.append(uint32LE(tag))
         frame.append(body)
         try writeAll(fd: fd, data: frame)
-        let header = try readExact(fd: fd, byteCount: 16, timeoutSeconds: 5)
+        let header = try readExact(
+            fd: fd,
+            byteCount: IOSUseProtocol.XCConstants.usbmuxFrameHeaderByteCount,
+            timeoutSeconds: IOSUseProtocol.XCConstants.usbmuxReadTimeoutSeconds
+        )
         let size = Int(readUInt32LE(header, 0))
-        guard size >= 16, size <= 10 * 1024 * 1024 else {
+        guard size >= IOSUseProtocol.XCConstants.usbmuxFrameHeaderByteCount,
+              size <= IOSUseProtocol.XCConstants.usbmuxMaxResponseBytes else {
             throw CLIParseError.invalidValue("usbmux invalid response size: \(size)")
         }
-        return try parsePlist(try readExact(fd: fd, byteCount: size - 16, timeoutSeconds: 5))
+        return try parsePlist(try readExact(
+            fd: fd,
+            byteCount: size - IOSUseProtocol.XCConstants.usbmuxFrameHeaderByteCount,
+            timeoutSeconds: IOSUseProtocol.XCConstants.usbmuxReadTimeoutSeconds
+        ))
     }
 
     private static func swap16(_ value: Int) -> Int {

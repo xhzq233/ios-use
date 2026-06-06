@@ -111,9 +111,9 @@ enum SwipeCommands {
         let vertical = abs(dy) > abs(dx)
 
         let scrollUpwards: Bool
-        if args.dir == 1 { // explicit back
+        if args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack {
             scrollUpwards = true
-        } else if args.dir == 0 { // explicit forth
+        } else if args.dir == IOSUseProtocol.XCConstants.swipeDirectionForth {
             scrollUpwards = false
         } else if let tci = targetCellIdx {
             scrollUpwards = tci < lastVisibleIdx
@@ -189,7 +189,7 @@ enum SwipeCommands {
         let dx = visibleCells.first!.frame.minX - visibleCells.last!.frame.minX
         let dy = visibleCells.first!.frame.minY - visibleCells.last!.frame.minY
         let vertical = abs(dy) > abs(dx)
-        let scrollUpwards = (args.dir == 1) // back
+        let scrollUpwards = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
 
         let result = scrollUntilVisible(scrollView: anchorScrollView,
                                         target: toTarget,
@@ -230,7 +230,7 @@ enum SwipeCommands {
         )
         let payload = ForySwipePayload(
             ancestors: [],
-            elemType: 1, // Other (coordinate)
+            elemType: IOSUseProtocol.XCConstants.coordinateElementTypeRawValue,
             label: "",
             rect: ForyRect(
                 x: Int32(from.x.sanitized),
@@ -286,7 +286,7 @@ enum SwipeCommands {
                                             app: XCUIApplication) throws -> ForyResponseFrame {
         let scrollNode = findLargestScrollable(cs.root)
         let scrollFrame = scrollNode?.frame ?? app.frame
-        let isBack = args.dir == 1
+        let isBack = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
         let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root), scrollFrame: scrollFrame)
         let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
         let distance = args.distance > 0 ? args.distance : (IOSUseProtocol.scrollTouchProportion * Double(axisSize))

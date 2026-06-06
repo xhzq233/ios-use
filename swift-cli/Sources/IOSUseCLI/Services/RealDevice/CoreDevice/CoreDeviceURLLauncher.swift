@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 protocol RealDeviceURLLaunching {
     func open(url: String, udid: String) throws
@@ -52,7 +53,7 @@ final class CoreDeviceURLLauncher: RealDeviceURLLaunching {
         let session = try dependencies.startTunnel(udid)
         defer {
             session.close()
-            _ = session.waitForClose(timeoutSeconds: 1)
+            _ = session.waitForClose(timeoutSeconds: IOSUseProtocol.XCConstants.xctestTunnelCloseTimeoutSeconds)
         }
         guard session.peerInfo != nil else {
             throw CLIParseError.invalidValue("CoreDevice tunnel did not return RSD peer info")
@@ -66,7 +67,7 @@ final class CoreDeviceURLLauncher: RealDeviceURLLaunching {
 
         eventSink?("opening URL through CoreDevice appservice payloadURL")
         _ = try appService.launchApplication(
-            bundleID: "com.apple.springboard",
+            bundleID: IOSUseProtocol.springboardBundleId,
             arguments: [],
             terminateExisting: false,
             startSuspended: false,

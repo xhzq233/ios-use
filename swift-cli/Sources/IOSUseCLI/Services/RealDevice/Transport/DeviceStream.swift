@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
 
 protocol DeviceStream {
     func write(_ data: Data) throws
@@ -214,7 +215,7 @@ final class OpenSSLDeviceStream: DeviceStream {
         condition.lock()
         defer { condition.unlock() }
         while buffer.isEmpty, !closed, process.isRunning, Date() < deadline {
-            let nextWake = Date().addingTimeInterval(0.05)
+            let nextWake = Date().addingTimeInterval(IOSUseProtocol.XCConstants.opensslReadPollSeconds)
             condition.wait(until: nextWake < deadline ? nextWake : deadline)
         }
         if !buffer.isEmpty {
@@ -248,12 +249,12 @@ final class OpenSSLDeviceStream: DeviceStream {
         try? input.close()
         if process.isRunning {
             process.terminate()
-            if !Self.waitForProcessExit(process, timeoutSeconds: 1) {
+            if !Self.waitForProcessExit(process, timeoutSeconds: IOSUseProtocol.XCConstants.opensslCloseStepTimeoutSeconds) {
                 process.interrupt()
             }
-            if !Self.waitForProcessExit(process, timeoutSeconds: 1) {
+            if !Self.waitForProcessExit(process, timeoutSeconds: IOSUseProtocol.XCConstants.opensslCloseStepTimeoutSeconds) {
                 Darwin.kill(process.processIdentifier, SIGKILL)
-                _ = Self.waitForProcessExit(process, timeoutSeconds: 1)
+                _ = Self.waitForProcessExit(process, timeoutSeconds: IOSUseProtocol.XCConstants.opensslCloseStepTimeoutSeconds)
             }
         }
         proxy.close()
@@ -270,8 +271,8 @@ final class OpenSSLDeviceStream: DeviceStream {
     private func appendStderr(_ data: Data) {
         condition.lock()
         stderrBuffer.append(data)
-        if stderrBuffer.count > 16 * 1024 {
-            stderrBuffer.removeFirst(stderrBuffer.count - 16 * 1024)
+        if stderrBuffer.count > IOSUseProtocol.XCConstants.opensslStderrBufferMaxBytes {
+            stderrBuffer.removeFirst(stderrBuffer.count - IOSUseProtocol.XCConstants.opensslStderrBufferMaxBytes)
         }
         condition.broadcast()
         condition.unlock()
@@ -286,7 +287,7 @@ final class OpenSSLDeviceStream: DeviceStream {
     private static func waitForProcessExit(_ process: Process, timeoutSeconds: Double) -> Bool {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while process.isRunning, Date() < deadline {
-            usleep(50_000)
+            usleep(useconds_t(IOSUseProtocol.XCConstants.opensslProcessExitPollMicroseconds))
         }
         return !process.isRunning
     }
@@ -332,7 +333,7 @@ final class LocalFDProxy {
             Darwin.close(fd)
             throw CLIParseError.invalidValue("failed to bind TLS proxy socket: errno \(err)")
         }
-        guard Darwin.listen(fd, 1) == 0 else {
+        guard Darwin.listen(fd, IOSUseProtocol.XCConstants.localFDProxyListenBacklog) == 0 else {
             let err = errno
             Darwin.close(fd)
             throw CLIParseError.invalidValue("failed to listen on TLS proxy socket: errno \(err)")
@@ -402,7 +403,7 @@ final class LocalFDProxy {
 
     private static func bridge(from source: Int32, to destination: Int32, shutdownTargetOnEOF: Bool) {
         DispatchQueue.global(qos: .userInitiated).async {
-            var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+            var buffer = [UInt8](repeating: 0, count: IOSUseProtocol.XCConstants.localFDProxyBridgeBufferBytes)
             while true {
                 let n = Darwin.read(source, &buffer, buffer.count)
                 if n > 0 {

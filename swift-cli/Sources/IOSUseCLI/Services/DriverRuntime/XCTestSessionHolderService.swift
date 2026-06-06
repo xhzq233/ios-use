@@ -64,7 +64,7 @@ enum XCTestSessionHolderService {
                     log(stopMessage)
                     break
                 }
-                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.25))
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(IOSUseProtocol.XCConstants.xctestHolderRunLoopIntervalSeconds))
             }
             interruptMonitor.stop()
             startedSession.close(killRunner: true)

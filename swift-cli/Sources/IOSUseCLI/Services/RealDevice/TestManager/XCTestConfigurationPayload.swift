@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 struct XCTestConfigurationPayload: Equatable {
     let testBundlePath: String
@@ -27,10 +28,10 @@ struct XCTestConfigurationPayload: Equatable {
 
         let testBundleURL = builder.nsURL(relative: URL(fileURLWithPath: testBundlePath).absoluteString)
         let sessionUUID = builder.nsUUID(sessionIdentifier)
-        let formatVersion = builder.append(NSNumber(value: 2))
+        let formatVersion = builder.append(NSNumber(value: IOSUseProtocol.XCConstants.xctestConfigurationFormatVersion))
         let targetBundle = targetApplicationBundleID.map { builder.append($0 as NSString) } ?? 0
-        let targetPath = builder.append((targetApplicationPath ?? "/tmp/XCTestTargetApp.app") as NSString)
-        let automationPath = builder.append("/Developer/Library/PrivateFrameworks/XCTAutomationSupport.framework" as NSString)
+        let targetPath = builder.append((targetApplicationPath ?? IOSUseProtocol.XCConstants.xctestConfigurationFallbackTargetAppPath) as NSString)
+        let automationPath = builder.append(IOSUseProtocol.XCConstants.xctestAutomationFrameworkPath as NSString)
         let productModule = productModuleName.map { builder.append($0 as NSString) } ?? 0
         let aggregateStats = builder.nsDictionary(["XCSuiteRecordsKey": builder.nsDictionary([:])])
         let emptyArray = builder.nsArray([])
@@ -62,7 +63,7 @@ struct XCTestConfigurationPayload: Equatable {
             "gatherLocalizableStringsData": false,
             "maximumTestExecutionTimeAllowance": builder.uid(0),
             "randomExecutionOrderingSeed": builder.uid(0),
-            "systemAttachmentLifetime": 2,
+            "systemAttachmentLifetime": IOSUseProtocol.XCConstants.xctestSystemAttachmentLifetime,
             "targetApplicationArguments": builder.uid(emptyArray),
             "targetApplicationEnvironment": builder.uid(0),
             "testApplicationDependencies": builder.uid(emptyDictionary),
@@ -70,7 +71,7 @@ struct XCTestConfigurationPayload: Equatable {
             "testExecutionOrdering": 0,
             "testTimeoutsEnabled": false,
             "testsDrivenByIDE": false,
-            "userAttachmentLifetime": 1,
+            "userAttachmentLifetime": IOSUseProtocol.XCConstants.xctestUserAttachmentLifetime,
             "$class": builder.uid(configClass),
         ])
 
@@ -172,7 +173,7 @@ private struct NSKeyedArchiveBuilder {
 
     func archivePlist(rootIndex: Int) throws -> [String: Any] {
         [
-            "$version": 100_000,
+            "$version": IOSUseProtocol.XCConstants.nsKeyedArchiveVersion,
             "$archiver": "NSKeyedArchiver",
             "$top": ["root": uid(rootIndex)],
             "$objects": objects,
@@ -181,7 +182,7 @@ private struct NSKeyedArchiveBuilder {
 }
 
 private enum KeyedArchiveUID {
-    private static let maxUID = 512
+    private static let maxUID = IOSUseProtocol.XCConstants.nsKeyedArchiveMaxUID
     private static let values: [Any] = makeValues()
 
     static func value(_ index: Int) -> Any {

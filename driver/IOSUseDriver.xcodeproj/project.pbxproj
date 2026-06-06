@@ -30,8 +30,10 @@
 		47E166A3CA2BC186D06626FC /* SessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */; };
 		48653EFFFD1FE2DFBFADED95 /* Dom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C5B4B608C890EFE8841A177 /* Dom.swift */; };
 		4C1335951DE9BCB1ACEB1105 /* Touch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */; };
+		520B1D9FBAB7EA0C634FCF59 /* XCConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = A36A3582BA8132B2BD0CFB94 /* XCConstants.swift */; };
 		563B2CE6B340E53A14814EFB /* Server.swift in Sources */ = {isa = PBXBuildFile; fileRef = D394439301E45CC69DD7CB41 /* Server.swift */; };
 		5C78D96B9AE1C0C47419D5E5 /* SnapshotWalker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15A0FF7257FB4C92EC6C889D /* SnapshotWalker.swift */; };
+		679A2D0F948DC3C65F294208 /* XCConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = A36A3582BA8132B2BD0CFB94 /* XCConstants.swift */; };
 		6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B82A6D94A3BC809E2C68F694 /* WaitFor.swift */; };
 		71116604C00B45958024BAE0 /* RawPointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA8EE69CD9E44A379094C75D /* RawPointer.swift */; };
@@ -98,6 +100,7 @@
 		9BD21616CCE081BC7DBF97C5 /* TypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypesTests.swift; sourceTree = "<group>"; };
 		9BD5EF928C9D1CB107908D28 /* Quiescence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Quiescence.swift; sourceTree = "<group>"; };
 		9DE69CDBA7F414F7325EFBD0 /* Codec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Codec.swift; sourceTree = "<group>"; };
+		A36A3582BA8132B2BD0CFB94 /* XCConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XCConstants.swift; sourceTree = "<group>"; };
 		A7314D09B4E47FB05DDAAF58 /* Screen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screen.swift; sourceTree = "<group>"; };
 		AABACD4A116F231BF1D16712 /* CodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodecTests.swift; sourceTree = "<group>"; };
 		B82A6D94A3BC809E2C68F694 /* WaitFor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaitFor.swift; sourceTree = "<group>"; };
@@ -148,6 +151,7 @@
 				F5673E8F5A73863E5BFC1145 /* DriverProtocol.swift */,
 				C4F773497F680794800B78E3 /* ElementTypes.swift */,
 				52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */,
+				A36A3582BA8132B2BD0CFB94 /* XCConstants.swift */,
 			);
 			name = IOSUseProtocol;
 			path = ../shared/IOSUseProtocol/Sources/IOSUseProtocol;
@@ -349,6 +353,7 @@
 				80253DFDB846500A5A7E2567 /* Types.swift in Sources */,
 				81CD91B7F77CDB0EB872969C /* TypesTests.swift in Sources */,
 				6F56F3E80E365D7622C6E8FE /* WaitFor.swift in Sources */,
+				520B1D9FBAB7EA0C634FCF59 /* XCConstants.swift in Sources */,
 				F23939ACC634CC69D0D7C5E0 /* XCTestPrivate.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -383,6 +388,7 @@
 				0DEB372CF9D585EBEBA86A4A /* Touch.swift in Sources */,
 				1C3EBE5B9344D22F327464D4 /* Types.swift in Sources */,
 				6ADD31576F7D9FA53D03ED40 /* WaitFor.swift in Sources */,
+				679A2D0F948DC3C65F294208 /* XCConstants.swift in Sources */,
 				F84D2C040ACBA005CD67B912 /* XCTestPrivate.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

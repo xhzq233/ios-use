@@ -19,7 +19,7 @@ enum TouchCommands {
             let point = CGPoint(x: pt.x, y: pt.y)
             try tapAtPoint(point, app: app)
             let payload = ForyElementPayload(
-                elemType: 1, // Other (coordinate)
+                elemType: IOSUseProtocol.XCConstants.coordinateElementTypeRawValue,
                 label: "",
                 rect: makeForyRect(CGRect(x: point.x, y: point.y, width: 0, height: 0))
             )
@@ -67,7 +67,7 @@ enum TouchCommands {
             let point = CGPoint(x: pt.x, y: pt.y)
             try pressAtPoint(point, duration: duration, app: app)
             let payload = ForyElementPayload(
-                elemType: 1, // Other (coordinate)
+                elemType: IOSUseProtocol.XCConstants.coordinateElementTypeRawValue,
                 label: "",
                 rect: makeForyRect(CGRect(x: point.x, y: point.y, width: 0, height: 0))
             )

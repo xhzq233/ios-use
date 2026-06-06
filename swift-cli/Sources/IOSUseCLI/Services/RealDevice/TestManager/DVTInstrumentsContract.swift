@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 enum DTXMessageKind: UInt8 {
     case ok = 0
@@ -259,12 +260,12 @@ struct DVTInvocation: Equatable {
 
 enum DVTInstrumentsContract {
     enum Provider {
-        static let rsdServiceName = "com.apple.instruments.dtservicehub"
-        static let terminationCallbackCapability = "com.apple.instruments.client.processcontrol.capability.terminationCallback"
+        static let rsdServiceName = IOSUseProtocol.XCConstants.dvtInstrumentsRSDServiceName
+        static let terminationCallbackCapability = IOSUseProtocol.XCConstants.dvtTerminationCallbackCapability
 
         static let capabilities: [String: Int] = [
-            "com.apple.private.DTXBlockCompression": 0,
-            "com.apple.private.DTXConnection": 1,
+            IOSUseProtocol.XCConstants.dvtBlockCompressionCapability: 0,
+            IOSUseProtocol.XCConstants.dvtConnectionCapability: 1,
             terminationCallbackCapability: 1,
         ]
     }
@@ -302,10 +303,10 @@ enum DVTInstrumentsContract {
     }
 
     enum XCTestManagerDaemon {
-        static let rsdServiceName = "com.apple.dt.testmanagerd.remote"
-        static let ideServiceIdentifier = "XCTestManager_IDEInterface"
-        static let serviceIdentifier = "XCTestManager_DaemonConnectionInterface"
-        static let xcodeVersion = 36
+        static let rsdServiceName = IOSUseProtocol.XCConstants.xctestManagerDaemonRSDServiceName
+        static let ideServiceIdentifier = IOSUseProtocol.XCConstants.xctestManagerIDEInterfaceIdentifier
+        static let serviceIdentifier = IOSUseProtocol.XCConstants.xctestManagerDaemonConnectionIdentifier
+        static let xcodeVersion = IOSUseProtocol.XCConstants.xctestManagerProtocolVersion
 
         static var proxyServiceIdentifier: String {
             "dtxproxy:\(ideServiceIdentifier):\(serviceIdentifier)"
@@ -337,8 +338,8 @@ enum DVTInstrumentsContract {
         }
 
         static func initiateControlSession(productMajorVersion: Int) throws -> DVTInvocation {
-            guard productMajorVersion >= 17 else {
-                throw CLIParseError.invalidValue("Real-device start requires iOS 17 or later; device reported iOS \(productMajorVersion).")
+            guard productMajorVersion >= IOSUseProtocol.XCConstants.minimumRealDeviceIOSMajorVersion else {
+                throw CLIParseError.invalidValue("Real-device start requires iOS \(IOSUseProtocol.XCConstants.minimumRealDeviceIOSMajorVersion) or later; device reported iOS \(productMajorVersion).")
             }
             return try DVTInvocation(
                 serviceIdentifier: serviceIdentifier,
@@ -349,8 +350,8 @@ enum DVTInstrumentsContract {
         }
 
         static func authorizeTestSession(productMajorVersion: Int, pid: Int) throws -> DVTInvocation {
-            guard productMajorVersion >= 17 else {
-                throw CLIParseError.invalidValue("Real-device start requires iOS 17 or later; device reported iOS \(productMajorVersion).")
+            guard productMajorVersion >= IOSUseProtocol.XCConstants.minimumRealDeviceIOSMajorVersion else {
+                throw CLIParseError.invalidValue("Real-device start requires iOS \(IOSUseProtocol.XCConstants.minimumRealDeviceIOSMajorVersion) or later; device reported iOS \(productMajorVersion).")
             }
             return try DVTInvocation(
                 serviceIdentifier: serviceIdentifier,

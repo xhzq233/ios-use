@@ -1,7 +1,8 @@
 import Foundation
+import IOSUseProtocol
 
 final class CoreDeviceOpenStdIOSocket {
-    static let serviceName = "com.apple.coredevice.openstdiosocket"
+    static let serviceName = IOSUseProtocol.XCConstants.coreDeviceOpenStdIOServiceName
 
     let identifier: UUID
     private let stream: DeviceStream
@@ -17,7 +18,10 @@ final class CoreDeviceOpenStdIOSocket {
     static func connect(session: CoreDeviceLifecycleTunnelSession) throws -> CoreDeviceOpenStdIOSocket {
         let stream = try session.connectService(serviceName)
         do {
-            let uuidData = try stream.readExact(byteCount: 16, timeoutSeconds: 10)
+            let uuidData = try stream.readExact(
+                byteCount: IOSUseProtocol.XCConstants.openStdIOIdentifierByteCount,
+                timeoutSeconds: IOSUseProtocol.XCConstants.openStdIOIdentifierReadTimeoutSeconds
+            )
             let identifier = try uuid(from: uuidData)
             return CoreDeviceOpenStdIOSocket(identifier: identifier, stream: stream)
         } catch {
@@ -56,9 +60,12 @@ final class CoreDeviceOpenStdIOSocket {
     private func drain(eventSink: ((String) -> Void)?) {
         while !shouldStop {
             do {
-                let data = try stream.readAvailable(maxBytes: 4096, timeoutSeconds: 1)
+                let data = try stream.readAvailable(
+                    maxBytes: IOSUseProtocol.XCConstants.openStdIODrainMaxBytes,
+                    timeoutSeconds: IOSUseProtocol.XCConstants.openStdIODrainReadTimeoutSeconds
+                )
                 guard !data.isEmpty else {
-                    usleep(50_000)
+                    usleep(useconds_t(IOSUseProtocol.XCConstants.openStdIODrainIdleSleepMicroseconds))
                     continue
                 }
                 emit(data: data, eventSink: eventSink)
