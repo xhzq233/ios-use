@@ -522,6 +522,12 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.springboardBundleId, "com.apple.springboard")
     }
 
+    func testCLILogTimestampIncludesMilliseconds() {
+        let timestamp = CLILogService.formatTimestamp(Date(timeIntervalSince1970: 0.123))
+
+        XCTAssertEqual(timestamp, "1970-01-01T00:00:00.123Z")
+    }
+
     func testDriverCommandRetriesAfterInitialConnectFailure() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-driver-retry-\(UUID().uuidString)")
