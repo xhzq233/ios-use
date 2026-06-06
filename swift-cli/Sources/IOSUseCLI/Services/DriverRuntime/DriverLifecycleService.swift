@@ -3,8 +3,6 @@ import Foundation
 import IOSUseProtocol
 
 enum DriverLifecycleService {
-    private static let xctestHolderStartResultTimeoutSeconds = 60.0
-
     struct LaunchMetadata: Equatable {
         let holderPid: Int?
         let runnerPid: Int?
@@ -232,7 +230,7 @@ enum DriverLifecycleService {
         bundleId: String,
         paths: IOSUsePaths
     ) throws -> LaunchMetadata {
-        let timeout = xctestHolderStartResultTimeoutSeconds
+        let timeout = IOSUseProtocol.XCConstants.xctestHolderStartResultTimeoutSeconds
         let deadline = Date().addingTimeInterval(timeout)
         var lastSocketError: Error?
         while Date() < deadline {
@@ -269,7 +267,7 @@ enum DriverLifecycleService {
                 }
                 throw CLIParseError.invalidValue("XCTest holder exited before start result with status \(status). Check \(CLILogService.holderLogPath(paths: paths))")
             }
-            usleep(100_000)
+            usleep(useconds_t(IOSUseProtocol.XCConstants.xctestHolderStartPollMicroseconds))
         }
         if let lastSocketError {
             throw CLIParseError.invalidValue("Timed out waiting for XCTest holder start result. Check \(CLILogService.holderLogPath(paths: paths)). Last socket error: \(lastSocketError)")
@@ -285,11 +283,11 @@ enum DriverLifecycleService {
             let response = try XCTestSessionHolderControlClient.request(
                 socketPath: socketPath,
                 command: "stop",
-                timeoutSeconds: 5
+                timeoutSeconds: IOSUseProtocol.XCConstants.xctestHolderStopRequestTimeoutSeconds
             )
             appendLifecycleLog(paths: paths, "Requested XCTest holder stop through control socket status=\(response.status)")
             if let holderPid = info.holderPid {
-                return waitForProcessExit(pid: Int32(holderPid), timeoutSeconds: 15) ? .terminated : .failed
+                return waitForProcessExit(pid: Int32(holderPid), timeoutSeconds: IOSUseProtocol.XCConstants.xctestHolderStopWaitTimeoutSeconds) ? .terminated : .failed
             }
             return .terminated
         } catch {
@@ -384,14 +382,14 @@ enum DriverLifecycleService {
     private static func terminateProcess(pid: Int32, force: Bool) -> Bool {
         guard pid > 0 else { return true }
         _ = sendSignal(pid: pid, signal: SIGTERM)
-        if waitForProcessExit(pid: pid, timeoutSeconds: 15) {
+        if waitForProcessExit(pid: pid, timeoutSeconds: IOSUseProtocol.XCConstants.xctestProcessTerminateWaitSeconds) {
             return true
         }
         guard force else {
             return false
         }
         _ = sendSignal(pid: pid, signal: SIGKILL)
-        return waitForProcessExit(pid: pid, timeoutSeconds: 2)
+        return waitForProcessExit(pid: pid, timeoutSeconds: IOSUseProtocol.XCConstants.xctestProcessKillWaitSeconds)
     }
 
     private static func waitForProcessExit(pid: Int32, timeoutSeconds: Double) -> Bool {
@@ -403,7 +401,7 @@ enum DriverLifecycleService {
             if !processAlive(pid: pid) {
                 return true
             }
-            usleep(100_000)
+            usleep(useconds_t(IOSUseProtocol.XCConstants.xctestProcessExitPollMicroseconds))
         }
         return !processAlive(pid: pid)
     }

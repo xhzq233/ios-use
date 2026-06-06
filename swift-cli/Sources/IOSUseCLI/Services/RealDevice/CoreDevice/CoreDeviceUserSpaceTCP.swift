@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
 
 private enum CoreDeviceTCPTrace {
     static let enabled = ProcessInfo.processInfo.environment["IOS_USE_COREDEVICE_TRACE"] == "1"
@@ -201,10 +202,10 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
         tunnel: IPv6PacketIO,
         localAddress: String,
         remoteAddress: String,
-        localPort: UInt16 = UInt16.random(in: 49_152...65_000),
+        localPort: UInt16 = UInt16.random(in: IOSUseProtocol.XCConstants.userspaceTCPLocalPortLowerBound...IOSUseProtocol.XCConstants.userspaceTCPLocalPortUpperBound),
         remotePort: Int,
         initialSequence: UInt32 = UInt32.random(in: 1...UInt32.max - 1),
-        maxSegmentPayload: Int = 1_200,
+        maxSegmentPayload: Int = IOSUseProtocol.XCConstants.userspaceTCPDefaultMaxSegmentPayload,
         eventSink: ((String) -> Void)? = nil
     ) throws {
         self.tunnel = tunnel
@@ -220,7 +221,7 @@ final class CoreDeviceUserSpaceTCPConnection: DeviceStream {
         self.eventSink = eventSink
     }
 
-    func connect(timeoutSeconds: Double = 10) throws {
+    func connect(timeoutSeconds: Double = IOSUseProtocol.XCConstants.userspaceTCPConnectTimeoutSeconds) throws {
         guard !connected else { return }
         try sendSegment(flags: CoreDeviceTCPFlags.syn)
         let synSequence = sendSequence
@@ -464,7 +465,7 @@ private final class CoreDeviceDirectTunnelPacketRouter {
                 return
             }
             do {
-                let packet = try tunnel.readIPv6Packet(timeoutSeconds: 1)
+                let packet = try tunnel.readIPv6Packet(timeoutSeconds: IOSUseProtocol.XCConstants.coreDeviceTunnelRouterReadTimeoutSeconds)
                 try dispatch(packet)
             } catch CoreDeviceTCPError.connectionTimeout {
                 continue
@@ -662,14 +663,12 @@ protocol CoreDeviceLifecycleTunnelSession: AnyObject {
 }
 
 final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
-    private static let remoteXPCHandshakeTimeoutSeconds = 15.0
-
     let tunnel: CoreDeviceTunnel
     let handshake: CoreDeviceTunnelHandshake
     var peerInfo: RemoteXPCPeerInfo?
     private let eventSink: ((String) -> Void)?
     private let packetRouter: CoreDeviceDirectTunnelPacketRouter
-    private var nextLocalPort: UInt16 = 49_152
+    private var nextLocalPort: UInt16 = IOSUseProtocol.XCConstants.userspaceTCPLocalPortLowerBound
     private var closed = false
 
     var serverAddress: String { handshake.serverAddress }
@@ -688,7 +687,7 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         let stream = try connectServicePort(peerInfo.servicePort(serviceName))
         do {
             let client = RemoteXPCClient(stream: stream, eventSink: eventSink)
-            try client.completeClientHandshake(timeoutSeconds: Self.remoteXPCHandshakeTimeoutSeconds)
+            try client.completeClientHandshake(timeoutSeconds: IOSUseProtocol.XCConstants.remoteXPCDirectTunnelHandshakeTimeoutSeconds)
             eventSink?("RemoteXPC client handshake sent to \(handshake.serverAddress):\(try peerInfo.servicePort(serviceName))")
             return client
         } catch {
@@ -701,7 +700,7 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         let stream = try connectServicePort(port)
         do {
             let client = RemoteXPCClient(stream: stream, eventSink: eventSink)
-            try client.completeClientHandshake(timeoutSeconds: Self.remoteXPCHandshakeTimeoutSeconds)
+            try client.completeClientHandshake(timeoutSeconds: IOSUseProtocol.XCConstants.remoteXPCDirectTunnelHandshakeTimeoutSeconds)
             eventSink?("RemoteXPC client handshake sent to \(handshake.serverAddress):\(port)")
             return client
         } catch {
@@ -745,14 +744,14 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         tunnel.close()
     }
 
-    func waitForClose(timeoutSeconds _: Double = 1) -> Bool {
+    func waitForClose(timeoutSeconds _: Double = IOSUseProtocol.XCConstants.xctestTunnelCloseTimeoutSeconds) -> Bool {
         true
     }
 
     private func allocateLocalPort() -> UInt16 {
         let port = nextLocalPort
-        if nextLocalPort == 65_000 {
-            nextLocalPort = 49_152
+        if nextLocalPort == IOSUseProtocol.XCConstants.userspaceTCPLocalPortUpperBound {
+            nextLocalPort = IOSUseProtocol.XCConstants.userspaceTCPLocalPortLowerBound
         } else {
             nextLocalPort += 1
         }

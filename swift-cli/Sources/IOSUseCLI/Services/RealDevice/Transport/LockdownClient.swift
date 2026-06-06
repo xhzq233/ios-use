@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
 
 final class LockdownClient {
     private let fd: Int32
@@ -7,7 +8,7 @@ final class LockdownClient {
     private var stream: DeviceStream
 
     init(udid: String, pairRecord: PairRecord) throws {
-        self.fd = try Usbmux.connect(udid: udid, port: 62_078)
+        self.fd = try Usbmux.connect(udid: udid, port: IOSUseProtocol.XCConstants.lockdownPort)
         self.pairRecord = pairRecord
         self.stream = PlainDeviceStream(fd: fd, ownsFD: false)
     }
@@ -79,12 +80,12 @@ final class LockdownClient {
         request["ProtocolVersion"] = "2"
         let xml = try serializePlist(request)
         try stream.write(uint32BE(UInt32(xml.count)) + xml)
-        let header = try stream.readExact(byteCount: 4, timeoutSeconds: 5)
+        let header = try stream.readExact(byteCount: 4, timeoutSeconds: IOSUseProtocol.XCConstants.lockdownRequestTimeoutSeconds)
         let size = Int(readUInt32BE(header, 0))
-        guard size > 0, size <= 10 * 1024 * 1024 else {
+        guard size > 0, size <= IOSUseProtocol.XCConstants.lockdownMaxPlistSizeBytes else {
             throw CLIParseError.invalidValue("lockdown plist invalid size: \(size)")
         }
-        return try parsePlist(try stream.readExact(byteCount: size, timeoutSeconds: 5))
+        return try parsePlist(try stream.readExact(byteCount: size, timeoutSeconds: IOSUseProtocol.XCConstants.lockdownRequestTimeoutSeconds))
     }
 
     private static func errorDescription(_ error: Any, response: [String: Any]) -> String {

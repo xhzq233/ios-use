@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
 
 private enum RemoteXPCTrace {
     static let enabled = ProcessInfo.processInfo.environment["IOS_USE_COREDEVICE_TRACE"] == "1"
@@ -526,7 +527,7 @@ final class RemoteXPCClient {
         }
     }
 
-    func completeClientHandshake(timeoutSeconds: Double = 3) throws {
+    func completeClientHandshake(timeoutSeconds: Double = IOSUseProtocol.XCConstants.remoteXPCDefaultHandshakeTimeoutSeconds) throws {
         try sendClientHandshake()
         let frame = try readFrame(timeoutSeconds: timeoutSeconds)
         guard frame.type == RemoteXPCHTTP2.frameSettings else {
@@ -569,7 +570,7 @@ final class RemoteXPCClient {
         _ = try readMessage(streamID: RemoteXPCHTTP2.rootStreamID, timeoutSeconds: timeoutSeconds)
     }
 
-    func sendReceiveRequest(_ request: [String: RemoteXPCValue], timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
+    func sendReceiveRequest(_ request: [String: RemoteXPCValue], timeoutSeconds: Double = IOSUseProtocol.XCConstants.remoteXPCDefaultRequestTimeoutSeconds) throws -> RemoteXPCValue {
         try sendRequest(request, wantingReply: true)
         return try receivePayload(streamID: RemoteXPCHTTP2.replyStreamID, timeoutSeconds: timeoutSeconds)
     }
@@ -587,11 +588,11 @@ final class RemoteXPCClient {
         nextRootMessageID = messageID + 1
     }
 
-    func receiveResponse(timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
+    func receiveResponse(timeoutSeconds: Double = IOSUseProtocol.XCConstants.remoteXPCDefaultRequestTimeoutSeconds) throws -> RemoteXPCValue {
         try receivePayload(streamID: RemoteXPCHTTP2.replyStreamID, timeoutSeconds: timeoutSeconds)
     }
 
-    private func receivePayload(streamID: Int, timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
+    private func receivePayload(streamID: Int, timeoutSeconds: Double = IOSUseProtocol.XCConstants.remoteXPCDefaultRequestTimeoutSeconds) throws -> RemoteXPCValue {
         while true {
             let message = try readMessage(streamID: streamID, timeoutSeconds: timeoutSeconds)
             guard let payload = message.payload else {
@@ -607,7 +608,7 @@ final class RemoteXPCClient {
         }
     }
 
-    func receivePeerInfo(timeoutSeconds: Double = 10) throws -> RemoteXPCPeerInfo {
+    func receivePeerInfo(timeoutSeconds: Double = IOSUseProtocol.XCConstants.remoteXPCPeerInfoTimeoutSeconds) throws -> RemoteXPCPeerInfo {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
             let value = try receivePayload(
@@ -741,7 +742,7 @@ final class RemoteXPCClient {
 }
 
 enum RemoteServiceDiscoveryClient {
-    static let defaultPort = 58_783
+    static let defaultPort = IOSUseProtocol.XCConstants.remoteServiceDiscoveryPort
     static var streamConnectorForTesting: ((String, Int) throws -> DeviceStream)?
 
     static func connect(host: String, port: Int = defaultPort) throws -> RemoteXPCPeerInfo {

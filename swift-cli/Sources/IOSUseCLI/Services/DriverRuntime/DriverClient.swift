@@ -244,9 +244,9 @@ final class DriverClient: DriverCommandClient {
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {
         let dirValue: Int32
         switch dir {
-        case "forth": dirValue = 0
-        case "back": dirValue = 1
-        default: dirValue = -1
+        case "forth": dirValue = IOSUseProtocol.XCConstants.swipeDirectionForth
+        case "back": dirValue = IOSUseProtocol.XCConstants.swipeDirectionBack
+        default: dirValue = IOSUseProtocol.XCConstants.swipeDirectionUnspecified
         }
         return try send(SwipeCommand.self, args: ForySwipeArgs(toTarget: to.withLookup(traits: traits, cindex: cindex), fromTarget: from, distance: distance ?? 0, dir: dirValue))
     }
@@ -264,7 +264,7 @@ final class DriverClient: DriverCommandClient {
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
-        try send(DismissAlertCommand.self, args: ForyDismissAlertArgs(index: Int32(index ?? -1)))
+        try send(DismissAlertCommand.self, args: ForyDismissAlertArgs(index: index.map(Int32.init) ?? IOSUseProtocol.XCConstants.defaultAlertButtonIndex))
     }
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {

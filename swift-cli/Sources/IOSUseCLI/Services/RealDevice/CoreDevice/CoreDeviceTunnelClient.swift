@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 enum CDTunnelError: Error, CustomStringConvertible, Equatable {
     case payloadTooLarge(Int)
@@ -48,8 +49,8 @@ protocol CoreDeviceTunnel: IPv6PacketIO {
 
 enum CDTunnelPacket {
     static let magic = Data("CDTunnel".utf8)
-    static let requestedMTU = 16_000
-    private static let maxPayloadSize = 64 * 1024
+    static let requestedMTU = IOSUseProtocol.XCConstants.coreDeviceTunnelRequestedMTU
+    private static let maxPayloadSize = IOSUseProtocol.XCConstants.coreDeviceTunnelMaxPayloadSize
 
     static func encodeJSON(_ body: [String: Any]) throws -> Data {
         let payload = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
@@ -118,8 +119,8 @@ enum CDTunnelPacket {
 }
 
 enum CDTunnelIPv6Packet {
-    static let headerSize = 40
-    static let maxPacketSize = 256 * 1024
+    static let headerSize = IOSUseProtocol.XCConstants.coreDeviceTunnelIPv6HeaderByteCount
+    static let maxPacketSize = IOSUseProtocol.XCConstants.coreDeviceTunnelIPv6MaxPacketBytes
 
     static func bodySize(fromHeader header: Data) throws -> Int {
         guard header.count == headerSize, (header[0] >> 4) == 6 else {
@@ -154,7 +155,7 @@ final class CoreDeviceTunnelClient {
 
     static func connect(udid: String) throws -> CoreDeviceTunnelClient {
         CoreDeviceTunnelClient(
-            stream: try LockdownSession.connectToService("com.apple.internal.devicecompute.CoreDeviceProxy", udid: udid)
+            stream: try LockdownSession.connectToService(IOSUseProtocol.XCConstants.coreDeviceProxyServiceName, udid: udid)
         )
     }
 
@@ -166,19 +167,19 @@ final class CoreDeviceTunnelClient {
 
     func requestHandshake(mtu: Int = CDTunnelPacket.requestedMTU) throws -> CoreDeviceTunnelHandshake {
         try stream.write(CDTunnelPacket.encodeHandshakeRequest(mtu: mtu))
-        let header = try stream.readExact(byteCount: 10, timeoutSeconds: 10)
+        let header = try stream.readExact(byteCount: 10, timeoutSeconds: IOSUseProtocol.XCConstants.coreDeviceTunnelHandshakeTimeoutSeconds)
         guard header.prefix(8) == CDTunnelPacket.magic else {
             throw CDTunnelError.invalidMagic
         }
         let payloadSize = Int(readUInt16BE(header, 8))
-        guard payloadSize > 0, payloadSize <= 64 * 1024 else {
+        guard payloadSize > 0, payloadSize <= IOSUseProtocol.XCConstants.coreDeviceTunnelMaxPayloadSize else {
             throw CDTunnelError.invalidPayloadSize(payloadSize)
         }
-        let payload = try stream.readExact(byteCount: payloadSize, timeoutSeconds: 10)
+        let payload = try stream.readExact(byteCount: payloadSize, timeoutSeconds: IOSUseProtocol.XCConstants.coreDeviceTunnelHandshakeTimeoutSeconds)
         return try CDTunnelPacket.decodeHandshakeResponse(header + payload)
     }
 
-    func readIPv6Packet(timeoutSeconds: Double = 10) throws -> Data {
+    func readIPv6Packet(timeoutSeconds: Double = IOSUseProtocol.XCConstants.coreDeviceTunnelPacketReadTimeoutSeconds) throws -> Data {
         let header = try stream.readExact(byteCount: CDTunnelIPv6Packet.headerSize, timeoutSeconds: timeoutSeconds)
         let bodySize = try CDTunnelIPv6Packet.bodySize(fromHeader: header)
         let body = bodySize == 0 ? Data() : try stream.readExact(byteCount: bodySize, timeoutSeconds: timeoutSeconds)

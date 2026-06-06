@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
 
 struct XCTestSessionHolderControlRequest: Codable, Equatable {
     let command: String
@@ -140,7 +141,7 @@ final class XCTestSessionHolderControlServer {
         setSocketNoSigPipe(fd)
         do {
             try bindUnixSocket(fd: fd, path: socketPath)
-            guard Darwin.listen(fd, 8) == 0 else {
+            guard Darwin.listen(fd, IOSUseProtocol.XCConstants.xctestHolderControlListenBacklog) == 0 else {
                 throw CLIParseError.invalidValue("failed to listen on holder control socket: errno \(errno)")
             }
             lock.lock()
@@ -203,7 +204,10 @@ final class XCTestSessionHolderControlServer {
             Darwin.close(clientFD)
         }
         do {
-            let request = try XCTestSessionHolderControlSocketCodec.readRequest(fd: clientFD, timeoutSeconds: 30)
+            let request = try XCTestSessionHolderControlSocketCodec.readRequest(
+                fd: clientFD,
+                timeoutSeconds: IOSUseProtocol.XCConstants.xctestHolderControlReadTimeoutSeconds
+            )
             let response: XCTestSessionHolderControlResponse
             switch request.command {
             case "startStatus":
@@ -289,7 +293,7 @@ enum XCTestSessionHolderControlSocketCodec {
         var data = Data()
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
-            guard waitForReadable(fd: fd, timeoutSeconds: max(0, min(0.2, deadline.timeIntervalSinceNow))) else {
+            guard waitForReadable(fd: fd, timeoutSeconds: max(0, min(IOSUseProtocol.XCConstants.xctestHolderControlReadPollSeconds, deadline.timeIntervalSinceNow))) else {
                 continue
             }
             var byte: UInt8 = 0
