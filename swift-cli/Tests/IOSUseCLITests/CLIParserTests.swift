@@ -141,7 +141,12 @@ final class CLIParserTests: XCTestCase {
     func testParsesAppAndUtilityDriverCommands() throws {
         XCTAssertEqual(
             try CLIParser.parse(["activateApp", "com.apple.Preferences"]),
-            .driver(.activateApp(bundleId: "com.apple.Preferences"))
+            .appLifecycle(AppLifecycleOptions(action: .activate, bundleID: "com.apple.Preferences"))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["terminateApp", "com.apple.Preferences", "--udid", "REAL-1"]),
+            .appLifecycle(AppLifecycleOptions(action: .terminate, bundleID: "com.apple.Preferences", session: SessionOptions(udid: "REAL-1")))
         )
 
         XCTAssertEqual(

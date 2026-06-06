@@ -476,7 +476,8 @@ final class ConfigServiceTests: XCTestCase {
                 holderPid: 101,
                 runnerPid: 202,
                 sessionIdentifier: "SESSION-START",
-                bundleId: bundleId
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-start.sock"
             )
         }
 
@@ -490,8 +491,161 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(lock.deviceType, "real")
         XCTAssertEqual(lock.deviceName, "Phone")
         XCTAssertEqual(lock.holderPid, 101)
+        XCTAssertEqual(lock.controlSocketPath, "\(root)/state/holder-start.sock")
         XCTAssertNil(lock.startMode)
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
+    }
+
+    func testRealStartDoesNotWriteDriverLockBeforeHolderIsReady() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-NO-PRELOCK":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-NO-PRELOCK"] }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-NO-PRELOCK", kind: .real)]
+        }
+        DriverLifecycleService.holderLauncherForTesting = { _, bundleId, receivedPaths, _ in
+            XCTAssertNil(try SessionService.readDriverLockInfo(paths: receivedPaths))
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 101,
+                runnerPid: 202,
+                sessionIdentifier: "SESSION-NO-PRELOCK",
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-no-prelock.sock"
+            )
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-NO-PRELOCK"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.holderPid, 101)
+        XCTAssertEqual(lock.sessionIdentifier, "SESSION-NO-PRELOCK")
+    }
+
+    func testRealStartCleansIncompleteRealDriverLockBeforeStarting() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-STALE":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "REAL-STALE",
+                deviceName: "Phone",
+                deviceVersion: "26.2",
+                deviceType: "real",
+                startedAt: 1,
+                holderPid: 101,
+                runnerPid: 202,
+                sessionIdentifier: "STALE-INCOMPLETE",
+                bundleId: "com.example.driver"
+            ),
+            paths: paths
+        )
+        var cleaned: [SessionService.Info] = []
+        DriverLifecycleService.holderTerminatorForTesting = { info, receivedPaths in
+            XCTAssertEqual(receivedPaths.root, paths.root)
+            cleaned.append(info)
+            return .terminated
+        }
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-STALE"] }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-STALE", kind: .real)]
+        }
+        DriverLifecycleService.holderLauncherForTesting = { _, bundleId, _, _ in
+            DriverLifecycleService.LaunchMetadata(
+                holderPid: 303,
+                runnerPid: 404,
+                sessionIdentifier: "SESSION-RECOVERED",
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-recovered.sock"
+            )
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-STALE"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(cleaned.map(\.holderPid), [101])
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.holderPid, 303)
+        XCTAssertEqual(lock.sessionIdentifier, "SESSION-RECOVERED")
+        XCTAssertEqual(lock.controlSocketPath, "\(root)/state/holder-recovered.sock")
+    }
+
+    func testRealStartCleansPartialLaunchMetadataWhenHolderMetadataIsIncomplete() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-PARTIAL":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-PARTIAL"] }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-PARTIAL", kind: .real)]
+        }
+        DriverLifecycleService.holderLauncherForTesting = { _, bundleId, _, _ in
+            DriverLifecycleService.LaunchMetadata(
+                holderPid: 707,
+                runnerPid: 808,
+                sessionIdentifier: "PARTIAL",
+                bundleId: bundleId
+            )
+        }
+        var cleaned: [SessionService.Info] = []
+        DriverLifecycleService.holderTerminatorForTesting = { info, _ in
+            cleaned.append(info)
+            return .terminated
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-PARTIAL"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("Native real-device launch did not return complete XCTest holder metadata."))
+        XCTAssertEqual(cleaned.map(\.holderPid), [707])
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
+    }
+
+    func testRealStartPreservesIncompleteLockWhenSocketOnlyCleanupFails() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "REAL-SOCKET-ONLY",
+                deviceName: "Phone",
+                deviceVersion: "26.2",
+                deviceType: "real",
+                startedAt: 1,
+                runnerPid: 202,
+                sessionIdentifier: "STALE-SOCKET-ONLY",
+                bundleId: "com.example.driver",
+                controlSocketPath: "\(root)/state/missing-holder.sock"
+            ),
+            paths: paths
+        )
+        DriverLifecycleService.holderLauncherForTesting = { _, _, _, _ in
+            XCTFail("start must not relaunch when incomplete lock cleanup fails")
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 1,
+                runnerPid: 2,
+                sessionIdentifier: "BAD",
+                bundleId: "com.example.driver",
+                controlSocketPath: "\(root)/state/bad.sock"
+            )
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-SOCKET-ONLY"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("Existing driver.lock is incomplete, but cleanup failed"))
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.udid, "REAL-SOCKET-ONLY")
+        XCTAssertEqual(lock.controlSocketPath, "\(root)/state/missing-holder.sock")
     }
 
     func testStartWithoutUdidDefaultsToFirstConnectedRealDevice() throws {
@@ -519,7 +673,8 @@ final class ConfigServiceTests: XCTestCase {
                 holderPid: 303,
                 runnerPid: 404,
                 sessionIdentifier: "SESSION-FIRST",
-                bundleId: bundleId
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-first.sock"
             )
         }
 
@@ -557,7 +712,8 @@ final class ConfigServiceTests: XCTestCase {
                 holderPid: 505,
                 runnerPid: 606,
                 sessionIdentifier: "SESSION-NATIVE",
-                bundleId: bundleId
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-native.sock"
             )
         }
         Shell.runOverrideForTesting = { executable, _, _, _ in
@@ -603,7 +759,8 @@ final class ConfigServiceTests: XCTestCase {
                 holderPid: 111,
                 runnerPid: 222,
                 sessionIdentifier: "SESSION-2",
-                bundleId: bundleId
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-2.sock"
             )
         }
 
@@ -653,7 +810,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
     }
 
-    func testStartPreservesLockWhenLaunchedHolderCleanupFails() throws {
+    func testStartDoesNotLeaveIncompleteLockWhenLockWriteFails() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
@@ -671,10 +828,11 @@ final class ConfigServiceTests: XCTestCase {
                 holderPid: 1234,
                 runnerPid: 5678,
                 sessionIdentifier: "LAUNCHED-BUT-LOCK-FAILED",
-                bundleId: bundleId
+                bundleId: bundleId,
+                controlSocketPath: "\(stateDir)/holder.sock"
             )
         }
-        DriverLifecycleService.holderTerminatorForTesting = { _, _ in .failed }
+        DriverLifecycleService.holderTerminatorForTesting = { _, _ in .terminated }
         defer {
             try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stateDir)
         }
@@ -682,10 +840,8 @@ final class ConfigServiceTests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-START-CLEANUP-FAIL"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("Driver start failed after holder launch, and cleanup failed"))
-        XCTAssertTrue(result.stderr.contains("Failed to stop XCTest holder pid=1234"))
-        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
-        XCTAssertEqual(lock.udid, "REAL-START-CLEANUP-FAIL")
+        XCTAssertFalse(result.stderr.contains("Driver already started"))
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
     }
 
     func testStopTerminatesNativeXCTestHolderFromLock() throws {
@@ -784,7 +940,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
     }
 
-    func testStartDoesNotLaunchWhenDriverLockCannotBeWritten() throws {
+    func testStartCleansLaunchedDriverWhenDriverLockCannotBeWritten() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
@@ -797,11 +953,18 @@ final class ConfigServiceTests: XCTestCase {
         }
         var launched: [String] = []
         SessionService.simulatorDriverLauncherForTesting = { launched.append($0) }
+        SessionService.simulatorDriverReachableForTesting = { !launched.isEmpty }
+        var terminated: [String] = []
+        SessionService.simulatorDriverTerminatorForTesting = { udid in
+            terminated.append(udid)
+            return true
+        }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "SIM-LOCKFAIL"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(launched.isEmpty)
+        XCTAssertEqual(launched, ["SIM-LOCKFAIL"])
+        XCTAssertEqual(terminated, ["SIM-LOCKFAIL"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
     }

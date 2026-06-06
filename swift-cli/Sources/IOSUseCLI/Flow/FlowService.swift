@@ -578,7 +578,15 @@ enum FlowLowering {
     }
 
     static func parseCLIBackedStep(_ step: [String: Any], flowApp: String? = nil, hostUdid: String? = nil) throws -> ParsedCommand {
-        try CLIParser.parse(lowerCLIBackedStep(step, flowApp: flowApp, hostUdid: hostUdid))
+        let parsed = try CLIParser.parse(lowerCLIBackedStep(step, flowApp: flowApp, hostUdid: hostUdid))
+        switch parsed {
+        case .appLifecycle(let options) where options.action == .activate:
+            return .driver(.activateApp(bundleId: options.bundleID))
+        case .appLifecycle(let options) where options.action == .terminate:
+            return .driver(.terminateApp(bundleId: options.bundleID))
+        default:
+            return parsed
+        }
     }
 
     static func validateStaticTypes(_ step: [String: Any]) throws {

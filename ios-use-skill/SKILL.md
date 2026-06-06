@@ -49,10 +49,10 @@ ios-use start
 - `start` 会启动第一个 USB 真机的 driver；真机要求 iOS 17+。多台真机或要启动 Simulator 时，用 `start <udid>` 明确指定。
 - 启动后，该设备会成为后续 driver-backed 命令的目标。
 - 切换设备时先 `ios-use stop`，再 `ios-use start <new-udid>`。
-- `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `activateApp` / `terminateApp` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
-- `devices` / `config` / `install` / `uninstall` / `apps` / `open` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
+- `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
+- `devices` / `config` / `install` / `uninstall` / `apps` / `open` / `activateApp` / `terminateApp` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
 - `proxy start --server` / `proxy stop --server` 只管理本机 mitmdump，不要求当前设备 driver。
-- 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `start` / `stop` / `open` / `oslog` 不要求 Xcode CLI；Simulator 使用仍需要 Xcode / `simctl`。
+- 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI；Simulator 使用仍需要 Xcode / `simctl`。
 
 ## 4. 操作原则
 
@@ -115,6 +115,7 @@ ios-use dismissAlert
 ios-use dismissAlert --index 0
 ```
 
+`activateApp` / `terminateApp` 是 host-side 命令，不要求 driver 已启动；省略 `--udid` 时使用当前 `driver.lock` 推断目标。
 `open <url>` 是 host-side 命令。省略 `--udid` 时使用当前 `driver.lock`，显式 `--udid` 优先；无 App 注册 scheme 时会报 `URL scheme "xxx" not registered on device`。
 
 ### 5.5 管理真机 App

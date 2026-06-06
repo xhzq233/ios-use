@@ -9,6 +9,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case uninstall(AppUninstallOptions)
     case apps(AppsOptions)
     case open(OpenURLOptions)
+    case appLifecycle(AppLifecycleOptions)
     case oslog(OSLogOptions)
     case driver(DriverAction)
     case flow(FlowOptions)
@@ -25,6 +26,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .uninstall: return "uninstall"
         case .apps: return "apps"
         case .open: return "open"
+        case .appLifecycle(let options): return options.action.commandName
         case .oslog: return "oslog"
         case .driver(let action): return action.name
         case .flow: return "flow"
@@ -124,6 +126,30 @@ public struct OpenURLOptions: Equatable, Sendable {
 
     public init(url: String, session: SessionOptions = SessionOptions()) {
         self.url = url
+        self.session = session
+    }
+}
+
+public struct AppLifecycleOptions: Equatable, Sendable {
+    public enum Action: Equatable, Sendable {
+        case activate
+        case terminate
+
+        public var commandName: String {
+            switch self {
+            case .activate: return "activateApp"
+            case .terminate: return "terminateApp"
+            }
+        }
+    }
+
+    public var action: Action
+    public var bundleID: String
+    public var session: SessionOptions
+
+    public init(action: Action, bundleID: String, session: SessionOptions = SessionOptions()) {
+        self.action = action
+        self.bundleID = bundleID
         self.session = session
     }
 }

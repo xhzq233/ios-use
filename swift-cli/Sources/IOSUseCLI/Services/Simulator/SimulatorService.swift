@@ -116,6 +116,31 @@ enum SimulatorService {
         }
     }
 
+    static func activateApp(bundleID: String, udid: String) throws {
+        let result = try Shell.runWithResult("xcrun", arguments: ["simctl", "launch", udid, bundleID])
+        guard result.exitCode == 0 else {
+            throw CLIParseError.invalidValue(result.stderr.isEmpty
+                ? "simctl launch failed with exit \(result.exitCode)"
+                : result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+
+    static func terminateApp(bundleID: String, udid: String) throws -> Bool {
+        let result = try Shell.runWithResult("xcrun", arguments: ["simctl", "terminate", udid, bundleID])
+        switch result.exitCode {
+        case 0:
+            return true
+        default:
+            let message = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if IOSUseCLI.isAppNotRunningErrorMessage(message) {
+                return false
+            }
+            throw CLIParseError.invalidValue(message.isEmpty
+                ? "simctl terminate failed with exit \(result.exitCode)"
+                : message)
+        }
+    }
+
     static func isLocalDriverPortReachable() -> Bool {
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
