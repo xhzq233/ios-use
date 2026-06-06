@@ -67,10 +67,24 @@ enum LockdownSession {
 
     static func connectToService(_ serviceName: String, udid: String) throws -> DeviceStream {
         let connection = try startService(serviceName, udid: udid)
-        let fd = try Usbmux.connect(udid: udid, port: connection.service.port)
-        if connection.service.enableServiceSSL {
-            return try OpenSSLDeviceStream(fd: fd, pairRecord: connection.pairRecord)
+        return try connectToStartedService(connection, udid: udid)
+    }
+
+    static func connectToStartedService(
+        _ connection: LockdownServiceConnection,
+        udid: String,
+        usbmuxConnect: (String, Int) throws -> Int32 = Usbmux.connect,
+        tlsStreamFactory: (Int32, PairRecord) throws -> DeviceStream = { fd, pairRecord in
+            try OpenSSLDeviceStream(fd: fd, pairRecord: pairRecord)
+        },
+        plainStreamFactory: (Int32) -> DeviceStream = { fd in
+            PlainDeviceStream(fd: fd)
         }
-        return PlainDeviceStream(fd: fd)
+    ) throws -> DeviceStream {
+        let fd = try usbmuxConnect(udid, connection.service.port)
+        if connection.service.enableServiceSSL {
+            return try tlsStreamFactory(fd, connection.pairRecord)
+        }
+        return plainStreamFactory(fd)
     }
 }

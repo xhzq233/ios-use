@@ -30,7 +30,6 @@ final class IOSUseCLITests: XCTestCase {
         DriverLifecycleService.holderProcessValidatorForTesting = nil
         DriverLifecycleService.signalSenderForTesting = nil
         DriverLifecycleService.processExitWaiterForTesting = nil
-        RealDeviceOSLogService.collectorForTesting = nil
         Shell.runOverrideForTesting = nil
         Shell.runResultOverrideForTesting = nil
         super.tearDown()
