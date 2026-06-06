@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import IOSUseProtocol
+import IOSUseProtocol
 
 struct XCTestRunnerInstallInfo: Equatable {
     let appPath: String
@@ -84,7 +85,7 @@ final class RealDeviceXCTestActiveSession {
             tunnel.close()
         }
         for tunnel in tunnels {
-            _ = tunnel.waitForClose(timeoutSeconds: 1)
+            _ = tunnel.waitForClose(timeoutSeconds: IOSUseProtocol.XCConstants.xctestTunnelCloseTimeoutSeconds)
         }
     }
 
@@ -179,8 +180,8 @@ final class RealDeviceXCTestDriverLifecycle {
     func startDriverSession(udid: String, bundleID: String) throws -> RealDeviceXCTestActiveSession {
         let productMajorVersion = try dependencies.productMajorVersion(udid)
         eventSink?("testmanagerd product major version=\(productMajorVersion)")
-        guard productMajorVersion >= 17 else {
-            throw CLIParseError.invalidValue("Real-device start requires iOS 17 or later; device \(udid) reported iOS \(productMajorVersion).")
+        guard productMajorVersion >= IOSUseProtocol.XCConstants.minimumRealDeviceIOSMajorVersion else {
+            throw CLIParseError.invalidValue("Real-device start requires iOS \(IOSUseProtocol.XCConstants.minimumRealDeviceIOSMajorVersion) or later; device \(udid) reported iOS \(productMajorVersion).")
         }
         let runnerInfo = try dependencies.resolveRunnerInfo(udid, bundleID)
         eventSink?("resolved runner app=\(runnerInfo.appPath)")
@@ -277,7 +278,7 @@ final class RealDeviceXCTestDriverLifecycle {
             openedControlListener.start()
 
             eventSink?("waiting for XCTest runner ready/configuration reply")
-            try openedListener.waitUntilConfigurationSent(timeoutSeconds: 20)
+            try openedListener.waitUntilConfigurationSent(timeoutSeconds: IOSUseProtocol.XCConstants.xctestRunnerConfigurationTimeoutSeconds)
             eventSink?("starting XCTest test plan")
             try execDaemon.startExecutingTestPlan()
 
@@ -316,7 +317,7 @@ final class RealDeviceXCTestDriverLifecycle {
                 tunnel.close()
             }
             for tunnel in openedTunnels {
-                _ = tunnel.waitForClose(timeoutSeconds: 1)
+                _ = tunnel.waitForClose(timeoutSeconds: IOSUseProtocol.XCConstants.xctestTunnelCloseTimeoutSeconds)
             }
             throw error
         }
@@ -345,7 +346,7 @@ final class RealDeviceXCTestDriverLifecycle {
             return tunnel
         } catch {
             tunnel.close()
-            _ = tunnel.waitForClose(timeoutSeconds: 1)
+            _ = tunnel.waitForClose(timeoutSeconds: IOSUseProtocol.XCConstants.xctestTunnelCloseTimeoutSeconds)
             throw error
         }
     }

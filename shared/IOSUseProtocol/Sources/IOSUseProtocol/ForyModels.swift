@@ -331,9 +331,9 @@ public struct ForySwipeArgs {
     public var toTarget: ForyTarget = ForyTarget()
     public var fromTarget: ForyTarget = ForyTarget()
     public var distance: Double = 0
-    public var dir: Int32 = -1
+    public var dir: Int32 = IOSUseProtocol.XCConstants.swipeDirectionUnspecified
 
-    public init(toTarget: ForyTarget = ForyTarget(), fromTarget: ForyTarget = ForyTarget(), distance: Double = 0, dir: Int32 = -1) {
+    public init(toTarget: ForyTarget = ForyTarget(), fromTarget: ForyTarget = ForyTarget(), distance: Double = 0, dir: Int32 = IOSUseProtocol.XCConstants.swipeDirectionUnspecified) {
         self.toTarget = toTarget
         self.fromTarget = fromTarget
         self.distance = distance
@@ -343,9 +343,9 @@ public struct ForySwipeArgs {
 
 @ForyStruct
 public struct ForyDismissAlertArgs {
-    public var index: Int32 = -1
+    public var index: Int32 = IOSUseProtocol.XCConstants.defaultAlertButtonIndex
 
-    public init(index: Int32 = -1) {
+    public init(index: Int32 = IOSUseProtocol.XCConstants.defaultAlertButtonIndex) {
         self.index = index
     }
 }

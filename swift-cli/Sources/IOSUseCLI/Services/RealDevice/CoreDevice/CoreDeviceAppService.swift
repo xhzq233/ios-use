@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import IOSUseProtocol
 
 enum CoreDeviceAppServiceError: Error, CustomStringConvertible, Equatable {
     case missingOutput(String)
@@ -34,8 +35,8 @@ struct CoreDeviceProcessToken: Equatable {
 }
 
 final class CoreDeviceAppService {
-    static let serviceName = "com.apple.coredevice.appservice"
-    static let versionString = "325.3"
+    static let serviceName = IOSUseProtocol.XCConstants.coreDeviceAppServiceName
+    static let versionString = IOSUseProtocol.XCConstants.coreDeviceAppServiceVersion
 
     private let client: RemoteXPCClient
     private let uuidProvider: () -> String
@@ -95,7 +96,7 @@ final class CoreDeviceAppService {
         activeUser: Bool = false
     ) throws -> RemoteXPCValue {
         try invoke(
-            featureIdentifier: "com.apple.coredevice.feature.launchapplication",
+            featureIdentifier: IOSUseProtocol.XCConstants.coreDeviceFeatureLaunchApplication,
             input: Self.launchApplicationInput(
                 bundleID: bundleID,
                 arguments: arguments,
@@ -108,7 +109,7 @@ final class CoreDeviceAppService {
                 platformSpecificOptions: platformSpecificOptions,
                 activeUser: activeUser
             ),
-            timeoutSeconds: 30
+            timeoutSeconds: IOSUseProtocol.XCConstants.coreDeviceLaunchApplicationTimeoutSeconds
         )
     }
 
@@ -135,15 +136,15 @@ final class CoreDeviceAppService {
     }
 
     func listProcesses() throws -> [CoreDeviceProcessToken] {
-        let output = try invoke(featureIdentifier: "com.apple.coredevice.feature.listprocesses")
+        let output = try invoke(featureIdentifier: IOSUseProtocol.XCConstants.coreDeviceFeatureListProcesses)
         guard let tokens = output.dictionaryValue?["processTokens"] else {
-            throw CoreDeviceAppServiceError.missingOutput("com.apple.coredevice.feature.listprocesses.processTokens")
+            throw CoreDeviceAppServiceError.missingOutput(IOSUseProtocol.XCConstants.coreDeviceFeatureListProcessesTokensPath)
         }
         return try Self.decodeProcessTokens(tokens)
     }
 
     func sendSignal(processIdentifier: Int, signal: Int) throws -> RemoteXPCValue {
-        let featureIdentifier = "com.apple.coredevice.feature.sendsignaltoprocess"
+        let featureIdentifier = IOSUseProtocol.XCConstants.coreDeviceFeatureSendSignalToProcess
         let request = coreDeviceRequest(featureIdentifier: featureIdentifier, input: [
             "process": .dictionary([
                 "processIdentifier": .int64(Int64(processIdentifier)),
@@ -152,7 +153,7 @@ final class CoreDeviceAppService {
         ])
         try client.sendRequest(request, wantingReply: true)
         do {
-            let response = try client.receiveResponse(timeoutSeconds: 10)
+            let response = try client.receiveResponse(timeoutSeconds: IOSUseProtocol.XCConstants.coreDeviceRequestTimeoutSeconds)
             if response.dictionaryValue?["CoreDevice.error"] != nil {
                 throw CoreDeviceAppServiceError.missingOutputResponse(featureIdentifier, Self.describe(response))
             }
@@ -168,7 +169,7 @@ final class CoreDeviceAppService {
         _ = try sendSignal(processIdentifier: processIdentifier, signal: Int(SIGKILL))
     }
 
-    func invoke(featureIdentifier: String, input: [String: RemoteXPCValue] = [:], timeoutSeconds: Double = 10) throws -> RemoteXPCValue {
+    func invoke(featureIdentifier: String, input: [String: RemoteXPCValue] = [:], timeoutSeconds: Double = IOSUseProtocol.XCConstants.coreDeviceRequestTimeoutSeconds) throws -> RemoteXPCValue {
         let response = try client.sendReceiveRequest(coreDeviceRequest(featureIdentifier: featureIdentifier, input: input), timeoutSeconds: timeoutSeconds)
         guard let output = response.dictionaryValue?["CoreDevice.output"] else {
             throw CoreDeviceAppServiceError.missingOutputResponse(featureIdentifier, Self.describe(response))
@@ -178,7 +179,7 @@ final class CoreDeviceAppService {
 
     func coreDeviceRequest(featureIdentifier: String, input: [String: RemoteXPCValue]) -> [String: RemoteXPCValue] {
         return [
-            "CoreDevice.CoreDeviceDDIProtocolVersion": .int64(0),
+            "CoreDevice.CoreDeviceDDIProtocolVersion": .int64(IOSUseProtocol.XCConstants.coreDeviceDDIProtocolVersion),
             "CoreDevice.action": .dictionary([:]),
             "CoreDevice.coreDeviceVersion": Self.coreDeviceVersion(Self.versionString),
             "CoreDevice.deviceIdentifier": .string(uuidProvider()),

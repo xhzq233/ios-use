@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 enum AfcOpcode: UInt64 {
     case status = 0x01
@@ -98,14 +99,14 @@ enum AfcClientError: Error, CustomStringConvertible, Equatable {
 final class AfcClient {
     private let stream: DeviceStream
     private var packetNumber: UInt64 = 1
-    private var maxWriteChunkSize = 512 * 1024
+    private var maxWriteChunkSize = IOSUseProtocol.XCConstants.afcInitialWriteChunkSize
 
     init(stream: DeviceStream) {
         self.stream = stream
     }
 
     static func withClient<T>(udid: String, _ body: (AfcClient) throws -> T) throws -> T {
-        let stream = try LockdownSession.connectToService("com.apple.afc", udid: udid)
+        let stream = try LockdownSession.connectToService(IOSUseProtocol.XCConstants.afcServiceName, udid: udid)
         defer { stream.close() }
         return try body(AfcClient(stream: stream))
     }
@@ -158,8 +159,8 @@ final class AfcClient {
                 try write(handle: handle, data: data)
             } catch let error as AfcClientError {
                 switch error {
-                case .status(.tooMuchData) where maxWriteChunkSize > 64 * 1024:
-                    maxWriteChunkSize = 64 * 1024
+                case .status(.tooMuchData) where maxWriteChunkSize > IOSUseProtocol.XCConstants.afcFallbackWriteChunkSize:
+                    maxWriteChunkSize = IOSUseProtocol.XCConstants.afcFallbackWriteChunkSize
                     try writeChunks(handle: handle, data: data, chunkSize: maxWriteChunkSize)
                 default:
                     throw error
@@ -169,7 +170,7 @@ final class AfcClient {
     }
 
     func openFile(_ path: String) throws -> UInt64 {
-        var payload = uint64LE(3)
+        var payload = uint64LE(IOSUseProtocol.XCConstants.afcFileOpenModeWriteOnly)
         payload.append(cString(normalizeDevicePath(path)))
         let response = try request(.fileOpen, payload: payload)
         guard response.opcode == AfcOpcode.fileOpenResult.rawValue else {
@@ -184,7 +185,7 @@ final class AfcClient {
     func write(handle: UInt64, data: Data) throws {
         var payload = uint64LE(handle)
         payload.append(data)
-        try request(.write, payload: payload, thisLength: 48)
+        try request(.write, payload: payload, thisLength: IOSUseProtocol.XCConstants.afcWriteRequestHeaderLength)
     }
 
     private func writeChunks(handle: UInt64, data: Data, chunkSize: Int) throws {
@@ -204,9 +205,10 @@ final class AfcClient {
     private func request(_ opcode: AfcOpcode, payload: Data = Data(), thisLength: UInt64? = nil) throws -> (opcode: UInt64, payload: Data) {
         let packetNumber = self.packetNumber
         self.packetNumber += 1
-        let requestEntireLength = 40 + UInt64(payload.count)
+        let headerLength = UInt64(IOSUseProtocol.XCConstants.afcHeaderByteCount)
+        let requestEntireLength = headerLength + UInt64(payload.count)
 
-        var packet = Data("CFA6LPAA".utf8)
+        var packet = Data(IOSUseProtocol.XCConstants.afcPacketMagic.utf8)
         packet.append(uint64LE(requestEntireLength))
         packet.append(uint64LE(thisLength ?? requestEntireLength))
         packet.append(uint64LE(packetNumber))
@@ -214,19 +216,27 @@ final class AfcClient {
         packet.append(payload)
         try stream.write(packet)
 
-        let header = try stream.readExact(byteCount: 40, timeoutSeconds: 30)
-        guard Data(header.prefix(8)) == Data("CFA6LPAA".utf8) else {
+        let header = try stream.readExact(
+            byteCount: IOSUseProtocol.XCConstants.afcHeaderByteCount,
+            timeoutSeconds: IOSUseProtocol.XCConstants.afcReadTimeoutSeconds
+        )
+        guard Data(header.prefix(8)) == Data(IOSUseProtocol.XCConstants.afcPacketMagic.utf8) else {
             throw AfcClientError.invalidMagic
         }
         let entireLength = readUInt64LE(header, 8)
         let responseHeaderLength = readUInt64LE(header, 16)
         let responseOpcode = readUInt64LE(header, 32)
-        guard entireLength >= responseHeaderLength, responseHeaderLength >= 40, entireLength <= 256 * 1024 * 1024 else {
+        guard entireLength >= responseHeaderLength,
+              responseHeaderLength >= headerLength,
+              entireLength <= IOSUseProtocol.XCConstants.afcMaxResponseBytes else {
             throw AfcClientError.invalidLength(entireLength)
         }
 
-        let payloadCount = Int(entireLength - 40)
-        let responsePayload = payloadCount == 0 ? Data() : try stream.readExact(byteCount: payloadCount, timeoutSeconds: 30)
+        let payloadCount = Int(entireLength - headerLength)
+        let responsePayload = payloadCount == 0 ? Data() : try stream.readExact(
+            byteCount: payloadCount,
+            timeoutSeconds: IOSUseProtocol.XCConstants.afcReadTimeoutSeconds
+        )
         if responseOpcode == AfcOpcode.status.rawValue {
             let rawStatus = responsePayload.count >= 8 ? readUInt64LE(responsePayload, 0) : 0
             if rawStatus == AfcStatus.success.rawValue {

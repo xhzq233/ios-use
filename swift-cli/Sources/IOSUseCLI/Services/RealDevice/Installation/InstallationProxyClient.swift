@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 enum InstallationProxyError: Error, CustomStringConvertible, Equatable {
     case invalidResponseSize(Int)
@@ -22,7 +23,7 @@ final class InstallationProxyClient {
     }
 
     static func withClient<T>(udid: String, _ body: (InstallationProxyClient) throws -> T) throws -> T {
-        let stream = try LockdownSession.connectToService("com.apple.mobile.installation_proxy", udid: udid)
+        let stream = try LockdownSession.connectToService(IOSUseProtocol.XCConstants.installationProxyServiceName, udid: udid)
         defer { stream.close() }
         return try body(InstallationProxyClient(stream: stream))
     }
@@ -56,7 +57,7 @@ final class InstallationProxyClient {
 
         var result: [[String: Any]] = []
         while true {
-            let response = try readPlistFrame(timeoutSeconds: 120)
+            let response = try readPlistFrame(timeoutSeconds: IOSUseProtocol.XCConstants.installationProxyProgressTimeoutSeconds)
             if let currentList = response["CurrentList"] as? [[String: Any]] {
                 result.append(contentsOf: currentList)
             }
@@ -100,7 +101,7 @@ final class InstallationProxyClient {
     }
 
     @discardableResult
-    func sendPlist(_ body: [String: Any], timeoutSeconds: Double = 30) throws -> [String: Any] {
+    func sendPlist(_ body: [String: Any], timeoutSeconds: Double = IOSUseProtocol.XCConstants.installationProxyDefaultTimeoutSeconds) throws -> [String: Any] {
         try sendPlistWithoutResponse(body)
         return try readPlistFrame(timeoutSeconds: timeoutSeconds)
     }
@@ -120,9 +121,12 @@ final class InstallationProxyClient {
     }
 
     private func readRawPlistFrame(timeoutSeconds: Double) throws -> [String: Any] {
-        let header = try stream.readExact(byteCount: 4, timeoutSeconds: timeoutSeconds)
+        let header = try stream.readExact(
+            byteCount: IOSUseProtocol.XCConstants.installationProxyFrameHeaderByteCount,
+            timeoutSeconds: timeoutSeconds
+        )
         let size = Int(readUInt32BE(header, 0))
-        guard size > 0, size <= 100 * 1024 * 1024 else {
+        guard size > 0, size <= IOSUseProtocol.XCConstants.installationProxyMaxResponseBytes else {
             throw InstallationProxyError.invalidResponseSize(size)
         }
         return try parsePlist(try stream.readExact(byteCount: size, timeoutSeconds: timeoutSeconds))
@@ -131,7 +135,7 @@ final class InstallationProxyClient {
     private func runProgressCommand(_ body: [String: Any], responseObserver: (([String: Any]) -> Void)? = nil) throws {
         try sendPlistWithoutResponse(body)
         while true {
-            let response = try readRawPlistFrame(timeoutSeconds: 120)
+            let response = try readRawPlistFrame(timeoutSeconds: IOSUseProtocol.XCConstants.installationProxyProgressTimeoutSeconds)
             responseObserver?(response)
             if let error = response["Error"] {
                 let description = response["ErrorDescription"].map { String(describing: $0) } ?? String(describing: error)
