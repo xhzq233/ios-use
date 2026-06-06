@@ -214,15 +214,29 @@ enum CLIHelp {
                 ]
             )
         case "activateApp":
-            return driverHelp(
-                usage: "ios-use activateApp <bundleId>",
-                summary: "Activate an app by bundle ID."
-            )
+            return """
+            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--verbose]
+
+            Activate an app by bundle ID using host-side device services.
+            Defaults to the active driver.lock UDID when --udid is omitted.
+
+            Options:
+              --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
+              --verbose      Enable verbose output
+
+            """
         case "terminateApp":
-            return driverHelp(
-                usage: "ios-use terminateApp <bundleId>",
-                summary: "Terminate an app by bundle ID."
-            )
+            return """
+            Usage: ios-use terminateApp <bundleId> [--udid <udid>] [--verbose]
+
+            Terminate an app by bundle ID using host-side device services.
+            Defaults to the active driver.lock UDID when --udid is omitted.
+
+            Options:
+              --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
+              --verbose      Enable verbose output
+
+            """
         case "home":
             return driverHelp(
                 usage: "ios-use home",

@@ -561,11 +561,23 @@ final class DeviceProtocolClientTests: XCTestCase {
                 expectsReply: true
             ).wireData,
         ])
-        let tunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
+        let execTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
             peerInfo: peerInfo,
-            streams: [execStream, stdioStream, controlStream]
+            streams: [execStream]
         )
-        var tunnels = [tunnel]
+        let appServiceTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
+            peerInfo: peerInfo,
+            streams: []
+        )
+        let stdioTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
+            peerInfo: peerInfo,
+            streams: [stdioStream]
+        )
+        let controlTunnel = FakeMultiStreamCoreDeviceLifecycleTunnelSession(
+            peerInfo: peerInfo,
+            streams: [controlStream]
+        )
+        var tunnels = [execTunnel, appServiceTunnel, stdioTunnel, controlTunnel]
         let appService = FakeXCTestRunnerAppService(pid: 333)
         let lifecycle = RealDeviceXCTestDriverLifecycle(dependencies: RealDeviceXCTestDriverLifecycle.Dependencies(
             startTunnel: { udid in
@@ -586,11 +598,11 @@ final class DeviceProtocolClientTests: XCTestCase {
             productMajorVersion: { _ in 17 },
             makeSessionIdentifier: { sessionID },
             openAppService: { tunnelSession in
-                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(tunnel))
+                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(appServiceTunnel))
                 return appService
             },
             openStdIOSocket: { tunnelSession in
-                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(tunnel))
+                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(stdioTunnel))
                 return try CoreDeviceOpenStdIOSocket.connect(session: tunnelSession)
             }
         ))
@@ -600,12 +612,20 @@ final class DeviceProtocolClientTests: XCTestCase {
         activeSession.close(killRunner: false)
 
         XCTAssertTrue(tunnels.isEmpty)
-        XCTAssertEqual(tunnel.requestedServices, [
-            DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
-            CoreDeviceOpenStdIOSocket.serviceName,
+        XCTAssertEqual(execTunnel.requestedServices, [
             DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
         ])
-        XCTAssertTrue(tunnel.closed)
+        XCTAssertEqual(appServiceTunnel.requestedServices, [])
+        XCTAssertEqual(stdioTunnel.requestedServices, [
+            CoreDeviceOpenStdIOSocket.serviceName,
+        ])
+        XCTAssertEqual(controlTunnel.requestedServices, [
+            DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
+        ])
+        XCTAssertTrue(execTunnel.closed)
+        XCTAssertTrue(appServiceTunnel.closed)
+        XCTAssertTrue(stdioTunnel.closed)
+        XCTAssertTrue(controlTunnel.closed)
         XCTAssertTrue(execStream.closed)
         XCTAssertTrue(stdioStream.closed)
         XCTAssertTrue(controlStream.closed)
@@ -1192,6 +1212,42 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(processes.first?.executable, "file:///private/var/containers/Bundle/Application/Driver/IOSUseDriver-Runner")
     }
 
+    func testCoreDeviceAppServiceDecodesNestedBundleIdentifier() throws {
+        let response = try RemoteXPCWrapper.encode(
+            messageID: 1,
+            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
+            payload: .dictionary([
+                "CoreDevice.output": .dictionary([
+                    "processTokens": .array([
+                        .dictionary([
+                            "processIdentifier": .int64(123),
+                            "executableURL": .dictionary([
+                                "relative": .string("file:///private/var/containers/Bundle/Application/Demo/Demo"),
+                            ]),
+                            "applicationIdentifier": .dictionary([
+                                "bundleIdentifier": .dictionary([
+                                    "_0": .string("com.example.demo"),
+                                ]),
+                            ]),
+                        ]),
+                    ]),
+                ]),
+            ])
+        )
+        let stream = FakeDeviceStream(reads: [
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
+            ),
+        ])
+        let client = RemoteXPCClient(stream: stream)
+        try client.completeClientHandshake()
+        let service = CoreDeviceAppService(client: client)
+
+        let processes = try service.listProcesses()
+
+        XCTAssertEqual(processes.first?.bundleIdentifier, "com.example.demo")
+    }
+
     func testCoreDeviceAppServiceFallsBackToTokenWideExecutableSearch() throws {
         let response = try RemoteXPCWrapper.encode(
             messageID: 1,
@@ -1303,6 +1359,79 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(appService.launches.first?.activates, true)
         XCTAssertEqual(appService.launches.first?.terminateExisting, false)
         XCTAssertTrue(appService.closed)
+    }
+
+    func testCoreDeviceAppLifecycleRunnerActivatesAppThroughAppService() throws {
+        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
+        let appService = FakeCoreDeviceAppLifecycleService()
+        let runner = CoreDeviceAppLifecycleRunner(dependencies: CoreDeviceAppLifecycleRunner.Dependencies(
+            startTunnel: { udid in
+                XCTAssertEqual(udid, "REAL-UDID")
+                return session
+            },
+            openAppService: { tunnelSession in
+                XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(session))
+                return appService
+            },
+            resolveBundleExecutable: { _, _ in nil }
+        ))
+
+        try runner.activate(bundleID: "com.example.app", udid: "REAL-UDID")
+
+        XCTAssertEqual(appService.launches.map(\.bundleID), ["com.example.app"])
+        XCTAssertEqual(appService.launches.first?.terminateExisting, false)
+        XCTAssertEqual(appService.launches.first?.activates, true)
+        XCTAssertTrue(appService.closed)
+        XCTAssertTrue(session.closed)
+    }
+
+    func testCoreDeviceAppLifecycleRunnerTerminatesMatchingBundleProcesses() throws {
+        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
+        let appService = FakeCoreDeviceAppLifecycleService()
+        appService.processes = [
+            CoreDeviceProcessToken(processIdentifier: 11, executable: "file:///private/var/containers/Bundle/Application/A/Target"),
+            CoreDeviceProcessToken(processIdentifier: 12, executable: "file:///private/var/containers/Bundle/Application/B/Other"),
+            CoreDeviceProcessToken(processIdentifier: 13, executable: "/private/var/containers/Bundle/Application/C/Target"),
+        ]
+        let runner = CoreDeviceAppLifecycleRunner(dependencies: CoreDeviceAppLifecycleRunner.Dependencies(
+            startTunnel: { _ in session },
+            openAppService: { _ in appService },
+            resolveBundleExecutable: { udid, bundleID in
+                XCTAssertEqual(udid, "REAL-UDID")
+                XCTAssertEqual(bundleID, "com.example.app")
+                return "Target"
+            }
+        ))
+
+        let terminated = try runner.terminate(bundleID: "com.example.app", udid: "REAL-UDID")
+
+        XCTAssertTrue(terminated)
+        XCTAssertEqual(appService.killedProcessIdentifiers, [11, 13])
+        XCTAssertTrue(appService.closed)
+        XCTAssertTrue(session.closed)
+    }
+
+    func testCoreDeviceAppLifecycleRunnerTreatsKillRaceAsNotRunning() throws {
+        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
+        let appService = FakeCoreDeviceAppLifecycleService()
+        appService.processes = [
+            CoreDeviceProcessToken(processIdentifier: 11, executable: "/private/var/containers/Bundle/Application/A/App", bundleIdentifier: "com.example.app"),
+        ]
+        appService.killErrors = [
+            11: CLIParseError.invalidValue("no such process"),
+        ]
+        let runner = CoreDeviceAppLifecycleRunner(dependencies: CoreDeviceAppLifecycleRunner.Dependencies(
+            startTunnel: { _ in session },
+            openAppService: { _ in appService },
+            resolveBundleExecutable: { _, _ in nil }
+        ))
+
+        let terminated = try runner.terminate(bundleID: "com.example.app", udid: "REAL-UDID")
+
+        XCTAssertFalse(terminated)
+        XCTAssertEqual(appService.killedProcessIdentifiers, [11])
+        XCTAssertTrue(appService.closed)
+        XCTAssertTrue(session.closed)
     }
 
     func testAfcOpenWriteAndCloseFrames() throws {
@@ -2066,6 +2195,55 @@ private final class FakeCoreDeviceAppService: CoreDeviceAppManaging {
         launchedBundleIDs.append(bundleID)
         launches.append((bundleID, terminateExisting, payloadURL, activates))
         return launchOutput
+    }
+
+    func close() {
+        closed = true
+    }
+}
+
+private final class FakeCoreDeviceAppLifecycleService: CoreDeviceAppLifecycleServicing {
+    struct Launch: Equatable {
+        let bundleID: String
+        let terminateExisting: Bool
+        let payloadURL: String?
+        let activates: Bool?
+    }
+
+    var launches: [Launch] = []
+    var processes: [CoreDeviceProcessToken] = []
+    var killedProcessIdentifiers: [Int] = []
+    var killErrors: [Int: Error] = [:]
+    var launchOutput: RemoteXPCValue = .dictionary(["processIdentifier": .int64(222)])
+    private(set) var closed = false
+
+    func launchApplication(
+        bundleID: String,
+        arguments _: [String],
+        terminateExisting: Bool,
+        startSuspended _: Bool,
+        environment _: [String: String],
+        payloadURL: String?,
+        activates: Bool?
+    ) throws -> RemoteXPCValue {
+        launches.append(Launch(
+            bundleID: bundleID,
+            terminateExisting: terminateExisting,
+            payloadURL: payloadURL,
+            activates: activates
+        ))
+        return launchOutput
+    }
+
+    func listProcesses() throws -> [CoreDeviceProcessToken] {
+        processes
+    }
+
+    func kill(processIdentifier: Int) throws {
+        killedProcessIdentifiers.append(processIdentifier)
+        if let error = killErrors[processIdentifier] {
+            throw error
+        }
     }
 
     func close() {

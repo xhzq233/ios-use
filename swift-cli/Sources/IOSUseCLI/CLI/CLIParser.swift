@@ -47,9 +47,9 @@ public enum CLIParser {
         case "waitFor":
             return .driver(try parseWaitFor(&parser))
         case "activateApp":
-            return .driver(try parseBundleAction(&parser, kind: .activateApp))
+            return .appLifecycle(try parseAppLifecycle(&parser, action: .activate))
         case "terminateApp":
-            return .driver(try parseBundleAction(&parser, kind: .terminateApp))
+            return .appLifecycle(try parseAppLifecycle(&parser, action: .terminate))
         case "home":
             return .driver(try parseHome(&parser))
         case "open":
@@ -442,20 +442,6 @@ public enum CLIParser {
         return .waitFor(label: try require(label, option: "--label"), timeout: timeout, traits: traits, cindex: cindex)
     }
 
-    private enum BundleActionKind {
-        case activateApp
-        case terminateApp
-    }
-
-    private static func parseBundleAction(_ parser: inout ArgumentParser, kind: BundleActionKind) throws -> DriverAction {
-        let bundleId = try parser.requiredPositional("bundleId")
-        try parser.requireEnd()
-        switch kind {
-        case .activateApp: return .activateApp(bundleId: bundleId)
-        case .terminateApp: return .terminateApp(bundleId: bundleId)
-        }
-    }
-
     private static func parseHome(_ parser: inout ArgumentParser) throws -> DriverAction {
         try parser.requireEnd()
         return .home
@@ -468,6 +454,15 @@ public enum CLIParser {
             try parseSession(arg, parser: &parser, session: &session)
         }
         return OpenURLOptions(url: url, session: session)
+    }
+
+    private static func parseAppLifecycle(_ parser: inout ArgumentParser, action: AppLifecycleOptions.Action) throws -> AppLifecycleOptions {
+        let bundleID = try parser.requiredPositional("bundleId")
+        var session = SessionOptions()
+        while let arg = parser.consume() {
+            try parseSession(arg, parser: &parser, session: &session)
+        }
+        return AppLifecycleOptions(action: action, bundleID: bundleID, session: session)
     }
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {

@@ -1,11 +1,11 @@
-import os.log
+import Foundation
 
 enum DriverLog {
     static func info(_ message: String) {
-        os_log("%{public}@", log: .default, type: .info, message)
+        NSLog("%@", message)
     }
 
     static func error(_ message: String) {
-        os_log("%{public}@", log: .default, type: .error, message)
+        NSLog("%@", message)
     }
 }
