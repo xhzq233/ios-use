@@ -15,6 +15,8 @@ final class IOSUseCLITests: XCTestCase {
         DeviceService.resetCacheForTesting()
         DriverClient.usbmuxConnectorForTesting = nil
         IOSUseCLI.driverClientFactoryForTesting = nil
+        AppLifecycleService.realDeviceRunnerForTesting = nil
+        AppLifecycleService.simulatorRunnerForTesting = nil
         OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
         OpenURLService.realDeviceURLLauncherForTesting = nil
         AppManagementService.installerForTesting = nil
@@ -70,6 +72,16 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Usage: ios-use tap <target>"))
         XCTAssertTrue(result.stdout.contains("--offset-ratio <x,y>"))
         XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testAppLifecycleHelpIsHostSide() {
+        let result = IOSUseCLI().run(arguments: ["activateApp", "--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("Usage: ios-use activateApp <bundleId> [--udid <udid>]"))
+        XCTAssertTrue(result.stdout.contains("using host-side device services"))
+        XCTAssertTrue(result.stdout.contains("--udid <udid>"))
+        XCTAssertFalse(result.stdout.contains("Requires an active driver.lock"))
     }
 
     func testAllDocumentedCommandsReturnPerCommandHelp() {
@@ -536,7 +548,8 @@ final class IOSUseCLITests: XCTestCase {
                 holderPid: 111,
                 runnerPid: 222,
                 sessionIdentifier: "RECOVERED",
-                bundleId: bundleId
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-recovered.sock"
             )
         }
         var attempts = 0
@@ -583,7 +596,8 @@ final class IOSUseCLITests: XCTestCase {
                 holderPid: 111,
                 runnerPid: 222,
                 sessionIdentifier: "RECOVERED",
-                bundleId: bundleId
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-recovered.sock"
             )
         }
         Shell.runOverrideForTesting = { executable, _, _, _ in
@@ -704,7 +718,8 @@ final class IOSUseCLITests: XCTestCase {
                 holderPid: 555,
                 runnerPid: 666,
                 sessionIdentifier: "RECOVERED-HUNG",
-                bundleId: bundleId
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-recovered-hung.sock"
             )
         }
         var clientSessions: [SessionService.Info] = []
@@ -772,7 +787,13 @@ final class IOSUseCLITests: XCTestCase {
         DriverLifecycleService.processExitWaiterForTesting = { _, _ in false }
         DriverLifecycleService.holderLauncherForTesting = { _, _, _, _ in
             XCTFail("must not relaunch a new holder when stale holder cleanup fails")
-            return DriverLifecycleService.LaunchMetadata(holderPid: 999, runnerPid: 1000, sessionIdentifier: "BAD", bundleId: "com.example.driver")
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 999,
+                runnerPid: 1000,
+                sessionIdentifier: "BAD",
+                bundleId: "com.example.driver",
+                controlSocketPath: "\(root)/state/holder-bad.sock"
+            )
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             FakeDriverCommandClient(domHandler: { _, _, _ in
@@ -794,28 +815,30 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(lock.sessionIdentifier, "STUCK")
     }
 
-    func testRealDeviceActivateAppUsesDriverClient() throws {
+    func testRealDeviceActivateAppUsesHostSideRunner() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-real-activate-\(UUID().uuidString)")
             .path
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try writeDriverLock(udid: "REAL-ACTIVE", deviceType: "real", paths: paths)
-        var activatedBundleIDs: [String] = []
+        var calls: [(AppLifecycleOptions.Action, String, String)] = []
+        AppLifecycleService.realDeviceRunnerForTesting = { action, bundleID, udid in
+            calls.append((action, bundleID, udid))
+            return AppLifecycleService.Result(message: "App \(bundleID) activated")
+        }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(activateHandler: { bundleID in
-                activatedBundleIDs.append(bundleID)
-            })
+            XCTFail("host-side activateApp must not create a driver client")
+            return FakeDriverCommandClient()
         }
         addTeardownBlock {
             IOSUseCLI.driverClientFactoryForTesting = nil
+            AppLifecycleService.realDeviceRunnerForTesting = nil
             try? FileManager.default.removeItem(atPath: root)
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["activateApp", "com.apple.Preferences"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["activateApp", "com.apple.Preferences", "--udid", "REAL-ACTIVE"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "App com.apple.Preferences activated\n")
-        XCTAssertEqual(activatedBundleIDs, ["com.apple.Preferences"])
+        XCTAssertEqual(calls.map { [$0.0.commandName, $0.1, $0.2] }, [["activateApp", "com.apple.Preferences", "REAL-ACTIVE"]])
     }
 
     func testMutatingCommandCanAppendFreshDom() throws {
@@ -916,21 +939,24 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
     }
 
-    func testRealDeviceTerminateAppUsesDriverClientAndSkipsMissingProcess() throws {
+    func testRealDeviceTerminateAppUsesActiveLockAndHostSideRunner() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-real-terminate-\(UUID().uuidString)")
             .path
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try writeDriverLock(udid: "REAL-TERM", deviceType: "real", paths: paths)
-        var terminatedBundleIDs: [String] = []
+        var calls: [(AppLifecycleOptions.Action, String, String)] = []
+        AppLifecycleService.realDeviceRunnerForTesting = { action, bundleID, udid in
+            calls.append((action, bundleID, udid))
+            return AppLifecycleService.Result(message: "App \(bundleID) not running, skipped terminate")
+        }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            FakeDriverCommandClient(terminateHandler: { bundleID in
-                terminatedBundleIDs.append(bundleID)
-                throw DriverClientError.driverError("Application is not running")
-            })
+            XCTFail("host-side terminateApp must not create a driver client")
+            return FakeDriverCommandClient()
         }
         addTeardownBlock {
             IOSUseCLI.driverClientFactoryForTesting = nil
+            AppLifecycleService.realDeviceRunnerForTesting = nil
             try? FileManager.default.removeItem(atPath: root)
         }
 
@@ -938,7 +964,21 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "App com.apple.Preferences not running, skipped terminate\n")
-        XCTAssertEqual(terminatedBundleIDs, ["com.apple.Preferences"])
+        XCTAssertEqual(calls.map { [$0.0.commandName, $0.1, $0.2] }, [["terminateApp", "com.apple.Preferences", "REAL-TERM"]])
+    }
+
+    func testHostSideAppLifecycleRequiresUdidOrActiveLock() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-app-lifecycle-no-target-\(UUID().uuidString)")
+            .path
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["activateApp", "com.apple.Preferences"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("activateApp requires --udid or an active driver"))
     }
 
     func testDriverCommandWithoutLockFailsBeforeClientOrDiscovery() throws {

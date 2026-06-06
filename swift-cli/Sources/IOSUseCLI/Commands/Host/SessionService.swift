@@ -106,18 +106,28 @@ public enum SessionService {
 
     public static func start(udid requestedUdid: String?, paths: IOSUsePaths, verbose: Bool) throws -> String {
         if let current = try readDriverLockInfo(paths: paths) {
-            throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
+            if isIncompleteRealDriverLock(current) {
+                try cleanupIncompleteRealDriverLock(current, paths: paths)
+            } else {
+                throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
+            }
         }
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         let info = try resolveDriverInfo(udid: udid, paths: paths)
-        try writeDriverLock(info: info, paths: paths)
         var launchedInfo: Info?
         do {
+            let updated: Info
             if let metadata = try launchDriver(for: info, paths: paths, verbose: verbose) {
-                let updated = info.applying(metadata)
+                updated = info.applying(metadata)
                 launchedInfo = updated
-                try writeDriverLock(info: updated, paths: paths)
+                if info.deviceType == "real", isIncompleteRealDriverLock(updated) {
+                    throw CLIParseError.invalidValue("Native real-device launch did not return complete XCTest holder metadata.")
+                }
+            } else {
+                updated = info
+                launchedInfo = updated
             }
+            try writeDriverLock(info: updated, paths: paths)
         } catch {
             if let launchedInfo {
                 do {
@@ -138,6 +148,30 @@ public enum SessionService {
             throw error
         }
         return "Driver started for \(udid)\n"
+    }
+
+    static func isIncompleteRealDriverLock(_ info: Info) -> Bool {
+        guard info.deviceType == "real" else { return false }
+        return info.holderPid == nil
+            || info.runnerPid == nil
+            || info.sessionIdentifier == nil
+            || info.bundleId == nil
+            || info.controlSocketPath == nil
+            || info.controlSocketPath?.isEmpty == true
+    }
+
+    private static func cleanupIncompleteRealDriverLock(_ info: Info, paths: IOSUsePaths) throws {
+        do {
+            _ = try DriverLifecycleService.terminateDriver(
+                for: info,
+                paths: paths,
+                simulatorTerminator: simulatorDriverTerminatorForTesting,
+                realTerminator: realDriverTerminatorForTesting
+            )
+            DriverSessionStore.clearDriverLock(paths: paths)
+        } catch {
+            throw CLIParseError.invalidValue("Existing driver.lock is incomplete, but cleanup failed: \(error). Run `ios-use stop` or remove the stale lock after verifying no holder process is running.")
+        }
     }
 
     public static func stop(paths: IOSUsePaths) throws -> String {

@@ -96,6 +96,8 @@ public struct IOSUseCLI: Sendable {
             }
         case .open(let options):
             return executeOpen(options)
+        case .appLifecycle(let options):
+            return executeAppLifecycle(options)
         case .oslog(let options):
             return executeOSLog(options)
         case .flow(let options):
@@ -186,6 +188,15 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
+    private func executeAppLifecycle(_ options: AppLifecycleOptions) -> CLIResult {
+        do {
+            let result = try AppLifecycleService.run(options: options, paths: paths)
+            return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
+        } catch {
+            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+        }
+    }
+
     private func executeOSLog(_ options: OSLogOptions, hostDeviceTypeHint: String? = nil) -> CLIResult {
         do {
             let stdout = try OSLogCommandService.run(options: options, paths: paths, hostDeviceTypeHint: hostDeviceTypeHint, outputSink: outputSink)
@@ -213,7 +224,10 @@ public struct IOSUseCLI: Sendable {
     }
 
     static func isAppNotRunningError(_ error: Error) -> Bool {
-        let message = String(describing: error)
+        isAppNotRunningErrorMessage(String(describing: error))
+    }
+
+    static func isAppNotRunningErrorMessage(_ message: String) -> Bool {
         return message.range(of: #"not running|already terminated|no such process|state=1|state=0"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 

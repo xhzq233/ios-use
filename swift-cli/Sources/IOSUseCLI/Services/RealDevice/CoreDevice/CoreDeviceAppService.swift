@@ -143,15 +143,25 @@ final class CoreDeviceAppService {
     }
 
     func sendSignal(processIdentifier: Int, signal: Int) throws -> RemoteXPCValue {
-        try invoke(
-            featureIdentifier: "com.apple.coredevice.feature.sendsignaltoprocess",
-            input: [
-                "process": .dictionary([
-                    "processIdentifier": .int64(Int64(processIdentifier)),
-                ]),
-                "signal": .int64(Int64(signal)),
-            ]
-        )
+        let featureIdentifier = "com.apple.coredevice.feature.sendsignaltoprocess"
+        let request = coreDeviceRequest(featureIdentifier: featureIdentifier, input: [
+            "process": .dictionary([
+                "processIdentifier": .int64(Int64(processIdentifier)),
+            ]),
+            "signal": .int64(Int64(signal)),
+        ])
+        try client.sendRequest(request, wantingReply: true)
+        do {
+            let response = try client.receiveResponse(timeoutSeconds: 10)
+            if response.dictionaryValue?["CoreDevice.error"] != nil {
+                throw CoreDeviceAppServiceError.missingOutputResponse(featureIdentifier, Self.describe(response))
+            }
+            return response.dictionaryValue?["CoreDevice.output"] ?? .dictionary([:])
+        } catch CoreDeviceTCPError.connectionClosed {
+            return .dictionary([:])
+        } catch CoreDeviceTCPError.connectionReset {
+            return .dictionary([:])
+        }
     }
 
     func kill(processIdentifier: Int) throws {
@@ -305,6 +315,26 @@ final class CoreDeviceAppService {
         for key in ["bundleIdentifier", "bundleID", "applicationIdentifier", "applicationBundleIdentifier"] {
             if let value = token[key]?.stringValue, !value.isEmpty {
                 return value
+            }
+            if let value = token[key].flatMap(extractNestedBundleIdentifier) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func extractNestedBundleIdentifier(from value: RemoteXPCValue) -> String? {
+        if let string = value.stringValue, !string.isEmpty {
+            return string
+        }
+        guard let dictionary = value.dictionaryValue else {
+            return nil
+        }
+        for key in ["bundleIdentifier", "bundleID", "applicationBundleIdentifier", "_0"] {
+            if let nested = dictionary[key],
+               let string = extractNestedBundleIdentifier(from: nested),
+               !string.isEmpty {
+                return string
             }
         }
         return nil

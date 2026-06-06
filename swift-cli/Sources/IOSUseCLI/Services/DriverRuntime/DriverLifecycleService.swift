@@ -306,7 +306,13 @@ enum DriverLifecycleService {
         if let holderTerminatorForTesting {
             return holderTerminatorForTesting(info, paths)
         }
-        guard info.deviceType == "real", let holderPid = info.holderPid, holderPid > 0 else {
+        guard info.deviceType == "real" else {
+            return .notApplicable
+        }
+        guard let holderPid = info.holderPid, holderPid > 0 else {
+            if let socketPath = info.controlSocketPath, !socketPath.isEmpty {
+                return stopHolderThroughControlSocketIfPossible(info: info, paths: paths) ?? .failed
+            }
             return .notApplicable
         }
         let pid = Int32(holderPid)
