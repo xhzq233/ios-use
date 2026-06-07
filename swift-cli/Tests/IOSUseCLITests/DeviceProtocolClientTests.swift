@@ -241,6 +241,89 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(payloadAck.acknowledgmentNumber, 903)
     }
 
+    func testCoreDeviceDirectTunnelRouteQueueOverflowFailsUnreadRoute() throws {
+        let local = "fd7b:e5b:6f53::2"
+        let remote = "fd7b:e5b:6f53::1"
+        let localAddress = try CoreDeviceIPv6TCPCodec.parseIPv6Address(local)
+        let remoteAddress = try CoreDeviceIPv6TCPCodec.parseIPv6Address(remote)
+        let serviceName = "com.test.service"
+        let servicePort = 58_783
+        let localPort = IOSUseProtocol.XCConstants.userspaceTCPLocalPortLowerBound
+        let handshake = CoreDeviceTunnelHandshake(
+            serverAddress: remote,
+            serverRSDPort: servicePort,
+            clientAddress: local,
+            clientMTU: IOSUseProtocol.XCConstants.coreDeviceTunnelRequestedMTU
+        )
+        let tunnel = FakeCoreDeviceTunnel(handshake: handshake, reads: [], autoRespondToSyn: true)
+        let session = CoreDeviceDirectTunnelSession(tunnel: tunnel, handshake: handshake)
+        session.peerInfo = RemoteXPCPeerInfo(
+            properties: [:],
+            services: [
+                serviceName: RemoteXPCService(name: serviceName, port: servicePort, usesRemoteXPC: false),
+            ]
+        )
+
+        let stream = try session.connectService(serviceName)
+        let overflowPackets = try (0...IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit).map { index in
+            try CoreDeviceIPv6TCPCodec.encodeSegment(
+                sourceAddress: remoteAddress,
+                destinationAddress: localAddress,
+                sourcePort: UInt16(servicePort),
+                destinationPort: localPort,
+                sequenceNumber: UInt32(901 + index),
+                acknowledgmentNumber: 101,
+                flags: CoreDeviceTCPFlags.psh | CoreDeviceTCPFlags.ack,
+                payload: Data([UInt8(index & 0xff)])
+            )
+        }
+        tunnel.appendReads(overflowPackets)
+        usleep(100_000)
+
+        XCTAssertThrowsError(try stream.readAvailable(maxBytes: 1, timeoutSeconds: 0.1)) { error in
+            guard case CoreDeviceTCPError.routeBackpressure(let failedPort, let pendingPackets) = error else {
+                return XCTFail("expected route backpressure, got \(error)")
+            }
+            XCTAssertEqual(failedPort, localPort)
+            XCTAssertEqual(pendingPackets, IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit)
+        }
+        XCTAssertThrowsError(try stream.write(Data("x".utf8))) { error in
+            guard case CoreDeviceTCPError.routeBackpressure = error else {
+                return XCTFail("expected route backpressure on write, got \(error)")
+            }
+        }
+
+        session.close()
+        XCTAssertTrue(session.waitForClose(timeoutSeconds: 2))
+    }
+
+    func testCoreDeviceDirectTunnelWaitForCloseWaitsForRouterReaderExit() throws {
+        let local = "fd7b:e5b:6f53::2"
+        let remote = "fd7b:e5b:6f53::1"
+        let serviceName = "com.test.service"
+        let servicePort = 58_783
+        let handshake = CoreDeviceTunnelHandshake(
+            serverAddress: remote,
+            serverRSDPort: servicePort,
+            clientAddress: local,
+            clientMTU: IOSUseProtocol.XCConstants.coreDeviceTunnelRequestedMTU
+        )
+        let tunnel = FakeCoreDeviceTunnel(handshake: handshake, reads: [], autoRespondToSyn: true)
+        let session = CoreDeviceDirectTunnelSession(tunnel: tunnel, handshake: handshake)
+        session.peerInfo = RemoteXPCPeerInfo(
+            properties: [:],
+            services: [
+                serviceName: RemoteXPCService(name: serviceName, port: servicePort, usesRemoteXPC: false),
+            ]
+        )
+
+        _ = try session.connectService(serviceName)
+        session.close()
+
+        XCTAssertTrue(session.waitForClose(timeoutSeconds: 2))
+        XCTAssertTrue(tunnel.isClosed)
+    }
+
     func testCDTunnelRejectsInvalidMagicAndMissingFields() throws {
         var invalidMagic = try cdtunnelPacket(["type": "serverHandshakeResponse"])
         invalidMagic.replaceSubrange(0..<8, with: Data("BadMagic".utf8))
@@ -2181,6 +2264,7 @@ private final class FakeIPv6PacketIO: IPv6PacketIO {
 private final class FakeCoreDeviceTunnel: CoreDeviceTunnel {
     private let lock = NSLock()
     private let handshake: CoreDeviceTunnelHandshake
+    private let autoRespondToSyn: Bool
     private var reads: [Data]
     private var writesStorage: [Data] = []
     private var closed = false
@@ -2198,9 +2282,16 @@ private final class FakeCoreDeviceTunnel: CoreDeviceTunnel {
         return closed
     }
 
-    init(handshake: CoreDeviceTunnelHandshake, reads: [Data]) {
+    init(handshake: CoreDeviceTunnelHandshake, reads: [Data], autoRespondToSyn: Bool = false) {
         self.handshake = handshake
+        self.autoRespondToSyn = autoRespondToSyn
         self.reads = reads
+    }
+
+    func appendReads(_ packets: [Data]) {
+        lock.lock()
+        reads.append(contentsOf: packets)
+        lock.unlock()
     }
 
     func requestHandshake(mtu: Int) throws -> CoreDeviceTunnelHandshake {
@@ -2225,6 +2316,22 @@ private final class FakeCoreDeviceTunnel: CoreDeviceTunnel {
     func writeIPv6Packet(_ packet: Data) throws {
         lock.lock()
         writesStorage.append(packet)
+        if autoRespondToSyn,
+           let segment = try? CoreDeviceIPv6TCPCodec.decodeSegment(packet),
+           segment.hasSyn {
+            let synAck = try? CoreDeviceIPv6TCPCodec.encodeSegment(
+                sourceAddress: segment.destinationAddress,
+                destinationAddress: segment.sourceAddress,
+                sourcePort: segment.destinationPort,
+                destinationPort: segment.sourcePort,
+                sequenceNumber: 900,
+                acknowledgmentNumber: segment.sequenceNumber + 1,
+                flags: CoreDeviceTCPFlags.syn | CoreDeviceTCPFlags.ack
+            )
+            if let synAck {
+                reads.append(synAck)
+            }
+        }
         lock.unlock()
     }
 

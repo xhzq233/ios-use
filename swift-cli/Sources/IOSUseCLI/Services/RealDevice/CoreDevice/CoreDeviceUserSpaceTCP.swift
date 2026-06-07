@@ -13,6 +13,7 @@ enum CoreDeviceTCPError: Error, CustomStringConvertible, Equatable {
     case connectionReset
     case connectionClosed
     case connectionTimeout
+    case routeBackpressure(localPort: UInt16, pendingPackets: Int)
     case unexpectedHandshake(String)
 
     var description: String {
@@ -29,6 +30,8 @@ enum CoreDeviceTCPError: Error, CustomStringConvertible, Equatable {
             return "CoreDevice TCP connection closed"
         case .connectionTimeout:
             return "CoreDevice TCP connection timed out"
+        case .routeBackpressure(let localPort, let pendingPackets):
+            return "CoreDevice TCP route \(localPort) packet queue exceeded limit with \(pendingPackets) pending packets"
         case .unexpectedHandshake(let detail):
             return "CoreDevice TCP unexpected handshake: \(detail)"
         }
@@ -398,6 +401,7 @@ private final class CoreDeviceDirectTunnelPacketRouter {
     private let eventSink: ((String) -> Void)?
     private let routeLock = NSLock()
     private let writeLock = NSLock()
+    private let readerGroup = DispatchGroup()
     private var routes: [UInt16: CoreDeviceRoutedIPv6PacketIO] = [:]
     private var started = false
     private var closed = false
@@ -454,9 +458,16 @@ private final class CoreDeviceDirectTunnelPacketRouter {
     }
 
     private func startReader() {
+        let readerGroup = readerGroup
+        readerGroup.enter()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            defer { readerGroup.leave() }
             self?.readLoop()
         }
+    }
+
+    func waitForClose(timeoutSeconds: Double) -> Bool {
+        readerGroup.wait(timeout: .now() + timeoutSeconds) == .success
     }
 
     private func readLoop() {
@@ -561,6 +572,16 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
     }
 
     func writeIPv6Packet(_ packet: Data) throws {
+        condition.lock()
+        let currentFailure = failure
+        let isClosed = closed
+        condition.unlock()
+        if let currentFailure {
+            throw currentFailure
+        }
+        guard !isClosed else {
+            throw CoreDeviceTCPError.connectionClosed
+        }
         guard let router else {
             throw CoreDeviceTCPError.connectionClosed
         }
@@ -574,6 +595,7 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
             return
         }
         closed = true
+        packets.removeAll(keepingCapacity: false)
         condition.broadcast()
         condition.unlock()
         router?.unregister(localPort: localPort)
@@ -581,7 +603,19 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
 
     fileprivate func enqueue(_ packet: Data) {
         condition.lock()
-        if !closed {
+        if !closed, failure == nil {
+            if packets.count >= IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit {
+                failure = CoreDeviceTCPError.routeBackpressure(
+                    localPort: localPort,
+                    pendingPackets: packets.count
+                )
+                closed = true
+                packets.removeAll(keepingCapacity: false)
+                condition.broadcast()
+                condition.unlock()
+                router?.unregister(localPort: localPort)
+                return
+            }
             packets.append(packet)
             condition.signal()
         }
@@ -593,6 +627,7 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
         if failure == nil {
             failure = error
         }
+        packets.removeAll(keepingCapacity: false)
         condition.broadcast()
         condition.unlock()
     }
@@ -600,6 +635,7 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
     fileprivate func closeFromRouter() {
         condition.lock()
         closed = true
+        packets.removeAll(keepingCapacity: false)
         condition.broadcast()
         condition.unlock()
     }
@@ -744,8 +780,8 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         tunnel.close()
     }
 
-    func waitForClose(timeoutSeconds _: Double = IOSUseProtocol.XCConstants.xctestTunnelCloseTimeoutSeconds) -> Bool {
-        true
+    func waitForClose(timeoutSeconds: Double = IOSUseProtocol.XCConstants.xctestTunnelCloseTimeoutSeconds) -> Bool {
+        packetRouter.waitForClose(timeoutSeconds: timeoutSeconds)
     }
 
     private func allocateLocalPort() -> UInt16 {

@@ -26,53 +26,54 @@ struct XCTestConfigurationPayload: Equatable {
         var builder = NSKeyedArchiveBuilder()
         let rootIndex = builder.reserve()
 
-        let testBundleURL = builder.nsURL(relative: URL(fileURLWithPath: testBundlePath).absoluteString)
-        let sessionUUID = builder.nsUUID(sessionIdentifier)
+        let testBundleURL = try builder.nsURL(relative: URL(fileURLWithPath: testBundlePath).absoluteString)
+        let sessionUUID = try builder.nsUUID(sessionIdentifier)
         let formatVersion = builder.append(NSNumber(value: IOSUseProtocol.XCConstants.xctestConfigurationFormatVersion))
         let targetBundle = targetApplicationBundleID.map { builder.append($0 as NSString) } ?? 0
         let targetPath = builder.append((targetApplicationPath ?? IOSUseProtocol.XCConstants.xctestConfigurationFallbackTargetAppPath) as NSString)
         let automationPath = builder.append(IOSUseProtocol.XCConstants.xctestAutomationFrameworkPath as NSString)
         let productModule = productModuleName.map { builder.append($0 as NSString) } ?? 0
-        let aggregateStats = builder.nsDictionary(["XCSuiteRecordsKey": builder.nsDictionary([:])])
-        let emptyArray = builder.nsArray([])
-        let emptyDictionary = builder.nsDictionary([:])
+        let suiteRecords = try builder.nsDictionary([:])
+        let aggregateStats = try builder.nsDictionary(["XCSuiteRecordsKey": suiteRecords])
+        let emptyArray = try builder.nsArray([])
+        let emptyDictionary = try builder.nsDictionary([:])
         let configClass = builder.classObject("XCTestConfiguration", "NSObject")
 
         builder.replace(at: rootIndex, with: [
-            "testBundleURL": builder.uid(testBundleURL),
-            "sessionIdentifier": builder.uid(sessionUUID),
-            "formatVersion": builder.uid(formatVersion),
+            "testBundleURL": try builder.uid(testBundleURL),
+            "sessionIdentifier": try builder.uid(sessionUUID),
+            "formatVersion": try builder.uid(formatVersion),
             "treatMissingBaselinesAsFailures": false,
-            "targetApplicationBundleID": builder.uid(targetBundle),
-            "targetApplicationPath": builder.uid(targetPath),
+            "targetApplicationBundleID": try builder.uid(targetBundle),
+            "targetApplicationPath": try builder.uid(targetPath),
             "reportResultsToIDE": true,
-            "automationFrameworkPath": builder.uid(automationPath),
+            "automationFrameworkPath": try builder.uid(automationPath),
             "testsMustRunOnMainThread": true,
             "initializeForUITesting": true,
             "reportActivities": true,
-            "testsToSkip": builder.uid(0),
-            "testsToRun": builder.uid(0),
-            "productModuleName": builder.uid(productModule),
-            "testBundleRelativePath": builder.uid(0),
-            "aggregateStatisticsBeforeCrash": builder.uid(aggregateStats),
-            "baselineFileRelativePath": builder.uid(0),
-            "baselineFileURL": builder.uid(0),
-            "defaultTestExecutionTimeAllowance": builder.uid(0),
+            "testsToSkip": try builder.uid(0),
+            "testsToRun": try builder.uid(0),
+            "productModuleName": try builder.uid(productModule),
+            "testBundleRelativePath": try builder.uid(0),
+            "aggregateStatisticsBeforeCrash": try builder.uid(aggregateStats),
+            "baselineFileRelativePath": try builder.uid(0),
+            "baselineFileURL": try builder.uid(0),
+            "defaultTestExecutionTimeAllowance": try builder.uid(0),
             "disablePerformanceMetrics": false,
             "emitOSLogs": false,
             "gatherLocalizableStringsData": false,
-            "maximumTestExecutionTimeAllowance": builder.uid(0),
-            "randomExecutionOrderingSeed": builder.uid(0),
+            "maximumTestExecutionTimeAllowance": try builder.uid(0),
+            "randomExecutionOrderingSeed": try builder.uid(0),
             "systemAttachmentLifetime": IOSUseProtocol.XCConstants.xctestSystemAttachmentLifetime,
-            "targetApplicationArguments": builder.uid(emptyArray),
-            "targetApplicationEnvironment": builder.uid(0),
-            "testApplicationDependencies": builder.uid(emptyDictionary),
-            "testApplicationUserOverrides": builder.uid(0),
+            "targetApplicationArguments": try builder.uid(emptyArray),
+            "targetApplicationEnvironment": try builder.uid(0),
+            "testApplicationDependencies": try builder.uid(emptyDictionary),
+            "testApplicationUserOverrides": try builder.uid(0),
             "testExecutionOrdering": 0,
             "testTimeoutsEnabled": false,
             "testsDrivenByIDE": false,
             "userAttachmentLifetime": IOSUseProtocol.XCConstants.xctestUserAttachmentLifetime,
-            "$class": builder.uid(configClass),
+            "$class": try builder.uid(configClass),
         ])
 
         return try builder.archive(rootIndex: rootIndex)
@@ -86,11 +87,11 @@ enum XCTestCapabilitiesPayload {
         let capabilityEntries = capabilities.reduce(into: [String: Int]()) { result, item in
             result[item.key] = builder.append(NSNumber(value: item.value))
         }
-        let capabilitiesDictionary = builder.nsDictionary(capabilityEntries)
+        let capabilitiesDictionary = try builder.nsDictionary(capabilityEntries)
         let capabilitiesClass = builder.classObject("XCTCapabilities", "NSObject")
         builder.replace(at: rootIndex, with: [
-            "capabilities-dictionary": builder.uid(capabilitiesDictionary),
-            "$class": builder.uid(capabilitiesClass),
+            "capabilities-dictionary": try builder.uid(capabilitiesDictionary),
+            "$class": try builder.uid(capabilitiesClass),
         ])
         return try builder.archive(rootIndex: rootIndex)
     }
@@ -113,8 +114,8 @@ private struct NSKeyedArchiveBuilder {
         return objects.count - 1
     }
 
-    func uid(_ index: Int) -> Any {
-        KeyedArchiveUID.value(index)
+    func uid(_ index: Int) throws -> Any {
+        try KeyedArchiveUID.value(index)
     }
 
     mutating func classObject(_ classname: String, _ superclasses: String...) -> Int {
@@ -129,39 +130,39 @@ private struct NSKeyedArchiveBuilder {
         return index
     }
 
-    mutating func nsURL(relative: String) -> Int {
+    mutating func nsURL(relative: String) throws -> Int {
         let relativeIndex = append(relative as NSString)
         let classIndex = classObject("NSURL", "NSObject")
-        return append([
+        return try append([
             "NS.base": uid(0),
             "NS.relative": uid(relativeIndex),
             "$class": uid(classIndex),
         ])
     }
 
-    mutating func nsUUID(_ uuid: UUID) -> Int {
+    mutating func nsUUID(_ uuid: UUID) throws -> Int {
         let classIndex = classObject("NSUUID", "NSObject")
-        return append([
-            "NS.uuidbytes": Data(uuid.uuidString.replacingOccurrences(of: "-", with: "").hexBytes),
+        return try append([
+            "NS.uuidbytes": Data(uuid.uuidString.replacingOccurrences(of: "-", with: "").hexBytes()),
             "$class": uid(classIndex),
         ])
     }
 
-    mutating func nsArray(_ objectIndexes: [Int]) -> Int {
+    mutating func nsArray(_ objectIndexes: [Int]) throws -> Int {
         let classIndex = classObject("NSArray", "NSObject")
-        return append([
-            "NS.objects": objectIndexes.map { uid($0) },
+        return try append([
+            "NS.objects": objectIndexes.map { try uid($0) },
             "$class": uid(classIndex),
         ])
     }
 
-    mutating func nsDictionary(_ entries: [String: Int]) -> Int {
+    mutating func nsDictionary(_ entries: [String: Int]) throws -> Int {
         let classIndex = classObject("NSDictionary", "NSObject")
         let sorted = entries.sorted { $0.key < $1.key }
         let keyIndexes = sorted.map { append($0.key as NSString) }
-        return append([
-            "NS.keys": keyIndexes.map { uid($0) },
-            "NS.objects": sorted.map { uid($0.value) },
+        return try append([
+            "NS.keys": keyIndexes.map { try uid($0) },
+            "NS.objects": sorted.map { try uid($0.value) },
             "$class": uid(classIndex),
         ])
     }
@@ -175,7 +176,7 @@ private struct NSKeyedArchiveBuilder {
         [
             "$version": IOSUseProtocol.XCConstants.nsKeyedArchiveVersion,
             "$archiver": "NSKeyedArchiver",
-            "$top": ["root": uid(rootIndex)],
+            "$top": ["root": try uid(rootIndex)],
             "$objects": objects,
         ]
     }
@@ -183,34 +184,53 @@ private struct NSKeyedArchiveBuilder {
 
 private enum KeyedArchiveUID {
     private static let maxUID = IOSUseProtocol.XCConstants.nsKeyedArchiveMaxUID
-    private static let values: [Any] = makeValues()
+    private static let values = Result<[Any], Error> {
+        try makeValues()
+    }
 
-    static func value(_ index: Int) -> Any {
-        precondition(index >= 0 && index < values.count, "NSKeyedArchiver UID index out of range: \(index)")
+    static func value(_ index: Int) throws -> Any {
+        let values = try values.get()
+        guard index >= 0 && index < values.count else {
+            throw CLIParseError.invalidValue("NSKeyedArchiver UID index out of range: \(index)")
+        }
         return values[index]
     }
 
-    private static func makeValues() -> [Any] {
+    private static func makeValues() throws -> [Any] {
         var result = Array<Any?>(repeating: nil, count: maxUID)
 
-        let urlData = try! NSKeyedArchiver.archivedData(
-            withRootObject: NSURL(string: "file:///tmp/ios-use-uid-probe")!,
+        guard let probeURL = NSURL(string: "file:///tmp/ios-use-uid-probe") else {
+            throw CLIParseError.invalidValue("failed to construct NSKeyedArchiver UID probe URL")
+        }
+        let urlData = try NSKeyedArchiver.archivedData(
+            withRootObject: probeURL,
             requiringSecureCoding: false
         )
-        let urlArchive = try! PropertyListSerialization.propertyList(from: urlData, options: [], format: nil) as! [String: Any]
-        let urlObjects = urlArchive["$objects"] as! [Any]
-        let urlObject = urlObjects[1] as! [String: Any]
-        result[0] = urlObject["NS.base"]!
+        let urlArchiveAny = try PropertyListSerialization.propertyList(from: urlData, options: [], format: nil)
+        guard let urlArchive = urlArchiveAny as? [String: Any],
+              let urlObjects = urlArchive["$objects"] as? [Any],
+              urlObjects.indices.contains(1),
+              let urlObject = urlObjects[1] as? [String: Any],
+              let baseUID = urlObject["NS.base"] else {
+            throw CLIParseError.invalidValue("failed to derive NSKeyedArchiver URL base UID")
+        }
+        result[0] = baseUID
 
-        let arrayData = try! NSKeyedArchiver.archivedData(
+        let arrayData = try NSKeyedArchiver.archivedData(
             withRootObject: (0..<(maxUID - 2)).map { NSNumber(value: $0) } as NSArray,
             requiringSecureCoding: false
         )
-        let arrayArchive = try! PropertyListSerialization.propertyList(from: arrayData, options: [], format: nil) as! [String: Any]
-        result[1] = (arrayArchive["$top"] as! [String: Any])["root"]!
-        let arrayObjects = arrayArchive["$objects"] as! [Any]
-        let arrayObject = arrayObjects[1] as! [String: Any]
-        let refs = arrayObject["NS.objects"] as! [Any]
+        let arrayArchiveAny = try PropertyListSerialization.propertyList(from: arrayData, options: [], format: nil)
+        guard let arrayArchive = arrayArchiveAny as? [String: Any],
+              let top = arrayArchive["$top"] as? [String: Any],
+              let rootUID = top["root"],
+              let arrayObjects = arrayArchive["$objects"] as? [Any],
+              arrayObjects.indices.contains(1),
+              let arrayObject = arrayObjects[1] as? [String: Any],
+              let refs = arrayObject["NS.objects"] as? [Any] else {
+            throw CLIParseError.invalidValue("failed to derive NSKeyedArchiver array UID table")
+        }
+        result[1] = rootUID
         for (offset, ref) in refs.enumerated() {
             let value = offset + 2
             if value < result.count {
@@ -218,17 +238,31 @@ private enum KeyedArchiveUID {
             }
         }
 
-        return result.map { $0! }
+        var values: [Any] = []
+        values.reserveCapacity(result.count)
+        for (index, value) in result.enumerated() {
+            guard let value else {
+                throw CLIParseError.invalidValue("missing NSKeyedArchiver UID probe value at index \(index)")
+            }
+            values.append(value)
+        }
+        return values
     }
 }
 
 private extension String {
-    var hexBytes: [UInt8] {
+    func hexBytes() throws -> [UInt8] {
+        guard count % 2 == 0 else {
+            throw CLIParseError.invalidValue("hex string has odd length")
+        }
         var output: [UInt8] = []
         var index = startIndex
         while index < endIndex {
             let next = self.index(index, offsetBy: 2)
-            output.append(UInt8(self[index..<next], radix: 16)!)
+            guard let byte = UInt8(self[index..<next], radix: 16) else {
+                throw CLIParseError.invalidValue("invalid hex byte '\(self[index..<next])'")
+            }
+            output.append(byte)
             index = next
         }
         return output
