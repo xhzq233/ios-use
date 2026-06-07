@@ -18,7 +18,7 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(sem.wait(timeout: .now() + .seconds(1)), .success)
     }
 
-    func testAcceptLoopWaitsForPreviousClientDuringHandoff() throws {
+    func testSecondConnectionIsAcceptedWhileFirstConnectionStaysOpen() throws {
         DriverServer.shared.stop()
         let port = try Self.freePort()
         try DriverServer.shared.start(port: port)
@@ -53,10 +53,6 @@ final class ServerTests: XCTestCase {
         }
 
         usleep(50_000)
-        Darwin.shutdown(firstFD!, SHUT_RDWR)
-        Darwin.close(firstFD!)
-        firstFD = nil
-
         XCTAssertEqual(sem.wait(timeout: .now() + .seconds(2)), .success)
         lock.lock()
         let result = secondResult
@@ -66,10 +62,14 @@ final class ServerTests: XCTestCase {
             XCTAssertFalse(response.ok)
             XCTAssertTrue(response.error.contains("unknown command"))
         case .failure(let error):
-            XCTFail("second client should be accepted after handoff, got \(error)")
+            XCTFail("second client should be accepted while first remains open, got \(error)")
         case nil:
             XCTFail("second client did not report a result")
         }
+
+        let thirdOnFirst = try Self.sendRequestAndReadResponse(fd: firstFD!, command: "unitUnknownFirstStillOpen")
+        XCTAssertFalse(thirdOnFirst.ok)
+        XCTAssertTrue(thirdOnFirst.error.contains("unknown command"))
     }
 
     func testSameConnectionHandlesMultipleRequestResponseCycles() throws {
@@ -89,7 +89,7 @@ final class ServerTests: XCTestCase {
         XCTAssertTrue(second.error.contains("unknown command"))
     }
 
-    func testPendingInitialConnectionIsReplacedByNextClient() throws {
+    func testPendingEmptyConnectionDoesNotBlockNextClient() throws {
         DriverServer.shared.stop()
         let port = try Self.freePort()
         try DriverServer.shared.start(port: port)
@@ -104,9 +104,13 @@ final class ServerTests: XCTestCase {
 
         XCTAssertFalse(response.ok)
         XCTAssertTrue(response.error.contains("unknown command"))
+
+        let pendingResponse = try Self.sendRequestAndReadResponse(fd: emptyFD, command: "unitUnknownPendingStillOpen")
+        XCTAssertFalse(pendingResponse.ok)
+        XCTAssertTrue(pendingResponse.error.contains("unknown command"))
     }
 
-    func testPartialInitialFrameIsNotReplacedByNextClient() throws {
+    func testPartialInitialFrameDoesNotBlockNextClient() throws {
         DriverServer.shared.stop()
         let port = try Self.freePort()
         try DriverServer.shared.start(port: port)
@@ -141,14 +145,119 @@ final class ServerTests: XCTestCase {
         lock.lock()
         let result = secondResult
         lock.unlock()
-        if case .success(let response) = result {
-            XCTFail("second client should not replace a partial first frame, got \(response)")
+        switch result {
+        case .success(let response):
+            XCTAssertFalse(response.ok)
+            XCTAssertTrue(response.error.contains("unknown command"))
+        case .failure(let error):
+            XCTFail("second client should not be blocked by a partial first frame, got \(error)")
+        case nil:
+            XCTFail("second client did not report a result")
         }
 
         try Self.writeAll(fd: firstFD, data: firstRequest.dropFirst(1))
         let firstResponse = try Self.readResponse(fd: firstFD)
         XCTAssertFalse(firstResponse.ok)
         XCTAssertTrue(firstResponse.error.contains("unknown command"))
+    }
+
+    func testConcurrentKnownCommandsAreSerializedOnMainThreadInQueueOrder() throws {
+        DriverServer.shared.stop()
+        let port = try Self.freePort()
+
+        let lock = NSLock()
+        var activeCommands = 0
+        var maxActiveCommands = 0
+        var mainThreadExecutions = 0
+        var startOrder: [String] = []
+        let firstStarted = DispatchSemaphore(value: 0)
+
+        DriverServer.dispatchForyForTesting = { command in
+            XCTAssertTrue(Thread.isMainThread)
+            lock.lock()
+            activeCommands += 1
+            maxActiveCommands = max(maxActiveCommands, activeCommands)
+            mainThreadExecutions += 1
+            startOrder.append(command.rawValue)
+            lock.unlock()
+
+            if command == .home {
+                firstStarted.signal()
+                usleep(100_000)
+            }
+
+            lock.lock()
+            activeCommands -= 1
+            lock.unlock()
+            return Codec.foryOK()
+        }
+        defer { DriverServer.dispatchForyForTesting = nil }
+
+        try DriverServer.shared.start(port: port)
+
+        let done = expectation(description: "concurrent known commands complete")
+        done.expectedFulfillmentCount = 2
+        let resultLock = NSLock()
+        var responses: [ForyResponseFrame] = []
+        var errors: [Error] = []
+
+        DispatchQueue.global().async {
+            do {
+                let fd = try Self.connect(port: port)
+                defer { Darwin.close(fd) }
+                let response = try Self.sendRequestAndReadResponse(fd: fd, command: Command.home.rawValue)
+                resultLock.lock()
+                responses.append(response)
+                resultLock.unlock()
+            } catch {
+                resultLock.lock()
+                errors.append(error)
+                resultLock.unlock()
+            }
+            done.fulfill()
+        }
+
+        DispatchQueue.global().async {
+            guard firstStarted.wait(timeout: .now() + .seconds(1)) == .success else {
+                resultLock.lock()
+                errors.append(NSError(domain: "ServerTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "first command did not start"]))
+                resultLock.unlock()
+                done.fulfill()
+                return
+            }
+            do {
+                let fd = try Self.connect(port: port)
+                defer { Darwin.close(fd) }
+                let response = try Self.sendRequestAndReadResponse(fd: fd, command: Command.screenshot.rawValue)
+                resultLock.lock()
+                responses.append(response)
+                resultLock.unlock()
+            } catch {
+                resultLock.lock()
+                errors.append(error)
+                resultLock.unlock()
+            }
+            done.fulfill()
+        }
+
+        wait(for: [done], timeout: 2)
+
+        resultLock.lock()
+        let capturedResponses = responses
+        let capturedErrors = errors
+        resultLock.unlock()
+        XCTAssertTrue(capturedErrors.isEmpty, "unexpected errors: \(capturedErrors)")
+        XCTAssertEqual(capturedResponses.count, 2)
+        XCTAssertTrue(capturedResponses.allSatisfy(\.ok))
+
+        lock.lock()
+        let capturedMaxActiveCommands = maxActiveCommands
+        let capturedMainThreadExecutions = mainThreadExecutions
+        let capturedStartOrder = startOrder
+        lock.unlock()
+        XCTAssertEqual(capturedMainThreadExecutions, 2)
+        XCTAssertEqual(capturedMaxActiveCommands, 1)
+        XCTAssertEqual(capturedStartOrder, [Command.home.rawValue, Command.screenshot.rawValue])
     }
 
     private static func freePort() throws -> UInt16 {

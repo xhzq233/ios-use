@@ -6,38 +6,50 @@ enum FrameError: Error {
     case writeFailed
     case invalidLength
     case maxSizeExceeded
+    case mainThreadRequired
 }
 
 final class Codec {
     static let maxFrameSize = IOSUseProtocol.maxFrameSizeBytes
-    static let sharedFory: Fory = createFory()
+    private static let mainThreadFory = createFory()
+
+    final class Context {
+        private let fory = createFory()
+
+        func readFrame(_ fd: Int32) throws -> ForyRequestFrame {
+            var lenBuf = [UInt8](repeating: 0, count: 4)
+            try Codec.readExact(fd, into: &lenBuf, count: 4)
+
+            let length = Int((UInt32(lenBuf[0]) << 24) | (UInt32(lenBuf[1]) << 16) | (UInt32(lenBuf[2]) << 8) | UInt32(lenBuf[3]))
+            guard length > 0, length <= IOSUseProtocol.maxFrameSizeBytes else { throw FrameError.invalidLength }
+
+            var body = Data(count: length)
+            try body.withUnsafeMutableBytes { buf in
+                guard let base = buf.baseAddress else { throw FrameError.readFailed }
+                try Codec.readExact(fd, into: base, count: length)
+            }
+
+            return try fory.deserialize(body, as: ForyRequestFrame.self)
+        }
+
+        func writeResponseFrame(_ fd: Int32, frame: ForyResponseFrame) throws {
+            let data = try fory.serialize(frame)
+            try Codec.writeLengthPrefixedData(fd, data: data)
+        }
+
+        func deserialize<T: Serializer>(_ data: Data, as type: T.Type) throws -> T {
+            try fory.deserialize(data, as: type)
+        }
+    }
 
     // MARK: - Read
 
     /// Read a single length-prefixed Fory frame and deserialize as ForyRequestFrame.
-    static func readFrame(_ fd: Int32, onFirstByteRead: (() -> Void)? = nil) throws -> ForyRequestFrame {
-        var reportedFirstByte = false
-        let reportFirstByte = {
-            guard !reportedFirstByte else { return }
-            reportedFirstByte = true
-            onFirstByteRead?()
-        }
-        var lenBuf = [UInt8](repeating: 0, count: 4)
-        try readExact(fd, into: &lenBuf, count: 4, onBytesRead: reportFirstByte)
-
-        let length = Int((UInt32(lenBuf[0]) << 24) | (UInt32(lenBuf[1]) << 16) | (UInt32(lenBuf[2]) << 8) | UInt32(lenBuf[3]))
-        guard length > 0, length <= IOSUseProtocol.maxFrameSizeBytes else { throw FrameError.invalidLength }
-
-        var body = Data(count: length)
-        try body.withUnsafeMutableBytes { buf in
-            guard let base = buf.baseAddress else { throw FrameError.readFailed }
-            try readExact(fd, into: base, count: length, onBytesRead: reportFirstByte)
-        }
-
-        return try sharedFory.deserialize(body, as: ForyRequestFrame.self)
+    static func readFrame(_ fd: Int32) throws -> ForyRequestFrame {
+        try Context().readFrame(fd)
     }
 
-    private static func readExact(_ fd: Int32, into ptr: UnsafeMutableRawPointer, count: Int, onBytesRead: (() -> Void)? = nil) throws {
+    private static func readExact(_ fd: Int32, into ptr: UnsafeMutableRawPointer, count: Int) throws {
         var offset = 0
         while offset < count {
             let n = Darwin.read(fd, ptr.advanced(by: offset), count - offset)
@@ -46,22 +58,20 @@ final class Codec {
                 throw FrameError.readFailed
             }
             if n == 0 { throw FrameError.readFailed }
-            onBytesRead?()
             offset += n
         }
     }
 
-    private static func readExact(_ fd: Int32, into buf: inout [UInt8], count: Int, onBytesRead: (() -> Void)? = nil) throws {
+    private static func readExact(_ fd: Int32, into buf: inout [UInt8], count: Int) throws {
         guard count > 0, buf.count >= count else { return }
-        try readExact(fd, into: &buf[0], count: count, onBytesRead: onBytesRead)
+        try readExact(fd, into: &buf[0], count: count)
     }
 
     // MARK: - Write
 
     /// Serialize and write a ForyResponseFrame as a single length-prefixed frame.
     static func writeResponseFrame(_ fd: Int32, frame: ForyResponseFrame) throws {
-        let data = try sharedFory.serialize(frame)
-        try writeLengthPrefixedData(fd, data: data)
+        try Context().writeResponseFrame(fd, frame: frame)
     }
 
     static func writeLengthPrefixedData(_ fd: Int32, data: Data) throws {
@@ -97,7 +107,10 @@ final class Codec {
     }
 
     static func foryOK<P>(_ payload: P) throws -> ForyResponseFrame {
-        let data = try sharedFory.serialize(payload)
+        guard Thread.isMainThread else {
+            throw FrameError.mainThreadRequired
+        }
+        let data = try mainThreadFory.serialize(payload)
         return ForyResponseFrame(ok: true, error: "", payload: data)
     }
 
