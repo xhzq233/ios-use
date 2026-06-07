@@ -97,6 +97,15 @@ export const settingsAfterContactsCaseMetadata = [
   { id: 'AS-8', group: 'settings', kind: 'proxy-no-driver', setup: 'no driver lock', assertion: 'proxy read/doctor do not require active driver error', coverage: 'simulator', requiresPrerequisite: false },
 ];
 
+const invalidBundleLaunchErrorPattern = new RegExp([
+  'app not found',
+  'state=unknown',
+  'not installed',
+  'FBSOpenApplicationServiceErrorDomain',
+  'Simulator device failed to launch com\\.iosuse\\.invalid\\.bundle',
+  'request to open "com\\.iosuse\\.invalid\\.bundle" failed',
+].join('|'), 'i');
+
 export function buildSettingsBeforeContactsCases(ctx) {
   const {
     artifactDir,
@@ -329,7 +338,7 @@ export function buildSettingsAfterContactsCases(ctx) {
     { id: 'DOM-3', run: () => runCaseContains('DOM-3', 'App:', ['dom', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
     { id: 'HOME-2', run: () => runCaseContains('HOME-2', 'App: com.apple.springboard', ['dom', '--fresh'], async () => { runCli(['home']); await sleep(1000); }) },
     { id: 'AA-4', run: () => runCaseContainsAndDomContains('AA-4', 'activated', ['activateApp', 'com.apple.Preferences'], 'App: com.apple.Preferences') },
-    { id: 'AA-5', run: () => runCaseFailsMatches('AA-5', /app not found|state=unknown|not installed/i, ['activateApp', 'com.iosuse.invalid.bundle']) },
+    { id: 'AA-5', run: () => runCaseFailsMatches('AA-5', invalidBundleLaunchErrorPattern, ['activateApp', 'com.iosuse.invalid.bundle']) },
     { id: 'AS-1', run: async () => { if (!selected('AS-1')) return recordSkip('AS-1'); stopDriverIfLocked('AS-1'); await runCaseFailsContains('AS-1', 'No active driver', ['dom', '--fresh']); } },
     { id: 'AS-2', run: () => runCaseFailsMatches('AS-2', /unknown option '--udid'/i, ['dom', '--fresh', '--udid', '00000000-0000-0000-0000-000000000000']) },
     { id: 'AS-3', run: () => runCaseContains('AS-3', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },

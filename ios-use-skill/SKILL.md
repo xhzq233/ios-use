@@ -10,7 +10,7 @@ description: "Use ios-use to drive iOS devices via CLI. Primary scope: device/se
 这个 Skill 的主文件只负责给 agent 一个稳定的操作口径：
 
 - 如何准备设备和选择当前目标设备
-- 如何用 `dom` / `find` 先确认页面，再串行执行 UI 操作
+- 如何用 `dom` / `find` 先确认页面，再按合理顺序执行 UI 操作
 - 常用单步命令、日志命令和排障入口
 - 什么时候转去专门 reference
 
@@ -58,7 +58,8 @@ ios-use start
 
 - 一切先以 DOM 为准。每次切页面、滚动后、找不到元素时，先跑 `ios-use dom` 或 `ios-use find`，确认页面状态再继续。
 - 不要猜 bundle ID、label、按钮位置或页面状态。当前信息不足时先查设备状态，或者问用户。
-- 同一设备上的 UI 命令必须串行执行，不要并发运行 `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot`。
+- 推荐操作顺序：先观察当前页面，再定位目标，接着执行动作，最后按需要确认结果。常见链路是 `dom` / `find` / `waitFor` -> `tap` / `swipe` / `input` -> `--dom` 或再次 `dom`。
+- 可以同时发起不互相依赖的只读观察命令；有页面状态依赖的命令仍建议按顺序执行，尤其是 `tap` / `swipe` / `input` 这类会改变界面的动作。
 - 默认不截图。只有 DOM 无法描述视觉内容，或用户明确要求视觉验收时，才用 `screenshot`。
 - 不知道下一步是否安全时，先 `dom --fresh`，再决定动作。
 
