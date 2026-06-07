@@ -11,10 +11,9 @@ description: "Use ios-use to drive iOS devices via CLI. Primary scope: device/se
 
 - 如何准备设备和选择当前目标设备
 - 如何用 `dom` / `find` 先确认页面，再按合理顺序执行 UI 操作
-- 常用单步命令、日志命令和排障入口
-- 什么时候转去专门 reference
+- 常用单步命令、日志命令和排障入口 
 
-不要把所有子系统教程都塞进本文件：
+什么时候转去专门 reference
 
 - 写或维护 YAML Flow：看 `references/flow.md`
 - 抓 HTTP/HTTPS 包、证书、mitmdump、过滤表达式：看 `references/proxy.md`
@@ -27,8 +26,6 @@ description: "Use ios-use to drive iOS devices via CLI. Primary scope: device/se
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash
 ```
-
-安装完成后，命令直接使用 `ios-use`。安装路径默认 `$HOME/.local/bin`，不在 `PATH` 时安装脚本会提示。
 
 真机首次执行需要操作设备屏幕的命令，或升级到新版本后，按这个顺序准备：
 
@@ -57,11 +54,9 @@ ios-use start
 ## 4. 操作原则
 
 - 一切先以 DOM 为准。每次切页面、滚动后、找不到元素时，先跑 `ios-use dom` 或 `ios-use find`，确认页面状态再继续。
-- 不要猜 bundle ID、label、按钮位置或页面状态。当前信息不足时先查设备状态，或者问用户。
 - 推荐操作顺序：先观察当前页面，再定位目标，接着执行动作，最后按需要确认结果。常见链路是 `dom` / `find` / `waitFor` -> `tap` / `swipe` / `input` -> `--dom` 或再次 `dom`。
 - 可以同时发起不互相依赖的只读观察命令；有页面状态依赖的命令仍建议按顺序执行，尤其是 `tap` / `swipe` / `input` 这类会改变界面的动作。
 - 默认不截图。只有 DOM 无法描述视觉内容，或用户明确要求视觉验收时，才用 `screenshot`。
-- 不知道下一步是否安全时，先 `dom --fresh`，再决定动作。
 
 ## 5. 推荐工作流
 
@@ -79,7 +74,6 @@ ios-use dom
 ```bash
 ios-use dom
 ios-use dom --raw
-ios-use dom --fresh
 ios-use dom --wait-quiescence
 ios-use find "蓝牙"
 ios-use waitFor --label "蓝牙" --timeout 8
@@ -143,7 +137,7 @@ ios-use uninstall com.example.app --udid <udid>
 - `ios-use dom --fresh` 忽略缓存重新获取。
 - `ios-use dom --wait-quiescence` 等待界面平静后返回 fresh clean DOM。
 - `dom --raw` 只能单独使用，不能和 `--fresh` / `--wait-quiescence` 组合。
-- DOM type 使用短名，例如 `Text`、`Input`、`Scroll`、`Collection`。
+- DOM 行中的 `label=value [traits] (x,y,w,h)` 表示 label 和 value 都可作为 target 查询，`[traits]` / 坐标是元信息，不要把整行或 `label=value` 拼成 target。
 - 展示层追加的 `vertical` / `horizontal` 只用于阅读，不要当成 `find/tap/waitFor/swipe --traits` 的可过滤 trait。
 
 ### 6.2 `find` / `waitFor`
@@ -255,14 +249,6 @@ ios-use nslog stop
 - 如果提示 stale local publisher 或 live nslog server，按提示清掉旧 `dns-sd` 或关闭旧 NSLogger viewer 后重试。
 
 ## 10. 常见排障
-
-设备或 driver 连不上：
-
-```bash
-ios-use devices
-ios-use config --udid <udid>
-ios-use start
-```
 
 行为和预期不一致：
 
