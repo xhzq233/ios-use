@@ -1,9 +1,11 @@
 #import "XCTestPrivate.h"
 #import <objc/message.h>
+#import <objc/runtime.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 static const NSUInteger XCMaxTextAbbrLen = 12;
 static const NSUInteger XCMaxClearRetries = 3;
+static const int XCSnapshotMaxChildrenLimit = 50;
 static const double XCTapLiftUpDelay = 0.08;
 static const double XCDefaultLongPressDuration = 0.5;
 static const CGFloat XCDetectionPointScreenRatio = 0.2;
@@ -59,6 +61,119 @@ static NSString *XCSanitizedSnapshotString(NSString *value) {
         return nil;
     }
     return [[trimmed componentsSeparatedByCharactersInSet:invisibleSet] componentsJoinedByString:@""];
+}
+
+static id XCValueForKeySafely(id raw, NSString *key) {
+    if (!raw || !key) return nil;
+    @try {
+        return [raw valueForKey:key];
+    } @catch (NSException *e) {
+        return nil;
+    }
+}
+
+static CGRect XCRawSnapshotFrame(id raw) {
+    NSValue *value = XCValueForKeySafely(raw, @"frame");
+    if (![value isKindOfClass:[NSValue class]]) {
+        return CGRectZero;
+    }
+    return [value CGRectValue];
+}
+
+static BOOL XCRawSnapshotIsVisibleInAppFrame(id raw, CGRect appFrame) {
+    NSNumber *value = XCValueForKeySafely(raw, @"isVisible");
+    if ([value isKindOfClass:[NSNumber class]]) {
+        return [value boolValue];
+    }
+
+    CGRect frame = XCRawSnapshotFrame(raw);
+    if (frame.size.width <= 0 || frame.size.height <= 0) {
+        return NO;
+    }
+    if (CGRectIsEmpty(appFrame)) {
+        return YES;
+    }
+    return CGRectIntersectsRect(frame, appFrame);
+}
+
+// MARK: - XCTest snapshot request parameters
+
+static id (*XCOriginalDefaultParameters)(id, SEL) = NULL;
+static id (*XCOriginalSnapshotParameters)(id, SEL) = NULL;
+static NSDictionary *XCDefaultRequestParameters = nil;
+static NSDictionary *XCAdditionalRequestParameters = nil;
+static NSMutableDictionary *XCCustomRequestParameters = nil;
+
+static void XCSetSnapshotRequestParameter(NSString *name, id value) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        XCCustomRequestParameters = [NSMutableDictionary dictionary];
+    });
+    if (name.length == 0 || !value) return;
+    XCCustomRequestParameters[name] = value;
+}
+
+static id XCSwizzledDefaultParameters(id self, SEL _cmd) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        if (!XCOriginalDefaultParameters) return;
+        id defaults = XCOriginalDefaultParameters(self, _cmd);
+        if ([defaults isKindOfClass:[NSDictionary class]]) {
+            XCDefaultRequestParameters = defaults;
+        }
+    });
+
+    NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:XCDefaultRequestParameters ?: @{}];
+    if ([XCAdditionalRequestParameters isKindOfClass:[NSDictionary class]]) {
+        [result addEntriesFromDictionary:XCAdditionalRequestParameters];
+    }
+    if ([XCCustomRequestParameters isKindOfClass:[NSDictionary class]]) {
+        [result addEntriesFromDictionary:XCCustomRequestParameters];
+    }
+    return result.copy;
+}
+
+static id XCSwizzledSnapshotParameters(id self, SEL _cmd) {
+    if (!XCOriginalSnapshotParameters) return nil;
+    id result = XCOriginalSnapshotParameters(self, _cmd);
+    if ([result isKindOfClass:[NSDictionary class]]) {
+        XCAdditionalRequestParameters = result;
+    }
+    return result;
+}
+
+static void XCInstallSnapshotRequestParameterPatch(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        XCSetSnapshotRequestParameter(@"maxChildren", @(XCSnapshotMaxChildrenLimit));
+
+        Class clientClass = NSClassFromString(@"XCAXClient_iOS");
+        Method defaultParametersMethod = clientClass
+            ? class_getInstanceMethod(clientClass, NSSelectorFromString(@"defaultParameters"))
+            : NULL;
+        if (defaultParametersMethod) {
+            XCOriginalDefaultParameters = (id (*)(id, SEL))method_setImplementation(
+                defaultParametersMethod,
+                (IMP)XCSwizzledDefaultParameters
+            );
+        }
+
+        Class queryClass = NSClassFromString(@"XCTElementQuery");
+        Method snapshotParametersMethod = queryClass
+            ? class_getInstanceMethod(queryClass, NSSelectorFromString(@"snapshotParameters"))
+            : NULL;
+        if (snapshotParametersMethod) {
+            XCOriginalSnapshotParameters = (id (*)(id, SEL))method_setImplementation(
+                snapshotParametersMethod,
+                (IMP)XCSwizzledSnapshotParameters
+            );
+        }
+
+        NSLog(@"[driver] snapshot request parameter maxChildren=%d defaultParameters=%@ snapshotParameters=%@",
+              XCSnapshotMaxChildrenLimit,
+              defaultParametersMethod ? @"patched" : @"missing",
+              snapshotParametersMethod ? @"patched" : @"missing");
+    });
 }
 
 // MARK: - Public: Gesture helpers
@@ -231,6 +346,7 @@ XCUIApplication *GetActiveApplication(void)
 
 id SnapshotOfElement(XCUIElement *element) {
     if (!element) return nil;
+    XCInstallSnapshotRequestParameterPatch();
     SEL sel = NSSelectorFromString(@"snapshotWithError:");
     if (![element respondsToSelector:sel]) return nil;
     NSMethodSignature *sig = [element methodSignatureForSelector:sel];
@@ -666,11 +782,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
 // MARK: Private helpers
 
 - (id)valueForKeySafely:(NSString *)key {
-    @try {
-        return [_raw valueForKey:key];
-    } @catch (NSException *e) {
-        return nil;
-    }
+    return XCValueForKeySafely(_raw, key);
 }
 
 - (NSString *)copyStringForKey:(NSString *)key {
@@ -699,6 +811,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
 // MARK: Factory
 
 + (instancetype)snapshotOfApp:(XCUIApplication *)app {
+    XCInstallSnapshotRequestParameterPatch();
     __block id raw = nil;
     @autoreleasepool {
         SEL sel = NSSelectorFromString(@"snapshotWithError:");
@@ -718,7 +831,11 @@ BOOL SnapshotMatchesElement(id a, id b) {
     if (!raw) return nil;
     // WDA: self.lastSnapshot = snapshot (XCUIElement private header, @property(retain))
     [app setValue:raw forKey:@"lastSnapshot"];
-    return [[SafeSnapshot alloc] initWithRaw:raw appFrame:app.frame];
+    CGRect appFrame = XCRawSnapshotFrame(raw);
+    if (CGRectIsEmpty(appFrame)) {
+        appFrame = [UIScreen mainScreen].bounds;
+    }
+    return [[SafeSnapshot alloc] initWithRaw:raw appFrame:appFrame];
 }
 
 - (instancetype)initWithRaw:(id)raw appFrame:(CGRect)appFrame {
@@ -845,23 +962,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
 
 - (BOOL)isVisible {
     if (!_visibleCached) {
-        BOOL has = NO;
-        BOOL axValue = [self getBoolForKey:@"isVisible" fallback:NO hasValue:&has];
-        if (has) {
-            _isVisible = axValue;
-        } else {
-            // Fallback: geometric check — frame within the app window.
-            // (doc §4.1: prefer AX isVisible, fall back to frame vs window.)
-            CGRect f = self.frame;
-            if (f.size.width <= 0 || f.size.height <= 0) {
-                _isVisible = NO;
-            } else if (CGRectIsEmpty(_appFrame)) {
-                // Unknown window — treat non-empty frame as visible.
-                _isVisible = YES;
-            } else {
-                _isVisible = CGRectIntersectsRect(f, _appFrame);
-            }
-        }
+        _isVisible = XCRawSnapshotIsVisibleInAppFrame(_raw, _appFrame);
         _visibleCached = YES;
     }
     return _isVisible;
