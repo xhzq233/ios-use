@@ -78,7 +78,7 @@ enum SwipeCommands {
 
         // STEP 3: find scrollable ancestor.
         guard let scrollView = findScrollableAncestor(target.node) else {
-            if isVisibleWithEffectiveGeometry(target, in: app.frame) {
+            if isVisibleWithEffectiveGeometry(target, in: cs.appFrame) {
                 return okScroll(target: target, scrolls: 0, scrollDirection: "")
             }
             return okScroll(target: target, scrolls: 0, scrollDirection: "")
@@ -86,7 +86,7 @@ enum SwipeCommands {
 
         // STEP 4: already visible in app frame. Still try centering the target
         // in its scrollable so edge / overlay-adjacent targets become easier to tap.
-        if isVisibleWithEffectiveGeometry(target, in: app.frame) {
+        if isVisibleWithEffectiveGeometry(target, in: cs.appFrame) {
             let adjusted = centerTargetInScrollFrame(targetCell: findCellAncestor(target.node),
                                                      scrollFrame: scrollView.frame,
                                                      app: app)
@@ -285,7 +285,7 @@ enum SwipeCommands {
                                             cs: CleanedSnapshot,
                                             app: XCUIApplication) throws -> ForyResponseFrame {
         let scrollNode = findLargestScrollable(cs.root)
-        let scrollFrame = scrollNode?.frame ?? app.frame
+        let scrollFrame = scrollNode?.frame ?? cs.appFrame
         let isBack = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
         let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root), scrollFrame: scrollFrame)
         let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
