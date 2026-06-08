@@ -127,7 +127,7 @@ func rebuildCleanedSnapshot() -> CleanedSnapshot? {
 
     return CleanedSnapshot(
         root: raw,
-        appFrame: app.frame,
+        appFrame: raw.frame,
         rawRoot: raw,
         elements: elements,
         searchEntries: searchEntries,

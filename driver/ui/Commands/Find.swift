@@ -9,8 +9,6 @@ enum FindCommands {
     /// performs exact + fuzzy + traits/visibility filtering and returns one of four
     /// outcomes.
     static func find(_ args: ForyFindArgs) throws -> ForyResponseFrame {
-        _ = try Session.shared.ensureActive()
-
         switch rawFind(args.target, visibility: .any) {
         case .found(let elem):
             let match = makeForyFindMatch(elem, includeAncestors: true)
