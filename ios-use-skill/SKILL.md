@@ -38,6 +38,7 @@ ios-use start
 - `devices` 用来查看设备列表、UDID 和配置状态。
 - 设备未显示 `configured`，或显示 `driver update required`，先重新执行 `ios-use config --udid <udid>`。
 - 首次配置真机可能需要 Apple ID 和 2FA。出现这类交互时，让用户在终端手动运行带账号参数的 `config` 命令。
+- 如果 `start` 报 `Developer Disk Image services are not ready` 或缺 `com.apple.dt.testmanagerd.remote`，先运行 `ios-use ddi-mount --udid <udid>`，然后重试 `ios-use start <udid>`。
 - Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`。
 - 真机必须 USB 连接且系统版本为 iOS 17+；只通过 Wi-Fi 连接的设备不可用。
 
@@ -47,9 +48,9 @@ ios-use start
 - 启动后，该设备会成为后续 driver-backed 命令的目标。
 - 切换设备时先 `ios-use stop`，再 `ios-use start <new-udid>`。
 - `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
-- `devices` / `config` / `install` / `uninstall` / `apps` / `open` / `activateApp` / `terminateApp` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
+- `devices` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `open` / `activateApp` / `terminateApp` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
 - `proxy start --server` / `proxy stop --server` 只管理本机 mitmdump，不要求当前设备 driver。
-- 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI；Simulator 使用仍需要 Xcode / `simctl`。
+- 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI；Simulator 使用仍需要 Xcode / `simctl`。
 
 ## 4. 操作原则
 
@@ -119,6 +120,7 @@ ios-use dismissAlert --index 0
 ios-use apps
 ios-use apps --json
 ios-use apps --udid <udid>
+ios-use ddi-mount --udid <udid>
 ios-use install path/to/app.ipa
 ios-use install path/to/App.app
 ios-use install path/to/app.ipa --udid <udid>
@@ -126,7 +128,7 @@ ios-use uninstall com.example.app
 ios-use uninstall com.example.app --udid <udid>
 ```
 
-这些命令直接走真机设备服务，不需要先 `start`，但省略 `--udid` 时需要 active 真机 lock。`install` 只接受已签名 `.ipa` 或 `.app`，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
+这些命令直接走真机设备服务，不需要先 `start`，但省略 `--udid` 时需要 active 真机 lock。`ddi-mount` 用于挂载 iOS 17+ Developer Disk Image；省略 `--path` 时扫描本机 CoreDevice DDI 缓存，不调用 `devicectl`、不下载或内置 DDI。`install` 只接受已签名 `.ipa` 或 `.app`，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
 
 ## 6. 常用命令速查
 

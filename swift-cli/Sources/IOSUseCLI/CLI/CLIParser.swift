@@ -24,6 +24,8 @@ public enum CLIParser {
             return .uninstall(try parseUninstall(&parser))
         case "apps":
             return .apps(try parseApps(&parser))
+        case "ddi-mount":
+            return .ddiMount(try parseDDIMount(&parser))
         case "flow":
             return .flow(try parseFlow(&parser))
         case "nslog":
@@ -162,6 +164,22 @@ public enum CLIParser {
             }
         }
         return AppsOptions(udid: udid, includeSystem: includeSystem, json: json)
+    }
+
+    private static func parseDDIMount(_ parser: inout ArgumentParser) throws -> DDIMountOptions {
+        var options = DDIMountOptions()
+        while let arg = parser.consume() {
+            switch arg {
+            case "--path": options.path = try parser.value(for: arg)
+            case "--udid": options.udid = try parser.value(for: arg)
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                throw CLIParseError.unexpectedArgument(arg)
+            }
+        }
+        return options
     }
 
     private static func parseFlow(_ parser: inout ArgumentParser) throws -> FlowOptions {
