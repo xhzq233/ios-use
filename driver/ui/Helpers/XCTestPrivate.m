@@ -5,9 +5,9 @@
 
 static const NSUInteger XCMaxTextAbbrLen = 12;
 static const NSUInteger XCMaxClearRetries = 3;
-static const int XCSnapshotMaxChildrenLimit = 300;
-static const NSUInteger XCSnapshotChildrenPruneThreshold = 100;
-static const NSUInteger XCSnapshotInvisibleContextChildren = 10;
+static const int XCSnapshotMaxChildrenLimit = 150;
+static const NSUInteger XCSnapshotChildrenViewportPruneThreshold = 75;
+static const CGFloat XCSnapshotChildrenViewportMargin = 3.0;
 static const double XCTapLiftUpDelay = 0.08;
 static const double XCDefaultLongPressDuration = 0.5;
 static const CGFloat XCDetectionPointScreenRatio = 0.2;
@@ -100,41 +100,38 @@ static BOOL XCRawSnapshotIsVisibleInAppFrame(id raw, CGRect appFrame) {
 
 static NSArray *XCPrunedSnapshotChildren(NSArray *rawChildren, CGRect appFrame) {
     NSUInteger count = rawChildren.count;
-    if (count <= XCSnapshotChildrenPruneThreshold) {
+    if (count <= XCSnapshotChildrenViewportPruneThreshold) {
+        return rawChildren;
+    }
+    if (CGRectIsEmpty(appFrame)) {
         return rawChildren;
     }
 
-    NSMutableIndexSet *keepIndexes = [NSMutableIndexSet indexSet];
-    NSUInteger visibleCount = 0;
+    CGRect keepFrame = CGRectInset(appFrame,
+                                   -appFrame.size.width * XCSnapshotChildrenViewportMargin,
+                                   -appFrame.size.height * XCSnapshotChildrenViewportMargin);
+    NSMutableArray *pruned = [NSMutableArray arrayWithCapacity:count];
+    NSUInteger droppedCount = 0;
     for (NSUInteger i = 0; i < count; i++) {
         id child = rawChildren[i];
-        if (!XCRawSnapshotIsVisibleInAppFrame(child, appFrame)) {
+        CGRect frame = XCRawSnapshotFrame(child);
+        if (frame.size.width > 0 && frame.size.height > 0 && !CGRectIntersectsRect(frame, keepFrame)) {
+            droppedCount += 1;
             continue;
         }
-
-        visibleCount += 1;
-        NSUInteger start = i > XCSnapshotInvisibleContextChildren
-            ? i - XCSnapshotInvisibleContextChildren
-            : 0;
-        NSUInteger end = MIN(count - 1, i + XCSnapshotInvisibleContextChildren);
-        [keepIndexes addIndexesInRange:NSMakeRange(start, end - start + 1)];
+        [pruned addObject:child];
     }
 
-    if (keepIndexes.count == count) {
+    if (droppedCount == 0) {
         return rawChildren;
     }
 
-    NSMutableArray *pruned = [NSMutableArray arrayWithCapacity:keepIndexes.count];
-    [keepIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
-        [pruned addObject:rawChildren[idx]];
-    }];
-
-    NSLog(@"[driver] SafeSnapshot children pruned rawCount=%lu kept=%lu visible=%lu threshold=%lu context=%lu",
+    NSLog(@"[driver] SafeSnapshot children pruned rawCount=%lu kept=%lu dropped=%lu threshold=%lu viewportMargin=%.1f",
           (unsigned long)count,
           (unsigned long)pruned.count,
-          (unsigned long)visibleCount,
-          (unsigned long)XCSnapshotChildrenPruneThreshold,
-          (unsigned long)XCSnapshotInvisibleContextChildren);
+          (unsigned long)droppedCount,
+          (unsigned long)XCSnapshotChildrenViewportPruneThreshold,
+          XCSnapshotChildrenViewportMargin);
     return pruned;
 }
 
