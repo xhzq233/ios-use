@@ -1107,35 +1107,79 @@ final class TypesTests: XCTestCase {
 
     // MARK: - SafeSnapshot children pruning
 
-    func testSafeSnapshotChildrenPruning_KeepsVisibleTailAndContextInReversedAXOrder() {
-        var children: [FakeRawSnapshot] = []
-        for i in 0..<130 {
-            let isVisible = i == 120
-            let y = isVisible ? 640 : -2000 - CGFloat(i)
-            children.append(FakeRawSnapshot(
-                label: "item-\(i)",
+    func testSafeSnapshotChildrenPruning_DropsChildrenOutsideThreeViewports() {
+        var children = [
+            FakeRawSnapshot(
+                label: "far-above",
                 elementType: .cell,
-                frame: CGRect(x: 0, y: y, width: 375, height: 44),
-                isVisible: isVisible
+                frame: CGRect(x: 0, y: -2600, width: 375, height: 44),
+                isVisible: true
+            ),
+            FakeRawSnapshot(
+                label: "near-above",
+                elementType: .cell,
+                frame: CGRect(x: 0, y: -2400, width: 375, height: 44),
+                isVisible: false
+            ),
+            FakeRawSnapshot(
+                label: "onscreen",
+                elementType: .cell,
+                frame: CGRect(x: 0, y: 640, width: 375, height: 44),
+                isVisible: false
+            ),
+            FakeRawSnapshot(
+                label: "far-below",
+                elementType: .cell,
+                frame: CGRect(x: 0, y: 3500, width: 375, height: 44),
+                isVisible: true
+            ),
+        ]
+        for i in 0..<72 {
+            children.append(FakeRawSnapshot(
+                label: "far-below-\(i)",
+                elementType: .cell,
+                frame: CGRect(x: 0, y: 3600 + CGFloat(i * 50), width: 375, height: 44),
+                isVisible: false
             ))
         }
         let table = FakeRawSnapshot(elementType: .table, children: children)
         let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
 
         let labels = root.children.compactMap { $0.label }
-        XCTAssertEqual(labels, (110...129).map { "item-\($0)" })
-        XCTAssertTrue(labels.contains("item-120"))
-        XCTAssertFalse(labels.contains("item-0"))
+        XCTAssertEqual(labels, ["near-above", "onscreen"])
     }
 
     func testSafeSnapshotChildrenPruning_DoesNotPruneAtThreshold() {
-        let children = (0..<100).map { i in
-            FakeRawSnapshot(label: "item-\(i)", elementType: .cell, isVisible: false)
+        let children = (0..<75).map { i in
+            FakeRawSnapshot(
+                label: "far-above-\(i)",
+                elementType: .cell,
+                frame: CGRect(x: 0, y: -4000 - CGFloat(i * 50), width: 375, height: 44),
+                isVisible: false
+            )
         }
         let table = FakeRawSnapshot(elementType: .table, children: children)
         let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
 
-        XCTAssertEqual(root.children.count, 100)
+        XCTAssertEqual(root.children.count, 75)
+    }
+
+    func testSafeSnapshotChildrenPruning_KeepsChildrenWithEmptyFrames() {
+        var children = [
+            FakeRawSnapshot(label: "empty-frame", elementType: .cell, frame: .zero, isVisible: false)
+        ]
+        for i in 0..<75 {
+            children.append(FakeRawSnapshot(
+                label: "far-above-\(i)",
+                elementType: .cell,
+                frame: CGRect(x: 0, y: -4000 - CGFloat(i * 50), width: 375, height: 44),
+                isVisible: false
+            ))
+        }
+        let table = FakeRawSnapshot(elementType: .table, children: children)
+        let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertEqual(root.children.compactMap { $0.label }, ["empty-frame"])
     }
 
     // MARK: - ForyRect / makeForyRect
