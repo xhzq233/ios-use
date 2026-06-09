@@ -25,6 +25,7 @@ final class IOSUseCLITests: XCTestCase {
         DeveloperDiskImageService.mountForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
+        SimulatorService.xcodebuildLauncherForTesting = nil
         DriverLifecycleService.holderLauncherForTesting = nil
         DriverLifecycleService.holderTerminatorForTesting = nil
         DriverLifecycleService.processAliveForTesting = nil

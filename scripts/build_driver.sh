@@ -144,6 +144,38 @@ stamp_driver_version() {
   done
 }
 
+add_simulator_testing_interop_shim() {
+  local app_path="$1"
+  local frameworks_path="$app_path/Frameworks"
+  local testing_binary="$frameworks_path/Testing.framework/Testing"
+  if [ ! -f "$testing_binary" ]; then
+    echo 0
+    return
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local sdk_path
+  sdk_path="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+  printf 'void __iosuse_testinginterop_stub(void) {}\n' > "$tmp_dir/lib_TestingInterop.c"
+  xcrun clang -dynamiclib -target arm64-apple-ios17.0-simulator -isysroot "$sdk_path" \
+    -install_name @rpath/lib_TestingInterop.dylib \
+    "$tmp_dir/lib_TestingInterop.c" -o "$tmp_dir/lib_TestingInterop_arm64.dylib"
+  xcrun clang -dynamiclib -target x86_64-apple-ios17.0-simulator -isysroot "$sdk_path" \
+    -install_name @rpath/lib_TestingInterop.dylib \
+    "$tmp_dir/lib_TestingInterop.c" -o "$tmp_dir/lib_TestingInterop_x86_64.dylib"
+  xcrun lipo -create \
+    "$tmp_dir/lib_TestingInterop_arm64.dylib" \
+    "$tmp_dir/lib_TestingInterop_x86_64.dylib" \
+    -output "$frameworks_path/lib_TestingInterop.dylib"
+  rm -rf "$tmp_dir"
+
+  if ! otool -l "$testing_binary" | grep -q 'path @loader_path/..'; then
+    install_name_tool -add_rpath @loader_path/.. "$testing_binary" 2>/dev/null || true
+  fi
+  echo 1
+}
+
 # =============================================================================
 # Device build
 # =============================================================================
@@ -225,6 +257,13 @@ if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
 fi
 echo "[build] Built Simulator xctest wrapper: $XCTEST_WRAPPER_PATH"
 stamp_driver_version "$XCTEST_WRAPPER_PATH"
+
+echo "[build] Adding Simulator TestingInterop shim..."
+STEP_STARTED_AT="$(date +%s)"
+SHIMMED="$(add_simulator_testing_interop_shim "$XCTEST_WRAPPER_PATH")"
+echo "[build] Added $SHIMMED Simulator TestingInterop shim(s)"
+STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
+printf '[build] Simulator TestingInterop shim completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 
 # Package Simulator IPA
 echo "[build] Packaging simulator IPA..."

@@ -3,7 +3,7 @@ export const deviceConfigCaseMetadata = [
   { id: 'DEV-3', group: 'device-config', kind: 'help', setup: 'none', assertion: 'stdout contains Usage', coverage: 'simulator' },
   { id: 'DEV-1', group: 'device-config', kind: 'device-list', setup: 'none', assertion: 'stdout matches real-device listing or empty state', coverage: 'simulator' },
   { id: 'DEV-5', group: 'device-config', kind: 'device-list', setup: 'empty IOS_USE_HOME', assertion: 'stdout does not mark simulator configured', coverage: 'simulator' },
-  { id: 'CFG-4', group: 'device-config', kind: 'config', setup: 'self configures simulator driver', assertion: 'command succeeds and driver becomes ready', coverage: 'simulator', providesPrerequisite: true },
+  { id: 'CFG-4', group: 'device-config', kind: 'config', setup: 'self configures simulator driver', assertion: 'config succeeds and explicit start makes driver ready', coverage: 'simulator', providesPrerequisite: true },
   { id: 'CFG-1', group: 'device-config', kind: 'config', setup: 'configured simulator', assertion: 'config list contains simulator udid', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'CFG-7', group: 'device-config', kind: 'config-state', setup: 'configured simulator', assertion: 'config entry only stores bundleId and driverVersion', coverage: 'simulator', requiresPrerequisite: false },
   { id: 'CFG-5', group: 'device-config', kind: 'parser-error', setup: 'none', assertion: 'unknown option error', coverage: 'simulator', requiresPrerequisite: false },
@@ -63,7 +63,10 @@ export function buildDeviceConfigCases(ctx) {
     } },
     { id: 'CFG-4', run: async () => {
       await runCase('CFG-4', ['config', '--simulator', '--udid', sim.udid]);
-      if (selected('CFG-4') || !caseFilterIds) await waitForDriver();
+      if (selected('CFG-4') || !caseFilterIds) {
+        ensureDriverStarted('CFG-4-start');
+        await waitForDriver();
+      }
     } },
     { id: 'CFG-1', run: () => runCaseContains('CFG-1', sim.udid, ['config', '--list']) },
     { id: 'CFG-7', run: runConfigDriverVersionCase },
