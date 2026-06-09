@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Use ios-use to drive iOS devices via CLI. Primary scope: device/session setup, DOM-first UI inspection, tap/swipe/input actions, app lifecycle, and log collection. For YAML Flow authoring route to references/flow.md; for HTTP/HTTPS proxy capture route to references/proxy.md."
+description: "Use ios-use to drive iOS devices via CLI. Primary scope: real-device/session setup, DOM-first UI inspection, tap/swipe/input actions, app lifecycle, and log collection. Simulator; YAML Flow authoring; HTTP/HTTPS proxy capture."
 ---
 
 # ios-use Skill
@@ -17,6 +17,7 @@ description: "Use ios-use to drive iOS devices via CLI. Primary scope: device/se
 
 - 写或维护 YAML Flow：看 `references/flow.md`
 - 抓 HTTP/HTTPS 包、证书、mitmdump、过滤表达式：看 `references/proxy.md`
+- 使用或排查 Simulator：看 `references/simulator.md`
 - 当前 CLI/Flow/API 的完整用户可见契约：以项目内 `docs/private/design/cli/command_api.md` 为准
 
 ## 2. 前置要求
@@ -39,18 +40,17 @@ ios-use start
 - 设备未显示 `configured`，或显示 `driver update required`，先重新执行 `ios-use config --udid <udid>`。
 - 首次配置真机可能需要 Apple ID 和 2FA。出现这类交互时，让用户在终端手动运行带账号参数的 `config` 命令。
 - 如果 `start` 报 `Developer Disk Image services are not ready` 或缺 `com.apple.dt.testmanagerd.remote`，先运行 `ios-use ddi-mount --udid <udid>`，然后重试 `ios-use start <udid>`。
-- Simulator 免签名：`ios-use config --simulator --udid <sim-udid>`。
 - 真机必须 USB 连接且系统版本为 iOS 17+；只通过 Wi-Fi 连接的设备不可用。
 
 ## 3. 目标设备与命令边界
 
-- `start` 会启动第一个 USB 真机的 driver；真机要求 iOS 17+。多台真机或要启动 Simulator 时，用 `start <udid>` 明确指定。
+- `start` 会启动第一个 USB 真机的 driver；真机要求 iOS 17+。多台真机时，用 `start <udid>` 明确指定。
 - 启动后，该设备会成为后续 driver-backed 命令的目标。
 - 切换设备时先 `ios-use stop`，再 `ios-use start <new-udid>`。
 - `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
 - `devices` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `open` / `activateApp` / `terminateApp` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
 - `proxy start --server` / `proxy stop --server` 只管理本机 mitmdump，不要求当前设备 driver。
-- 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI；Simulator 使用仍需要 Xcode / `simctl`。
+- 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI。
 
 ## 4. 操作原则
 
@@ -229,7 +229,7 @@ ios-use oslog --pattern "error|failed" --flags i --timeout 10
 ```
 
 - 省略 `--udid` 时使用当前 `driver.lock`。
-- 真机前台 stream 到超时，Simulator 在窗口期内轮询匹配。
+- 真机前台 stream 到超时。
 - `--timeout` 必须大于 0；`0` 不合法。
 - `--process <name>` 或 `--pid <pid>` 过滤单个日志来源，二者互斥，只过滤日志，不切 app。
 - 日志直接输出到 stdout，不写 artifact；需要落盘时自行重定向或使用 `tee`。
