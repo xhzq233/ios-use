@@ -1105,6 +1105,39 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(frames[2].origin.y, 100)
     }
 
+    // MARK: - SafeSnapshot children pruning
+
+    func testSafeSnapshotChildrenPruning_KeepsVisibleTailAndContextInReversedAXOrder() {
+        var children: [FakeRawSnapshot] = []
+        for i in 0..<130 {
+            let isVisible = i == 120
+            let y = isVisible ? 640 : -2000 - CGFloat(i)
+            children.append(FakeRawSnapshot(
+                label: "item-\(i)",
+                elementType: .cell,
+                frame: CGRect(x: 0, y: y, width: 375, height: 44),
+                isVisible: isVisible
+            ))
+        }
+        let table = FakeRawSnapshot(elementType: .table, children: children)
+        let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        let labels = root.children.compactMap { $0.label }
+        XCTAssertEqual(labels, (110...129).map { "item-\($0)" })
+        XCTAssertTrue(labels.contains("item-120"))
+        XCTAssertFalse(labels.contains("item-0"))
+    }
+
+    func testSafeSnapshotChildrenPruning_DoesNotPruneAtThreshold() {
+        let children = (0..<100).map { i in
+            FakeRawSnapshot(label: "item-\(i)", elementType: .cell, isVisible: false)
+        }
+        let table = FakeRawSnapshot(elementType: .table, children: children)
+        let root = SafeSnapshot(raw: table, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertEqual(root.children.count, 100)
+    }
+
     // MARK: - ForyRect / makeForyRect
 
     func testMakeForyRect_RoundsToIntegers() {

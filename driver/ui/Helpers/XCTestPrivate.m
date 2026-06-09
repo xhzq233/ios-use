@@ -5,7 +5,9 @@
 
 static const NSUInteger XCMaxTextAbbrLen = 12;
 static const NSUInteger XCMaxClearRetries = 3;
-static const int XCSnapshotMaxChildrenLimit = 50;
+static const int XCSnapshotMaxChildrenLimit = 300;
+static const NSUInteger XCSnapshotChildrenPruneThreshold = 100;
+static const NSUInteger XCSnapshotInvisibleContextChildren = 10;
 static const double XCTapLiftUpDelay = 0.08;
 static const double XCDefaultLongPressDuration = 0.5;
 static const CGFloat XCDetectionPointScreenRatio = 0.2;
@@ -94,6 +96,46 @@ static BOOL XCRawSnapshotIsVisibleInAppFrame(id raw, CGRect appFrame) {
         return YES;
     }
     return CGRectIntersectsRect(frame, appFrame);
+}
+
+static NSArray *XCPrunedSnapshotChildren(NSArray *rawChildren, CGRect appFrame) {
+    NSUInteger count = rawChildren.count;
+    if (count <= XCSnapshotChildrenPruneThreshold) {
+        return rawChildren;
+    }
+
+    NSMutableIndexSet *keepIndexes = [NSMutableIndexSet indexSet];
+    NSUInteger visibleCount = 0;
+    for (NSUInteger i = 0; i < count; i++) {
+        id child = rawChildren[i];
+        if (!XCRawSnapshotIsVisibleInAppFrame(child, appFrame)) {
+            continue;
+        }
+
+        visibleCount += 1;
+        NSUInteger start = i > XCSnapshotInvisibleContextChildren
+            ? i - XCSnapshotInvisibleContextChildren
+            : 0;
+        NSUInteger end = MIN(count - 1, i + XCSnapshotInvisibleContextChildren);
+        [keepIndexes addIndexesInRange:NSMakeRange(start, end - start + 1)];
+    }
+
+    if (keepIndexes.count == count) {
+        return rawChildren;
+    }
+
+    NSMutableArray *pruned = [NSMutableArray arrayWithCapacity:keepIndexes.count];
+    [keepIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
+        [pruned addObject:rawChildren[idx]];
+    }];
+
+    NSLog(@"[driver] SafeSnapshot children pruned rawCount=%lu kept=%lu visible=%lu threshold=%lu context=%lu",
+          (unsigned long)count,
+          (unsigned long)pruned.count,
+          (unsigned long)visibleCount,
+          (unsigned long)XCSnapshotChildrenPruneThreshold,
+          (unsigned long)XCSnapshotInvisibleContextChildren);
+    return pruned;
 }
 
 // MARK: - XCTest snapshot request parameters
@@ -1014,8 +1056,9 @@ BOOL SnapshotMatchesElement(id a, id b) {
         if (![rawChildren isKindOfClass:[NSArray class]]) {
             _children = @[];
         } else {
-            NSMutableArray *wrapped = [NSMutableArray arrayWithCapacity:rawChildren.count];
-            for (id child in rawChildren) {
+            NSArray *childrenToWrap = XCPrunedSnapshotChildren(rawChildren, _appFrame);
+            NSMutableArray *wrapped = [NSMutableArray arrayWithCapacity:childrenToWrap.count];
+            for (id child in childrenToWrap) {
                 @autoreleasepool {
                     SafeSnapshot *wrap = [[SafeSnapshot alloc] initWithRaw:child appFrame:_appFrame];
                     wrap->_parent = self;
