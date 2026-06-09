@@ -822,9 +822,15 @@ async function waitForDriver() {
 }
 
 function relaunchSimulatorDriver(attempt) {
-  const res = execCmd(['xcrun', 'simctl', 'launch', sim.udid, simulatorDriverBundleId]);
-  writeFile(path.join(artifactDir, `driver-warmup-relaunch-${attempt}.out`), res.stdout);
-  writeFile(path.join(artifactDir, `driver-warmup-relaunch-${attempt}.err`), res.stderr);
+  stopDriverIfLocked(`driver-warmup-relaunch-${attempt}`);
+  const res = runCliToFiles(
+    ['start', sim.udid],
+    path.join(artifactDir, `driver-warmup-relaunch-${attempt}.out`),
+    path.join(artifactDir, `driver-warmup-relaunch-${attempt}.err`),
+  );
+  if (res.code !== 0) {
+    throw new Error(`failed to relaunch simulator driver\n${res.stdout}${res.stderr}`);
+  }
 }
 
 function collectDriverWarmupDiagnostics() {

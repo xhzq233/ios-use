@@ -122,7 +122,7 @@ public enum ConfigService {
     public static func configureSimulator(udid requestedUdid: String?, paths: IOSUsePaths) throws -> String {
         let result = try SimulatorService.configureDriver(udid: requestedUdid, paths: paths)
         try saveConfig(udid: result.udid, bundleId: simulatorBundleId, driverVersion: IOSUseCLI.version, paths: paths)
-        return "Using prebuilt driver: \(result.ipaPath)\nDriver installed to Simulator\nDriver launched on Simulator (PID: \(result.launchOutput))\nSimulator config complete!\n"
+        return "Using prebuilt driver: \(result.ipaPath)\nDriver installed to Simulator\nRun `ios-use start \(result.udid)` to start the Simulator driver\nSimulator config complete!\n"
     }
 
     static func simulatorIPAPath(paths: IOSUsePaths) -> String {

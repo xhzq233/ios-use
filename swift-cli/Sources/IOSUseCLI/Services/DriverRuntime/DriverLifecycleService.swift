@@ -73,6 +73,14 @@ enum DriverLifecycleService {
         try ConfigService.assertDriverInstallCurrent(udid: info.udid, paths: paths)
         switch info.deviceType {
         case "simulator":
+            if simulatorLauncher == nil {
+                return try SimulatorService.launchDriverWithXcodebuild(
+                    udid: info.udid,
+                    paths: paths,
+                    verbose: verbose,
+                    isReachable: simulatorReachable
+                )
+            }
             try SimulatorService.ensureDriverRunning(
                 udid: info.udid,
                 allowExistingDriver: false,
@@ -98,8 +106,13 @@ enum DriverLifecycleService {
         realTerminator: ((String) throws -> Bool)?
     ) throws -> String {
         if info.deviceType == "simulator" {
+            let holderResult = terminateHolderProcessIfNeeded(info: info, paths: paths, allowedDeviceTypes: ["simulator"])
             let terminated = try SimulatorService.terminateDriver(udid: info.udid, terminator: simulatorTerminator)
-            return terminated ? "Driver app terminated on simulator\n" : "Driver app was not running on simulator\n"
+            SimulatorService.cleanupXcodebuildLaunchArtifacts(udid: info.udid, paths: paths)
+            if let failure = holderTerminationFailureMessage(result: holderResult, info: info) {
+                throw CLIParseError.invalidValue(failure)
+            }
+            return (terminated || holderResult == .terminated) ? "Driver app terminated on simulator\n" : "Driver app was not running on simulator\n"
         }
 
         if let realTerminator {
@@ -297,15 +310,19 @@ enum DriverLifecycleService {
     }
 
     static func terminateFullXCTestHolderIfNeeded(info: SessionService.Info, paths: IOSUsePaths) -> HolderTerminationResult {
-        terminateHolderProcessIfNeeded(info: info, paths: paths)
+        terminateHolderProcessIfNeeded(info: info, paths: paths, allowedDeviceTypes: ["real"])
     }
 
-    private static func terminateHolderProcessIfNeeded(info: SessionService.Info, paths: IOSUsePaths) -> HolderTerminationResult {
+    private static func terminateHolderProcessIfNeeded(
+        info: SessionService.Info,
+        paths: IOSUsePaths,
+        allowedDeviceTypes: Set<String> = ["real"]
+    ) -> HolderTerminationResult {
+        guard allowedDeviceTypes.contains(info.deviceType) else {
+            return .notApplicable
+        }
         if let holderTerminatorForTesting {
             return holderTerminatorForTesting(info, paths)
-        }
-        guard info.deviceType == "real" else {
-            return .notApplicable
         }
         guard let holderPid = info.holderPid, holderPid > 0 else {
             if let socketPath = info.controlSocketPath, !socketPath.isEmpty {
@@ -321,7 +338,7 @@ enum DriverLifecycleService {
         if let socketResult = stopHolderThroughControlSocketIfPossible(info: info, paths: paths) {
             return socketResult
         }
-        guard isExpectedHolderProcess(pid: pid, udid: info.udid) else {
+        guard isExpectedHolderProcess(pid: pid, udid: info.udid, deviceType: info.deviceType) else {
             appendLifecycleLog(paths: paths, "Refusing to terminate pid=\(holderPid); command does not match XCTest holder for \(info.udid)")
             return .refused
         }
@@ -414,15 +431,28 @@ enum DriverLifecycleService {
     }
 
     static func isExpectedHolderProcess(pid: Int32, udid: String) -> Bool {
+        isExpectedHolderProcess(pid: pid, udid: udid, deviceType: "real")
+    }
+
+    private static func isExpectedHolderProcess(pid: Int32, udid: String, deviceType: String) -> Bool {
         if let holderProcessValidatorForTesting {
             return holderProcessValidatorForTesting(pid, udid)
         }
         guard let command = processCommand(pid: pid) else {
             return false
         }
-        return command.contains(XCTestSessionHolderService.commandName)
-            && command.contains("--udid")
-            && command.contains(udid)
+        switch deviceType {
+        case "real":
+            return command.contains(XCTestSessionHolderService.commandName)
+                && command.contains("--udid")
+                && command.contains(udid)
+        case "simulator":
+            return command.contains("xcodebuild")
+                && command.contains("test-without-building")
+                && command.contains("platform=iOS Simulator,id=\(udid)")
+        default:
+            return false
+        }
     }
 
     private static func processCommand(pid: Int32) -> String? {

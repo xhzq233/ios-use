@@ -21,6 +21,7 @@ final class ConfigServiceTests: XCTestCase {
         SessionService.simulatorDriverReachableForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverTerminatorForTesting = nil
+        SimulatorService.xcodebuildLauncherForTesting = nil
         SessionService.realDriverTerminatorForTesting = nil
         DriverLifecycleService.holderLauncherForTesting = nil
         DriverLifecycleService.holderTerminatorForTesting = nil
@@ -425,6 +426,43 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(terminated, ["SIM-1"])
     }
 
+    func testStopSimulatorTerminatesXcodebuildHolderFromLock() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "SIM-HOLDER-STOP",
+                deviceName: "IOSUseTest",
+                deviceVersion: "26.0",
+                deviceType: "simulator",
+                startedAt: 1,
+                holderPid: 333,
+                bundleId: ConfigService.simulatorBundleId
+            ),
+            paths: paths
+        )
+        var holderStops: [SessionService.Info] = []
+        DriverLifecycleService.holderTerminatorForTesting = { info, receivedPaths in
+            XCTAssertEqual(receivedPaths.root, paths.root)
+            holderStops.append(info)
+            return .terminated
+        }
+        var terminated: [String] = []
+        SessionService.simulatorDriverTerminatorForTesting = { udid in
+            terminated.append(udid)
+            return false
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["stop"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "Driver app terminated on simulator\nDriver stopped\n")
+        XCTAssertEqual(holderStops.map(\.holderPid), [333])
+        XCTAssertEqual(terminated, ["SIM-HOLDER-STOP"])
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
+    }
+
     func testStartCommandCreatesFullSimulatorDriverLockWithoutSessionJSON() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -450,6 +488,42 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(lock.deviceName, "IOSUseTest")
         XCTAssertEqual(lock.deviceVersion, "26.0")
         XCTAssertGreaterThan(lock.startedAt, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
+    }
+
+    func testStartCommandUsesXcodebuildForDefaultSimulatorLaunch() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try """
+        {"devices":{"SIM-XCODEBUILD":{"bundleId":"com.iosuse.xcuidriver.xctrunner","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [IOSDevice(name: "IOSUseTest", version: "26.0", udid: "SIM-XCODEBUILD", kind: .simulator)] : []
+        }
+        var xcodebuildLaunches: [(String, String, Bool)] = []
+        SimulatorService.xcodebuildLauncherForTesting = { udid, receivedPaths, verbose, _ in
+            xcodebuildLaunches.append((udid, receivedPaths.root, verbose))
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 444,
+                runnerPid: nil,
+                sessionIdentifier: nil,
+                bundleId: ConfigService.simulatorBundleId
+            )
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "SIM-XCODEBUILD", "--verbose"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "Driver started for SIM-XCODEBUILD\n")
+        XCTAssertEqual(xcodebuildLaunches.map { $0.0 }, ["SIM-XCODEBUILD"])
+        XCTAssertEqual(xcodebuildLaunches.map { $0.1 }, [paths.root])
+        XCTAssertEqual(xcodebuildLaunches.map { $0.2 }, [true])
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.udid, "SIM-XCODEBUILD")
+        XCTAssertEqual(lock.deviceType, "simulator")
+        XCTAssertEqual(lock.holderPid, 444)
+        XCTAssertEqual(lock.bundleId, ConfigService.simulatorBundleId)
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
     }
 
