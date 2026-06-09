@@ -323,9 +323,19 @@ final class RealDeviceXCTestDriverLifecycle {
         }
     }
 
-    private func validateRequiredServices(_ serviceNames: [String], peerInfo: RemoteXPCPeerInfo) throws {
+    private func validateRequiredServices(_ serviceNames: [String], peerInfo: RemoteXPCPeerInfo, udid: String) throws {
         for serviceName in serviceNames {
-            _ = try peerInfo.servicePort(serviceName)
+            do {
+                _ = try peerInfo.servicePort(serviceName)
+            } catch {
+                if serviceName == DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
+                   String(describing: error).contains("Services.\(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName)") {
+                    throw CLIParseError.invalidValue(
+                        "Developer Disk Image services are not ready on \(udid). Run `ios-use ddi-mount --udid \(udid)` and retry `ios-use start`. Original error: \(error)"
+                    )
+                }
+                throw error
+            }
         }
     }
 
@@ -342,7 +352,7 @@ final class RealDeviceXCTestDriverLifecycle {
             if shouldLogPeerInfo {
                 logPeerInfo(peerInfo)
             }
-            try validateRequiredServices(requiredServices, peerInfo: peerInfo)
+            try validateRequiredServices(requiredServices, peerInfo: peerInfo, udid: udid)
             return tunnel
         } catch {
             tunnel.close()

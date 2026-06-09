@@ -94,6 +94,12 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .ddiMount(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try DeveloperDiskImageService.mount(options: options, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .open(let options):
             return executeOpen(options)
         case .appLifecycle(let options):

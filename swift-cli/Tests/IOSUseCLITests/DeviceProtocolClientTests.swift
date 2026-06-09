@@ -771,6 +771,58 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertFalse(didResolveRunner)
     }
 
+    func testRealDeviceXCTestLifecycleSuggestsDDIMountWhenTestManagerServiceIsMissing() throws {
+        let peerInfo = try RemoteXPCPeerInfo.decode(remotePeerInfoValue(extraServices: [
+            CoreDeviceOpenStdIOSocket.serviceName: .dictionary([
+                "Port": .uint64(62003),
+                "Properties": .dictionary([
+                    "UsesRemoteXPC": .bool(false),
+                ]),
+            ]),
+            CoreDeviceAppService.serviceName: .dictionary([
+                "Port": .uint64(62004),
+                "Properties": .dictionary([
+                    "UsesRemoteXPC": .bool(true),
+                ]),
+            ]),
+        ]))
+        let tunnel = FakeCoreDeviceLifecycleTunnelSession(stream: FakeDeviceStream(reads: []), peerInfo: peerInfo)
+        var didOpenAppService = false
+        let lifecycle = RealDeviceXCTestDriverLifecycle(dependencies: RealDeviceXCTestDriverLifecycle.Dependencies(
+            startTunnel: { udid in
+                XCTAssertEqual(udid, "REAL-XCTEST")
+                return tunnel
+            },
+            resolveRunnerInfo: { _, _ in
+                XCTestRunnerInstallInfo(
+                    appPath: "/private/var/containers/Bundle/Application/UUID/IOSUseDriver-Runner.app",
+                    testBundlePath: "/private/var/containers/Bundle/Application/UUID/IOSUseDriver-Runner.app/PlugIns/IOSUseDriver.xctest"
+                )
+            },
+            productMajorVersion: { _ in 17 },
+            makeSessionIdentifier: { UUID() },
+            openAppService: { _ in
+                didOpenAppService = true
+                throw CLIParseError.invalidValue("unexpected appservice")
+            },
+            openStdIOSocket: { _ in
+                XCTFail("missing testmanagerd must fail before openstdio")
+                throw CLIParseError.invalidValue("unexpected openstdio")
+            }
+        ))
+
+        XCTAssertThrowsError(try lifecycle.startDriverSession(
+            udid: "REAL-XCTEST",
+            bundleID: "com.example.driver.xctrunner"
+        )) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("ios-use ddi-mount --udid REAL-XCTEST"))
+            XCTAssertTrue(message.contains("Services.com.apple.dt.testmanagerd.remote"))
+        }
+        XCTAssertTrue(tunnel.closed)
+        XCTAssertFalse(didOpenAppService)
+    }
+
     func testDTXStreamInvokerWritesDispatchAndDecodesObjectReply() throws {
         let reply = try DTXMessageEncoder.objectReply(
             identifier: 5,
@@ -1898,6 +1950,148 @@ final class DeviceProtocolClientTests: XCTestCase {
         )
     }
 
+    func testMobileImageMounterQueriesPersonalizationIdentifiers() throws {
+        let stream = FakeDeviceStream(reads: [
+            plistFrame([
+                "PersonalizationIdentifiers": [
+                    "BoardId": 12,
+                    "ChipID": 32784,
+                    "SecurityDomain": 1,
+                    "Ap,ProductType": "iPhone9,3",
+                ],
+            ]),
+        ])
+        let client = MobileImageMounterClient(stream: stream)
+
+        let identifiers = try client.queryPersonalizationIdentifiers()
+
+        XCTAssertEqual(identifiers.boardID, 12)
+        XCTAssertEqual(identifiers.chipID, 32784)
+        XCTAssertEqual(identifiers.securityDomain, 1)
+        XCTAssertEqual(identifiers.apTags["Ap,ProductType"] as? String, "iPhone9,3")
+        let request = try parseLengthPrefixedPlist(stream.writes[0])
+        XCTAssertEqual(request["Command"] as? String, "QueryPersonalizationIdentifiers")
+        XCTAssertEqual(request["PersonalizedImageType"] as? String, "DeveloperDiskImage")
+    }
+
+    func testMobileImageMounterUploadAndMountPersonalizedImageRequests() throws {
+        let image = Data([0xaa, 0xbb, 0xcc])
+        let signature = Data([0x01, 0x02])
+        let trustCache = Data([0x03, 0x04])
+        let stream = FakeDeviceStream(reads: [
+            plistFrame(["Status": "ReceiveBytesAck"]),
+            plistFrame(["Status": "Complete"]),
+            plistFrame(["Status": "Complete"]),
+        ])
+        let client = MobileImageMounterClient(stream: stream)
+
+        try client.uploadPersonalizedImage(image: image, signature: signature)
+        try client.mountPersonalizedImage(signature: signature, trustCache: trustCache)
+
+        let receive = try parseLengthPrefixedPlist(stream.writes[0])
+        XCTAssertEqual(receive["Command"] as? String, "ReceiveBytes")
+        XCTAssertEqual(receive["ImageType"] as? String, "Personalized")
+        XCTAssertEqual(receive["ImageSize"] as? Int, image.count)
+        XCTAssertEqual(receive["ImageSignature"] as? Data, signature)
+        XCTAssertEqual(stream.writes[1], image)
+        let mount = try parseLengthPrefixedPlist(stream.writes[2])
+        XCTAssertEqual(mount["Command"] as? String, "MountImage")
+        XCTAssertEqual(mount["ImageType"] as? String, "Personalized")
+        XCTAssertEqual(mount["ImageSignature"] as? Data, signature)
+        XCTAssertEqual(mount["ImageTrustCache"] as? Data, trustCache)
+    }
+
+    func testDeveloperDiskImageBuildManifestSelectsIdentityAndBuildsTSSRequest() throws {
+        let root = try temporaryDirectory(prefix: "ddi-manifest")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let restore = root.appendingPathComponent("Restore", isDirectory: true)
+        try FileManager.default.createDirectory(at: restore.appendingPathComponent("Firmware", isDirectory: true), withIntermediateDirectories: true)
+        let imageDigest = Data(repeating: 0xa1, count: 48)
+        let trustDigest = Data(repeating: 0xb2, count: 48)
+        let manifestURL = restore.appendingPathComponent("BuildManifest.plist")
+        let manifest: [String: Any] = [
+            "BuildIdentities": [
+                [
+                    "ApBoardID": "0x0C",
+                    "ApChipID": "0x8010",
+                    "Manifest": [
+                        "PersonalizedDMG": [
+                            "Digest": imageDigest,
+                            "Info": [
+                                "Path": "Image.dmg",
+                                "Personalize": true,
+                            ],
+                            "Name": "DeveloperDiskImage",
+                            "Trusted": true,
+                        ],
+                        "LoadableTrustCache": [
+                            "Digest": trustDigest,
+                            "Info": [
+                                "Path": "Firmware/Image.dmg.trustcache",
+                                "RestoreRequestRules": [
+                                    [
+                                        "Conditions": [
+                                            "ApCurrentProductionMode": true,
+                                            "ApRequiresImage4": true,
+                                        ],
+                                        "Actions": [
+                                            "EPRO": true,
+                                        ],
+                                    ],
+                                    [
+                                        "Conditions": [
+                                            "ApRawSecurityMode": true,
+                                            "ApRequiresImage4": true,
+                                        ],
+                                        "Actions": [
+                                            "ESEC": true,
+                                        ],
+                                    ],
+                                ],
+                            ],
+                            "Trusted": true,
+                        ],
+                    ],
+                ],
+            ],
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: manifest, format: .xml, options: 0)
+        try data.write(to: manifestURL)
+        try Data([1]).write(to: restore.appendingPathComponent("Image.dmg"))
+        try Data([2]).write(to: restore.appendingPathComponent("Firmware/Image.dmg.trustcache"))
+
+        let identifiers = DeveloperDiskImageBuildManifest.DeviceIdentifiers(
+            boardID: 12,
+            chipID: 0x8010,
+            securityDomain: 1,
+            apTags: ["Ap,ProductType": "iPhone9,3"]
+        )
+        let resolved = try DeveloperDiskImageResolver.resolve(path: root.path, identifiers: identifiers)
+        defer { resolved.cleanup() }
+        let buildManifest = try DeveloperDiskImageBuildManifest(url: resolved.buildManifestURL)
+        let identity = try buildManifest.identity(for: identifiers)
+        let request = DeveloperDiskImageBuildManifest.tssRequest(
+            identity: identity,
+            identifiers: identifiers,
+            ecid: 12345,
+            nonce: Data([0x10, 0x20])
+        )
+
+        XCTAssertEqual(resolved.imageURL.lastPathComponent, "Image.dmg")
+        XCTAssertEqual(resolved.trustCacheURL.lastPathComponent, "Image.dmg.trustcache")
+        XCTAssertEqual(request["@ApImg4Ticket"] as? Bool, true)
+        XCTAssertEqual(request["ApBoardID"] as? Int, 12)
+        XCTAssertEqual(request["ApChipID"] as? Int, 0x8010)
+        XCTAssertEqual(request["ApECID"] as? Int64, 12345)
+        XCTAssertEqual(request["ApNonce"] as? Data, Data([0x10, 0x20]))
+        XCTAssertEqual(request["Ap,ProductType"] as? String, "iPhone9,3")
+        let trustEntry = try XCTUnwrap(request["LoadableTrustCache"] as? [String: Any])
+        XCTAssertEqual(trustEntry["Digest"] as? Data, trustDigest)
+        XCTAssertEqual(trustEntry["EPRO"] as? Bool, true)
+        XCTAssertEqual(trustEntry["ESEC"] as? Bool, true)
+        XCTAssertNil(trustEntry["Info"])
+    }
+
     func testRealDevicePackageInstallerValidatesInstalledVersion() throws {
         let response: [String: Any] = [
             "LookupResult": [
@@ -1945,6 +2139,13 @@ final class DeviceProtocolClientTests: XCTestCase {
     private func parseLengthPrefixedPlist(_ data: Data) throws -> [String: Any] {
         let size = Int(readUInt32BE(data, 0))
         return try parsePlist(Data(data.dropFirst(4).prefix(size)))
+    }
+
+    private func temporaryDirectory(prefix: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-\(prefix)-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
     private func cdtunnelPacket(_ body: [String: Any]) throws -> Data {

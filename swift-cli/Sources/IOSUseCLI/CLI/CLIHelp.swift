@@ -13,7 +13,7 @@ enum CLIHelp {
 
         Commands:
           devices, config, start, stop, dom, find, waitFor, screenshot, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, flow, proxy, oslog, nslog
+          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, flow, proxy, oslog, nslog
 
         """
     }
@@ -126,6 +126,18 @@ enum CLIHelp {
               --udid <udid>  Target USB real device UDID; overrides active driver.lock
               --system       Include system apps
               --json         Print JSON
+
+            """
+        case "ddi-mount":
+            return """
+            Usage: ios-use ddi-mount [--udid <udid>] [--path <path>]
+
+            Mount an iOS 17+ personalized Developer Disk Image on a USB real device.
+            When --path is omitted, scans local CoreDevice DeveloperDiskImages caches.
+
+            Options:
+              --udid <udid>  Target USB real device UDID; defaults to active driver.lock or a single connected USB real device
+              --path <path>  Restore directory, iOS_DDI directory, or iOS_DDI.dmg
 
             """
         case "dom":

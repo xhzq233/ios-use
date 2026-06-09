@@ -67,6 +67,16 @@ final class CLIParserTests: XCTestCase {
             try CLIParser.parse(["apps", "--system", "--json"]),
             .apps(AppsOptions(includeSystem: true, json: true))
         )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["ddi-mount", "--udid", "REAL-1", "--path", "/Library/Developer/DeveloperDiskImages/iOS_DDI/Restore"]),
+            .ddiMount(DDIMountOptions(path: "/Library/Developer/DeveloperDiskImages/iOS_DDI/Restore", udid: "REAL-1"))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["ddi-mount"]),
+            .ddiMount(DDIMountOptions())
+        )
     }
 
     func testParsesDriverReadCommands() throws {

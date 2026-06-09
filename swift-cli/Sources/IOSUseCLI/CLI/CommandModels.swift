@@ -8,6 +8,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case install(AppInstallOptions)
     case uninstall(AppUninstallOptions)
     case apps(AppsOptions)
+    case ddiMount(DDIMountOptions)
     case open(OpenURLOptions)
     case appLifecycle(AppLifecycleOptions)
     case oslog(OSLogOptions)
@@ -25,6 +26,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .install: return "install"
         case .uninstall: return "uninstall"
         case .apps: return "apps"
+        case .ddiMount: return "ddi-mount"
         case .open: return "open"
         case .appLifecycle(let options): return options.action.commandName
         case .oslog: return "oslog"
@@ -117,6 +119,16 @@ public struct AppsOptions: Equatable, Sendable {
         self.udid = udid
         self.includeSystem = includeSystem
         self.json = json
+    }
+}
+
+public struct DDIMountOptions: Equatable, Sendable {
+    public var path: String?
+    public var udid: String?
+
+    public init(path: String? = nil, udid: String? = nil) {
+        self.path = path
+        self.udid = udid
     }
 }
 

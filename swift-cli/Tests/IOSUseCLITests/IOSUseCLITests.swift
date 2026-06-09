@@ -22,6 +22,7 @@ final class IOSUseCLITests: XCTestCase {
         AppManagementService.installerForTesting = nil
         AppManagementService.uninstallerForTesting = nil
         AppManagementService.appsProviderForTesting = nil
+        DeveloperDiskImageService.mountForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
         DriverLifecycleService.holderLauncherForTesting = nil
@@ -42,6 +43,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Swift CLI for ios-use"))
         XCTAssertTrue(result.stdout.contains("Usage: ios-use [--help] [--version] <command>"))
         XCTAssertTrue(result.stdout.contains("devices, config, start, stop, dom"))
+        XCTAssertTrue(result.stdout.contains("ddi-mount"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
@@ -104,6 +106,7 @@ final class IOSUseCLITests: XCTestCase {
             (["install", "--help"], "Usage: ios-use install"),
             (["uninstall", "--help"], "Usage: ios-use uninstall"),
             (["apps", "--help"], "Usage: ios-use apps"),
+            (["ddi-mount", "--help"], "Usage: ios-use ddi-mount"),
             (["dismissAlert", "--help"], "Usage: ios-use dismissAlert"),
             (["flow", "--help"], "Usage: ios-use flow"),
             (["proxy", "--help"], "Usage: ios-use proxy"),
