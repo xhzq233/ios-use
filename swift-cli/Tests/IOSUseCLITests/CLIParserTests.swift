@@ -114,7 +114,12 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["input", "--tap", "First name", "--content", "Alpha", "--traits", "Input", "--cindex", "0"]),
-            .driver(.input(tap: "First name", content: "Alpha", traits: "Input", cindex: 0, postDom: nil))
+            .driver(.input(tap: "First name", content: "Alpha", delete: 0, enter: false, traits: "Input", cindex: 0, postDom: nil))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["input", "--tap", "First name", "--content", "Alpha", "--delete", "2", "--enter"]),
+            .driver(.input(tap: "First name", content: "Alpha", delete: 2, enter: true, traits: nil, cindex: nil, postDom: nil))
         )
 
         XCTAssertEqual(
@@ -134,12 +139,17 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["input", "--tap", "First name", "--content", "Alpha", "--dom=300"]),
-            .driver(.input(tap: "First name", content: "Alpha", traits: nil, cindex: nil, postDom: .afterMilliseconds(300)))
+            .driver(.input(tap: "First name", content: "Alpha", delete: 0, enter: false, traits: nil, cindex: nil, postDom: .afterMilliseconds(300)))
         )
 
         XCTAssertEqual(
             try CLIParser.parse(["input", "--content", "Alpha"]),
-            .driver(.input(tap: nil, content: "Alpha", traits: nil, cindex: nil, postDom: nil))
+            .driver(.input(tap: nil, content: "Alpha", delete: 0, enter: false, traits: nil, cindex: nil, postDom: nil))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["input", "--content", "Alpha", "--delete", "3", "--enter"]),
+            .driver(.input(tap: nil, content: "Alpha", delete: 3, enter: true, traits: nil, cindex: nil, postDom: nil))
         )
 
         XCTAssertEqual(
@@ -364,7 +374,7 @@ final class CLIParserTests: XCTestCase {
     func testParsesDashPrefixedOptionValuesWhereSemanticallyValid() throws {
         XCTAssertEqual(
             try CLIParser.parse(["input", "--tap", "First name", "--content", "-Alpha"]),
-            .driver(.input(tap: "First name", content: "-Alpha", traits: nil, cindex: nil, postDom: nil))
+            .driver(.input(tap: "First name", content: "-Alpha", delete: 0, enter: false, traits: nil, cindex: nil, postDom: nil))
         )
 
         XCTAssertEqual(

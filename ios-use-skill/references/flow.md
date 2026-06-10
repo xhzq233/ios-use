@@ -276,9 +276,10 @@ steps:
 - 未知字段会直接报错，不会静默忽略
 - `find.print`、`dom.print`、`dom.save`、`dom.name` 均不是合法字段
 - `outputs` 只支持 `find` / `dom` / `runFlow` / `swipe`
-- 字段类型严格：`raw: "true"`、`clear: 1`、`offset: {x: -50}` 都会失败
+- 字段类型严格：`raw: "true"`、`delete: "1"`、`offset: {x: -50}` 都会失败
 - `offset` / `offsetRatio` 必须写成 CLI 同款字符串，例如 `offset: "-50,-50"` 或 `offsetRatio: "0.8,"`
 - `tap.dom` / `longpress.dom` / `input.dom` / `swipe.dom` 必须是非负整数，不支持 `dom: true`
+- `input.delete: 3` 会在 content 前发送 3 个删除字符；`input.enter: true` 会发送尾随换行符，可触发 Enter、Done、Go、发送等行为
 - 明确写死路径的 `runFlow.file` 子 flow 会和父 flow 一起提前检查
 
 ### 6.4 `swipe`
