@@ -169,9 +169,10 @@ ios-use uninstall com.example.app --udid <udid>
 
 ### 6.5 `input`
 
-- `ios-use input --tap "搜索" --content "蓝牙"`，或键盘已弹出后 `ios-use input --content "蓝牙"`。
-- `--tap` 只用于输入前聚焦；不传 `--tap` 时要求键盘已可见。
-- 不隐式 clear。
+- `ios-use input --tap "搜索" --content "蓝牙"`，或已有文本焦点后 `ios-use input --content "蓝牙"`。
+- `--tap` 只用于输入前聚焦；不传 `--tap` 时向当前文本焦点输入。
+- `--delete <n>` 会在 content 前发送 n 个删除字符。
+- `--enter` 会发送尾随换行符，可触发 Enter、Done、Go、发送等行为。
 - 支持 `--traits` / `--cindex` / `--dom [ms]`。
 
 ### 6.6 `screenshot`

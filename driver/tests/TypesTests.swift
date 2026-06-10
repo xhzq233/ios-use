@@ -240,18 +240,6 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    // MARK: - input keyboard gate
-
-    func testCanInputWithoutTapRequiresVisibleKeyboard() {
-        XCTAssertFalse(canInputWithoutTap(keyboardVisible: false))
-        XCTAssertTrue(canInputWithoutTap(keyboardVisible: true))
-    }
-
-    func testCanInputAfterTapRequiresVisibleKeyboard() {
-        XCTAssertFalse(canInputAfterTap(keyboardVisible: false))
-        XCTAssertTrue(canInputAfterTap(keyboardVisible: true))
-    }
-
     // MARK: - Double.sanitized
 
     func testDoubleSanitized_Finite() {

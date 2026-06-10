@@ -201,11 +201,13 @@ enum CLIHelp {
             )
         case "input":
             return driverHelp(
-                usage: "ios-use input [--tap <target>] --content <text> [--traits <traits>] [--cindex <index>] [--dom [ms]]",
+                usage: "ios-use input [--tap <target>] --content <text> [--delete <n>] [--enter] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
                 summary: "Input text into the current keyboard focus, optionally tapping a target first.",
                 options: [
                     "--tap <target>     Optional label or x,y target to tap before typing",
                     "--content <text>   Text to input",
+                    "--delete <n>       Send n delete characters before content",
+                    "--enter            Send a trailing newline, which may trigger Enter, Done, Go, or send",
                     "--traits <traits>  Comma-separated trait filter for label tap target",
                     "--cindex <index>   Select the Nth cleaned child under a label tap target",
                     "--dom [ms]         Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",

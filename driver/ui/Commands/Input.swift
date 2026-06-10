@@ -20,9 +20,6 @@ enum InputCommands {
                 return response
             }
         } else {
-            guard canInputWithoutTap(keyboardVisible: keyboardVisible(in: app)) else {
-                return Codec.foryError("input: keyboard is not visible; pass --tap <target> or focus an input first")
-            }
             targetSummary = ForyElementSummary()
         }
 
@@ -41,18 +38,6 @@ private enum InputTapResult {
 
 private func hasTapTarget(_ target: ForyTarget) -> Bool {
     target.point != nil || !target.label.isEmpty
-}
-
-private func keyboardVisible(in app: XCUIApplication) -> Bool {
-    !app.keyboards.allElementsBoundByIndex.isEmpty
-}
-
-func canInputWithoutTap(keyboardVisible: Bool) -> Bool {
-    keyboardVisible
-}
-
-func canInputAfterTap(keyboardVisible: Bool) -> Bool {
-    keyboardVisible
 }
 
 private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) -> InputTapResult {
@@ -84,10 +69,6 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) -> Input
 
     Thread.sleep(forTimeInterval: IOSUseProtocol.inputPostTapFocusSettleSeconds)
     invalidateSnapshot()
-    guard canInputAfterTap(keyboardVisible: keyboardVisible(in: app)) else {
-        let targetDescription = target.point.map { "\($0.x),\($0.y)" } ?? target.label
-        return .failure(Codec.foryError("input: failed to focus '\(targetDescription)'; keyboard is not visible after tap"))
-    }
     return .success(summary)
 }
 

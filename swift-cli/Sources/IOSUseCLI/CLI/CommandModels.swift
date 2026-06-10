@@ -200,7 +200,7 @@ public enum PostDomMode: Equatable, Sendable {
 public enum DriverAction: Equatable, Sendable {
     case tap(target: String, offset: String?, offsetRatio: String?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case longPress(target: String, duration: Int?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
-    case input(tap: String?, content: String, traits: String?, cindex: Int32?, postDom: PostDomMode?)
+    case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool)
     case find(label: String, traits: String?, cindex: Int32?)

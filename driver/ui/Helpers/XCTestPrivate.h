@@ -10,9 +10,6 @@ XCUIApplication * _Nullable GetActiveApplication(void);
 /// Takes a raw snapshot of an XCUIElement via `snapshotWithError:`.
 id _Nullable SnapshotOfElement(XCUIElement * _Nonnull element);
 
-/// Best-effort keyboard Clear key event (WDA-style IOHID shortcut).
-BOOL XCPerformKeyboardClear(void);
-
 /// WDA-style synthesized text input using XCSynthesizedEventRecord +
 /// XCPointerEventPath(initForTextInput). Returns NO and assigns `error`
 /// when the event synthesizer reports a failure.
