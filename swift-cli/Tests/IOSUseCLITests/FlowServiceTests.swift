@@ -377,6 +377,8 @@ final class FlowServiceTests: XCTestCase {
           - action: input
             tap: Name
             content: Alpha
+            delete: 2
+            enter: true
             traits: Input
             cindex: 0
         """)
@@ -392,6 +394,7 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(driver.taps.first?.target.label, "Settings")
         XCTAssertEqual(driver.taps.first?.cindex, 1)
         XCTAssertEqual(driver.inputs.first?.tap?.label, "Name")
+        XCTAssertEqual(driver.inputs.first?.content, "\u{7F}\u{7F}Alpha\n")
         XCTAssertEqual(driver.inputs.first?.cindex, 0)
     }
 

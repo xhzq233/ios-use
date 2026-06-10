@@ -452,7 +452,7 @@ private let flowStepAllowedKeys: [String: Set<String>] = [
     "dom": ["raw", "fresh", "candidates", "outputs"],
     "tap": ["label", "offset", "offsetRatio", "traits", "cindex", "dom"],
     "longpress": ["label", "duration", "traits", "cindex", "dom"],
-    "input": ["tap", "content", "traits", "cindex", "dom"],
+    "input": ["tap", "content", "delete", "enter", "traits", "cindex", "dom"],
     "swipe": ["dir", "from", "to", "distance", "traits", "cindex", "outputs", "dom"],
     "screenshot": ["name"],
     "activateApp": ["bundleId"],
@@ -516,6 +516,8 @@ enum FlowLowering {
             var args = ["input"]
             args += try optionalStringArg("--tap", step["tap"], field: "input.tap")
             args += ["--content", try requiredString(step["content"], field: "input.content")]
+            args += try optionalIntArg("--delete", step["delete"], field: "input.delete", allowNegative: false)
+            args += try boolFlag("--enter", step["enter"], field: "input.enter")
             args += try optionalStringArg("--traits", step["traits"], field: "input.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "input.cindex", allowNegative: true)
             args += try optionalPostDomArg("--dom", step["dom"], field: "input.dom")
@@ -621,6 +623,8 @@ enum FlowLowering {
         case "input":
             try validateStringLike(step["tap"], field: "input.tap")
             try validateStringLike(step["content"], field: "input.content", required: true)
+            try validateIntLike(step["delete"], field: "input.delete", allowNegative: false)
+            try validateBoolLike(step["enter"], field: "input.enter")
             try validateStringLike(step["traits"], field: "input.traits")
             try validateIntLike(step["cindex"], field: "input.cindex", allowNegative: true)
             try validatePostDomLike(step["dom"], field: "input.dom")

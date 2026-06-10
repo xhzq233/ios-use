@@ -80,15 +80,17 @@ enum DriverCommandExecutor {
             ok = true
             return result
 
-        case .input(let tap, let content, let traits, let cindex, let postDom):
+        case .input(let tap, let content, let delete, let enter, let traits, let cindex, let postDom):
             let tapTarget = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
+            let deletePrefix = String(repeating: "\u{7F}", count: delete)
+            let effectiveContent = deletePrefix + content + (enter ? "\n" : "")
             _ = try clientRunner {
-                try $0.input(tap: tapTarget, content: content)
+                try $0.input(tap: tapTarget, content: effectiveContent)
                 return nil
             }
             let targetDescription = tap.map { " after tapping \"\($0)\"" } ?? ""
             let result = try appendPostDomIfNeeded(
-                DriverCommandResult(stdout: "Input \"\(content)\"\(targetDescription)\n", payload: nil),
+                DriverCommandResult(stdout: "Input \"\(effectiveContent)\"\(targetDescription)\n", payload: nil),
                 postDom: postDom,
                 clientRunner: clientRunner
             )
@@ -153,7 +155,7 @@ enum DriverCommandExecutor {
             _ = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
         case .longPress(let target, _, let traits, let cindex, _):
             _ = try resolveTarget(target, traits: traits, cindex: cindex)
-        case .input(let tap, _, let traits, let cindex, _):
+        case .input(let tap, _, _, _, let traits, let cindex, _):
             _ = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
         case .swipe(let to, let from, _, _, let traits, let cindex, _):
             _ = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)

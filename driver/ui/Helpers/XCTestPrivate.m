@@ -401,34 +401,6 @@ id SnapshotOfElement(XCUIElement *element) {
     return tmp;
 }
 
-BOOL XCPerformKeyboardClear(void) {
-    id device = [XCUIDevice sharedDevice];
-    SEL sel = NSSelectorFromString(@"fb_performIOHIDEventWithPage:usage:duration:error:");
-    NSMethodSignature *sig = [device methodSignatureForSelector:sel];
-    if (!sig) {
-        sel = NSSelectorFromString(@"performIOHIDEventWithPage:usage:duration:error:");
-        sig = [device methodSignatureForSelector:sel];
-        if (!sig || ![device respondsToSelector:sel]) {
-            return NO;
-        }
-    }
-
-    int page = 0x07;   // kHIDPage_KeyboardOrKeypad
-    int usage = 0x9c;  // kHIDUsage_KeyboardClear
-    double duration = 0.01;
-    NSError *error = nil;
-
-    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-    [inv setTarget:device];
-    [inv setSelector:sel];
-    [inv setArgument:&page atIndex:2];
-    [inv setArgument:&usage atIndex:3];
-    [inv setArgument:&duration atIndex:4];
-    [inv setArgument:&error atIndex:5];
-    [inv invoke];
-    return YES;
-}
-
 NSUInteger XCDefaultTypingFrequency(void) {
     NSInteger defaultFreq = [[NSUserDefaults standardUserDefaults] integerForKey:@"com.apple.xctest.iOSMaximumTypingFrequency"];
     return defaultFreq > 0 ? (NSUInteger)defaultFreq : 60;
