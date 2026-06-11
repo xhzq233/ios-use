@@ -218,7 +218,12 @@ final class RealDeviceXCTestDriverLifecycle {
             openedStdIOSocket.startDraining(eventSink: eventSink)
 
             eventSink?("opening XCTest exec session")
-            let openedExecSession = XCTestManagerSession(stream: try openedTunnel.connectService(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName))
+            let openedExecSession = XCTestManagerSession(
+                stream: try openedTunnel.connectService(
+                    DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
+                    routeLabel: "xctest-exec"
+                )
+            )
             execSession = openedExecSession
             try openedExecSession.connect()
             let execDaemon = try openedExecSession.openDaemonConnection()
@@ -256,7 +261,12 @@ final class RealDeviceXCTestDriverLifecycle {
             openedListener.start()
 
             eventSink?("opening XCTest control session")
-            let openedControlSession = XCTestManagerSession(stream: try openedTunnel.connectService(DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName))
+            let openedControlSession = XCTestManagerSession(
+                stream: try openedTunnel.connectService(
+                    DVTInstrumentsContract.XCTestManagerDaemon.rsdServiceName,
+                    routeLabel: "xctest-control"
+                )
+            )
             controlSession = openedControlSession
             try openedControlSession.connect()
             let controlDaemon = try openedControlSession.openDaemonConnection()

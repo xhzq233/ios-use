@@ -13,7 +13,7 @@ enum CoreDeviceTCPError: Error, CustomStringConvertible, Equatable {
     case connectionReset
     case connectionClosed
     case connectionTimeout
-    case routeBackpressure(localPort: UInt16, pendingPackets: Int)
+    case routeBackpressure(localPort: UInt16, context: CoreDeviceRouteBackpressureContext)
     case unexpectedHandshake(String)
 
     var description: String {
@@ -30,11 +30,36 @@ enum CoreDeviceTCPError: Error, CustomStringConvertible, Equatable {
             return "CoreDevice TCP connection closed"
         case .connectionTimeout:
             return "CoreDevice TCP connection timed out"
-        case .routeBackpressure(let localPort, let pendingPackets):
-            return "CoreDevice TCP route \(localPort) packet queue exceeded limit with \(pendingPackets) pending packets"
+        case .routeBackpressure(let localPort, let context):
+            return "CoreDevice TCP route \(localPort)\(context.routeDescription) packet queue exceeded limit with \(context.pendingPackets) pending packets queuedBytes=\(context.queuedBytes)\(context.ageDescription)"
         case .unexpectedHandshake(let detail):
             return "CoreDevice TCP unexpected handshake: \(detail)"
         }
+    }
+}
+
+struct CoreDeviceRouteBackpressureContext: Equatable {
+    let routeLabel: String?
+    let pendingPackets: Int
+    let queuedBytes: Int
+    let lastEnqueueAgeMilliseconds: Int?
+    let lastDequeueAgeMilliseconds: Int?
+
+    var routeDescription: String {
+        guard let routeLabel, !routeLabel.isEmpty else { return "" }
+        return " (\(routeLabel))"
+    }
+
+    var ageDescription: String {
+        var parts: [String] = []
+        if let lastEnqueueAgeMilliseconds {
+            parts.append("lastEnqueueAgeMs=\(lastEnqueueAgeMilliseconds)")
+        }
+        if let lastDequeueAgeMilliseconds {
+            parts.append("lastDequeueAgeMs=\(lastDequeueAgeMilliseconds)")
+        }
+        guard !parts.isEmpty else { return "" }
+        return " " + parts.joined(separator: " ")
     }
 }
 
@@ -412,10 +437,15 @@ private final class CoreDeviceDirectTunnelPacketRouter {
         self.eventSink = eventSink
     }
 
-    func openRoute(localPort: UInt16) -> CoreDeviceRoutedIPv6PacketIO {
+    func openRoute(localPort: UInt16, label: String? = nil) -> CoreDeviceRoutedIPv6PacketIO {
         routeLock.lock()
         defer { routeLock.unlock() }
-        let route = CoreDeviceRoutedIPv6PacketIO(localPort: localPort, router: self)
+        let route = CoreDeviceRoutedIPv6PacketIO(
+            localPort: localPort,
+            label: label,
+            router: self,
+            eventSink: eventSink
+        )
         routes[localPort] = route
         if let failure {
             route.fail(failure)
@@ -537,16 +567,37 @@ private final class CoreDeviceDirectTunnelPacketRouter {
 }
 
 private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
+    private static let highWaterThresholds: [Int] = {
+        var seen = Set<Int>()
+        return [32, 64, 96, 128, 256, IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit].filter { threshold in
+            threshold <= IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit && seen.insert(threshold).inserted
+        }
+    }()
+
     private let localPort: UInt16
+    private let label: String?
     private weak var router: CoreDeviceDirectTunnelPacketRouter?
+    private let eventSink: ((String) -> Void)?
     private let condition = NSCondition()
     private var packets: [Data] = []
+    private var packetHeadIndex = 0
+    private var queuedBytes = 0
+    private var lastEnqueueAt: Date?
+    private var lastDequeueAt: Date?
+    private var reportedHighWaterThresholds = Set<Int>()
     private var closed = false
     private var failure: Error?
 
-    init(localPort: UInt16, router: CoreDeviceDirectTunnelPacketRouter) {
+    init(
+        localPort: UInt16,
+        label: String?,
+        router: CoreDeviceDirectTunnelPacketRouter,
+        eventSink: ((String) -> Void)?
+    ) {
         self.localPort = localPort
+        self.label = label
         self.router = router
+        self.eventSink = eventSink
     }
 
     func readIPv6Packet(timeoutSeconds: Double) throws -> Data {
@@ -554,7 +605,7 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
         condition.lock()
         defer { condition.unlock() }
 
-        while packets.isEmpty, failure == nil, !closed {
+        while queuedPacketCount == 0, failure == nil, !closed {
             let remaining = deadline.timeIntervalSinceNow
             if remaining <= 0 {
                 throw CoreDeviceTCPError.connectionTimeout
@@ -562,8 +613,13 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
             condition.wait(until: Date().addingTimeInterval(remaining))
         }
 
-        if !packets.isEmpty {
-            return packets.removeFirst()
+        if queuedPacketCount > 0 {
+            let packet = packets[packetHeadIndex]
+            packetHeadIndex += 1
+            queuedBytes = max(0, queuedBytes - packet.count)
+            lastDequeueAt = Date()
+            compactPacketStorageIfNeeded()
+            return packet
         }
         if let failure {
             throw failure
@@ -595,31 +651,41 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
             return
         }
         closed = true
-        packets.removeAll(keepingCapacity: false)
+        clearQueuedPackets(keepingCapacity: false)
         condition.broadcast()
         condition.unlock()
         router?.unregister(localPort: localPort)
     }
 
     fileprivate func enqueue(_ packet: Data) {
+        var highWaterMessages: [String] = []
+        var backpressureMessage: String?
         condition.lock()
         if !closed, failure == nil {
-            if packets.count >= IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit {
-                failure = CoreDeviceTCPError.routeBackpressure(
-                    localPort: localPort,
-                    pendingPackets: packets.count
-                )
+            if queuedPacketCount >= IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit {
+                let context = backpressureContext()
+                highWaterMessages = consumeHighWaterMessages(packetCount: queuedPacketCount)
+                backpressureMessage = "TCP route \(routeDescription) backpressure \(queueDescription(context: context))"
+                failure = CoreDeviceTCPError.routeBackpressure(localPort: localPort, context: context)
                 closed = true
-                packets.removeAll(keepingCapacity: false)
+                clearQueuedPackets(keepingCapacity: false)
                 condition.broadcast()
                 condition.unlock()
+                log(messages: highWaterMessages)
+                if let backpressureMessage {
+                    eventSink?(backpressureMessage)
+                }
                 router?.unregister(localPort: localPort)
                 return
             }
             packets.append(packet)
+            queuedBytes += packet.count
+            lastEnqueueAt = Date()
+            highWaterMessages = consumeHighWaterMessages(packetCount: queuedPacketCount)
             condition.signal()
         }
         condition.unlock()
+        log(messages: highWaterMessages)
     }
 
     fileprivate func fail(_ error: Error) {
@@ -627,7 +693,7 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
         if failure == nil {
             failure = error
         }
-        packets.removeAll(keepingCapacity: false)
+        clearQueuedPackets(keepingCapacity: false)
         condition.broadcast()
         condition.unlock()
     }
@@ -635,9 +701,66 @@ private final class CoreDeviceRoutedIPv6PacketIO: IPv6PacketIO {
     fileprivate func closeFromRouter() {
         condition.lock()
         closed = true
-        packets.removeAll(keepingCapacity: false)
+        clearQueuedPackets(keepingCapacity: false)
         condition.broadcast()
         condition.unlock()
+    }
+
+    private var queuedPacketCount: Int {
+        packets.count - packetHeadIndex
+    }
+
+    private var routeDescription: String {
+        guard let label, !label.isEmpty else { return "\(localPort)" }
+        return "\(localPort) (\(label))"
+    }
+
+    private func consumeHighWaterMessages(packetCount: Int) -> [String] {
+        var messages: [String] = []
+        for threshold in Self.highWaterThresholds where packetCount >= threshold && !reportedHighWaterThresholds.contains(threshold) {
+            reportedHighWaterThresholds.insert(threshold)
+            let context = backpressureContext(pendingPackets: packetCount)
+            messages.append("TCP route \(routeDescription) queue high-water threshold=\(threshold) \(queueDescription(context: context))")
+        }
+        return messages
+    }
+
+    private func backpressureContext(pendingPackets: Int? = nil) -> CoreDeviceRouteBackpressureContext {
+        CoreDeviceRouteBackpressureContext(
+            routeLabel: label,
+            pendingPackets: pendingPackets ?? queuedPacketCount,
+            queuedBytes: queuedBytes,
+            lastEnqueueAgeMilliseconds: ageMilliseconds(since: lastEnqueueAt),
+            lastDequeueAgeMilliseconds: ageMilliseconds(since: lastDequeueAt)
+        )
+    }
+
+    private func queueDescription(context: CoreDeviceRouteBackpressureContext) -> String {
+        "pendingPackets=\(context.pendingPackets) queuedBytes=\(context.queuedBytes)\(context.ageDescription)"
+    }
+
+    private func ageMilliseconds(since date: Date?) -> Int? {
+        guard let date else { return nil }
+        return max(0, Int(Date().timeIntervalSince(date) * 1000))
+    }
+
+    private func clearQueuedPackets(keepingCapacity: Bool) {
+        packets.removeAll(keepingCapacity: keepingCapacity)
+        packetHeadIndex = 0
+        queuedBytes = 0
+    }
+
+    private func compactPacketStorageIfNeeded() {
+        guard packetHeadIndex > 64, packetHeadIndex * 2 >= packets.count else { return }
+        packets.removeFirst(packetHeadIndex)
+        packetHeadIndex = 0
+    }
+
+    private func log(messages: [String]) {
+        guard let eventSink, !messages.isEmpty else { return }
+        for message in messages {
+            eventSink(message)
+        }
     }
 }
 
@@ -668,7 +791,7 @@ final class CoreDeviceDirectTunnelRuntime {
             let session = CoreDeviceDirectTunnelSession(tunnel: tunnel, handshake: handshake, eventSink: eventSink)
             do {
                 eventSink?("connecting RSD through userspace TCP")
-                let client = try session.connectRemoteXPCClient(port: handshake.serverRSDPort)
+                let client = try session.connectRemoteXPCClient(port: handshake.serverRSDPort, routeLabel: "rsd")
                 do {
                     session.peerInfo = try client.receivePeerInfo()
                     client.close()
@@ -692,10 +815,20 @@ final class CoreDeviceDirectTunnelRuntime {
 protocol CoreDeviceLifecycleTunnelSession: AnyObject {
     var serverAddress: String { get }
     var peerInfo: RemoteXPCPeerInfo? { get }
-    func connectService(_ serviceName: String) throws -> DeviceStream
-    func connectRemoteXPCService(_ serviceName: String) throws -> RemoteXPCClient
+    func connectService(_ serviceName: String, routeLabel: String?) throws -> DeviceStream
+    func connectRemoteXPCService(_ serviceName: String, routeLabel: String?) throws -> RemoteXPCClient
     func close()
     func waitForClose(timeoutSeconds: Double) -> Bool
+}
+
+extension CoreDeviceLifecycleTunnelSession {
+    func connectService(_ serviceName: String) throws -> DeviceStream {
+        try connectService(serviceName, routeLabel: nil)
+    }
+
+    func connectRemoteXPCService(_ serviceName: String) throws -> RemoteXPCClient {
+        try connectRemoteXPCService(serviceName, routeLabel: nil)
+    }
 }
 
 final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
@@ -716,11 +849,14 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         self.packetRouter = CoreDeviceDirectTunnelPacketRouter(tunnel: tunnel, eventSink: eventSink)
     }
 
-    func connectRemoteXPCService(_ serviceName: String) throws -> RemoteXPCClient {
+    func connectRemoteXPCService(_ serviceName: String, routeLabel: String? = nil) throws -> RemoteXPCClient {
         guard let peerInfo else {
             throw CLIParseError.invalidValue("CoreDevice tunnel did not return RSD peer info")
         }
-        let stream = try connectServicePort(peerInfo.servicePort(serviceName))
+        let stream = try connectServicePort(
+            peerInfo.servicePort(serviceName),
+            routeLabel: routeLabel ?? defaultRouteLabel(forService: serviceName)
+        )
         do {
             let client = RemoteXPCClient(stream: stream, eventSink: eventSink)
             try client.completeClientHandshake(timeoutSeconds: IOSUseProtocol.XCConstants.remoteXPCDirectTunnelHandshakeTimeoutSeconds)
@@ -732,8 +868,8 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         }
     }
 
-    func connectRemoteXPCClient(port: Int) throws -> RemoteXPCClient {
-        let stream = try connectServicePort(port)
+    func connectRemoteXPCClient(port: Int, routeLabel: String? = nil) throws -> RemoteXPCClient {
+        let stream = try connectServicePort(port, routeLabel: routeLabel)
         do {
             let client = RemoteXPCClient(stream: stream, eventSink: eventSink)
             try client.completeClientHandshake(timeoutSeconds: IOSUseProtocol.XCConstants.remoteXPCDirectTunnelHandshakeTimeoutSeconds)
@@ -745,18 +881,22 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         }
     }
 
-    func connectService(_ serviceName: String) throws -> DeviceStream {
+    func connectService(_ serviceName: String, routeLabel: String? = nil) throws -> DeviceStream {
         guard let peerInfo else {
             throw CLIParseError.invalidValue("CoreDevice tunnel did not return RSD peer info")
         }
-        return try connectServicePort(peerInfo.servicePort(serviceName))
+        return try connectServicePort(
+            peerInfo.servicePort(serviceName),
+            routeLabel: routeLabel ?? defaultRouteLabel(forService: serviceName)
+        )
     }
 
-    private func connectServicePort(_ port: Int) throws -> CoreDeviceUserSpaceTCPConnection {
-        eventSink?("opening userspace TCP \(handshake.serverAddress):\(port)")
+    private func connectServicePort(_ port: Int, routeLabel: String? = nil) throws -> CoreDeviceUserSpaceTCPConnection {
         let localPort = allocateLocalPort()
+        let routeLabelDescription = routeLabel.map { " route=\($0)" } ?? ""
+        eventSink?("opening userspace TCP \(handshake.serverAddress):\(port) localPort=\(localPort)\(routeLabelDescription)")
         let stream = try CoreDeviceUserSpaceTCPConnection(
-            tunnel: packetRouter.openRoute(localPort: localPort),
+            tunnel: packetRouter.openRoute(localPort: localPort, label: routeLabel),
             localAddress: handshake.clientAddress,
             remoteAddress: handshake.serverAddress,
             localPort: localPort,
@@ -765,7 +905,7 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
         )
         do {
             try stream.connect()
-            eventSink?("userspace TCP connected to \(handshake.serverAddress):\(port)")
+            eventSink?("userspace TCP connected to \(handshake.serverAddress):\(port) localPort=\(localPort)\(routeLabelDescription)")
             return stream
         } catch {
             stream.close()
@@ -792,6 +932,19 @@ final class CoreDeviceDirectTunnelSession: CoreDeviceLifecycleTunnelSession {
             nextLocalPort += 1
         }
         return port
+    }
+
+    private func defaultRouteLabel(forService serviceName: String) -> String {
+        switch serviceName {
+        case IOSUseProtocol.XCConstants.coreDeviceAppServiceName:
+            return "coredevice-appservice"
+        case IOSUseProtocol.XCConstants.coreDeviceOpenStdIOServiceName:
+            return "coredevice-openstdio"
+        case IOSUseProtocol.XCConstants.xctestManagerDaemonRSDServiceName:
+            return "xctest"
+        default:
+            return serviceName
+        }
     }
 }
 

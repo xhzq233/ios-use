@@ -68,7 +68,7 @@ public extension IOSUseProtocol {
         public static let coreDeviceTunnelHandshakeTimeoutSeconds = 10.0
         public static let coreDeviceTunnelPacketReadTimeoutSeconds = 10.0
         public static let coreDeviceTunnelRouterReadTimeoutSeconds = 1.0
-        public static let coreDeviceRoutePacketQueueLimit = 128
+        public static let coreDeviceRoutePacketQueueLimit = 512
         public static let coreDeviceTunnelIPv6HeaderByteCount = 40
         public static let coreDeviceTunnelIPv6MaxPacketBytes = 256 * 1024
         public static let userspaceTCPLocalPortLowerBound: UInt16 = 49_152
