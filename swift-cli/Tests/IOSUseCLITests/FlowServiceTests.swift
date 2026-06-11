@@ -94,8 +94,9 @@ final class FlowServiceTests: XCTestCase {
           label: ChildDefault
         outputs: found
         steps:
-          - action: find
-            label: ${vars.label}
+          - action: dom
+            candidates:
+              - ${vars.label}
             outputs: found
         """)
         let parent = try fixture.write("parent.yaml", """
@@ -111,21 +112,24 @@ final class FlowServiceTests: XCTestCase {
             outputs: found
         """)
         let driver = FakeFlowDriver()
-        driver.findPayload = ForyFindPayload(matches: [ForyFindMatch(elemType: 9, label: "InjectedLabel", value: "value")])
+        driver.domPayload = ForyDomPayload(
+            app: "com.example",
+            elements: [ForyDomElement(traits: ["Button"], label: "InjectedLabel", value: "value")]
+        )
 
         let result = try FlowService.runForTesting(file: parent.path, externalVars: ["label": "InjectedLabel"], paths: fixture.paths, driver: driver)
 
         XCTAssertTrue(result.stdout.contains("Running flow: parent (1 steps)"))
         XCTAssertTrue(result.stdout.contains("Step 1/1: runFlow"))
         XCTAssertTrue(result.stdout.contains("Running flow: child (1 steps)"))
-        XCTAssertTrue(result.stdout.contains("Step 1/1: InjectedLabel"))
+        XCTAssertTrue(result.stdout.contains("Step 1/1: dom"))
         XCTAssertTrue(result.stdout.contains("Flow completed: 1 steps executed"))
-        XCTAssertEqual(driver.findLabels, ["InjectedLabel"])
+        XCTAssertEqual(driver.domCalls, 1)
         let found = try XCTUnwrap(result.outputs["found"] as? [String: Any])
         let first = try XCTUnwrap(found["firstMatch"] as? [String: Any])
         XCTAssertEqual(first["label"] as? String, "InjectedLabel")
         XCTAssertEqual(first["type"] as? String, "Button")
-        XCTAssertTrue(result.stdout.contains("Find \"InjectedLabel\""))
+        XCTAssertTrue(result.stdout.contains("App: com.example"))
     }
 
     func testReturnIfSupportsNullBooleanMatchAndNoOp() throws {
@@ -140,7 +144,7 @@ final class FlowServiceTests: XCTestCase {
           - action: returnIf
             value: ${page.firstMatch}
             is: null
-          - action: find
+          - action: tap
             label: ShouldNotRun
         """)
         let falseFlow = try fixture.write("false.yaml", """
@@ -151,7 +155,7 @@ final class FlowServiceTests: XCTestCase {
           - action: returnIf
             value: ${vars.shouldStop}
             is: false
-          - action: find
+          - action: tap
             label: ShouldNotRun
         """)
         let noOpFlow = try fixture.write("noop.yaml", """
@@ -162,7 +166,7 @@ final class FlowServiceTests: XCTestCase {
           - action: returnIf
             value: ${vars.shouldStop}
             is: true
-          - action: find
+          - action: tap
             label: ShouldRun
         """)
         let driver = FakeFlowDriver()
@@ -172,7 +176,7 @@ final class FlowServiceTests: XCTestCase {
         _ = try FlowService.runForTesting(file: falseFlow.path, paths: fixture.paths, driver: driver)
         _ = try FlowService.runForTesting(file: noOpFlow.path, paths: fixture.paths, driver: driver)
 
-        XCTAssertEqual(driver.findLabels, ["ShouldRun"])
+        XCTAssertEqual(driver.taps.map(\.target.label), ["ShouldRun"])
     }
 
     func testDomCandidatesRespectCandidatePriorityAndBindOutput() throws {
@@ -241,7 +245,7 @@ final class FlowServiceTests: XCTestCase {
         let flow = try fixture.write("missing-template.yaml", """
         name: missing-template
         steps:
-          - action: find
+          - action: waitFor
             label: ${vars.missing}
         """)
 
@@ -357,15 +361,11 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertEqual(press.cindex, 2)
     }
 
-    func testFlowPassesCindexForFindTapInputAndWaitFor() throws {
+    func testFlowPassesCindexForTapInputAndWaitFor() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("cindex.yaml", """
         name: cindex-flow
         steps:
-          - action: find
-            label: General
-            traits: Cell
-            cindex: -1
           - action: waitFor
             label: Ready
             traits: Text
@@ -386,9 +386,6 @@ final class FlowServiceTests: XCTestCase {
 
         _ = try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)
 
-        XCTAssertEqual(driver.finds.first?.label, "General")
-        XCTAssertEqual(driver.finds.first?.traits, "Cell")
-        XCTAssertEqual(driver.finds.first?.cindex, -1)
         XCTAssertEqual(driver.waits.first?.label, "Ready")
         XCTAssertEqual(driver.waits.first?.cindex, 0)
         XCTAssertEqual(driver.taps.first?.target.label, "Settings")
@@ -683,7 +680,7 @@ final class FlowServiceTests: XCTestCase {
         let flow = try fixture.write("unknown-key.yaml", """
         name: unknown-key
         steps:
-          - action: find
+          - action: waitFor
             label: General
           - action: tap
             label: General
@@ -694,7 +691,7 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)) { error in
             XCTAssertTrue(String(describing: error).contains("tap has unknown field \"tpyo\""))
         }
-        XCTAssertTrue(driver.finds.isEmpty)
+        XCTAssertTrue(driver.waits.isEmpty)
         XCTAssertTrue(driver.taps.isEmpty)
     }
 
@@ -703,7 +700,7 @@ final class FlowServiceTests: XCTestCase {
         let stringOffset = try fixture.write("string-offset.yaml", """
         name: string-offset
         steps:
-          - action: find
+          - action: waitFor
             label: General
           - action: tap
             label: General
@@ -718,7 +715,7 @@ final class FlowServiceTests: XCTestCase {
         let badOffsetDict = try fixture.write("bad-offset-dict.yaml", """
         name: bad-offset-dict
         steps:
-          - action: find
+          - action: waitFor
             label: General
           - action: tap
             label: General
@@ -729,7 +726,7 @@ final class FlowServiceTests: XCTestCase {
         let driver = FakeFlowDriver()
 
         _ = try FlowService.runForTesting(file: stringOffset.path, paths: fixture.paths, driver: driver)
-        XCTAssertEqual(driver.finds.map(\.label), ["General"])
+        XCTAssertEqual(driver.waits.map(\.label), ["General"])
         XCTAssertEqual(driver.taps.first?.offset?.x, -50)
         XCTAssertEqual(driver.taps.first?.offset?.y, -50)
         XCTAssertThrowsError(try FlowService.runForTesting(file: rawString.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
@@ -752,7 +749,7 @@ final class FlowServiceTests: XCTestCase {
         let parent = try fixture.write("parent.yaml", """
         name: parent
         steps:
-          - action: find
+          - action: waitFor
             label: General
           - action: runFlow
             file: child.yaml
@@ -762,7 +759,7 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertThrowsError(try FlowService.runForTesting(file: parent.path, paths: fixture.paths, driver: driver)) { error in
             XCTAssertTrue(String(describing: error).contains("waitFor has unknown field \"debgu\""))
         }
-        XCTAssertTrue(driver.finds.isEmpty)
+        XCTAssertTrue(driver.waits.isEmpty)
     }
 
     func testFlowRejectsInvalidSwipeDirAndFractionalAlertIndex() throws {
@@ -964,15 +961,15 @@ final class FlowServiceTests: XCTestCase {
         let flow = try fixture.write("failure-context.yaml", """
         name: failure-context
         steps:
-          - action: find
+          - action: waitFor
             label: Missing
         """)
         let driver = FakeFlowDriver()
-        driver.findError = CLIParseError.invalidValue("not found")
+        driver.waitError = CLIParseError.invalidValue("not found")
 
         XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: driver)) { error in
             let message = String(describing: error)
-            XCTAssertTrue(message.contains("Step 1 [action: find] failed"))
+            XCTAssertTrue(message.contains("Step 1 [action: waitFor] failed"))
             XCTAssertTrue(message.contains("not found"))
         }
     }
@@ -982,7 +979,7 @@ final class FlowServiceTests: XCTestCase {
         let flow = try fixture.write("text-log.yaml", """
         name: text-log
         steps:
-          - action: find
+          - action: waitFor
             comment: Open Settings
             label: General
         """)
@@ -1153,7 +1150,7 @@ final class FlowServiceTests: XCTestCase {
             "flows/proxy_clear_wifi_proxy.yaml",
             "flows/proxy_set_wifi_proxy.yaml",
             "flows/proxy_configca.yaml",
-            "flows/subflow_wait_and_find.yaml",
+            "flows/subflow_wait_and_match.yaml",
             "flows/test_flow.yaml",
             "flows/tmp_nslog_perf.yaml",
         ]
@@ -1241,11 +1238,8 @@ private final class FlowFixture {
 }
 
 private final class FakeFlowDriver: FlowDriver {
-    var findPayload = ForyFindPayload()
     var domPayload = ForyDomPayload()
-    var findError: Error?
-    var findLabels: [String] = []
-    var finds: [(label: String, traits: String?, cindex: Int32?)] = []
+    var waitError: Error?
     var waits: [(label: String, timeout: Double?, traits: String?, cindex: Int32?)] = []
     var inputs: [(tap: ForyTarget?, content: String, traits: String?, cindex: Int32?)] = []
     var activatedApps: [String] = []
@@ -1278,16 +1272,10 @@ private final class FakeFlowDriver: FlowDriver {
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload {
         commands.append("waitFor")
         waits.append((label, timeout, traits, cindex))
-        return ForyWaitForPayload(label: label)
-    }
-    func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload {
-        commands.append("find")
-        findLabels.append(label)
-        finds.append((label, traits, cindex))
-        if let findError {
-            throw findError
+        if let waitError {
+            throw waitError
         }
-        return findPayload
+        return ForyWaitForPayload(label: label)
     }
     func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
         commands.append("dom")

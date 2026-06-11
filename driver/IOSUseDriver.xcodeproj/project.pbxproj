@@ -24,7 +24,6 @@
 		2D30D40139893E650198A77E /* Proxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F60F451C114B1CD47F9A702 /* Proxy.swift */; };
 		2EBAF8649B90EB21D7A50ED1 /* DriverLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D2B90E83BBAE04E8408D34 /* DriverLog.swift */; };
 		3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35DDA5A7967522B295F5AEDB /* FindUtils.swift */; };
-		3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DDB97D9F6B1FB7C45A9A1 /* Find.swift */; };
 		40ABC56B17A1E242D6F7A6B0 /* Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE69CDBA7F414F7325EFBD0 /* Codec.swift */; };
 		431ACF5CC685EAF0D8ABA2A4 /* ElementTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4F773497F680794800B78E3 /* ElementTypes.swift */; };
 		47E166A3CA2BC186D06626FC /* SessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D9FEE6657397C0DDE6FC5D /* SessionTests.swift */; };
@@ -51,7 +50,6 @@
 		AB27A981461305BDE97F5D25 /* Alert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02295CAF657EE98E21F5AAF8 /* Alert.swift */; };
 		ADB402EBA304FD6F23411372 /* Screen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7314D09B4E47FB05DDAAF58 /* Screen.swift */; };
 		AE1FA7B53A46D8954639BE1A /* Fory in Frameworks */ = {isa = PBXBuildFile; productRef = 474ADCE2AB5D6821ABA4BBF2 /* Fory */; };
-		AF07412EEE37705E162B6743 /* Find.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577DDB97D9F6B1FB7C45A9A1 /* Find.swift */; };
 		B03079F36E017EE33C677A3F /* ServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A018728001BB6A88192EAFD /* ServerTests.swift */; };
 		B4E55F7E5EE6BCDF2396AC5C /* ScrollMechanicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FF2988F5EECDDB665288D5D /* ScrollMechanicsTests.swift */; };
 		BA991741F7A5B2A8CAD9DEF6 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AE99BB4D5AD93891B02F4CB /* Session.swift */; };
@@ -86,7 +84,6 @@
 		500F078718C032D73B2E9EDA /* AppRegistry.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppRegistry.h; sourceTree = "<group>"; };
 		52092FBCC6C8ED3D017C29A1 /* ForyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForyModels.swift; sourceTree = "<group>"; };
 		561DD9A295FA2CA856529D37 /* XCTestPrivate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = XCTestPrivate.h; sourceTree = "<group>"; };
-		577DDB97D9F6B1FB7C45A9A1 /* Find.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Find.swift; sourceTree = "<group>"; };
 		58EEFA264BFDD8A28B6DBCC2 /* Touch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Touch.swift; sourceTree = "<group>"; };
 		65984823BF87C6EFC8233743 /* ScrollMechanics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollMechanics.swift; sourceTree = "<group>"; };
 		688FE3DE301B8593639EAB9B /* Swipe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Swipe.swift; sourceTree = "<group>"; };
@@ -178,7 +175,6 @@
 				02295CAF657EE98E21F5AAF8 /* Alert.swift */,
 				71A0AC56CC6B8335709D4A71 /* App.swift */,
 				7C5B4B608C890EFE8841A177 /* Dom.swift */,
-				577DDB97D9F6B1FB7C45A9A1 /* Find.swift */,
 				7C773A75C11E5CE2360A4FB4 /* Input.swift */,
 				0F60F451C114B1CD47F9A702 /* Proxy.swift */,
 				9BD5EF928C9D1CB107908D28 /* Quiescence.swift */,
@@ -333,7 +329,6 @@
 				2617C12F7FE92652A2B7E897 /* DriverPerf.swift in Sources */,
 				22FF865268ADCC2D9D816FA3 /* DriverProtocol.swift in Sources */,
 				431ACF5CC685EAF0D8ABA2A4 /* ElementTypes.swift in Sources */,
-				3E0194AD01A24D3CAB4E86FB /* Find.swift in Sources */,
 				17A60E236F1D12E058214F25 /* FindUtils.swift in Sources */,
 				D4BEF7290917234083FDE8F7 /* ForyModels.swift in Sources */,
 				CA1EE85BEDCBCDEE9B2ABF5E /* Input.swift in Sources */,
@@ -371,7 +366,6 @@
 				2A2204C88E4EE9C80378FF0B /* DriverPerf.swift in Sources */,
 				BB6FC10754570033C9A83E5B /* DriverProtocol.swift in Sources */,
 				0F225B1B7E968A537D411062 /* ElementTypes.swift in Sources */,
-				AF07412EEE37705E162B6743 /* Find.swift in Sources */,
 				3919289C22296B68FB699CF1 /* FindUtils.swift in Sources */,
 				D285AAC468646BCF5AE7FD77 /* ForyModels.swift in Sources */,
 				9B2D14D04A8484C749189950 /* Input.swift in Sources */,

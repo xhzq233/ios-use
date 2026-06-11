@@ -253,7 +253,6 @@ const driverSideCommands = new Set([
   'activateApp',
   'dismissAlert',
   'dom',
-  'find',
   'home',
   'input',
   'longpress',
@@ -553,29 +552,6 @@ async function runCaseFileExists(id, filePath, args, setup) {
   }
 }
 
-async function runAutoLabelFindCase() {
-  const id = 'FIND-12';
-  if (!selected(id)) return recordSkip(id);
-  await resetSettingsHome();
-  const domOut = path.join(artifactDir, `${id}-dom.out`);
-  const domErr = path.join(artifactDir, `${id}-dom.err`);
-  const findOut = path.join(artifactDir, `${id}.out`);
-  const findErr = path.join(artifactDir, `${id}.err`);
-  console.log(`[sim-test] RUN ${id}: dom auto label then find generated label`);
-  const dom = runCliToFiles(['dom', '--fresh'], domOut, domErr);
-  const match = dom.stdout.match(/^\s+([^\s]+Appc\d*) \[Collection(?:,[^\]]*)?\](?: \(\d+,\d+,\d+,\d+\))?:/m);
-  if (dom.code !== 0 || !match) {
-    return recordFail(id, dom.stdout + dom.stderr, dom.code === 0 ? 'assertion' : 'command');
-  }
-  const autoLabel = match[1];
-  const found = runCliToFiles(['find', autoLabel, '--traits', 'Collection'], findOut, findErr);
-  if (found.code === 0 && found.stdout.includes(autoLabel)) {
-    recordPass(id);
-  } else {
-    recordFail(id, found.stdout + found.stderr, found.code === 0 ? 'assertion' : 'command');
-  }
-}
-
 async function runDomPresentationCase() {
   const id = 'DOM-12';
   if (!selected(id)) return recordSkip(id);
@@ -643,20 +619,6 @@ async function runDomPayloadShapeCase() {
     recordPass(id);
   } else {
     recordFail(id, `${res.stdout}${res.stderr}[sim-test] DOM-4 expected app header without Window header plus container and leaf rects\n`, res.code === 0 ? 'assertion' : 'command');
-  }
-}
-
-async function runFindExactPreferredCase(id) {
-  if (!selected(id)) return recordSkip(id);
-  await resetSettingsHome();
-  const out = path.join(artifactDir, `${id}.out`);
-  const err = path.join(artifactDir, `${id}.err`);
-  console.log(`[sim-test] RUN ${id}: find exact label should not return contains ambiguity`);
-  const res = runCliToFiles(['find', 'General'], out, err);
-  if (res.code === 0 && res.stdout.includes('Find "General":') && !/Find "General" \(\d+ matches\):/.test(res.stdout)) {
-    recordPass(id);
-  } else {
-    recordFail(id, res.stdout + res.stderr, res.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -1073,10 +1035,6 @@ steps:
     label: \${vars.targetLabel}
     traits: Button
     timeout: 3
-  - action: find
-    label: \${vars.targetLabel}
-    traits: Button
-    outputs: found
   - action: dom
     fresh: true
     candidates:
@@ -1100,9 +1058,9 @@ steps:
     label: \${vars.targetLabel}
     traits: Button
     timeout: 3
-  - action: find
-    label: \${vars.targetLabel}
-    traits: Button
+  - action: dom
+    candidates:
+      - \${vars.targetLabel}
     outputs: found
 `);
   writeFile(path.join(flowDir, 'parent.yaml'), `name: simulator-parent-flow
@@ -1113,10 +1071,11 @@ steps:
     vars:
       targetLabel: com.apple.settings.general
     outputs: found
-  - action: find
+  - action: waitFor
     label: \${found.firstMatch.label}
     traits: Button
-`);
+    timeout: 3
+	`);
   writeFile(path.join(flowDir, 'missing-output.yaml'), `name: simulator-missing-output-flow
 app: com.apple.Preferences
 steps:
@@ -1258,7 +1217,6 @@ function buildCaseContext() {
     recordSkip,
     resetSettingsHome,
     rootDir,
-    runAutoLabelFindCase,
     runCase,
     runCaseContains,
     runCaseContainsAndDomContains,
@@ -1277,7 +1235,6 @@ function buildCaseContext() {
     runDomPresentationCase,
     runDriverBridgeCase,
     runExternalToFiles,
-    runFindExactPreferredCase,
     runInputAndVerifyDom,
     runProxyDoctorCase,
     runProxyReadDoctorNoLockCase,

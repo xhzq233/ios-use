@@ -28,7 +28,7 @@ After `start`, screen-driving commands target the selected device. To switch dev
 
 ## Why ios-use
 
-- **Deeply optimized DOM tree**: the accessibility snapshot is restructured for agent consumption: flat, noise-free, with stable labels and semantic grouping. `dom` and `find` are cheap enough for tight observe-act loops.
+- **Deeply optimized DOM tree**: the accessibility snapshot is restructured for agent consumption: flat, noise-free, with stable labels and semantic grouping. `dom` and `waitFor` are cheap enough for tight observe-act loops.
 - **Target-based command semantics**: actions can target label/value text instead of raw coordinates. The driver resolves element frames internally, while coordinate and offset modes remain available for visual-only controls.
 - **Single binary, zero infrastructure**: no separate server process, no port forwarding, no extra bridge to maintain.
 - **Real device and Simulator support**: real devices connect through usbmuxd; Simulators connect over `localhost`.
@@ -124,7 +124,6 @@ When upgrading `ios-use`, run `ios-use devices` after installation. If a device 
 | `start` / `stop` | Select or release the current automation target. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID. |
 | `dom` | Print the current UI tree for inspection and planning. |
-| `find` | Locate elements by label/value text and optional traits. |
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
 | `input` | Type into the current keyboard focus, optionally tapping a target first. |
@@ -139,7 +138,7 @@ Typical manual loop:
 ```bash
 ios-use activateApp com.apple.Preferences
 ios-use dom
-ios-use find "蓝牙"
+ios-use waitFor --label "蓝牙" --timeout 5
 ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use input --tap "搜索" --content "蓝牙"
@@ -160,12 +159,11 @@ The benchmark below compares `ios-use` against the full `Appium Server -> WebDri
 | --- | ---: | ---: | ---: |
 | `start_session` | `1954.8 ms` | `10753.6 ms` | `81.8%` |
 | `dom_cached` | `20.7 ms` | `965.7 ms` | `97.9%` |
-| `find_hit` | `14.2 ms` | `285.3 ms` | `95.0%` |
 | `wait_for_present` | `14.0 ms` | `308.7 ms` | `95.5%` |
 | `tap_label` | `413.2 ms` | `1076.3 ms` | `61.6%` |
 | `scroll_to_visible` | `10799.2 ms` | `17050.9 ms` | `36.7%` |
 
-These are the operations that matter most to AI agents: start a session, refresh UI state, locate targets, wait for changes, and act. Full benchmark setup and the complete 17-case table are in [docs/benchmark.md](docs/benchmark.md).
+These are the operations that matter most to AI agents: start a session, refresh UI state, wait for changes, and act. Full benchmark setup and the complete table are in [docs/benchmark.md](docs/benchmark.md).
 
 ## Flow Example
 

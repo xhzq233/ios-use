@@ -12,7 +12,7 @@ enum CLIHelp {
           -V, --version    Show version
 
         Commands:
-          devices, config, start, stop, dom, find, waitFor, screenshot, tap, longpress, input, swipe
+          devices, config, start, stop, dom, waitFor, screenshot, tap, longpress, input, swipe
           activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, flow, proxy, oslog, nslog
 
         """
@@ -148,15 +148,6 @@ enum CLIHelp {
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
                     "--wait-quiescence   Wait until the UI is idle before returning a fresh DOM",
-                ]
-            )
-        case "find":
-            return driverHelp(
-                usage: "ios-use find <label> [--traits <traits>] [--cindex <index>]",
-                summary: "Find UI elements by label.",
-                options: [
-                    "--traits <traits>  Comma-separated trait filter",
-                    "--cindex <index>   Select the Nth cleaned child under a matched parent",
                 ]
             )
         case "waitFor":

@@ -42,8 +42,6 @@ public enum CLIParser {
             return .driver(try parseSwipe(&parser))
         case "dom":
             return .driver(try parseDom(&parser))
-        case "find":
-            return .driver(try parseFind(&parser))
         case "screenshot":
             return .driver(try parseScreenshot(&parser))
         case "waitFor":
@@ -420,20 +418,6 @@ public enum CLIParser {
             throw CLIParseError.invalidValue("\(option) must be at least \(IOSUseProtocol.minimumPostDomMilliseconds)ms")
         }
         return .afterMilliseconds(milliseconds)
-    }
-
-    private static func parseFind(_ parser: inout ArgumentParser) throws -> DriverAction {
-        let label = try parser.requiredPositional("label")
-        var traits: String?
-        var cindex: Int32?
-        while let arg = parser.consume() {
-            switch arg {
-            case "--traits": traits = try parser.value(for: arg)
-            case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            default: throw CLIParseError.unknownOption(arg)
-            }
-        }
-        return .find(label: label, traits: traits, cindex: cindex)
     }
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {

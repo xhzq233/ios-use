@@ -91,11 +91,6 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["find", "General", "--traits", "Cell,selected", "--cindex", "-1"]),
-            .driver(.find(label: "General", traits: "Cell,selected", cindex: -1))
-        )
-
-        XCTAssertEqual(
             try CLIParser.parse(["waitFor", "--label", "Ready", "--timeout", "1.5", "--traits", "Text", "--cindex", "0"]),
             .driver(.waitFor(label: "Ready", timeout: 1.5, traits: "Text", cindex: 0))
         )
@@ -334,8 +329,8 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
         }
 
-        XCTAssertThrowsError(try CLIParser.parse(["find", "General", "--verbose"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .unknownOption("--verbose"))
+        XCTAssertThrowsError(try CLIParser.parse(["find", "General"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownCommand("find"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["oslog", "--process", "A", "--pid", "1"])) { error in
@@ -400,10 +395,10 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parse(["waitFor", "--label", "General", "--timeout", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be non-negative"))
         }
-        XCTAssertThrowsError(try CLIParser.parse(["find", "General", "--cindex", "1.2"])) { error in
+        XCTAssertThrowsError(try CLIParser.parse(["waitFor", "--label", "General", "--cindex", "1.2"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid integer: \"1.2\""))
         }
-        XCTAssertThrowsError(try CLIParser.parse(["find", "General", "--cindex", "2147483648"])) { error in
+        XCTAssertThrowsError(try CLIParser.parse(["waitFor", "--label", "General", "--cindex", "2147483648"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--cindex is out of Int32 range"))
         }
         XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--index", "-1"])) { error in

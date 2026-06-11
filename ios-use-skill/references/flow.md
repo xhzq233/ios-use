@@ -38,7 +38,6 @@ steps:
 - `swipe`
 - `longpress`
 - `dom`
-- `find`
 - `screenshot`
 - `waitFor`
 - `activateApp`
@@ -109,12 +108,13 @@ ios-use flow flows/proxy_set_wifi_proxy.yaml --server 192.168.1.10 --port 9080
 
 - `outputs` 是 Flow 的结果输出
 - `outputs` 只写变量名，不做映射
-- 支持写入 `outputs` 的 action 只有 `find` / `dom` / `runFlow` / `swipe`
+- 支持写入 `outputs` 的 action 只有 `dom` / `runFlow` / `swipe`
 
 ```yaml
-- action: find
-  label: 蓝牙
-  outputs: matchedNode
+- action: dom
+  candidates:
+    - 蓝牙
+  outputs: pageDom
 ```
 
 ### 5.3 `runFlow`
@@ -129,19 +129,19 @@ ios-use flow flows/proxy_set_wifi_proxy.yaml --server 192.168.1.10 --port 9080
 
 ```yaml
 - action: runFlow
-  file: ./subflow_wait_and_find.yaml
+  file: ./subflow_wait_and_match.yaml
   vars:
     targetLabel: 蓝牙
   outputs: matchedNode
 
-- action: find
-  label: ${matchedNode.label}
+- action: tap
+  label: ${matchedNode.firstMatch.label}
 ```
 
 子 flow：
 
 ```yaml
-name: "subflow: wait-and-find"
+name: "subflow: wait-and-match"
 vars:
   targetLabel: 蓝牙
 outputs: matchedNode
@@ -150,8 +150,9 @@ steps:
     label: ${vars.targetLabel}
     timeout: 5
 
-  - action: find
-    label: ${vars.targetLabel}
+  - action: dom
+    candidates:
+      - ${vars.targetLabel}
     outputs: matchedNode
 ```
 
@@ -176,7 +177,7 @@ steps:
 适用场景：
 
 - 弹窗有多个可能按钮文案，但你只想命中第一优先候选
-- 当前 `find` 不支持一次传多个 label 时，用 `dom + candidates` 做 flow 层选择
+- 多个候选文案场景，用 `dom + candidates` 做 flow 层选择
 
 ### 5.5 `tap offset`
 
@@ -237,28 +238,7 @@ steps:
   timeout: 8
 ```
 
-### 6.2 `find`
-
-- 用于拿到结构化节点，常和 `outputs` 配合
-- 找不到或命中歧义时会直接失败
-- `traits` 支持逗号分隔多值，AND 语义（元素必须同时包含所有指定 trait）；type trait 使用 DOM 展示短名，如 `Text`、`Input`、`Scroll`、`Collection`
-- `cindex` 支持按 DOM 中显示的顺序选择父元素的直接子元素，允许负数，`-1` 表示最后一个子元素
-
-```yaml
-- action: find
-  label: 蓝牙
-  traits: Cell
-  cindex: -1
-  outputs: bluetoothNode
-```
-
-```yaml
-- action: find
-  label: 开关
-  traits: "Cell,Switch"
-```
-
-### 6.3 `dom`
+### 6.2 `dom`
 
 - 用于观察当前页面全量结构
 - 调试阶段建议多用
@@ -274,15 +254,15 @@ steps:
 ### 6.x 执行前校验
 
 - 未知字段会直接报错，不会静默忽略
-- `find.print`、`dom.print`、`dom.save`、`dom.name` 均不是合法字段
-- `outputs` 只支持 `find` / `dom` / `runFlow` / `swipe`
+- `dom.print`、`dom.save`、`dom.name` 均不是合法字段
+- `outputs` 只支持 `dom` / `runFlow` / `swipe`
 - 字段类型严格：`raw: "true"`、`delete: "1"`、`offset: {x: -50}` 都会失败
 - `offset` / `offsetRatio` 必须写成 CLI 同款字符串，例如 `offset: "-50,-50"` 或 `offsetRatio: "0.8,"`
 - `tap.dom` / `longpress.dom` / `input.dom` / `swipe.dom` 必须是非负整数，不支持 `dom: true`
 - `input.delete: 3` 会在 content 前发送 3 个删除字符；`input.enter: true` 会发送尾随换行符，可触发 Enter、Done、Go、发送等行为
 - 明确写死路径的 `runFlow.file` 子 flow 会和父 flow 一起提前检查
 
-### 6.4 `swipe`
+### 6.3 `swipe`
 
 - **目标导向（推荐）**：通过 `to` / `from` 自动循环滚动，直到目标进入可见区域
   - 目标不需要初始可见，但必须能被系统界面树发现（不确定时先 `dom` 确认）
@@ -309,7 +289,7 @@ steps:
   distance: 300
 ```
 
-### 6.5 `oslog`
+### 6.4 `oslog`
 
 - `timeout` 在窗口期内轮询匹配
 - `bundleId` 按 subsystem/category/process/消息内容过滤
@@ -325,7 +305,7 @@ steps:
   name: settings-oslog
 ```
 
-### 6.6 `sleep`
+### 6.5 `sleep`
 
 - 等待指定毫秒，用于页面切换后等 UI 渲染、弹窗延迟出现等时序场景
 - `ms` 可选，不传默认 `1000ms`（1 秒）
@@ -339,7 +319,7 @@ steps:
   ms: 500
 ```
 
-### 6.7 `nslog`
+### 6.6 `nslog`
 
 - 需要 `needNSLog: true`（自动开始采集 nslog 并等待 app 连接）
 - `pattern` 是正则匹配，`timeout` 轮询等待匹配出现
@@ -354,7 +334,7 @@ steps:
   clearAfterRead: true
 ```
 
-### 6.8 `open`
+### 6.7 `open`
 
 - 在设备上打开 URL，`url` 是必填字段
 - 未注册 scheme 时步骤失败并报错；是否真正打开目标页面应由后续 `dom` / `waitFor` 验证
@@ -364,7 +344,7 @@ steps:
   url: "https://example.com"
 ```
 
-### 6.9 `dismissAlert`
+### 6.8 `dismissAlert`
 
 - 关闭当前系统 Alert 弹窗
 - 不传 `index` 时默认点击最后一个按钮
@@ -377,7 +357,7 @@ steps:
   index: 0
 ```
 
-### 6.10 关闭弹窗
+### 6.9 关闭弹窗
 
 没有 `dismissPopup` action。关闭弹窗的标准做法：
 
@@ -412,7 +392,7 @@ steps:
 - 一上来就写大 flow，不先手动验证：最后很难知道是哪一步用法错了
 - 用坐标代替 label：页面稍微变化就脆
 - 公共步骤复制多份：后期改一个弹窗策略要改很多地方
-- 把多候选查找硬塞给 `find`：应该改用 `dom + candidates`
+- 多候选文案用多段分支硬写：应该改用 `dom + candidates`
 - 在绝对坐标 `label: "x,y"` 上继续叠加 `offset`：这是非法组合
 - 使用不存在的 action（`dismissPopup`、`assert`、`wait`）：只用第 3 节列出的 action
 

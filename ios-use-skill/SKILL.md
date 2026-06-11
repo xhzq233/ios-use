@@ -34,18 +34,18 @@ ios-use start
 
 ## 3. 目标设备与命令边界
 
-- `start` 会启动第一个 USB 真机的 driver；真机要求 iOS 17+。多台真机时，用 `start <udid>` 明确指定。
+- `start` 会启动第一个 USB 真机的 driver；多台真机时，用 `start <udid>` 明确指定。
 - 启动后，该设备会成为后续 driver-backed 命令的目标。
 - 切换设备时先 `ios-use stop`，再 `ios-use start <new-udid>`。
-- `dom` / `find` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
+- `dom` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
 - `devices` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `open` / `activateApp` / `terminateApp` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
 - `proxy start --server` / `proxy stop --server` 只管理本机 mitmdump，不要求当前设备 driver。
 - 真机 `devices` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI。
 
 ## 4. 操作原则
 
-- 一切先以 DOM 为准。每次切页面、滚动后、找不到元素时，先跑 `ios-use dom` 或 `ios-use find`，确认页面状态再继续。
-- 推荐操作顺序：先观察当前页面，再定位目标，接着执行动作，最后按需要确认结果。常见链路是 `dom` / `find` / `waitFor` -> `tap` / `swipe` / `input` -> `--dom` 或再次 `dom`。
+- 一切先以 DOM 为准。每次切页面、滚动后、找不到元素时，先跑 `ios-use dom`，确认页面状态再继续。
+- 推荐操作顺序：先观察当前页面，再定位目标，接着执行动作，最后按需要确认结果。常见链路是 `dom` / `waitFor` -> `tap` / `swipe` / `input` -> `--dom` 或再次 `dom`。
 - 可以同时发起不互相依赖的只读观察命令；有页面状态依赖的命令仍建议按顺序执行，尤其是 `tap` / `swipe` / `input` 这类会改变界面的动作。
 - DOM 无法描述视觉内容，或用户明确要求视觉验收时，才用 `screenshot`。
 
@@ -65,7 +65,6 @@ ios-use dom
 ios-use dom
 ios-use dom --raw
 ios-use dom --wait-quiescence
-ios-use find "蓝牙"
 ios-use waitFor --label "蓝牙" --timeout 8
 ```
 
@@ -100,9 +99,6 @@ ios-use dismissAlert
 ios-use dismissAlert --index 0
 ```
 
-`activateApp` / `terminateApp` 是 host-side 命令，不要求 driver 已启动；省略 `--udid` 时使用当前 `driver.lock` 推断目标。
-`open <url>` 是 host-side 命令。省略 `--udid` 时使用当前 `driver.lock`，显式 `--udid` 优先；无 App 注册 scheme 时会报 `URL scheme "xxx" not registered on device`。
-
 ### 5.5 管理真机 App
 
 ```bash
@@ -117,7 +113,7 @@ ios-use uninstall com.example.app
 ios-use uninstall com.example.app --udid <udid>
 ```
 
-这些命令直接走真机设备服务，不需要先 `start`，但省略 `--udid` 时需要 active 真机 lock。`ddi-mount` 用于挂载 iOS 17+ Developer Disk Image；省略 `--path` 时扫描本机 CoreDevice DDI 缓存，不调用 `devicectl`、不下载或内置 DDI。`install` 只接受已签名 `.ipa` 或 `.app`，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
+这些命令直接走真机设备服务。`ddi-mount` 用于挂载 iOS 17+ Developer Disk Image；省略 `--path` 时扫描本机 CoreDevice DDI 缓存，不调用 `devicectl`、不下载或内置 DDI。`install` 只接受已签名 `.ipa` 或 `.app`，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
 
 ## 6. 常用命令速查
 
@@ -125,15 +121,13 @@ ios-use uninstall com.example.app --udid <udid>
 
 - `ios-use dom` 输出 clean tree。
 - `ios-use dom --raw` 输出原始界面树文本，排查 DOM 异常时使用。
-- `ios-use dom --fresh` 忽略缓存重新获取。
 - `ios-use dom --wait-quiescence` 等待界面平静后返回 fresh clean DOM。
 - `dom --raw` 只能单独使用，不能和 `--fresh` / `--wait-quiescence` 组合。
 - DOM 行中的 `label=value [traits] (x,y,w,h)` 表示 label 和 value 都可作为 target 查询，`[traits]` / 坐标是元信息，不要把整行或 `label=value` 拼成 target。
-- 展示层追加的 `vertical` / `horizontal` 只用于阅读，不要当成 `find/tap/waitFor/swipe --traits` 的可过滤 trait。
+- 展示层追加的 `vertical` / `horizontal` 只用于阅读，不要当成 `tap/waitFor/swipe --traits` 的可过滤 trait。
 
-### 6.2 `find` / `waitFor`
+### 6.2 `waitFor`
 
-- `ios-use find <label>` 查找元素。完整 label 优先 exact；无 exact 时回退 contains。
 - `--traits <traits>` 按 DOM 展示出来的 traits 过滤，逗号分隔多值，AND 语义。
 - `--cindex <int>` 先找父元素再选 DOM 中显示的第 N 个直接子元素，`-1` 表示最后一个。
 - `waitFor` 用 `--label <text> --timeout <seconds>` 轮询等待元素出现。
@@ -184,9 +178,8 @@ ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 
 - Flow 目标就是最近一次 `ios-use start` 的设备，不支持 `--udid`。
 - 写 flow 前先用 CLI 手动跑通每一步，再组装成 YAML。
-- Flow 执行前会先检查整份 YAML；未知字段、明显类型错误和可提前发现的 subflow 错误会在任何设备动作前失败。
 - Flow 中坐标、offset、offsetRatio 都写成和 CLI 参数一致的字符串。
-- `needNSLog: true` 是 Flow 内使用 `nslog` action 的入口；不要使用旧字段 `needLog` / `nslog_start`。
+- `needNSLog: true` 是 Flow 内使用 `nslog` action 的入口。
 
 ## 8. Proxy 入口
 

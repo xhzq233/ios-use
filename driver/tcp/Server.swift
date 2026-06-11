@@ -258,9 +258,6 @@ import Foundation
         case .dom(let args):
             return try DomCommands.dom(args)
 
-        case .find(let args):
-            return try FindCommands.find(args)
-
         case .tap(let args):
             return try TouchCommands.tap(args)
 
@@ -307,9 +304,6 @@ private struct CommandInvocation {
         case .dom:
             self.arguments = .dom(payload.count > 0 ? try codec.deserialize(payload, as: ForyDomArgs.self) : ForyDomArgs())
 
-        case .find:
-            self.arguments = .find(try codec.deserialize(payload, as: ForyFindArgs.self))
-
         case .tap:
             self.arguments = .tap(try codec.deserialize(payload, as: ForyTapArgs.self))
 
@@ -337,7 +331,6 @@ private struct CommandInvocation {
         case proxyCAPush(ForyProxyCAPushArgs)
         case screenshot
         case dom(ForyDomArgs)
-        case find(ForyFindArgs)
         case tap(ForyTapArgs)
         case longPress(ForyLongPressArgs)
         case input(ForyInputArgs)

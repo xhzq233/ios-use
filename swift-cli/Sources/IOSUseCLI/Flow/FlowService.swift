@@ -230,7 +230,7 @@ private struct FlowRunner {
         try throwIfInterrupted()
         let rawStep = compiled.raw
         let action = compiled.action
-        if !["find", "dom", "runFlow", "swipe"].contains(action), !compiled.outputs.isEmpty {
+        if !["dom", "runFlow", "swipe"].contains(action), !compiled.outputs.isEmpty {
             throw CLIParseError.invalidValue("\(action) does not support outputs")
         }
         switch action {
@@ -375,8 +375,6 @@ private struct FlowRunner {
         guard let name = outputs.first else { return }
         let value: Any?
         switch (action, payload) {
-        case ("find", .find(let payload)):
-            value = findOutput(payload)
         case ("dom", .dom(let payload)):
             let candidates = try optionalStringList(resolvedStep["candidates"], field: "dom.candidates")
             value = domOutput(payload, candidates: candidates)
@@ -448,7 +446,6 @@ private let flowStepGlobalKeys: Set<String> = ["action", "comment"]
 
 private let flowStepAllowedKeys: [String: Set<String>] = [
     "waitFor": ["label", "timeout", "traits", "cindex"],
-    "find": ["label", "traits", "cindex", "outputs"],
     "dom": ["raw", "fresh", "candidates", "outputs"],
     "tap": ["label", "offset", "offsetRatio", "traits", "cindex", "dom"],
     "longpress": ["label", "duration", "traits", "cindex", "dom"],
@@ -467,7 +464,7 @@ private let flowStepAllowedKeys: [String: Set<String>] = [
     "sleep": ["ms"],
 ]
 
-private let flowOutputActions: Set<String> = ["find", "dom", "runFlow", "swipe"]
+private let flowOutputActions: Set<String> = ["dom", "runFlow", "swipe"]
 
 enum FlowLowering {
     static func lowerCLIBackedStep(_ step: [String: Any], flowApp: String? = nil, hostUdid: String? = nil) throws -> [String] {
@@ -478,13 +475,6 @@ enum FlowLowering {
             args += try optionalNumberArg("--timeout", step["timeout"], field: "waitFor.timeout")
             args += try optionalStringArg("--traits", step["traits"], field: "waitFor.traits")
             args += try optionalIntArg("--cindex", step["cindex"], field: "waitFor.cindex", allowNegative: true)
-            return args
-
-        case "find":
-            var args = ["find"]
-            args += try targetArgs(step["label"], field: "find.label")
-            args += try optionalStringArg("--traits", step["traits"], field: "find.traits")
-            args += try optionalIntArg("--cindex", step["cindex"], field: "find.cindex", allowNegative: true)
             return args
 
         case "dom":
@@ -599,10 +589,6 @@ enum FlowLowering {
             try validateNumberLike(step["timeout"], field: "waitFor.timeout")
             try validateStringLike(step["traits"], field: "waitFor.traits")
             try validateIntLike(step["cindex"], field: "waitFor.cindex", allowNegative: true)
-        case "find":
-            try validateStringLike(step["label"], field: "find.label", required: true)
-            try validateStringLike(step["traits"], field: "find.traits")
-            try validateIntLike(step["cindex"], field: "find.cindex", allowNegative: true)
         case "dom":
             try validateBoolLike(step["raw"], field: "dom.raw")
             try validateBoolLike(step["fresh"], field: "dom.fresh")
@@ -871,8 +857,6 @@ private func compileFlowStep(_ step: [String: Any], index: Int, baseFile: String
         try FlowLowering.validateStaticTypes(step)
         let outputs: [String]
         switch action {
-        case "find":
-            outputs = try outputNames(step["outputs"], fieldName: "find outputs", allowMultiple: false)
         case "dom":
             outputs = try outputNames(step["outputs"], fieldName: "dom outputs", allowMultiple: false)
         case "swipe":
@@ -1119,14 +1103,6 @@ private func outputNames(_ value: Any?, fieldName: String, allowMultiple: Bool) 
     return names
 }
 
-private func findOutput(_ payload: ForyFindPayload) -> [String: Any] {
-    let matches = payload.matches.map(matchObject)
-    return [
-        "matches": matches,
-        "firstMatch": matches.first ?? NSNull(),
-    ]
-}
-
 private func swipeOutput(_ payload: ForySwipePayload) -> [String: Any] {
     var out: [String: Any] = [
         "scrolls": payload.scrolls,
@@ -1204,24 +1180,6 @@ private func domCandidateObject(_ element: ForyDomElement) -> [String: Any] {
     }
     if !element.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         out["value"] = element.value
-    }
-    return out
-}
-
-private func matchObject(_ match: ForyFindMatch) -> [String: Any] {
-    var out: [String: Any] = [
-        "type": DriverOutput.elementTypeName(match.elemType),
-        "label": match.label,
-        "traits": match.traits,
-    ]
-    if !match.value.isEmpty {
-        out["value"] = match.value
-    }
-    if let rect = match.rect {
-        out["rect"] = [rect.x, rect.y, rect.w, rect.h]
-    }
-    if !match.ancestors.isEmpty {
-        out["ancestors"] = match.ancestors
     }
     return out
 }
@@ -1428,10 +1386,6 @@ private final class RecoveringFlowDriver: FlowDriver {
 
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload {
         try run { try $0.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex) }
-    }
-
-    func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload {
-        try run { try $0.find(label: label, traits: traits, cindex: cindex) }
     }
 
     func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {

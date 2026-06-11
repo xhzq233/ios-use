@@ -39,7 +39,7 @@ Run the full UI replay only when needed:
 
 ```bash
 bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa
-bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case FIND-1B
+bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case WF-1
 ```
 
 GitHub CI uses `.github/workflows/ci.yml` for the default gate and runs script syntax, Swift CLI tests/smoke checks, and driver unit tests in parallel jobs. The full UI replay lives in `.github/workflows/simulator.yml` and is manual-only.

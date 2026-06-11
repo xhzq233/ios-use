@@ -132,19 +132,6 @@ public struct ForyScreenshotPayload {
 }
 
 @ForyStruct
-public struct ForyFindPayload {
-    public var matches: [ForyFindMatch] = []
-    public var hint: String = ""
-    public var suggestions: [String] = []
-
-    public init(matches: [ForyFindMatch] = [], hint: String = "", suggestions: [String] = []) {
-        self.matches = matches
-        self.hint = hint
-        self.suggestions = suggestions
-    }
-}
-
-@ForyStruct
 public struct ForyElementSummary {
     public var elemType: Int32 = 0
     public var label: String = ""
@@ -272,15 +259,6 @@ public struct ForyDomArgs {
 }
 
 @ForyStruct
-public struct ForyFindArgs {
-    public var target: ForyTarget = ForyTarget()
-
-    public init(target: ForyTarget = ForyTarget()) {
-        self.target = target
-    }
-}
-
-@ForyStruct
 public struct ForyWaitForArgs {
     public var target: ForyTarget = ForyTarget()
     public var timeout: Double = 0
@@ -372,7 +350,6 @@ public enum ForyRegistry {
         try! fory.register(ForyDomElement.self, name: "ForyDomElement")
         try! fory.register(ForyDomPayload.self, name: "ForyDomPayload")
         try! fory.register(ForyScreenshotPayload.self, name: "ForyScreenshotPayload")
-        try! fory.register(ForyFindPayload.self, name: "ForyFindPayload")
         try! fory.register(ForyElementSummary.self, name: "ForyElementSummary")
         try! fory.register(ForyWaitForPayload.self, name: "ForyWaitForPayload")
         try! fory.register(ForyElementPayload.self, name: "ForyElementPayload")
@@ -383,7 +360,6 @@ public enum ForyRegistry {
         try! fory.register(ForyActivateAppArgs.self, name: "ForyActivateAppArgs")
         try! fory.register(ForyTerminateAppArgs.self, name: "ForyTerminateAppArgs")
         try! fory.register(ForyDomArgs.self, name: "ForyDomArgs")
-        try! fory.register(ForyFindArgs.self, name: "ForyFindArgs")
         try! fory.register(ForyWaitForArgs.self, name: "ForyWaitForArgs")
         try! fory.register(ForyInputArgs.self, name: "ForyInputArgs")
         try! fory.register(ForyTapArgs.self, name: "ForyTapArgs")

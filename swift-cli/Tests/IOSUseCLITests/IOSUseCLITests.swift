@@ -93,7 +93,6 @@ final class IOSUseCLITests: XCTestCase {
             (["start", "--help"], "Usage: ios-use start"),
             (["stop", "--help"], "Usage: ios-use stop"),
             (["dom", "--help"], "Usage: ios-use dom"),
-            (["find", "--help"], "Usage: ios-use find"),
             (["waitFor", "--help"], "Usage: ios-use waitFor"),
             (["screenshot", "--help"], "Usage: ios-use screenshot"),
             (["tap", "--help"], "Usage: ios-use tap"),
@@ -502,11 +501,11 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
-    func testMissingRequiredArgumentFailsBeforeExecution() {
-        let result = IOSUseCLI().run(arguments: ["find"])
+    func testRemovedFindCommandFailsBeforeExecution() {
+        let result = IOSUseCLI().run(arguments: ["find", "General"])
 
         XCTAssertEqual(result.exitCode, 64)
-        XCTAssertTrue(result.stderr.contains("missing required argument 'label'"))
+        XCTAssertTrue(result.stderr.contains("unknown command 'find'"))
     }
 
     func testCLILogTimestampIncludesMilliseconds() {
@@ -1475,18 +1474,13 @@ final class IOSUseCLITests: XCTestCase {
         let commands = Set(DriverCommand.allCases.map(\.rawValue))
 
         XCTAssertTrue(commands.contains("dom"))
-        XCTAssertTrue(commands.contains("find"))
         XCTAssertTrue(commands.contains("waitFor"))
         XCTAssertTrue(commands.contains("dismissAlert"))
         XCTAssertFalse(commands.contains("health"))
-        XCTAssertEqual(commands.count, 13)
+        XCTAssertEqual(commands.count, 12)
     }
 
     func testDriverCommandMetadataBindsArgsAndPayloadTypes() {
-        XCTAssertEqual(DriverCommand.find.metadata.argsTypeName, "ForyFindArgs")
-        XCTAssertEqual(DriverCommand.find.metadata.payloadTypeName, "ForyFindPayload")
-        XCTAssertEqual(FindCommand.command, .find)
-
         XCTAssertEqual(DriverCommand.tap.metadata.argsTypeName, "ForyTapArgs")
         XCTAssertEqual(DriverCommand.tap.metadata.payloadTypeName, "ForyElementPayload")
         XCTAssertTrue(DriverCommand.tap.metadata.mutatesUI)
@@ -1689,10 +1683,6 @@ private final class FakeDriverCommandClient: DriverCommandClient {
 
     func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload {
         try domHandler(raw, fresh, waitQuiescence)
-    }
-
-    func find(label: String, traits: String?, cindex: Int32?) throws -> ForyFindPayload {
-        throw CLIParseError.invalidValue("unexpected find")
     }
 
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload {

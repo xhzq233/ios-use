@@ -203,7 +203,6 @@ public enum DriverAction: Equatable, Sendable {
     case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool)
-    case find(label: String, traits: String?, cindex: Int32?)
     case screenshot(name: String?)
     case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?)
     case activateApp(bundleId: String)
@@ -218,7 +217,6 @@ public enum DriverAction: Equatable, Sendable {
         case .input: return "input"
         case .swipe: return "swipe"
         case .dom: return "dom"
-        case .find: return "find"
         case .screenshot: return "screenshot"
         case .waitFor: return "waitFor"
         case .activateApp: return "activateApp"
