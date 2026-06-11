@@ -38,9 +38,6 @@ The two benches run separately and write separate JSON reports. Compare them by 
 | --- | ---: | ---: | ---: |
 | `start_session` | 1954.8 | 10753.6 | 81.8% |
 | `dom_cached` | 20.7 | 965.7 | 97.9% |
-| `find_hit` | 14.2 | 285.3 | 95.0% |
-| `find_miss` | 17.7 | 204.9 | 91.4% |
-| `find_traits` | 15.8 | 299.7 | 94.7% |
 | `wait_for_present` | 14.0 | 308.7 | 95.5% |
 | `wait_for_timeout_2000ms` | 2270.2 | 2365.2 | 4.0% |
 | `screenshot` | 81.2 | 179.0 | 54.6% |
@@ -56,11 +53,11 @@ The two benches run separately and write separate JSON reports. Compare them by 
 
 ## Case Notes
 
-- `dom_cached`, `find_hit`, and `wait_for_present` represent the tight AI loop: observe the UI, locate a target, and wait for visible state.
+- `dom_cached` and `wait_for_present` represent the tight AI loop: observe the UI and wait for visible state.
 - `wait_for_timeout_2000ms` is intentionally dominated by a 2-second timeout on both sides.
 - `tap_label` and `tap_offset_ratio` are semantic actions: ios-use performs label lookup plus action in one CLI command; the WDA side performs the equivalent find/frame/action sequence.
 - `scroll_to_visible` is an end-to-end workflow case, not a raw gesture primitive.
 - `activate_app` and `terminate_app` are measured as app lifecycle commands after prepare puts the app in the expected state.
 - `terminate_app` is roughly parity in this run, with WDA slightly faster.
 
-Numbers vary by device, iOS version, app state, and whether the target page is already warm. The stable shape is that read-heavy agent operations and semantic actions avoid most of the Appium/WDA HTTP stack overhead.
+The former `find_*` benchmark cases were removed with the public `find` command; use `waitFor` for read-side existence checks and action commands for semantic targeting. Numbers vary by device, iOS version, app state, and whether the target page is already warm. The stable shape is that read-heavy agent operations and semantic actions avoid most of the Appium/WDA HTTP stack overhead.

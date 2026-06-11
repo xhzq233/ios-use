@@ -28,8 +28,6 @@ const DEFAULT_TIMEOUT_MS = 60000;
 const DEVICECTL_TIMEOUT_MS = Number(process.env.IOS_USE_BENCHMARK_DEVICECTL_TIMEOUT_MS || '30000');
 const WDA_SCREENSHOT_QUALITY = 1;
 const MISSING_LABEL = '__ios_use_benchmark_missing_label__';
-const FIND_TRAITS = 'StaticText';
-const WDA_FIND_TRAITS_TYPE = 'XCUIElementTypeStaticText';
 const WAIT_TIMEOUT_SECONDS = '2';
 const WAIT_TIMEOUT_MS = 2000;
 const DRIVER_STOP_SETTLE_MS = Number(process.env.IOS_USE_BENCHMARK_DRIVER_STOP_SETTLE_MS || '30000');
@@ -37,16 +35,15 @@ const DRIVER_STOP_SETTLE_MS = Number(process.env.IOS_USE_BENCHMARK_DRIVER_STOP_S
 const BENCHES = new Set(['ios-use', 'wda']);
 const PRESETS = {
   full: null,
-  read: ['dom_cached', 'find_hit', 'find_miss', 'find_traits', 'wait_for_present', 'wait_for_timeout_2000ms', 'screenshot'],
+  read: ['dom_cached', 'wait_for_present', 'wait_for_timeout_2000ms', 'screenshot'],
   lifecycle: ['start_session', 'activate_app', 'terminate_app'],
   mutate: ['tap_coord', 'tap_label', 'tap_offset_ratio', 'longpress_coord', 'input', 'scroll_distance_semantic', 'scroll_to_visible'],
   app: ['activate_app', 'terminate_app'],
-  smoke: ['start_session', 'dom_cached', 'find_hit', 'screenshot', 'tap_coord', 'activate_app'],
+  smoke: ['start_session', 'dom_cached', 'wait_for_present', 'screenshot', 'tap_coord', 'activate_app'],
 };
 
 const BASELINE_CASE_ALIASES = new Map([
   ['dom_vs_source', 'dom_cached'],
-  ['find', 'find_hit'],
   ['wait_for', 'wait_for_present'],
   ['swipe_distance', 'scroll_distance_semantic'],
 ]);
@@ -330,7 +327,7 @@ Common options:
 
 App/UI options:
   --bundle-id <id>           App under test. Default: ${DEFAULT_APP_BUNDLE}.
-  --label <text>             Anchor label for find/waitFor. Default: ${DEFAULT_LABEL}.
+  --label <text>             Anchor label for waitFor/tap/input. Default: ${DEFAULT_LABEL}.
   --search-label <text>      SearchField label for input case. Default: 搜索.
   --scroll-to-label <text>   Target label for scroll_to_visible. Default: 开发者.
   --input-bundle-id <id>     App for input case. Default: ${DEFAULT_INPUT_BUNDLE}.
@@ -427,7 +424,6 @@ const driverSideCommands = new Set([
   'activateApp',
   'dismissAlert',
   'dom',
-  'find',
   'home',
   'input',
   'longpress',
@@ -1159,57 +1155,6 @@ function buildCases(ctx) {
       notes: 'Warm Settings root state; this is the default user-facing DOM path, not a cold snapshot profiling case.',
       iosRun: async () => { cli(['dom', '--udid', ctx.udid]); },
       wdaRun: async () => { await ctx.appium.source(); },
-    },
-    {
-      id: 'find_hit',
-      group: 'read',
-      kind: 'read',
-      prepareState: 'settingsRootWarm',
-      stateReusable: true,
-      invalidatesState: false,
-      runs: ctx.iterations,
-      mapping: '`ios-use find <label>` / WDA `POST /element`',
-      notes: 'Positive element lookup on the configured anchor label.',
-      iosRun: async () => { cli(['find', ctx.label, '--udid', ctx.udid]); },
-      wdaRun: async () => { await ctx.appium.findElement(ctx.label); },
-    },
-    {
-      id: 'find_miss',
-      group: 'read',
-      kind: 'read',
-      prepareState: 'settingsRootNoMatch',
-      stateReusable: true,
-      invalidatesState: false,
-      runs: ctx.iterations,
-      mapping: '`ios-use find <missing-label>` / WDA `POST /element` expected miss',
-      notes: 'Negative lookup path. The not-found error is the expected success condition.',
-      iosRun: async () => {
-        const result = cli(['find', MISSING_LABEL, '--udid', ctx.udid], { allowFailure: true });
-        if (result.exitCode === 0) {
-          throw new Error(`missing label unexpectedly found: ${MISSING_LABEL}`);
-        }
-      },
-      wdaRun: async () => {
-        try {
-          await ctx.appium.findElement(MISSING_LABEL);
-        } catch {
-          return;
-        }
-        throw new Error(`missing label unexpectedly found: ${MISSING_LABEL}`);
-      },
-    },
-    {
-      id: 'find_traits',
-      group: 'read',
-      kind: 'read',
-      prepareState: 'settingsRootWarm',
-      stateReusable: true,
-      invalidatesState: false,
-      runs: ctx.iterations,
-      mapping: '`ios-use find <label> --traits StaticText` / WDA predicate lookup',
-      notes: 'Positive lookup with type/trait filtering.',
-      iosRun: async () => { cli(['find', ctx.label, '--traits', FIND_TRAITS, '--udid', ctx.udid]); },
-      wdaRun: async () => { await ctx.appium.findElementByPredicate(`label == "${ctx.label}" AND type == "${WDA_FIND_TRAITS_TYPE}"`); },
     },
     {
       id: 'wait_for_present',

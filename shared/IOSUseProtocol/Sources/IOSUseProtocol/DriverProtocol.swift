@@ -87,7 +87,7 @@ public enum IOSUseProtocol {
     public static let snapshotCacheTTLSeconds = 1.0
     /// Same-rect merge tolerance for clean tree rule 4.
     public static let rectApproxEqualEpsilon = 0.5
-    /// Maximum fuzzy suggestions returned by find.
+    /// Maximum fuzzy suggestions returned by rawFind diagnostics.
     public static let fuzzyMaxSuggestionCount = 3
     /// Query length at or below this value disables fuzzy suggestions.
     public static let fuzzyNoSuggestionMaxLength = 1
@@ -159,7 +159,6 @@ public enum DriverCommand: String, CaseIterable, Sendable {
     case proxyCAPush
     case screenshot
     case dom
-    case find
     case tap
     case longPress
     case input
@@ -205,12 +204,6 @@ public enum DomCommand: DriverCommandBinding {
     public typealias Args = ForyDomArgs
     public typealias Payload = ForyDomPayload
     public static let command = DriverCommand.dom
-}
-
-public enum FindCommand: DriverCommandBinding {
-    public typealias Args = ForyFindArgs
-    public typealias Payload = ForyFindPayload
-    public static let command = DriverCommand.find
 }
 
 public enum WaitForCommand: DriverCommandBinding {
@@ -270,8 +263,6 @@ public extension DriverCommand {
             DriverCommandMetadata(command: self, argsTypeName: nil, payloadTypeName: String(describing: ForyScreenshotPayload.self), mutatesUI: false)
         case .dom:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyDomArgs.self), payloadTypeName: String(describing: ForyDomPayload.self), mutatesUI: false)
-        case .find:
-            DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyFindArgs.self), payloadTypeName: String(describing: ForyFindPayload.self), mutatesUI: false)
         case .tap:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyTapArgs.self), payloadTypeName: String(describing: ForyElementPayload.self), mutatesUI: true)
         case .longPress:

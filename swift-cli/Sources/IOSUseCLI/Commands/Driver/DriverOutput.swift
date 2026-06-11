@@ -141,35 +141,6 @@ public enum DriverOutput {
         return rect.h >= rect.w ? "vertical" : "horizontal"
     }
 
-    public static func formatFind(label: String, payload: ForyFindPayload) -> String {
-        if payload.matches.isEmpty {
-            var lines: [String] = ["", "Find \"\(label)\" (0 matches, did you mean?):"]
-            if !payload.suggestions.isEmpty { lines.append("    suggestions: \(payload.suggestions.joined(separator: ", "))") }
-            if !payload.hint.isEmpty { lines.append("  hint: \(payload.hint)") }
-            return lines.joined(separator: "\n") + "\n"
-        }
-
-        var lines: [String]
-        if payload.matches.count == 1 {
-            lines = ["", "Find \"\(label)\":"]
-            lines.append("    \(formatFindMatch(payload.matches[0]))")
-        } else {
-            lines = ["", "Find \"\(label)\" (\(payload.matches.count) matches):"]
-            for (index, match) in payload.matches.enumerated() {
-                lines.append("    \(index + 1). \(formatFindMatch(match))")
-            }
-        }
-        if !payload.hint.isEmpty { lines.append("  hint: \(payload.hint)") }
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    private static func formatFindMatch(_ match: ForyFindMatch) -> String {
-        let ancestors = match.ancestors.joined(separator: " > ")
-        let rect = match.rect.map { "\($0.x),\($0.y),\($0.w),\($0.h)" } ?? ""
-        let title = match.value.isEmpty ? match.label : "\(match.label)=\(match.value)"
-        return "[\(ancestors)] \(elementTypeName(match.elemType)) \"\(title)\" (\(rect))"
-    }
-
     public static func formatWaitFor(label: String, payload: ForyWaitForPayload) -> String {
         let element = payload.element
         let rect = element.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"

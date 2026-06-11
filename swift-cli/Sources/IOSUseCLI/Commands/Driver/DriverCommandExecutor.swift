@@ -3,7 +3,6 @@ import IOSUseProtocol
 
 enum DriverCommandPayload {
     case dom(ForyDomPayload)
-    case find(ForyFindPayload)
     case waitFor(ForyWaitForPayload)
     case screenshot(Data)
     case element(ForyElementPayload)
@@ -35,11 +34,6 @@ enum DriverCommandExecutor {
             let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: raw, fresh: fresh, waitQuiescence: waitQuiescence)) }, as: ForyDomPayload.self)
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatDom(payload), payload: .dom(payload))
-
-        case .find(let label, let traits, let cindex):
-            let payload = try requiredPayload(clientRunner { .find(try $0.find(label: label, traits: traits, cindex: cindex)) }, as: ForyFindPayload.self)
-            ok = true
-            return DriverCommandResult(stdout: DriverOutput.formatFind(label: label, payload: payload), payload: .find(payload))
 
         case .waitFor(let label, let timeout, let traits, let cindex):
             let payload = try requiredPayload(clientRunner { .waitFor(try $0.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)) }, as: ForyWaitForPayload.self)
@@ -265,7 +259,6 @@ enum DriverCommandExecutor {
         let value: Any?
         switch payload {
         case .dom(let payload): value = payload
-        case .find(let payload): value = payload
         case .waitFor(let payload): value = payload
         case .screenshot(let payload): value = payload
         case .element(let payload): value = payload
