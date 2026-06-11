@@ -7,18 +7,9 @@ description: "Use ios-use to drive iOS devices via CLI. Primary scope: real-devi
 
 ## 1. 职责边界
 
-这个 Skill 的主文件只负责给 agent 一个稳定的操作口径：
-
-- 如何准备设备和选择当前目标设备
-- 如何用 `dom` / `find` 先确认页面，再按合理顺序执行 UI 操作
-- 常用单步命令、日志命令和排障入口 
-
-什么时候转去专门 reference
-
 - 写或维护 YAML Flow：看 `references/flow.md`
 - 抓 HTTP/HTTPS 包、证书、mitmdump、过滤表达式：看 `references/proxy.md`
 - 使用或排查 Simulator：看 `references/simulator.md`
-- 当前 CLI/Flow/API 的完整用户可见契约：以项目内 `docs/private/design/cli/command_api.md` 为准
 
 ## 2. 前置要求
 
@@ -39,7 +30,6 @@ ios-use start
 - `devices` 用来查看设备列表、UDID 和配置状态。
 - 设备未显示 `configured`，或显示 `driver update required`，先重新执行 `ios-use config --udid <udid>`。
 - 首次配置真机可能需要 Apple ID 和 2FA。出现这类交互时，让用户在终端手动运行带账号参数的 `config` 命令。
-- 如果 `start` 报 `Developer Disk Image services are not ready` 或缺 `com.apple.dt.testmanagerd.remote`，先运行 `ios-use ddi-mount --udid <udid>`，然后重试 `ios-use start <udid>`。
 - 真机必须 USB 连接且系统版本为 iOS 17+；只通过 Wi-Fi 连接的设备不可用。
 
 ## 3. 目标设备与命令边界
@@ -57,14 +47,13 @@ ios-use start
 - 一切先以 DOM 为准。每次切页面、滚动后、找不到元素时，先跑 `ios-use dom` 或 `ios-use find`，确认页面状态再继续。
 - 推荐操作顺序：先观察当前页面，再定位目标，接着执行动作，最后按需要确认结果。常见链路是 `dom` / `find` / `waitFor` -> `tap` / `swipe` / `input` -> `--dom` 或再次 `dom`。
 - 可以同时发起不互相依赖的只读观察命令；有页面状态依赖的命令仍建议按顺序执行，尤其是 `tap` / `swipe` / `input` 这类会改变界面的动作。
-- 默认不截图。只有 DOM 无法描述视觉内容，或用户明确要求视觉验收时，才用 `screenshot`。
+- DOM 无法描述视觉内容，或用户明确要求视觉验收时，才用 `screenshot`。
 
 ## 5. 推荐工作流
 
 ### 5.1 准备并进入目标 App
 
 ```bash
-ios-use devices
 ios-use start
 ios-use activateApp com.apple.Preferences
 ios-use dom
@@ -86,7 +75,7 @@ ios-use waitFor --label "蓝牙" --timeout 8
 ios-use tap "通用"
 ios-use tap "亮度" --offset-ratio 0.8,
 ios-use longpress "通用"
-ios-use swipe --to "开发者" --from "蓝牙"
+ios-use swipe --to "开发者" --from "蓝牙" # 从"蓝牙"开始，寻找"开发者"
 ios-use swipe --dir forth --distance 300
 ios-use input --tap "搜索" --content "蓝牙"
 ```
@@ -160,7 +149,7 @@ ios-use uninstall com.example.app --udid <udid>
 
 ### 6.4 `swipe`
 
-- 目标导向优先：`ios-use swipe --to "开发者" --from "蓝牙"`。
+- 找目标时，目标导向优先：`ios-use swipe --to "开发者" --from "蓝牙"`。
 - 目标不在当前屏幕时必须传 `--from`，用当前可见元素作为滚动锚点。
 - 固定距离：`ios-use swipe --dir forth --distance 300` 或 `--dir back`。
 - `forth` 表示继续往前浏览当前列表，`back` 表示反方向回拉。
@@ -252,13 +241,6 @@ ios-use nslog stop
 - 如果提示 stale local publisher 或 live nslog server，按提示清掉旧 `dns-sd` 或关闭旧 NSLogger viewer 后重试。
 
 ## 10. 常见排障
-
-行为和预期不一致：
-
-- 先 `ios-use dom`
-- 再 `ios-use find <label>`
-- DOM 无法解释时再补 `ios-use screenshot`
-- 需要更多细节时加 `--verbose`
 
 签名异常：
 
