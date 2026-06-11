@@ -241,7 +241,7 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(payloadAck.acknowledgmentNumber, 903)
     }
 
-    func testCoreDeviceDirectTunnelRouteQueueOverflowFailsUnreadRoute() throws {
+    func testCoreDeviceDirectTunnelRouteQueueKeepsFIFOAfterCompaction() throws {
         let local = "fd7b:e5b:6f53::2"
         let remote = "fd7b:e5b:6f53::1"
         let localAddress = try CoreDeviceIPv6TCPCodec.parseIPv6Address(local)
@@ -257,6 +257,59 @@ final class DeviceProtocolClientTests: XCTestCase {
         )
         let tunnel = FakeCoreDeviceTunnel(handshake: handshake, reads: [], autoRespondToSyn: true)
         let session = CoreDeviceDirectTunnelSession(tunnel: tunnel, handshake: handshake)
+        session.peerInfo = RemoteXPCPeerInfo(
+            properties: [:],
+            services: [
+                serviceName: RemoteXPCService(name: serviceName, port: servicePort, usesRemoteXPC: false),
+            ]
+        )
+
+        let stream = try session.connectService(serviceName)
+        let packetCount = 140
+        let packets = try (0..<packetCount).map { index in
+            try CoreDeviceIPv6TCPCodec.encodeSegment(
+                sourceAddress: remoteAddress,
+                destinationAddress: localAddress,
+                sourcePort: UInt16(servicePort),
+                destinationPort: localPort,
+                sequenceNumber: UInt32(901 + index),
+                acknowledgmentNumber: 101,
+                flags: CoreDeviceTCPFlags.psh | CoreDeviceTCPFlags.ack,
+                payload: Data([UInt8(index)])
+            )
+        }
+        tunnel.appendReads(packets)
+        usleep(100_000)
+
+        let received = try stream.readExact(byteCount: packetCount, timeoutSeconds: 2)
+
+        XCTAssertEqual(received, Data((0..<packetCount).map { UInt8($0) }))
+        session.close()
+        XCTAssertTrue(session.waitForClose(timeoutSeconds: 2))
+    }
+
+    func testCoreDeviceDirectTunnelRouteQueueOverflowFailsUnreadRoute() throws {
+        let local = "fd7b:e5b:6f53::2"
+        let remote = "fd7b:e5b:6f53::1"
+        let localAddress = try CoreDeviceIPv6TCPCodec.parseIPv6Address(local)
+        let remoteAddress = try CoreDeviceIPv6TCPCodec.parseIPv6Address(remote)
+        let serviceName = "com.test.service"
+        let servicePort = 58_783
+        let localPort = IOSUseProtocol.XCConstants.userspaceTCPLocalPortLowerBound
+        let handshake = CoreDeviceTunnelHandshake(
+            serverAddress: remote,
+            serverRSDPort: servicePort,
+            clientAddress: local,
+            clientMTU: IOSUseProtocol.XCConstants.coreDeviceTunnelRequestedMTU
+        )
+        let tunnel = FakeCoreDeviceTunnel(handshake: handshake, reads: [], autoRespondToSyn: true)
+        let eventLock = NSLock()
+        var events: [String] = []
+        let session = CoreDeviceDirectTunnelSession(tunnel: tunnel, handshake: handshake) { event in
+            eventLock.lock()
+            events.append(event)
+            eventLock.unlock()
+        }
         session.peerInfo = RemoteXPCPeerInfo(
             properties: [:],
             services: [
@@ -281,17 +334,31 @@ final class DeviceProtocolClientTests: XCTestCase {
         usleep(100_000)
 
         XCTAssertThrowsError(try stream.readAvailable(maxBytes: 1, timeoutSeconds: 0.1)) { error in
-            guard case CoreDeviceTCPError.routeBackpressure(let failedPort, let pendingPackets) = error else {
+            guard case CoreDeviceTCPError.routeBackpressure(let failedPort, let context) = error else {
                 return XCTFail("expected route backpressure, got \(error)")
             }
             XCTAssertEqual(failedPort, localPort)
-            XCTAssertEqual(pendingPackets, IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit)
+            XCTAssertEqual(context.routeLabel, serviceName)
+            XCTAssertEqual(context.pendingPackets, IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit)
+            XCTAssertGreaterThan(context.queuedBytes, 0)
+            XCTAssertTrue(String(describing: error).contains("(\(serviceName))"))
+            XCTAssertTrue(String(describing: error).contains("queuedBytes="))
         }
         XCTAssertThrowsError(try stream.write(Data("x".utf8))) { error in
             guard case CoreDeviceTCPError.routeBackpressure = error else {
                 return XCTFail("expected route backpressure on write, got \(error)")
             }
         }
+        eventLock.lock()
+        let loggedEvents = events
+        eventLock.unlock()
+        XCTAssertTrue(loggedEvents.contains { $0.contains("queue high-water threshold=32") })
+        XCTAssertTrue(loggedEvents.contains { $0.contains("queue high-water threshold=64") })
+        XCTAssertTrue(loggedEvents.contains { $0.contains("queue high-water threshold=96") })
+        XCTAssertTrue(loggedEvents.contains { $0.contains("queue high-water threshold=128") })
+        XCTAssertTrue(loggedEvents.contains { $0.contains("queue high-water threshold=256") })
+        XCTAssertTrue(loggedEvents.contains { $0.contains("queue high-water threshold=\(IOSUseProtocol.XCConstants.coreDeviceRoutePacketQueueLimit)") })
+        XCTAssertTrue(loggedEvents.contains { $0.contains("TCP route \(localPort) (\(serviceName)) backpressure") })
 
         session.close()
         XCTAssertTrue(session.waitForClose(timeoutSeconds: 2))
@@ -1770,6 +1837,21 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertTrue(ack.payload.isEmpty)
     }
 
+    func testXCTestExecCallbackListenerReportsRuntimeStateOnFailure() throws {
+        let stream = FakeDeviceStream(reads: [Data([0x01, 0x02])])
+        let channel = DTXChannelClient(transport: DTXStreamTransport(stream: stream), channelCode: 1)
+        let listener = XCTestExecCallbackListener(channel: channel, configurationPayload: Data())
+
+        listener.start()
+        defer { listener.stop() }
+
+        XCTAssertTrue(waitUntil { listener.startupFailure != nil })
+        let failure = try XCTUnwrap(listener.startupFailure)
+        let description = String(describing: failure)
+        XCTAssertTrue(description.contains("listenerState={state=readingMessage"), description)
+        XCTAssertTrue(description.contains("lastError="), description)
+    }
+
     func testDTXConnectionIdleListenerAcksGenericCallbacksWithoutReturnValue() throws {
         let callback = try DTXMessageEncoder.dispatch(
             identifier: 92,
@@ -1792,6 +1874,24 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(ack.channelCode, 1)
         XCTAssertEqual(ack.kind, .ok)
         XCTAssertTrue(ack.payload.isEmpty)
+    }
+
+    func testDTXConnectionIdleListenerReportsRuntimeStateOnFailure() throws {
+        let stream = FakeDeviceStream(reads: [Data([0x01, 0x02])])
+        let channel = DTXChannelClient(transport: DTXStreamTransport(stream: stream), channelCode: 1)
+        let listener = DTXConnectionIdleListener(name: "test-control", channel: channel)
+
+        listener.start()
+        defer { listener.stop() }
+
+        var failure: DTXConnectionIdleListenerFailure?
+        XCTAssertTrue(waitUntil {
+            failure = listener.takeFailure()
+            return failure != nil
+        })
+        let description = String(describing: try XCTUnwrap(failure))
+        XCTAssertTrue(description.contains("listenerState={state=readingMessage"), description)
+        XCTAssertTrue(description.contains("lastError="), description)
     }
 
     func testUsbmuxDeviceIDAcceptsTopLevelAndPropertiesShapes() {
@@ -2380,12 +2480,12 @@ private final class FakeCoreDeviceLifecycleTunnelSession: CoreDeviceLifecycleTun
         self.peerInfo = peerInfo
     }
 
-    func connectService(_ serviceName: String) throws -> DeviceStream {
+    func connectService(_ serviceName: String, routeLabel _: String?) throws -> DeviceStream {
         requestedServices.append(serviceName)
         return stream
     }
 
-    func connectRemoteXPCService(_: String) throws -> RemoteXPCClient {
+    func connectRemoteXPCService(_: String, routeLabel _: String?) throws -> RemoteXPCClient {
         throw CLIParseError.invalidValue("fake session does not provide RemoteXPC")
     }
 
@@ -2410,7 +2510,7 @@ private final class FakeMultiStreamCoreDeviceLifecycleTunnelSession: CoreDeviceL
         self.streams = streams
     }
 
-    func connectService(_ serviceName: String) throws -> DeviceStream {
+    func connectService(_ serviceName: String, routeLabel _: String?) throws -> DeviceStream {
         requestedServices.append(serviceName)
         guard !streams.isEmpty else {
             throw CLIParseError.invalidValue("fake session stream underflow for \(serviceName)")
@@ -2418,7 +2518,7 @@ private final class FakeMultiStreamCoreDeviceLifecycleTunnelSession: CoreDeviceL
         return streams.removeFirst()
     }
 
-    func connectRemoteXPCService(_: String) throws -> RemoteXPCClient {
+    func connectRemoteXPCService(_: String, routeLabel _: String?) throws -> RemoteXPCClient {
         throw CLIParseError.invalidValue("fake session does not provide RemoteXPC")
     }
 
