@@ -14,25 +14,6 @@ final class DriverOutputTests: XCTestCase {
         XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 999), "-")
     }
 
-    func testFormatFindIncludesValueText() {
-        let payload = ForyFindPayload(matches: [
-            ForyFindMatch(
-                elemType: 49,
-                label: "First name",
-                rect: ForyRect(x: 1, y: 2, w: 3, h: 4),
-                traits: ["Input"],
-                value: "Alpha",
-                ancestors: ["App", "Table", "Cell[Name]"]
-            )
-        ])
-
-        let output = DriverOutput.formatFind(label: "Alpha", payload: payload)
-
-        XCTAssertTrue(output.contains("Find \"Alpha\""))
-        XCTAssertTrue(output.contains("[App > Table > Cell[Name]] Input \"First name=Alpha\" (1,2,3,4)"))
-        XCTAssertFalse(output.contains("matches=1"))
-    }
-
     func testDriverErrorUsesDriverProvidedString() {
         let error = DriverClientError.driverError("""
         label '关闭' is ambiguous (2 matches)

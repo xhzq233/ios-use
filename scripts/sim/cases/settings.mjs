@@ -10,20 +10,6 @@ export const settingsBeforeContactsCaseMetadata = [
   { id: 'DOM-7', group: 'settings', kind: 'dom-perf', setup: 'settings home', assertion: 'cold and warm DOM stay under guardrails', coverage: 'simulator' },
   { id: 'DOM-8', group: 'settings', kind: 'dom', setup: 'settings home', assertion: 'dom shows Preferences app', coverage: 'simulator' },
   { id: 'DOM-13', group: 'settings', kind: 'dom-quiescence', setup: 'settings home', assertion: 'dom --wait-quiescence returns Preferences fresh DOM', coverage: 'simulator' },
-  { id: 'FIND-1', group: 'settings', kind: 'find', setup: 'settings home', assertion: 'stdout contains Find', coverage: 'simulator' },
-  { id: 'FIND-2', group: 'settings', kind: 'find', setup: 'settings home', assertion: 'exact label does not return contains ambiguity', coverage: 'simulator' },
-  { id: 'FIND-3', group: 'settings', kind: 'find', setup: 'settings home', assertion: 'find button by traits', coverage: 'simulator' },
-  { id: 'FIND-4', group: 'settings', kind: 'find', setup: 'general page', assertion: 'find disabled chevron button', coverage: 'simulator' },
-  { id: 'FIND-5', group: 'settings', kind: 'find-fuzzy', setup: 'settings home', assertion: 'misspelling returns suggestions or match', coverage: 'simulator' },
-  { id: 'FIND-7', group: 'settings', kind: 'find', setup: 'settings home', assertion: 'find generated HomeScreen label', coverage: 'simulator' },
-  { id: 'FIND-8', group: 'settings', kind: 'find', setup: 'settings home', assertion: 'find search button by traits', coverage: 'simulator' },
-  { id: 'FIND-9', group: 'settings', kind: 'find', setup: 'general page', assertion: 'find disabled chevron output', coverage: 'simulator' },
-  { id: 'FIND-12', group: 'settings', kind: 'find-auto-label', setup: 'settings home', assertion: 'auto label can be found by traits', coverage: 'simulator' },
-  { id: 'FIND-10A', group: 'settings', kind: 'find-cindex', setup: 'settings home', assertion: 'positive cindex selects first child', coverage: 'simulator' },
-  { id: 'FIND-10B', group: 'settings', kind: 'find-cindex', setup: 'settings home', assertion: 'negative cindex selects last child', coverage: 'simulator' },
-  { id: 'FIND-11A', group: 'settings', kind: 'find-error', setup: 'settings home', assertion: 'out-of-range cindex returns not found', coverage: 'simulator' },
-  { id: 'FIND-1B', group: 'settings', kind: 'find-input-value', setup: 'contacts new contact with first name', assertion: 'find can locate input value', coverage: 'simulator' },
-  { id: 'FIND-5B', group: 'settings', kind: 'find-error', setup: 'settings home', assertion: 'missing label returns not found', coverage: 'simulator' },
   { id: 'WF-1', group: 'settings', kind: 'waitFor', setup: 'settings home', assertion: 'waitFor finds General button', coverage: 'simulator' },
   { id: 'WF-2', group: 'settings', kind: 'waitFor-error', setup: 'settings home', assertion: 'missing label times out', coverage: 'simulator' },
   { id: 'WF-4', group: 'settings', kind: 'waitFor-error', setup: 'settings home', assertion: 'short timeout reports timed out/not found', coverage: 'simulator' },
@@ -117,25 +103,20 @@ export function buildSettingsBeforeContactsCases(ctx) {
     recordPass,
     recordSkip,
     resetSettingsHome,
-    runAutoLabelFindCase,
     runCase,
     runCaseContains,
     runCaseContainsAndDomContains,
     runCaseFailsContains,
     runCaseFailsMatches,
-    runCaseMatches,
     runCli,
     runCliToFiles,
     runDomPerfCase,
     runDomNoWindowHeaderCase,
-    runFindExactPreferredCase,
     runInputAndVerifyDom,
     runPostDomMutationCase,
     selected,
     settingsHome,
     generalPage,
-    openContactsNewContact,
-    discardContactIfNeeded,
     openHomeScreenWithSafariIcon,
   } = ctx;
 
@@ -163,27 +144,6 @@ export function buildSettingsBeforeContactsCases(ctx) {
     { id: 'DOM-7', run: runDomPerfCase },
     { id: 'DOM-8', run: () => runCaseContains('DOM-8', 'App: com.apple.Preferences', ['dom', '--fresh'], settingsHome) },
     { id: 'DOM-13', run: () => runCaseContains('DOM-13', 'App: com.apple.Preferences', ['dom', '--wait-quiescence'], settingsHome) },
-    { id: 'FIND-1', run: () => runCaseContains('FIND-1', 'Find', ['find', 'General'], settingsHome) },
-    { id: 'FIND-2', run: () => runFindExactPreferredCase('FIND-2') },
-    { id: 'FIND-3', run: () => runCaseContains('FIND-3', 'Find', ['find', 'com.apple.settings.general', '--traits', 'Button'], settingsHome) },
-    { id: 'FIND-4', run: () => runCaseContains('FIND-4', 'Find', ['find', 'chevron', '--traits', 'Button,disabled'], generalPage) },
-    { id: 'FIND-5', run: () => runCaseMatches('FIND-5', /suggestions|Did you mean|General/, ['find', 'Generak'], settingsHome) },
-    { id: 'FIND-7', run: () => runCaseContains('FIND-7', 'Find', ['find', 'HomeScreen'], settingsHome) },
-    { id: 'FIND-8', run: () => runCaseContains('FIND-8', 'Find', ['find', 'com.apple.settings.search', '--traits', 'Button'], settingsHome) },
-    { id: 'FIND-9', run: () => runCaseContains('FIND-9', 'chevron', ['find', 'chevron', '--traits', 'Button,disabled'], generalPage) },
-    { id: 'FIND-12', run: runAutoLabelFindCase },
-    { id: 'FIND-10A', run: () => runCaseContains('FIND-10A', 'Text "General"', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], settingsHome) },
-    { id: 'FIND-10B', run: () => runCaseContains('FIND-10B', 'chevron.forward', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '-1'], settingsHome) },
-    { id: 'FIND-11A', run: () => runCaseFailsContains('FIND-11A', 'not found', ['find', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '99'], settingsHome) },
-    { id: 'FIND-1B', run: async () => {
-      await runCaseContains('FIND-1B', 'First name=iosuse-find', ['find', 'iosuse-find', '--traits', 'Input'], async () => {
-        await openContactsNewContact();
-        const input = runCliToFiles(['input', '--tap', 'First name', '--content', 'iosuse-find', '--traits', 'Input'], path.join(artifactDir, 'FIND-1B-input.out'), path.join(artifactDir, 'FIND-1B-input.err'));
-        if (input.code !== 0) throw new Error(`FIND-1B setup input failed\n${input.stdout}${input.stderr}`);
-      });
-      if (selected('FIND-1B')) await discardContactIfNeeded();
-    } },
-    { id: 'FIND-5B', run: () => runCaseFailsContains('FIND-5B', 'not found', ['find', '__ios_use_missing_label__'], settingsHome) },
     { id: 'WF-1', run: () => runCaseContains('WF-1', 'waited=', ['waitFor', '--label', 'com.apple.settings.general', '--traits', 'Button', '--timeout', '2'], settingsHome) },
     { id: 'WF-2', run: () => runCaseFailsMatches('WF-2', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.3'], settingsHome) },
     { id: 'WF-4', run: () => runCaseFailsMatches('WF-4', /timed out|not found/i, ['waitFor', '--label', '__ios_use_missing_label__', '--timeout', '0.2'], settingsHome) },
@@ -223,7 +183,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
       const err = path.join(artifactDir, 'TAP-12.err');
       console.log('[sim-test] RUN TAP-12: tap cindex child and verify navigation');
       const tap = runCliToFiles(['tap', 'com.apple.settings.general', '--traits', 'Button', '--cindex', '0'], out, err);
-      const verify = runCliToFiles(['find', 'About', '--traits', 'Cell'], path.join(artifactDir, 'TAP-12-verify.out'), path.join(artifactDir, 'TAP-12-verify.err'));
+      const verify = runCliToFiles(['waitFor', '--label', 'About', '--traits', 'Cell', '--timeout', '2'], path.join(artifactDir, 'TAP-12-verify.out'), path.join(artifactDir, 'TAP-12-verify.err'));
       if (tap.code === 0 && verify.code === 0) recordPass('TAP-12');
       else recordFail('TAP-12', tap.stdout + tap.stderr + verify.stdout + verify.stderr, tap.code === 0 && verify.code === 0 ? 'assertion' : 'command');
     } },

@@ -39,7 +39,7 @@ Once started, driver-backed commands are the same as real device commands:
 
 ```bash
 ios-use dom --fresh
-ios-use find "Settings"
+ios-use waitFor --label "Settings" --timeout 5
 ios-use tap "Settings"
 ios-use screenshot
 ios-use stop
