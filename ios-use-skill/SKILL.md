@@ -10,6 +10,7 @@ description: "Use ios-use to drive iOS devices via CLI. Primary scope: real-devi
 - 写或维护 YAML Flow：看 `references/flow.md`
 - 抓 HTTP/HTTPS 包、证书、mitmdump、过滤表达式：看 `references/proxy.md`
 - 使用或排查 Simulator：看 `references/simulator.md`
+- 维护旧 NSLogger / `nslog`：看 `references/nslog.md`
 
 ## 2. 前置要求
 
@@ -181,7 +182,7 @@ ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 - Flow 目标就是最近一次 `ios-use start` 的设备，不支持 `--udid`。
 - 写 flow 前先用 CLI 手动跑通每一步，再组装成 YAML。
 - Flow 中坐标、offset、offsetRatio 都写成和 CLI 参数一致的字符串。
-- `needNSLog: true` 是 Flow 内使用 `nslog` action 的入口。
+- `needNSLog: true` 是 Flow 内使用旧 `nslog` action 的入口；除非任务明确要求 NSLogger，否则优先用 `activateApp --log` 或 `oslog`。
 
 ## 8. Proxy 入口
 
@@ -205,7 +206,22 @@ ios-use proxy read --filter "~d example.com" --raw
 
 ## 9. 日志
 
-### 9.1 `oslog`
+### 9.1 App 启动日志
+
+```bash
+ios-use activateApp com.example.app --terminateExisting --log
+ios-use log-read --last 50
+ios-use log-read --pattern "error|warning" --flags i --timeout 5
+ios-use log-read --clearAfterRead
+ios-use terminateApp com.example.app
+```
+
+- 用 `activateApp --terminateExisting --log` 重新启动 App，并采集启动后的 stdout/stderr 和 console 可见日志。
+- 用 `log-read` 读取最近一次采集，支持 `--pattern`、`--flags`、`--timeout`、`--last`、`--clearAfterRead`。
+- `--log` 必须和 `--terminateExisting` 一起使用。
+- `terminateApp` 后采集进程会随 App 退出自动结束；再次 `activateApp --log` 会替换上一轮采集。
+
+### 9.2 `oslog`
 
 ```bash
 ios-use oslog --process IOSUseDriver-Runner --timeout 5
@@ -219,35 +235,8 @@ ios-use oslog --pattern "error|failed" --flags i --timeout 10
 - `--process <name>` 或 `--pid <pid>` 过滤单个日志来源，二者互斥，只过滤日志，不切 app。
 - 日志直接输出到 stdout，不写 artifact；需要落盘时自行重定向或使用 `tee`。
 
-### 9.2 `nslog`
-
-```bash
-ios-use nslog
-ios-use nslog start
-ios-use nslog read --pattern "finished" --timeout 10
-ios-use nslog read --last 50
-ios-use nslog stop
-```
-
-- `nslog` 启动本地 NSLogger server，iOS app 主动推送日志。最好在 app 启动前启动。
-- 前台 streaming 时，监听信息写 stderr，日志行写 stdout。
-- `nslog start` 后台采集并写入 `~/.ios-use/logs/nslog-*.log`。
-- `nslog read` 从最近一次后台采集读取；`stop` 后日志文件保留。
-- 如果提示 stale local publisher 或 live nslog server，按提示清掉旧 `dns-sd` 或关闭旧 NSLogger viewer 后重试。
-
-### 9.3 App 启动日志
-
-```bash
-ios-use activateApp com.example.app --terminateExisting --log
-ios-use log-read --last 50
-ios-use log-read --pattern "error|warning" --flags i --timeout 5
-ios-use log-read --clearAfterRead
-ios-use terminateApp com.example.app
-```
-
-- 用 `activateApp --terminateExisting --log` 重新启动 App 并采集 stdout/stderr。
-- 用 `log-read` 读取最近一次采集，支持 `--pattern`、`--flags`、`--timeout`、`--last`、`--clearAfterRead`。
-- 需要系统 unified log 时仍用 `oslog`。
+- 需要系统 unified log、`os_log` 或更宽的系统日志时用 `oslog`。
+- 旧 NSLogger / `nslog` 只在 App 已接入 NSLogger 或 Flow 明确依赖 `needNSLog` 时使用，见 `references/nslog.md`。
 
 ## 10. 常见排障
 
