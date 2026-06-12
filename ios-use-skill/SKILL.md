@@ -93,6 +93,8 @@ ios-use input --tap "搜索" --content "蓝牙" --dom 300
 
 ```bash
 ios-use activateApp com.apple.Preferences
+ios-use activateApp com.example.app --terminateExisting --log
+ios-use log-read --last 50
 ios-use terminateApp com.apple.Preferences
 ios-use open "https://example.com"
 ios-use dismissAlert
@@ -232,6 +234,20 @@ ios-use nslog stop
 - `nslog start` 后台采集并写入 `~/.ios-use/logs/nslog-*.log`。
 - `nslog read` 从最近一次后台采集读取；`stop` 后日志文件保留。
 - 如果提示 stale local publisher 或 live nslog server，按提示清掉旧 `dns-sd` 或关闭旧 NSLogger viewer 后重试。
+
+### 9.3 App 启动日志
+
+```bash
+ios-use activateApp com.example.app --terminateExisting --log
+ios-use log-read --last 50
+ios-use log-read --pattern "error|warning" --flags i --timeout 5
+ios-use log-read --clearAfterRead
+ios-use terminateApp com.example.app
+```
+
+- 用 `activateApp --terminateExisting --log` 重新启动 App 并采集 stdout/stderr。
+- 用 `log-read` 读取最近一次采集，支持 `--pattern`、`--flags`、`--timeout`、`--last`、`--clearAfterRead`。
+- 需要系统 unified log 时仍用 `oslog`。
 
 ## 10. 常见排障
 

@@ -30,6 +30,19 @@ public struct IOSUseCLI: Sendable {
             }
         }
 
+        if arguments.first == AppLogCaptureService.helperCommandName {
+            do {
+                return CLIResult(
+                    exitCode: 0,
+                    stdout: try AppLogCaptureService.runHelper(arguments: Array(arguments.dropFirst()), paths: paths)
+                )
+            } catch let signal as CLIExitSignal {
+                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
+        }
+
         if let immediate = CLIHelp.immediateResult(arguments: arguments) {
             return immediate
         }
@@ -104,6 +117,12 @@ public struct IOSUseCLI: Sendable {
             return executeOpen(options)
         case .appLifecycle(let options):
             return executeAppLifecycle(options)
+        case .logRead(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try AppLogCaptureService.read(options: options, paths: paths))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .oslog(let options):
             return executeOSLog(options)
         case .flow(let options):

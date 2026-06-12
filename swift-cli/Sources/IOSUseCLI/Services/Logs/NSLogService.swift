@@ -149,40 +149,25 @@ public enum NSLogService {
     }
 
     static func readCapture(capture: NSLogCaptureTarget, pattern: String?, flags: String, timeout: Double, clearAfterRead: Bool, last: Int?, interruptMonitor: InterruptMonitor? = nil) throws -> String {
-        guard FileManager.default.fileExists(atPath: capture.logFile) else {
-            throw CLIParseError.invalidValue("NSLogger capture file not found: \(capture.logFile). Run `ios-use nslog start` first.")
-        }
-        let regex = try pattern.flatMap { $0.isEmpty ? nil : try NSRegularExpression(pattern: $0, options: regexOptions(flags)) }
-        let deadline = Date().addingTimeInterval(max(0, timeout))
-        let canWait = capture.status == "running" && timeout > 0
-        var lines: [String] = []
-        repeat {
-            try interruptMonitor?.throwIfInterrupted()
-            lines = try readMatchingLines(logFile: capture.logFile, regex: regex)
-            if !lines.isEmpty || !canWait {
-                break
-            }
-            usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
-        } while Date() < deadline
-        try interruptMonitor?.throwIfInterrupted()
-
-        if let last {
-            lines = Array(lines.suffix(last))
-        }
-        if clearAfterRead {
-            try Data().write(to: URL(fileURLWithPath: capture.logFile))
-        }
-        return lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")
+        try LogFileReadService.read(
+            logFile: capture.logFile,
+            status: capture.status,
+            missingFileMessage: "NSLogger capture file not found: \(capture.logFile). Run `ios-use nslog start` first.",
+            pattern: pattern,
+            flags: flags,
+            timeout: timeout,
+            clearAfterRead: clearAfterRead,
+            last: last,
+            interruptMonitor: interruptMonitor
+        )
     }
 
     static func matches(_ entry: String, pattern: String, flags: String) throws -> Bool {
-        let regex = try NSRegularExpression(pattern: pattern, options: regexOptions(flags))
-        return matches(entry, regex: regex)
+        try LogFileReadService.matches(entry, pattern: pattern, flags: flags)
     }
 
     static func matches(_ entry: String, regex: NSRegularExpression) -> Bool {
-        let range = NSRange(entry.startIndex..<entry.endIndex, in: entry)
-        return regex.firstMatch(in: entry, range: range) != nil
+        LogFileReadService.matches(entry, regex: regex)
     }
 
     public struct ParsedMessage: Equatable {
@@ -312,22 +297,7 @@ public enum NSLogService {
     }
 
     static func regexOptions(_ flags: String) throws -> NSRegularExpression.Options {
-        var options: NSRegularExpression.Options = []
-        for flag in flags {
-            switch flag {
-            case "i":
-                options.insert(.caseInsensitive)
-            case "m":
-                options.insert(.anchorsMatchLines)
-            case "s":
-                options.insert(.dotMatchesLineSeparators)
-            case "g", "u", "y":
-                continue
-            default:
-                throw CLIParseError.invalidValue("Invalid regex flag: \(flag)")
-            }
-        }
-        return options
+        try LogFileReadService.regexOptions(flags)
     }
 
     private static func readUInt16(_ bytes: [UInt8], _ offset: Int) -> UInt16 {
@@ -374,15 +344,6 @@ public enum NSLogService {
             usleep(useconds_t(IOSUseProtocol.nslogCaptureStartPollMicroseconds))
         }
         throw CLIParseError.invalidValue("Timed out waiting for NSLogger capture to start")
-    }
-
-    private static func readMatchingLines(logFile: String, regex: NSRegularExpression?) throws -> [String] {
-        let text = try String(contentsOfFile: logFile, encoding: .utf8)
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        guard let regex else {
-            return lines.filter { !$0.isEmpty }
-        }
-        return lines.filter { !$0.isEmpty && matches($0, regex: regex) }
     }
 
     static func executablePath(environment: [String: String] = ProcessInfo.processInfo.environment, currentDirectoryPath: String = FileManager.default.currentDirectoryPath) throws -> String {

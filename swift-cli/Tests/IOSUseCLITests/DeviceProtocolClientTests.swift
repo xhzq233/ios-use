@@ -1564,6 +1564,27 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(appService.launches.map(\.bundleID), ["com.example.app"])
         XCTAssertEqual(appService.launches.first?.terminateExisting, false)
         XCTAssertEqual(appService.launches.first?.activates, true)
+        XCTAssertNil(appService.launches.first?.standardIOIdentifier)
+        XCTAssertTrue(appService.closed)
+        XCTAssertTrue(session.closed)
+    }
+
+    func testCoreDeviceAppLifecycleRunnerLaunchesAppWithTerminateExistingAndStdIO() throws {
+        let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
+        let appService = FakeCoreDeviceAppLifecycleService()
+        let runner = CoreDeviceAppLifecycleRunner(dependencies: CoreDeviceAppLifecycleRunner.Dependencies(
+            startTunnel: { _ in session },
+            openAppService: { _ in appService },
+            resolveBundleExecutable: { _, _ in nil }
+        ))
+        let stdioIdentifier = UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF")
+
+        try runner.activate(bundleID: "com.example.app", udid: "REAL-UDID", terminateExisting: true, standardIOIdentifier: stdioIdentifier)
+
+        XCTAssertEqual(appService.launches.map(\.bundleID), ["com.example.app"])
+        XCTAssertEqual(appService.launches.first?.terminateExisting, true)
+        XCTAssertEqual(appService.launches.first?.activates, true)
+        XCTAssertEqual(appService.launches.first?.standardIOIdentifier, stdioIdentifier)
         XCTAssertTrue(appService.closed)
         XCTAssertTrue(session.closed)
     }
@@ -2674,6 +2695,7 @@ private final class FakeCoreDeviceAppLifecycleService: CoreDeviceAppLifecycleSer
         let terminateExisting: Bool
         let payloadURL: String?
         let activates: Bool?
+        let standardIOIdentifier: UUID?
     }
 
     var launches: [Launch] = []
@@ -2690,13 +2712,15 @@ private final class FakeCoreDeviceAppLifecycleService: CoreDeviceAppLifecycleSer
         startSuspended _: Bool,
         environment _: [String: String],
         payloadURL: String?,
-        activates: Bool?
+        activates: Bool?,
+        standardIOIdentifier: UUID?
     ) throws -> RemoteXPCValue {
         launches.append(Launch(
             bundleID: bundleID,
             terminateExisting: terminateExisting,
             payloadURL: payloadURL,
-            activates: activates
+            activates: activates,
+            standardIOIdentifier: standardIOIdentifier
         ))
         return launchOutput
     }
