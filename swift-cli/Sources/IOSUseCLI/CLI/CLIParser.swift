@@ -30,6 +30,8 @@ public enum CLIParser {
             return .flow(try parseFlow(&parser))
         case "nslog":
             return .nslog(try parseNSLog(&parser))
+        case "log-read":
+            return .logRead(try parseAppLogRead(&parser))
         case "proxy":
             return .proxy(try parseProxy(&parser))
         case "tap":
@@ -243,6 +245,21 @@ public enum CLIParser {
             case "--grep", "--flags":
                 throw CLIParseError.invalidValue("\(arg) moved to `ios-use nslog read`. Use `ios-use nslog read --pattern <regex> --flags <flags>`.")
             case "--capture-mode": options.captureMode = try parser.value(for: arg)
+            default: throw CLIParseError.unknownOption(arg)
+            }
+        }
+        return options
+    }
+
+    private static func parseAppLogRead(_ parser: inout ArgumentParser) throws -> AppLogReadOptions {
+        var options = AppLogReadOptions()
+        while let arg = parser.consume() {
+            switch arg {
+            case "--pattern": options.pattern = try parser.valueAllowingLeadingDash(for: arg)
+            case "--flags": options.flags = try parser.value(for: arg)
+            case "--timeout": options.timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--clearAfterRead": options.clearAfterRead = true
+            case "--last": options.last = try parsePositiveIntStrict(parser.value(for: arg), label: arg)
             default: throw CLIParseError.unknownOption(arg)
             }
         }
@@ -465,10 +482,24 @@ public enum CLIParser {
     private static func parseAppLifecycle(_ parser: inout ArgumentParser, action: AppLifecycleOptions.Action) throws -> AppLifecycleOptions {
         let bundleID = try parser.requiredPositional("bundleId")
         var session = SessionOptions()
+        var terminateExisting = false
+        var log = false
         while let arg = parser.consume() {
-            try parseSession(arg, parser: &parser, session: &session)
+            switch arg {
+            case "--terminateExisting":
+                guard action == .activate else { throw CLIParseError.unknownOption(arg) }
+                terminateExisting = true
+            case "--log":
+                guard action == .activate else { throw CLIParseError.unknownOption(arg) }
+                log = true
+            default:
+                try parseSession(arg, parser: &parser, session: &session)
+            }
         }
-        return AppLifecycleOptions(action: action, bundleID: bundleID, session: session)
+        if log && !terminateExisting {
+            throw CLIParseError.invalidValue("activateApp --log requires --terminateExisting so the app starts with a fresh stdio pipe")
+        }
+        return AppLifecycleOptions(action: action, bundleID: bundleID, session: session, terminateExisting: terminateExisting, log: log)
     }
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -612,7 +643,7 @@ public enum CLIParseError: Error, Equatable, CustomStringConvertible, Sendable {
     }
 }
 
-private struct ArgumentParser {
+struct ArgumentParser {
     private static let inlineValuePrefix = "\u{0}inline:"
     private let arguments: [String]
     private var index = 0

@@ -8,6 +8,7 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let driverLock: String
     public let nslogLock: String
     public let nslogState: String
+    public let appLogState: String
     public let logs: String
     public let artifacts: String
 
@@ -21,6 +22,7 @@ public struct IOSUsePaths: Equatable, Sendable {
             driverLock: "\(configured.root)/state/driver.lock",
             nslogLock: "\(configured.root)/state/nslog.lock",
             nslogState: "\(configured.root)/state/nslog-state.json",
+            appLogState: "\(configured.root)/state/app-log.json",
             logs: "\(configured.root)/logs",
             artifacts: "\(configured.root)/artifacts"
         )

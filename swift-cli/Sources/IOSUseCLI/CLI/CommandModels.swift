@@ -11,6 +11,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case ddiMount(DDIMountOptions)
     case open(OpenURLOptions)
     case appLifecycle(AppLifecycleOptions)
+    case logRead(AppLogReadOptions)
     case oslog(OSLogOptions)
     case driver(DriverAction)
     case flow(FlowOptions)
@@ -29,6 +30,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .ddiMount: return "ddi-mount"
         case .open: return "open"
         case .appLifecycle(let options): return options.action.commandName
+        case .logRead: return "log-read"
         case .oslog: return "oslog"
         case .driver(let action): return action.name
         case .flow: return "flow"
@@ -158,11 +160,31 @@ public struct AppLifecycleOptions: Equatable, Sendable {
     public var action: Action
     public var bundleID: String
     public var session: SessionOptions
+    public var terminateExisting: Bool
+    public var log: Bool
 
-    public init(action: Action, bundleID: String, session: SessionOptions = SessionOptions()) {
+    public init(action: Action, bundleID: String, session: SessionOptions = SessionOptions(), terminateExisting: Bool = false, log: Bool = false) {
         self.action = action
         self.bundleID = bundleID
         self.session = session
+        self.terminateExisting = terminateExisting
+        self.log = log
+    }
+}
+
+public struct AppLogReadOptions: Equatable, Sendable {
+    public var pattern: String?
+    public var flags: String
+    public var timeout: Double?
+    public var clearAfterRead: Bool
+    public var last: Int?
+
+    public init(pattern: String? = nil, flags: String = "", timeout: Double? = nil, clearAfterRead: Bool = false, last: Int? = nil) {
+        self.pattern = pattern
+        self.flags = flags
+        self.timeout = timeout
+        self.clearAfterRead = clearAfterRead
+        self.last = last
     }
 }
 

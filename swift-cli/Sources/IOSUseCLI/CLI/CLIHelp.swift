@@ -13,7 +13,7 @@ enum CLIHelp {
 
         Commands:
           devices, config, start, stop, dom, waitFor, screenshot, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, flow, proxy, oslog, nslog
+          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, flow, proxy, oslog, nslog, log-read
 
         """
     }
@@ -220,14 +220,17 @@ enum CLIHelp {
             )
         case "activateApp":
             return """
-            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--verbose]
+            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--terminateExisting] [--log] [--verbose]
 
             Activate an app by bundle ID using host-side device services.
             Defaults to the active driver.lock UDID when --udid is omitted.
+            With --log, starts a background app stdio capture and returns a log file path.
 
             Options:
-              --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
-              --verbose      Enable verbose output
+              --udid <udid>          Target USB real device or booted Simulator UDID; overrides active driver.lock
+              --terminateExisting    Relaunch the app instead of activating an existing process
+              --log                  Capture stdout/stderr; requires --terminateExisting
+              --verbose              Enable verbose output
 
             """
         case "terminateApp":
@@ -311,6 +314,20 @@ enum CLIHelp {
               --name <name>       Bonjour service name
               --pattern <regex>   Regex filter for nslog read
               --flags <flags>     Regex flags for nslog read: i, m, s
+              --timeout <sec>     Wait for a matching line while capture is running
+              --clearAfterRead    Truncate the capture log after reading
+              --last N            Print only the last N matching lines (N > 0)
+
+            """
+        case "log-read":
+            return """
+            Usage: ios-use log-read [--pattern <regex>] [--flags <flags>] [--timeout <sec>] [--clearAfterRead] [--last N]
+
+            Read the most recent app stdio capture started by activateApp --log.
+
+            Options:
+              --pattern <regex>   Regex filter
+              --flags <flags>     Regex flags: i, m, s
               --timeout <sec>     Wait for a matching line while capture is running
               --clearAfterRead    Truncate the capture log after reading
               --last N            Print only the last N matching lines (N > 0)

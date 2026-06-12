@@ -160,6 +160,17 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["activateApp", "com.apple.Preferences", "--terminateExisting", "--log", "--udid", "REAL-1"]),
+            .appLifecycle(AppLifecycleOptions(
+                action: .activate,
+                bundleID: "com.apple.Preferences",
+                session: SessionOptions(udid: "REAL-1"),
+                terminateExisting: true,
+                log: true
+            ))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["terminateApp", "com.apple.Preferences", "--udid", "REAL-1"]),
             .appLifecycle(AppLifecycleOptions(action: .terminate, bundleID: "com.apple.Preferences", session: SessionOptions(udid: "REAL-1")))
         )
@@ -187,6 +198,11 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["oslog", "--timeout", "1", "--udid", "DEVICE-1"]),
             .oslog(OSLogOptions(timeout: 1, session: SessionOptions(udid: "DEVICE-1")))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["log-read", "--pattern", "error|warning", "--flags", "i", "--timeout", "1", "--clearAfterRead", "--last", "10"]),
+            .logRead(AppLogReadOptions(pattern: "error|warning", flags: "i", timeout: 1, clearAfterRead: true, last: 10))
         )
     }
 
@@ -424,6 +440,18 @@ final class CLIParserTests: XCTestCase {
         }
         XCTAssertThrowsError(try CLIParser.parse(["nslog", "--grep", "ready"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--grep moved to `ios-use nslog read`. Use `ios-use nslog read --pattern <regex> --flags <flags>`."))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.example", "--log"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("activateApp --log requires --terminateExisting so the app starts with a fresh stdio pipe"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["terminateApp", "com.example", "--log"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--log"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["terminateApp", "com.example", "--terminateExisting"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--terminateExisting"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["log-read", "--last", "0"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--last must be greater than 0"))
         }
     }
 
