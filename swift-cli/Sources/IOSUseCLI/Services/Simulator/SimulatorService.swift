@@ -197,8 +197,13 @@ enum SimulatorService {
         }
     }
 
-    static func activateApp(bundleID: String, udid: String) throws {
-        let result = try Shell.runWithResult("xcrun", arguments: ["simctl", "launch", udid, bundleID])
+    static func activateApp(bundleID: String, udid: String, terminateExisting: Bool = false) throws {
+        var arguments = ["simctl", "launch"]
+        if terminateExisting {
+            arguments.append("--terminate-running-process")
+        }
+        arguments += [udid, bundleID]
+        let result = try Shell.runWithResult("xcrun", arguments: arguments)
         guard result.exitCode == 0 else {
             throw CLIParseError.invalidValue(result.stderr.isEmpty
                 ? "simctl launch failed with exit \(result.exitCode)"

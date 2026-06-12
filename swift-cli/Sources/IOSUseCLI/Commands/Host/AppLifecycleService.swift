@@ -3,10 +3,16 @@ import Foundation
 enum AppLifecycleService {
     struct Result: Equatable {
         let message: String
+        let didTerminateApp: Bool?
+
+        init(message: String, didTerminateApp: Bool? = nil) {
+            self.message = message
+            self.didTerminateApp = didTerminateApp
+        }
     }
 
-    static var realDeviceRunnerForTesting: ((AppLifecycleOptions.Action, String, String) throws -> Result)?
-    static var simulatorRunnerForTesting: ((AppLifecycleOptions.Action, String, String) throws -> Result)?
+    static var realDeviceRunnerForTesting: ((AppLifecycleOptions, String) throws -> Result)?
+    static var simulatorRunnerForTesting: ((AppLifecycleOptions, String) throws -> Result)?
 
     static func run(options: AppLifecycleOptions, paths: IOSUsePaths) throws -> Result {
         let activeDriver = SessionService.read(paths: paths)
@@ -21,44 +27,56 @@ enum AppLifecycleService {
 
         switch deviceType {
         case "simulator":
-            return try runSimulator(action: options.action, bundleID: options.bundleID, udid: udid)
+            return try runSimulator(options: options, udid: udid, paths: paths)
         case "real":
-            return try runRealDevice(action: options.action, bundleID: options.bundleID, udid: udid)
+            return try runRealDevice(options: options, udid: udid, paths: paths)
         default:
             throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType ?? "(missing)").")
         }
     }
 
-    private static func runSimulator(action: AppLifecycleOptions.Action, bundleID: String, udid: String) throws -> Result {
+    private static func runSimulator(options: AppLifecycleOptions, udid: String, paths: IOSUsePaths) throws -> Result {
         if let simulatorRunnerForTesting {
-            return try simulatorRunnerForTesting(action, bundleID, udid)
+            return try simulatorRunnerForTesting(options, udid)
         }
-        switch action {
+        switch options.action {
         case .activate:
-            try SimulatorService.activateApp(bundleID: bundleID, udid: udid)
-            return Result(message: "App \(bundleID) activated")
+            if options.log {
+                return try AppLogCaptureService.start(bundleID: options.bundleID, udid: udid, deviceType: "simulator", paths: paths)
+            }
+            try SimulatorService.activateApp(bundleID: options.bundleID, udid: udid, terminateExisting: options.terminateExisting)
+            return Result(message: "App \(options.bundleID) activated")
         case .terminate:
-            let terminated = try SimulatorService.terminateApp(bundleID: bundleID, udid: udid)
-            return Result(message: terminated
-                ? "App \(bundleID) terminated"
-                : "App \(bundleID) not running, skipped terminate")
+            let terminated = try SimulatorService.terminateApp(bundleID: options.bundleID, udid: udid)
+            return try resultForTerminate(bundleID: options.bundleID, udid: udid, terminated: terminated, paths: paths)
         }
     }
 
-    private static func runRealDevice(action: AppLifecycleOptions.Action, bundleID: String, udid: String) throws -> Result {
+    private static func runRealDevice(options: AppLifecycleOptions, udid: String, paths: IOSUsePaths) throws -> Result {
         if let realDeviceRunnerForTesting {
-            return try realDeviceRunnerForTesting(action, bundleID, udid)
+            return try realDeviceRunnerForTesting(options, udid)
         }
-        switch action {
+        switch options.action {
         case .activate:
-            try CoreDeviceAppLifecycleRunner().activate(bundleID: bundleID, udid: udid)
-            return Result(message: "App \(bundleID) activated")
+            if options.log {
+                return try AppLogCaptureService.start(bundleID: options.bundleID, udid: udid, deviceType: "real", paths: paths)
+            }
+            try CoreDeviceAppLifecycleRunner().activate(bundleID: options.bundleID, udid: udid, terminateExisting: options.terminateExisting)
+            return Result(message: "App \(options.bundleID) activated")
         case .terminate:
-            let terminated = try CoreDeviceAppLifecycleRunner().terminate(bundleID: bundleID, udid: udid)
-            return Result(message: terminated
-                ? "App \(bundleID) terminated"
-                : "App \(bundleID) not running, skipped terminate")
+            let terminated = try CoreDeviceAppLifecycleRunner().terminate(bundleID: options.bundleID, udid: udid)
+            return try resultForTerminate(bundleID: options.bundleID, udid: udid, terminated: terminated, paths: paths)
         }
+    }
+
+    private static func resultForTerminate(bundleID: String, udid: String, terminated: Bool, paths: IOSUsePaths) throws -> Result {
+        var message = terminated
+            ? "App \(bundleID) terminated"
+            : "App \(bundleID) not running, skipped terminate"
+        if terminated, let captureMessage = try AppLogCaptureService.observeStopAfterTerminate(bundleID: bundleID, udid: udid, paths: paths) {
+            message += "\n\(captureMessage)"
+        }
+        return Result(message: message, didTerminateApp: terminated)
     }
 }
 
@@ -70,14 +88,39 @@ protocol CoreDeviceAppLifecycleServicing {
         startSuspended: Bool,
         environment: [String: String],
         payloadURL: String?,
-        activates: Bool?
+        activates: Bool?,
+        standardIOIdentifier: UUID?
     ) throws -> RemoteXPCValue
     func listProcesses() throws -> [CoreDeviceProcessToken]
     func kill(processIdentifier: Int) throws
     func close()
 }
 
-extension CoreDeviceAppService: CoreDeviceAppLifecycleServicing {}
+extension CoreDeviceAppService: CoreDeviceAppLifecycleServicing {
+    func launchApplication(
+        bundleID: String,
+        arguments: [String],
+        terminateExisting: Bool,
+        startSuspended: Bool,
+        environment: [String: String],
+        payloadURL: String?,
+        activates: Bool?,
+        standardIOIdentifier: UUID?
+    ) throws -> RemoteXPCValue {
+        try launchApplication(
+            bundleID: bundleID,
+            arguments: arguments,
+            terminateExisting: terminateExisting,
+            startSuspended: startSuspended,
+            environment: environment,
+            payloadURL: payloadURL,
+            activates: activates,
+            standardIOIdentifier: standardIOIdentifier,
+            platformSpecificOptions: [:],
+            activeUser: false
+        )
+    }
+}
 
 final class CoreDeviceAppLifecycleRunner {
     struct Dependencies {
@@ -107,16 +150,17 @@ final class CoreDeviceAppLifecycleRunner {
         self.dependencies = dependencies
     }
 
-    func activate(bundleID: String, udid: String) throws {
+    func activate(bundleID: String, udid: String, terminateExisting: Bool = false, standardIOIdentifier: UUID? = nil) throws {
         try withAppService(udid: udid) { appService in
             _ = try appService.launchApplication(
                 bundleID: bundleID,
                 arguments: [],
-                terminateExisting: false,
+                terminateExisting: terminateExisting,
                 startSuspended: false,
                 environment: [:],
                 payloadURL: nil,
-                activates: true
+                activates: true,
+                standardIOIdentifier: standardIOIdentifier
             )
         }
     }

@@ -44,6 +44,38 @@ final class CoreDeviceOpenStdIOSocket {
         }
     }
 
+    func drainToFile(_ fileHandle: FileHandle, interruptMonitor: InterruptMonitor? = nil) throws {
+        lock.lock()
+        if draining {
+            lock.unlock()
+            return
+        }
+        draining = true
+        lock.unlock()
+
+        while !shouldStop {
+            try interruptMonitor?.throwIfInterrupted("App log capture interrupted")
+            do {
+                let data = try stream.readAvailable(
+                    maxBytes: IOSUseProtocol.XCConstants.openStdIODrainMaxBytes,
+                    timeoutSeconds: IOSUseProtocol.XCConstants.openStdIODrainReadTimeoutSeconds
+                )
+                guard !data.isEmpty else {
+                    usleep(useconds_t(IOSUseProtocol.XCConstants.openStdIODrainIdleSleepMicroseconds))
+                    continue
+                }
+                try fileHandle.write(contentsOf: data)
+            } catch let signal as CLIExitSignal {
+                throw signal
+            } catch {
+                if shouldStop {
+                    return
+                }
+                return
+            }
+        }
+    }
+
     func close() {
         lock.lock()
         stopped = true

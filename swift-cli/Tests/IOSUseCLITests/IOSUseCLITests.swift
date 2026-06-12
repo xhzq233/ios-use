@@ -17,6 +17,13 @@ final class IOSUseCLITests: XCTestCase {
         IOSUseCLI.driverClientFactoryForTesting = nil
         AppLifecycleService.realDeviceRunnerForTesting = nil
         AppLifecycleService.simulatorRunnerForTesting = nil
+        AppLogCaptureService.executablePathOverrideForTesting = nil
+        AppLogCaptureService.helperLauncherForTesting = nil
+        AppLogCaptureService.processAliveOverrideForTesting = nil
+        AppLogCaptureService.processCommandOverrideForTesting = nil
+        AppLogCaptureService.signalSenderForTesting = nil
+        AppLogCaptureService.processExitWaiterForTesting = nil
+        AppLogCaptureService.terminateObservationTimeoutForTesting = nil
         OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
         OpenURLService.realDeviceURLLauncherForTesting = nil
         AppManagementService.installerForTesting = nil
@@ -83,6 +90,8 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Usage: ios-use activateApp <bundleId> [--udid <udid>]"))
         XCTAssertTrue(result.stdout.contains("using host-side device services"))
         XCTAssertTrue(result.stdout.contains("--udid <udid>"))
+        XCTAssertTrue(result.stdout.contains("--terminateExisting"))
+        XCTAssertTrue(result.stdout.contains("--log"))
         XCTAssertFalse(result.stdout.contains("Requires an active driver.lock"))
     }
 
@@ -116,6 +125,7 @@ final class IOSUseCLITests: XCTestCase {
             (["proxy", "doctor", "--help"], "Usage: ios-use proxy doctor"),
             (["oslog", "--help"], "Usage: ios-use oslog"),
             (["nslog", "--help"], "Usage: ios-use nslog"),
+            (["log-read", "--help"], "Usage: ios-use log-read"),
         ]
 
         for entry in cases {
@@ -811,10 +821,10 @@ final class IOSUseCLITests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-real-activate-\(UUID().uuidString)")
             .path
-        var calls: [(AppLifecycleOptions.Action, String, String)] = []
-        AppLifecycleService.realDeviceRunnerForTesting = { action, bundleID, udid in
-            calls.append((action, bundleID, udid))
-            return AppLifecycleService.Result(message: "App \(bundleID) activated")
+        var calls: [(AppLifecycleOptions, String)] = []
+        AppLifecycleService.realDeviceRunnerForTesting = { options, udid in
+            calls.append((options, udid))
+            return AppLifecycleService.Result(message: "App \(options.bundleID) activated")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("host-side activateApp must not create a driver client")
@@ -830,7 +840,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "App com.apple.Preferences activated\n")
-        XCTAssertEqual(calls.map { [$0.0.commandName, $0.1, $0.2] }, [["activateApp", "com.apple.Preferences", "REAL-ACTIVE"]])
+        XCTAssertEqual(calls.map { [$0.0.action.commandName, $0.0.bundleID, $0.1, "\($0.0.terminateExisting)", "\($0.0.log)"] }, [["activateApp", "com.apple.Preferences", "REAL-ACTIVE", "false", "false"]])
     }
 
     func testMutatingCommandCanAppendFreshDom() throws {
@@ -937,10 +947,10 @@ final class IOSUseCLITests: XCTestCase {
             .path
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try writeDriverLock(udid: "REAL-TERM", deviceType: "real", paths: paths)
-        var calls: [(AppLifecycleOptions.Action, String, String)] = []
-        AppLifecycleService.realDeviceRunnerForTesting = { action, bundleID, udid in
-            calls.append((action, bundleID, udid))
-            return AppLifecycleService.Result(message: "App \(bundleID) not running, skipped terminate")
+        var calls: [(AppLifecycleOptions, String)] = []
+        AppLifecycleService.realDeviceRunnerForTesting = { options, udid in
+            calls.append((options, udid))
+            return AppLifecycleService.Result(message: "App \(options.bundleID) not running, skipped terminate")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("host-side terminateApp must not create a driver client")
@@ -956,7 +966,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "App com.apple.Preferences not running, skipped terminate\n")
-        XCTAssertEqual(calls.map { [$0.0.commandName, $0.1, $0.2] }, [["terminateApp", "com.apple.Preferences", "REAL-TERM"]])
+        XCTAssertEqual(calls.map { [$0.0.action.commandName, $0.0.bundleID, $0.1] }, [["terminateApp", "com.apple.Preferences", "REAL-TERM"]])
     }
 
     func testHostSideAppLifecycleRequiresUdidOrActiveLock() {
@@ -1590,6 +1600,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(paths.session, "/tmp/ios-use-swift-test-home/state/session.json")
         XCTAssertEqual(paths.driverLock, "/tmp/ios-use-swift-test-home/state/driver.lock")
         XCTAssertEqual(paths.nslogLock, "/tmp/ios-use-swift-test-home/state/nslog.lock")
+        XCTAssertEqual(paths.appLogState, "/tmp/ios-use-swift-test-home/state/app-log.json")
         XCTAssertEqual(paths.logs, "/tmp/ios-use-swift-test-home/logs")
         XCTAssertEqual(paths.artifacts, "/tmp/ios-use-swift-test-home/artifacts")
     }
