@@ -182,7 +182,7 @@ ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
 - Flow 目标就是最近一次 `ios-use start` 的设备，不支持 `--udid`。
 - 写 flow 前先用 CLI 手动跑通每一步，再组装成 YAML。
 - Flow 中坐标、offset、offsetRatio 都写成和 CLI 参数一致的字符串。
-- `needNSLog: true` 是 Flow 内使用旧 `nslog` action 的入口；除非任务明确要求 NSLogger，否则优先用 `activateApp --log` 或 `oslog`。
+- Flow 内 App 启动日志用 `needLog: true` + `action: log`。旧 `needNSLog` / `nslog` 只在任务明确要求 NSLogger 时使用。
 
 ## 8. Proxy 入口
 

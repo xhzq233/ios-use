@@ -3,6 +3,23 @@ import IOSUseProtocol
 @testable import IOSUseCLI
 
 final class FlowServiceTests: XCTestCase {
+    override func tearDown() {
+        AppLogCaptureService.executablePathOverrideForTesting = nil
+        AppLogCaptureService.helperLauncherForTesting = nil
+        AppLogCaptureService.processAliveOverrideForTesting = nil
+        AppLogCaptureService.processCommandOverrideForTesting = nil
+        AppLogCaptureService.signalSenderForTesting = nil
+        AppLogCaptureService.processExitWaiterForTesting = nil
+        AppLogCaptureService.terminateObservationTimeoutForTesting = nil
+        IOSUseCLI.driverClientFactoryForTesting = nil
+        Shell.runOverrideForTesting = nil
+        Shell.runResultOverrideForTesting = nil
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+        OpenURLService.realDeviceURLLauncherForTesting = nil
+        OSLogService.resetSimulatorLogCollectorForTesting()
+        super.tearDown()
+    }
+
     func testMissingFlowFileFailsBeforeDriverWork() {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": "/tmp/ios-use-swift-flow"]).run(arguments: ["flow", "/tmp/no-such-flow.yaml"])
 
@@ -510,6 +527,93 @@ final class FlowServiceTests: XCTestCase {
         XCTAssertTrue(try String(contentsOfFile: saved).contains("Driver READY"))
     }
 
+    func testFlowNeedLogStartsCaptureAndLogStepReadsCurrentCapture() throws {
+        let fixture = try FlowFixture()
+        try writeDriverLock(udid: "REAL-FLOW", deviceType: "real", paths: fixture.paths)
+        let flow = try fixture.write("app-log.yaml", """
+        name: app-log
+        app: com.example.Target
+        needLog: true
+        steps:
+          - action: log
+            pattern: ready
+            flags: i
+            timeout: 1
+            last: 1
+            name: app-ready
+            clearAfterRead: true
+        """)
+        AppLogCaptureService.executablePathOverrideForTesting = "/usr/local/bin/ios-use"
+        var launchedRequest: AppLogCaptureService.HelperLaunchRequest?
+        AppLogCaptureService.helperLauncherForTesting = { request in
+            launchedRequest = request
+            let logFile = try XCTUnwrap(argumentValue(after: "--log-file", in: request.arguments))
+            try "ignore\nDriver READY\n".write(toFile: logFile, atomically: true, encoding: .utf8)
+            try AppLogCaptureService.writeState(AppLogState(
+                lastLogFile: logFile,
+                lastCapture: AppLogCaptureTarget(
+                    bundleID: "com.example.Target",
+                    udid: "REAL-FLOW",
+                    deviceType: "real",
+                    logFile: logFile,
+                    startedAt: 1,
+                    stoppedAt: nil,
+                    status: "running",
+                    helperPID: 333,
+                    lastError: nil
+                )
+            ), paths: fixture.paths)
+            return 333
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("needLog + log-only flow must not create a driver client")
+            return FakeFlowDriver()
+        }
+
+        let output = try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)
+
+        XCTAssertTrue(output.contains("→ log: capturing com.example.Target"))
+        XCTAssertTrue(output.contains("→ log: 1 matched /ready/"))
+        XCTAssertTrue(output.contains("→ log: buffer cleared"))
+        let request = try XCTUnwrap(launchedRequest)
+        XCTAssertEqual(argumentValue(after: "--device-type", in: request.arguments), "real")
+        XCTAssertEqual(argumentValue(after: "--udid", in: request.arguments), "REAL-FLOW")
+        XCTAssertEqual(argumentValue(after: "--bundle-id", in: request.arguments), "com.example.Target")
+        let logFile = try XCTUnwrap(argumentValue(after: "--log-file", in: request.arguments))
+        XCTAssertEqual(try String(contentsOfFile: logFile, encoding: .utf8), "")
+        let saved = "\(fixture.paths.artifacts)/app-ready.log"
+        XCTAssertEqual(try String(contentsOfFile: saved, encoding: .utf8), "Driver READY\n")
+    }
+
+    func testFlowLogRequiresNeedLog() throws {
+        let fixture = try FlowFixture()
+        let flow = try fixture.write("log-without-need-log.yaml", """
+        name: log-without-need-log
+        steps:
+          - action: log
+            pattern: ready
+        """)
+
+        XCTAssertThrowsError(try FlowService.runForTesting(file: flow.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("log requires needLog in flow config"))
+        }
+    }
+
+    func testFlowNeedLogRequiresApp() throws {
+        let fixture = try FlowFixture()
+        try writeDriverLock(udid: "REAL-FLOW", deviceType: "real", paths: fixture.paths)
+        let flow = try fixture.write("need-log-without-app.yaml", """
+        name: need-log-without-app
+        needLog: true
+        steps:
+          - action: sleep
+        """)
+
+        XCTAssertThrowsError(try FlowService.run(file: flow.path, options: FlowOptions(file: flow.path), paths: fixture.paths)) { error in
+            XCTAssertTrue(String(describing: error).contains("needLog requires top-level app"))
+        }
+    }
+
     func testFlowNSLogNameTemplateMustResolveToString() throws {
         let fixture = try FlowFixture()
         let flow = try fixture.write("bad-nslog-name.yaml", """
@@ -861,6 +965,19 @@ final class FlowServiceTests: XCTestCase {
           - action: oslog
             bundleId: com.example
         """)
+        let invalidLogLast = try fixture.write("log-last-zero.yaml", """
+        name: log-last-zero
+        steps:
+          - action: log
+            last: 0
+        """)
+        let invalidNeedLog = try fixture.write("need-log-object.yaml", """
+        name: need-log-object
+        needLog:
+          enabled: true
+        steps:
+          - action: sleep
+        """)
 
         XCTAssertThrowsError(try FlowService.runForTesting(file: nonArrayCandidates.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
             XCTAssertTrue(String(describing: error).contains("dom.candidates must be a string array"))
@@ -879,6 +996,12 @@ final class FlowServiceTests: XCTestCase {
         }
         XCTAssertThrowsError(try FlowService.runForTesting(file: oslogBundleId.path, paths: fixture.paths, driver: FakeFlowDriver(), udid: "SIM-1")) { error in
             XCTAssertTrue(String(describing: error).contains("oslog has unknown field \"bundleId\""))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: invalidLogLast.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("log.last must be greater than 0"))
+        }
+        XCTAssertThrowsError(try FlowService.runForTesting(file: invalidNeedLog.path, paths: fixture.paths, driver: FakeFlowDriver())) { error in
+            XCTAssertTrue(String(describing: error).contains("needLog must be a boolean"))
         }
     }
 
@@ -1305,4 +1428,12 @@ private final class FakeFlowDriver: FlowDriver {
         commands.append("screenshot")
         return Data([0xff, 0xd8, 0xff])
     }
+}
+
+private func argumentValue(after option: String, in arguments: [String]) -> String? {
+    guard let index = arguments.firstIndex(of: option),
+          arguments.indices.contains(arguments.index(after: index)) else {
+        return nil
+    }
+    return arguments[arguments.index(after: index)]
 }

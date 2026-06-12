@@ -11,7 +11,7 @@
 ```yaml
 name: Settings Search
 app: com.apple.Preferences
-needNSLog: true
+needLog: true
 steps:
   - action: waitFor
     label: 蓝牙
@@ -26,7 +26,7 @@ steps:
 
 - `name`：flow 名称，建议能说明页面或目标
 - `app`：可选；指定目标 app，常用于主 flow；入口 flow 会切到目标 app，不要再把 `terminateApp` / `activateApp` / `open` 当成通用前置步骤写进 flow
-- `needNSLog`：设为 `true` 时自动开始采集 nslog 并等待 app 连接，flow 中的 `nslog` action 需要它
+- `needLog`：设为 `true` 时用 `activateApp --terminateExisting --log` 启动顶层 `app`，flow 中的 `log` action 读取本次采集
 - `steps`：按顺序执行的动作列表
 
 ## 3. 支持的 action
@@ -45,7 +45,8 @@ steps:
 - `open`
 - `dismissAlert`
 - `oslog`
-- `nslog`
+- `log`
+- `nslog`（旧 NSLogger 入口，只在 App 已接入 NSLogger 时使用）
 
 只在 Flow 里使用的编排 action：
 
@@ -65,7 +66,7 @@ steps:
 - 先确认页面，再做动作：切页后先 `waitFor` 或 `dom`
 - 能用 label 就不用坐标；坐标只作兜底
 - 需要滚动到目标时，优先 `swipe --to` 对应的 flow 写法
-- 快速 batch 操作可在 `tap` / `longpress` / `input` / `swipe` 上加 `dom: <ms>`，动作成功后追加 fresh DOM；关键节点也可保留独立 `dom` / `oslog`，方便失败后定位
+- 快速 batch 操作可在 `tap` / `longpress` / `input` / `swipe` 上加 `dom: <ms>`，动作成功后追加 fresh DOM；关键节点也可保留独立 `dom` / `log` / `oslog`，方便失败后定位
 - 公共前置条件和公共收尾动作抽成 subflow，不要在多个 flow 里重复粘贴
 
 ## 5. 核心字段
@@ -292,17 +293,15 @@ steps:
 ### 6.4 `oslog`
 
 - `timeout` 在窗口期内轮询匹配
-- `bundleId` 按 subsystem/category/process/消息内容过滤
-- `clear: true` 清空 buffer
-- 适合验证某个动作之后系统日志是否出现
+- `process` / `pid` 用于过滤单个日志来源，二者互斥
+- 适合验证系统 unified log 或 `os_log` 是否出现
 
 ```yaml
 - action: oslog
   pattern: Preferences
   flags: i
-  bundleId: com.apple.Preferences
+  process: Preferences
   timeout: 3
-  name: settings-oslog
 ```
 
 ### 6.5 `sleep`
@@ -319,7 +318,31 @@ steps:
   ms: 500
 ```
 
-### 6.6 `nslog`
+### 6.6 `log`
+
+- 需要顶层 `app` 和 `needLog: true`
+- flow 开始时会重新启动 App 并绑定日志采集
+- `pattern` 是可选正则；不传时读取匹配范围内全部日志行
+- `timeout` 只在采集仍运行时等待新日志
+- `last` 只保留最后 N 行
+- `clearAfterRead: true` 读取后截断当前 app log 文件，避免后续 `log` action 重复命中
+- `name` 控制保存到 `~/.ios-use/artifacts/<name>.log` 的文件名
+
+```yaml
+name: Log Check
+app: com.example.app
+needLog: true
+steps:
+  - action: log
+    pattern: "ready|error"
+    flags: i
+    timeout: 10
+    last: 50
+    name: app-ready
+    clearAfterRead: true
+```
+
+### 6.7 `nslog`（legacy）
 
 - 需要 `needNSLog: true`（自动开始采集 nslog 并等待 app 连接）
 - `pattern` 是正则匹配，`timeout` 轮询等待匹配出现
@@ -334,7 +357,7 @@ steps:
   clearAfterRead: true
 ```
 
-### 6.7 `open`
+### 6.8 `open`
 
 - 在设备上打开 URL，`url` 是必填字段
 - 未注册 scheme 时步骤失败并报错；是否真正打开目标页面应由后续 `dom` / `waitFor` 验证
@@ -344,7 +367,7 @@ steps:
   url: "https://example.com"
 ```
 
-### 6.8 `dismissAlert`
+### 6.9 `dismissAlert`
 
 - 关闭当前系统 Alert 弹窗
 - 不传 `index` 时默认点击最后一个按钮
@@ -357,7 +380,7 @@ steps:
   index: 0
 ```
 
-### 6.9 关闭弹窗
+### 6.10 关闭弹窗
 
 没有 `dismissPopup` action。关闭弹窗的标准做法：
 
@@ -382,7 +405,7 @@ steps:
 1. 先手动跑通目标页面上的每个动作
 2. 把稳定可复用的前置过程抽成 subflow
 3. 用 `vars` 传输入，用 `outputs` 传回结果
-4. 在关键节点保留 `dom` / `oslog`
+4. 在关键节点保留 `dom` / `log` / `oslog`
 5. 先运行 `ios-use start` 选择目标设备；多设备或 Simulator 用 `ios-use start <udid>`；`flow --udid <udid>` 不再支持
 6. 运行 `ios-use flow your-flow.yaml`
 7. 如果失败，回到 `SKILL.md` 的 CLI 工作流逐步单步复现
@@ -401,4 +424,5 @@ steps:
 - 第一次 Ctrl+C：优雅中断，等待当前 step 完成后停止
 - 第二次 Ctrl+C：强制退出
 - 中断时自动清理临时资源、停止 nslog 采集
+- `needLog: true` 的 app log 采集会随 App 退出结束，或被下一次 `activateApp --log` / `needLog` flow 替换；需要 flow 结束时关闭采集就显式加入 `terminateApp`
 - `needNSLog: true` 的 flow 结束时自动停止 nslog 采集（无论正常结束还是中断）
