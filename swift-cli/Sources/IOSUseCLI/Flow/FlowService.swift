@@ -21,11 +21,17 @@ public enum FlowService {
         let activeDriver = try SessionService.requireDriverLock(paths: paths)
         let bootstrapVars = try resolveVars(rawVars: flow.vars, inheritedVars: options.externalVars)
         let flowApp = try flow.app.map { try resolveTemplates($0, vars: bootstrapVars) } as? String
+        let needLog = try flow.needLog.map { try resolveTemplates($0, vars: bootstrapVars) }
         let needNSLog = try flow.needNSLog.map { try resolveTemplates($0, vars: bootstrapVars) }
+        let shouldCaptureAppLog = try appLogEnabled(needLog)
+        if shouldCaptureAppLog, flowApp?.isEmpty != false {
+            throw CLIParseError.invalidValue("needLog requires top-level app")
+        }
         let interruptMonitor = InterruptMonitor()
         interruptMonitor.start()
         defer { interruptMonitor.stop() }
 
+        var appLogCapture: AppLogCaptureTarget?
         var nslogCapture: NSLogCaptureTarget?
         defer {
             if let nslogCapture {
@@ -51,11 +57,24 @@ public enum FlowService {
         let driver = RecoveringFlowDriver(paths: paths, verbose: options.verbose)
         defer { driver.close() }
         if let flowApp, !flowApp.isEmpty {
-            _ = try DriverCommandExecutor.execute(action: .terminateApp(bundleId: flowApp), paths: paths, hostDeviceTypeHint: activeDriver.deviceType) { body in
-                try body(driver)
-            }
-            _ = try DriverCommandExecutor.execute(action: .activateApp(bundleId: flowApp), paths: paths, hostDeviceTypeHint: activeDriver.deviceType) { body in
-                try body(driver)
+            if shouldCaptureAppLog {
+                let result = try AppLogCaptureService.start(bundleID: flowApp, udid: activeDriver.udid, deviceType: activeDriver.deviceType, paths: paths)
+                appLogCapture = AppLogCaptureService.readState(paths: paths)?.lastCapture
+                emit("  → log: capturing \(flowApp)")
+                if let logFile = appLogCapture?.logFile {
+                    emit(" → \(logFile)")
+                }
+                emit("\n")
+                if appLogCapture == nil {
+                    emit("\(result.message)\n")
+                }
+            } else {
+                _ = try DriverCommandExecutor.execute(action: .terminateApp(bundleId: flowApp), paths: paths, hostDeviceTypeHint: activeDriver.deviceType) { body in
+                    try body(driver)
+                }
+                _ = try DriverCommandExecutor.execute(action: .activateApp(bundleId: flowApp), paths: paths, hostDeviceTypeHint: activeDriver.deviceType) { body in
+                    try body(driver)
+                }
             }
         }
         var runner = FlowRunner(
@@ -70,6 +89,7 @@ public enum FlowService {
             interruptMonitor: interruptMonitor
         )
         runner.output = bootstrapOutput
+        runner.appLogCapture = appLogCapture
         runner.nslogCapture = nslogCapture
         if let capture = nslogCapture {
             runner.emit("Waiting for app to connect to NSLogger...\n")
@@ -120,6 +140,7 @@ public enum FlowService {
 private struct FlowFile {
     var name: String
     var app: Any?
+    var needLog: Any?
     var needNSLog: Any?
     var vars: [String: Any]
     var outputs: Any?
@@ -167,6 +188,7 @@ private struct FlowRunner {
     var captureOutput = true
     var interruptMonitor: InterruptMonitor? = nil
     var output = ""
+    var appLogCapture: AppLogCaptureTarget?
     var nsloggerServer: NSLoggerServer?
     var nslogCapture: NSLogCaptureTarget?
 
@@ -192,6 +214,8 @@ private struct FlowRunner {
         var flowVars = try resolveVars(rawVars: flow.vars, inheritedVars: inheritedVars)
         let resolvedFlowApp = try flow.app.map { try resolveTemplates($0, vars: flowVars) } as? String
         let flowApp = resolvedFlowApp?.isEmpty == false ? resolvedFlowApp : inheritedFlowApp
+        let needLog = try flow.needLog.map { try resolveTemplates($0, vars: flowVars) }
+        _ = try appLogEnabled(needLog)
         let needNSLog = try flow.needNSLog.map { try resolveTemplates($0, vars: flowVars) }
         _ = try nsloggerOptions(needNSLog)
         let visibleStepCount = compiled.steps.reduce(0) { count, step in
@@ -278,6 +302,7 @@ private struct FlowRunner {
             )
             child.nsloggerServer = nsloggerServer
             child.nslogCapture = nslogCapture
+            child.appLogCapture = appLogCapture
             let childOutputs = try child.run(file: childFile, inheritedVars: flowVars.merging(childVars) { _, new in new }, stack: stack)
             if outputSink == nil {
                 output += child.output
@@ -295,6 +320,14 @@ private struct FlowRunner {
                 options.name = try requiredString(step["name"], field: "nslog.name")
             }
             emit(try runNSLogStep(options))
+
+        case "log":
+            let parsed = try FlowLowering.parseCLIBackedStep(step, flowApp: flowApp, hostUdid: udid)
+            guard case .logRead(let options) = parsed else {
+                throw CLIParseError.invalidValue("internal error: expected log command")
+            }
+            let name = isNull(step["name"]) ? nil : try requiredString(step["name"], field: "log.name")
+            emit(try runLogStep(options, name: name))
 
         case "open":
             let parsed = try FlowLowering.parseCLIBackedStep(step, flowApp: flowApp, hostUdid: udid)
@@ -334,6 +367,40 @@ private struct FlowRunner {
         return false
     }
 
+    private mutating func runLogStep(_ options: AppLogReadOptions, name: String?) throws -> String {
+        guard let capture = appLogCapture else {
+            throw CLIParseError.invalidValue("log requires needLog in flow config")
+        }
+        let startedAt = Date()
+        let refreshed = AppLogCaptureService.readState(paths: paths)?.lastCapture
+        let status = refreshed?.logFile == capture.logFile ? refreshed?.status ?? capture.status : capture.status
+        let output = try LogFileReadService.read(
+            logFile: capture.logFile,
+            status: status,
+            missingFileMessage: "App log capture file not found: \(capture.logFile). Run flow again with needLog: true.",
+            pattern: options.pattern,
+            flags: options.flags,
+            timeout: options.timeout ?? 0,
+            clearAfterRead: options.clearAfterRead,
+            last: options.last,
+            interruptMonitor: interruptMonitor
+        )
+        let lines = output.split(separator: "\n", omittingEmptySubsequences: false).map(String.init).filter { !$0.isEmpty }
+        let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        let path = try saveLog(lines: lines, name: name ?? "log-\(flowTimestamp())", defaultName: "log-\(flowTimestamp())")
+        let summary: String
+        if let pattern = options.pattern, !pattern.isEmpty {
+            summary = "\(lines.count) matched /\(pattern)/"
+        } else {
+            summary = "\(lines.count) lines"
+        }
+        var out = "  → log: \(summary) in \(elapsedMs)ms → \(path)\n"
+        if options.clearAfterRead {
+            out += "  → log: buffer cleared\n"
+        }
+        return out
+    }
+
     private mutating func runNSLogStep(_ options: NSLogOptions) throws -> String {
         guard nslogCapture != nil || nsloggerServer != nil else {
             throw CLIParseError.invalidValue("nslog requires needNSLog in flow config")
@@ -363,7 +430,7 @@ private struct FlowRunner {
             matches = []
         }
         let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
-        let path = try saveLog(lines: matches, name: options.name ?? "nslog-\(flowTimestamp())")
+        let path = try saveLog(lines: matches, name: options.name ?? "nslog-\(flowTimestamp())", defaultName: "nslog-\(flowTimestamp())")
         var out = "  → nslog: \(matches.count) matched /\(pattern)/ in \(elapsedMs)ms → \(path)\n"
         if options.clearAfterRead {
             out += "  → nslog: buffer cleared\n"
@@ -406,9 +473,9 @@ private struct FlowRunner {
         return URL(fileURLWithPath: file, relativeTo: base).standardized.path
     }
 
-    private func saveLog(lines: [String], name: String) throws -> String {
+    private func saveLog(lines: [String], name: String, defaultName: String) throws -> String {
         try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "nslog-\(flowTimestamp())", extension: "log")
+        let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: defaultName, extension: "log")
         let content = lines.joined(separator: "\n") + (lines.isEmpty ? "" : "\n")
         try content.write(toFile: path, atomically: true, encoding: .utf8)
         return path
@@ -435,6 +502,7 @@ private func loadFlowFile(_ path: String) throws -> FlowFile {
     return FlowFile(
         name: raw["name"] as? String ?? URL(fileURLWithPath: path).lastPathComponent,
         app: raw["app"],
+        needLog: raw["needLog"],
         needNSLog: raw["needNSLog"],
         vars: raw["vars"] as? [String: Any] ?? [:],
         outputs: raw["outputs"],
@@ -458,6 +526,7 @@ private let flowStepAllowedKeys: [String: Set<String>] = [
     "open": ["url"],
     "dismissAlert": ["index"],
     "oslog": ["pattern", "flags", "process", "pid", "timeout"],
+    "log": ["pattern", "flags", "timeout", "clearAfterRead", "last", "name"],
     "nslog": ["pattern", "flags", "timeout", "clearAfterRead", "name"],
     "runFlow": ["file", "vars", "outputs"],
     "returnIf": ["value", "is"],
@@ -557,6 +626,15 @@ enum FlowLowering {
             args += hostUdidArg(hostUdid)
             return args
 
+        case "log":
+            var args = ["log-read"]
+            args += try optionalStringArg("--pattern", step["pattern"], field: "log.pattern")
+            args += try optionalStringArg("--flags", step["flags"], field: "log.flags")
+            args += try optionalNumberArg("--timeout", step["timeout"], field: "log.timeout")
+            args += try boolFlag("--clearAfterRead", step["clearAfterRead"], field: "log.clearAfterRead")
+            args += try optionalIntArg("--last", step["last"], field: "log.last", allowNegative: false)
+            return args
+
         case "nslog":
             var args = ["nslog", "read", "--pattern", try requiredString(step["pattern"], field: "nslog.pattern")]
             args += try optionalStringArg("--flags", step["flags"], field: "nslog.flags")
@@ -643,6 +721,13 @@ enum FlowLowering {
                 throw CLIParseError.invalidValue("oslog.process and oslog.pid are mutually exclusive")
             }
             try validatePositiveNumberLike(step["timeout"], field: "oslog.timeout")
+        case "log":
+            try validateStringLike(step["pattern"], field: "log.pattern")
+            try validateStringLike(step["flags"], field: "log.flags")
+            try validateNumberLike(step["timeout"], field: "log.timeout")
+            try validateBoolLike(step["clearAfterRead"], field: "log.clearAfterRead")
+            try validatePositiveIntLike(step["last"], field: "log.last")
+            try validateStringLike(step["name"], field: "log.name")
         case "nslog":
             try validateStringLike(step["pattern"], field: "nslog.pattern", required: true)
             try validateStringLike(step["flags"], field: "nslog.flags")
@@ -768,6 +853,14 @@ enum FlowLowering {
         _ = try intString(value, field: field, allowNegative: allowNegative)
     }
 
+    private static func validatePositiveIntLike(_ value: Any?, field: String) throws {
+        guard !isNull(value), !containsTemplate(value) else { return }
+        let string = try intString(value, field: field, allowNegative: false)
+        guard let parsed = Int(string), parsed > 0 else {
+            throw CLIParseError.invalidValue("\(field) must be greater than 0")
+        }
+    }
+
     private static func validatePostDomLike(_ value: Any?, field: String) throws {
         guard !isNull(value), !containsTemplate(value) else { return }
         let string = try intString(value, field: field, allowNegative: false)
@@ -816,6 +909,7 @@ private func compileFlow(file: String, context: FlowRunContext, stack: [String])
         throw CLIParseError.invalidValue("flow vars must be an object")
     }
     try validateNeedNSLogForCompile(flow.needNSLog)
+    try validateNeedLogForCompile(flow.needLog)
 
     let nextStack = stack + [resolvedFile]
     var compiledSteps: [CompiledStep] = []
@@ -941,6 +1035,19 @@ private func validateRunFlowOutputs(_ rawOutputs: Any?, childFileValue: String, 
 private func validateNeedNSLogForCompile(_ raw: Any?) throws {
     guard !isNull(raw), !containsTemplate(raw) else { return }
     _ = try nsloggerOptions(raw)
+}
+
+private func validateNeedLogForCompile(_ raw: Any?) throws {
+    guard !isNull(raw), !containsTemplate(raw) else { return }
+    _ = try appLogEnabled(raw)
+}
+
+private func appLogEnabled(_ raw: Any?) throws -> Bool {
+    guard !isNull(raw) else { return false }
+    guard let enabled = raw as? Bool else {
+        throw CLIParseError.invalidValue("needLog must be a boolean")
+    }
+    return enabled
 }
 
 private func nsloggerOptions(_ raw: Any?) throws -> NSLoggerServerOptions? {
