@@ -350,6 +350,25 @@ final class MobileImageMounterClient {
             if message.contains("NotMounted") || message.contains("NoImageMounted") || message.contains("ImagePresent") {
                 return false
             }
+            return try copyDevicesContainsPersonalizedDeveloperDiskImage()
+        }
+    }
+
+    private func copyDevicesContainsPersonalizedDeveloperDiskImage() throws -> Bool {
+        let response = try sendPlist(["Command": "CopyDevices"])
+        guard let entries = response["EntryList"] as? [[String: Any]] else {
+            return false
+        }
+        return entries.contains { entry in
+            let isMounted = (entry["IsMounted"] as? Bool) ?? true
+            guard isMounted else { return false }
+            if entry["PersonalizedImageType"] as? String == "DeveloperDiskImage" {
+                return true
+            }
+            if entry["DiskImageType"] as? String == "Personalized",
+               entry["MountPath"] as? String == "/System/Developer" {
+                return true
+            }
             return false
         }
     }
