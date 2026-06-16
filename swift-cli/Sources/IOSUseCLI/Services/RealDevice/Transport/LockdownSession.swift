@@ -75,7 +75,7 @@ enum LockdownSession {
         udid: String,
         usbmuxConnect: (String, Int) throws -> Int32 = Usbmux.connect,
         tlsStreamFactory: (Int32, PairRecord) throws -> DeviceStream = { fd, pairRecord in
-            try OpenSSLDeviceStream(fd: fd, pairRecord: pairRecord)
+            try NIOSSLDeviceStream(fd: fd, pairRecord: pairRecord)
         },
         plainStreamFactory: (Int32) -> DeviceStream = { fd in
             PlainDeviceStream(fd: fd)

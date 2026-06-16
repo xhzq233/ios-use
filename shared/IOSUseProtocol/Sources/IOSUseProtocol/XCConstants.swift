@@ -96,6 +96,7 @@ public extension IOSUseProtocol {
         public static let usbmuxConnectTag: UInt32 = 1
         public static let usbmuxReadTimeoutSeconds = 5.0
         public static let usbmuxMaxResponseBytes = 10 * 1024 * 1024
+        public static let deviceStreamWriteChunkBytes = 1024 * 1024
 
         public static let afcServiceName = "com.apple.afc"
         public static let afcPacketMagic = "CFA6LPAA"

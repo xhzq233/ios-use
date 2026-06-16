@@ -1,6 +1,9 @@
 import Darwin
 import Foundation
 import IOSUseProtocol
+import NIOCore
+import NIOPosix
+import NIOSSL
 
 protocol DeviceStream {
     func write(_ data: Data) throws
@@ -295,6 +298,194 @@ final class OpenSSLDeviceStream: DeviceStream {
     private static func debug(_ message: String) {
         guard ProcessInfo.processInfo.environment["IOS_USE_DEBUG_OSLOG"] == "1" else { return }
         FileHandle.standardError.write(Data("[real-oslog] \(message)\n".utf8))
+    }
+}
+
+final class NIOSSLDeviceStream: DeviceStream {
+    private let group: MultiThreadedEventLoopGroup
+    private let proxy: LocalFDProxy
+    private let tempDir: URL
+    private let channel: Channel
+    private let inbound: NIOSSLDeviceStreamInbound
+    private let lock = NSLock()
+    private var closed = false
+
+    init(fd: Int32, pairRecord: PairRecord, ownsFD: Bool = true) throws {
+        let createdTempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-niossl-\(UUID().uuidString)", isDirectory: true)
+        let keyPath = createdTempDir.appendingPathComponent("host.key").path
+        let certPath = createdTempDir.appendingPathComponent("host.crt").path
+        do {
+            try FileManager.default.createDirectory(at: createdTempDir, withIntermediateDirectories: true)
+            try pairRecord.hostPrivateKey.write(to: URL(fileURLWithPath: keyPath), options: .atomic)
+            try pairRecord.hostCertificate.write(to: URL(fileURLWithPath: certPath), options: .atomic)
+        } catch {
+            if ownsFD {
+                Darwin.shutdown(fd, SHUT_RDWR)
+                Darwin.close(fd)
+            }
+            try? FileManager.default.removeItem(at: createdTempDir)
+            throw error
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyPath)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: certPath)
+
+        let createdProxy: LocalFDProxy
+        do {
+            createdProxy = try LocalFDProxy(targetFD: fd, closeTargetOnClose: ownsFD)
+        } catch {
+            if ownsFD {
+                Darwin.shutdown(fd, SHUT_RDWR)
+                Darwin.close(fd)
+            }
+            try? FileManager.default.removeItem(at: createdTempDir)
+            throw error
+        }
+
+        self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        self.proxy = createdProxy
+        self.tempDir = createdTempDir
+        let inboundHandler = NIOSSLDeviceStreamInbound()
+        self.inbound = inboundHandler
+
+        var configuration = TLSConfiguration.makeClientConfiguration()
+        configuration.certificateVerification = .none
+        configuration.certificateChain = try NIOSSLCertificate.fromPEMFile(certPath).map { .certificate($0) }
+        configuration.privateKey = .privateKey(try NIOSSLPrivateKey(file: keyPath, format: .pem))
+        let sslContext = try NIOSSLContext(configuration: configuration)
+
+        do {
+            let bootstrap = ClientBootstrap(group: group)
+                .channelInitializer { channel in
+                    do {
+                        let sslHandler = try NIOSSLClientHandler(context: sslContext, serverHostname: nil)
+                        return channel.pipeline.addHandler(sslHandler).flatMap {
+                            channel.pipeline.addHandler(inboundHandler)
+                        }
+                    } catch {
+                        return channel.eventLoop.makeFailedFuture(error)
+                    }
+                }
+            self.channel = try bootstrap.connect(host: "127.0.0.1", port: createdProxy.port).wait()
+        } catch {
+            createdProxy.close()
+            try? group.syncShutdownGracefully()
+            try? FileManager.default.removeItem(at: createdTempDir)
+            throw error
+        }
+    }
+
+    deinit {
+        close()
+    }
+
+    func write(_ data: Data) throws {
+        lock.lock()
+        let isClosed = closed
+        lock.unlock()
+        if isClosed { throw CLIParseError.invalidValue("TLS stream is closed") }
+
+        var offset = 0
+        while offset < data.count {
+            let end = min(offset + IOSUseProtocol.XCConstants.deviceStreamWriteChunkBytes, data.count)
+            var buffer = channel.allocator.buffer(capacity: end - offset)
+            buffer.writeBytes(data[offset..<end])
+            do {
+                try channel.writeAndFlush(buffer).wait()
+            } catch {
+                throw DeviceStreamError.writeFailedWithError("TLS \(error)")
+            }
+            offset = end
+        }
+    }
+
+    func readExact(byteCount: Int, timeoutSeconds: Double) throws -> Data {
+        var out = Data()
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while out.count < byteCount {
+            let chunk = try readAvailable(maxBytes: byteCount - out.count, timeoutSeconds: max(0, deadline.timeIntervalSinceNow))
+            if chunk.isEmpty { throw DeviceStreamError.timeout("TLS read") }
+            out.append(chunk)
+        }
+        return out
+    }
+
+    func readAvailable(maxBytes: Int, timeoutSeconds: Double) throws -> Data {
+        try inbound.readAvailable(maxBytes: maxBytes, timeoutSeconds: timeoutSeconds)
+    }
+
+    func close() {
+        lock.lock()
+        if closed {
+            lock.unlock()
+            return
+        }
+        closed = true
+        lock.unlock()
+
+        try? channel.close().wait()
+        proxy.close()
+        try? group.syncShutdownGracefully()
+        try? FileManager.default.removeItem(at: tempDir)
+    }
+}
+
+private final class NIOSSLDeviceStreamInbound: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+
+    private let condition = NSCondition()
+    private var buffer = Data()
+    private var closed = false
+    private var error: Error?
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var byteBuffer = unwrapInboundIn(data)
+        guard let incoming = byteBuffer.readBytes(length: byteBuffer.readableBytes), !incoming.isEmpty else {
+            return
+        }
+        condition.lock()
+        buffer.append(contentsOf: incoming)
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        condition.lock()
+        closed = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        condition.lock()
+        self.error = error
+        closed = true
+        condition.broadcast()
+        condition.unlock()
+        context.close(promise: nil)
+    }
+
+    func readAvailable(maxBytes: Int, timeoutSeconds: Double) throws -> Data {
+        let deadline = Date().addingTimeInterval(max(0, timeoutSeconds))
+        condition.lock()
+        defer { condition.unlock() }
+
+        while buffer.isEmpty, error == nil, !closed, Date() < deadline {
+            condition.wait(until: deadline)
+        }
+        if !buffer.isEmpty {
+            let count = min(maxBytes, buffer.count)
+            let out = buffer.prefix(count)
+            buffer.removeFirst(count)
+            return Data(out)
+        }
+        if let error {
+            throw CLIParseError.invalidValue("TLS stream failed: \(error)")
+        }
+        if closed {
+            throw DeviceStreamError.closed("TLS stream")
+        }
+        return Data()
     }
 }
 

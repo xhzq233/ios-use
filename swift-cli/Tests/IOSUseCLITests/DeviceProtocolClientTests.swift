@@ -2095,6 +2095,34 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(request["PersonalizedImageType"] as? String, "DeveloperDiskImage")
     }
 
+    func testMobileImageMounterMountedDetectionFallsBackToCopyDevices() throws {
+        let stream = FakeDeviceStream(reads: [
+            plistFrame([
+                "Error": "InternalError",
+                "DetailedError": "lookup failed",
+            ]),
+            plistFrame([
+                "EntryList": [
+                    [
+                        "DiskImageType": "Personalized",
+                        "IsMounted": true,
+                        "MountPath": "/System/Developer",
+                        "PersonalizedImageType": "DeveloperDiskImage",
+                    ],
+                ],
+            ]),
+        ])
+        let client = MobileImageMounterClient(stream: stream)
+
+        XCTAssertTrue(try client.isPersonalizedImageMounted())
+
+        let lookup = try parseLengthPrefixedPlist(stream.writes[0])
+        XCTAssertEqual(lookup["Command"] as? String, "LookupImage")
+        XCTAssertEqual(lookup["ImageType"] as? String, "Personalized")
+        let copyDevices = try parseLengthPrefixedPlist(stream.writes[1])
+        XCTAssertEqual(copyDevices["Command"] as? String, "CopyDevices")
+    }
+
     func testMobileImageMounterUploadAndMountPersonalizedImageRequests() throws {
         let image = Data([0xaa, 0xbb, 0xcc])
         let signature = Data([0x01, 0x02])
