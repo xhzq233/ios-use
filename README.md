@@ -79,7 +79,7 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.2.4
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.2.5
 ```
 
 Intel Macs should compile locally instead:
@@ -197,7 +197,6 @@ ios-use flow settings.yaml
 | `xcrun simctl` | not needed | not needed | required for Simulator config; dev build also uses it |
 | `unzip` | not needed | required during `config` | required during Simulator `config` |
 | `altsign-cli` | copied by installer if bundled | required for real-device signing | not needed |
-| `openssl` | not needed | required for real-device `oslog` TLS relay | not needed |
 | `dns-sd` | not needed | optional for NSLogger Bonjour publish | optional for NSLogger Bonjour publish |
 | `mitmproxy` | not needed | proxy capture only | proxy capture only |
 | `node` | not needed | benchmark only | benchmark and full Simulator tests |
