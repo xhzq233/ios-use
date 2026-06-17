@@ -14,6 +14,7 @@ enum LockdownSession {
     static func getValue(udid: String, domain: String? = nil, key: String? = nil) throws -> [String: Any] {
         let pairRecord = try PairRecord.load(udid: udid)
         let lockdown = try LockdownClient(udid: udid, pairRecord: pairRecord)
+        let sslError: Error
         do {
             try lockdown.startSession()
             try lockdown.enableSessionSSL()
@@ -21,6 +22,7 @@ enum LockdownSession {
             lockdown.disconnect()
             return values
         } catch {
+            sslError = error
             lockdown.disconnect()
         }
 
@@ -32,7 +34,7 @@ enum LockdownSession {
             return values
         } catch {
             fallback.disconnect()
-            throw error
+            throw combinedLockdownFallbackError(operation: "GetValue", sslError: sslError, plainError: error)
         }
     }
 
@@ -43,6 +45,7 @@ enum LockdownSession {
 
     static func startService(_ serviceName: String, udid: String, pairRecord: PairRecord) throws -> LockdownServiceConnection {
         let lockdown = try LockdownClient(udid: udid, pairRecord: pairRecord)
+        let sslError: Error
         do {
             try lockdown.startSession()
             try lockdown.enableSessionSSL()
@@ -50,6 +53,7 @@ enum LockdownSession {
             lockdown.disconnect()
             return LockdownServiceConnection(pairRecord: pairRecord, service: service)
         } catch {
+            sslError = error
             lockdown.disconnect()
         }
 
@@ -61,7 +65,7 @@ enum LockdownSession {
             return LockdownServiceConnection(pairRecord: pairRecord, service: service)
         } catch {
             fallback.disconnect()
-            throw error
+            throw combinedLockdownFallbackError(operation: "StartService(\(serviceName))", sslError: sslError, plainError: error)
         }
     }
 
@@ -86,5 +90,9 @@ enum LockdownSession {
             return try tlsStreamFactory(fd, connection.pairRecord)
         }
         return plainStreamFactory(fd)
+    }
+
+    private static func combinedLockdownFallbackError(operation: String, sslError: Error, plainError: Error) -> Error {
+        CLIParseError.invalidValue("\(operation) failed over lockdownd SSL and plain fallback. SSL error: \(sslError); plain fallback error: \(plainError)")
     }
 }
