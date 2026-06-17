@@ -11,6 +11,7 @@ public extension IOSUseProtocol {
         // MARK: Real-device XCTest lifecycle
 
         public static let minimumRealDeviceIOSMajorVersion = 17
+        public static let minimumRealDeviceIOSVersion = "17.4"
         public static let xctestHolderRunLoopIntervalSeconds = 0.25
         public static let xctestHolderStartResultTimeoutSeconds = 10.0
         public static let xctestHolderStartPollMicroseconds = 100_000
