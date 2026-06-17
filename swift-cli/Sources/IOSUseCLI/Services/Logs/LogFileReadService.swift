@@ -70,7 +70,7 @@ enum LogFileReadService {
 
     private static func readMatchingLines(logFile: String, regex: NSRegularExpression?) throws -> [String] {
         let text = try String(contentsOfFile: logFile, encoding: .utf8)
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let lines = text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map(String.init)
         guard let regex else {
             return lines.filter { !$0.isEmpty }
         }

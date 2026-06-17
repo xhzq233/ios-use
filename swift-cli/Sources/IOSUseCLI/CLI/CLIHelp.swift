@@ -12,7 +12,7 @@ enum CLIHelp {
           -V, --version    Show version
 
         Commands:
-          devices, config, start, stop, dom, waitFor, screenshot, tap, longpress, input, swipe
+          status, config, start, stop, dom, waitFor, screenshot, tap, longpress, input, swipe
           activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, flow, proxy, oslog, nslog, log-read
 
         """
@@ -47,15 +47,14 @@ enum CLIHelp {
         guard let command = arguments.first else { return rootText }
         let rest = Array(arguments.dropFirst())
         switch command {
-        case "devices", "device":
+        case "status":
             return """
-            Usage: ios-use devices [--simulator] [--verbose]
+            Usage: ios-use status [--verbose]
 
-            List connected USB devices or booted Simulators.
+            Show connected devices, capture processes, proxy state, and config state.
 
             Options:
-              -s, --simulator    List booted Simulators
-              --verbose          Enable verbose output
+              --verbose    Enable verbose device output
 
             """
         case "config":

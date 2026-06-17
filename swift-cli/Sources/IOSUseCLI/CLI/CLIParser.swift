@@ -9,8 +9,8 @@ public enum CLIParser {
         }
 
         switch command {
-        case "devices", "device":
-            return .devices(try parseDevices(&parser))
+        case "status":
+            return .status(try parseStatus(&parser))
         case "config":
             return .config(try parseConfig(&parser))
         case "start":
@@ -65,11 +65,10 @@ public enum CLIParser {
         }
     }
 
-    private static func parseDevices(_ parser: inout ArgumentParser) throws -> DeviceOptions {
-        var options = DeviceOptions()
+    private static func parseStatus(_ parser: inout ArgumentParser) throws -> StatusOptions {
+        var options = StatusOptions()
         while let arg = parser.consume() {
             switch arg {
-            case "-s", "--simulator": options.simulator = true
             case "--verbose": options.verbose = true
             default: throw CLIParseError.unknownOption(arg)
             }

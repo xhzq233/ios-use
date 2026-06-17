@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ParsedCommand: Equatable, Sendable {
-    case devices(DeviceOptions)
+    case status(StatusOptions)
     case config(ConfigOptions)
     case start(StartOptions)
     case stop
@@ -20,7 +20,7 @@ public enum ParsedCommand: Equatable, Sendable {
 
     public var commandName: String {
         switch self {
-        case .devices: return "devices"
+        case .status: return "status"
         case .config: return "config"
         case .start: return "start"
         case .stop: return "stop"
@@ -40,12 +40,10 @@ public enum ParsedCommand: Equatable, Sendable {
     }
 }
 
-public struct DeviceOptions: Equatable, Sendable {
-    public var simulator = false
+public struct StatusOptions: Equatable, Sendable {
     public var verbose = false
 
-    public init(simulator: Bool = false, verbose: Bool = false) {
-        self.simulator = simulator
+    public init(verbose: Bool = false) {
         self.verbose = verbose
     }
 }

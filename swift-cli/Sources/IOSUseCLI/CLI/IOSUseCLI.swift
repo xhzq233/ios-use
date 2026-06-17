@@ -67,8 +67,12 @@ public struct IOSUseCLI: Sendable {
 
     private func execute(_ parsed: ParsedCommand) -> CLIResult {
         switch parsed {
-        case .devices(let options):
-            return listDevices(options)
+        case .status(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try StatusService.status(paths: paths, verbose: options.verbose))
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         case .config(let options) where options.list:
             return CLIResult(exitCode: 0, stdout: ConfigService.formatList(ConfigService.listEntries(paths: paths)))
         case .config(let options) where options.simulator:
@@ -254,20 +258,6 @@ public struct IOSUseCLI: Sendable {
 
     static func isAppNotRunningErrorMessage(_ message: String) -> Bool {
         return message.range(of: #"not running|already terminated|no such process|state=1|state=0"#, options: [.regularExpression, .caseInsensitive]) != nil
-    }
-
-    private func listDevices(_ options: DeviceOptions) -> CLIResult {
-        do {
-            let devices = try DeviceService.listDevices(simulatorOnly: options.simulator, paths: paths)
-            if devices.isEmpty {
-                return CLIResult(exitCode: 0, stdout: options.simulator ? "No booted Simulators found\n" : "No connected real devices found\n")
-            }
-            let configured = DeviceService.configuredDevices(paths: paths)
-            let lines = devices.map { DeviceService.format($0, configuredDevices: configured, verbose: options.verbose) }.joined(separator: "\n")
-            return CLIResult(exitCode: 0, stdout: "\(lines)\n")
-        } catch {
-            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
-        }
     }
 
     public static var helpText: String {

@@ -4,8 +4,8 @@ import IOSUseCLI
 final class CLIParserTests: XCTestCase {
     func testParsesDeviceAndConfigCommands() throws {
         XCTAssertEqual(
-            try CLIParser.parse(["devices", "--simulator", "--verbose"]),
-            .devices(DeviceOptions(simulator: true, verbose: true))
+            try CLIParser.parse(["status", "--verbose"]),
+            .status(StatusOptions(verbose: true))
         )
 
         XCTAssertEqual(
@@ -284,6 +284,10 @@ final class CLIParserTests: XCTestCase {
     }
 
     func testRejectsInvalidValuesAndUnknownOptions() {
+        XCTAssertThrowsError(try CLIParser.parse(["devices"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownCommand("devices"))
+        }
+
         XCTAssertThrowsError(try CLIParser.parse(["swipe", "--dir", "forward"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid swipe dir: \"forward\", expected \"forth\" or \"back\""))
         }

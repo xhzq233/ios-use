@@ -50,7 +50,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Swift CLI for ios-use"))
         XCTAssertTrue(result.stdout.contains("Usage: ios-use [--help] [--version] <command>"))
-        XCTAssertTrue(result.stdout.contains("devices, config, start, stop, dom"))
+        XCTAssertTrue(result.stdout.contains("status, config, start, stop, dom"))
         XCTAssertTrue(result.stdout.contains("ddi-mount"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
@@ -83,6 +83,91 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
+    func testStatusReportsDevicesCapturesProxyAndConfig() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-status-\(UUID().uuidString)", isDirectory: true)
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        try """
+        {"devices":{"REAL-1":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(toFile: paths.config, atomically: true, encoding: .utf8)
+        try SessionService.writeDriverLock(info: SessionService.Info(
+            udid: "REAL-1",
+            deviceName: "Real Phone",
+            deviceVersion: "17.4",
+            deviceType: "real",
+            startedAt: 1,
+            holderPid: 11,
+            runnerPid: 12,
+            startMode: "xctest-holder",
+            sessionIdentifier: "session-1",
+            bundleId: "com.example.driver"
+        ), paths: paths)
+        try AppLogCaptureService.writeState(AppLogState(
+            lastLogFile: "\(root)/logs/app.log",
+            lastCapture: AppLogCaptureTarget(
+                bundleID: "com.example.app",
+                udid: "REAL-1",
+                deviceType: "real",
+                logFile: "\(root)/logs/app.log",
+                startedAt: 1,
+                stoppedAt: nil,
+                status: "running",
+                helperPID: 101,
+                lastError: nil
+            )
+        ), paths: paths)
+        try JSONEncoder().encode(NSLogState(lastCapture: NSLogCaptureTarget(
+            logFile: "\(root)/logs/nslog.log",
+            name: "unit",
+            startedAt: 1,
+            stoppedAt: nil,
+            status: "running",
+            pid: 202,
+            port: 303
+        ))).write(to: URL(fileURLWithPath: paths.nslogState))
+        try JSONEncoder().encode(ProxySessionState(
+            sessionId: "proxy-1",
+            status: "running",
+            startedAt: 1,
+            udid: "REAL-1",
+            flowFile: "\(root)/artifacts/proxy.flow",
+            caInstalled: true,
+            network: ProxySessionState.NetworkInfo(interface: "en0", macLanIp: "192.168.1.10"),
+            mitmdumpPid: 404,
+            mitmdumpPort: 8080,
+            serverStatus: "running",
+            deviceProxyStatus: "configured",
+            caStatus: "trusted"
+        )).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            if simulatorOnly {
+                return [IOSDevice(name: "Booted Sim", version: "26.0", udid: "SIM-1", kind: .simulator)]
+            }
+            return [IOSDevice(name: "Real Phone", version: "17.4", udid: "REAL-1", kind: .real)]
+        }
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["status"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("Connected devices:"))
+        XCTAssertTrue(result.stdout.contains("Real Phone | iOS 17.4 | Device | UDID: REAL-1 | configured"))
+        XCTAssertTrue(result.stdout.contains("Booted Sim | iOS 26.0 | Simulator | UDID: SIM-1"))
+        XCTAssertTrue(result.stdout.contains("Driver:"))
+        XCTAssertTrue(result.stdout.contains("running | udid: REAL-1 | device: real | name: Real Phone | iOS: 17.4 | bundle: com.example.driver | holder pid: 11 | runner pid: 12 | session: session-1"))
+        XCTAssertTrue(result.stdout.contains("App log:"))
+        XCTAssertTrue(result.stdout.contains("running | bundle: com.example.app | udid: REAL-1 | device: real | pid: 101"))
+        XCTAssertTrue(result.stdout.contains("NSLog:"))
+        XCTAssertTrue(result.stdout.contains("running | name: unit | pid: 202 | port: 303"))
+        XCTAssertTrue(result.stdout.contains("Proxy:"))
+        XCTAssertTrue(result.stdout.contains("running | udid: REAL-1 | server: running | device proxy: configured | CA: trusted"))
+        XCTAssertTrue(result.stdout.contains("Config:"))
+        XCTAssertTrue(result.stdout.contains("REAL-1 | bundleId: com.example.driver | driverVersion: \(IOSUseCLI.version)"))
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
     func testAppLifecycleHelpIsHostSide() {
         let result = IOSUseCLI().run(arguments: ["activateApp", "--help"])
 
@@ -97,7 +182,7 @@ final class IOSUseCLITests: XCTestCase {
 
     func testAllDocumentedCommandsReturnPerCommandHelp() {
         let cases: [(arguments: [String], usage: String)] = [
-            (["devices", "--help"], "Usage: ios-use devices"),
+            (["status", "--help"], "Usage: ios-use status"),
             (["config", "--help"], "Usage: ios-use config"),
             (["start", "--help"], "Usage: ios-use start"),
             (["stop", "--help"], "Usage: ios-use stop"),
