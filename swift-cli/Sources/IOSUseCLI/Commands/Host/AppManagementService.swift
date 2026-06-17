@@ -26,6 +26,9 @@ enum AppManagementService {
         let bundleID = try? extractBundleID(packagePath: options.ipaPath, kind: packageKind)
         var responseFrames: [[String: Any]] = []
         do {
+            if let bundleID, !bundleID.isEmpty {
+                try AppLogCaptureService.stopCaptureForInstall(bundleID: bundleID, udid: targetUdid, paths: paths)
+            }
             if let installerForTesting {
                 try installerForTesting(options.ipaPath, targetUdid, bundleID)
             } else {
