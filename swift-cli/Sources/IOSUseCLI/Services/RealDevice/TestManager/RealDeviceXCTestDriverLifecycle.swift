@@ -109,10 +109,37 @@ final class RealDeviceXCTestActiveSession {
 }
 
 final class RealDeviceXCTestDriverLifecycle {
+    struct IOSProductVersion: Comparable, CustomStringConvertible {
+        let major: Int
+        let minor: Int
+        let patch: Int
+        let rawValue: String
+
+        var description: String { rawValue }
+
+        init(_ rawValue: String) throws {
+            let parts = rawValue.split(separator: ".")
+            guard let majorPart = parts.first,
+                  let major = Int(majorPart) else {
+                throw CLIParseError.invalidValue("Unable to parse iOS ProductVersion: \(rawValue)")
+            }
+            self.major = major
+            self.minor = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            self.patch = parts.count > 2 ? Int(parts[2]) ?? 0 : 0
+            self.rawValue = rawValue
+        }
+
+        static func < (lhs: IOSProductVersion, rhs: IOSProductVersion) -> Bool {
+            if lhs.major != rhs.major { return lhs.major < rhs.major }
+            if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+            return lhs.patch < rhs.patch
+        }
+    }
+
     struct Dependencies {
         var startTunnel: (String) throws -> CoreDeviceLifecycleTunnelSession
         var resolveRunnerInfo: (String, String) throws -> XCTestRunnerInstallInfo
-        var productMajorVersion: (String) throws -> Int
+        var productVersion: (String) throws -> String
         var makeSessionIdentifier: () -> UUID
         var openAppService: (CoreDeviceLifecycleTunnelSession) throws -> XCTestRunnerAppServicing
         var openStdIOSocket: (CoreDeviceLifecycleTunnelSession) throws -> CoreDeviceOpenStdIOSocket
@@ -125,13 +152,12 @@ final class RealDeviceXCTestDriverLifecycle {
                 resolveRunnerInfo: { udid, bundleID in
                     try Self.installedRunnerInfo(udid: udid, bundleID: bundleID)
                 },
-                productMajorVersion: { udid in
+                productVersion: { udid in
                     let values = try LockdownSession.getValue(udid: udid, key: "ProductVersion")
-                    guard let version = values["ProductVersion"] as? String,
-                          let major = Int(version.split(separator: ".").first ?? "") else {
+                    guard let version = values["ProductVersion"] as? String, !version.isEmpty else {
                         throw CLIParseError.invalidValue("Unable to determine ProductVersion for device \(udid)")
                     }
-                    return major
+                    return version
                 },
                 makeSessionIdentifier: { UUID() },
                 openAppService: { session in
@@ -178,11 +204,13 @@ final class RealDeviceXCTestDriverLifecycle {
     }
 
     func startDriverSession(udid: String, bundleID: String) throws -> RealDeviceXCTestActiveSession {
-        let productMajorVersion = try dependencies.productMajorVersion(udid)
-        eventSink?("testmanagerd product major version=\(productMajorVersion)")
-        guard productMajorVersion >= IOSUseProtocol.XCConstants.minimumRealDeviceIOSMajorVersion else {
-            throw CLIParseError.invalidValue("Real-device start requires iOS \(IOSUseProtocol.XCConstants.minimumRealDeviceIOSMajorVersion) or later; device \(udid) reported iOS \(productMajorVersion).")
+        let productVersion = try IOSProductVersion(dependencies.productVersion(udid))
+        eventSink?("testmanagerd product version=\(productVersion)")
+        let minimumVersion = try IOSProductVersion(IOSUseProtocol.XCConstants.minimumRealDeviceIOSVersion)
+        guard productVersion >= minimumVersion else {
+            throw CLIParseError.invalidValue("Real-device start requires iOS \(IOSUseProtocol.XCConstants.minimumRealDeviceIOSVersion) or later; device \(udid) reported iOS \(productVersion).")
         }
+        let productMajorVersion = productVersion.major
         let runnerInfo = try dependencies.resolveRunnerInfo(udid, bundleID)
         eventSink?("resolved runner app=\(runnerInfo.appPath)")
         eventSink?("resolved test bundle=\(runnerInfo.testBundlePath)")

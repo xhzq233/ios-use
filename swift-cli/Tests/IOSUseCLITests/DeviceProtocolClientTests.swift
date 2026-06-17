@@ -734,7 +734,7 @@ final class DeviceProtocolClientTests: XCTestCase {
                     testBundlePath: "/private/var/containers/Bundle/Application/UUID/IOSUseDriver-Runner.app/PlugIns/IOSUseDriver.xctest"
                 )
             },
-            productMajorVersion: { _ in 17 },
+            productVersion: { _ in "17.4" },
             makeSessionIdentifier: { sessionID },
             openAppService: { tunnelSession in
                 XCTAssertEqual(ObjectIdentifier(tunnelSession), ObjectIdentifier(coreDeviceTunnel))
@@ -799,7 +799,7 @@ final class DeviceProtocolClientTests: XCTestCase {
         ])
     }
 
-    func testRealDeviceXCTestLifecycleRejectsIOSBefore17BeforeOpeningServices() throws {
+    func testRealDeviceXCTestLifecycleRejectsIOSBefore174BeforeOpeningServices() throws {
         var productVersionUdids: [String] = []
         var didStartTunnel = false
         var didResolveRunner = false
@@ -812,9 +812,9 @@ final class DeviceProtocolClientTests: XCTestCase {
                 didResolveRunner = true
                 throw CLIParseError.invalidValue("unexpected runner lookup")
             },
-            productMajorVersion: { udid in
+            productVersion: { udid in
                 productVersionUdids.append(udid)
-                return 16
+                return "17.3.1"
             },
             makeSessionIdentifier: { UUID() },
             openAppService: { _ in
@@ -828,12 +828,12 @@ final class DeviceProtocolClientTests: XCTestCase {
         ))
 
         XCTAssertThrowsError(try lifecycle.startDriverSession(
-            udid: "REAL-IOS16",
+            udid: "REAL-IOS173",
             bundleID: "com.example.driver.xctrunner"
         )) { error in
-            XCTAssertTrue(String(describing: error).contains("requires iOS 17 or later"))
+            XCTAssertTrue(String(describing: error).contains("requires iOS 17.4 or later"))
         }
-        XCTAssertEqual(productVersionUdids, ["REAL-IOS16"])
+        XCTAssertEqual(productVersionUdids, ["REAL-IOS173"])
         XCTAssertFalse(didStartTunnel)
         XCTAssertFalse(didResolveRunner)
     }
@@ -866,7 +866,7 @@ final class DeviceProtocolClientTests: XCTestCase {
                     testBundlePath: "/private/var/containers/Bundle/Application/UUID/IOSUseDriver-Runner.app/PlugIns/IOSUseDriver.xctest"
                 )
             },
-            productMajorVersion: { _ in 17 },
+            productVersion: { _ in "17.4" },
             makeSessionIdentifier: { UUID() },
             openAppService: { _ in
                 didOpenAppService = true
