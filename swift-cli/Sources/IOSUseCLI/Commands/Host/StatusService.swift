@@ -1,16 +1,20 @@
 import Foundation
 
 public enum StatusService {
+    static var simctlAvailableForTesting: (() -> Bool)?
+
     public static func status(paths: IOSUsePaths, verbose: Bool = false) throws -> String {
         let configuredDevices = DeviceService.configuredDevices(paths: paths)
         var lines: [String] = []
 
         lines.append("Connected devices:")
         lines.append(contentsOf: deviceLines(simulatorOnly: false, paths: paths, configuredDevices: configuredDevices, verbose: verbose, emptyMessage: "No connected real devices found."))
-        lines.append("")
 
-        lines.append("Booted Simulators:")
-        lines.append(contentsOf: deviceLines(simulatorOnly: true, paths: paths, configuredDevices: configuredDevices, verbose: verbose, emptyMessage: "No booted Simulators found."))
+        if simctlAvailable() {
+            lines.append("")
+            lines.append("Booted Simulators:")
+            lines.append(contentsOf: deviceLines(simulatorOnly: true, paths: paths, configuredDevices: configuredDevices, verbose: verbose, emptyMessage: "No booted Simulators found."))
+        }
         lines.append("")
 
         lines.append("Driver:")
@@ -43,6 +47,13 @@ public enum StatusService {
         } catch {
             return ["  unavailable: \(error)"]
         }
+    }
+
+    private static func simctlAvailable() -> Bool {
+        if let simctlAvailableForTesting {
+            return simctlAvailableForTesting()
+        }
+        return (try? Shell.run("xcrun", arguments: ["--find", "simctl"])) != nil
     }
 
     private static func driverLines(paths: IOSUsePaths) -> [String] {

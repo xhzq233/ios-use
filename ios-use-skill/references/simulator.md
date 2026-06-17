@@ -10,10 +10,10 @@ Use this reference only when the target is an iOS Simulator. The main skill flow
 ## Requirements
 
 - Simulator use requires Xcode command line tools: `xcrun simctl` and `xcodebuild`.
-- Use a booted Simulator UDID. List booted targets with:
+- Use a booted Simulator UDID. When `simctl` is available, list booted targets with:
 
 ```bash
-ios-use devices --simulator
+ios-use status
 ```
 
 ## Setup And Start

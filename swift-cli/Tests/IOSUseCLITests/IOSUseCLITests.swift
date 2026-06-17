@@ -30,6 +30,7 @@ final class IOSUseCLITests: XCTestCase {
         AppManagementService.uninstallerForTesting = nil
         AppManagementService.appsProviderForTesting = nil
         DeveloperDiskImageService.mountForTesting = nil
+        StatusService.simctlAvailableForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
         SimulatorService.xcodebuildLauncherForTesting = nil
@@ -141,6 +142,7 @@ final class IOSUseCLITests: XCTestCase {
             deviceProxyStatus: "configured",
             caStatus: "trusted"
         )).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
+        StatusService.simctlAvailableForTesting = { true }
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             if simulatorOnly {
                 return [IOSDevice(name: "Booted Sim", version: "26.0", udid: "SIM-1", kind: .simulator)]
@@ -165,6 +167,28 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("running | udid: REAL-1 | server: running | device proxy: configured | CA: trusted"))
         XCTAssertTrue(result.stdout.contains("Config:"))
         XCTAssertTrue(result.stdout.contains("REAL-1 | bundleId: com.example.driver | driverVersion: \(IOSUseCLI.version)"))
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testStatusSkipsBootedSimulatorsWhenSimctlIsUnavailable() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-status-no-simctl-\(UUID().uuidString)", isDirectory: true)
+            .path
+        StatusService.simctlAvailableForTesting = { false }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            if simulatorOnly {
+                XCTFail("status must not list booted Simulators when simctl is unavailable")
+                return []
+            }
+            return [IOSDevice(name: "Real Phone", version: "17.4", udid: "REAL-1", kind: .real)]
+        }
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["status"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("Connected devices:"))
+        XCTAssertFalse(result.stdout.contains("Booted Simulators:"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
