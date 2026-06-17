@@ -125,6 +125,10 @@ enum AppLogCaptureService {
         )
     }
 
+    static func stopCaptureForInstall(bundleID: String, udid: String, paths: IOSUsePaths) throws {
+        try stopExistingCaptureIfNeeded(paths: paths, matchingBundleID: bundleID, matchingUDID: udid)
+    }
+
     static func observeStopAfterTerminate(bundleID: String, udid: String, paths: IOSUsePaths) throws -> String? {
         guard let capture = readState(paths: paths)?.lastCapture,
               capture.status == "running",
@@ -292,11 +296,17 @@ enum AppLogCaptureService {
         throw CLIParseError.invalidValue("Timed out waiting for app log capture helper to start. Check \(CLILogService.logPath(paths: paths)).")
     }
 
-    private static func stopExistingCaptureIfNeeded(paths: IOSUsePaths) throws {
+    private static func stopExistingCaptureIfNeeded(paths: IOSUsePaths, matchingBundleID: String? = nil, matchingUDID: String? = nil) throws {
         guard var state = readState(paths: paths),
               var capture = state.lastCapture,
               capture.status == "running",
               let pid = capture.helperPID else {
+            return
+        }
+        if let matchingBundleID, capture.bundleID != matchingBundleID {
+            return
+        }
+        if let matchingUDID, capture.udid != matchingUDID {
             return
         }
         guard processAlive(pid) else {

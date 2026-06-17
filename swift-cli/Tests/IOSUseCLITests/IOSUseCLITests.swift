@@ -177,6 +177,58 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root]).driverLock))
     }
 
+    func testInstallStopsRunningAppLogCaptureForSameBundleBeforeInstalling() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-install-stops-log-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let ipaPath = "\(root)/app.ipa"
+        try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app")
+        try AppLogCaptureService.writeState(AppLogState(
+            lastLogFile: "\(root)/logs/app.log",
+            lastCapture: AppLogCaptureTarget(
+                bundleID: "com.example.app",
+                udid: "REAL-1",
+                deviceType: "real",
+                logFile: "\(root)/logs/app.log",
+                startedAt: 1,
+                stoppedAt: nil,
+                status: "running",
+                helperPID: 4321,
+                lastError: nil
+            )
+        ), paths: paths)
+        AppLogCaptureService.processAliveOverrideForTesting = { pid in pid == 4321 }
+        AppLogCaptureService.processCommandOverrideForTesting = { pid in
+            pid == 4321 ? "/usr/local/bin/ios-use __ios-use-app-log-capture --home \(root)" : nil
+        }
+        var signals: [(Int32, Int32)] = []
+        AppLogCaptureService.signalSenderForTesting = { pid, signal in
+            signals.append((pid, signal))
+            return 0
+        }
+        AppLogCaptureService.processExitWaiterForTesting = { _, _ in true }
+        var installed = false
+        AppManagementService.installerForTesting = { _, _, _ in
+            installed = true
+            let capture = try XCTUnwrap(AppLogCaptureService.readState(paths: paths)?.lastCapture)
+            XCTAssertEqual(capture.status, "stopped")
+            XCTAssertNil(capture.helperPID)
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["install", ipaPath, "--udid", "REAL-1"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(installed)
+        XCTAssertEqual(signals.count, 1)
+        XCTAssertEqual(signals.first?.0, 4321)
+        XCTAssertEqual(signals.first?.1, SIGTERM)
+    }
+
     private func repositoryRootForTest() -> URL {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<4 {
