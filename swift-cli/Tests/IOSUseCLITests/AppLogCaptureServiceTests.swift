@@ -122,6 +122,35 @@ final class AppLogCaptureServiceTests: XCTestCase {
         XCTAssertEqual(outputLines.last, "GearDefault matched 5999")
     }
 
+    func testLogReadLastHandlesCRLFLogs() throws {
+        let root = tempRoot("ios-use-app-log-read-crlf")
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
+        let logFile = "\(paths.logs)/com.example-crlf.log"
+        try "one\r\ntwo\r\nthree\r\nfour\r\n".write(toFile: logFile, atomically: true, encoding: .utf8)
+        try AppLogCaptureService.writeState(AppLogState(
+            lastLogFile: logFile,
+            lastCapture: AppLogCaptureTarget(
+                bundleID: "com.example",
+                udid: "REAL-1",
+                deviceType: "real",
+                logFile: logFile,
+                startedAt: 1,
+                stoppedAt: 2,
+                status: "stopped",
+                helperPID: nil,
+                lastError: nil
+            )
+        ), paths: paths)
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+            .run(arguments: ["log-read", "--last", "2"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "three\nfour\n")
+    }
+
     func testObserveStopAfterTerminateReturnsStoppedWhenHelperUpdatesState() throws {
         let root = tempRoot("ios-use-app-log-observe-stopped")
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
