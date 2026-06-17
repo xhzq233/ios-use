@@ -114,10 +114,6 @@ public extension IOSUseProtocol {
         public static let installationProxyProgressTimeoutSeconds = 120.0
         public static let installationProxyMaxResponseBytes = 100 * 1024 * 1024
 
-        public static let opensslReadPollSeconds = 0.05
-        public static let opensslCloseStepTimeoutSeconds = 1.0
-        public static let opensslStderrBufferMaxBytes = 16 * 1024
-        public static let opensslProcessExitPollMicroseconds = 50_000
         public static let localFDProxyListenBacklog: Int32 = 1
         public static let localFDProxyBridgeBufferBytes = 16 * 1024
 
