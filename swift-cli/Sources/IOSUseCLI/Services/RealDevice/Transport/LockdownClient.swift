@@ -28,7 +28,7 @@ final class LockdownClient {
     }
 
     func enableSessionSSL() throws {
-        stream = try OpenSSLDeviceStream(fd: fd, pairRecord: pairRecord, ownsFD: false)
+        stream = try NIOSSLDeviceStream(fd: fd, pairRecord: pairRecord, ownsFD: false)
     }
 
     func startService(_ serviceName: String) throws -> LockdownService {
