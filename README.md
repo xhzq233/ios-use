@@ -157,7 +157,7 @@ The benchmark below compares `ios-use` against the full `Appium Server -> WebDri
 
 | Case | ios-use Avg | Appium+WDA Avg | Reduction |
 | --- | ---: | ---: | ---: |
-| `start_session` | `1954.8 ms` | `10753.6 ms` | `81.8%` |
+| `start_session` | `1040.0 ms` | `10753.6 ms` | `90.3%` |
 | `dom_cached` | `20.7 ms` | `965.7 ms` | `97.9%` |
 | `wait_for_present` | `14.0 ms` | `308.7 ms` | `95.5%` |
 | `tap_label` | `413.2 ms` | `1076.3 ms` | `61.6%` |
