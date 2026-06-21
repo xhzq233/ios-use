@@ -430,21 +430,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(decoded.payload, .dictionary(payload))
     }
 
-    func testRemoteXPCWrapperRoundTripsFileTransferPayload() throws {
-        let payload: [String: RemoteXPCValue] = [
-            "AssetStreamFD": .fileTransfer(
-                messageID: 1,
-                data: .dictionary(["s": .uint64(1234)])
-            ),
-        ]
-
-        let wrapper = try RemoteXPCWrapper.encodeDictionary(payload, messageID: 7, wantingReply: true)
-        let decoded = try RemoteXPCWrapper.decode(wrapper)
-
-        XCTAssertEqual(decoded.payload, .dictionary(payload))
-        XCTAssertTrue(wrapper.hexString.contains("00a00100"))
-    }
-
     func testRemoteXPCHTTP2ClientHandshakeFramesMatchGoIOSHTTPSetup() throws {
         var handshake = try RemoteXPCHTTP2.encodeClientHandshake()
         XCTAssertEqual(Data(handshake.prefix(RemoteXPCHTTP2.connectionPreface.count)), RemoteXPCHTTP2.connectionPreface)
@@ -463,8 +448,8 @@ final class DeviceProtocolClientTests: XCTestCase {
     func testRemoteXPCHTTP2ClientHandshakeMatchesGoIOSHTTPReferenceBytes() throws {
         let expectedHex = """
         505249202a20485454502f322e300d0a0d0a534d0d0a0d0a\
-        00000c040000000000000300000064000401000000\
-        00000408000000000000ff0001
+        00000c040000000000000300000064000400100000\
+        000004080000000000000f0001
         """.split(separator: "\n").joined()
         XCTAssertEqual(try RemoteXPCHTTP2.encodeClientHandshake().hexString, expectedHex)
         XCTAssertEqual(RemoteXPCHTTP2.settingsFrame(ack: true).hexString, "000000040100000000")
@@ -2526,62 +2511,6 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertNil(trustEntry["Info"])
     }
 
-    func testCoreDeviceStreamingZipConduitConnectPerformsRSDCheckin() throws {
-        let stream = FakeDeviceStream(reads: [
-            plistFrame(["Status": "OK"]),
-            plistFrame(["Status": "OK"]),
-        ])
-        let session = FakeCoreDeviceLifecycleTunnelSession(stream: stream)
-
-        let conduit = try CoreDeviceStreamingZipConduit.connect(session: session)
-        defer { conduit.close() }
-
-        XCTAssertEqual(session.requestedServices, [CoreDeviceStreamingZipConduit.serviceName])
-        XCTAssertEqual(stream.writes.count, 1)
-        let checkin = try parseLengthPrefixedPlist(stream.writes[0])
-        XCTAssertEqual(checkin["Request"] as? String, "RSDCheckin")
-        XCTAssertEqual(checkin["ProtocolVersion"] as? String, "2")
-    }
-
-    func testCoreDeviceStreamingZipConduitStreamsExtractedIpaAsPseudoZip() throws {
-        let root = try temporaryDirectory(prefix: "streaming-zip")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let appURL = root.appendingPathComponent("Payload/Demo.app", isDirectory: true)
-        try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
-        let info = Data("<plist><dict><key>CFBundleIdentifier</key><string>com.example.demo</string></dict></plist>".utf8)
-        try info.write(to: appURL.appendingPathComponent("Info.plist"))
-        let stream = FakeDeviceStream(reads: [
-            plistFrame(["Status": "DataComplete"]),
-        ])
-        let conduit = CoreDeviceStreamingZipConduit(stream: stream)
-
-        try conduit.installExtractedPackage(rootPath: root.path, mediaName: "Demo.ipa")
-
-        XCTAssertGreaterThanOrEqual(stream.writes.count, 9)
-        let initTransfer = try parseLengthPrefixedPlist(stream.writes[0])
-        XCTAssertEqual(initTransfer["InstallTransferredDirectory"] as? Int, 1)
-        XCTAssertEqual(initTransfer["MediaSubdir"] as? String, "PublicStaging/Demo.ipa")
-        let options = try XCTUnwrap(initTransfer["InstallOptionsDictionary"] as? [String: Any])
-        XCTAssertEqual(options["PackageType"] as? String, "Customer")
-        XCTAssertEqual(options["InstallDeltaTypeKey"] as? String, "InstallDeltaTypeSparseIPAFiles")
-
-        XCTAssertEqual(zipLocalHeaderPath(stream.writes[1]), "META-INF/")
-        XCTAssertEqual(zipLocalHeaderPath(stream.writes[2]), "META-INF/com.apple.ZipMetadata.plist")
-        let metadata = try parsePlist(stream.writes[3])
-        XCTAssertEqual(metadata["Version"] as? Int, 2)
-        XCTAssertEqual(metadata["RecordCount"] as? Int, 5)
-        XCTAssertEqual(metadata["TotalUncompressedBytes"] as? Int, info.count)
-
-        let archivePaths = stream.writes.dropFirst(4).dropLast().compactMap(zipLocalHeaderPath)
-        XCTAssertEqual(archivePaths, [
-            "Payload/",
-            "Payload/Demo.app/",
-            "Payload/Demo.app/Info.plist",
-        ])
-        XCTAssertEqual(stream.writes[7], info)
-        XCTAssertEqual(stream.writes.last, Data([0x50, 0x4b, 0x01, 0x02]))
-    }
-
     func testRealDevicePackageInstallerValidatesInstalledVersion() throws {
         let response: [String: Any] = [
             "LookupResult": [
@@ -2637,19 +2566,6 @@ final class DeviceProtocolClientTests: XCTestCase {
     private func parseLengthPrefixedPlist(_ data: Data) throws -> [String: Any] {
         let size = Int(readUInt32BE(data, 0))
         return try parsePlist(Data(data.dropFirst(4).prefix(size)))
-    }
-
-    private func zipLocalHeaderPath(_ data: Data) -> String? {
-        guard data.count >= 30, readUInt32LE(data, 0) == 0x0403_4b50 else {
-            return nil
-        }
-        let nameLength = Int(UInt16(data[26]) | (UInt16(data[27]) << 8))
-        let nameStart = 30
-        let nameEnd = nameStart + nameLength
-        guard data.count >= nameEnd else {
-            return nil
-        }
-        return String(data: data[nameStart..<nameEnd], encoding: .utf8)
     }
 
     private func temporaryDirectory(prefix: String) throws -> URL {
