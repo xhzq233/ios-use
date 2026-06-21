@@ -81,6 +81,10 @@ final class InstallationProxyClient {
         if let bundleID, !bundleID.isEmpty {
             options["CFBundleIdentifier"] = bundleID
         }
+        try install(packagePath: packagePath, clientOptions: options, responseObserver: responseObserver)
+    }
+
+    func install(packagePath: String, clientOptions options: [String: Any], responseObserver: (([String: Any]) -> Void)? = nil) throws {
         try runProgressCommand([
             "Command": "Install",
             "PackagePath": packagePath,
@@ -166,7 +170,27 @@ final class InstallationProxyClient {
 }
 
 enum RealDevicePackageInstaller {
-    static var packagePathPrefix = "PublicStaging/ios-use"
+    enum UploadMode: Equatable {
+        case file
+        case directory
+    }
+
+    struct PreparedInstallPackage {
+        let localPath: String
+        let remotePath: String
+        let packagePath: String
+        let bundleID: String
+        let expectedVersion: AppVersionInfo
+        let clientOptions: [String: Any]
+        let uploadMode: UploadMode
+        let packageKind: AppManagementService.AppPackageKind
+    }
+
+    static var packagePathPrefix = "PublicStaging"
+    static var preparedPackageInstallerForTesting: ((PreparedInstallPackage, String, (([String: Any]) -> Void)?) throws -> Void)?
+    static var nativePackageInstallerForTesting: ((PreparedInstallPackage, String, (([String: Any]) -> Void)?) throws -> Void)?
+    static var installedAppLookupForTesting: ((String, String) throws -> [String: Any])?
+    static var devicectlRunnerForTesting: (([String]) throws -> Shell.RunResult)?
 
     static func installedVersion(udid: String, bundleID: String) throws -> String? {
         try InstallationProxyClient.withClient(udid: udid) { client in
@@ -177,29 +201,31 @@ enum RealDevicePackageInstaller {
         }
     }
 
-    static func installIpa(ipaPath: String, udid: String, bundleID: String?, developer: Bool = false, responseObserver: (([String: Any]) -> Void)? = nil) throws {
-        let expectedVersion = ConfigService.driverIPAVersion(at: ipaPath)
-        let remoteName = bundleID.flatMap { $0.isEmpty ? nil : $0 } ?? "\(UUID().uuidString).ipa"
-        let remotePath = "\(packagePathPrefix)/\(remoteName)"
-        let packagePath = installationProxyPackagePath(forAfcPath: remotePath)
-        try AfcClient.withClient(udid: udid) { afc in
-            try? afc.removePath(remotePath)
-            try afc.uploadFile(localPath: ipaPath, remotePath: remotePath)
-            defer {
-                try? afc.removePath(remotePath)
+    private static func installedAppVersionInfo(udid: String, bundleID: String) throws -> AppVersionInfo? {
+        try InstallationProxyClient.withClient(udid: udid) { client in
+            guard let info = try client.installedAppInfo(
+                bundleID: bundleID,
+                attributes: ["CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion"]
+            ) else {
+                return nil
             }
-
-            try InstallationProxyClient.withClient(udid: udid) { client in
-                try client.install(packagePath: packagePath, bundleID: bundleID, developer: developer, responseObserver: responseObserver)
-            }
+            return AppVersionInfo(
+                bundleVersion: info["CFBundleVersion"] as? String,
+                shortVersion: info["CFBundleShortVersionString"] as? String
+            )
         }
+    }
 
-        if let bundleID, !bundleID.isEmpty {
-            let response = try InstallationProxyClient.withClient(udid: udid) { client in
-                try client.lookup(attributes: ["CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion"], bundleIDs: [bundleID])
-            }
-            try validateInstalledApp(response: response, bundleID: bundleID, expectedVersion: expectedVersion)
-        }
+    static func installIpa(
+        ipaPath: String,
+        udid: String,
+        bundleID: String?,
+        developer _: Bool = false,
+        preferDevicectl: Bool = true,
+        responseObserver: (([String: Any]) -> Void)? = nil
+    ) throws {
+        let package = try preparedIpaPackage(ipaPath: ipaPath, explicitBundleID: bundleID)
+        try installPreparedPackage(package, udid: udid, preferDevicectl: preferDevicectl, responseObserver: responseObserver)
     }
 
     static func installPackage(
@@ -211,45 +237,331 @@ enum RealDevicePackageInstaller {
     ) throws {
         switch kind {
         case .ipa:
-            try installIpa(ipaPath: packagePath, udid: udid, bundleID: bundleID, responseObserver: responseObserver)
+            try installPreparedPackage(
+                try preparedIpaPackage(ipaPath: packagePath, explicitBundleID: bundleID),
+                udid: udid,
+                responseObserver: responseObserver
+            )
         case .app:
-            try withTemporaryIpaFromApp(appPath: packagePath) { ipaPath in
-                try installIpa(ipaPath: ipaPath, udid: udid, bundleID: bundleID, responseObserver: responseObserver)
-            }
+            try installPreparedPackage(
+                try preparedAppPackage(appPath: packagePath, explicitBundleID: bundleID),
+                udid: udid,
+                responseObserver: responseObserver
+            )
         }
     }
 
-    static func withTemporaryIpaFromApp<T>(appPath: String, _ body: (String) throws -> T) throws -> T {
-        let appURL = URL(fileURLWithPath: appPath, isDirectory: true)
-        let tmpURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-use-app-ipa-\(UUID().uuidString)", isDirectory: true)
-        let payloadURL = tmpURL.appendingPathComponent("Payload", isDirectory: true)
-        let stagedAppURL = payloadURL.appendingPathComponent(appURL.lastPathComponent, isDirectory: true)
-        let ipaURL = tmpURL.appendingPathComponent("app.ipa")
-        try FileManager.default.createDirectory(at: payloadURL, withIntermediateDirectories: true)
-        try FileManager.default.copyItem(at: appURL, to: stagedAppURL)
-        _ = try Shell.run("zip", arguments: ["-qry", ipaURL.path, "Payload"], cwd: tmpURL.path)
-        defer {
-            try? FileManager.default.removeItem(at: tmpURL)
+    private static func installPreparedPackage(
+        _ package: PreparedInstallPackage,
+        udid: String,
+        preferDevicectl: Bool = true,
+        responseObserver: (([String: Any]) -> Void)? = nil
+    ) throws {
+        if let preparedPackageInstallerForTesting {
+            try preparedPackageInstallerForTesting(package, udid, responseObserver)
+            return
         }
-        return try body(ipaURL.path)
+        if preferDevicectl, try installWithDevicectlIfAvailable(package, udid: udid) {
+            return
+        }
+        if let nativePackageInstallerForTesting {
+            try nativePackageInstallerForTesting(package, udid, responseObserver)
+            try validateInstalledPackage(package, udid: udid)
+            return
+        }
+        try AfcClient.withClient(udid: udid) { afc in
+            try afc.makeDirectories(packagePathPrefix)
+            try? afc.removePathRecursive(package.remotePath)
+            switch package.uploadMode {
+            case .file:
+                try afc.uploadFile(localPath: package.localPath, remotePath: package.remotePath)
+            case .directory:
+                try afc.uploadDirectory(localPath: package.localPath, remotePath: package.remotePath)
+            }
+            defer {
+                try? afc.removePathRecursive(package.remotePath)
+            }
+            try InstallationProxyClient.withClient(udid: udid) { client in
+                try client.install(packagePath: package.packagePath, clientOptions: package.clientOptions, responseObserver: responseObserver)
+            }
+        }
+
+        try validateInstalledPackage(package, udid: udid)
+    }
+
+    static func preparedAppPackage(appPath: String, explicitBundleID: String? = nil) throws -> PreparedInstallPackage {
+        let metadata = try appMetadataOrThrow(appPath: appPath, fallbackBundleID: explicitBundleID)
+        try validateExplicitBundleID(explicitBundleID, actual: metadata.bundleID)
+        let remotePath = "\(packagePathPrefix)/\(URL(fileURLWithPath: appPath, isDirectory: true).lastPathComponent)"
+        return PreparedInstallPackage(
+            localPath: appPath,
+            remotePath: remotePath,
+            packagePath: installationProxyPackagePath(forAfcPath: remotePath),
+            bundleID: metadata.bundleID,
+            expectedVersion: metadata.versionInfo,
+            clientOptions: ["PackageType": "Developer"],
+            uploadMode: .directory,
+            packageKind: .app
+        )
+    }
+
+    static func preparedIpaPackage(ipaPath: String, explicitBundleID: String? = nil) throws -> PreparedInstallPackage {
+        let metadata = try ipaMetadata(ipaPath: ipaPath)
+        try validateExplicitBundleID(explicitBundleID, actual: metadata.bundleID)
+        let remotePath = "\(packagePathPrefix)/\(metadata.bundleID)"
+        var options: [String: Any] = ["CFBundleIdentifier": metadata.bundleID]
+        if let sinf = metadata.applicationSINF {
+            options["ApplicationSINF"] = sinf
+        }
+        if let iTunesMetadata = metadata.iTunesMetadata {
+            options["iTunesMetadata"] = iTunesMetadata
+        }
+        return PreparedInstallPackage(
+            localPath: ipaPath,
+            remotePath: remotePath,
+            packagePath: installationProxyPackagePath(forAfcPath: remotePath),
+            bundleID: metadata.bundleID,
+            expectedVersion: metadata.versionInfo,
+            clientOptions: options,
+            uploadMode: .file,
+            packageKind: .ipa
+        )
+    }
+
+    private static func installWithDevicectlIfAvailable(_ package: PreparedInstallPackage, udid: String) throws -> Bool {
+        let result: Shell.RunResult
+        do {
+            result = try runDevicectl(["devicectl", "device", "install", "app", "--device", udid, package.localPath])
+        } catch {
+            return false
+        }
+        if result.exitCode == 0 {
+            try validateInstalledPackage(package, udid: udid)
+            return true
+        }
+        let output = (result.stdout + "\n" + result.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
+        if devicectlErrorAllowsFallback(output, exitCode: result.exitCode, packageKind: package.packageKind) {
+            return false
+        }
+        throw InstallationProxyError.installFailed("devicectl install failed: \(output.isEmpty ? "exit \(result.exitCode)" : output)")
+    }
+
+    private static func runDevicectl(_ arguments: [String]) throws -> Shell.RunResult {
+        if let devicectlRunnerForTesting {
+            return try devicectlRunnerForTesting(arguments)
+        }
+        return try Shell.runWithResult("xcrun", arguments: arguments)
+    }
+
+    private static func devicectlErrorAllowsFallback(_ output: String, exitCode: Int32, packageKind: AppManagementService.AppPackageKind) -> Bool {
+        let lowercased = output.lowercased()
+        let packageValidationError = lowercased.contains("provision")
+            || lowercased.contains("entitlement")
+            || lowercased.contains("signature")
+            || lowercased.contains("verification")
+            || lowercased.contains("applicationverificationfailed")
+            || lowercased.contains("bundle identifier")
+        if packageValidationError {
+            return false
+        }
+
+        let ipaUnsupportedByDevicectl = packageKind == .ipa && (
+            lowercased.contains("unsupported")
+                || lowercased.contains("not supported")
+                || lowercased.contains("invalid package")
+                || lowercased.contains("expected .app")
+                || lowercased.contains("app bundle")
+        )
+        let devicectlToolUnavailable = exitCode == 127
+            || lowercased.contains("unable to find utility")
+            || lowercased.contains("command not found")
+            || lowercased.contains("no such file or directory")
+        let devicectlDeviceUnavailable = lowercased.contains("device not found")
+            || lowercased.contains("unable to find device")
+            || lowercased.contains("no device")
+        let devicectlEnvironmentUnavailable = lowercased.contains("developer disk image")
+            || lowercased.contains("ddi")
+            || lowercased.contains("device support")
+        return ipaUnsupportedByDevicectl
+            || devicectlToolUnavailable
+            || devicectlDeviceUnavailable
+            || devicectlEnvironmentUnavailable
+    }
+
+    private static func validateInstalledPackage(_ package: PreparedInstallPackage, udid: String) throws {
+        let response: [String: Any]
+        if let installedAppLookupForTesting {
+            response = try installedAppLookupForTesting(udid, package.bundleID)
+        } else {
+            response = try InstallationProxyClient.withClient(udid: udid) { client in
+                try client.lookup(attributes: ["CFBundleIdentifier", "CFBundleShortVersionString", "CFBundleVersion"], bundleIDs: [package.bundleID])
+            }
+        }
+        try validateInstalledApp(response: response, bundleID: package.bundleID, expectedVersion: package.expectedVersion)
     }
 
     static func installationProxyPackagePath(forAfcPath path: String) -> String {
         path.split(separator: "/", omittingEmptySubsequences: true).joined(separator: "/")
     }
 
-    static func validateInstalledApp(response: [String: Any], bundleID: String, expectedVersion: String?) throws {
-        guard let app = InstallationProxyClient.installedAppInfo(response: response, bundleID: bundleID) else {
-            throw InstallationProxyError.installFailed("installed app \(bundleID) was not found by installation_proxy Lookup; response: \(InstallationProxyClient.responseSummary(response))")
+    private static func appMetadataOrThrow(appPath: String, fallbackBundleID: String? = nil) throws -> AppBundleMetadata {
+        guard let metadata = appMetadata(appPath: appPath, fallbackBundleID: fallbackBundleID) else {
+            throw CLIParseError.invalidValue("No CFBundleIdentifier found in \(appPath)/Info.plist")
         }
-        guard let expectedVersion, !expectedVersion.isEmpty else { return }
-        guard let installedVersion = app["CFBundleShortVersionString"] as? String, !installedVersion.isEmpty else {
-            throw InstallationProxyError.installFailed("installed app \(bundleID) did not report CFBundleShortVersionString; response: \(InstallationProxyClient.responseSummary(response))")
+        return metadata
+    }
+
+    static func appMetadata(appPath: String, fallbackBundleID: String? = nil) -> AppBundleMetadata? {
+        let infoPath = "\(appPath)/Info.plist"
+        let bundleID = plistString(infoPath: infoPath, key: "CFBundleIdentifier") ?? fallbackBundleID
+        guard let bundleID, !bundleID.isEmpty else { return nil }
+        return AppBundleMetadata(
+            bundleID: bundleID,
+            versionInfo: AppVersionInfo(
+                bundleVersion: plistString(infoPath: infoPath, key: "CFBundleVersion"),
+                shortVersion: plistString(infoPath: infoPath, key: "CFBundleShortVersionString")
+            )
+        )
+    }
+
+    private static func ipaMetadata(ipaPath: String) throws -> IpaInstallMetadata {
+        let entries = try Shell.run("unzip", arguments: ["-Z1", ipaPath])
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        guard let infoEntry = entries.first(where: { entry in
+            entry.hasPrefix("Payload/")
+                && entry.hasSuffix(".app/Info.plist")
+                && entry.dropFirst("Payload/".count).split(separator: "/").count == 2
+        }) else {
+            throw CLIParseError.invalidValue("No Payload/*.app/Info.plist found in IPA")
         }
-        guard installedVersion == expectedVersion else {
-            throw InstallationProxyError.installFailed("installed app \(bundleID) version \(installedVersion) does not match IPA version \(expectedVersion); response: \(InstallationProxyClient.responseSummary(response))")
+        let infoData = try zipEntryData(archivePath: ipaPath, entry: infoEntry)
+        guard let info = try PropertyListSerialization.propertyList(from: infoData, options: [], format: nil) as? [String: Any] else {
+            throw CLIParseError.invalidValue("Invalid Info.plist in IPA at \(infoEntry)")
+        }
+        guard let bundleID = (info["CFBundleIdentifier"] as? String)?.nonEmpty else {
+            throw CLIParseError.invalidValue("No CFBundleIdentifier found in IPA Info.plist")
+        }
+        guard let executable = (info["CFBundleExecutable"] as? String)?.nonEmpty else {
+            throw CLIParseError.invalidValue("No CFBundleExecutable found in IPA Info.plist")
+        }
+
+        let appRoot = String(infoEntry.dropLast("Info.plist".count))
+        let sinfEntry = "\(appRoot)SC_Info/\(executable).sinf"
+        let metadataEntry = "iTunesMetadata.plist"
+        return IpaInstallMetadata(
+            bundleID: bundleID,
+            versionInfo: AppVersionInfo(
+                bundleVersion: info["CFBundleVersion"] as? String,
+                shortVersion: info["CFBundleShortVersionString"] as? String
+            ),
+            applicationSINF: entries.contains(sinfEntry) ? try zipEntryData(archivePath: ipaPath, entry: sinfEntry) : nil,
+            iTunesMetadata: entries.contains(metadataEntry) ? try zipEntryData(archivePath: ipaPath, entry: metadataEntry) : nil
+        )
+    }
+
+    private static func zipEntryData(archivePath: String, entry: String) throws -> Data {
+        try Shell.runData("unzip", arguments: ["-p", archivePath, entry])
+    }
+
+    private static func validateExplicitBundleID(_ explicitBundleID: String?, actual: String) throws {
+        guard let explicitBundleID = explicitBundleID?.nonEmpty else { return }
+        guard explicitBundleID == actual else {
+            throw InstallationProxyError.installFailed("package bundle id \(actual) does not match requested bundle id \(explicitBundleID)")
         }
     }
 
+    private static func plistString(infoPath: String, key: String) -> String? {
+        let value = try? Shell.run("plutil", arguments: ["-extract", key, "raw", "-o", "-", infoPath])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+
+    static func sparseInstallCommands(bundleID: String, sourceVersion: AppVersionInfo, targetVersion: AppVersionInfo) -> Data {
+        let source = sourceVersion.manifestVersionString
+        let target = targetVersion.manifestVersionString
+        let text = """
+        ipaD
+        1
+        \(source)
+        +Info.plist
+        +_CodeSignature/CodeResources
+        xEOF
+        #CreateSparseIPA UUID: \(UUID().uuidString)
+        #Bundle id: \(bundleID)
+        #Old bundle version: \(source)
+        #New bundle version: \(target)
+
+        """
+        return Data(text.utf8)
+    }
+
+    static func validateInstalledApp(response: [String: Any], bundleID: String, expectedVersion: AppVersionInfo) throws {
+        guard let app = InstallationProxyClient.installedAppInfo(response: response, bundleID: bundleID) else {
+            throw InstallationProxyError.installFailed("installed app \(bundleID) was not found by installation_proxy Lookup; response: \(InstallationProxyClient.responseSummary(response))")
+        }
+        guard let installedBundleID = app["CFBundleIdentifier"] as? String, installedBundleID == bundleID else {
+            throw InstallationProxyError.installFailed("installed app bundle id \(String(describing: app["CFBundleIdentifier"])) does not match expected \(bundleID); response: \(InstallationProxyClient.responseSummary(response))")
+        }
+        if let expectedShortVersion = expectedVersion.shortVersion?.nonEmpty {
+            guard let installedVersion = app["CFBundleShortVersionString"] as? String, !installedVersion.isEmpty else {
+                throw InstallationProxyError.installFailed("installed app \(bundleID) did not report CFBundleShortVersionString; response: \(InstallationProxyClient.responseSummary(response))")
+            }
+            guard installedVersion == expectedShortVersion else {
+                throw InstallationProxyError.installFailed("installed app \(bundleID) short version \(installedVersion) does not match expected \(expectedShortVersion); response: \(InstallationProxyClient.responseSummary(response))")
+            }
+        }
+        if let expectedBuildVersion = expectedVersion.bundleVersion?.nonEmpty {
+            guard let installedBuildVersion = app["CFBundleVersion"] as? String, !installedBuildVersion.isEmpty else {
+                throw InstallationProxyError.installFailed("installed app \(bundleID) did not report CFBundleVersion; response: \(InstallationProxyClient.responseSummary(response))")
+            }
+            guard installedBuildVersion == expectedBuildVersion else {
+                throw InstallationProxyError.installFailed("installed app \(bundleID) build version \(installedBuildVersion) does not match expected \(expectedBuildVersion); response: \(InstallationProxyClient.responseSummary(response))")
+            }
+        }
+    }
+
+    static func validateInstalledApp(response: [String: Any], bundleID: String, expectedVersion: String?) throws {
+        try validateInstalledApp(
+            response: response,
+            bundleID: bundleID,
+            expectedVersion: AppVersionInfo(bundleVersion: nil, shortVersion: expectedVersion)
+        )
+    }
+
+}
+
+private struct IpaInstallMetadata {
+    let bundleID: String
+    let versionInfo: AppVersionInfo
+    let applicationSINF: Data?
+    let iTunesMetadata: Data?
+}
+
+struct AppBundleMetadata: Equatable {
+    let bundleID: String
+    let versionInfo: AppVersionInfo
+}
+
+struct AppVersionInfo: Equatable {
+    let bundleVersion: String?
+    let shortVersion: String?
+
+    var manifestVersionString: String {
+        [bundleVersion, shortVersion]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    func matches(_ other: AppVersionInfo) -> Bool {
+        bundleVersion == other.bundleVersion && shortVersion == other.shortVersion
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
 }

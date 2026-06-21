@@ -18,6 +18,10 @@ final class ConfigServiceTests: XCTestCase {
         ConfigService.realDeviceInstallerForTesting = nil
         ConfigService.installedDriverVersionProviderForTesting = nil
         ConfigService.driverIPAPathProviderForTesting = nil
+        RealDevicePackageInstaller.preparedPackageInstallerForTesting = nil
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = nil
+        RealDevicePackageInstaller.installedAppLookupForTesting = nil
+        RealDevicePackageInstaller.devicectlRunnerForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverTerminatorForTesting = nil
@@ -1112,6 +1116,76 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(result.stdout.contains("port:"))
     }
 
+    func testRealDeviceConfigUsesNativeInstallerWithoutDevicectlOnProductionPath() throws {
+        let root = try temporaryRoot()
+        let workspace = try temporaryRoot()
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
+        let oldCwd = FileManager.default.currentDirectoryPath
+        XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(workspace))
+        addTeardownBlock {
+            _ = FileManager.default.changeCurrentDirectoryPath(oldCwd)
+        }
+
+        let altsign = "\(root)/altsign-cli/altsign-cli"
+        try FileManager.default.createDirectory(atPath: "\(root)/altsign-cli", withIntermediateDirectories: true)
+        try "#!/bin/sh\nexit 0\n".write(toFile: altsign, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
+        try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
+        ConfigService.installedDriverVersionProviderForTesting = { _, _ in nil }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            XCTAssertFalse(simulatorOnly)
+            return [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-CONFIG", kind: .real)]
+        }
+        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
+            if executable == "xcrun" {
+                XCTFail("real device config must not call xcrun/devicectl")
+            }
+            if executable == altsign, arguments == ["list"] {
+                return "Using cached session for user@example.com\n"
+            }
+            return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
+        }
+        ConfigService.altsignRunnerForTesting = { _, arguments in
+            guard let outputIndex = arguments.firstIndex(of: "--output"),
+                  let inputIndex = arguments.firstIndex(of: "--ipa") else {
+                XCTFail("altsign args missing input or output")
+                return
+            }
+            let output = arguments[arguments.index(after: outputIndex)]
+            let input = arguments[arguments.index(after: inputIndex)]
+            try FileManager.default.copyItem(atPath: input, toPath: output)
+        }
+        var nativePackages: [RealDevicePackageInstaller.PreparedInstallPackage] = []
+        RealDevicePackageInstaller.devicectlRunnerForTesting = { _ in
+            XCTFail("config driver install must not use devicectl")
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 1)
+        }
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = { package, udid, _ in
+            XCTAssertEqual(udid, "REAL-CONFIG")
+            nativePackages.append(package)
+        }
+        RealDevicePackageInstaller.installedAppLookupForTesting = { _, bundleID in
+            [
+                "LookupResult": [
+                    bundleID: [
+                        "CFBundleIdentifier": bundleID,
+                        "CFBundleShortVersionString": IOSUseCLI.version,
+                    ],
+                ],
+            ]
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["config", "--udid", "REAL-CONFIG"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(nativePackages.count, 1)
+        XCTAssertEqual(nativePackages.first?.uploadMode, .file)
+        XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/com.ios-use.driver.user-example-com.xctrunner")
+        XCTAssertTrue(result.stdout.contains("Driver installed to device"))
+    }
+
     func testRealDeviceConfigInstallsSignedIpaThroughNativeInstallerWithoutDevicectl() throws {
         let root = try temporaryRoot()
         let workspace = try temporaryRoot()
@@ -1323,8 +1397,10 @@ final class ConfigServiceTests: XCTestCase {
         try FileManager.default.createDirectory(atPath: xctestPath, withIntermediateDirectories: true)
         try writePlist([
             "CFBundleIdentifier": "com.iosuse.xcuidriver.xctrunner",
+            "CFBundleExecutable": "IOSUseDriver-Runner",
             "CFBundleShortVersionString": version,
         ], path: "\(appPath)/Info.plist")
+        FileManager.default.createFile(atPath: "\(appPath)/IOSUseDriver-Runner", contents: Data(), attributes: nil)
         try writePlist(["CFBundleIdentifier": "com.iosuse.xcuidriver"], path: "\(xctestPath)/Info.plist")
         _ = try runProcess(executable: "zip", arguments: ["-r", "-q", path, "Payload"], cwd: tmp, combineStderr: false)
     }

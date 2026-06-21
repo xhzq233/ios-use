@@ -25,6 +25,41 @@ enum Shell {
         return try runCapturedWithResult(executable, arguments: arguments, cwd: cwd)
     }
 
+    static func runData(_ executable: String, arguments: [String], cwd: String? = nil) throws -> Data {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [executable] + arguments
+        if let cwd {
+            process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        }
+
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-shell-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let stdoutURL = tempDir.appendingPathComponent("stdout")
+        let stderrURL = tempDir.appendingPathComponent("stderr")
+        FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+        FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+        let stdout = try FileHandle(forWritingTo: stdoutURL)
+        let stderr = try FileHandle(forWritingTo: stderrURL)
+        defer {
+            try? stdout.close()
+            try? stderr.close()
+        }
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        process.waitUntilExit()
+
+        let error = (try? String(contentsOf: stderrURL, encoding: .utf8)) ?? ""
+        if process.terminationStatus != 0 {
+            throw CLIParseError.invalidValue(error.isEmpty ? "\(executable) failed with exit \(process.terminationStatus)" : error.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return (try? Data(contentsOf: stdoutURL)) ?? Data()
+    }
+
     static func runInheriting(_ executable: String, arguments: [String], cwd: String? = nil) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
