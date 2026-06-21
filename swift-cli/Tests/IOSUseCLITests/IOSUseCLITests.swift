@@ -29,6 +29,10 @@ final class IOSUseCLITests: XCTestCase {
         AppManagementService.installerForTesting = nil
         AppManagementService.uninstallerForTesting = nil
         AppManagementService.appsProviderForTesting = nil
+        RealDevicePackageInstaller.preparedPackageInstallerForTesting = nil
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = nil
+        RealDevicePackageInstaller.installedAppLookupForTesting = nil
+        RealDevicePackageInstaller.devicectlRunnerForTesting = nil
         DeveloperDiskImageService.mountForTesting = nil
         StatusService.simctlAvailableForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
@@ -398,26 +402,343 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Installed app on REAL-1 (com.example.demo)"))
     }
 
-    func testAppBundlePackagingBuildsPayloadIpa() throws {
+    func testAppBundleInstallUsesDeveloperDirectoryPackage() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-use-package-app-bundle-\(UUID().uuidString)")
+            .appendingPathComponent("ios-use-app-directory-install-\(UUID().uuidString)")
             .path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         let appPath = "\(root)/Demo.app"
         try makeMinimalApp(path: appPath, bundleID: "com.example.demo")
-        var generatedIpaPath: String?
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        var installerCalls: [(package: RealDevicePackageInstaller.PreparedInstallPackage, udid: String)] = []
+
+        RealDevicePackageInstaller.preparedPackageInstallerForTesting = { package, udid, _ in
+            installerCalls.append((package, udid))
+        }
+
+        try RealDevicePackageInstaller.installPackage(
+            packagePath: appPath,
+            kind: .app,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )
+
+        XCTAssertEqual(installerCalls.count, 1)
+        XCTAssertEqual(installerCalls[0].udid, "REAL-1")
+        let package = installerCalls[0].package
+        XCTAssertEqual(package.localPath, appPath)
+        XCTAssertEqual(package.remotePath, "PublicStaging/Demo.app")
+        XCTAssertEqual(package.packagePath, "PublicStaging/Demo.app")
+        XCTAssertEqual(package.bundleID, "com.example.demo")
+        XCTAssertEqual(package.uploadMode, .directory)
+        XCTAssertEqual(package.clientOptions["PackageType"] as? String, "Developer")
+        XCTAssertNil(package.clientOptions["CFBundleIdentifier"])
+    }
+
+    func testSparseInstallCommandsRecordSourceAndTargetVersions() throws {
+        let data = RealDevicePackageInstaller.sparseInstallCommands(
+            bundleID: "com.example.demo",
+            sourceVersion: AppVersionInfo(bundleVersion: "1", shortVersion: "1.0"),
+            targetVersion: AppVersionInfo(bundleVersion: "2", shortVersion: "2.0")
+        )
+        let text = try XCTUnwrap(String(data: data, encoding: .utf8))
+
+        XCTAssertTrue(text.contains("\n1 1.0\n+Info.plist\n+_CodeSignature/CodeResources\nxEOF\n"))
+        XCTAssertTrue(text.contains("#Bundle id: com.example.demo"))
+        XCTAssertTrue(text.contains("#Old bundle version: 1 1.0"))
+        XCTAssertTrue(text.contains("#New bundle version: 2 2.0"))
+    }
+
+    func testIpaInstallUsesPreparedDeviceInstallerDirectly() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-ipa-direct-install-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let ipaPath = "\(root)/Demo.ipa"
+        try makeMinimalIpa(path: ipaPath, bundleID: "com.example.demo")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        var installerCalls: [(package: RealDevicePackageInstaller.PreparedInstallPackage, udid: String)] = []
+
+        RealDevicePackageInstaller.preparedPackageInstallerForTesting = { package, udid, _ in
+            installerCalls.append((package, udid))
+        }
+
+        try RealDevicePackageInstaller.installPackage(
+            packagePath: ipaPath,
+            kind: .ipa,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )
+
+        XCTAssertEqual(installerCalls.count, 1)
+        XCTAssertEqual(installerCalls[0].udid, "REAL-1")
+        let package = installerCalls[0].package
+        XCTAssertEqual(package.localPath, ipaPath)
+        XCTAssertEqual(package.remotePath, "PublicStaging/com.example.demo")
+        XCTAssertEqual(package.packagePath, "PublicStaging/com.example.demo")
+        XCTAssertEqual(package.bundleID, "com.example.demo")
+        XCTAssertEqual(package.uploadMode, .file)
+        XCTAssertEqual(package.clientOptions["CFBundleIdentifier"] as? String, "com.example.demo")
+        XCTAssertNil(package.clientOptions["PackageType"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: ipaPath))
+    }
+
+    func testPreparedIpaPackageReadsSinfAndITunesMetadataOptions() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-ipa-metadata-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let ipaPath = "\(root)/Demo.ipa"
+        try makeMinimalIpa(
+            path: ipaPath,
+            bundleID: "com.example.demo",
+            build: "7",
+            version: "1.2",
+            applicationSINF: Data([0x01, 0x02]),
+            iTunesMetadata: Data([0x03, 0x04])
+        )
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
         }
 
-        try RealDevicePackageInstaller.withTemporaryIpaFromApp(appPath: appPath) { ipaPath in
-            generatedIpaPath = ipaPath
-            XCTAssertTrue(FileManager.default.fileExists(atPath: ipaPath))
-            let entries = try Shell.run("unzip", arguments: ["-Z1", ipaPath])
-            XCTAssertTrue(entries.contains("Payload/Demo.app/Info.plist"))
+        let package = try RealDevicePackageInstaller.preparedIpaPackage(ipaPath: ipaPath, explicitBundleID: "com.example.demo")
+
+        XCTAssertEqual(package.remotePath, "PublicStaging/com.example.demo")
+        XCTAssertEqual(package.expectedVersion, AppVersionInfo(bundleVersion: "7", shortVersion: "1.2"))
+        XCTAssertEqual(package.clientOptions["ApplicationSINF"] as? Data, Data([0x01, 0x02]))
+        XCTAssertEqual(package.clientOptions["iTunesMetadata"] as? Data, Data([0x03, 0x04]))
+    }
+
+    func testInstallPackageUsesDevicectlWhenDeviceIsAvailable() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-devicectl-install-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let appPath = "\(root)/Demo.app"
+        try makeMinimalVersionedApp(path: appPath, bundleID: "com.example.demo", build: "7", version: "1.2")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        var devicectlCalls: [[String]] = []
+        var nativeCalled = false
+        RealDevicePackageInstaller.devicectlRunnerForTesting = { arguments in
+            devicectlCalls.append(arguments)
+            return Shell.RunResult(stdout: "installed\n", stderr: "", exitCode: 0)
+        }
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = { _, _, _ in
+            nativeCalled = true
+        }
+        RealDevicePackageInstaller.installedAppLookupForTesting = { _, bundleID in
+            [
+                "LookupResult": [
+                    bundleID: [
+                        "CFBundleIdentifier": bundleID,
+                        "CFBundleVersion": "7",
+                        "CFBundleShortVersionString": "1.2",
+                    ],
+                ],
+            ]
         }
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: generatedIpaPath ?? ""))
+        try RealDevicePackageInstaller.installPackage(
+            packagePath: appPath,
+            kind: .app,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )
+
+        XCTAssertFalse(nativeCalled)
+        XCTAssertEqual(devicectlCalls, [["devicectl", "device", "install", "app", "--device", "REAL-1", appPath]])
+    }
+
+    func testIpaInstallFallsBackWhenDevicectlDoesNotSupportPackage() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-devicectl-ipa-fallback-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let ipaPath = "\(root)/Demo.ipa"
+        try makeMinimalIpa(path: ipaPath, bundleID: "com.example.demo", build: "7", version: "1.2")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        var nativePackages: [RealDevicePackageInstaller.PreparedInstallPackage] = []
+        RealDevicePackageInstaller.devicectlRunnerForTesting = { arguments in
+            XCTAssertEqual(arguments, ["devicectl", "device", "install", "app", "--device", "REAL-1", ipaPath])
+            return Shell.RunResult(stdout: "", stderr: "unsupported app bundle package", exitCode: 1)
+        }
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = { package, _, _ in
+            nativePackages.append(package)
+        }
+        RealDevicePackageInstaller.installedAppLookupForTesting = { _, bundleID in
+            [
+                "LookupResult": [
+                    bundleID: [
+                        "CFBundleIdentifier": bundleID,
+                        "CFBundleVersion": "7",
+                        "CFBundleShortVersionString": "1.2",
+                    ],
+                ],
+            ]
+        }
+
+        try RealDevicePackageInstaller.installPackage(
+            packagePath: ipaPath,
+            kind: .ipa,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )
+
+        XCTAssertEqual(nativePackages.count, 1)
+        XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/com.example.demo")
+        XCTAssertEqual(nativePackages.first?.uploadMode, .file)
+    }
+
+    func testAppInstallFallsBackWhenDevicectlEnvironmentIsUnavailable() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-devicectl-app-fallback-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let appPath = "\(root)/Demo.app"
+        try makeMinimalVersionedApp(path: appPath, bundleID: "com.example.demo", build: "7", version: "1.2")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        var nativePackages: [RealDevicePackageInstaller.PreparedInstallPackage] = []
+        RealDevicePackageInstaller.devicectlRunnerForTesting = { arguments in
+            XCTAssertEqual(arguments, ["devicectl", "device", "install", "app", "--device", "REAL-1", appPath])
+            return Shell.RunResult(stdout: "", stderr: "CoreDevice failed to prepare Developer Disk Image", exitCode: 1)
+        }
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = { package, _, _ in
+            nativePackages.append(package)
+        }
+        RealDevicePackageInstaller.installedAppLookupForTesting = { _, bundleID in
+            [
+                "LookupResult": [
+                    bundleID: [
+                        "CFBundleIdentifier": bundleID,
+                        "CFBundleVersion": "7",
+                        "CFBundleShortVersionString": "1.2",
+                    ],
+                ],
+            ]
+        }
+
+        try RealDevicePackageInstaller.installPackage(
+            packagePath: appPath,
+            kind: .app,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )
+
+        XCTAssertEqual(nativePackages.count, 1)
+        XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/Demo.app")
+        XCTAssertEqual(nativePackages.first?.uploadMode, .directory)
+    }
+
+    func testAppInstallFallsBackWhenDevicectlToolIsUnavailable() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-devicectl-missing-fallback-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let appPath = "\(root)/Demo.app"
+        try makeMinimalVersionedApp(path: appPath, bundleID: "com.example.demo", build: "7", version: "1.2")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        var nativePackages: [RealDevicePackageInstaller.PreparedInstallPackage] = []
+        RealDevicePackageInstaller.devicectlRunnerForTesting = { arguments in
+            XCTAssertEqual(arguments, ["devicectl", "device", "install", "app", "--device", "REAL-1", appPath])
+            return Shell.RunResult(stdout: "", stderr: "env: xcrun: No such file or directory", exitCode: 127)
+        }
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = { package, _, _ in
+            nativePackages.append(package)
+        }
+        RealDevicePackageInstaller.installedAppLookupForTesting = { _, bundleID in
+            [
+                "LookupResult": [
+                    bundleID: [
+                        "CFBundleIdentifier": bundleID,
+                        "CFBundleVersion": "7",
+                        "CFBundleShortVersionString": "1.2",
+                    ],
+                ],
+            ]
+        }
+
+        try RealDevicePackageInstaller.installPackage(
+            packagePath: appPath,
+            kind: .app,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )
+
+        XCTAssertEqual(nativePackages.count, 1)
+        XCTAssertEqual(nativePackages.first?.remotePath, "PublicStaging/Demo.app")
+        XCTAssertEqual(nativePackages.first?.uploadMode, .directory)
+    }
+
+    func testDevicectlPackageValidationFailureDoesNotFallBack() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-devicectl-validation-error-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let appPath = "\(root)/Demo.app"
+        try makeMinimalVersionedApp(path: appPath, bundleID: "com.example.demo", build: "7", version: "1.2")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        var nativeCalled = false
+        RealDevicePackageInstaller.devicectlRunnerForTesting = { arguments in
+            XCTAssertEqual(arguments, ["devicectl", "device", "install", "app", "--device", "REAL-1", appPath])
+            return Shell.RunResult(stdout: "", stderr: "ApplicationVerificationFailed: signature invalid", exitCode: 1)
+        }
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = { _, _, _ in
+            nativeCalled = true
+        }
+
+        XCTAssertThrowsError(try RealDevicePackageInstaller.installPackage(
+            packagePath: appPath,
+            kind: .app,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )) { error in
+            XCTAssertTrue("\(error)".contains("ApplicationVerificationFailed"))
+        }
+        XCTAssertFalse(nativeCalled)
+    }
+
+    func testGenericCoreDeviceInstallFailureDoesNotFallBack() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-devicectl-coredevice-error-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let appPath = "\(root)/Demo.app"
+        try makeMinimalVersionedApp(path: appPath, bundleID: "com.example.demo", build: "7", version: "1.2")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        var nativeCalled = false
+        RealDevicePackageInstaller.devicectlRunnerForTesting = { arguments in
+            XCTAssertEqual(arguments, ["devicectl", "device", "install", "app", "--device", "REAL-1", appPath])
+            return Shell.RunResult(stdout: "", stderr: "CoreDeviceError: install failed for app bundle", exitCode: 1)
+        }
+        RealDevicePackageInstaller.nativePackageInstallerForTesting = { _, _, _ in
+            nativeCalled = true
+        }
+
+        XCTAssertThrowsError(try RealDevicePackageInstaller.installPackage(
+            packagePath: appPath,
+            kind: .app,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )) { error in
+            XCTAssertTrue("\(error)".contains("CoreDeviceError"))
+        }
+        XCTAssertFalse(nativeCalled)
     }
 
     func testInstallCommandRejectsUnsupportedPackageExtensionBeforeTargetResolution() throws {
@@ -449,7 +770,7 @@ final class IOSUseCLITests: XCTestCase {
         let ipaPath = "\(root)/app.ipa"
         try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app")
         AppManagementService.installerForTesting = { _, _, _ in
-            XCTFail("install without a target must not call installation_proxy")
+            XCTFail("install without a target must not call installer")
         }
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
@@ -1791,14 +2112,37 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.isEmpty)
     }
 
-    private func makeMinimalIpa(path: String, bundleID: String) throws {
+    private func makeMinimalIpa(
+        path: String,
+        bundleID: String,
+        build: String? = nil,
+        version: String? = nil,
+        applicationSINF: Data? = nil,
+        iTunesMetadata: Data? = nil
+    ) throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-test-ipa-\(UUID().uuidString)", isDirectory: true)
             .path
         let appPath = "\(tmp)/Payload/App.app"
-        try makeMinimalApp(path: appPath, bundleID: bundleID)
+        if let build, let version {
+            try makeMinimalVersionedApp(path: appPath, bundleID: bundleID, build: build, version: version)
+        } else {
+            try makeMinimalApp(path: appPath, bundleID: bundleID)
+        }
+        if let applicationSINF {
+            let scInfoPath = "\(appPath)/SC_Info"
+            try FileManager.default.createDirectory(atPath: scInfoPath, withIntermediateDirectories: true)
+            try applicationSINF.write(to: URL(fileURLWithPath: "\(scInfoPath)/App.sinf"))
+        }
+        if let iTunesMetadata {
+            try iTunesMetadata.write(to: URL(fileURLWithPath: "\(tmp)/iTunesMetadata.plist"))
+        }
         defer { try? FileManager.default.removeItem(atPath: tmp) }
-        _ = try Shell.run("zip", arguments: ["-r", "-q", path, "Payload"], cwd: tmp)
+        var zipInputs = ["Payload"]
+        if iTunesMetadata != nil {
+            zipInputs.append("iTunesMetadata.plist")
+        }
+        _ = try Shell.run("zip", arguments: ["-r", "-q", path] + zipInputs, cwd: tmp)
     }
 
     private func makeMinimalApp(path: String, bundleID: String) throws {
@@ -1809,6 +2153,19 @@ final class IOSUseCLITests: XCTestCase {
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: URL(fileURLWithPath: "\(path)/Info.plist"))
+    }
+
+    private func makeMinimalVersionedApp(path: String, bundleID: String, build: String, version: String) throws {
+        try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        let plist: [String: Any] = [
+            "CFBundleIdentifier": bundleID,
+            "CFBundleExecutable": "App",
+            "CFBundleVersion": build,
+            "CFBundleShortVersionString": version,
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try data.write(to: URL(fileURLWithPath: "\(path)/Info.plist"))
+        try Data("binary".utf8).write(to: URL(fileURLWithPath: "\(path)/App"))
     }
 
     private func writeDriverLock(udid: String, deviceType: String, paths: IOSUsePaths) throws {

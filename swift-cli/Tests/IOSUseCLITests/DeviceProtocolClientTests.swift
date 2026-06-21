@@ -430,6 +430,21 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(decoded.payload, .dictionary(payload))
     }
 
+    func testRemoteXPCWrapperRoundTripsFileTransferPayload() throws {
+        let payload: [String: RemoteXPCValue] = [
+            "AssetStreamFD": .fileTransfer(
+                messageID: 1,
+                data: .dictionary(["s": .uint64(1234)])
+            ),
+        ]
+
+        let wrapper = try RemoteXPCWrapper.encodeDictionary(payload, messageID: 7, wantingReply: true)
+        let decoded = try RemoteXPCWrapper.decode(wrapper)
+
+        XCTAssertEqual(decoded.payload, .dictionary(payload))
+        XCTAssertTrue(wrapper.hexString.contains("00a00100"))
+    }
+
     func testRemoteXPCHTTP2ClientHandshakeFramesMatchGoIOSHTTPSetup() throws {
         var handshake = try RemoteXPCHTTP2.encodeClientHandshake()
         XCTAssertEqual(Data(handshake.prefix(RemoteXPCHTTP2.connectionPreface.count)), RemoteXPCHTTP2.connectionPreface)
@@ -448,8 +463,8 @@ final class DeviceProtocolClientTests: XCTestCase {
     func testRemoteXPCHTTP2ClientHandshakeMatchesGoIOSHTTPReferenceBytes() throws {
         let expectedHex = """
         505249202a20485454502f322e300d0a0d0a534d0d0a0d0a\
-        00000c040000000000000300000064000400100000\
-        000004080000000000000f0001
+        00000c040000000000000300000064000401000000\
+        00000408000000000000ff0001
         """.split(separator: "\n").joined()
         XCTAssertEqual(try RemoteXPCHTTP2.encodeClientHandshake().hexString, expectedHex)
         XCTAssertEqual(RemoteXPCHTTP2.settingsFrame(ack: true).hexString, "000000040100000000")
@@ -1360,6 +1375,207 @@ final class DeviceProtocolClientTests: XCTestCase {
         )
     }
 
+    func testRealDeviceAppInstallActionProbe() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["IOS_USE_REAL_DEVICE_APPINSTALL_PROBE"] == "1" else {
+            throw XCTSkip("set IOS_USE_REAL_DEVICE_APPINSTALL_PROBE=1 to run real-device AppInstallAction probe")
+        }
+        let udid = environment["IOS_USE_REAL_DEVICE_UDID"] ?? "00008150-0015309E2EE3401C"
+        let appPath = environment["IOS_USE_REAL_DEVICE_APP_PATH"] ?? "/path/to/TestApp.app"
+        let appURL = URL(fileURLWithPath: appPath, isDirectory: true).absoluteString
+        let feature = environment["IOS_USE_REAL_DEVICE_APPINSTALL_FEATURE"] ?? "com.apple.coredevice.feature.installapp"
+        let actionAppInstall = "com.apple.coredevice.action.appinstall"
+        let inputVariants: [(name: String, input: [String: RemoteXPCValue])] = [
+            ("empty-input", [:]),
+            ("path-string", [
+                "appBundleToInstall": .string(appPath),
+            ]),
+            ("url-relative", [
+                "appBundleToInstall": .dictionary([
+                    "relative": .string(appURL),
+                ]),
+            ]),
+            ("url-wrapper", [
+                "appBundleToInstall": .dictionary([
+                    "url": .dictionary([
+                        "_0": .dictionary([
+                            "relative": .string(appURL),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            ("url-relative-options", [
+                "appBundleToInstall": .dictionary([
+                    "relative": .string(appURL),
+                ]),
+                "options": .dictionary([:]),
+            ]),
+        ]
+        let actionVariants: [(name: String, action: RemoteXPCValue)] = [
+            ("empty-action", .dictionary([:])),
+            ("name-string", .string(actionAppInstall)),
+            ("name-field", .dictionary([
+                "name": .string(actionAppInstall),
+            ])),
+            ("rawvalue-field", .dictionary([
+                "rawValue": .string(actionAppInstall),
+            ])),
+            ("action-key", .dictionary([
+                actionAppInstall: .dictionary([:]),
+            ])),
+        ]
+        let session = try CoreDeviceDirectTunnelRuntime(eventSink: { print("[appinstall-probe] \($0)") }).start(udid: udid)
+        defer {
+            session.close()
+            _ = session.waitForClose(timeoutSeconds: 2)
+        }
+
+        for actionVariant in actionVariants {
+            for inputVariant in inputVariants {
+                let client = try session.connectRemoteXPCService(CoreDeviceAppService.serviceName)
+                let service = CoreDeviceAppService(client: client)
+                defer { service.close() }
+                var request = service.coreDeviceRequest(featureIdentifier: feature, input: inputVariant.input)
+                request["CoreDevice.action"] = actionVariant.action
+                let variantName = "\(actionVariant.name)/\(inputVariant.name)"
+                print("[appinstall-probe] variant=\(variantName)")
+                do {
+                    let response = try client.sendReceiveRequest(request, timeoutSeconds: 30)
+                    print("[appinstall-probe] variant=\(variantName) response=\(String(describing: response))")
+                } catch {
+                    print("[appinstall-probe] variant=\(variantName) error=\(String(describing: error))")
+                }
+            }
+        }
+    }
+
+    func testRealDeviceAppInstallActionProbeSingle() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["IOS_USE_REAL_DEVICE_APPINSTALL_PROBE_SINGLE"] == "1" else {
+            throw XCTSkip("set IOS_USE_REAL_DEVICE_APPINSTALL_PROBE_SINGLE=1 to run one real-device AppInstallAction probe")
+        }
+        let udid = environment["IOS_USE_REAL_DEVICE_UDID"] ?? "00008150-0015309E2EE3401C"
+        let appPath = environment["IOS_USE_REAL_DEVICE_APP_PATH"] ?? "/path/to/TestApp.app"
+        let appURL = URL(fileURLWithPath: appPath, isDirectory: true).absoluteString
+        let feature = environment["IOS_USE_REAL_DEVICE_APPINSTALL_FEATURE"] ?? "com.apple.coredevice.feature.installapp"
+        let serviceName = environment["IOS_USE_REAL_DEVICE_APPINSTALL_SERVICE"] ?? CoreDeviceAppService.serviceName
+        let handshakeOnly = environment["IOS_USE_REAL_DEVICE_APPINSTALL_HANDSHAKE_ONLY"] == "1"
+        let action = environment["IOS_USE_REAL_DEVICE_APPINSTALL_ACTION"] ?? "com.apple.coredevice.action.appinstall"
+        let actionShape = environment["IOS_USE_REAL_DEVICE_APPINSTALL_ACTION_SHAPE"] ?? "name-field"
+        let inputShape = environment["IOS_USE_REAL_DEVICE_APPINSTALL_INPUT_SHAPE"] ?? "url-relative-options"
+        let actionValue: RemoteXPCValue
+        switch actionShape {
+        case "empty-action":
+            actionValue = .dictionary([:])
+        case "name-string":
+            actionValue = .string(action)
+        case "rawvalue-field":
+            actionValue = .dictionary(["rawValue": .string(action)])
+        case "action-key":
+            actionValue = .dictionary([action: .dictionary([:])])
+        default:
+            actionValue = .dictionary(["name": .string(action)])
+        }
+        let input: [String: RemoteXPCValue]
+        switch inputShape {
+        case "path-string":
+            input = ["appBundleToInstall": .string(appPath)]
+        case "url-wrapper":
+            input = [
+                "appBundleToInstall": .dictionary([
+                    "url": .dictionary([
+                        "_0": .dictionary([
+                            "relative": .string(appURL),
+                        ]),
+                    ]),
+                ]),
+            ]
+        case "url-relative":
+            input = ["appBundleToInstall": .dictionary(["relative": .string(appURL)])]
+        default:
+            input = [
+                "appBundleToInstall": .dictionary(["relative": .string(appURL)]),
+                "options": .dictionary([:]),
+            ]
+        }
+        let session = try CoreDeviceDirectTunnelRuntime(eventSink: { print("[appinstall-probe-single] \($0)") }).start(udid: udid)
+        defer {
+            session.close()
+            _ = session.waitForClose(timeoutSeconds: 2)
+        }
+        let client = try session.connectRemoteXPCService(serviceName)
+        print("[appinstall-probe-single] connected service=\(serviceName)")
+        if handshakeOnly {
+            client.close()
+            return
+        }
+        let service = CoreDeviceAppService(client: client)
+        defer { service.close() }
+        var request = service.coreDeviceRequest(featureIdentifier: feature, input: input)
+        request["CoreDevice.action"] = actionValue
+        print("[appinstall-probe-single] feature=\(feature) action=\(action) actionShape=\(actionShape) inputShape=\(inputShape)")
+        do {
+            let response = try client.sendReceiveRequest(request, timeoutSeconds: 60)
+            print("[appinstall-probe-single] response=\(String(describing: response))")
+        } catch {
+            print("[appinstall-probe-single] error=\(String(describing: error))")
+        }
+    }
+
+    func disabled_testRealDeviceAppInstallActionProbeOld() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["IOS_USE_REAL_DEVICE_APPINSTALL_PROBE_OLD"] == "1" else {
+            throw XCTSkip("set IOS_USE_REAL_DEVICE_APPINSTALL_PROBE_OLD=1 to run real-device AppInstallAction probe")
+        }
+        let udid = environment["IOS_USE_REAL_DEVICE_UDID"] ?? "00008150-0015309E2EE3401C"
+        let appPath = environment["IOS_USE_REAL_DEVICE_APP_PATH"] ?? "/path/to/TestApp.app"
+        let appURL = URL(fileURLWithPath: appPath, isDirectory: true).absoluteString
+        let feature = "com.apple.coredevice.feature.installapp"
+        let variants: [(name: String, input: [String: RemoteXPCValue])] = [
+            ("empty", [:]),
+            ("path-string", [
+                "appBundleToInstall": .string(appPath),
+            ]),
+            ("url-relative", [
+                "appBundleToInstall": .dictionary([
+                    "relative": .string(appURL),
+                ]),
+            ]),
+            ("url-wrapper", [
+                "appBundleToInstall": .dictionary([
+                    "url": .dictionary([
+                        "_0": .dictionary([
+                            "relative": .string(appURL),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            ("url-relative-options", [
+                "appBundleToInstall": .dictionary([
+                    "relative": .string(appURL),
+                ]),
+                "options": .dictionary([:]),
+            ]),
+        ]
+        let session = try CoreDeviceDirectTunnelRuntime(eventSink: { print("[appinstall-probe] \($0)") }).start(udid: udid)
+        defer {
+            session.close()
+            _ = session.waitForClose(timeoutSeconds: 2)
+        }
+
+        for variant in variants {
+            let service = try CoreDeviceAppService(client: session.connectRemoteXPCService(CoreDeviceAppService.serviceName))
+            defer { service.close() }
+            print("[appinstall-probe] variant=\(variant.name)")
+            do {
+                let output = try service.invoke(featureIdentifier: feature, input: variant.input, timeoutSeconds: 30)
+                print("[appinstall-probe] variant=\(variant.name) output=\(String(describing: output))")
+            } catch {
+                print("[appinstall-probe] variant=\(variant.name) error=\(String(describing: error))")
+            }
+        }
+    }
+
     func testCoreDeviceAppServiceDecodesNestedExecutableURL() throws {
         let response = try RemoteXPCWrapper.encode(
             messageID: 1,
@@ -1673,6 +1889,54 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertEqual(readUInt64LE(close, 40), 42)
     }
 
+    func testAfcUploadDirectoryCreatesRemoteDirectoryAndUploadsFiles() throws {
+        let root = try temporaryDirectory(prefix: "afc-upload-dir")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let appURL = root.appendingPathComponent("Demo.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+        try Data("plist".utf8).write(to: appURL.appendingPathComponent("Info.plist"))
+        let stream = FakeDeviceStream(reads: [
+            afcStatus(.success),
+            afcStatus(.success),
+            afcStatus(.success),
+            afcStatus(.success),
+            afcResponse(opcode: AfcOpcode.fileOpenResult.rawValue, payload: uint64LE(42)),
+            afcStatus(.success),
+            afcStatus(.success),
+        ])
+        let client = AfcClient(stream: stream)
+
+        try client.uploadDirectory(localPath: appURL.path, remotePath: "PublicStaging/Demo.app")
+
+        XCTAssertEqual(stream.writes.map { readUInt64LE($0, 32) }, [
+            AfcOpcode.makeDirectory.rawValue,
+            AfcOpcode.makeDirectory.rawValue,
+            AfcOpcode.makeDirectory.rawValue,
+            AfcOpcode.makeDirectory.rawValue,
+            AfcOpcode.fileOpen.rawValue,
+            AfcOpcode.write.rawValue,
+            AfcOpcode.close.rawValue,
+        ])
+        XCTAssertEqual(String(data: stream.writes[4].dropFirst(48).dropLast(), encoding: .utf8), "PublicStaging/Demo.app/Info.plist")
+    }
+
+    func testAfcMakeSymlinkFrameMatchesLibimobiledeviceShape() throws {
+        let stream = FakeDeviceStream(reads: [
+            afcStatus(.success),
+        ])
+        let client = AfcClient(stream: stream)
+
+        try client.makeSymlink(target: "Frameworks/Foo.framework", linkPath: "PublicStaging/Demo.app/Foo.framework")
+
+        let request = try XCTUnwrap(stream.writes.first)
+        XCTAssertEqual(readUInt64LE(request, 32), AfcOpcode.makeLink.rawValue)
+        XCTAssertEqual(readUInt64LE(request, 40), 2)
+        let strings = request.dropFirst(48).split(separator: 0).compactMap {
+            String(data: Data($0), encoding: .utf8)
+        }
+        XCTAssertEqual(strings, ["Frameworks/Foo.framework", "PublicStaging/Demo.app/Foo.framework"])
+    }
+
     func testAfcTooMuchDataFallbackWritesAllRemainingChunksAtReducedSize() throws {
         let file = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-afc-\(UUID().uuidString)")
@@ -1984,11 +2248,11 @@ final class DeviceProtocolClientTests: XCTestCase {
         ])
         let client = InstallationProxyClient(stream: stream)
 
-        try client.install(packagePath: "PublicStaging/ios-use/com.example.app", bundleID: "com.example.app")
+        try client.install(packagePath: "PublicStaging/com.example.app", bundleID: "com.example.app")
 
         let request = try parseLengthPrefixedPlist(stream.writes[0])
         XCTAssertEqual(request["Command"] as? String, "Install")
-        XCTAssertEqual(request["PackagePath"] as? String, "PublicStaging/ios-use/com.example.app")
+        XCTAssertEqual(request["PackagePath"] as? String, "PublicStaging/com.example.app")
         let options = try XCTUnwrap(request["ClientOptions"] as? [String: Any])
         XCTAssertEqual(options["CFBundleIdentifier"] as? String, "com.example.app")
         XCTAssertNil(options["PackageType"])
@@ -2002,12 +2266,33 @@ final class DeviceProtocolClientTests: XCTestCase {
         ])
         let client = InstallationProxyClient(stream: stream)
 
-        try client.install(packagePath: "PublicStaging/App.app", bundleID: "com.example.app", developer: true)
+        try client.install(packagePath: "PublicStaging/App.app", clientOptions: ["PackageType": "Developer"])
 
         let request = try parseLengthPrefixedPlist(stream.writes[0])
         let options = try XCTUnwrap(request["ClientOptions"] as? [String: Any])
         XCTAssertEqual(options["PackageType"] as? String, "Developer")
-        XCTAssertEqual(options["CFBundleIdentifier"] as? String, "com.example.app")
+        XCTAssertNil(options["CFBundleIdentifier"])
+    }
+
+    func testInstallationProxyInstallSupportsBinaryMetadataOptions() throws {
+        let stream = FakeDeviceStream(reads: [
+            plistFrame(["Status": "Complete"]),
+        ])
+        let client = InstallationProxyClient(stream: stream)
+
+        try client.install(
+            packagePath: "PublicStaging/com.example.app",
+            clientOptions: [
+                "CFBundleIdentifier": "com.example.app",
+                "ApplicationSINF": Data([0x01, 0x02]),
+                "iTunesMetadata": Data([0x03, 0x04]),
+            ]
+        )
+
+        let request = try parseLengthPrefixedPlist(stream.writes[0])
+        let options = try XCTUnwrap(request["ClientOptions"] as? [String: Any])
+        XCTAssertEqual(options["ApplicationSINF"] as? Data, Data([0x01, 0x02]))
+        XCTAssertEqual(options["iTunesMetadata"] as? Data, Data([0x03, 0x04]))
     }
 
     func testInstallationProxyBrowseAggregatesCurrentListUntilComplete() throws {
@@ -2062,12 +2347,12 @@ final class DeviceProtocolClientTests: XCTestCase {
 
     func testInstallationProxyPackagePathMatchesAfcRelativePath() {
         XCTAssertEqual(
-            RealDevicePackageInstaller.installationProxyPackagePath(forAfcPath: "PublicStaging/ios-use/app.ipa"),
-            "PublicStaging/ios-use/app.ipa"
+            RealDevicePackageInstaller.installationProxyPackagePath(forAfcPath: "PublicStaging/com.example.app"),
+            "PublicStaging/com.example.app"
         )
         XCTAssertEqual(
-            RealDevicePackageInstaller.installationProxyPackagePath(forAfcPath: "/PublicStaging/ios-use/app.ipa"),
-            "PublicStaging/ios-use/app.ipa"
+            RealDevicePackageInstaller.installationProxyPackagePath(forAfcPath: "/PublicStaging/com.example.app"),
+            "PublicStaging/com.example.app"
         )
     }
 
@@ -2241,12 +2526,69 @@ final class DeviceProtocolClientTests: XCTestCase {
         XCTAssertNil(trustEntry["Info"])
     }
 
+    func testCoreDeviceStreamingZipConduitConnectPerformsRSDCheckin() throws {
+        let stream = FakeDeviceStream(reads: [
+            plistFrame(["Status": "OK"]),
+            plistFrame(["Status": "OK"]),
+        ])
+        let session = FakeCoreDeviceLifecycleTunnelSession(stream: stream)
+
+        let conduit = try CoreDeviceStreamingZipConduit.connect(session: session)
+        defer { conduit.close() }
+
+        XCTAssertEqual(session.requestedServices, [CoreDeviceStreamingZipConduit.serviceName])
+        XCTAssertEqual(stream.writes.count, 1)
+        let checkin = try parseLengthPrefixedPlist(stream.writes[0])
+        XCTAssertEqual(checkin["Request"] as? String, "RSDCheckin")
+        XCTAssertEqual(checkin["ProtocolVersion"] as? String, "2")
+    }
+
+    func testCoreDeviceStreamingZipConduitStreamsExtractedIpaAsPseudoZip() throws {
+        let root = try temporaryDirectory(prefix: "streaming-zip")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let appURL = root.appendingPathComponent("Payload/Demo.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+        let info = Data("<plist><dict><key>CFBundleIdentifier</key><string>com.example.demo</string></dict></plist>".utf8)
+        try info.write(to: appURL.appendingPathComponent("Info.plist"))
+        let stream = FakeDeviceStream(reads: [
+            plistFrame(["Status": "DataComplete"]),
+        ])
+        let conduit = CoreDeviceStreamingZipConduit(stream: stream)
+
+        try conduit.installExtractedPackage(rootPath: root.path, mediaName: "Demo.ipa")
+
+        XCTAssertGreaterThanOrEqual(stream.writes.count, 9)
+        let initTransfer = try parseLengthPrefixedPlist(stream.writes[0])
+        XCTAssertEqual(initTransfer["InstallTransferredDirectory"] as? Int, 1)
+        XCTAssertEqual(initTransfer["MediaSubdir"] as? String, "PublicStaging/Demo.ipa")
+        let options = try XCTUnwrap(initTransfer["InstallOptionsDictionary"] as? [String: Any])
+        XCTAssertEqual(options["PackageType"] as? String, "Customer")
+        XCTAssertEqual(options["InstallDeltaTypeKey"] as? String, "InstallDeltaTypeSparseIPAFiles")
+
+        XCTAssertEqual(zipLocalHeaderPath(stream.writes[1]), "META-INF/")
+        XCTAssertEqual(zipLocalHeaderPath(stream.writes[2]), "META-INF/com.apple.ZipMetadata.plist")
+        let metadata = try parsePlist(stream.writes[3])
+        XCTAssertEqual(metadata["Version"] as? Int, 2)
+        XCTAssertEqual(metadata["RecordCount"] as? Int, 5)
+        XCTAssertEqual(metadata["TotalUncompressedBytes"] as? Int, info.count)
+
+        let archivePaths = stream.writes.dropFirst(4).dropLast().compactMap(zipLocalHeaderPath)
+        XCTAssertEqual(archivePaths, [
+            "Payload/",
+            "Payload/Demo.app/",
+            "Payload/Demo.app/Info.plist",
+        ])
+        XCTAssertEqual(stream.writes[7], info)
+        XCTAssertEqual(stream.writes.last, Data([0x50, 0x4b, 0x01, 0x02]))
+    }
+
     func testRealDevicePackageInstallerValidatesInstalledVersion() throws {
         let response: [String: Any] = [
             "LookupResult": [
                 "com.example.app": [
                     "CFBundleIdentifier": "com.example.app",
                     "CFBundleShortVersionString": "1.1.1",
+                    "CFBundleVersion": "7",
                 ],
             ],
         ]
@@ -2254,15 +2596,22 @@ final class DeviceProtocolClientTests: XCTestCase {
         try RealDevicePackageInstaller.validateInstalledApp(
             response: response,
             bundleID: "com.example.app",
-            expectedVersion: "1.1.1"
+            expectedVersion: AppVersionInfo(bundleVersion: "7", shortVersion: "1.1.1")
         )
 
         XCTAssertThrowsError(try RealDevicePackageInstaller.validateInstalledApp(
             response: response,
             bundleID: "com.example.app",
-            expectedVersion: "1.2.1"
+            expectedVersion: AppVersionInfo(bundleVersion: "7", shortVersion: "1.2.1")
         )) { error in
-            XCTAssertTrue(String(describing: error).contains("does not match IPA version"))
+            XCTAssertTrue(String(describing: error).contains("short version"))
+        }
+        XCTAssertThrowsError(try RealDevicePackageInstaller.validateInstalledApp(
+            response: response,
+            bundleID: "com.example.app",
+            expectedVersion: AppVersionInfo(bundleVersion: "8", shortVersion: "1.1.1")
+        )) { error in
+            XCTAssertTrue(String(describing: error).contains("build version"))
         }
     }
 
@@ -2288,6 +2637,19 @@ final class DeviceProtocolClientTests: XCTestCase {
     private func parseLengthPrefixedPlist(_ data: Data) throws -> [String: Any] {
         let size = Int(readUInt32BE(data, 0))
         return try parsePlist(Data(data.dropFirst(4).prefix(size)))
+    }
+
+    private func zipLocalHeaderPath(_ data: Data) -> String? {
+        guard data.count >= 30, readUInt32LE(data, 0) == 0x0403_4b50 else {
+            return nil
+        }
+        let nameLength = Int(UInt16(data[26]) | (UInt16(data[27]) << 8))
+        let nameStart = 30
+        let nameEnd = nameStart + nameLength
+        guard data.count >= nameEnd else {
+            return nil
+        }
+        return String(data: data[nameStart..<nameEnd], encoding: .utf8)
     }
 
     private func temporaryDirectory(prefix: String) throws -> URL {

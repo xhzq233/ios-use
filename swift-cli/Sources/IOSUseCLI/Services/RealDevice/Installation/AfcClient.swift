@@ -4,12 +4,15 @@ import IOSUseProtocol
 enum AfcOpcode: UInt64 {
     case status = 0x01
     case data = 0x02
+    case readDirectory = 0x03
     case removePath = 0x08
     case makeDirectory = 0x09
+    case getFileInfo = 0x0a
     case fileOpen = 0x0d
     case fileOpenResult = 0x0e
     case write = 0x10
     case close = 0x14
+    case makeLink = 0x1c
 }
 
 enum AfcStatus: UInt64, CustomStringConvertible {
@@ -139,6 +142,21 @@ final class AfcClient {
         }
     }
 
+    func removePathRecursive(_ path: String) throws {
+        let normalized = normalizeDevicePath(path)
+        guard let info = try? fileInfo(normalized) else {
+            try? removePath(normalized)
+            return
+        }
+        if info["st_ifmt"] == "S_IFDIR" {
+            let children = (try? readDirectory(normalized)) ?? []
+            for child in children where child != "." && child != ".." {
+                try removePathRecursive(joinDevicePath(normalized, child))
+            }
+        }
+        try removePath(normalized)
+    }
+
     func uploadFile(localPath: String, remotePath: String) throws {
         let remotePath = normalizeDevicePath(remotePath)
         let parent = parentDevicePath(remotePath)
@@ -167,6 +185,59 @@ final class AfcClient {
                 }
             }
         }
+    }
+
+    func uploadDirectory(localPath: String, remotePath: String) throws {
+        let localURL = URL(fileURLWithPath: localPath, isDirectory: true)
+        let remotePath = normalizeDevicePath(remotePath)
+        try makeDirectories(remotePath)
+        let children = try FileManager.default.contentsOfDirectory(
+            at: localURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+            options: []
+        ).sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        for child in children {
+            let remoteChild = joinDevicePath(remotePath, child.lastPathComponent)
+            let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+            if values.isSymbolicLink == true {
+                let target = try FileManager.default.destinationOfSymbolicLink(atPath: child.path)
+                try makeSymlink(target: target, linkPath: remoteChild)
+            } else if values.isDirectory == true {
+                try uploadDirectory(localPath: child.path, remotePath: remoteChild)
+            } else if values.isRegularFile == true {
+                try uploadFile(localPath: child.path, remotePath: remoteChild)
+            }
+        }
+    }
+
+    func readDirectory(_ path: String) throws -> [String] {
+        let response = try request(.readDirectory, payload: cString(normalizeDevicePath(path)))
+        guard response.opcode == AfcOpcode.data.rawValue else {
+            throw AfcClientError.unexpectedOpcode(response.opcode)
+        }
+        return nullSeparatedStrings(response.payload)
+    }
+
+    func fileInfo(_ path: String) throws -> [String: String] {
+        let response = try request(.getFileInfo, payload: cString(normalizeDevicePath(path)))
+        guard response.opcode == AfcOpcode.data.rawValue else {
+            throw AfcClientError.unexpectedOpcode(response.opcode)
+        }
+        let fields = nullSeparatedStrings(response.payload)
+        var result: [String: String] = [:]
+        var index = 0
+        while index + 1 < fields.count {
+            result[fields[index]] = fields[index + 1]
+            index += 2
+        }
+        return result
+    }
+
+    func makeSymlink(target: String, linkPath: String) throws {
+        var payload = uint64LE(2)
+        payload.append(cString(target))
+        payload.append(cString(normalizeDevicePath(linkPath)))
+        try request(.makeLink, payload: payload)
     }
 
     func openFile(_ path: String) throws -> UInt64 {
@@ -266,11 +337,22 @@ final class AfcClient {
         return "/" + normalized
     }
 
+    private func joinDevicePath(_ base: String, _ child: String) -> String {
+        let normalized = normalizeDevicePath(base)
+        return normalized.isEmpty ? child : "\(normalized)/\(child)"
+    }
+
     private func parentDevicePath(_ path: String) -> String? {
         let normalized = normalizeDevicePath(path)
         guard let slash = normalized.lastIndex(of: "/") else {
             return nil
         }
         return String(normalized[..<slash])
+    }
+
+    private func nullSeparatedStrings(_ data: Data) -> [String] {
+        data.split(separator: 0, omittingEmptySubsequences: true).compactMap {
+            String(data: Data($0), encoding: .utf8)
+        }
     }
 }

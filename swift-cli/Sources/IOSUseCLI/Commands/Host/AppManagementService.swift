@@ -74,7 +74,7 @@ enum AppManagementService {
     private static func verboseResponsePrefix(_ frames: [[String: Any]]) -> String {
         guard !frames.isEmpty else { return "" }
         let lines = frames.map { InstallationProxyClient.responseSummary($0) }
-        return "installation_proxy responses:\n" + lines.joined(separator: "\n") + "\n"
+        return "installer responses:\n" + lines.joined(separator: "\n") + "\n"
     }
 
     private static func errorWithVerboseResponses(_ error: Error, frames: [[String: Any]], verbose: Bool) -> Error {
@@ -202,18 +202,23 @@ enum AppManagementService {
     }
 
     private static func extractBundleIDFromIpa(ipaPath: String) throws -> String {
-        let tmpDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-use-ipa-info-\(UUID().uuidString)", isDirectory: true)
-            .path
-        try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(atPath: tmpDir) }
-        _ = try Shell.run("unzip", arguments: ["-q", "-o", ipaPath, "-d", tmpDir])
-        let payloadDir = "\(tmpDir)/Payload"
-        let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
-        guard let appEntry = appEntries.first else {
-            throw CLIParseError.invalidValue("No .app found in IPA")
+        let entries = try Shell.run("unzip", arguments: ["-Z1", ipaPath])
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        guard let infoEntry = entries.first(where: { entry in
+            entry.hasPrefix("Payload/")
+                && entry.hasSuffix(".app/Info.plist")
+                && entry.dropFirst("Payload/".count).split(separator: "/").count == 2
+        }) else {
+            throw CLIParseError.invalidValue("No Payload/*.app/Info.plist found in IPA")
         }
-        return try extractBundleIDFromApp(appPath: "\(payloadDir)/\(appEntry)")
+        let infoData = try Shell.runData("unzip", arguments: ["-p", ipaPath, infoEntry])
+        guard let info = try PropertyListSerialization.propertyList(from: infoData, options: [], format: nil) as? [String: Any],
+              let bundleID = info["CFBundleIdentifier"] as? String,
+              !bundleID.isEmpty else {
+            throw CLIParseError.invalidValue("No CFBundleIdentifier found in IPA Info.plist")
+        }
+        return bundleID
     }
 
     private static func extractBundleIDFromApp(appPath: String) throws -> String {

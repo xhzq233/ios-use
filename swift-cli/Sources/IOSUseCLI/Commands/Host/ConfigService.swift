@@ -80,7 +80,7 @@ public enum ConfigService {
             if let realDeviceInstallerForTesting {
                 try realDeviceInstallerForTesting(signedIpa, udid, bundleId)
             } else {
-                try RealDevicePackageInstaller.installIpa(ipaPath: signedIpa, udid: udid, bundleID: bundleId)
+                try RealDevicePackageInstaller.installIpa(ipaPath: signedIpa, udid: udid, bundleID: bundleId, preferDevicectl: false)
             }
             installMessage = "Driver installed to device"
         }
@@ -157,17 +157,22 @@ public enum ConfigService {
 
     static func driverIPAVersion(at ipaPath: String) -> String? {
         guard FileManager.default.fileExists(atPath: ipaPath) else { return nil }
-        let tmpDir = "\(FileManager.default.temporaryDirectory.path)/ios-use-ipa-version-\(UUID().uuidString)"
         do {
-            try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
-            defer { try? FileManager.default.removeItem(atPath: tmpDir) }
-            _ = try Shell.run("unzip", arguments: ["-q", "-o", ipaPath, "-d", tmpDir])
-            let payloadDir = "\(tmpDir)/Payload"
-            let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
-            guard let appEntry = appEntries.first else { return nil }
-            return try Shell.run("plutil", arguments: ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", "\(payloadDir)/\(appEntry)/Info.plist"])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .nonEmpty
+            let entries = try Shell.run("unzip", arguments: ["-Z1", ipaPath])
+                .split(whereSeparator: \.isNewline)
+                .map(String.init)
+            guard let infoEntry = entries.first(where: { entry in
+                entry.hasPrefix("Payload/")
+                    && entry.hasSuffix(".app/Info.plist")
+                    && entry.dropFirst("Payload/".count).split(separator: "/").count == 2
+            }) else {
+                return nil
+            }
+            let infoData = try Shell.runData("unzip", arguments: ["-p", ipaPath, infoEntry])
+            guard let info = try PropertyListSerialization.propertyList(from: infoData, options: [], format: nil) as? [String: Any] else {
+                return nil
+            }
+            return (info["CFBundleShortVersionString"] as? String)?.nonEmpty
         } catch {
             return nil
         }
