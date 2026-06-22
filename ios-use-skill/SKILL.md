@@ -28,7 +28,7 @@ ios-use config --udid <udid>
 ios-use start
 ```
 
-- `status` 用来查看 USB 真机、当前 driver、日志采集、NSLog、Proxy、配置状态；本机有 `simctl` 时也会列出已 boot 的 Simulator。
+- `status` 用来查看 USB 真机、当前 driver、日志采集、NSLog、Proxy、配置状态；不列出 Simulator。需要 Simulator UDID 时用 `xcrun simctl list devices booted` 自行查询。
 - 设备未显示 `configured`，或显示 `driver update required`，先重新执行 `ios-use config --udid <udid>`。
 - 首次配置真机可能需要 Apple ID 和 2FA。出现这类交互时，让用户在终端手动运行带账号参数的 `config` 命令。
 - 真机必须 USB 连接且系统版本为 iOS 17.4+；只通过 Wi-Fi 连接的设备不可用。
@@ -41,7 +41,7 @@ ios-use start
 - `dom` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
 - `status` 不接受 `--udid`，只汇总当前环境状态；`config` / `install` / `uninstall` / `apps` / `ddi-mount` / `open` / `activateApp` / `terminateApp` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
 - `proxy start --server` / `proxy stop --server` 只管理本机 mitmdump，不要求当前设备 driver。
-- 真机 `status` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI；`status` 只有在本机有 `simctl` 时才会额外列出 booted Simulator。
+- 真机 `status` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI；查询 Simulator UDID 时才需要 Xcode CLI，可运行 `xcrun simctl list devices booted`。
 
 ## 4. 操作原则
 

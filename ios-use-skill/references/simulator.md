@@ -13,7 +13,7 @@ Use this reference only when the target is an iOS Simulator. The main skill flow
 - Use a booted Simulator UDID. When `simctl` is available, list booted targets with:
 
 ```bash
-ios-use status
+xcrun simctl list devices booted
 ```
 
 ## Setup And Start
