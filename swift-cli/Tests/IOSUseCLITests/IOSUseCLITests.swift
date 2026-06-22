@@ -34,7 +34,6 @@ final class IOSUseCLITests: XCTestCase {
         RealDevicePackageInstaller.installedAppLookupForTesting = nil
         RealDevicePackageInstaller.devicectlRunnerForTesting = nil
         DeveloperDiskImageService.mountForTesting = nil
-        StatusService.simctlAvailableForTesting = nil
         SessionService.simulatorDriverLauncherForTesting = nil
         SessionService.simulatorDriverReachableForTesting = nil
         SimulatorService.xcodebuildLauncherForTesting = nil
@@ -146,10 +145,10 @@ final class IOSUseCLITests: XCTestCase {
             deviceProxyStatus: "configured",
             caStatus: "trusted"
         )).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
-        StatusService.simctlAvailableForTesting = { true }
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             if simulatorOnly {
-                return [IOSDevice(name: "Booted Sim", version: "26.0", udid: "SIM-1", kind: .simulator)]
+                XCTFail("status must not list booted Simulators")
+                return []
             }
             return [IOSDevice(name: "Real Phone", version: "17.4", udid: "REAL-1", kind: .real)]
         }
@@ -160,7 +159,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Connected devices:"))
         XCTAssertTrue(result.stdout.contains("Real Phone | iOS 17.4 | Device | UDID: REAL-1 | configured"))
-        XCTAssertTrue(result.stdout.contains("Booted Sim | iOS 26.0 | Simulator | UDID: SIM-1"))
+        XCTAssertFalse(result.stdout.contains("Booted Simulators:"))
         XCTAssertTrue(result.stdout.contains("Driver:"))
         XCTAssertTrue(result.stdout.contains("running | udid: REAL-1 | device: real | name: Real Phone | iOS: 17.4 | bundle: com.example.driver | holder pid: 11 | runner pid: 12 | session: session-1"))
         XCTAssertTrue(result.stdout.contains("App log:"))
@@ -174,14 +173,13 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
-    func testStatusSkipsBootedSimulatorsWhenSimctlIsUnavailable() throws {
+    func testStatusSkipsBootedSimulators() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ios-use-status-no-simctl-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("ios-use-status-no-simulators-\(UUID().uuidString)", isDirectory: true)
             .path
-        StatusService.simctlAvailableForTesting = { false }
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             if simulatorOnly {
-                XCTFail("status must not list booted Simulators when simctl is unavailable")
+                XCTFail("status must not list booted Simulators")
                 return []
             }
             return [IOSDevice(name: "Real Phone", version: "17.4", udid: "REAL-1", kind: .real)]
