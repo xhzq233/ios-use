@@ -11,6 +11,7 @@ description: "Use ios-use to drive iOS devices via CLI. Primary scope: real-devi
 - 抓 HTTP/HTTPS 包、证书、mitmdump、过滤表达式：看 `references/proxy.md`
 - 使用或排查 Simulator：看 `references/simulator.md`
 - 维护旧 NSLogger / `nslog`：看 `references/nslog.md`
+- 整理故障报告并提交 GitHub Issue：看 `references/report.md`
 
 ## 2. 前置要求
 
@@ -243,6 +244,8 @@ ios-use oslog --pattern "error|failed" --flags i --timeout 10
 - 旧 NSLogger / `nslog` 只在 App 已接入 NSLogger 或 Flow 明确依赖 `needNSLog` 时使用，见 `references/nslog.md`。
 
 ## 10. 常见排障
+
+遇到无法解决的问题时，可以先到 GitHub Issues 搜索相似问题，再决定是否整理报告。需要主动提交 GitHub Issue 时，用户明确说“提交吧”这类提交意图即可；确认后再看 `references/report.md`，按模板收集失败命令、`status`、配置摘要和必要日志尾部，并在提交前脱敏 Apple ID、完整 UDID、证书、密码和业务 App 私有日志。Issue 查询、创建、关闭优先用 `gh` CLI；本机没有 `gh` 时先安装 GitHub CLI。
 
 签名异常：
 
