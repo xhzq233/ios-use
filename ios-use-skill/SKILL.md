@@ -116,7 +116,11 @@ ios-use uninstall com.example.app
 ios-use uninstall com.example.app --udid <udid>
 ```
 
-这些命令直接走真机设备服务。`ddi-mount` 用于挂载 iOS 17+ Developer Disk Image；省略 `--path` 时扫描本机 CoreDevice DDI 缓存，不调用 `devicectl`、不下载或内置 DDI。`install` 只接受已签名 `.ipa` 或 `.app`，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
+这些命令直接走真机设备服务。`ddi-mount` 用于挂载 iOS 17+ Developer Disk Image；省略 `--path` 时扫描本机 CoreDevice DDI 缓存。本机缓存为空时，可从以下地址手动下载 DDI，解压后将 `Restore/` 目录路径传给 `--path`：
+
+- iOS 17+（personalized）：`https://deviceboxhq.com/ddi-17E5179g.zip`（go-ios `ios image auto` 的下载源，版本号随 go-ios 更新，可在 [go-ios imagemounter 源码](https://github.com/danielpaulus/go-ios/blob/main/ios/imagemounter/imagedownloader.go) 中查看最新值）
+
+`install` 只接受已签名 `.ipa` 或 `.app`，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
 
 ## 6. 常用命令速查
 
