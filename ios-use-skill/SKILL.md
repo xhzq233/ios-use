@@ -249,5 +249,6 @@ ios-use oslog --pattern "error|failed" --flags i --timeout 10
 
 签名异常：
 
+- `config` 在签名后可能输出 `Driver signing warnings`，这是安装前本地检查发现的 profile / UDID / bundle id / codesign 风险提示；不会阻塞继续安装，最终是否安装成功以随后的安装结果为准。
 - altsign 出现 HTTP 4xx，常见原因是 Apple Developer 账号状态或凭据问题。
 - altsign 出现 HTTP 5xx，优先检查网络或 VPN。

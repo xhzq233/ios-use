@@ -71,6 +71,13 @@ public enum ConfigService {
         guard FileManager.default.fileExists(atPath: signedIpa) else {
             throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
         }
+        let signingWarnings = signedDriverPreflightWarnings(
+            signedIpa: signedIpa,
+            udid: udid,
+            runnerBundleId: bundleId,
+            xctestBundleId: xctestBundleId,
+            paths: paths
+        )
         if let realDeviceInstallerForTesting {
             try realDeviceInstallerForTesting(signedIpa, udid, bundleId)
         } else {
@@ -86,6 +93,7 @@ public enum ConfigService {
         XCTest Bundle ID: \(xctestBundleId)
         Using prebuilt driver: \(ipaPath)
         Driver signed
+        \(formatSigningWarnings(signingWarnings))\
         \(installMessage)
         Device config complete! Run `ios-use start \(udid)` before driver-backed commands.
         """ + "\n"
@@ -243,6 +251,185 @@ public enum ConfigService {
         _ = try Shell.run("plutil", arguments: ["-replace", "CFBundleIdentifier", "-string", newId, plistPath])
     }
 
+    private static func signedDriverPreflightWarnings(
+        signedIpa: String,
+        udid: String,
+        runnerBundleId: String,
+        xctestBundleId: String,
+        paths: IOSUsePaths
+    ) -> [String] {
+        do {
+            return try inspectSignedDriverIpa(
+                signedIpa: signedIpa,
+                udid: udid,
+                runnerBundleId: runnerBundleId,
+                xctestBundleId: xctestBundleId,
+                paths: paths
+            )
+        } catch {
+            return ["signed IPA preflight could not inspect \(signedIpa): \(error)"]
+        }
+    }
+
+    private static func inspectSignedDriverIpa(
+        signedIpa: String,
+        udid: String,
+        runnerBundleId: String,
+        xctestBundleId: String,
+        paths: IOSUsePaths
+    ) throws -> [String] {
+        let tmpDir = "\(paths.root)/signed-preflight-\(UUID().uuidString)"
+        try? FileManager.default.removeItem(atPath: tmpDir)
+        try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true, attributes: nil)
+        defer { try? FileManager.default.removeItem(atPath: tmpDir) }
+
+        _ = try Shell.run("unzip", arguments: ["-q", "-o", signedIpa, "-d", tmpDir])
+        let payloadDir = "\(tmpDir)/Payload"
+        let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
+        guard let appEntry = appEntries.first else {
+            return ["signed IPA preflight found no Payload/*.app bundle"]
+        }
+        let appPath = "\(payloadDir)/\(appEntry)"
+        var bundles = [
+            SignedBundlePreflightTarget(label: "runner", path: appPath, expectedBundleId: runnerBundleId, requireEntitlements: true),
+        ]
+        let pluginsDir = "\(appPath)/PlugIns"
+        if let plugins = try? FileManager.default.contentsOfDirectory(atPath: pluginsDir),
+           let xctest = plugins.first(where: { $0.hasSuffix(".xctest") }) {
+            bundles.append(SignedBundlePreflightTarget(label: "xctest", path: "\(pluginsDir)/\(xctest)", expectedBundleId: xctestBundleId, requireEntitlements: false))
+        } else {
+            bundles.append(SignedBundlePreflightTarget(label: "xctest", path: "\(pluginsDir)/IOSUseDriver.xctest", expectedBundleId: xctestBundleId, requireEntitlements: false))
+        }
+
+        var warnings: [String] = []
+        warnings.append(contentsOf: codesignVerifyWarnings(appPath: appPath))
+        for bundle in bundles {
+            warnings.append(contentsOf: inspectSignedBundle(bundle, udid: udid))
+        }
+        return warnings
+    }
+
+    private static func codesignVerifyWarnings(appPath: String) -> [String] {
+        guard let result = try? Shell.runWithResult("codesign", arguments: ["--verify", "--deep", "--strict", "--verbose=2", appPath]) else {
+            return ["signed IPA preflight could not run local codesign verification"]
+        }
+        guard result.exitCode != 0 else { return [] }
+        let output = (result.stderr + "\n" + result.stdout)
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map(String.init) ?? "codesign verify failed with exit \(result.exitCode)"
+        return ["signed IPA preflight local codesign verification failed: \(output)"]
+    }
+
+    private static func inspectSignedBundle(_ target: SignedBundlePreflightTarget, udid: String) -> [String] {
+        var warnings: [String] = []
+        let label = target.label
+        guard FileManager.default.fileExists(atPath: target.path) else {
+            return ["signed IPA preflight \(label) bundle is missing at \(target.path)"]
+        }
+
+        let infoPath = "\(target.path)/Info.plist"
+        let actualBundleId = plistDictionary(at: infoPath)?["CFBundleIdentifier"] as? String
+        if actualBundleId != target.expectedBundleId {
+            warnings.append("signed IPA preflight \(label) bundle id is \(actualBundleId ?? "(missing)"), expected \(target.expectedBundleId)")
+        }
+
+        let profilePath = "\(target.path)/embedded.mobileprovision"
+        guard FileManager.default.fileExists(atPath: profilePath) else {
+            warnings.append("signed IPA preflight \(label) is missing embedded.mobileprovision")
+            return warnings
+        }
+        guard let profile = provisioningProfileSummary(path: profilePath) else {
+            warnings.append("signed IPA preflight \(label) embedded.mobileprovision could not be decoded")
+            return warnings
+        }
+
+        if let expirationDate = profile.expirationDate, expirationDate <= Date() {
+            warnings.append("signed IPA preflight \(label) provisioning profile is expired: \(expirationDate)")
+        }
+        if let provisionedDevices = profile.provisionedDevices, !provisionedDevices.contains(udid) {
+            warnings.append("signed IPA preflight \(label) provisioning profile does not include target UDID \(udid)")
+        }
+        if let profileAppId = profile.applicationIdentifier {
+            let expectedSuffix = ".\(target.expectedBundleId)"
+            if !profileAppId.hasSuffix(expectedSuffix) {
+                warnings.append("signed IPA preflight \(label) profile application-identifier is \(profileAppId), expected suffix \(expectedSuffix)")
+            }
+        } else {
+            warnings.append("signed IPA preflight \(label) profile is missing application-identifier")
+        }
+
+        let codesign = codesignSummary(path: target.path)
+        if target.requireEntitlements, codesign.entitlements == nil {
+            warnings.append("signed IPA preflight \(label) codesign entitlements could not be read")
+        }
+        if let profileTeamId = profile.teamIdentifier,
+           let codesignTeamId = codesign.teamIdentifier,
+           profileTeamId != codesignTeamId {
+            warnings.append("signed IPA preflight \(label) profile team \(profileTeamId) does not match codesign team \(codesignTeamId)")
+        }
+        if let profileAppId = profile.applicationIdentifier,
+           let signedAppId = codesign.entitlements?["application-identifier"] as? String,
+           profileAppId != signedAppId {
+            warnings.append("signed IPA preflight \(label) profile application-identifier \(profileAppId) does not match signed entitlement \(signedAppId)")
+        }
+        if let profileTeamId = profile.teamIdentifier,
+           let signedTeamId = codesign.entitlements?["com.apple.developer.team-identifier"] as? String,
+           profileTeamId != signedTeamId {
+            warnings.append("signed IPA preflight \(label) profile team \(profileTeamId) does not match signed entitlement team \(signedTeamId)")
+        }
+
+        return warnings
+    }
+
+    private static func provisioningProfileSummary(path: String) -> ProvisioningProfileSummary? {
+        guard let data = try? Shell.runData("security", arguments: ["cms", "-D", "-i", path]),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+            return nil
+        }
+        let entitlements = plist["Entitlements"] as? [String: Any]
+        let teamIdentifier = (plist["TeamIdentifier"] as? [String])?.first
+        return ProvisioningProfileSummary(
+            expirationDate: plist["ExpirationDate"] as? Date,
+            provisionedDevices: plist["ProvisionedDevices"] as? [String],
+            teamIdentifier: teamIdentifier,
+            applicationIdentifier: entitlements?["application-identifier"] as? String
+        )
+    }
+
+    private static func codesignSummary(path: String) -> CodesignSummary {
+        let display = (try? Shell.runCombined("codesign", arguments: ["-dvvv", path])) ?? ""
+        let entitlementsData = try? Shell.runData("codesign", arguments: ["-d", "--entitlements", ":-", path])
+        let entitlements = entitlementsData.flatMap { data -> [String: Any]? in
+            guard !data.isEmpty else { return nil }
+            return try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+        }
+        return CodesignSummary(
+            teamIdentifier: firstRegexCapture(pattern: #"TeamIdentifier=([A-Z0-9]+)"#, in: display),
+            entitlements: entitlements
+        )
+    }
+
+    private static func firstRegexCapture(pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return String(text[range])
+    }
+
+    private static func plistDictionary(at path: String) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+        return try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+    }
+
+    private static func formatSigningWarnings(_ warnings: [String]) -> String {
+        guard !warnings.isEmpty else { return "" }
+        return "Driver signing warnings:\n" + warnings.map { "  - \($0)" }.joined(separator: "\n") + "\n"
+    }
+
     private static func saveConfig(udid: String, bundleId: String, driverVersion: String, paths: IOSUsePaths) throws {
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: URL(fileURLWithPath: paths.config)),
@@ -262,6 +449,25 @@ public enum ConfigService {
         try data.write(to: URL(fileURLWithPath: paths.config), options: .atomic)
     }
 
+}
+
+private struct SignedBundlePreflightTarget {
+    let label: String
+    let path: String
+    let expectedBundleId: String
+    let requireEntitlements: Bool
+}
+
+private struct ProvisioningProfileSummary {
+    let expirationDate: Date?
+    let provisionedDevices: [String]?
+    let teamIdentifier: String?
+    let applicationIdentifier: String?
+}
+
+private struct CodesignSummary {
+    let teamIdentifier: String?
+    let entitlements: [String: Any]?
 }
 
 private extension String {
