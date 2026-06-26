@@ -16,7 +16,6 @@ final class ConfigServiceTests: XCTestCase {
         DeviceService.resetCacheForTesting()
         ConfigService.altsignRunnerForTesting = nil
         ConfigService.realDeviceInstallerForTesting = nil
-        ConfigService.installedDriverVersionProviderForTesting = nil
         ConfigService.driverIPAPathProviderForTesting = nil
         RealDevicePackageInstaller.preparedPackageInstallerForTesting = nil
         RealDevicePackageInstaller.nativePackageInstallerForTesting = nil
@@ -1133,7 +1132,6 @@ final class ConfigServiceTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
         try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
         ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
-        ConfigService.installedDriverVersionProviderForTesting = { _, _ in nil }
         DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
             XCTAssertFalse(simulatorOnly)
             return [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-CONFIG", kind: .real)]
@@ -1248,67 +1246,6 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Driver installed to device"))
         XCTAssertTrue(result.stdout.contains("Run `ios-use start REAL-CONFIG` before driver-backed commands."))
         XCTAssertFalse(result.stdout.contains("activateApp"))
-        XCTAssertEqual(
-            ConfigService.listEntries(paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])),
-            [DeviceConfigEntry(udid: "REAL-CONFIG", bundleId: "com.ios-use.driver.user-example-com.xctrunner", driverVersion: IOSUseCLI.version)]
-        )
-    }
-
-    func testRealDeviceConfigSkipsInstallWhenCurrentDriverAlreadyInstalled() throws {
-        let root = try temporaryRoot()
-        let workspace = try temporaryRoot()
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
-        let oldCwd = FileManager.default.currentDirectoryPath
-        XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(workspace))
-        addTeardownBlock {
-            _ = FileManager.default.changeCurrentDirectoryPath(oldCwd)
-        }
-
-        let altsign = "\(root)/altsign-cli/altsign-cli"
-        try FileManager.default.createDirectory(atPath: "\(root)/altsign-cli", withIntermediateDirectories: true)
-        try "#!/bin/sh\nexit 0\n".write(toFile: altsign, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
-        try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
-        ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
-        try """
-        {"devices":{"REAL-CONFIG":{"bundleId":"com.ios-use.driver.user-example-com.xctrunner","driverVersion":"old"}}}
-        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
-
-        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
-            if simulatorOnly {
-                XCTFail("real device config must not inspect Simulator devices")
-                return []
-            }
-            return [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-CONFIG", kind: .real)]
-        }
-        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
-            if executable == altsign, arguments == ["list"] {
-                return "Using cached session for user@example.com\n"
-            }
-            return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
-        }
-        ConfigService.altsignRunnerForTesting = { _, arguments in
-            let outputIndex = try XCTUnwrap(arguments.firstIndex(of: "--output"))
-            let inputIndex = try XCTUnwrap(arguments.firstIndex(of: "--ipa"))
-            try FileManager.default.copyItem(
-                atPath: arguments[arguments.index(after: inputIndex)],
-                toPath: arguments[arguments.index(after: outputIndex)]
-            )
-        }
-        ConfigService.installedDriverVersionProviderForTesting = { udid, bundleId in
-            XCTAssertEqual(udid, "REAL-CONFIG")
-            XCTAssertEqual(bundleId, "com.ios-use.driver.user-example-com.xctrunner")
-            return IOSUseCLI.version
-        }
-        ConfigService.realDeviceInstallerForTesting = { _, _, _ in
-            XCTFail("current installed driver should not be reinstalled")
-        }
-
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["config", "--udid", "REAL-CONFIG"])
-
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertTrue(result.stdout.contains("Driver already installed on device"))
         XCTAssertEqual(
             ConfigService.listEntries(paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])),
             [DeviceConfigEntry(udid: "REAL-CONFIG", bundleId: "com.ios-use.driver.user-example-com.xctrunner", driverVersion: IOSUseCLI.version)]
