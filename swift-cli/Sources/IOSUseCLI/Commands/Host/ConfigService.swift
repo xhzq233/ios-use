@@ -20,7 +20,6 @@ public enum ConfigService {
     private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
     static var altsignRunnerForTesting: ((String, [String]) throws -> Void)?
     static var realDeviceInstallerForTesting: ((String, String, String) throws -> Void)?
-    static var installedDriverVersionProviderForTesting: ((String, String) throws -> String?)?
     static var driverIPAPathProviderForTesting: ((String, IOSUsePaths) -> String)?
 
     public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
@@ -72,18 +71,12 @@ public enum ConfigService {
         guard FileManager.default.fileExists(atPath: signedIpa) else {
             throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
         }
-        let installedVersion = try currentInstalledDriverVersion(udid: udid, bundleId: bundleId)
-        let installMessage: String
-        if installedVersion == IOSUseCLI.version {
-            installMessage = "Driver already installed on device"
+        if let realDeviceInstallerForTesting {
+            try realDeviceInstallerForTesting(signedIpa, udid, bundleId)
         } else {
-            if let realDeviceInstallerForTesting {
-                try realDeviceInstallerForTesting(signedIpa, udid, bundleId)
-            } else {
-                try RealDevicePackageInstaller.installIpa(ipaPath: signedIpa, udid: udid, bundleID: bundleId, preferDevicectl: false)
-            }
-            installMessage = "Driver installed to device"
+            try RealDevicePackageInstaller.installIpa(ipaPath: signedIpa, udid: udid, bundleID: bundleId, preferDevicectl: false)
         }
+        let installMessage = "Driver installed to device"
 
         try saveConfig(udid: udid, bundleId: bundleId, driverVersion: IOSUseCLI.version, paths: paths)
 
@@ -211,16 +204,6 @@ public enum ConfigService {
             return nil
         }
         return String(output[range])
-    }
-
-    private static func currentInstalledDriverVersion(udid: String, bundleId: String) throws -> String? {
-        if let installedDriverVersionProviderForTesting {
-            return try installedDriverVersionProviderForTesting(udid, bundleId)
-        }
-        if realDeviceInstallerForTesting != nil {
-            return nil
-        }
-        return try? RealDevicePackageInstaller.installedVersion(udid: udid, bundleID: bundleId)
     }
 
     private static func sanitizeForBundleId(_ value: String) -> String {
