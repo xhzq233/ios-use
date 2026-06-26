@@ -1360,6 +1360,39 @@ final class DeviceProtocolClientTests: XCTestCase {
         )
     }
 
+    func testCoreDeviceLaunchApplicationTrustFailureIncludesDeviceTrustHint() throws {
+        let response = try RemoteXPCWrapper.encode(
+            messageID: 1,
+            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
+            payload: .dictionary([
+                "CoreDevice.error": .dictionary([
+                    "code": .int64(10002),
+                    "domain": .string("com.apple.dt.CoreDeviceError"),
+                    "userInfo": .dictionary([
+                        "BundleIdentifier": .string("com.ios-use.driver.user-example-com.xctrunner"),
+                        "NSLocalizedDescription": .string("The application failed to launch."),
+                    ]),
+                ]),
+            ])
+        )
+        let stream = FakeDeviceStream(reads: [
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
+            ),
+        ])
+        let client = RemoteXPCClient(stream: stream)
+        try client.completeClientHandshake()
+        let service = CoreDeviceAppService(client: client)
+
+        XCTAssertThrowsError(try service.launchApplication(bundleID: "com.ios-use.driver.user-example-com.xctrunner")) { error in
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("CoreDevice appservice response missing CoreDevice.output"))
+            XCTAssertTrue(message.contains("Settings > General > VPN & Device Management"))
+            XCTAssertTrue(message.contains("tap Trust"))
+            XCTAssertTrue(message.contains("retry `ios-use start`"))
+        }
+    }
+
     func testRealDeviceAppInstallActionProbe() throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["IOS_USE_REAL_DEVICE_APPINSTALL_PROBE"] == "1" else {

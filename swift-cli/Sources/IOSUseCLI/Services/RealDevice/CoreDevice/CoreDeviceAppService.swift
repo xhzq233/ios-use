@@ -13,12 +13,31 @@ enum CoreDeviceAppServiceError: Error, CustomStringConvertible, Equatable {
         case .missingOutput(let feature):
             return "CoreDevice appservice response missing CoreDevice.output for \(feature)"
         case .missingOutputResponse(let feature, let response):
-            return "CoreDevice appservice response missing CoreDevice.output for \(feature): \(response)"
+            return Self.missingOutputResponseDescription(feature: feature, response: response)
         case .invalidProcessToken(let detail):
             return "CoreDevice appservice invalid process token: \(detail)"
         case .missingProcessIdentifier(let detail):
             return "CoreDevice appservice response missing process identifier: \(detail)"
         }
+    }
+
+    private static func missingOutputResponseDescription(feature: String, response: String) -> String {
+        var message = "CoreDevice appservice response missing CoreDevice.output for \(feature): \(response)"
+        guard isLaunchApplicationTrustFailure(feature: feature, response: response) else {
+            return message
+        }
+        message += " Hint: iOS refused to launch the developer-signed app. On the iPhone, open Settings > General > VPN & Device Management, select the developer app profile for this Apple ID, tap Trust, then retry `ios-use start`."
+        return message
+    }
+
+    private static func isLaunchApplicationTrustFailure(feature: String, response: String) -> Bool {
+        guard feature == IOSUseProtocol.XCConstants.coreDeviceFeatureLaunchApplication else {
+            return false
+        }
+        let lowercased = response.lowercased()
+        return lowercased.contains("coredevice.error")
+            && lowercased.contains("10002")
+            && lowercased.contains("application failed to launch")
     }
 }
 
