@@ -68,7 +68,7 @@ enum CLIHelp {
               --simulator            Configure a Simulator
               --list                 List configured devices
               --apple-id <email>     Apple ID for first-time real-device signing
-              --password <password>  App-specific password
+              --password <password>  App-specific password (prompted securely if omitted)
               --verbose              Enable verbose output
 
             """
