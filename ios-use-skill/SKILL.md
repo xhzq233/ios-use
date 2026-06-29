@@ -31,7 +31,7 @@ ios-use start
 
 - `status` 用来查看 USB 真机、当前 driver、日志采集、NSLog、Proxy、配置状态；不列出 Simulator。需要 Simulator UDID 时用 `xcrun simctl list devices booted` 自行查询。
 - 设备未显示 `configured`，或显示 `driver update required`，先重新执行 `ios-use config --udid <udid>`。
-- 首次配置真机可能需要 Apple ID 和 2FA。出现这类交互时，让用户在终端手动运行带账号参数的 `config` 命令。
+- 首次配置真机需要 Apple ID 签名。让用户在终端运行 `ios-use config --udid <udid> --apple-id <email>`，密码会以隐藏输入方式交互提示，不要通过命令行参数传递。
 - 真机必须 USB 连接且系统版本为 iOS 17.4+；只通过 Wi-Fi 连接的设备不可用。
 
 ## 3. 目标设备与命令边界

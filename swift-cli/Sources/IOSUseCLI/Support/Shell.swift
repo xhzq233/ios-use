@@ -1,6 +1,24 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 enum Shell {
+    static func readSecureInput(prompt: String) -> String? {
+        print(prompt, terminator: "")
+        var oldTermios = termios()
+        tcgetattr(STDIN_FILENO, &oldTermios)
+        var newTermios = oldTermios
+        newTermios.c_lflag &= ~UInt(ECHO)
+        tcsetattr(STDIN_FILENO, TCSANOW, &newTermios)
+        let input = readLine(strippingNewline: true)
+        tcsetattr(STDIN_FILENO, TCSANOW, &oldTermios)
+        print("")
+        return input
+    }
+
     struct RunResult {
         let stdout: String
         let stderr: String

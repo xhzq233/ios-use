@@ -59,8 +59,19 @@ public enum ConfigService {
         let signedIpa = "\(paths.root)/driver-signed-\(udid).ipa"
         try? FileManager.default.removeItem(atPath: signedIpa)
         var signArgs = ["sign", "--udid", udid, "--ipa", rewritten, "--output", signedIpa]
-        if let appleId = options.appleId { signArgs += ["--apple-id", appleId] }
-        if let password = options.password { signArgs += ["--password", password] }
+        if let appleId = options.appleId {
+            signArgs += ["--apple-id", appleId]
+            let password: String
+            if let p = options.password {
+                password = p
+            } else {
+                guard let p = Shell.readSecureInput(prompt: "App-specific password for \(appleId): "), !p.isEmpty else {
+                    throw CLIParseError.invalidValue("Password is required for signing. Provide via interactive prompt or --password.")
+                }
+                password = p
+            }
+            signArgs += ["--password", password]
+        }
         if options.verbose { signArgs.append("--verbose") }
         if let altsignRunnerForTesting {
             try altsignRunnerForTesting(altsign, signArgs)
