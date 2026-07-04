@@ -15,8 +15,6 @@ assets/
 .idea/
 .claude/
 .trae/
-CLAUDE.md
-AGENTS.md
 docs/private/
 driver/build/
 *.xcuserstate
