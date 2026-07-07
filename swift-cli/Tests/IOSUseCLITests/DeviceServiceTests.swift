@@ -7,6 +7,7 @@ final class DeviceServiceTests: XCTestCase {
         DeviceService.usbDeviceUdidsOverrideForTesting = nil
         DeviceService.realDeviceResolverForTesting = nil
         DeviceService.resetCacheForTesting()
+        ConfigService.nowProviderForTesting = nil
         Shell.runOverrideForTesting = nil
         super.tearDown()
     }
@@ -52,7 +53,23 @@ final class DeviceServiceTests: XCTestCase {
 
         XCTAssertEqual(
             DeviceService.format(device, configuredDevices: ["REAL-1": DeviceService.ConfiguredDevice(driverVersion: "0.9.0")]),
-            "Phone | iOS 26.2 | Device | UDID: REAL-1 | configured | driver update required: run ios-use config --udid REAL-1"
+            "Phone | iOS 26.2 | Device | UDID: REAL-1 | configured | driver update required: run ios-use config --udid REAL-1 | signing unknown: run ios-use config --udid REAL-1 to enable expiry reminders"
+        )
+    }
+
+    func testFormatDeviceLabelIncludesSigningExpiredSeparatelyFromDriverUpdate() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        ConfigService.nowProviderForTesting = { now }
+        let device = IOSDevice(name: "Phone", version: "26.2", udid: "REAL-1", kind: .real)
+
+        XCTAssertEqual(
+            DeviceService.format(device, configuredDevices: [
+                "REAL-1": DeviceService.ConfiguredDevice(
+                    driverVersion: IOSUseCLI.version,
+                    signingExpiresAt: now.addingTimeInterval(-60)
+                )
+            ]),
+            "Phone | iOS 26.2 | Device | UDID: REAL-1 | configured | signing expired: run ios-use config --udid REAL-1"
         )
     }
 

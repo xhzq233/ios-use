@@ -142,6 +142,9 @@ public enum StatusService {
             if entry.driverVersion != IOSUseCLI.version {
                 parts.append("driver update required")
             }
+            if let signing = ConfigService.signingStatusText(for: entry) {
+                parts.append(signing)
+            }
             return "  - \(parts.joined(separator: " | "))"
         }
     }

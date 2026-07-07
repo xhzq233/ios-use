@@ -45,6 +45,7 @@ final class IOSUseCLITests: XCTestCase {
         DriverLifecycleService.processExitWaiterForTesting = nil
         Shell.runOverrideForTesting = nil
         Shell.runResultOverrideForTesting = nil
+        ConfigService.nowProviderForTesting = nil
         super.tearDown()
     }
 
@@ -93,8 +94,11 @@ final class IOSUseCLITests: XCTestCase {
             .path
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: "\(root)/state", withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        ConfigService.nowProviderForTesting = { now }
+        let signingExpiresAt = ConfigService.formatSigningExpiresAt(now.addingTimeInterval(3 * 24 * 60 * 60))
         try """
-        {"devices":{"REAL-1":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        {"devices":{"REAL-1":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)","signing":{"expiresAt":"\(signingExpiresAt)","source":"embedded.mobileprovision"}}}}
         """.write(toFile: paths.config, atomically: true, encoding: .utf8)
         try SessionService.writeDriverLock(info: SessionService.Info(
             udid: "REAL-1",
@@ -158,7 +162,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("Connected devices:"))
-        XCTAssertTrue(result.stdout.contains("Real Phone | iOS 17.4 | Device | UDID: REAL-1 | configured"))
+        XCTAssertTrue(result.stdout.contains("Real Phone | iOS 17.4 | Device | UDID: REAL-1 | configured | signing expires in 3d"))
         XCTAssertFalse(result.stdout.contains("Booted Simulators:"))
         XCTAssertTrue(result.stdout.contains("Driver:"))
         XCTAssertTrue(result.stdout.contains("running | udid: REAL-1 | device: real | name: Real Phone | iOS: 17.4 | bundle: com.example.driver | holder pid: 11 | runner pid: 12 | session: session-1"))
@@ -169,7 +173,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("Proxy:"))
         XCTAssertTrue(result.stdout.contains("running | udid: REAL-1 | server: running | device proxy: configured | CA: trusted"))
         XCTAssertTrue(result.stdout.contains("Config:"))
-        XCTAssertTrue(result.stdout.contains("REAL-1 | bundleId: com.example.driver | driverVersion: \(IOSUseCLI.version)"))
+        XCTAssertTrue(result.stdout.contains("REAL-1 | bundleId: com.example.driver | driverVersion: \(IOSUseCLI.version) | signing expires in 3d"))
         XCTAssertTrue(result.stderr.isEmpty)
     }
 

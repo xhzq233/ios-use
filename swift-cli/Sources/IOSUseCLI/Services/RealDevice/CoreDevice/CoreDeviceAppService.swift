@@ -26,7 +26,7 @@ enum CoreDeviceAppServiceError: Error, CustomStringConvertible, Equatable {
         guard isLaunchApplicationTrustFailure(feature: feature, response: response) else {
             return message
         }
-        message += " Hint: iOS refused to launch the developer-signed app. On the iPhone, open Settings > General > VPN & Device Management, select the developer app profile for this Apple ID, tap Trust, then retry `ios-use start`."
+        message += " Hint: iOS refused to launch the developer-signed app. On the iPhone, open Settings > General > VPN & Device Management, select the developer app profile for this Apple ID, tap Trust, then retry `ios-use start`. If this device was configured with a free Apple ID more than 7 days ago, run `ios-use config --udid <udid>` again to re-sign and reinstall the driver."
         return message
     }
 

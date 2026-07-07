@@ -147,7 +147,7 @@ public enum SessionService {
             }
             throw error
         }
-        return "Driver started for \(udid)\n"
+        return (ConfigService.startSigningWarning(udid: udid, paths: paths) ?? "") + "Driver started for \(udid)\n"
     }
 
     static func isIncompleteRealDriverLock(_ info: Info) -> Bool {

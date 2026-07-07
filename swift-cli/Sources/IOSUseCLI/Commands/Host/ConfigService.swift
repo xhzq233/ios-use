@@ -4,23 +4,47 @@ public struct DeviceConfigEntry: Equatable, Sendable {
     public let udid: String
     public let bundleId: String
     public let driverVersion: String
+    public let signingExpiresAt: Date?
 
-    public init(udid: String, bundleId: String, driverVersion: String = "(missing)") {
+    public init(udid: String, bundleId: String, driverVersion: String = "(missing)", signingExpiresAt: Date? = nil) {
         self.udid = udid
         self.bundleId = bundleId
         self.driverVersion = driverVersion
+        self.signingExpiresAt = signingExpiresAt
     }
 }
 
 public enum ConfigService {
+    public enum DriverSigningStatus: Equatable, Sendable {
+        case notApplicable
+        case unknown
+        case valid(daysRemaining: Int)
+        case expiresSoon
+        case expired
+
+        var isExpired: Bool {
+            if case .expired = self { return true }
+            return false
+        }
+
+        var isExpiringSoon: Bool {
+            if case .expiresSoon = self { return true }
+            return false
+        }
+    }
+
     public static let simulatorBundleId = "com.iosuse.xcuidriver.xctrunner"
     private static let devRunnerBundleId = "com.iosuse.xcuidriver.xctrunner"
     private static let devXCTestBundleId = "com.iosuse.xcuidriver"
     private static let defaultDriverBundlePrefix = "com.ios-use.driver"
     private static let cachedAppleIdPattern = #"Using cached session for ([^\s]+)"#
+    private static let signingExpirationWarningInterval: TimeInterval = 24 * 60 * 60
+    private static let secondsPerDay: TimeInterval = 24 * 60 * 60
     static var altsignRunnerForTesting: ((String, [String]) throws -> Void)?
     static var realDeviceInstallerForTesting: ((String, String, String) throws -> Void)?
     static var driverIPAPathProviderForTesting: ((String, IOSUsePaths) -> String)?
+    static var signedDriverPreflightInspectorForTesting: ((String, String, String, String, IOSUsePaths) throws -> SignedDriverPreflightResult)?
+    static var nowProviderForTesting: (() -> Date)?
 
     public static func configureDevice(options: ConfigOptions, paths: IOSUsePaths) throws -> String {
         let realDevices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
@@ -82,7 +106,7 @@ public enum ConfigService {
         guard FileManager.default.fileExists(atPath: signedIpa) else {
             throw CLIParseError.invalidValue("altsign-cli sign did not produce a signed IPA. Run with --verbose for full altsign output.")
         }
-        let signingWarnings = signedDriverPreflightWarnings(
+        let signingPreflight = signedDriverPreflight(
             signedIpa: signedIpa,
             udid: udid,
             runnerBundleId: bundleId,
@@ -96,15 +120,21 @@ public enum ConfigService {
         }
         let installMessage = "Driver installed to device"
 
-        try saveConfig(udid: udid, bundleId: bundleId, driverVersion: IOSUseCLI.version, paths: paths)
+        try saveConfig(
+            udid: udid,
+            bundleId: bundleId,
+            driverVersion: IOSUseCLI.version,
+            signingExpiresAt: signingPreflight.signingExpiresAt,
+            paths: paths
+        )
 
         return """
-        Using device: \(DeviceService.format(device, configured: DeviceService.configuredUdids(paths: paths)))
+        Using device: \(DeviceService.format(device, configuredDevices: DeviceService.configuredDevices(paths: paths)))
         Driver Bundle ID: \(bundleId)
         XCTest Bundle ID: \(xctestBundleId)
         Using prebuilt driver: \(ipaPath)
         Driver signed
-        \(formatSigningWarnings(signingWarnings))\
+        \(formatSigningWarnings(signingPreflight.warnings))\
         \(installMessage)
         Device config complete! Run `ios-use start \(udid)` before driver-backed commands.
         """ + "\n"
@@ -121,19 +151,27 @@ public enum ConfigService {
             let value = devices[udid] as? [String: Any] ?? [:]
             let bundleId = value["bundleId"] as? String ?? "(missing)"
             let driverVersion = value["driverVersion"] as? String ?? "(missing)"
-            return DeviceConfigEntry(udid: udid, bundleId: bundleId, driverVersion: driverVersion)
+            let signing = value["signing"] as? [String: Any]
+            let signingExpiresAt = parseSigningExpiresAt(signing?["expiresAt"] as? String)
+            return DeviceConfigEntry(udid: udid, bundleId: bundleId, driverVersion: driverVersion, signingExpiresAt: signingExpiresAt)
         }
     }
 
     public static func formatList(_ entries: [DeviceConfigEntry]) -> String {
         guard !entries.isEmpty else { return "No configured devices.\n" }
-        let lines = entries.map { "  \($0.udid) → bundleId: \($0.bundleId), driverVersion: \($0.driverVersion)" }.joined(separator: "\n")
+        let lines = entries.map { entry in
+            var line = "  \(entry.udid) → bundleId: \(entry.bundleId), driverVersion: \(entry.driverVersion)"
+            if let signing = signingStatusText(for: entry) {
+                line += ", \(signing)"
+            }
+            return line
+        }.joined(separator: "\n")
         return "Configured devices:\n\(lines)\n"
     }
 
     public static func configureSimulator(udid requestedUdid: String?, paths: IOSUsePaths) throws -> String {
         let result = try SimulatorService.configureDriver(udid: requestedUdid, paths: paths)
-        try saveConfig(udid: result.udid, bundleId: simulatorBundleId, driverVersion: IOSUseCLI.version, paths: paths)
+        try saveConfig(udid: result.udid, bundleId: simulatorBundleId, driverVersion: IOSUseCLI.version, signingExpiresAt: nil, paths: paths)
         return "Using prebuilt driver: \(result.ipaPath)\nDriver installed to Simulator\nRun `ios-use start \(result.udid)` to start the Simulator driver\nSimulator config complete!\n"
     }
 
@@ -213,6 +251,78 @@ public enum ConfigService {
             let installed = entry.driverVersion
             throw CLIParseError.invalidValue("Driver for device \(udid) is out of date (installed: \(installed); expected: \(IOSUseCLI.version)). Run `ios-use config --udid \(udid)` to update the driver.")
         }
+        guard !signingStatus(for: entry).isExpired else {
+            throw CLIParseError.invalidValue("driver signing expired, run `ios-use config --udid \(udid)` to re-sign and reinstall the driver.")
+        }
+    }
+
+    static func startSigningWarning(udid: String, paths: IOSUsePaths) -> String? {
+        guard let entry = listEntries(paths: paths).first(where: { $0.udid == udid }),
+              signingStatus(for: entry).isExpiringSoon else {
+            return nil
+        }
+        return "warning: driver signing expires soon; run `ios-use config --udid \(udid)` before it expires.\n"
+    }
+
+    public static func signingStatusText(udid: String, signingExpiresAt: Date?) -> String {
+        formatSigningStatus(status: signingStatus(signingExpiresAt: signingExpiresAt), udid: udid)
+    }
+
+    static func signingStatusText(for entry: DeviceConfigEntry) -> String? {
+        guard entry.bundleId != simulatorBundleId else { return nil }
+        return formatSigningStatus(status: signingStatus(for: entry), udid: entry.udid)
+    }
+
+    static func signingStatus(for entry: DeviceConfigEntry) -> DriverSigningStatus {
+        guard entry.bundleId != simulatorBundleId else { return .notApplicable }
+        return signingStatus(signingExpiresAt: entry.signingExpiresAt)
+    }
+
+    static func signingStatus(signingExpiresAt: Date?) -> DriverSigningStatus {
+        guard let signingExpiresAt else { return .unknown }
+        let remaining = signingExpiresAt.timeIntervalSince(currentDate())
+        if remaining <= 0 {
+            return .expired
+        }
+        if remaining <= signingExpirationWarningInterval {
+            return .expiresSoon
+        }
+        let days = max(1, Int(ceil(remaining / secondsPerDay)))
+        return .valid(daysRemaining: days)
+    }
+
+    static func parseSigningExpiresAt(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        return makeSigningDateFormatter().date(from: value)
+    }
+
+    static func formatSigningExpiresAt(_ date: Date) -> String {
+        makeSigningDateFormatter().string(from: date)
+    }
+
+    private static func formatSigningStatus(status: DriverSigningStatus, udid: String) -> String {
+        switch status {
+        case .notApplicable:
+            return "signing not applicable"
+        case .unknown:
+            return "signing unknown: run ios-use config --udid \(udid) to enable expiry reminders"
+        case .valid(let daysRemaining):
+            return "signing expires in \(daysRemaining)d"
+        case .expiresSoon:
+            return "signing expires soon: run ios-use config --udid \(udid)"
+        case .expired:
+            return "signing expired: run ios-use config --udid \(udid)"
+        }
+    }
+
+    private static func currentDate() -> Date {
+        nowProviderForTesting?() ?? Date()
+    }
+
+    private static func makeSigningDateFormatter() -> ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
     }
 
     private static func cachedAppleId(altsign: String) throws -> String? {
@@ -262,13 +372,20 @@ public enum ConfigService {
         _ = try Shell.run("plutil", arguments: ["-replace", "CFBundleIdentifier", "-string", newId, plistPath])
     }
 
-    private static func signedDriverPreflightWarnings(
+    private static func signedDriverPreflight(
         signedIpa: String,
         udid: String,
         runnerBundleId: String,
         xctestBundleId: String,
         paths: IOSUsePaths
-    ) -> [String] {
+    ) -> SignedDriverPreflightResult {
+        if let signedDriverPreflightInspectorForTesting {
+            do {
+                return try signedDriverPreflightInspectorForTesting(signedIpa, udid, runnerBundleId, xctestBundleId, paths)
+            } catch {
+                return SignedDriverPreflightResult(warnings: ["signed IPA preflight could not inspect \(signedIpa): \(error)"], signingExpiresAt: nil)
+            }
+        }
         do {
             return try inspectSignedDriverIpa(
                 signedIpa: signedIpa,
@@ -278,7 +395,7 @@ public enum ConfigService {
                 paths: paths
             )
         } catch {
-            return ["signed IPA preflight could not inspect \(signedIpa): \(error)"]
+            return SignedDriverPreflightResult(warnings: ["signed IPA preflight could not inspect \(signedIpa): \(error)"], signingExpiresAt: nil)
         }
     }
 
@@ -288,7 +405,7 @@ public enum ConfigService {
         runnerBundleId: String,
         xctestBundleId: String,
         paths: IOSUsePaths
-    ) throws -> [String] {
+    ) throws -> SignedDriverPreflightResult {
         let tmpDir = "\(paths.root)/signed-preflight-\(UUID().uuidString)"
         try? FileManager.default.removeItem(atPath: tmpDir)
         try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true, attributes: nil)
@@ -298,7 +415,7 @@ public enum ConfigService {
         let payloadDir = "\(tmpDir)/Payload"
         let appEntries = (try FileManager.default.contentsOfDirectory(atPath: payloadDir)).filter { $0.hasSuffix(".app") }
         guard let appEntry = appEntries.first else {
-            return ["signed IPA preflight found no Payload/*.app bundle"]
+            return SignedDriverPreflightResult(warnings: ["signed IPA preflight found no Payload/*.app bundle"], signingExpiresAt: nil)
         }
         let appPath = "\(payloadDir)/\(appEntry)"
         var bundles = [
@@ -313,11 +430,16 @@ public enum ConfigService {
         }
 
         var warnings: [String] = []
+        var expirations: [Date] = []
         warnings.append(contentsOf: codesignVerifyWarnings(appPath: appPath))
         for bundle in bundles {
-            warnings.append(contentsOf: inspectSignedBundle(bundle, udid: udid))
+            let inspection = inspectSignedBundle(bundle, udid: udid)
+            warnings.append(contentsOf: inspection.warnings)
+            if let expirationDate = inspection.expirationDate {
+                expirations.append(expirationDate)
+            }
         }
-        return warnings
+        return SignedDriverPreflightResult(warnings: warnings, signingExpiresAt: expirations.min())
     }
 
     private static func codesignVerifyWarnings(appPath: String) -> [String] {
@@ -332,11 +454,11 @@ public enum ConfigService {
         return ["signed IPA preflight local codesign verification failed: \(output)"]
     }
 
-    private static func inspectSignedBundle(_ target: SignedBundlePreflightTarget, udid: String) -> [String] {
+    private static func inspectSignedBundle(_ target: SignedBundlePreflightTarget, udid: String) -> SignedBundleInspection {
         var warnings: [String] = []
         let label = target.label
         guard FileManager.default.fileExists(atPath: target.path) else {
-            return ["signed IPA preflight \(label) bundle is missing at \(target.path)"]
+            return SignedBundleInspection(warnings: ["signed IPA preflight \(label) bundle is missing at \(target.path)"], expirationDate: nil)
         }
 
         let infoPath = "\(target.path)/Info.plist"
@@ -348,11 +470,11 @@ public enum ConfigService {
         let profilePath = "\(target.path)/embedded.mobileprovision"
         guard FileManager.default.fileExists(atPath: profilePath) else {
             warnings.append("signed IPA preflight \(label) is missing embedded.mobileprovision")
-            return warnings
+            return SignedBundleInspection(warnings: warnings, expirationDate: nil)
         }
         guard let profile = provisioningProfileSummary(path: profilePath) else {
             warnings.append("signed IPA preflight \(label) embedded.mobileprovision could not be decoded")
-            return warnings
+            return SignedBundleInspection(warnings: warnings, expirationDate: nil)
         }
 
         if let expirationDate = profile.expirationDate, expirationDate <= Date() {
@@ -390,7 +512,7 @@ public enum ConfigService {
             warnings.append("signed IPA preflight \(label) profile team \(profileTeamId) does not match signed entitlement team \(signedTeamId)")
         }
 
-        return warnings
+        return SignedBundleInspection(warnings: warnings, expirationDate: profile.expirationDate)
     }
 
     private static func provisioningProfileSummary(path: String) -> ProvisioningProfileSummary? {
@@ -441,17 +563,24 @@ public enum ConfigService {
         return "Driver signing warnings:\n" + warnings.map { "  - \($0)" }.joined(separator: "\n") + "\n"
     }
 
-    private static func saveConfig(udid: String, bundleId: String, driverVersion: String, paths: IOSUsePaths) throws {
+    private static func saveConfig(udid: String, bundleId: String, driverVersion: String, signingExpiresAt: Date?, paths: IOSUsePaths) throws {
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: URL(fileURLWithPath: paths.config)),
            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             root = parsed
         }
         var devices = root["devices"] as? [String: Any] ?? [:]
-        devices[udid] = [
+        var deviceEntry: [String: Any] = [
             "bundleId": bundleId,
             "driverVersion": driverVersion,
         ]
+        if let signingExpiresAt {
+            deviceEntry["signing"] = [
+                "expiresAt": formatSigningExpiresAt(signingExpiresAt),
+                "source": "embedded.mobileprovision",
+            ]
+        }
+        devices[udid] = deviceEntry
         root["devices"] = devices
 
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
@@ -460,6 +589,16 @@ public enum ConfigService {
         try data.write(to: URL(fileURLWithPath: paths.config), options: .atomic)
     }
 
+}
+
+struct SignedDriverPreflightResult {
+    let warnings: [String]
+    let signingExpiresAt: Date?
+}
+
+private struct SignedBundleInspection {
+    let warnings: [String]
+    let expirationDate: Date?
 }
 
 private struct SignedBundlePreflightTarget {

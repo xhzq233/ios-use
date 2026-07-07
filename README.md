@@ -115,6 +115,8 @@ ios-use start <simulator-udid>
 
 When upgrading `ios-use`, run `ios-use devices` after installation. If a device line says `driver update required`, run `ios-use config --udid <device-udid>` again so the on-device driver matches the newly installed CLI.
 
+Free Apple Developer signing expires after about 7 days. `ios-use devices`, `ios-use status`, and `ios-use start` will warn before expiry; once expired, run `ios-use config --udid <device-udid>` again to re-sign and reinstall the driver before trusting the developer profile if iOS asks.
+
 ## Command Overview
 
 | Command | Use it for |
