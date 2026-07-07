@@ -21,16 +21,6 @@ public enum ConfigService {
         case valid(daysRemaining: Int)
         case expiresSoon
         case expired
-
-        var isExpired: Bool {
-            if case .expired = self { return true }
-            return false
-        }
-
-        var isExpiringSoon: Bool {
-            if case .expiresSoon = self { return true }
-            return false
-        }
     }
 
     public static let simulatorBundleId = "com.iosuse.xcuidriver.xctrunner"
@@ -251,17 +241,20 @@ public enum ConfigService {
             let installed = entry.driverVersion
             throw CLIParseError.invalidValue("Driver for device \(udid) is out of date (installed: \(installed); expected: \(IOSUseCLI.version)). Run `ios-use config --udid \(udid)` to update the driver.")
         }
-        guard !signingStatus(for: entry).isExpired else {
-            throw CLIParseError.invalidValue("driver signing expired, run `ios-use config --udid \(udid)` to re-sign and reinstall the driver.")
-        }
     }
 
     static func startSigningWarning(udid: String, paths: IOSUsePaths) -> String? {
-        guard let entry = listEntries(paths: paths).first(where: { $0.udid == udid }),
-              signingStatus(for: entry).isExpiringSoon else {
+        guard let entry = listEntries(paths: paths).first(where: { $0.udid == udid }) else {
             return nil
         }
-        return "warning: driver signing expires soon; run `ios-use config --udid \(udid)` before it expires.\n"
+        switch signingStatus(for: entry) {
+        case .expired:
+            return "warning: driver signing is expired; run `ios-use config --udid \(udid)` to re-sign and reinstall the driver if launch fails.\n"
+        case .expiresSoon:
+            return "warning: driver signing expires soon; run `ios-use config --udid \(udid)` before it expires.\n"
+        case .notApplicable, .unknown, .valid:
+            return nil
+        }
     }
 
     public static func signingStatusText(udid: String, signingExpiresAt: Date?) -> String {

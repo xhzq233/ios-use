@@ -625,7 +625,7 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
     }
 
-    func testRealStartFailsFastWhenSigningExpiredBeforeHolderLaunch() throws {
+    func testRealStartWarnsWhenSigningExpiredAndContinues() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
@@ -635,16 +635,26 @@ final class ConfigServiceTests: XCTestCase {
         try """
         {"devices":{"REAL-EXPIRED":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)","signing":{"expiresAt":"\(expired)","source":"embedded.mobileprovision"}}}}
         """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
-        DriverLifecycleService.holderLauncherForTesting = { _, _, _, _ in
-            XCTFail("expired signing must fail before launching the XCTest holder")
-            return DriverLifecycleService.LaunchMetadata(holderPid: 1, runnerPid: 2, sessionIdentifier: "BAD", bundleId: "com.example.driver")
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-EXPIRED"] }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-EXPIRED", kind: .real)]
+        }
+        DriverLifecycleService.holderLauncherForTesting = { _, bundleId, _, _ in
+            DriverLifecycleService.LaunchMetadata(
+                holderPid: 101,
+                runnerPid: 202,
+                sessionIdentifier: "SESSION-EXPIRED",
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-expired.sock"
+            )
         }
 
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-EXPIRED"])
 
-        XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("driver signing expired, run `ios-use config --udid REAL-EXPIRED`"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "warning: driver signing is expired; run `ios-use config --udid REAL-EXPIRED` to re-sign and reinstall the driver if launch fails.\nDriver started for REAL-EXPIRED\n")
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.udid, "REAL-EXPIRED")
     }
 
     func testRealStartWarnsWhenSigningExpiresSoonAndContinues() throws {
@@ -677,6 +687,33 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(result.stdout, "warning: driver signing expires soon; run `ios-use config --udid REAL-SOON` before it expires.\nDriver started for REAL-SOON\n")
         let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
         XCTAssertEqual(lock.udid, "REAL-SOON")
+    }
+
+    func testRealStartKeepsExpiredSigningWarningWhenLaunchFails() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        ConfigService.nowProviderForTesting = { now }
+        let expired = ConfigService.formatSigningExpiresAt(now.addingTimeInterval(-60))
+        try """
+        {"devices":{"REAL-EXPIRED-FAIL":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)","signing":{"expiresAt":"\(expired)","source":"embedded.mobileprovision"}}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-EXPIRED-FAIL"] }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-EXPIRED-FAIL", kind: .real)]
+        }
+        DriverLifecycleService.holderLauncherForTesting = { _, _, _, _ in
+            throw CLIParseError.invalidValue("holder launch failed")
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-EXPIRED-FAIL"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("warning: driver signing is expired; run `ios-use config --udid REAL-EXPIRED-FAIL` to re-sign and reinstall the driver if launch fails."))
+        XCTAssertTrue(result.stderr.contains("Native real-device launch failed. XCTest:"))
+        XCTAssertTrue(result.stderr.contains("holder launch failed"))
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
     }
 
     func testRealStartDoesNotWriteDriverLockBeforeHolderIsReady() throws {

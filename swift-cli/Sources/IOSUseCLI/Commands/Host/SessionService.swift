@@ -114,6 +114,7 @@ public enum SessionService {
         }
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         let info = try resolveDriverInfo(udid: udid, paths: paths)
+        let signingWarning = ConfigService.startSigningWarning(udid: udid, paths: paths)
         var launchedInfo: Info?
         do {
             let updated: Info
@@ -145,9 +146,16 @@ public enum SessionService {
             } else {
                 clearDriverLock(paths: paths)
             }
-            throw error
+            throw errorWithSigningWarning(signingWarning, error: error)
         }
-        return (ConfigService.startSigningWarning(udid: udid, paths: paths) ?? "") + "Driver started for \(udid)\n"
+        return (signingWarning ?? "") + "Driver started for \(udid)\n"
+    }
+
+    private static func errorWithSigningWarning(_ warning: String?, error: Error) -> Error {
+        guard let warning, !warning.isEmpty else {
+            return error
+        }
+        return CLIParseError.invalidValue("\(warning.trimmingCharacters(in: .whitespacesAndNewlines))\n\(error)")
     }
 
     static func isIncompleteRealDriverLock(_ info: Info) -> Bool {
