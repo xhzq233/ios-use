@@ -17,6 +17,8 @@ final class ConfigServiceTests: XCTestCase {
         ConfigService.altsignRunnerForTesting = nil
         ConfigService.realDeviceInstallerForTesting = nil
         ConfigService.driverIPAPathProviderForTesting = nil
+        ConfigService.signedDriverPreflightInspectorForTesting = nil
+        ConfigService.nowProviderForTesting = nil
         RealDevicePackageInstaller.preparedPackageInstallerForTesting = nil
         RealDevicePackageInstaller.nativePackageInstallerForTesting = nil
         RealDevicePackageInstaller.installedAppLookupForTesting = nil
@@ -59,8 +61,59 @@ final class ConfigServiceTests: XCTestCase {
             ConfigService.formatList(ConfigService.listEntries(paths: paths)),
             """
             Configured devices:
-              A-UDID → bundleId: com.example.a, driverVersion: (missing)
-              B-UDID → bundleId: com.example.b, driverVersion: (missing)
+              A-UDID → bundleId: com.example.a, driverVersion: (missing), signing unknown: run ios-use config --udid A-UDID to enable expiry reminders
+              B-UDID → bundleId: com.example.b, driverVersion: (missing), signing unknown: run ios-use config --udid B-UDID to enable expiry reminders
+            """ + "\n"
+        )
+    }
+
+    func testConfigListFormatsSigningExpirationStatuses() throws {
+        let root = try temporaryRoot()
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        ConfigService.nowProviderForTesting = { now }
+        let expired = ConfigService.formatSigningExpiresAt(now.addingTimeInterval(-60))
+        let soon = ConfigService.formatSigningExpiresAt(now.addingTimeInterval(60 * 60))
+        let future = ConfigService.formatSigningExpiresAt(now.addingTimeInterval(6 * 24 * 60 * 60 + 1))
+        let config = """
+        {
+          "devices": {
+            "REAL-EXPIRED": {
+              "bundleId": "com.example.expired",
+              "driverVersion": "\(IOSUseCLI.version)",
+              "signing": { "expiresAt": "\(expired)", "source": "embedded.mobileprovision" }
+            },
+            "REAL-SOON": {
+              "bundleId": "com.example.soon",
+              "driverVersion": "\(IOSUseCLI.version)",
+              "signing": { "expiresAt": "\(soon)", "source": "embedded.mobileprovision" }
+            },
+            "REAL-VALID": {
+              "bundleId": "com.example.valid",
+              "driverVersion": "\(IOSUseCLI.version)",
+              "signing": { "expiresAt": "\(future)", "source": "embedded.mobileprovision" }
+            },
+            "SIM-1": {
+              "bundleId": "\(ConfigService.simulatorBundleId)",
+              "driverVersion": "\(IOSUseCLI.version)"
+            }
+          }
+        }
+        """
+        try config.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+
+        let entries = ConfigService.listEntries(paths: paths)
+
+        XCTAssertEqual(entries.first { $0.udid == "REAL-EXPIRED" }?.signingExpiresAt, ConfigService.parseSigningExpiresAt(expired))
+        XCTAssertEqual(
+            ConfigService.formatList(entries),
+            """
+            Configured devices:
+              REAL-EXPIRED → bundleId: com.example.expired, driverVersion: \(IOSUseCLI.version), signing expired: run ios-use config --udid REAL-EXPIRED
+              REAL-SOON → bundleId: com.example.soon, driverVersion: \(IOSUseCLI.version), signing expires soon: run ios-use config --udid REAL-SOON
+              REAL-VALID → bundleId: com.example.valid, driverVersion: \(IOSUseCLI.version), signing expires in 7d
+              SIM-1 → bundleId: \(ConfigService.simulatorBundleId), driverVersion: \(IOSUseCLI.version)
             """ + "\n"
         )
     }
@@ -570,6 +623,60 @@ final class ConfigServiceTests: XCTestCase {
         XCTAssertEqual(lock.controlSocketPath, "\(root)/state/holder-start.sock")
         XCTAssertNil(lock.startMode)
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.session))
+    }
+
+    func testRealStartFailsFastWhenSigningExpiredBeforeHolderLaunch() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        ConfigService.nowProviderForTesting = { now }
+        let expired = ConfigService.formatSigningExpiresAt(now.addingTimeInterval(-60))
+        try """
+        {"devices":{"REAL-EXPIRED":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)","signing":{"expiresAt":"\(expired)","source":"embedded.mobileprovision"}}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DriverLifecycleService.holderLauncherForTesting = { _, _, _, _ in
+            XCTFail("expired signing must fail before launching the XCTest holder")
+            return DriverLifecycleService.LaunchMetadata(holderPid: 1, runnerPid: 2, sessionIdentifier: "BAD", bundleId: "com.example.driver")
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-EXPIRED"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("driver signing expired, run `ios-use config --udid REAL-EXPIRED`"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
+    }
+
+    func testRealStartWarnsWhenSigningExpiresSoonAndContinues() throws {
+        let root = try temporaryRoot()
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        ConfigService.nowProviderForTesting = { now }
+        let soon = ConfigService.formatSigningExpiresAt(now.addingTimeInterval(60 * 60))
+        try """
+        {"devices":{"REAL-SOON":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)","signing":{"expiresAt":"\(soon)","source":"embedded.mobileprovision"}}}}
+        """.write(toFile: "\(root)/config.json", atomically: true, encoding: .utf8)
+        DeviceService.usbDeviceUdidsOverrideForTesting = { ["REAL-SOON"] }
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-SOON", kind: .real)]
+        }
+        DriverLifecycleService.holderLauncherForTesting = { _, bundleId, _, _ in
+            DriverLifecycleService.LaunchMetadata(
+                holderPid: 101,
+                runnerPid: 202,
+                sessionIdentifier: "SESSION-SOON",
+                bundleId: bundleId,
+                controlSocketPath: "\(root)/state/holder-soon.sock"
+            )
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["start", "REAL-SOON"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "warning: driver signing expires soon; run `ios-use config --udid REAL-SOON` before it expires.\nDriver started for REAL-SOON\n")
+        let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
+        XCTAssertEqual(lock.udid, "REAL-SOON")
     }
 
     func testRealStartDoesNotWriteDriverLockBeforeHolderIsReady() throws {
@@ -1253,6 +1360,67 @@ final class ConfigServiceTests: XCTestCase {
             ConfigService.listEntries(paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])),
             [DeviceConfigEntry(udid: "REAL-CONFIG", bundleId: "com.ios-use.driver.user-example-com.xctrunner", driverVersion: IOSUseCLI.version)]
         )
+    }
+
+    func testRealDeviceConfigSavesSigningExpirationFromPreflight() throws {
+        let root = try temporaryRoot()
+        let workspace = try temporaryRoot()
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
+        let oldCwd = FileManager.default.currentDirectoryPath
+        XCTAssertTrue(FileManager.default.changeCurrentDirectoryPath(workspace))
+        addTeardownBlock {
+            _ = FileManager.default.changeCurrentDirectoryPath(oldCwd)
+        }
+
+        let altsign = "\(root)/altsign-cli/altsign-cli"
+        try FileManager.default.createDirectory(atPath: "\(root)/altsign-cli", withIntermediateDirectories: true)
+        try "#!/bin/sh\nexit 0\n".write(toFile: altsign, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: altsign)
+        try makeMinimalDriverIpa(path: "\(root)/driver.ipa")
+        ConfigService.driverIPAPathProviderForTesting = { _, _ in "\(root)/driver.ipa" }
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        ConfigService.nowProviderForTesting = { now }
+        let signingExpiresAt = now.addingTimeInterval(6 * 24 * 60 * 60)
+        ConfigService.signedDriverPreflightInspectorForTesting = { _, _, _, _, _ in
+            SignedDriverPreflightResult(warnings: [], signingExpiresAt: signingExpiresAt)
+        }
+
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "26.2", udid: "REAL-SIGNED", kind: .real)]
+        }
+        Shell.runOverrideForTesting = { executable, arguments, cwd, combineStderr in
+            if executable == altsign, arguments == ["list"] {
+                return "Using cached session for user@example.com\n"
+            }
+            return try self.runProcess(executable: executable, arguments: arguments, cwd: cwd, combineStderr: combineStderr)
+        }
+        ConfigService.altsignRunnerForTesting = { _, arguments in
+            let outputIndex = try XCTUnwrap(arguments.firstIndex(of: "--output"))
+            let inputIndex = try XCTUnwrap(arguments.firstIndex(of: "--ipa"))
+            try FileManager.default.copyItem(
+                atPath: arguments[arguments.index(after: inputIndex)],
+                toPath: arguments[arguments.index(after: outputIndex)]
+            )
+        }
+        ConfigService.realDeviceInstallerForTesting = { _, _, _ in }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["config", "--udid", "REAL-SIGNED"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("signing expires in 6d"))
+        let entries = ConfigService.listEntries(paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root]))
+        XCTAssertEqual(entries, [
+            DeviceConfigEntry(
+                udid: "REAL-SIGNED",
+                bundleId: "com.ios-use.driver.user-example-com.xctrunner",
+                driverVersion: IOSUseCLI.version,
+                signingExpiresAt: signingExpiresAt
+            )
+        ])
+        let rawConfig = try String(contentsOfFile: "\(root)/config.json", encoding: .utf8)
+        XCTAssertTrue(rawConfig.contains("\"expiresAt\" : \"\(ConfigService.formatSigningExpiresAt(signingExpiresAt))\""))
+        XCTAssertTrue(rawConfig.contains("\"source\" : \"embedded.mobileprovision\""))
     }
 
     func testRealDeviceConfigInstallFailureDoesNotSaveConfigOrPrintSuccess() throws {

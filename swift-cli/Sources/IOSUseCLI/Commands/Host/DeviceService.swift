@@ -42,9 +42,11 @@ public struct IOSDeviceMetadata: Equatable, Sendable {
 public enum DeviceService {
     public struct ConfiguredDevice: Equatable, Sendable {
         public let driverVersion: String?
+        public let signingExpiresAt: Date?
 
-        public init(driverVersion: String?) {
+        public init(driverVersion: String?, signingExpiresAt: Date? = nil) {
             self.driverVersion = driverVersion
+            self.signingExpiresAt = signingExpiresAt
         }
 
         public var needsDriverUpdate: Bool {
@@ -191,7 +193,9 @@ public enum DeviceService {
         return devices.reduce(into: [:]) { result, item in
             let value = item.value as? [String: Any] ?? [:]
             let driverVersion = value["driverVersion"] as? String
-            result[item.key] = ConfiguredDevice(driverVersion: driverVersion)
+            let signing = value["signing"] as? [String: Any]
+            let signingExpiresAt = ConfigService.parseSigningExpiresAt(signing?["expiresAt"] as? String)
+            result[item.key] = ConfiguredDevice(driverVersion: driverVersion, signingExpiresAt: signingExpiresAt)
         }
     }
 
@@ -208,6 +212,9 @@ public enum DeviceService {
         var tag = config == nil ? "" : " | configured"
         if let config, config.needsDriverUpdate {
             tag += " | driver update required: run ios-use config --udid \(device.udid)"
+        }
+        if let config, device.kind == .real {
+            tag += " | \(ConfigService.signingStatusText(udid: device.udid, signingExpiresAt: config.signingExpiresAt))"
         }
         if let status = device.metadata?.status, status != "paired" {
             tag += " | \(status)"

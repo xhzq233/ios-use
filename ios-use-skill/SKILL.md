@@ -31,6 +31,7 @@ ios-use start
 
 - `status` 用来查看 USB 真机、当前 driver、日志采集、NSLog、Proxy、配置状态；不列出 Simulator。需要 Simulator UDID 时用 `xcrun simctl list devices booted` 自行查询。
 - 设备未显示 `configured`，或显示 `driver update required`，先重新执行 `ios-use config --udid <udid>`。
+- 设备显示 `signing expired`，或 `start` 报 driver signing expired，先重新执行 `ios-use config --udid <udid>`；免费 Apple Developer 签名约 7 天过期，过期后不是单纯的信任问题。
 - 首次配置真机需要 Apple ID 签名。让用户在终端运行 `ios-use config --udid <udid> --apple-id <email>`，密码会以隐藏输入方式交互提示，不要通过命令行参数传递。
 - 真机必须 USB 连接且系统版本为 iOS 17.4+；只通过 Wi-Fi 连接的设备不可用。
 
@@ -250,5 +251,6 @@ ios-use oslog --pattern "error|failed" --flags i --timeout 10
 签名异常：
 
 - `config` 在签名后可能输出 `Driver signing warnings`，这是安装前本地检查发现的 profile / UDID / bundle id / codesign 风险提示；不会阻塞继续安装，最终是否安装成功以随后的安装结果为准。
+- `driver update required` 表示 CLI/driver 版本不匹配；`signing expired` 表示已安装 driver 的开发者签名过期。两者都需要重新 `ios-use config --udid <udid>`，但不要把 `signing expired` 解释成“只需要去设备上信任开发者”。
 - altsign 出现 HTTP 4xx，常见原因是 Apple Developer 账号状态或凭据问题。
 - altsign 出现 HTTP 5xx，优先检查网络或 VPN。
