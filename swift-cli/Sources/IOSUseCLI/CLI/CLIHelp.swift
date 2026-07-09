@@ -67,8 +67,8 @@ enum CLIHelp {
               --udid <udid>          Target device or Simulator UDID
               --simulator            Configure a Simulator
               --list                 List configured devices
-              --apple-id <email>     Apple ID for first-time real-device signing
-              --password <password>  App-specific password (prompted securely if omitted)
+              --apple-id <email>     Free Apple Developer account email for first-time real-device signing
+              --password <password>  Developer account login password (prompted securely if omitted; 2FA code prompted separately if needed)
               --verbose              Enable verbose output
 
             """

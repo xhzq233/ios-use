@@ -79,7 +79,7 @@ public enum ConfigService {
             if let p = options.password {
                 password = p
             } else {
-                guard let p = Shell.readSecureInput(prompt: "App-specific password for \(appleId): "), !p.isEmpty else {
+                guard let p = Shell.readSecureInput(prompt: "Developer account password for \(appleId): "), !p.isEmpty else {
                     throw CLIParseError.invalidValue("Password is required for signing. Provide via interactive prompt or --password.")
                 }
                 password = p

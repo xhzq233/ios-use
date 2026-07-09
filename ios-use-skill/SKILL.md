@@ -32,7 +32,7 @@ ios-use start
 - `status` 用来查看 USB 真机、当前 driver、日志采集、NSLog、Proxy、配置状态；不列出 Simulator。需要 Simulator UDID 时用 `xcrun simctl list devices booted` 自行查询。
 - 设备未显示 `configured`，或显示 `driver update required`，先重新执行 `ios-use config --udid <udid>`。
 - 设备显示 `signing expires soon` 表示签名剩余不超过 1 天；显示 `signing expired`，或 `start` 输出 signing expired warning 时，优先重新执行 `ios-use config --udid <udid>`。`start` 会继续尝试启动，失败时不要只解释成“去设备上信任开发者”。
-- 首次配置真机需要 Apple ID 签名。让用户在终端运行 `ios-use config --udid <udid> --apple-id <email>`，密码会以隐藏输入方式交互提示，不要通过命令行参数传递。
+- 首次配置真机需要用**免费 Apple 开发者账号**（Personal Team，注意不是普通个人 Apple ID；无需付费 $99/年）签名。让用户在终端运行 `ios-use config --udid <udid> --apple-id <email>`，省略 `--password`，命令会交互提示输入该开发者账号的**登录密码**（隐藏输入）。若账号开启了双重认证，6 位验证码会在签名过程中单独提示输入。不要通过命令行参数或文档传递密码。
 - 真机必须 USB 连接且系统版本为 iOS 17.4+；只通过 Wi-Fi 连接的设备不可用。
 
 ## 3. 目标设备与命令边界
