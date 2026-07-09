@@ -97,8 +97,9 @@ Choose the environment you want to drive.
 ```bash
 ios-use devices
 
-# First run: provide Apple ID credentials if prompted.
-ios-use config --udid <device-udid> --apple-id <email> --password '<app-password>'
+# First run: sign with a free Apple Developer account (Personal Team; no paid $99 program).
+# --password is that developer account's login password. Omit it to be prompted securely instead.
+ios-use config --udid <device-udid> --apple-id <email> --password '<developer-account-password>'
 
 # Later runs: cached signing state is reused.
 ios-use config --udid <device-udid>
