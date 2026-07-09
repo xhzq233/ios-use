@@ -1390,7 +1390,7 @@ final class DeviceProtocolClientTests: XCTestCase {
             XCTAssertTrue(message.contains("Settings > General > VPN & Device Management"))
             XCTAssertTrue(message.contains("tap Trust"))
             XCTAssertTrue(message.contains("retry `ios-use start`"))
-            XCTAssertTrue(message.contains("free Apple ID more than 7 days ago"))
+            XCTAssertTrue(message.contains("free Apple Developer account more than 7 days ago"))
             XCTAssertTrue(message.contains("run `ios-use config --udid <udid>` again"))
         }
     }
