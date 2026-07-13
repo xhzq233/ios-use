@@ -174,6 +174,7 @@ https://deviceboxhq.com/ddi-17E5179g.zip
 ### 6.6 `screenshot`
 
 - 截图并输出保存路径；默认同时运行 macOS Vision 的 accurate OCR，并输出 OCR 文本、坐标和 `.ocr.json` sidecar。
+- OCR sidecar 的每个元素使用紧凑字段：`frame` 和 `frameNorm` 都是 `[x,y,w,h]`；浮点数统一四位小数，不包含额外的 engine 字段。
 - 只需要像素时使用 `ios-use screenshot --no-ocr --name pixels-only`；OCR 失败不会影响已经写入的截图，但会返回 warning。
 - 只在用户明确要求查看视觉效果，或 DOM 无法说明视觉状态时使用。
 

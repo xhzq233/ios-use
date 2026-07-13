@@ -81,80 +81,65 @@ struct OCRService {
             // Vision uses a bottom-left origin; expose the same top-left origin
             // used by screenshots, DOM frames, and the JSON sidecar.
             let topLeftY = 1 - box.maxY
-            let confidence = String(format: "%.2f", observation.confidence)
-            return String(format: "- %@ [x=%.3f,y=%.3f,w=%.3f,h=%.3f] confidence=%@", observation.text, box.minX, topLeftY, box.width, box.height, confidence)
+            let frame = [box.minX, topLeftY, box.width, box.height]
+                .map { fixed4(Double($0)) }
+                .joined(separator: ",")
+            return "- \(observation.text) [\(frame)] confidence=\(fixed4(Double(observation.confidence)))"
         }
         return lines.joined(separator: "\n") + "\n"
     }
 
     static func writeSidecar(result: Result, imagePath: String, elapsedMs: Int = 0) throws -> String {
-        struct PixelFrame: Codable {
-            let x: Int
-            let y: Int
-            let width: Int
-            let height: Int
-        }
-        struct NormalizedFrame: Codable {
-            let x: Double
-            let y: Double
-            let width: Double
-            let height: Double
-        }
-        struct Element: Codable {
-            let text: String
-            let confidence: Double
-            let framePixels: PixelFrame
-            let frameNormalized: NormalizedFrame
-        }
-        struct Image: Codable {
-            let file: String
-            let width: Int
-            let height: Int
-        }
-        struct Sidecar: Codable {
-            let schemaVersion: Int
-            let engine: String
-            let recognitionLevel: String
-            let image: Image
-            let elapsedMs: Int
-            let elements: [Element]
-        }
-
         let imageURL = URL(fileURLWithPath: imagePath)
         let imageName = imageURL.lastPathComponent
-        let elements = result.observations.map { observation -> Element in
+        let elements = try result.observations.map { observation -> String in
             let box = observation.boundingBox
-            let normalized = NormalizedFrame(
-                x: Double(box.minX),
-                y: Double(1 - box.maxY),
-                width: Double(box.width),
-                height: Double(box.height)
-            )
-            let pixels = PixelFrame(
-                x: Int((normalized.x * Double(result.imageWidth)).rounded()),
-                y: Int((normalized.y * Double(result.imageHeight)).rounded()),
-                width: Int((normalized.width * Double(result.imageWidth)).rounded()),
-                height: Int((normalized.height * Double(result.imageHeight)).rounded())
-            )
-            return Element(
-                text: observation.text,
-                confidence: Double(observation.confidence),
-                framePixels: pixels,
-                frameNormalized: normalized
-            )
+            let normalized = [
+                Double(box.minX),
+                Double(1 - box.maxY),
+                Double(box.width),
+                Double(box.height)
+            ]
+            let pixels = [
+                Int((normalized[0] * Double(result.imageWidth)).rounded()),
+                Int((normalized[1] * Double(result.imageHeight)).rounded()),
+                Int((normalized[2] * Double(result.imageWidth)).rounded()),
+                Int((normalized[3] * Double(result.imageHeight)).rounded())
+            ]
+            let normalizedJSON = normalized.map(fixed4).joined(separator: ",")
+            let pixelsJSON = pixels.map(String.init).joined(separator: ",")
+            return "    {\"text\":\(try jsonString(observation.text)),\"confidence\":\(fixed4(Double(observation.confidence))),\"frame\":[\(pixelsJSON)],\"frameNorm\":[\(normalizedJSON)]}"
         }
-        let sidecar = Sidecar(
-            schemaVersion: 1,
-            engine: "macOS Vision",
-            recognitionLevel: "accurate",
-            image: Image(file: imageName, width: result.imageWidth, height: result.imageHeight),
-            elapsedMs: elapsedMs,
-            elements: elements
-        )
+
+        var json = [
+            "{",
+            "  \"schemaVersion\":1,",
+            "  \"recognitionLevel\":\"accurate\",",
+            "  \"image\":{\"file\":\(try jsonString(imageName)),\"width\":\(result.imageWidth),\"height\":\(result.imageHeight)},",
+            "  \"elapsedMs\":\(elapsedMs),",
+            "  \"elements\":["
+        ]
+        for (index, element) in elements.enumerated() {
+            let suffix = index == elements.count - 1 ? "" : ","
+            json.append("    \(element)\(suffix)")
+        }
+        json += [
+            "  ]",
+            "}",
+            ""
+        ]
+
         let url = imageURL.deletingPathExtension().appendingPathExtension("ocr.json")
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(sidecar).write(to: url, options: .atomic)
+        try json.joined(separator: "\n").data(using: .utf8)!.write(to: url, options: .atomic)
         return url.path
+    }
+
+    private static func fixed4(_ value: Double) -> String {
+        String(format: "%.4f", locale: Locale(identifier: "en_US_POSIX"), value)
+    }
+
+    private static func jsonString(_ value: String) throws -> String {
+        let data = try JSONEncoder().encode(value)
+        return String(decoding: data, as: UTF8.self)
     }
 }
