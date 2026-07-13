@@ -262,10 +262,12 @@ public struct ForyDomArgs {
 public struct ForyWaitForArgs {
     public var target: ForyTarget = ForyTarget()
     public var timeout: Double = 0
+    public var gone: Bool = false
 
-    public init(target: ForyTarget = ForyTarget(), timeout: Double = 0) {
+    public init(target: ForyTarget = ForyTarget(), timeout: Double = 0, gone: Bool = false) {
         self.target = target
         self.timeout = timeout
+        self.gone = gone
     }
 }
 

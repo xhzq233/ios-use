@@ -121,23 +121,8 @@ public struct IOSUseCLI: Sendable {
             return executeOpen(options)
         case .appLifecycle(let options):
             return executeAppLifecycle(options)
-        case .logRead(let options):
-            do {
-                return CLIResult(exitCode: 0, stdout: try AppLogCaptureService.read(options: options, paths: paths))
-            } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
-            }
         case .oslog(let options):
             return executeOSLog(options)
-        case .flow(let options):
-            do {
-                let stdout = try FlowService.run(file: options.file, options: options, paths: paths, outputSink: outputSink)
-                return CLIResult(exitCode: 0, stdout: outputSink == nil ? stdout : "")
-            } catch let signal as CLIExitSignal {
-                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
-            } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
-            }
         case .nslog(let options):
             do {
                 switch options.command {
@@ -165,7 +150,7 @@ public struct IOSUseCLI: Sendable {
             return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))
         case .proxy(.configca(let markTrusted)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(markTrusted: markTrusted, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.configCA(markTrusted: markTrusted, paths: paths))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -173,7 +158,7 @@ public struct IOSUseCLI: Sendable {
             }
         case .proxy(.start(let interfaceName, let serverOnly)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.start(interfaceName: interfaceName, serverOnly: serverOnly, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.start(interfaceName: interfaceName, serverOnly: serverOnly, paths: paths))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -187,7 +172,7 @@ public struct IOSUseCLI: Sendable {
             }
         case .proxy(.stop(let serverOnly)):
             do {
-                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(serverOnly: serverOnly, paths: paths, outputSink: outputSink))
+                return CLIResult(exitCode: 0, stdout: try ProxyService.stop(serverOnly: serverOnly, paths: paths))
             } catch let signal as CLIExitSignal {
                 return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
             } catch {
@@ -195,6 +180,14 @@ public struct IOSUseCLI: Sendable {
             }
         case .driver(let action):
             return executeDriver(action)
+        case .capture(let options):
+            do {
+                return CLIResult(exitCode: 0, stdout: try CaptureService.run(options: options, paths: paths))
+            } catch let signal as CLIExitSignal {
+                return CLIResult(exitCode: signal.exitCode, stderr: "error: \(signal.message)\n")
+            } catch {
+                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            }
         }
     }
 
@@ -240,15 +233,16 @@ public struct IOSUseCLI: Sendable {
     }
 
     private func executeDriver(_ action: DriverAction) -> CLIResult {
+        let session = LockedDriverClientSession(paths: paths)
+        defer { session.close() }
         do {
-            let session = LockedDriverClientSession(paths: paths)
-            defer { session.close() }
             let result = try DriverCommandExecutor.execute(action: action, paths: paths) { body in
                 try session.run(body)
             }
             return CLIResult(exitCode: 0, stdout: result.stdout)
         } catch {
-            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            let message = DriverFailureEvidence.append(to: "\(error)", action: action, session: session, paths: paths)
+            return CLIErrorEnvelope(message: message, exitCode: 1).render()
         }
     }
 

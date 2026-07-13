@@ -43,6 +43,7 @@ protocol DriverCommandClient: AnyObject {
     func close()
     func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool) throws -> ForyWaitForPayload
     func screenshot() throws -> Data
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
@@ -62,6 +63,15 @@ enum DriverCommandExecution {
         let session = LockedDriverClientSession(paths: paths, verbose: verbose)
         defer { session.close() }
         return try session.run(body)
+    }
+}
+
+extension DriverCommandClient {
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool) throws -> ForyWaitForPayload {
+        guard !gone else {
+            throw CLIParseError.invalidValue("waitFor --gone is not supported by this driver client")
+        }
+        return try waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)
     }
 }
 
@@ -214,7 +224,11 @@ final class DriverClient: DriverCommandClient {
     }
 
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32? = nil) throws -> ForyWaitForPayload {
-        try send(WaitForCommand.self, args: ForyWaitForArgs(target: ForyTarget(label: label, traits: traits ?? "", cindex: cindex), timeout: timeout ?? 0))
+        try waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: false)
+    }
+
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32? = nil, gone: Bool) throws -> ForyWaitForPayload {
+        try send(WaitForCommand.self, args: ForyWaitForArgs(target: ForyTarget(label: label, traits: traits ?? "", cindex: cindex), timeout: timeout ?? 0, gone: gone))
     }
 
     func screenshot() throws -> Data {

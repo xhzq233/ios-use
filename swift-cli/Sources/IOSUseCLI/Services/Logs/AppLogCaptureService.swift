@@ -59,7 +59,7 @@ enum AppLogCaptureService {
         let pid = try launchHelper(request)
         let capture = try waitForCaptureStart(pid: pid, logFile: logFile, paths: paths)
         let status = capture.status == "running" ? "App log capture started." : "App log capture finished."
-        return AppLifecycleService.Result(message: "\(status)\nPID: \(pid)\nLog: \(logFile)\nRead with: ios-use log-read")
+        return AppLifecycleService.Result(message: "\(status)\nPID: \(pid)\nLog: \(logFile)")
     }
 
     static func runHelper(arguments: [String], paths: IOSUsePaths) throws -> String {
@@ -104,25 +104,6 @@ enum AppLogCaptureService {
             }
             throw error
         }
-    }
-
-    static func read(options: AppLogReadOptions, paths: IOSUsePaths) throws -> String {
-        guard let state = readState(paths: paths),
-              let logFile = state.lastLogFile ?? state.lastCapture?.logFile,
-              !logFile.isEmpty else {
-            throw CLIParseError.invalidValue("No app log capture found. Run `ios-use activateApp <bundleId> --terminateExisting --log` first.")
-        }
-        let status = state.lastCapture?.status ?? "stopped"
-        return try LogFileReadService.read(
-            logFile: logFile,
-            status: status,
-            missingFileMessage: "App log capture file not found: \(logFile). Run `ios-use activateApp <bundleId> --terminateExisting --log` again.",
-            pattern: options.pattern,
-            flags: options.flags,
-            timeout: options.timeout ?? 0,
-            clearAfterRead: options.clearAfterRead,
-            last: options.last
-        )
     }
 
     static func stopCaptureForInstall(bundleID: String, udid: String, paths: IOSUsePaths) throws {

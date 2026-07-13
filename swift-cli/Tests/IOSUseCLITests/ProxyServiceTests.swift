@@ -11,7 +11,7 @@ final class ProxyServiceTests: XCTestCase {
         ProxyService.mitmdumpReadOverrideForTesting = nil
         ProxyService.startMitmdumpOverrideForTesting = nil
         ProxyService.detectLanInfoOverrideForTesting = nil
-        ProxyService.flowDirectoryOverrideForTesting = nil
+        ProxyDeviceAutomation.operationOverrideForTesting = nil
         Shell.runOverrideForTesting = nil
         super.tearDown()
     }
@@ -82,31 +82,21 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertEqual(state.lastCapture?.flowFile, state.flowFile)
     }
 
-    func testProxyStartPrefersExecutableFlowDirectoryOverHomeCopy() throws {
+    func testProxyStartUsesInProcessDeviceAutomation() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        let preferredFlowDirectory = "\(root)/preferred-flows"
         try FileManager.default.createDirectory(atPath: "\(root)/mitmproxy", withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(atPath: "\(root)/flows", withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(atPath: preferredFlowDirectory, withIntermediateDirectories: true)
         try "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n".write(
             toFile: "\(root)/mitmproxy/mitmproxy-ca-cert.pem",
             atomically: true,
             encoding: .utf8
         )
-        try """
-        name: stale proxy flow
-        steps:
-          - action: unknown
-        """.write(toFile: "\(root)/flows/proxy_set_wifi_proxy.yaml", atomically: true, encoding: .utf8)
-        try """
-        name: preferred proxy flow
-        steps:
-          - action: sleep
-            ms: 1
-        """.write(toFile: "\(preferredFlowDirectory)/proxy_set_wifi_proxy.yaml", atomically: true, encoding: .utf8)
         try writeDriverLock(udid: "DEVICE-A", paths: paths)
-        ProxyService.flowDirectoryOverrideForTesting = preferredFlowDirectory
+        var operations: [ProxyDeviceAutomation.Operation] = []
+        ProxyDeviceAutomation.operationOverrideForTesting = { operation, _ in
+            operations.append(operation)
+            return "device automation\n"
+        }
         ProxyService.detectLanInfoOverrideForTesting = { _ in
             ProxySessionState.NetworkInfo(interface: "en0", macLanIp: "192.168.1.10")
         }
@@ -115,6 +105,7 @@ final class ProxyServiceTests: XCTestCase {
         let output = try ProxyService.start(interfaceName: nil, paths: paths)
 
         XCTAssertTrue(output.contains("Proxy started"))
+        XCTAssertEqual(operations, [.configureWiFi(server: "192.168.1.10", port: "9080")])
         let state = try XCTUnwrap(ProxyService.readState(paths: paths))
         XCTAssertEqual(state.deviceProxyStatus, "configured")
     }
@@ -183,7 +174,7 @@ final class ProxyServiceTests: XCTestCase {
         )
         try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: "\(root)/state/proxy-session.json"))
         IOSUseCLI.driverClientFactoryForTesting = { _ in
-            XCTFail("proxy stop must not run the clear Wi-Fi proxy flow when state is stopped")
+            XCTFail("proxy stop must not run the clear Wi-Fi proxy automation when state is stopped")
             return DriverClient(host: "127.0.0.1", port: 1)
         }
         addTeardownBlock {
@@ -430,7 +421,7 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertEqual(ProxyService.listeningPortOwnersForTesting(port: IOSUseProtocol.proxyMitmdumpPort), [123, 456])
     }
 
-    func testConfigCASkipsInstallFlowWhenTrustRecordMatches() throws {
+    func testConfigCASkipsInstallSequenceWhenTrustRecordMatches() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         let pem = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n"
@@ -451,7 +442,7 @@ final class ProxyServiceTests: XCTestCase {
         XCTAssertEqual(output, "CA already installed and trusted on device.\n")
     }
 
-    func testConfigCAMarkTrustedWritesTrustRecordWithoutInstallFlow() throws {
+    func testConfigCAMarkTrustedWritesTrustRecordWithoutInstallSequence() throws {
         let root = try temporaryRoot()
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
         let pem = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----\n"

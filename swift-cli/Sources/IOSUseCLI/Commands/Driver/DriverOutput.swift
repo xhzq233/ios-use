@@ -141,7 +141,10 @@ public enum DriverOutput {
         return rect.h >= rect.w ? "vertical" : "horizontal"
     }
 
-    public static func formatWaitFor(label: String, payload: ForyWaitForPayload) -> String {
+    public static func formatWaitFor(label: String, payload: ForyWaitForPayload, gone: Bool = false) -> String {
+        if gone {
+            return "Gone: \(label) (waited \(String(format: "%.2f", payload.waited))s)\n"
+        }
         let element = payload.element
         let rect = element.rect.map { "(\($0.x),\($0.y),\($0.w),\($0.h))" } ?? "(0,0,0,0)"
         return "\(elementTypeName(element.elemType)) \"\(element.label)\" \(rect) waited=\(String(format: "%.2f", payload.waited))s\n"

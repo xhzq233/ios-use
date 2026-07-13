@@ -1,13 +1,12 @@
 ---
 name: "ios-use-skill"
-description: "Use ios-use to drive iOS devices via CLI. Primary scope: real-device/session setup, DOM-first UI inspection, tap/swipe/input actions, app lifecycle, and log collection. Simulator; YAML Flow authoring; HTTP/HTTPS proxy capture."
+description: "Use ios-use to drive iOS devices via CLI. Primary scope: real-device/session setup, DOM-first UI inspection, tap/swipe/input actions, app lifecycle, and log collection. Simulator; HTTP/HTTPS proxy capture."
 ---
 
 # ios-use Skill
 
 ## 1. 职责边界
 
-- 写或维护 YAML Flow：看 `references/flow.md`
 - 抓 HTTP/HTTPS 包、证书、mitmdump、过滤表达式：看 `references/proxy.md`
 - 使用或排查 Simulator：看 `references/simulator.md`
 - 维护旧 NSLogger / `nslog`：看 `references/nslog.md`
@@ -40,8 +39,8 @@ ios-use start
 - `start` 会启动第一个 USB 真机的 driver；多台真机时，用 `start <udid>` 明确指定。
 - 启动后，该设备会成为后续 driver-backed 命令的目标。
 - 切换设备时先 `ios-use stop`，再 `ios-use start <new-udid>`。
-- `dom` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `home` / `dismissAlert` / `flow` / `proxy configca` / `proxy start` / `proxy stop` 都依赖当前 `driver.lock`，不接受自己的 `--udid`。
-- `status` 不接受 `--udid`，只汇总当前环境状态；`config` / `install` / `uninstall` / `apps` / `ddi-mount` / `open` / `activateApp` / `terminateApp` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 `driver.lock`。
+- `dom` / `tap` / `swipe` / `input` / `waitFor` / `screenshot` / `capture` / `home` / `dismissAlert` / `proxy configca` / `proxy start` / `proxy stop` 都使用最近一次 `start` 选中的设备，不接受自己的 `--udid`；执行前先运行 `ios-use start`。
+- `status` 不接受 `--udid`，只汇总当前环境状态；`config` / `install` / `uninstall` / `apps` / `ddi-mount` / `open` / `activateApp` / `terminateApp` / `oslog` 可使用 `--udid`。省略时，部分命令会使用当前 active target。
 - `proxy start --server` / `proxy stop --server` 只管理本机 mitmdump，不要求当前设备 driver。
 - 真机 `status` / `config` / `install` / `uninstall` / `apps` / `ddi-mount` / `start` / `stop` / `open` / `activateApp` / `terminateApp` / `oslog` 不要求 Xcode CLI；查询 Simulator UDID 时才需要 Xcode CLI，可运行 `xcrun simctl list devices booted`。
 
@@ -75,7 +74,7 @@ ios-use waitFor --label "蓝牙" --timeout 8
 
 ```bash
 ios-use tap "通用"
-ios-use tap "亮度" --offset-ratio 0.8,
+ios-use tap "亮度" --offset-ratio 0.8,0.5
 ios-use longpress "通用"
 ios-use swipe --to "开发者" --from "蓝牙" # 从"蓝牙"开始，寻找"开发者"
 ios-use swipe --dir forth --distance 300
@@ -97,7 +96,6 @@ ios-use input --tap "搜索" --content "蓝牙" --dom 300
 ```bash
 ios-use activateApp com.apple.Preferences
 ios-use activateApp com.example.app --terminateExisting --log
-ios-use log-read --last 50
 ios-use terminateApp com.apple.Preferences
 ios-use open "https://example.com"
 ios-use dismissAlert
@@ -118,9 +116,15 @@ ios-use uninstall com.example.app
 ios-use uninstall com.example.app --udid <udid>
 ```
 
-这些命令直接走真机设备服务。`ddi-mount` 用于挂载 iOS 17+ Developer Disk Image；省略 `--path` 时扫描本机 CoreDevice DDI 缓存。本机缓存为空时，可从以下地址手动下载 DDI，解压后将 `Restore/` 目录路径传给 `--path`：
+这些命令直接走真机设备服务。`ddi-mount` 用于挂载 iOS 17+ Developer Disk Image；省略 `--path` 时扫描本机 DDI 缓存。
 
-- iOS 17+（personalized）：`https://deviceboxhq.com/ddi-17E5179g.zip`（go-ios `ios image auto` 的下载源，版本号随 go-ios 更新，可在 [go-ios imagemounter 源码](https://github.com/danielpaulus/go-ios/blob/main/ios/imagemounter/imagedownloader.go) 中查看最新值）
+如果本机没有与设备系统版本匹配的 DDI，可从当前 fallback 地址下载：
+
+```text
+https://deviceboxhq.com/ddi-17E5179g.zip
+```
+
+下载后解压，向 `--path` 传入匹配的 `Restore/`、`iOS_DDI/` 或 `.dmg` 路径。版本不匹配时不要强行挂载；CLI 不会自动联网下载 DDI。
 
 `install` 只接受已签名 `.ipa` 或 `.app`，不负责给任意 App 自动签名。卸载前确认 bundle ID，避免误删真实 App。
 
@@ -139,7 +143,7 @@ ios-use uninstall com.example.app --udid <udid>
 
 - `--traits <traits>` 按 DOM 展示出来的 traits 过滤，逗号分隔多值，AND 语义。
 - `--cindex <int>` 先找父元素再选 DOM 中显示的第 N 个直接子元素，`-1` 表示最后一个。
-- `waitFor` 用 `--label <text> --timeout <seconds>` 轮询等待元素出现。
+- `waitFor` 用 `--label <text> --timeout <seconds>` 轮询等待元素出现；加 `--gone` 时等待匹配元素消失。
 
 ### 6.3 `tap` / `longpress`
 
@@ -169,28 +173,22 @@ ios-use uninstall com.example.app --udid <udid>
 
 ### 6.6 `screenshot`
 
-- 截图并输出保存路径。
+- 截图并输出保存路径；默认同时运行 macOS Vision 的 accurate OCR，并输出 OCR 文本、坐标和 `.ocr.json` sidecar。
+- 只需要像素时使用 `ios-use screenshot --no-ocr --name pixels-only`；OCR 失败不会影响已经写入的截图，但会返回 warning。
 - 只在用户明确要求查看视觉效果，或 DOM 无法说明视觉状态时使用。
 
-## 7. Flow 入口
-
-写 Flow 时不要在主文件里查完整语法，直接看 `references/flow.md`。
-
-最小运行入口：
+### 6.7 `capture`
 
 ```bash
-ios-use flow my-flow.yaml
-ios-use flow my-flow.yaml --targetLabel 蓝牙 --timeout 5
+ios-use tap "站姿1" && ios-use capture --fps 10 --duration 3 --name pose-sweep
 ```
 
-关键边界：
+- `capture` 只做固定时长的截图采样，不内置 tap、trigger、wait 或 shell 执行。
+- `--fps` 范围为 `(0, 10]`，默认 `10`；`--duration` 默认 `3` 秒。
+- 输出目录只有 JPEG 帧和 `manifest.json`，不生成 GIF、视频、contact sheet 或 OCR sidecar。
+- `--keep-changed-frames` 可只保留 JPEG 字节发生变化的采样帧；manifest 仍记录所有采样槽位。
 
-- Flow 目标就是最近一次 `ios-use start` 的设备，不支持 `--udid`。
-- 写 flow 前先用 CLI 手动跑通每一步，再组装成 YAML。
-- Flow 中坐标、offset、offsetRatio 都写成和 CLI 参数一致的字符串。
-- Flow 内 App 启动日志用 `needLog: true` + `action: log`。旧 `needNSLog` / `nslog` 只在任务明确要求 NSLogger 时使用。
-
-## 8. Proxy 入口
+## 7. Proxy 入口
 
 Proxy 是抓包子系统，详细步骤看 `references/proxy.md`，主文件只保留入口和硬前提。
 
@@ -210,24 +208,20 @@ ios-use proxy read --filter "~d example.com" --raw
 - HTTPS 解密需要先安装并信任 CA。需要手动信任时，完成后用 `ios-use proxy configca --mark-trusted` 记录人工确认。
 - 排障先运行 `ios-use proxy doctor`。
 
-## 9. 日志
+## 8. 日志
 
-### 9.1 App 启动日志
+### 8.1 App 启动日志
 
 ```bash
 ios-use activateApp com.example.app --terminateExisting --log
-ios-use log-read --last 50
-ios-use log-read --pattern "error|warning" --flags i --timeout 5
-ios-use log-read --clearAfterRead
 ios-use terminateApp com.example.app
 ```
 
-- 用 `activateApp --terminateExisting --log` 重新启动 App，并采集启动后的 stdout/stderr 和 console 可见日志。
-- 用 `log-read` 读取最近一次采集，支持 `--pattern`、`--flags`、`--timeout`、`--last`、`--clearAfterRead`。
+- 用 `activateApp --terminateExisting --log` 重新启动 App；命令会直接返回日志文件路径。用 `rg`、`tail` 或 `less` 查询该文件，例如 `rg -n -i 'error|warning' <log-file>`。
 - `--log` 必须和 `--terminateExisting` 一起使用。
 - `terminateApp` 后采集进程会随 App 退出自动结束；再次 `activateApp --log` 会替换上一轮采集。
 
-### 9.2 `oslog`
+### 8.2 `oslog`
 
 ```bash
 ios-use oslog --process IOSUseDriver-Runner --timeout 5
@@ -235,22 +229,25 @@ ios-use oslog --pid 123 --timeout 5
 ios-use oslog --pattern "error|failed" --flags i --timeout 10
 ```
 
-- 省略 `--udid` 时使用当前 `driver.lock`。
+- 省略 `--udid` 时使用当前 active target。
 - 真机前台 stream 到超时。
 - `--timeout` 必须大于 0；`0` 不合法。
 - `--process <name>` 或 `--pid <pid>` 过滤单个日志来源，二者互斥，只过滤日志，不切 app。
 - 日志直接输出到 stdout，不写 artifact；需要落盘时自行重定向或使用 `tee`。
 
 - 需要系统 unified log、`os_log` 或更宽的系统日志时用 `oslog`。
-- 旧 NSLogger / `nslog` 只在 App 已接入 NSLogger 或 Flow 明确依赖 `needNSLog` 时使用，见 `references/nslog.md`。
+- 旧 NSLogger / `nslog` 只在 App 已接入 NSLogger 时使用，见 `references/nslog.md`。
 
-## 10. 常见排障
+## 9. 常见排障
 
 遇到无法解决的问题时，可以先到 GitHub Issues 搜索相似问题，再决定是否整理报告。需要主动提交 GitHub Issue 时，用户明确说“提交吧”这类提交意图即可；确认后再看 `references/report.md`，按模板收集失败命令、`status`、配置摘要和必要日志尾部，并在提交前脱敏 Apple ID、完整 UDID、证书、密码和业务 App 私有日志。Issue 查询、创建、关闭优先用 `gh` CLI；本机没有 `gh` 时先安装 GitHub CLI。
 
-签名异常：
+签名异常时，先重新运行 `ios-use config --udid <udid>`，再运行 `ios-use start <udid>`。常见情况：
 
-- `config` 在签名后可能输出 `Driver signing warnings`，这是安装前本地检查发现的 profile / UDID / bundle id / codesign 风险提示；不会阻塞继续安装，最终是否安装成功以随后的安装结果为准。
-- `driver update required` 表示 CLI/driver 版本不匹配；`signing expired` 表示已安装 driver 的开发者签名过期。两者都建议重新 `ios-use config --udid <udid>`，但 `start` 遇到 `signing expired` 只 warning 并继续尝试启动。
-- altsign 出现 HTTP 4xx，常见原因是 Apple Developer 账号状态或凭据问题。
-- altsign 出现 HTTP 5xx，优先检查网络或 VPN。
+- `config` 输出 `Driver signing warnings` 时，先看随后是否成功安装；这是 profile、UDID、bundle id 或 codesign 的风险提示，不一定阻塞安装。
+- `driver update required` 表示 CLI/driver 版本不匹配；`signing expired` 表示已安装 driver 的开发者签名过期。两者都重新运行 `ios-use config --udid <udid>`；`start` 遇到 expired 通常只给 warning，但仍应刷新签名。
+- altsign 返回 HTTP 4xx，优先检查 Apple Developer 账号状态、Apple ID 和交互式认证是否有效，然后重试 `config`。
+- altsign 返回 HTTP 5xx，优先检查网络、VPN 或代理，稍后再重试；不要反复修改设备 UI 状态来解决服务端错误。
+- 如果签名成功但启动仍失败，再检查设备上的开发者信任状态和 driver/设备版本是否匹配，不要把所有失败都归因于“信任开发者”。
+
+不要把密码、验证码、证书或完整签名 profile 放进命令参数、日志或报告；需要上游报告时按 `references/report.md` 收集并脱敏证据。

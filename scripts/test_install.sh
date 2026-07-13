@@ -20,14 +20,12 @@ FAKE_BIN="$TMP_ROOT/fake-bin"
 FAKE_HOME="$TMP_ROOT/home"
 mkdir -p \
   "$FAKE_SOURCE/ios-use-skill" \
-  "$FAKE_SOURCE/flows" \
   "$FAKE_SOURCE/swift-cli" \
   "$FAKE_SOURCE/scripts" \
   "$FAKE_BIN" \
   "$FAKE_HOME"
 
 printf 'remote skill fixture\n' > "$FAKE_SOURCE/ios-use-skill/SKILL.md"
-printf 'name: remote-flow\n' > "$FAKE_SOURCE/flows/example.yaml"
 printf '// fake package\n' > "$FAKE_SOURCE/swift-cli/Package.swift"
 cat > "$FAKE_SOURCE/scripts/build_swift_cli.sh" <<'SCRIPT'
 #!/bin/bash
@@ -139,6 +137,10 @@ run_install_verbose() {
 
 BUILD_HOME="$FAKE_HOME/build-from-source"
 mkdir -p "$BUILD_HOME"
+mkdir -p "$BUILD_HOME/.ios-use/flows"
+printf 'legacy recipe\n' > "$BUILD_HOME/.ios-use/flows/proxy_configca.yaml"
+printf 'legacy recipe\n' > "$BUILD_HOME/.ios-use/flows/subflow_wait_and_find.yaml"
+printf 'custom recipe\n' > "$BUILD_HOME/.ios-use/flows/my-local-flow.yaml"
 BUILD_PATH="$(run_install "$BUILD_HOME" --build-from-source | tail -n 1)"
 if [[ "$BUILD_PATH" != "$BUILD_HOME/bin/ios-use" || ! -x "$BUILD_PATH" ]]; then
   echo "[install-test] ERROR: build-from-source install did not create expected binary" >&2
@@ -158,6 +160,18 @@ if ! grep -q 'remote-driver-sim' "$BUILD_HOME/.ios-use/driver-sim.ipa"; then
 fi
 if [[ ! -x "$BUILD_HOME/.ios-use/altsign-cli/altsign-cli" ]]; then
   echo "[install-test] ERROR: install did not download altsign-cli" >&2
+  exit 1
+fi
+if [[ -e "$BUILD_HOME/.ios-use/flows/proxy_configca.yaml" ]]; then
+  echo "[install-test] ERROR: install kept a bundled legacy Flow recipe" >&2
+  exit 1
+fi
+if [[ -e "$BUILD_HOME/.ios-use/flows/subflow_wait_and_find.yaml" ]]; then
+  echo "[install-test] ERROR: install kept an old bundled Flow recipe" >&2
+  exit 1
+fi
+if [[ ! -f "$BUILD_HOME/.ios-use/flows/my-local-flow.yaml" ]]; then
+  echo "[install-test] ERROR: install removed a user-authored Flow file" >&2
   exit 1
 fi
 

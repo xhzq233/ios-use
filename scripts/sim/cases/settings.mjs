@@ -79,7 +79,7 @@ export const settingsAfterContactsCaseMetadata = [
   { id: 'AS-3', group: 'settings', kind: 'active-session', setup: 'settings home', assertion: 'dom shows Preferences', coverage: 'simulator' },
   { id: 'AS-4', group: 'settings', kind: 'unsupported', setup: 'unit-only connect retry', assertion: 'unsupported by simulator runner', coverage: 'unsupported', requiresPrerequisite: false },
   { id: 'AS-5', group: 'settings', kind: 'unsupported', setup: 'unit-only send failure', assertion: 'unsupported by simulator runner', coverage: 'unsupported', requiresPrerequisite: false },
-  { id: 'AS-6', group: 'settings', kind: 'unsupported', setup: 'unit-only flow reuse', assertion: 'unsupported by simulator runner', coverage: 'unsupported', requiresPrerequisite: false },
+  { id: 'AS-6', group: 'settings', kind: 'unsupported', setup: 'unit-only session reuse', assertion: 'unsupported by simulator runner', coverage: 'unsupported', requiresPrerequisite: false },
   { id: 'AS-8', group: 'settings', kind: 'proxy-no-driver', setup: 'no driver lock', assertion: 'proxy read/doctor do not require active driver error', coverage: 'simulator', requiresPrerequisite: false },
 ];
 

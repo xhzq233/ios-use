@@ -73,6 +73,24 @@ final class DriverClientTests: XCTestCase {
         XCTAssertEqual(args.target.traits, "Cell")
         XCTAssertEqual(args.target.cindex, -1)
         XCTAssertEqual(args.timeout, 1.5)
+        XCTAssertFalse(args.gone)
+    }
+
+    func testClientSerializesWaitForGone() throws {
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(ForyWaitForPayload())
+        let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: payload)])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        _ = try client.waitFor(label: "Loading", timeout: 2, traits: nil, cindex: nil, gone: true)
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        let args = try fory.deserialize(request.payload, as: ForyWaitForArgs.self)
+        XCTAssertEqual(args.target.label, "Loading")
+        XCTAssertEqual(args.timeout, 2)
+        XCTAssertTrue(args.gone)
     }
 
     func testClientSerializesDomWaitQuiescence() throws {

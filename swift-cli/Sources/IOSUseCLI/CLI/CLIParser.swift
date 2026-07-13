@@ -26,12 +26,8 @@ public enum CLIParser {
             return .apps(try parseApps(&parser))
         case "ddi-mount":
             return .ddiMount(try parseDDIMount(&parser))
-        case "flow":
-            return .flow(try parseFlow(&parser))
         case "nslog":
             return .nslog(try parseNSLog(&parser))
-        case "log-read":
-            return .logRead(try parseAppLogRead(&parser))
         case "proxy":
             return .proxy(try parseProxy(&parser))
         case "tap":
@@ -46,6 +42,8 @@ public enum CLIParser {
             return .driver(try parseDom(&parser))
         case "screenshot":
             return .driver(try parseScreenshot(&parser))
+        case "capture":
+            return .capture(try parseCapture(&parser))
         case "waitFor":
             return .driver(try parseWaitFor(&parser))
         case "activateApp":
@@ -181,30 +179,6 @@ public enum CLIParser {
         return options
     }
 
-    private static func parseFlow(_ parser: inout ArgumentParser) throws -> FlowOptions {
-        let file = try parser.requiredPositional("file")
-        var options = FlowOptions(file: file)
-        while let arg = parser.consume() {
-            switch arg {
-            case "--udid":
-                throw CLIParseError.unknownOption(arg)
-            case "--verbose": options.verbose = true
-            default:
-                guard arg.hasPrefix("--") else { throw CLIParseError.unexpectedArgument(arg) }
-                let key = String(arg.dropFirst(2))
-                if key == "udid" || key.hasPrefix("udid=") {
-                    throw CLIParseError.unknownOption("--udid")
-                }
-                guard !key.isEmpty else { throw CLIParseError.unknownOption(arg) }
-                guard isFlowExternalVarName(key) else {
-                    throw CLIParseError.invalidValue("Invalid flow external variable name: \(key)")
-                }
-                options.externalVars[key] = try parser.flowVariableValue(for: arg)
-            }
-        }
-        return options
-    }
-
     private static func parseNSLog(_ parser: inout ArgumentParser) throws -> NSLogOptions {
         var options = NSLogOptions(command: .stream)
         while let arg = parser.consume() {
@@ -250,20 +224,6 @@ public enum CLIParser {
         return options
     }
 
-    private static func parseAppLogRead(_ parser: inout ArgumentParser) throws -> AppLogReadOptions {
-        var options = AppLogReadOptions()
-        while let arg = parser.consume() {
-            switch arg {
-            case "--pattern": options.pattern = try parser.valueAllowingLeadingDash(for: arg)
-            case "--flags": options.flags = try parser.value(for: arg)
-            case "--timeout": options.timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
-            case "--clearAfterRead": options.clearAfterRead = true
-            case "--last": options.last = try parsePositiveIntStrict(parser.value(for: arg), label: arg)
-            default: throw CLIParseError.unknownOption(arg)
-            }
-        }
-        return options
-    }
 
     private static func parseProxy(_ parser: inout ArgumentParser) throws -> ProxyCommand {
         let subcommand = try parser.requiredPositional("subcommand")
@@ -438,13 +398,42 @@ public enum CLIParser {
 
     private static func parseScreenshot(_ parser: inout ArgumentParser) throws -> DriverAction {
         var name: String?
+        var ocr = true
         while let arg = parser.consume() {
             switch arg {
             case "--name": name = try parser.value(for: arg)
+            case "--no-ocr": ocr = false
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .screenshot(name: name)
+        return .screenshot(name: name, ocr: ocr)
+    }
+
+    private static func parseCapture(_ parser: inout ArgumentParser) throws -> CaptureOptions {
+        var duration = 3.0
+        var fps = 10.0
+        var name: String?
+        var keepChangedFrames = false
+        while let arg = parser.consume() {
+            switch arg {
+            case "--duration":
+                duration = try parsePositiveDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--fps":
+                fps = try parsePositiveDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+                guard fps <= 10 else {
+                    throw CLIParseError.invalidValue("--fps must be at most 10")
+                }
+            case "--name": name = try parser.value(for: arg)
+            case "--keep-changed-frames": keepChangedFrames = true
+            default: throw CLIParseError.unknownOption(arg)
+            }
+        }
+        return CaptureOptions(
+            duration: duration,
+            fps: fps,
+            name: name,
+            keepChangedFrames: keepChangedFrames
+        )
     }
 
     private static func parseWaitFor(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -452,16 +441,18 @@ public enum CLIParser {
         var timeout: Double?
         var traits: String?
         var cindex: Int32?
+        var gone = false
         while let arg = parser.consume() {
             switch arg {
             case "--label": label = try parser.value(for: arg)
             case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--gone": gone = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .waitFor(label: try require(label, option: "--label"), timeout: timeout, traits: traits, cindex: cindex)
+        return .waitFor(label: try require(label, option: "--label"), timeout: timeout, traits: traits, cindex: cindex, gone: gone)
     }
 
     private static func parseHome(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -605,9 +596,6 @@ public enum CLIParser {
         return parsed
     }
 
-    private static func isFlowExternalVarName(_ value: String) -> Bool {
-        value.range(of: #"^[A-Za-z_][A-Za-z0-9_-]*$"#, options: .regularExpression) != nil
-    }
 }
 
 public enum CLIParseError: Error, Equatable, CustomStringConvertible, Sendable {
@@ -686,13 +674,6 @@ struct ArgumentParser {
             return nil
         }
         index += 1
-        return Self.stripInlinePrefix(value)
-    }
-
-    mutating func flowVariableValue(for option: String) throws -> String {
-        guard let value = consume(), value.hasPrefix(Self.inlineValuePrefix) || !value.hasPrefix("--") else {
-            throw CLIParseError.missingOptionValue(option)
-        }
         return Self.stripInlinePrefix(value)
     }
 

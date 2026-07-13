@@ -128,7 +128,7 @@ public enum StatusService {
         if let port = state.mitmdumpPort {
             parts.append("port: \(port)")
         }
-        parts.append("flow: \(state.flowFile)")
+        parts.append("capture: \(state.flowFile)")
         if let lastError = state.lastError, !lastError.isEmpty {
             parts.append("last error: \(lastError)")
         }

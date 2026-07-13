@@ -1,6 +1,5 @@
 import { contactsCaseMetadata } from './sim/cases/contacts.mjs';
 import { deviceConfigCaseMetadata } from './sim/cases/device-config.mjs';
-import { flowCaseMetadata } from './sim/cases/flow.mjs';
 import { hostBridgeCaseMetadata } from './sim/cases/host-bridge.mjs';
 import {
   settingsAfterContactsCaseMetadata,
@@ -12,7 +11,6 @@ export const simulatorCases = [
   ...settingsBeforeContactsCaseMetadata,
   ...contactsCaseMetadata,
   ...settingsAfterContactsCaseMetadata,
-  ...flowCaseMetadata,
   ...hostBridgeCaseMetadata,
 ];
 
