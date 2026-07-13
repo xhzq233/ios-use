@@ -26,7 +26,7 @@ enum LogFileReadService {
             if !lines.isEmpty || !canWait {
                 break
             }
-            usleep(useconds_t(IOSUseProtocol.flowNSLogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
+            usleep(useconds_t(IOSUseProtocol.nslogConnectPollMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))
         } while Date() < deadline
         try interruptMonitor?.throwIfInterrupted()
 

@@ -219,6 +219,7 @@ final class IOSUseCLITests: XCTestCase {
             (["dom", "--help"], "Usage: ios-use dom"),
             (["waitFor", "--help"], "Usage: ios-use waitFor"),
             (["screenshot", "--help"], "Usage: ios-use screenshot"),
+            (["capture", "--help"], "Usage: ios-use capture"),
             (["tap", "--help"], "Usage: ios-use tap"),
             (["longpress", "--help"], "Usage: ios-use longpress"),
             (["input", "--help"], "Usage: ios-use input"),
@@ -232,7 +233,6 @@ final class IOSUseCLITests: XCTestCase {
             (["apps", "--help"], "Usage: ios-use apps"),
             (["ddi-mount", "--help"], "Usage: ios-use ddi-mount"),
             (["dismissAlert", "--help"], "Usage: ios-use dismissAlert"),
-            (["flow", "--help"], "Usage: ios-use flow"),
             (["proxy", "--help"], "Usage: ios-use proxy"),
             (["proxy", "start", "--help"], "Usage: ios-use proxy start"),
             (["proxy", "stop", "--help"], "Usage: ios-use proxy stop"),
@@ -240,7 +240,6 @@ final class IOSUseCLITests: XCTestCase {
             (["proxy", "doctor", "--help"], "Usage: ios-use proxy doctor"),
             (["oslog", "--help"], "Usage: ios-use oslog"),
             (["nslog", "--help"], "Usage: ios-use nslog"),
-            (["log-read", "--help"], "Usage: ios-use log-read"),
         ]
 
         for entry in cases {

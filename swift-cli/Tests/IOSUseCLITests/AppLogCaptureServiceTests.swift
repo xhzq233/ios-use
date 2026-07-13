@@ -46,7 +46,7 @@ final class AppLogCaptureServiceTests: XCTestCase {
 
         XCTAssertEqual(result.message.components(separatedBy: "\n").first, "App log capture started.")
         XCTAssertTrue(result.message.contains("PID: 4321"))
-        XCTAssertTrue(result.message.contains("Read with: ios-use log-read"))
+        XCTAssertTrue(result.message.contains("Log:"))
         let request = try XCTUnwrap(launchedRequest)
         XCTAssertEqual(request.executablePath, "/usr/local/bin/ios-use")
         XCTAssertEqual(argumentValue(after: "--device-type", in: request.arguments), "simulator")
@@ -57,99 +57,6 @@ final class AppLogCaptureServiceTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(AppLogCaptureService.readState(paths: paths)?.lastLogFile).contains("com.example.LogEmitter-"))
     }
 
-    func testLogReadUsesPatternLastAndClearAfterRead() throws {
-        let root = tempRoot("ios-use-app-log-read")
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
-        let logFile = "\(paths.logs)/com.example-1.log"
-        try "alpha 1\nbeta\nALPHA 2\n".write(toFile: logFile, atomically: true, encoding: .utf8)
-        try AppLogCaptureService.writeState(AppLogState(
-            lastLogFile: logFile,
-            lastCapture: AppLogCaptureTarget(
-                bundleID: "com.example",
-                udid: "REAL-1",
-                deviceType: "real",
-                logFile: logFile,
-                startedAt: 1,
-                stoppedAt: 2,
-                status: "stopped",
-                helperPID: nil,
-                lastError: nil
-            )
-        ), paths: paths)
-        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
-
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root])
-            .run(arguments: ["log-read", "--pattern", "alpha", "--flags", "i", "--last", "1", "--clearAfterRead"])
-
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "ALPHA 2\n")
-        XCTAssertEqual(try String(contentsOfFile: logFile, encoding: .utf8), "")
-    }
-
-    func testLogReadLastLimitsLargeMatchedOutput() throws {
-        let root = tempRoot("ios-use-app-log-read-large")
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
-        let logFile = "\(paths.logs)/com.example-large.log"
-        let lines = (1...6_000).map { index in
-            index.isMultiple(of: 2) ? "noise \(index)" : "GearDefault matched \(index)"
-        }
-        try (lines.joined(separator: "\n") + "\n").write(toFile: logFile, atomically: true, encoding: .utf8)
-        try AppLogCaptureService.writeState(AppLogState(
-            lastLogFile: logFile,
-            lastCapture: AppLogCaptureTarget(
-                bundleID: "com.example",
-                udid: "REAL-1",
-                deviceType: "real",
-                logFile: logFile,
-                startedAt: 1,
-                stoppedAt: 2,
-                status: "stopped",
-                helperPID: nil,
-                lastError: nil
-            )
-        ), paths: paths)
-        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
-
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root])
-            .run(arguments: ["log-read", "--pattern", "GearDefault|default gear apply", "--last", "300"])
-
-        XCTAssertEqual(result.exitCode, 0)
-        let outputLines = result.stdout.split(separator: "\n").map(String.init)
-        XCTAssertEqual(outputLines.count, 300)
-        XCTAssertEqual(outputLines.first, "GearDefault matched 5401")
-        XCTAssertEqual(outputLines.last, "GearDefault matched 5999")
-    }
-
-    func testLogReadLastHandlesCRLFLogs() throws {
-        let root = tempRoot("ios-use-app-log-read-crlf")
-        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
-        try FileManager.default.createDirectory(atPath: paths.logs, withIntermediateDirectories: true)
-        let logFile = "\(paths.logs)/com.example-crlf.log"
-        try "one\r\ntwo\r\nthree\r\nfour\r\n".write(toFile: logFile, atomically: true, encoding: .utf8)
-        try AppLogCaptureService.writeState(AppLogState(
-            lastLogFile: logFile,
-            lastCapture: AppLogCaptureTarget(
-                bundleID: "com.example",
-                udid: "REAL-1",
-                deviceType: "real",
-                logFile: logFile,
-                startedAt: 1,
-                stoppedAt: 2,
-                status: "stopped",
-                helperPID: nil,
-                lastError: nil
-            )
-        ), paths: paths)
-        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
-
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root])
-            .run(arguments: ["log-read", "--last", "2"])
-
-        XCTAssertEqual(result.exitCode, 0)
-        XCTAssertEqual(result.stdout, "three\nfour\n")
-    }
 
     func testObserveStopAfterTerminateReturnsStoppedWhenHelperUpdatesState() throws {
         let root = tempRoot("ios-use-app-log-observe-stopped")

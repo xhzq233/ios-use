@@ -117,37 +117,6 @@ public enum NSLogService {
         return "NSLogger capture stopped.\n"
     }
 
-    public static func startFlowCapture(options: NSLoggerServerOptions, paths: IOSUsePaths) throws -> NSLogCaptureTarget {
-        try requireCaptureSlot(paths: paths)
-        try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true)
-        let logFile = "\(paths.artifacts)/nslog-flow-\(fileTimestamp()).log"
-        FileManager.default.createFile(atPath: logFile, contents: nil)
-        let fileHandle = try FileHandle(forWritingTo: URL(fileURLWithPath: logFile))
-        defer { try? fileHandle.close() }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: try executablePath())
-        var arguments = ["nslog", "--capture-mode", "flow"]
-        if let name = options.name, !name.isEmpty {
-            arguments += ["--name", name]
-        }
-        process.arguments = arguments
-        process.environment = ProcessInfo.processInfo.environment.merging(["IOS_USE_HOME": paths.root]) { _, new in new }
-        process.standardOutput = fileHandle
-        process.standardError = duplicatedStdoutHandle()
-        try runProcess(process)
-        return try waitForCapture(pid: process.processIdentifier, logFile: logFile, fallbackName: options.name, paths: paths)
-    }
-
-    public static func stopCapture(_ capture: NSLogCaptureTarget, paths: IOSUsePaths) {
-        if let pid = capture.pid {
-            terminateProcess(pid: pid)
-        }
-        if let record = readLock(paths: paths), record.pid == capture.pid {
-            try? FileManager.default.removeItem(atPath: paths.nslogLock)
-        }
-    }
-
     static func readCapture(capture: NSLogCaptureTarget, pattern: String?, flags: String, timeout: Double, clearAfterRead: Bool, last: Int?, interruptMonitor: InterruptMonitor? = nil) throws -> String {
         try LogFileReadService.read(
             logFile: capture.logFile,
@@ -267,7 +236,7 @@ public enum NSLogService {
     static func requireCaptureSlot(paths: IOSUsePaths) throws {
         if let record = readLock(paths: paths) {
             if processAlive(record.pid) {
-                throw CLIParseError.invalidValue("NSLOG_ALREADY_RUNNING: an nslog capture is already running (PID \(record.pid)). Stop it first with `ios-use nslog stop` or wait for the active flow to finish.")
+                throw CLIParseError.invalidValue("NSLOG_ALREADY_RUNNING: an nslog capture is already running (PID \(record.pid)). Stop it first with `ios-use nslog stop`.")
             }
             try? FileManager.default.removeItem(atPath: paths.nslogLock)
         }
@@ -426,7 +395,7 @@ public enum NSLogService {
 
     private static func isIOSUseNSLogOwnerProcess(pid: Int32) -> Bool {
         guard let command = processCommand(pid: pid)?.lowercased() else { return false }
-        return command.contains("ios-use") && (command.contains(" nslog") || command.contains(" flow"))
+        return command.contains("ios-use") && command.contains(" nslog")
     }
 
     private static func processAlive(_ pid: Int32) -> Bool {

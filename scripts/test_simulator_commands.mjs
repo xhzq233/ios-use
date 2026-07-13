@@ -14,7 +14,6 @@ import {
 } from './simulator_case_registry.mjs';
 import { buildContactsCases } from './sim/cases/contacts.mjs';
 import { buildDeviceConfigCases } from './sim/cases/device-config.mjs';
-import { buildFlowCases } from './sim/cases/flow.mjs';
 import { buildHostBridgeCases } from './sim/cases/host-bridge.mjs';
 import {
   buildSettingsAfterContactsCases,
@@ -114,7 +113,6 @@ let sim;
 let iosHome = '';
 let artifactDir = '';
 let stateBackupDir = '';
-let flowDir = '';
 let runLockFile = '';
 let runLockFd;
 const emptyHomeName = 'empty-home';
@@ -628,24 +626,25 @@ async function runConfigDriverVersionCase() {
   const out = path.join(artifactDir, `${id}.out`);
   const err = path.join(artifactDir, `${id}.err`);
   console.log(`[sim-test] RUN ${id}: config writes driverVersion only`);
-  const devices = runCliToFiles(['devices', '--simulator'], out, err);
+  const configList = runCliToFiles(['config', '--list'], out, err);
   let entry;
   try {
     const config = JSON.parse(fs.readFileSync(path.join(iosHome, 'config.json'), 'utf8'));
     entry = config.devices?.[sim.udid];
   } catch (error) {
-    return recordFail(id, `${devices.stdout}${devices.stderr}${error}\n`, devices.code === 0 ? 'assertion' : 'command');
+    return recordFail(id, `${configList.stdout}${configList.stderr}${error}\n`, configList.code === 0 ? 'assertion' : 'command');
   }
   if (
-    devices.code === 0 &&
-    !devices.stdout.includes('driver update required') &&
+    configList.code === 0 &&
+    configList.stdout.includes(sim.udid) &&
+    !configList.stdout.includes('driver update required') &&
     typeof entry?.driverVersion === 'string' &&
     entry.driverVersion.length > 0 &&
     Object.keys(entry).sort().join(',') === 'bundleId,driverVersion'
   ) {
     recordPass(id);
   } else {
-    recordFail(id, `${devices.stdout}${devices.stderr}${JSON.stringify(entry, null, 2)}\n`, devices.code === 0 ? 'assertion' : 'command');
+    recordFail(id, `${configList.stdout}${configList.stderr}${JSON.stringify(entry, null, 2)}\n`, configList.code === 0 ? 'assertion' : 'command');
   }
 }
 
@@ -1023,90 +1022,6 @@ async function unsupportedCase(id, reason) {
   recordUnsupported(id, resolvedReason);
 }
 
-function writeFlowFixtures() {
-  flowDir = path.join(artifactDir, 'flows');
-  ensureDir(flowDir);
-  writeFile(path.join(flowDir, 'basic.yaml'), `name: simulator-basic-flow
-app: com.apple.Preferences
-vars:
-  targetLabel: com.apple.settings.general
-steps:
-  - action: waitFor
-    label: \${vars.targetLabel}
-    traits: Button
-    timeout: 3
-  - action: dom
-    fresh: true
-    candidates:
-      - \${vars.targetLabel}
-      - Search
-    outputs: page
-  - action: returnIf
-    value: \${page.firstMatch}
-    is: null
-  - action: sleep
-    ms: 10
-  - action: dom
-    fresh: true
-`);
-  writeFile(path.join(flowDir, 'child.yaml'), `name: simulator-child-flow
-vars:
-  targetLabel: com.apple.settings.general
-outputs: found
-steps:
-  - action: waitFor
-    label: \${vars.targetLabel}
-    traits: Button
-    timeout: 3
-  - action: dom
-    candidates:
-      - \${vars.targetLabel}
-    outputs: found
-`);
-  writeFile(path.join(flowDir, 'parent.yaml'), `name: simulator-parent-flow
-app: com.apple.Preferences
-steps:
-  - action: runFlow
-    file: ./child.yaml
-    vars:
-      targetLabel: com.apple.settings.general
-    outputs: found
-  - action: waitFor
-    label: \${found.firstMatch.label}
-    traits: Button
-    timeout: 3
-	`);
-  writeFile(path.join(flowDir, 'missing-output.yaml'), `name: simulator-missing-output-flow
-app: com.apple.Preferences
-steps:
-  - action: runFlow
-    file: ./child.yaml
-    outputs: missingValue
-`);
-  writeFile(path.join(flowDir, 'cycle-a.yaml'), 'name: cycle-a\nsteps:\n  - action: runFlow\n    file: ./cycle-b.yaml\n');
-  writeFile(path.join(flowDir, 'cycle-b.yaml'), 'name: cycle-b\nsteps:\n  - action: runFlow\n    file: ./cycle-a.yaml\n');
-  writeFile(path.join(flowDir, 'return-null.yaml'), `name: simulator-return-null-flow
-app: com.apple.Preferences
-steps:
-  - action: dom
-    candidates:
-      - __ios_use_missing_label__
-    outputs: page
-  - action: returnIf
-    value: \${page.firstMatch}
-    is: null
-  - action: tap
-    label: __must_not_run__
-`);
-  writeFile(path.join(flowDir, 'invalid-return.yaml'), 'name: simulator-invalid-return-flow\nsteps:\n  - action: returnIf\n    value: true\n    is: invalid\n');
-  writeFile(path.join(flowDir, 'tap-offset.yaml'), 'name: simulator-tap-offset-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    offsetRatio: "0.5,"\n');
-  writeFile(path.join(flowDir, 'tap-dom.yaml'), 'name: simulator-tap-dom-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    dom: 100\n');
-  writeFile(path.join(flowDir, 'tap-dom-zero.yaml'), 'name: simulator-tap-dom-zero-flow\napp: com.apple.Preferences\nsteps:\n  - action: tap\n    label: com.apple.settings.general\n    traits: Button\n    dom: 0\n');
-  writeFile(path.join(flowDir, 'sleep-default.yaml'), 'name: simulator-sleep-default-flow\napp: com.apple.Preferences\nsteps:\n  - action: sleep\n  - action: dom\n    fresh: true\n');
-  writeFile(path.join(flowDir, 'dom-save.yaml'), 'name: simulator-dom-save-flow\napp: com.apple.Preferences\nsteps:\n  - action: dom\n    save: true\n    name: simulator-dom-save\n');
-  writeFile(path.join(flowDir, 'oslog-timeout.yaml'), 'name: simulator-oslog-timeout-flow\napp: com.apple.Preferences\nsteps:\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    process: Preferences\n    timeout: 0.2\n');
-  writeFile(path.join(flowDir, 'standard-smoke.yaml'), 'name: simulator-standard-smoke-flow\napp: com.apple.Preferences\nsteps:\n  - action: waitFor\n    label: com.apple.settings.general\n    traits: Button\n    timeout: 5\n  - action: dom\n    outputs: smokeDom\n  - action: screenshot\n    name: simulator-flow-smoke-screenshot\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    process: Preferences\n  - action: swipe\n    distance: 300\n    dir: forth\n  - action: oslog\n    pattern: __ios_use_no_such_log_line__\n    timeout: 0.2\n    process: Preferences\n  - action: activateApp\n    bundleId: com.apple.Preferences\n  - action: dom\n    raw: true\n    outputs: smokeRaw\n');
-}
 
 async function runDomPerfCase() {
   const id = 'DOM-7';
@@ -1198,7 +1113,6 @@ function buildCaseContext() {
     ensureDriverReady,
     ensureDriverStarted,
     findProxyPrecheckReferences,
-    flowDir,
     fs,
     generalPage,
     iosHome,
@@ -1264,7 +1178,6 @@ function buildCases() {
     ...buildSettingsBeforeContactsCases(ctx),
     ...buildContactsCases(ctx),
     ...buildSettingsAfterContactsCases(ctx),
-    ...buildFlowCases(ctx),
     ...buildHostBridgeCases(ctx),
   ];
 }
@@ -1314,7 +1227,6 @@ async function main() {
   console.log(`[sim-test] Artifacts: ${artifactDir}`);
 
   backupLocalState();
-  writeFlowFixtures();
   let cleanupDone = false;
   const safeCleanup = async () => {
     if (cleanupDone) return;

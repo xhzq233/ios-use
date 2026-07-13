@@ -130,7 +130,7 @@ bootstrap_remote_repo() {
   echo "Downloading ios-use source from ${GITHUB_REPO}@${GITHUB_REF}..."
   curl -fsSL "$archive_url" | tar -xzf - -C "$BOOTSTRAP_DIR"
   ROOT_DIR="$(find "$BOOTSTRAP_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  if [[ -z "$ROOT_DIR" || ! -d "$ROOT_DIR/ios-use-skill" || ! -d "$ROOT_DIR/flows" ]]; then
+  if [[ -z "$ROOT_DIR" || ! -d "$ROOT_DIR/ios-use-skill" ]]; then
     echo "Failed to bootstrap ios-use source tree." >&2
     exit 1
   fi
@@ -172,6 +172,48 @@ install_driver_artifact() {
   curl -fsSL "$(release_asset_url "$DRIVER_VERSION" "$asset")" -o "$destination"
 }
 
+cleanup_legacy_flow_artifacts() {
+  local flows_dir="$HOME/.ios-use/flows"
+  [[ -d "$flows_dir" ]] || return 0
+
+  # Older releases installed bundled recipes here. Remove only names that
+  # shipped with ios-use; leave user-authored files untouched and explain the
+  # migration because the public Flow/YAML command no longer exists.
+  local legacy_names=(
+    proxy_clear_wifi_proxy.yaml
+    proxy_configca.yaml
+    proxy_set_wifi_proxy.yaml
+    subflow_wait_and_find.yaml
+    subflow_wait_and_match.yaml
+    test_flow.yaml
+    tmp_nslog_perf.yaml
+  )
+  local removed=()
+  local name path
+  for name in "${legacy_names[@]}"; do
+    path="$flows_dir/$name"
+    if [[ -f "$path" || -L "$path" ]]; then
+      rm -f "$path"
+      removed+=("$name")
+    fi
+  done
+
+  if [[ "${#removed[@]}" -gt 0 ]]; then
+    echo "Removed legacy bundled Flow files from $flows_dir: ${removed[*]}"
+  fi
+
+  local has_custom=0
+  for path in "$flows_dir"/*; do
+    if [[ -f "$path" || -L "$path" ]]; then
+      has_custom=1
+      break
+    fi
+  done
+  if [[ "$has_custom" -eq 1 ]]; then
+    echo "Note: custom files remain in $flows_dir, but the ios-use Flow/YAML command was removed; migrate them to shell scripts under your project."
+  fi
+}
+
 install_binary() {
   local target_dir="$1"
   mkdir -p "$target_dir" "$HOME/.ios-use/runtime"
@@ -191,13 +233,7 @@ install_binary() {
     ln -sfn "$skill_dst" "$skill_link"
   fi
 
-  # flows: install YAML flows to ~/.ios-use/flows/
-  local flows_src="$ROOT_DIR/flows"
-  local flows_dst="$HOME/.ios-use/flows"
-  if [[ -d "$flows_src" ]]; then
-    rm -rf "$flows_dst"
-    cp -R "$flows_src" "$flows_dst"
-  fi
+  cleanup_legacy_flow_artifacts
 
   # altsign-cli: GitHub Release
   local alt_bin="$HOME/.ios-use/altsign-cli/altsign-cli"
@@ -262,7 +298,7 @@ fi
 
 echo ""
 echo "Next steps:"
-echo "  ios-use devices"
+echo "  ios-use status"
 echo "  ios-use config --udid <udid>"
 echo "  ios-use start <udid>"
 echo "  ios-use activateApp <bundleId>"

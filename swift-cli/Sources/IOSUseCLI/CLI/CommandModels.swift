@@ -11,10 +11,9 @@ public enum ParsedCommand: Equatable, Sendable {
     case ddiMount(DDIMountOptions)
     case open(OpenURLOptions)
     case appLifecycle(AppLifecycleOptions)
-    case logRead(AppLogReadOptions)
     case oslog(OSLogOptions)
     case driver(DriverAction)
-    case flow(FlowOptions)
+    case capture(CaptureOptions)
     case nslog(NSLogOptions)
     case proxy(ProxyCommand)
 
@@ -30,10 +29,9 @@ public enum ParsedCommand: Equatable, Sendable {
         case .ddiMount: return "ddi-mount"
         case .open: return "open"
         case .appLifecycle(let options): return options.action.commandName
-        case .logRead: return "log-read"
         case .oslog: return "oslog"
         case .driver(let action): return action.name
-        case .flow: return "flow"
+        case .capture: return "capture"
         case .nslog: return "nslog"
         case .proxy(let command): return "proxy \(command.subcommand)"
         }
@@ -170,22 +168,6 @@ public struct AppLifecycleOptions: Equatable, Sendable {
     }
 }
 
-public struct AppLogReadOptions: Equatable, Sendable {
-    public var pattern: String?
-    public var flags: String
-    public var timeout: Double?
-    public var clearAfterRead: Bool
-    public var last: Int?
-
-    public init(pattern: String? = nil, flags: String = "", timeout: Double? = nil, clearAfterRead: Bool = false, last: Int? = nil) {
-        self.pattern = pattern
-        self.flags = flags
-        self.timeout = timeout
-        self.clearAfterRead = clearAfterRead
-        self.last = last
-    }
-}
-
 public struct OSLogOptions: Equatable, Sendable {
     public struct SourceFilter: Equatable, Sendable {
         public var process: String?
@@ -212,6 +194,20 @@ public struct OSLogOptions: Equatable, Sendable {
     }
 }
 
+public struct CaptureOptions: Equatable, Sendable {
+    public var duration: Double
+    public var fps: Double
+    public var name: String?
+    public var keepChangedFrames: Bool
+
+    public init(duration: Double, fps: Double = 10, name: String? = nil, keepChangedFrames: Bool = false) {
+        self.duration = duration
+        self.fps = fps
+        self.name = name
+        self.keepChangedFrames = keepChangedFrames
+    }
+}
+
 public enum PostDomMode: Equatable, Sendable {
     case afterQuiescence
     case afterMilliseconds(Int)
@@ -223,8 +219,8 @@ public enum DriverAction: Equatable, Sendable {
     case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool)
-    case screenshot(name: String?)
-    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?)
+    case screenshot(name: String?, ocr: Bool)
+    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool)
     case activateApp(bundleId: String)
     case terminateApp(bundleId: String)
     case home
@@ -247,15 +243,15 @@ public enum DriverAction: Equatable, Sendable {
     }
 }
 
-public struct FlowOptions: Equatable, Sendable {
-    public var file: String
-    public var verbose = false
-    public var externalVars: [String: String] = [:]
+public extension DriverAction {
+    /// Source-compatible convenience for callers that do not need disappearance semantics.
+    static func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) -> DriverAction {
+        .waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: false)
+    }
 
-    public init(file: String, verbose: Bool = false, externalVars: [String: String] = [:]) {
-        self.file = file
-        self.verbose = verbose
-        self.externalVars = externalVars
+    /// Source-compatible convenience for callers that use the default accurate OCR.
+    static func screenshot(name: String?) -> DriverAction {
+        .screenshot(name: name, ocr: true)
     }
 }
 

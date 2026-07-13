@@ -18,7 +18,7 @@ ios-use proxy start
 ios-use proxy stop
 
 # 5. 查看抓包数据（读取最近一次 proxy start 写入的 last capture）
-ios-use proxy read [--filter <表达式>] [--raw] [--last N]
+ios-use proxy read
 ```
 
 ## 2. 抓包文件
@@ -26,9 +26,9 @@ ios-use proxy read [--filter <表达式>] [--raw] [--last N]
 `proxy start` 成功后会输出抓包文件路径，格式为：
 
 ```
-ℹ Capture: /Users/xxx/.ios-use/artifacts/proxy-2026-05-13T05-33-13-861Z.mitm
-ℹ View with: mitmweb -r /Users/xxx/.ios-use/artifacts/proxy-2026-05-13T05-33-13-861Z.mitm
-ℹ Read with: ios-use proxy read
+Capture: /Users/xxx/.ios-use/artifacts/proxy-2026-05-13T05-33-13-861Z.mitm
+View with: mitmweb -r /Users/xxx/.ios-use/artifacts/proxy-2026-05-13T05-33-13-861Z.mitm
+Read with: ios-use proxy read
 ```
 
 文件保存在 `~/.ios-use/artifacts/`，命名格式 `proxy-<ISO-timestamp>.mitm`。`proxy start` 会把本次文件写为 last capture；`proxy stop` 不会删除 last capture，stop 后仍可继续用 `ios-use proxy read` 读取。
@@ -69,7 +69,7 @@ mitmdump -n -r file.mitm --set hardump=output.har
 | 命令 | 说明 |
 |------|------|
 | `proxy configca` | 安装并信任 mitmproxy CA；若需要设备密码或手动信任证书，完成后用 `--mark-trusted` 记录人工确认 |
-| `proxy configca --mark-trusted` | 不 push CA、不执行安装 flow，只在已有当前 CA 文件时记录人工确认 |
+| `proxy configca --mark-trusted` | 不 push CA、不执行安装步骤，只在已有当前 CA 文件时记录人工确认 |
 | `proxy start [--server] [-i <interface>]` | 默认启动抓包 + 配置设备 Wi-Fi 代理，并记录 last capture；`--server` 只启动本机 mitmdump |
 | `proxy read [--filter <expression>] [--raw] [--last N]` | 读取最近一次 `proxy start` 记录的 last capture，`proxy stop` 后仍可读 |
 | `proxy stop [--server]` | 默认清除设备 Wi-Fi 代理 + 停止抓包；`--server` 只停止本机 mitmdump |

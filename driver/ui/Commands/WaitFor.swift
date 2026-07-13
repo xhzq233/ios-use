@@ -4,7 +4,7 @@ import Fory
 // MARK: - WaitFor (doc 6.5)
 
 enum WaitForCommands {
-    /// doc 6.5 — poll rawFind until target label is visible or timeout.
+    /// Poll rawFind until target label is visible, or (with --gone) until no exact visible match remains.
     static func waitFor(_ args: ForyWaitForArgs) throws -> ForyResponseFrame {
         _ = try Session.shared.ensureActive()
 
@@ -15,6 +15,7 @@ enum WaitForCommands {
         let t0 = CFAbsoluteTimeGetCurrent()
 
         var shouldUseFreshSnapshot = false
+        var remainingExactMatches = 0
         while true {
             if shouldUseFreshSnapshot {
                 invalidateSnapshot()
@@ -26,6 +27,12 @@ enum WaitForCommands {
 
             switch result {
             case .found(let elem):
+                if args.gone {
+                    // A gone wait only succeeds after an observation with no exact visible match.
+                    // Keep polling through ambiguous snapshots as well; a duplicate is still visible.
+                    remainingExactMatches = 1
+                    break
+                }
                 let elapsed = CFAbsoluteTimeGetCurrent() - t0
                 let payload = ForyWaitForPayload(
                     element: makeForyElementSummary(elem.node),
@@ -33,14 +40,33 @@ enum WaitForCommands {
                 )
                 return try Codec.foryOK(payload)
             case .ambiguous(let matches):
+                if args.gone {
+                    remainingExactMatches = matches.count
+                    break
+                }
                 return ambiguityResponse(args.target.label, matches: matches)
-            case .fuzzy, .notFound:
+            case .fuzzy:
+                remainingExactMatches = 0
                 break
+            case .notFound:
+                remainingExactMatches = 0
+                if args.gone {
+                    let elapsed = CFAbsoluteTimeGetCurrent() - t0
+                    let payload = ForyWaitForPayload(waited: Double(elapsed).sanitized)
+                    return try Codec.foryOK(payload)
+                }
             }
 
             let elapsed = CFAbsoluteTimeGetCurrent() - t0
             if elapsed >= timeout {
-                return Codec.foryError("waitFor '\(args.target.label)' timed out after \(timeout)s")
+                let suffix: String
+                if args.gone {
+                    let noun = remainingExactMatches == 1 ? "match" : "matches"
+                    suffix = "; \(remainingExactMatches) visible exact \(noun) remained"
+                } else {
+                    suffix = ""
+                }
+                return Codec.foryError("waitFor '\(args.target.label)' timed out after \(timeout)s\(suffix)")
             }
             shouldUseFreshSnapshot = true
             usleep(UInt32(IOSUseProtocol.waitForPollIntervalMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))

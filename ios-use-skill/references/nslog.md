@@ -1,6 +1,6 @@
 # NSLogger / nslog
 
-`nslog` 是旧 NSLogger 入口。只有目标 App 已接入 NSLogger，或旧 Flow 明确使用 `needNSLog` / `nslog` action 时再用。普通 App 启动日志优先用主手册里的 `activateApp --terminateExisting --log`；系统 unified log 用 `oslog`。
+`nslog` 是旧 NSLogger 入口。只有目标 App 已接入 NSLogger 时再用。普通 App 启动日志优先用主手册里的 `activateApp --terminateExisting --log`；系统 unified log 用 `oslog`。
 
 ## 常用命令
 

@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/50de69c3-dce7-474d-8ec4-008b81cdefde
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 
-ios-use devices
+ios-use status
 ios-use config --udid <device-udid>
 ios-use start <device-udid>
 ios-use activateApp com.apple.Preferences
@@ -32,7 +32,7 @@ After `start`, screen-driving commands target the selected device. To switch dev
 - **Target-based command semantics**: actions can target label/value text instead of raw coordinates. The driver resolves element frames internally, while coordinate and offset modes remain available for visual-only controls.
 - **Single binary, zero infrastructure**: no separate server process, no port forwarding, no extra bridge to maintain.
 - **Real device and Simulator support**: real devices connect through usbmuxd; Simulators connect over `localhost`.
-- **Flows, logs, and proxy capture included**: YAML flows, OSLog, NSLogger, and HTTP/HTTPS proxy capture are first-class CLI workflows.
+- **Logs and proxy capture included**: OSLog, NSLogger, and HTTP/HTTPS proxy capture are first-class CLI workflows; repeatable multi-step recipes can be composed with shell scripts.
 
 ## AX-First, Vision-Aware Architecture
 
@@ -95,11 +95,11 @@ Choose the environment you want to drive.
 **Real device:**
 
 ```bash
-ios-use devices
+ios-use status
 
 # First run: sign with a free Apple Developer account (Personal Team; no paid $99 program).
-# --password is that developer account's login password. Omit it to be prompted securely instead.
-ios-use config --udid <device-udid> --apple-id <email> --password '<developer-account-password>'
+# Omit --password so the CLI prompts securely for the developer account login.
+ios-use config --udid <device-udid> --apple-id <email>
 
 # Later runs: cached signing state is reused.
 ios-use config --udid <device-udid>
@@ -109,20 +109,20 @@ ios-use start <device-udid>
 **Simulator:**
 
 ```bash
-ios-use devices --simulator
+xcrun simctl list devices booted
 ios-use config --simulator --udid <simulator-udid>
 ios-use start <simulator-udid>
 ```
 
-When upgrading `ios-use`, run `ios-use devices` after installation. If a device line says `driver update required`, run `ios-use config --udid <device-udid>` again so the on-device driver matches the newly installed CLI.
+When upgrading `ios-use`, run `ios-use status` and `ios-use config --list` after installation. If an entry says `driver update required`, run `ios-use config --udid <device-udid>` again so the on-device driver matches the newly installed CLI.
 
-Free Apple Developer signing expires after about 7 days. `ios-use devices` and `ios-use status` show the signing state, and `ios-use start` warns during the final day before expiry or after expiry. If an expired driver fails to launch, run `ios-use config --udid <device-udid>` again to re-sign and reinstall it before trusting the developer profile if iOS asks.
+Free Apple Developer signing expires after about 7 days. `ios-use status` and `ios-use config --list` show the signing state, and `ios-use start` warns during the final day before expiry or after expiry. If an expired driver fails to launch, run `ios-use config --udid <device-udid>` again to re-sign and reinstall it before trusting the developer profile if iOS asks.
 
 ## Command Overview
 
 | Command | Use it for |
 | --- | --- |
-| `devices` | List real devices or Simulators and see configuration status. |
+| `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
 | `config` | Install or update the on-device driver. |
 | `start` / `stop` | Select or release the current automation target. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID. |
@@ -130,8 +130,8 @@ Free Apple Developer signing expires after about 7 days. `ios-use devices` and `
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
 | `input` | Type into the current keyboard focus, optionally tapping a target first. |
-| `screenshot` | Capture a visual fallback when DOM is not enough. |
-| `flow` | Run a YAML automation flow. |
+| `screenshot` | Capture a visual fallback with accurate host OCR by default. |
+| `capture` | Capture a fixed-rate JPEG sequence plus `manifest.json` (max 10 FPS). |
 | `oslog` / `nslog` | Capture system logs or app-side NSLogger output. |
 | `proxy` | Capture HTTP/HTTPS traffic through mitmproxy. |
 | `open` | Open a URL or custom scheme on a device. |
@@ -146,12 +146,18 @@ ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use input --tap "搜索" --content "蓝牙"
 ios-use screenshot --name settings-home
+
+# Short visual sequence; run the interaction separately so the capture primitive stays composable.
+ios-use tap "站姿1" && ios-use capture --fps 10 --duration 3 --name pose-sweep
 ```
 
-Typical flow:
+Repeatable sequences are ordinary shell scripts, so they can use variables, conditionals, and the same CLI commands without another DSL:
 
 ```bash
-ios-use flow flows/test_flow.yaml
+set -euo pipefail
+ios-use waitFor --label "蓝牙" --timeout 8
+ios-use tap "蓝牙"
+ios-use dom
 ```
 
 ## Performance Snapshot
@@ -168,28 +174,17 @@ The benchmark below compares `ios-use` against the full `Appium Server -> WebDri
 
 These are the operations that matter most to AI agents: start a session, refresh UI state, wait for changes, and act. Full benchmark setup and the complete table are in [docs/benchmark.md](docs/benchmark.md).
 
-## Flow Example
+## Proxy Shell Examples
 
-```yaml
-name: Settings Search
-app: com.apple.Preferences
-steps:
-  - action: waitFor
-    label: 蓝牙
-    timeout: 8
-
-  - action: tap
-    label: 蓝牙
-
-  - action: dom
-    outputs: settingsDom
-```
-
-Run it with:
+The three former proxy recipes are available as copyable shell examples. They use the public CLI primitives and are intentionally kept separate from the built-in `proxy` state machine:
 
 ```bash
-ios-use flow settings.yaml
+bash examples/proxy/configca.sh
+bash examples/proxy/set-wifi-proxy.sh --server 192.168.1.10 --port 8080
+bash examples/proxy/clear-wifi-proxy.sh
 ```
+
+See [examples/proxy/README.md](examples/proxy/README.md) for prerequisites and step-by-step notes.
 
 ## Dependency Matrix
 
@@ -209,10 +204,10 @@ ios-use flow settings.yaml
 ## Repository Layout
 
 ```text
-swift-cli/             Swift CLI, command parsing, config, Flow, host tools
+swift-cli/             Swift CLI, command parsing, config, proxy, logs, and host tools
 shared/IOSUseProtocol/ Shared Swift RPC types and Fory frame models
 driver/                Swift XCTest driver
-flows/                 Example flows
+examples/proxy/        Copyable shell recipes for proxy device setup
 scripts/               Install, build, test, and benchmark utilities
 docs/                  Public documentation
 ios-use-skill/         Skill documentation installed for agent usage

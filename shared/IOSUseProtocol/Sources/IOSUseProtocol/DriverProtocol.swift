@@ -104,7 +104,7 @@ public enum IOSUseProtocol {
     /// Scale used to round geometry values before serialization.
     public static let sanitizedDecimalScale = 10.0
 
-    // MARK: Host-side logs / flow / proxy
+    // MARK: Host-side logs / proxy
 
     /// Real-device oslog default collection window when caller omits timeout.
     public static let oslogDefaultCollectTimeoutSeconds = 5.0
@@ -126,12 +126,8 @@ public enum IOSUseProtocol {
     public static let nslogCaptureStartPollMicroseconds = 50_000
     /// Poll interval while waiting for nslog child process exit.
     public static let nslogProcessExitPollMicroseconds = 50_000
-    /// Flow waits this long for app-side NSLogger client connection.
-    public static let flowNSLogConnectTimeoutMilliseconds = 15_000
-    /// Flow NSLogger connection polling interval.
-    public static let flowNSLogConnectPollMilliseconds = 200
-    /// Default flow sleep step duration.
-    public static let flowDefaultSleepMilliseconds = 1_000
+    /// App-side NSLogger connection polling interval.
+    public static let nslogConnectPollMilliseconds = 200
     /// Default mitmdump listen port used by `proxy start`.
     public static let proxyMitmdumpPort = 9080
     /// Grace period before killing mitmdump with SIGKILL.

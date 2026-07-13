@@ -12,8 +12,8 @@ enum CLIHelp {
           -V, --version    Show version
 
         Commands:
-          status, config, start, stop, dom, waitFor, screenshot, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, flow, proxy, oslog, nslog, log-read
+          status, config, start, stop, dom, waitFor, screenshot, capture, tap, longpress, input, swipe
+          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
     }
@@ -152,21 +152,42 @@ enum CLIHelp {
             )
         case "waitFor":
             return driverHelp(
-                usage: "ios-use waitFor --label <label> [--timeout <seconds>] [--traits <traits>] [--cindex <index>]",
-                summary: "Wait until an element appears.",
+                usage: "ios-use waitFor --label <label> [--timeout <seconds>] [--traits <traits>] [--cindex <index>] [--gone]",
+                summary: "Wait until an element appears or disappears.",
                 options: [
                     "--label <label>      Target label",
                     "--timeout <seconds>  Maximum wait time",
                     "--traits <traits>    Comma-separated trait filter",
                     "--cindex <index>     Select the Nth cleaned child under a matched parent",
+                    "--gone               Wait until no matching visible element remains",
                 ]
             )
         case "screenshot":
             return driverHelp(
-                usage: "ios-use screenshot [--name <name>]",
+                usage: "ios-use screenshot [--name <name>] [--no-ocr]",
                 summary: "Save a screenshot under ios-use artifacts.",
-                options: ["--name <name>  Output name"]
+                options: [
+                    "--name <name>  Output name",
+                    "--no-ocr       Skip host-side Vision OCR"
+                ]
             )
+        case "capture":
+            return """
+            Usage: ios-use capture [--duration <seconds>] [--fps <number>] [--name <name>] [--keep-changed-frames]
+
+            Capture a short sequence of JPEG screenshots for AI inspection.
+            The output is a directory containing images and manifest.json; no video or GIF is produced.
+            Run a tap first when a capture should start immediately after an interaction.
+
+            Options:
+              --duration <seconds>      Capture duration; defaults to 3 and must be greater than 0
+              --fps <number>            Sampling rate in (0, 10]; defaults to 10
+              --name <name>             Artifact directory name
+              --keep-changed-frames     Keep only frames whose bytes changed from the previous frame
+
+            Requires an active driver.lock. Run `ios-use start` first.
+
+            """
         case "tap":
             return driverHelp(
                 usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
@@ -268,19 +289,6 @@ enum CLIHelp {
                 summary: "Dismiss a system alert.",
                 options: ["--index <index>  Button index; defaults to the last button"]
             )
-        case "flow":
-            return """
-            Usage: ios-use flow <file> [--verbose] [--<var> <value>...]
-
-            Run a YAML flow.
-
-            Options:
-              --verbose       Enable verbose output
-              --<var> <value> Pass an external flow variable
-
-            """
-        case "proxy":
-            return proxyHelp(arguments: rest)
         case "oslog":
             return """
             Usage: ios-use oslog [--udid <udid>] [--process <name> | --pid <pid>] [--pattern <regex>] [--flags <flags>] [--timeout <seconds>] [--verbose]
@@ -319,20 +327,8 @@ enum CLIHelp {
               --last N            Print only the last N matching lines (N > 0)
 
             """
-        case "log-read":
-            return """
-            Usage: ios-use log-read [--pattern <regex>] [--flags <flags>] [--timeout <sec>] [--clearAfterRead] [--last N]
-
-            Read the most recent app stdio capture started by activateApp --log.
-
-            Options:
-              --pattern <regex>   Regex filter
-              --flags <flags>     Regex flags: i, m, s
-              --timeout <sec>     Wait for a matching line while capture is running
-              --clearAfterRead    Truncate the capture log after reading
-              --last N            Print only the last N matching lines (N > 0)
-
-            """
+        case "proxy":
+            return proxyHelp(arguments: rest)
         default:
             return nil
         }
@@ -427,7 +423,7 @@ enum CLIHelp {
 
             Options:
               --filter <expression>  mitmdump filter expression
-              --raw                  Print full flow detail
+              --raw                  Print full capture detail
               --last N               Print only the last N output lines (N > 0)
 
             """

@@ -17,7 +17,7 @@ final class NSLogServiceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testServerOptionsUseRandomPortAndPreserveAllowedFlowFields() {
+    func testServerOptionsUseRandomPortAndPreserveAllowedFields() {
         let options = NSLoggerServerOptions(name: "ios-use-test", publishBonjour: false, maxBufferSize: 3)
 
         XCTAssertEqual(options.port, 0)
@@ -180,14 +180,14 @@ final class NSLogServiceTests: XCTestCase {
         try server.start()
         defer { server.stop() }
 
-        try NSLogService.writeLock(paths: paths, server: server, mode: "flow")
+        try NSLogService.writeLock(paths: paths, server: server, mode: "cli")
         let data = try Data(contentsOf: URL(fileURLWithPath: paths.nslogLock))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         XCTAssertEqual(json["pid"] as? Int, Int(getpid()))
         XCTAssertEqual(json["port"] as? Int, server.port)
         XCTAssertEqual(json["iosUseHome"] as? String, paths.root)
-        XCTAssertEqual(json["mode"] as? String, "flow")
+        XCTAssertEqual(json["mode"] as? String, "cli")
         XCTAssertNil(json["bonjourPid"])
     }
 
@@ -273,11 +273,11 @@ final class NSLogServiceTests: XCTestCase {
     func testStartRefusesExistingLiveCaptureWithoutKillingIt() throws {
         let paths = makePaths()
         try FileManager.default.createDirectory(atPath: "\(paths.root)/state", withIntermediateDirectories: true)
-        try #"{"pid":5555,"port":51723,"startedAt":"old","iosUseHome":"\#(paths.root)","mode":"flow"}"#
+        try #"{"pid":5555,"port":51723,"startedAt":"old","iosUseHome":"\#(paths.root)","mode":"daemon"}"#
             .write(toFile: paths.nslogLock, atomically: true, encoding: .utf8)
         var signals: [(Int32, Int32)] = []
         NSLogService.processAliveOverrideForTesting = { $0 == 5555 }
-        NSLogService.processCommandOverrideForTesting = { _ in "/usr/local/bin/ios-use flow active.yaml" }
+        NSLogService.processCommandOverrideForTesting = { _ in "/usr/local/bin/ios-use nslog start" }
         NSLogService.killOverrideForTesting = { pid, signal in
             signals.append((pid, signal))
             return 0

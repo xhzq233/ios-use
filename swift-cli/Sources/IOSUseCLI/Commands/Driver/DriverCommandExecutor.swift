@@ -35,18 +35,75 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatDom(payload), payload: .dom(payload))
 
-        case .waitFor(let label, let timeout, let traits, let cindex):
-            let payload = try requiredPayload(clientRunner { .waitFor(try $0.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)) }, as: ForyWaitForPayload.self)
+        case .waitFor(let label, let timeout, let traits, let cindex, let gone):
+            let payload = try requiredPayload(clientRunner { .waitFor(try $0.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: gone)) }, as: ForyWaitForPayload.self)
             ok = true
-            return DriverCommandResult(stdout: DriverOutput.formatWaitFor(label: label, payload: payload), payload: .waitFor(payload))
+            return DriverCommandResult(stdout: DriverOutput.formatWaitFor(label: label, payload: payload, gone: gone), payload: .waitFor(payload))
 
-        case .screenshot(let name):
+        case .screenshot(let name, let ocr):
             let data = try requiredPayload(clientRunner { .screenshot(try $0.screenshot()) }, as: Data.self)
             try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
             let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "screenshot", extension: "jpg")
-            try data.write(to: URL(fileURLWithPath: path))
+            // Avoid leaving a stale OCR sidecar when the same artifact name is
+            // reused with `--no-ocr` or when a new recognition attempt fails.
+            let sidecarPath = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("ocr.json").path
+            try? FileManager.default.removeItem(atPath: sidecarPath)
+            // JPEG persistence and OCR are independent host-side work. Run them in
+            // parallel so accurate recognition does not unnecessarily delay the
+            // screenshot artifact becoming available.
+            let work = DispatchGroup()
+            let resultLock = NSLock()
+            var imageError: Error?
+            var ocrOutput: String?
+
+            work.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { work.leave() }
+                do {
+                    try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+                } catch {
+                    resultLock.lock()
+                    imageError = error
+                    resultLock.unlock()
+                }
+            }
+
+            if ocr {
+                work.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    defer { work.leave() }
+                    do {
+                        let ocrStarted = CFAbsoluteTimeGetCurrent()
+                        let result = try OCRService.recognize(data: data)
+                        let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - ocrStarted) * 1000)
+                        let writtenSidecarPath = try OCRService.writeSidecar(result: result, imagePath: path, elapsedMs: elapsedMs)
+                        let output = OCRService.format(result) + "OCR sidecar: \(writtenSidecarPath)\n"
+                        resultLock.lock()
+                        ocrOutput = output
+                        resultLock.unlock()
+                    } catch {
+                        // OCR is an evidence aid. A malformed/unsupported screenshot
+                        // must never turn a successful screenshot command into failure.
+                        resultLock.lock()
+                        ocrOutput = "OCR (accurate): unavailable (\(error))\n"
+                        resultLock.unlock()
+                    }
+                }
+            }
+            work.wait()
+            resultLock.lock()
+            let capturedImageError = imageError
+            let capturedOCROutput = ocrOutput
+            resultLock.unlock()
+            if let capturedImageError {
+                throw capturedImageError
+            }
             ok = true
-            return DriverCommandResult(stdout: "Screenshot saved: \(path)\n", payload: .screenshot(data))
+            var stdout = "Screenshot saved: \(path)\n"
+            if let capturedOCROutput {
+                stdout += capturedOCROutput
+            }
+            return DriverCommandResult(stdout: stdout, payload: .screenshot(data))
 
         case .tap(let target, let offset, let offsetRatio, let traits, let cindex, let postDom):
             let params = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
