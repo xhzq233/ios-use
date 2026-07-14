@@ -22,16 +22,17 @@ tests. Use this evidence order:
 
 1. Read the relevant source under `swift-cli/`, `driver/`, and `shared/IOSUseProtocol/`.
 2. Read the owning unit tests and validation scripts for acceptance behavior.
-3. Use README, command help, and `ios-use-skill/` for the public CLI contract.
+3. Use README and command help for the public CLI contract. Use `ios-use-skill/`
+   only for operational workflows and recovery guidance.
 4. Use design and historical documents to understand boundaries and historical intent; do not copy early-version instructions as current behavior.
 
 ## 2. Documentation rules
 
 - Pure internal refactors and test-only changes usually do not require design updates.
-- User-visible CLI arguments, defaults, output, errors, or state side effects require a focused contract update and tests.
-- Shared protocol or driver lifecycle changes require updates to the shared models, owning tests, and the smallest relevant design note.
-- Test matrix, case ID, or CI changes belong in the owning test documentation.
-- Keep `ios-use-skill/SKILL.md` and its references strictly actionable for CLI users. Do not put Swift, Fory, TCP, XcodeGen, test-matrix, or release implementation notes there.
+- User-visible CLI arguments, defaults, output, errors, or state side effects require a focused update to command help or the smallest owning public document, plus tests.
+- Shared protocol or driver lifecycle changes require updates to the shared models and owning tests. Update a design note only when a durable cross-file invariant changes.
+- Test cases and case IDs belong in the owning executable tests or scripts, not in a parallel Markdown matrix. Update verification guidance only when gate selection changes.
+- Keep `ios-use-skill/SKILL.md` and its references strictly actionable for CLI users. Update them only when command choice, invocation order, or a user-executable recovery path changes. Do not mirror schemas, implementation details, benchmarks, test matrices, or release notes there.
 - Record completed code-change work in the coordinating ContextShell history when the task spans repositories. Do not commit or push unless the user asks.
 
 ## 3. Development commands
@@ -95,5 +96,6 @@ does not silently download or mount an unverified image.
 
 Follow [`docs/how-to-release.md`](docs/how-to-release.md) for release builds,
 version stamping, checksums, and publishing. Before release, synchronize code,
-tests, user docs, examples, skill guidance, and release notes; verify that no
-private local context is included.
+tests, user docs, examples, and release notes. Audit the skill for stale workflows,
+but change it only when operational guidance changed. Verify that no private local
+context is included.
