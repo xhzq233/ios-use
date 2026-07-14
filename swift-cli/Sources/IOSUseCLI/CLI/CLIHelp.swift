@@ -183,7 +183,7 @@ enum CLIHelp {
               --duration <seconds>      Capture duration; defaults to 3 and must be greater than 0
               --fps <number>            Sampling rate in (0, 10]; defaults to 10
               --name <name>             Artifact directory name
-              --keep-changed-frames     Keep only frames whose bytes changed from the previous frame
+              --keep-changed-frames     Keep only visually changed frames (tolerant Logical-size tile diff)
 
             Requires an active driver.lock. Run `ios-use start` first.
 

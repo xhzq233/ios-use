@@ -173,8 +173,9 @@ https://deviceboxhq.com/ddi-17E5179g.zip
 
 ### 6.6 `screenshot`
 
-- 截图并输出保存路径；默认同时运行 macOS Vision 的 accurate OCR，并输出 OCR 文本、坐标和 `.ocr.json` sidecar。
-- OCR sidecar 的每个元素使用紧凑字段：`frame` 和 `frameNorm` 都是 `[x,y,w,h]`；浮点数统一四位小数，不包含额外的 engine 字段。
+- 截图保持设备 native/Retina 分辨率并输出保存路径；默认同时运行 macOS Vision 的 accurate OCR，并输出 OCR 文本和 `.ocr.json` sidecar。
+- OCR sidecar 每个元素只保留一个 Logical Pixel 坐标字段：`frame: [x,y,w,h]`，左上角为原点，浮点数统一四位小数，不包含 `engine` 或重复的 pixel/normalized frame。sidecar 顶层会记录截图像素尺寸、Logical 尺寸和 scale。
+- 真机截图会并行查询 CoreDevice Display Info 来换算 Logical frame；查询失败时命令返回 warning，并退回截图 rect。无法可靠取得 scale 时，sidecar 会明确使用 `coordinateSpace: "pixel"`，不会把像素坐标误标成 Logical 坐标。
 - 只需要像素时使用 `ios-use screenshot --no-ocr --name pixels-only`；OCR 失败不会影响已经写入的截图，但会返回 warning。
 - 只在用户明确要求查看视觉效果，或 DOM 无法说明视觉状态时使用。
 
@@ -187,7 +188,8 @@ ios-use tap "站姿1" && ios-use capture --fps 10 --duration 3 --name pose-sweep
 - `capture` 只做固定时长的截图采样，不内置 tap、trigger、wait 或 shell 执行。
 - `--fps` 范围为 `(0, 10]`，默认 `10`；`--duration` 默认 `3` 秒。
 - 输出目录只有 JPEG 帧和 `manifest.json`，不生成 GIF、视频、contact sheet 或 OCR sidecar。
-- `--keep-changed-frames` 可只保留 JPEG 字节发生变化的采样帧；manifest 仍记录所有采样槽位。
+- `--keep-changed-frames` 使用解码后的容错视觉差异（Logical-size tile diff）保留发生视觉变化的采样帧；JPEG `sha256` 仅作为完整性/快速相同判断。manifest 记录所有实际采样帧和 diff 指标，并用 `missedSlots` 汇总未赶上的采样槽位。
+- 视觉去重在固定采样窗口结束后执行，不占用采样热路径；过期槽位会被跳过，不会用连续 burst 截图伪装成达到目标 FPS。
 
 ## 7. Proxy 入口
 

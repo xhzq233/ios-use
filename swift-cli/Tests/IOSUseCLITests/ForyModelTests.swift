@@ -29,6 +29,22 @@ final class ForyModelTests: XCTestCase {
         XCTAssertEqual(decoded.payload, Data([1, 2, 3]))
     }
 
+    func testScreenshotPayloadCarriesLogicalScreenGeometry() throws {
+        let fory = ForyRegistry.create()
+        let payload = ForyScreenshotPayload(
+            jpeg: Data([1, 2, 3]),
+            logicalSize: ForyPoint(x: 402, y: 874),
+            scale: 3
+        )
+
+        let decoded = try fory.deserialize(try fory.serialize(payload), as: ForyScreenshotPayload.self)
+
+        XCTAssertEqual(decoded.jpeg, Data([1, 2, 3]))
+        XCTAssertEqual(decoded.logicalSize.x, 402)
+        XCTAssertEqual(decoded.logicalSize.y, 874)
+        XCTAssertEqual(decoded.scale, 3)
+    }
+
     func testForyTargetSerializesNilAndPositiveCindex() throws {
         let fory = ForyRegistry.create()
         let nilEncoded = try fory.serialize(ForyTarget(label: "General", traits: "Cell"))

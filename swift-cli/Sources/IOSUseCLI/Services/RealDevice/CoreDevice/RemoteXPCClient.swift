@@ -69,6 +69,19 @@ enum RemoteXPCValue: Equatable {
         }
     }
 
+    var doubleValue: Double? {
+        switch self {
+        case .int64(let value):
+            return Double(value)
+        case .uint64(let value):
+            return Double(value)
+        case .double(let value):
+            return value
+        default:
+            return nil
+        }
+    }
+
     var boolValue: Bool? {
         if case .bool(let value) = self { return value }
         return nil

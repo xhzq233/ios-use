@@ -48,15 +48,19 @@ public extension IOSUseProtocol {
 
         public static let coreDeviceProxyServiceName = "com.apple.internal.devicecompute.CoreDeviceProxy"
         public static let coreDeviceAppServiceName = "com.apple.coredevice.appservice"
+        public static let coreDeviceDeviceInfoServiceName = "com.apple.coredevice.deviceinfo"
         public static let coreDeviceOpenStdIOServiceName = "com.apple.coredevice.openstdiosocket"
         public static let coreDeviceAppServiceVersion = "325.3"
         public static let coreDeviceFeatureLaunchApplication = "com.apple.coredevice.feature.launchapplication"
         public static let coreDeviceFeatureListProcesses = "com.apple.coredevice.feature.listprocesses"
         public static let coreDeviceFeatureListProcessesTokensPath = "com.apple.coredevice.feature.listprocesses.processTokens"
         public static let coreDeviceFeatureSendSignalToProcess = "com.apple.coredevice.feature.sendsignaltoprocess"
+        public static let coreDeviceFeatureGetDisplayInfo = "com.apple.coredevice.feature.getdisplayinfo"
         public static let coreDeviceDDIProtocolVersion: Int64 = 0
         public static let coreDeviceLaunchApplicationTimeoutSeconds = 30.0
         public static let coreDeviceRequestTimeoutSeconds = 10.0
+        public static let coreDeviceDisplayInfoTimeoutSeconds = 0.5
+        public static let coreDeviceDisplayInfoControlTimeoutSeconds = 0.75
 
         public static let remoteServiceDiscoveryPort = 58_783
         public static let remoteXPCDefaultHandshakeTimeoutSeconds = 3.0

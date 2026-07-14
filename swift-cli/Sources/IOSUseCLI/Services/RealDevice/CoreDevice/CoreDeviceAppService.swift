@@ -197,24 +197,16 @@ final class CoreDeviceAppService {
     }
 
     func coreDeviceRequest(featureIdentifier: String, input: [String: RemoteXPCValue]) -> [String: RemoteXPCValue] {
-        return [
-            "CoreDevice.CoreDeviceDDIProtocolVersion": .int64(IOSUseProtocol.XCConstants.coreDeviceDDIProtocolVersion),
-            "CoreDevice.action": .dictionary([:]),
-            "CoreDevice.coreDeviceVersion": Self.coreDeviceVersion(Self.versionString),
-            "CoreDevice.deviceIdentifier": .string(uuidProvider()),
-            "CoreDevice.featureIdentifier": .string(featureIdentifier),
-            "CoreDevice.input": .dictionary(input),
-            "CoreDevice.invocationIdentifier": .string(uuidProvider()),
-        ]
+        CoreDeviceRequestBuilder.make(
+            featureIdentifier: featureIdentifier,
+            input: input,
+            versionString: Self.versionString,
+            uuidProvider: uuidProvider
+        )
     }
 
     static func coreDeviceVersion(_ version: String) -> RemoteXPCValue {
-        let components = version.split(separator: ".").map { UInt64($0) ?? 0 }
-        return .dictionary([
-            "components": .array(components.map { .uint64($0) }),
-            "originalComponentsCount": .int64(Int64(components.count)),
-            "stringValue": .string(version),
-        ])
+        CoreDeviceRequestBuilder.version(version)
     }
 
     static func launchApplicationInput(

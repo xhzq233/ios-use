@@ -14,6 +14,30 @@ struct XCTestSessionHolderControlResponse: Codable, Equatable {
     let bundleId: String?
     let controlSocketPath: String?
     let error: String?
+    let displayInfo: CoreDeviceDisplayInfo?
+    let displayInfoElapsedMs: Int?
+
+    init(
+        status: String,
+        holderPid: Int?,
+        runnerPid: Int?,
+        sessionIdentifier: String?,
+        bundleId: String?,
+        controlSocketPath: String?,
+        error: String?,
+        displayInfo: CoreDeviceDisplayInfo? = nil,
+        displayInfoElapsedMs: Int? = nil
+    ) {
+        self.status = status
+        self.holderPid = holderPid
+        self.runnerPid = runnerPid
+        self.sessionIdentifier = sessionIdentifier
+        self.bundleId = bundleId
+        self.controlSocketPath = controlSocketPath
+        self.error = error
+        self.displayInfo = displayInfo
+        self.displayInfoElapsedMs = displayInfoElapsedMs
+    }
 }
 
 final class XCTestSessionHolderControlState {
@@ -34,6 +58,7 @@ final class XCTestSessionHolderControlState {
     private var sessionIdentifier: String?
     private var error: String?
     private var stopRequested = false
+    private var displayInfoProvider: (() throws -> CoreDeviceDisplayInfo)?
 
     init(holderPid: Int, bundleId: String, controlSocketPath: String) {
         self.holderPid = holderPid
@@ -47,11 +72,16 @@ final class XCTestSessionHolderControlState {
         return stopRequested
     }
 
-    func markReady(runnerPid: Int, sessionIdentifier: String) {
+    func markReady(
+        runnerPid: Int,
+        sessionIdentifier: String,
+        displayInfoProvider: (() throws -> CoreDeviceDisplayInfo)? = nil
+    ) {
         condition.lock()
         self.phase = .ready
         self.runnerPid = runnerPid
         self.sessionIdentifier = sessionIdentifier
+        self.displayInfoProvider = displayInfoProvider
         condition.broadcast()
         condition.unlock()
     }
@@ -60,6 +90,7 @@ final class XCTestSessionHolderControlState {
         condition.lock()
         self.phase = .failed
         self.error = String(describing: error)
+        self.displayInfoProvider = nil
         condition.broadcast()
         condition.unlock()
     }
@@ -79,6 +110,7 @@ final class XCTestSessionHolderControlState {
     func markStopped() {
         condition.lock()
         phase = .stopped
+        displayInfoProvider = nil
         condition.broadcast()
         condition.unlock()
     }
@@ -97,6 +129,56 @@ final class XCTestSessionHolderControlState {
         let response = currentResponseLocked()
         condition.unlock()
         return response
+    }
+
+    func displayInfo() -> XCTestSessionHolderControlResponse {
+        condition.lock()
+        let provider = phase == .ready ? displayInfoProvider : nil
+        let base = currentResponseLocked()
+        condition.unlock()
+
+        guard let provider else {
+            return XCTestSessionHolderControlResponse(
+                status: "error",
+                holderPid: base.holderPid,
+                runnerPid: base.runnerPid,
+                sessionIdentifier: base.sessionIdentifier,
+                bundleId: base.bundleId,
+                controlSocketPath: base.controlSocketPath,
+                error: "CoreDevice Display Info is unavailable while holder status is \(base.status)"
+            )
+        }
+
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        do {
+            let info = try provider()
+            return XCTestSessionHolderControlResponse(
+                status: "ok",
+                holderPid: base.holderPid,
+                runnerPid: base.runnerPid,
+                sessionIdentifier: base.sessionIdentifier,
+                bundleId: base.bundleId,
+                controlSocketPath: base.controlSocketPath,
+                error: nil,
+                displayInfo: info,
+                displayInfoElapsedMs: Int(
+                    (CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond
+                )
+            )
+        } catch {
+            return XCTestSessionHolderControlResponse(
+                status: "error",
+                holderPid: base.holderPid,
+                runnerPid: base.runnerPid,
+                sessionIdentifier: base.sessionIdentifier,
+                bundleId: base.bundleId,
+                controlSocketPath: base.controlSocketPath,
+                error: String(describing: error),
+                displayInfoElapsedMs: Int(
+                    (CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond
+                )
+            )
+        }
     }
 
     private func currentResponseLocked() -> XCTestSessionHolderControlResponse {
@@ -214,6 +296,8 @@ final class XCTestSessionHolderControlServer {
                 response = state.waitForStartResult()
             case "status":
                 response = state.status()
+            case "displayInfo":
+                response = state.displayInfo()
             case "stop":
                 response = state.requestStop()
             default:

@@ -125,9 +125,16 @@ public struct ForyDomPayload {
 @ForyStruct
 public struct ForyScreenshotPayload {
     public var jpeg: Data = Data()
+    /// The current screen coordinate space in logical points, when the driver
+    /// can report it reliably. A zero value asks the host to resolve geometry.
+    public var logicalSize: ForyPoint = ForyPoint()
+    /// The UIKit screen scale used for the screenshot coordinate space.
+    public var scale: Double = 0
 
-    public init(jpeg: Data = Data()) {
+    public init(jpeg: Data = Data(), logicalSize: ForyPoint = ForyPoint(), scale: Double = 0) {
         self.jpeg = jpeg
+        self.logicalSize = logicalSize
+        self.scale = scale
     }
 }
 

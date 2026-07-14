@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import IOSUseProtocol
 
@@ -61,14 +62,21 @@ enum DriverFailureEvidence {
         do {
             try session.run { client in
                 do {
-                    let data = try client.screenshot()
+                    let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
+                        try client.screenshotCapture()
+                    }
+                    let data = capture.jpeg
                     let pathURL = directoryURL.appendingPathComponent("screenshot.jpg")
                     try data.write(to: pathURL, options: .atomic)
                     screenshotPath = pathURL.path
                     screenshotCapturedAtMs = Int((CFAbsoluteTimeGetCurrent() - screenshotStarted) * 1000)
+                    if let warning = capture.warning {
+                        errors.append(warning)
+                    }
                     do {
                         let ocrStarted = CFAbsoluteTimeGetCurrent()
-                        let ocr = try OCRService.recognize(data: data)
+                        let logicalSize = capture.logicalSize.map { CGSize(width: $0.x, height: $0.y) }
+                        let ocr = try OCRService.recognize(data: data, logicalSize: logicalSize, scale: capture.scale)
                         let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - ocrStarted) * 1000)
                         ocrPath = try OCRService.writeSidecar(result: ocr, imagePath: pathURL.path, elapsedMs: elapsedMs)
                     } catch {
