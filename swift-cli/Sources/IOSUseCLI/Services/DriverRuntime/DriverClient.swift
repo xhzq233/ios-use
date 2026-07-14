@@ -45,6 +45,7 @@ protocol DriverCommandClient: AnyObject {
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool) throws -> ForyWaitForPayload
     func screenshot() throws -> Data
+    func screenshotCapture() throws -> ScreenshotCapture
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
     func input(tap: ForyTarget?, content: String) throws
@@ -54,6 +55,41 @@ protocol DriverCommandClient: AnyObject {
     func home() throws
     func dismissAlert(index: Int?) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
+}
+
+struct ScreenshotCapture {
+    let jpeg: Data
+    let pixelSize: ForyPoint?
+    let logicalSize: ForyPoint?
+    let scale: Double?
+    let geometrySource: String?
+    let warning: String?
+    let performance: ScreenshotCapturePerformance?
+
+    init(
+        jpeg: Data,
+        pixelSize: ForyPoint? = nil,
+        logicalSize: ForyPoint? = nil,
+        scale: Double? = nil,
+        geometrySource: String? = nil,
+        warning: String? = nil,
+        performance: ScreenshotCapturePerformance? = nil
+    ) {
+        self.jpeg = jpeg
+        self.pixelSize = pixelSize
+        self.logicalSize = logicalSize
+        self.scale = scale
+        self.geometrySource = geometrySource
+        self.warning = warning
+        self.performance = performance
+    }
+}
+
+struct ScreenshotCapturePerformance: Codable, Equatable {
+    let screenshotElapsedMs: Int
+    let displayInfoElapsedMs: Int?
+    let displayInfoServiceElapsedMs: Int?
+    let totalElapsedMs: Int
 }
 
 enum DriverCommandExecution {
@@ -67,6 +103,10 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func screenshotCapture() throws -> ScreenshotCapture {
+        ScreenshotCapture(jpeg: try screenshot())
+    }
+
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool) throws -> ForyWaitForPayload {
         guard !gone else {
             throw CLIParseError.invalidValue("waitFor --gone is not supported by this driver client")
@@ -232,9 +272,17 @@ final class DriverClient: DriverCommandClient {
     }
 
     func screenshot() throws -> Data {
+        try screenshotCapture().jpeg
+    }
+
+    func screenshotCapture() throws -> ScreenshotCapture {
         let payload = try sendRawPayload(command: DriverCommand.screenshot.rawValue, payload: Data())
         let decoded = try fory.deserialize(payload, as: ForyScreenshotPayload.self)
-        return decoded.jpeg
+        let logicalSize = decoded.logicalSize.x > 0 && decoded.logicalSize.y > 0
+            ? decoded.logicalSize
+            : nil
+        let scale = decoded.scale > 0 ? decoded.scale : nil
+        return ScreenshotCapture(jpeg: decoded.jpeg, logicalSize: logicalSize, scale: scale)
     }
 
     func tap(target: ForyTarget, traits: String?, cindex: Int32? = nil, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {

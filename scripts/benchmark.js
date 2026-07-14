@@ -1202,9 +1202,9 @@ function buildCases(ctx) {
       stateReusable: true,
       invalidatesState: false,
       runs: ctx.iterations,
-      mapping: '`ios-use screenshot` / WDA `GET /screenshot`',
-      notes: 'Warm Settings root screenshot path.',
-      iosRun: async () => { cli(['screenshot', '--name', 'benchmark-ios-use', '--udid', ctx.udid]); },
+      mapping: '`ios-use screenshot --no-ocr` / WDA `GET /screenshot`',
+      notes: 'Warm Settings root pixel-capture path; host OCR is excluded from both sides.',
+      iosRun: async () => { cli(['screenshot', '--no-ocr', '--name', 'benchmark-ios-use', '--udid', ctx.udid]); },
       wdaRun: async () => { await ctx.appium.screenshotToFile('benchmark-wda-appium'); },
     },
     {

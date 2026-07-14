@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 import IOSUseProtocol
-import IOSUseProtocol
 
 struct XCTestRunnerInstallInfo: Equatable {
     let appPath: String
@@ -31,9 +30,11 @@ final class RealDeviceXCTestActiveSession {
     private let controlListener: DTXConnectionIdleListener?
     private let execSession: XCTestManagerSession
     private let controlSession: XCTestManagerSession
+    private let primaryTunnel: CoreDeviceLifecycleTunnelSession
     private let tunnels: [CoreDeviceLifecycleTunnelSession]
     private let eventSink: ((String) -> Void)?
     private let lock = NSLock()
+    private let displayInfoLock = NSLock()
     private var closed = false
 
     init(
@@ -45,6 +46,7 @@ final class RealDeviceXCTestActiveSession {
         controlListener: DTXConnectionIdleListener?,
         execSession: XCTestManagerSession,
         controlSession: XCTestManagerSession,
+        primaryTunnel: CoreDeviceLifecycleTunnelSession,
         tunnels: [CoreDeviceLifecycleTunnelSession],
         eventSink: ((String) -> Void)?
     ) {
@@ -56,6 +58,7 @@ final class RealDeviceXCTestActiveSession {
         self.controlListener = controlListener
         self.execSession = execSession
         self.controlSession = controlSession
+        self.primaryTunnel = primaryTunnel
         self.tunnels = tunnels
         self.eventSink = eventSink
     }
@@ -81,12 +84,16 @@ final class RealDeviceXCTestActiveSession {
         controlSession.close()
         execSession.close()
         appService.close()
+        // Do not tear down the shared tunnel while a best-effort Display Info
+        // request is still using it.
+        displayInfoLock.lock()
         for tunnel in tunnels {
             tunnel.close()
         }
         for tunnel in tunnels {
             _ = tunnel.waitForClose(timeoutSeconds: IOSUseProtocol.XCConstants.xctestTunnelCloseTimeoutSeconds)
         }
+        displayInfoLock.unlock()
     }
 
     var startupFailure: Error? {
@@ -101,6 +108,34 @@ final class RealDeviceXCTestActiveSession {
             return failure
         }
         return nil
+    }
+
+    func getDisplayInfo() throws -> CoreDeviceDisplayInfo {
+        displayInfoLock.lock()
+        defer { displayInfoLock.unlock() }
+
+        lock.lock()
+        let isClosed = closed
+        lock.unlock()
+        guard !isClosed else {
+            throw CLIParseError.invalidValue("XCTest holder session is closed")
+        }
+
+        guard primaryTunnel.peerInfo?.services[CoreDeviceDisplayInfoService.serviceName] != nil else {
+            throw CLIParseError.invalidValue("CoreDevice deviceinfo service is not available")
+        }
+        // deviceinfo closes its RemoteXPC stream after replying. Reuse the
+        // long-lived CoreDevice tunnel, but open a fresh service connection for
+        // each query so consecutive screenshots do not alternate success/failure.
+        eventSink?("opening CoreDevice deviceinfo service")
+        let service = CoreDeviceDisplayInfoService(
+            client: try primaryTunnel.connectRemoteXPCService(
+                CoreDeviceDisplayInfoService.serviceName,
+                routeLabel: "deviceinfo"
+            )
+        )
+        defer { service.close() }
+        return try service.getDisplayInfo()
     }
 
     deinit {
@@ -336,6 +371,7 @@ final class RealDeviceXCTestDriverLifecycle {
                 controlListener: controlListener,
                 execSession: execSession,
                 controlSession: controlSession,
+                primaryTunnel: coreDeviceTunnel,
                 tunnels: [coreDeviceTunnel],
                 eventSink: eventSink
             )

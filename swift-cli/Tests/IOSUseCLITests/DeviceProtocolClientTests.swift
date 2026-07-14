@@ -1360,6 +1360,109 @@ final class DeviceProtocolClientTests: XCTestCase {
         )
     }
 
+    func testCoreDeviceDisplayInfoDecodesPrimaryDisplay() throws {
+        let response = try RemoteXPCWrapper.encode(
+            messageID: 1,
+            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
+            payload: .dictionary([
+                "CoreDevice.output": .dictionary([
+                    "backlightState": .string("on"),
+                    "displays": .array([
+                        .dictionary([
+                            "bounds": .array([
+                                .array([.double(0), .double(0)]),
+                                .array([.double(1206), .double(2622)]),
+                            ]),
+                            "currentOrientation": .string("rot0"),
+                            "displayId": .int64(1),
+                            "name": .string("LCD"),
+                            "nativeOrientation": .string("rot0"),
+                            "nativeSize": .array([.double(1206), .double(2622)]),
+                            "pointScale": .double(3),
+                            "primary": .bool(true),
+                        ]),
+                    ]),
+                    "orientation": .dictionary([
+                        "currentDeviceNonFlatOrientation": .string("portrait"),
+                        "currentDeviceOrientation": .string("portrait"),
+                        "currentDeviceOrientationLocked": .bool(false),
+                    ]),
+                ]),
+            ])
+        )
+        let stream = FakeDeviceStream(reads: [
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(streamID: RemoteXPCHTTP2.replyStreamID, payload: response)
+            ),
+        ])
+        let client = RemoteXPCClient(stream: stream)
+        try client.completeClientHandshake()
+        var uuids = ["device-uuid", "invocation-uuid"]
+        let service = CoreDeviceDisplayInfoService(client: client) { uuids.removeFirst() }
+
+        let info = try service.getDisplayInfo()
+
+        XCTAssertEqual(info.primaryDisplay?.displayID, 1)
+        XCTAssertEqual(info.primaryDisplay?.pointScale, 3)
+        XCTAssertEqual(info.primaryDisplay?.bounds, [0, 0, 1206, 2622])
+        XCTAssertEqual(info.primaryDisplay?.pixelSize, [1206, 2622])
+        XCTAssertEqual(info.currentDeviceOrientation, "portrait")
+        let requestFrame = try RemoteXPCHTTP2.decodeFrame(stream.writes.last!)
+        let request = try XCTUnwrap(try RemoteXPCWrapper.decode(requestFrame.payload).payload?.dictionaryValue)
+        XCTAssertEqual(request["CoreDevice.featureIdentifier"], .string(IOSUseProtocol.XCConstants.coreDeviceFeatureGetDisplayInfo))
+        XCTAssertEqual(request["CoreDevice.CoreDeviceDDIProtocolVersion"], .int64(0))
+    }
+
+    func testRealDeviceCoreDeviceDisplayAndScreenshotProbe() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["IOS_USE_REAL_DEVICE_SCREEN_CAPTURE_PROBE"] == "1" else {
+            throw XCTSkip("set IOS_USE_REAL_DEVICE_SCREEN_CAPTURE_PROBE=1 to benchmark CoreDevice display/screenshot")
+        }
+        guard let udid = environment["IOS_USE_REAL_DEVICE_UDID"], !udid.isEmpty else {
+            throw XCTSkip("set IOS_USE_REAL_DEVICE_UDID to the connected device UDID")
+        }
+        let iterations = max(1, Int(environment["IOS_USE_REAL_DEVICE_SCREEN_CAPTURE_ITERATIONS"] ?? "5") ?? 5)
+        let tunnelStartedAt = CFAbsoluteTimeGetCurrent()
+        let session = try CoreDeviceDirectTunnelRuntime(eventSink: nil).start(udid: udid)
+        let tunnelElapsedMs = Int((CFAbsoluteTimeGetCurrent() - tunnelStartedAt) * 1000)
+        defer {
+            session.close()
+            _ = session.waitForClose(timeoutSeconds: 2)
+        }
+
+        let displayClient = try session.connectRemoteXPCService(CoreDeviceDisplayInfoService.serviceName)
+        let displayService = CoreDeviceDisplayInfoService(client: displayClient)
+        defer { displayService.close() }
+        let displayStartedAt = CFAbsoluteTimeGetCurrent()
+        let displayInfo = try displayService.getDisplayInfo()
+        let displayElapsedMs = Int((CFAbsoluteTimeGetCurrent() - displayStartedAt) * 1000)
+        XCTAssertNotNil(displayInfo.primaryDisplay)
+
+        let screenshotServices = session.peerInfo?.services.keys
+            .filter { $0.localizedCaseInsensitiveContains("screenshot") }
+            .sorted() ?? []
+        let directStatus = screenshotServices.isEmpty
+            ? "unavailable"
+            : "advertised:\(screenshotServices.joined(separator: ","))"
+
+        let dvtStream = try session.connectService(
+            DVTInstrumentsContract.Provider.rsdServiceName,
+            routeLabel: "dvt-screenshot-probe"
+        )
+        let dvtService = try DVTInstrumentsScreenshotProbe(stream: dvtStream)
+        defer { dvtService.close() }
+        var dvtSamples: [Int] = []
+        var dvtSizes: [Int] = []
+        for _ in 0..<iterations {
+            let startedAt = CFAbsoluteTimeGetCurrent()
+            let image = try dvtService.screenshot()
+            dvtSamples.append(Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000))
+            dvtSizes.append(image.count)
+            XCTAssertTrue(image.starts(with: [0x89, 0x50, 0x4e, 0x47]) || image.starts(with: [0xff, 0xd8]))
+        }
+        print("[coredevice-screen-probe] tunnelMs=\(tunnelElapsedMs) displayInfoMs=\(displayElapsedMs) directStatus=\(directStatus) dvtMs=\(dvtSamples) dvtBytes=\(dvtSizes)")
+    }
+
     func testCoreDeviceLaunchApplicationTrustFailureIncludesDeviceTrustHint() throws {
         let response = try RemoteXPCWrapper.encode(
             messageID: 1,
@@ -3120,5 +3223,38 @@ private final class FakeXCTestRunnerAppService: XCTestRunnerAppServicing {
 
     func close() {
         closed = true
+    }
+}
+
+/// Test-only client used by the opt-in real-device backend probe. The product
+/// does not ship a second screenshot backend after the probe showed it slower.
+private final class DVTInstrumentsScreenshotProbe {
+    private static let serviceIdentifier = "com.apple.instruments.server.services.screenshot"
+    private let stream: DeviceStream
+    private let channel: DTXChannelClient
+
+    init(stream: DeviceStream, channelCode: Int32 = 1) throws {
+        self.stream = stream
+        let control = DTXControlChannelClient(stream: stream)
+        try control.notifyCapabilities()
+        try control.requestChannel(code: channelCode, identifier: Self.serviceIdentifier)
+        self.channel = control.channel(code: channelCode)
+    }
+
+    func screenshot() throws -> Data {
+        let response = try channel.invoke(DVTInvocation(
+            serviceIdentifier: Self.serviceIdentifier,
+            selector: "takeScreenshot",
+            arguments: [],
+            expectsReply: true
+        ))
+        guard let image = response as? Data else {
+            throw CLIParseError.invalidValue("DVT screenshot probe returned a non-image response")
+        }
+        return image
+    }
+
+    func close() {
+        stream.close()
     }
 }

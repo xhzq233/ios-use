@@ -87,6 +87,56 @@ final class XCTestSessionHolderServiceTests: XCTestCase {
         XCTAssertTrue(state.shouldStop)
     }
 
+    func testHolderControlSocketReturnsDisplayInfoFromReadySession() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("ius-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let socketPath = directory.appendingPathComponent("holder.sock").path
+        let state = XCTestSessionHolderControlState(
+            holderPid: 123,
+            bundleId: "com.example.driver",
+            controlSocketPath: socketPath
+        )
+        let expected = CoreDeviceDisplayInfo(
+            displays: [
+                CoreDeviceDisplayInfo.Display(
+                    displayID: 1,
+                    name: "LCD",
+                    primary: true,
+                    pointScale: 3,
+                    bounds: [0, 0, 1206, 2622],
+                    nativeSize: [1206, 2622],
+                    currentOrientation: "rot0",
+                    nativeOrientation: "rot0"
+                ),
+            ],
+            currentDeviceOrientation: "portrait",
+            currentDeviceNonFlatOrientation: "portrait",
+            orientationLocked: false,
+            backlightState: "on"
+        )
+        state.markReady(
+            runnerPid: 456,
+            sessionIdentifier: "SESSION-1",
+            displayInfoProvider: { expected }
+        )
+        let server = XCTestSessionHolderControlServer(socketPath: socketPath, state: state)
+        try server.start()
+        defer { server.stop() }
+
+        let response = try XCTestSessionHolderControlClient.request(
+            socketPath: socketPath,
+            command: "displayInfo",
+            timeoutSeconds: 2
+        )
+
+        XCTAssertEqual(response.status, "ok")
+        XCTAssertEqual(response.displayInfo, expected)
+        XCTAssertNotNil(response.displayInfoElapsedMs)
+        XCTAssertNil(response.error)
+    }
+
     func testHolderStopsAfterStartupFailure() {
         let message = XCTestSessionHolderService.holderStopMessage(
             startupFailure: HolderFailure(description: "startup EOF"),

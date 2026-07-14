@@ -5,6 +5,7 @@ enum DriverCommandPayload {
     case dom(ForyDomPayload)
     case waitFor(ForyWaitForPayload)
     case screenshot(Data)
+    case screenshotCapture(ScreenshotCapture)
     case element(ForyElementPayload)
     case swipe(ForySwipePayload)
     case alert(ForyAlertPayload)
@@ -41,7 +42,13 @@ enum DriverCommandExecutor {
             return DriverCommandResult(stdout: DriverOutput.formatWaitFor(label: label, payload: payload, gone: gone), payload: .waitFor(payload))
 
         case .screenshot(let name, let ocr):
-            let data = try requiredPayload(clientRunner { .screenshot(try $0.screenshot()) }, as: Data.self)
+            let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
+                try requiredPayload(
+                    clientRunner { .screenshotCapture(try $0.screenshotCapture()) },
+                    as: ScreenshotCapture.self
+                )
+            }
+            let data = capture.jpeg
             try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
             let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "screenshot", extension: "jpg")
             // Avoid leaving a stale OCR sidecar when the same artifact name is
@@ -74,7 +81,8 @@ enum DriverCommandExecutor {
                     defer { work.leave() }
                     do {
                         let ocrStarted = CFAbsoluteTimeGetCurrent()
-                        let result = try OCRService.recognize(data: data)
+                        let logicalSize = capture.logicalSize.map { CGSize(width: $0.x, height: $0.y) }
+                        let result = try OCRService.recognize(data: data, logicalSize: logicalSize, scale: capture.scale)
                         let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - ocrStarted) * 1000)
                         let writtenSidecarPath = try OCRService.writeSidecar(result: result, imagePath: path, elapsedMs: elapsedMs)
                         let output = OCRService.format(result) + "OCR sidecar: \(writtenSidecarPath)\n"
@@ -100,6 +108,9 @@ enum DriverCommandExecutor {
             }
             ok = true
             var stdout = "Screenshot saved: \(path)\n"
+            if let warning = capture.warning {
+                stdout += "Warning: \(warning)\n"
+            }
             if let capturedOCROutput {
                 stdout += capturedOCROutput
             }
@@ -318,6 +329,7 @@ enum DriverCommandExecutor {
         case .dom(let payload): value = payload
         case .waitFor(let payload): value = payload
         case .screenshot(let payload): value = payload
+        case .screenshotCapture(let payload): value = payload
         case .element(let payload): value = payload
         case .swipe(let payload): value = payload
         case .alert(let payload): value = payload

@@ -13,7 +13,25 @@ struct OCRService {
     struct Result {
         let imageWidth: Int
         let imageHeight: Int
+        let logicalWidth: Double?
+        let logicalHeight: Double?
+        let scale: Double?
         let observations: [Observation]
+
+        init(
+            imageWidth: Int,
+            imageHeight: Int,
+            logicalSize: CGSize? = nil,
+            scale: Double? = nil,
+            observations: [Observation]
+        ) {
+            self.imageWidth = imageWidth
+            self.imageHeight = imageHeight
+            self.logicalWidth = logicalSize.map { Double($0.width) }
+            self.logicalHeight = logicalSize.map { Double($0.height) }
+            self.scale = scale
+            self.observations = observations
+        }
 
         var text: String {
             observations.map(\.text).joined(separator: "\n")
@@ -32,7 +50,7 @@ struct OCRService {
         }
     }
 
-    static func recognize(data: Data) throws -> Result {
+    static func recognize(data: Data, logicalSize: CGSize? = nil, scale: Double? = nil) throws -> Result {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw Error.invalidImage
@@ -70,7 +88,13 @@ struct OCRService {
             }
             return $0.boundingBox.minX < $1.boundingBox.minX
         }
-        return Result(imageWidth: image.width, imageHeight: image.height, observations: observations)
+        return Result(
+            imageWidth: image.width,
+            imageHeight: image.height,
+            logicalSize: logicalSize,
+            scale: scale,
+            observations: observations
+        )
     }
 
     static func format(_ result: Result) -> String {
@@ -80,8 +104,7 @@ struct OCRService {
             let box = observation.boundingBox
             // Vision uses a bottom-left origin; expose the same top-left origin
             // used by screenshots, DOM frames, and the JSON sidecar.
-            let topLeftY = 1 - box.maxY
-            let frame = [box.minX, topLeftY, box.width, box.height]
+            let frame = logicalFrame(box, result: result)
                 .map { fixed4(Double($0)) }
                 .joined(separator: ",")
             return "- \(observation.text) [\(frame)] confidence=\(fixed4(Double(observation.confidence)))"
@@ -94,28 +117,31 @@ struct OCRService {
         let imageName = imageURL.lastPathComponent
         let elements = try result.observations.map { observation -> String in
             let box = observation.boundingBox
-            let normalized = [
-                Double(box.minX),
-                Double(1 - box.maxY),
-                Double(box.width),
-                Double(box.height)
-            ]
-            let pixels = [
-                Int((normalized[0] * Double(result.imageWidth)).rounded()),
-                Int((normalized[1] * Double(result.imageHeight)).rounded()),
-                Int((normalized[2] * Double(result.imageWidth)).rounded()),
-                Int((normalized[3] * Double(result.imageHeight)).rounded())
-            ]
-            let normalizedJSON = normalized.map(fixed4).joined(separator: ",")
-            let pixelsJSON = pixels.map(String.init).joined(separator: ",")
-            return "    {\"text\":\(try jsonString(observation.text)),\"confidence\":\(fixed4(Double(observation.confidence))),\"frame\":[\(pixelsJSON)],\"frameNorm\":[\(normalizedJSON)]}"
+            let frameJSON = logicalFrame(box, result: result).map { fixed4(Double($0)) }.joined(separator: ",")
+            return "    {\"text\":\(try jsonString(observation.text)),\"confidence\":\(fixed4(Double(observation.confidence))),\"frame\":[\(frameJSON)]}"
+        }
+
+        let coordinateSpace = result.logicalWidth != nil && result.logicalHeight != nil ? "logical" : "pixel"
+        let sizeJSON = "[\(result.imageWidth),\(result.imageHeight)]"
+        var imageFields = [
+            "\"file\":\(try jsonString(imageName))",
+            "\"size\":\(sizeJSON)"
+        ]
+        if let logicalWidth = result.logicalWidth, let logicalHeight = result.logicalHeight {
+            imageFields.append("\"logicalSize\":[\(fixed4(logicalWidth)),\(fixed4(logicalHeight))]")
+            let effectiveScale = result.scale ?? min(
+                Double(result.imageWidth) / max(logicalWidth, 1),
+                Double(result.imageHeight) / max(logicalHeight, 1)
+            )
+            imageFields.append("\"scale\":\(fixed4(effectiveScale))")
         }
 
         var json = [
             "{",
-            "  \"schemaVersion\":1,",
+            "  \"schemaVersion\":2,",
             "  \"recognitionLevel\":\"accurate\",",
-            "  \"image\":{\"file\":\(try jsonString(imageName)),\"width\":\(result.imageWidth),\"height\":\(result.imageHeight)},",
+            "  \"coordinateSpace\":\"\(coordinateSpace)\",",
+            "  \"image\":{\(imageFields.joined(separator: ","))},",
             "  \"elapsedMs\":\(elapsedMs),",
             "  \"elements\":["
         ]
@@ -132,6 +158,17 @@ struct OCRService {
         let url = imageURL.deletingPathExtension().appendingPathExtension("ocr.json")
         try json.joined(separator: "\n").data(using: .utf8)!.write(to: url, options: .atomic)
         return url.path
+    }
+
+    private static func logicalFrame(_ box: CGRect, result: Result) -> [Double] {
+        let width = result.logicalWidth ?? Double(result.imageWidth)
+        let height = result.logicalHeight ?? Double(result.imageHeight)
+        return [
+            Double(box.minX) * width,
+            Double(1 - box.maxY) * height,
+            Double(box.width) * width,
+            Double(box.height) * height
+        ]
     }
 
     private static func fixed4(_ value: Double) -> String {

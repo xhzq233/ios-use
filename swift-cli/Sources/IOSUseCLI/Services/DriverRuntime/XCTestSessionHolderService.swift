@@ -46,7 +46,8 @@ enum XCTestSessionHolderService {
             try waitForDriverReadiness(udid: options.udid, log: log)
             controlState.markReady(
                 runnerPid: startedSession.runnerPid,
-                sessionIdentifier: startedSession.sessionIdentifier.uuidString
+                sessionIdentifier: startedSession.sessionIdentifier.uuidString,
+                displayInfoProvider: { try startedSession.getDisplayInfo() }
             )
             log("holder start result runnerPid=\(startedSession.runnerPid) session=\(startedSession.sessionIdentifier.uuidString)")
 
