@@ -36,7 +36,15 @@ enum WaitForCommands {
                     target: args.target
                 )
             }
-            let result = rawFindInSnapshot(args.target, cs: cs, enableFuzzy: false, visibility: .only)
+            // Polling only needs selector state. Skip rejected-candidate diagnostics
+            // so every miss does not rescan the full DOM or build ancestor chains.
+            let result = rawFindInSnapshot(
+                args.target,
+                cs: cs,
+                enableFuzzy: false,
+                visibility: .only,
+                diagnostics: .none
+            )
 
             switch result {
             case .found(let elem):

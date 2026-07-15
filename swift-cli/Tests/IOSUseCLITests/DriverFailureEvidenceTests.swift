@@ -55,7 +55,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
         XCTAssertTrue(DriverFailureEvidence.mutationMayHaveApplied(errorPayload: actionFailure))
     }
 
-    func testUIFailureCapturesScreenshotThenOverlapsAccurateOCRWithFreshDOM() throws {
+    func testUIFailureCapturesScreenshotThenOverlapsFastOCRWithFreshDOM() throws {
         let fixture = try makeFixture(name: "ui-snapshot")
         defer { try? FileManager.default.removeItem(atPath: fixture.root) }
         let concurrency = EvidenceConcurrencyProbe()
@@ -79,7 +79,8 @@ final class DriverFailureEvidenceTests: XCTestCase {
             ]
         )
 
-        DriverFailureEvidence.ocrRecognizerForTesting = { _, logicalSize, scale in
+        DriverFailureEvidence.ocrRecognizerForTesting = { _, logicalSize, scale, recognitionLevel in
+            XCTAssertEqual(recognitionLevel, .fast)
             concurrency.ocrDidStart()
             Thread.sleep(forTimeInterval: 0.15)
             concurrency.ocrDidFinish()
@@ -88,6 +89,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
                 imageHeight: 2622,
                 logicalSize: logicalSize,
                 scale: scale,
+                recognitionLevel: recognitionLevel,
                 observations: []
             )
         }
@@ -154,6 +156,8 @@ final class DriverFailureEvidenceTests: XCTestCase {
         for name in ["screenshot.jpg", "screenshot.ocr.json", "dom.txt"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: manifestURL.deletingLastPathComponent().appendingPathComponent(name).path))
         }
+        let ocr = try jsonObject(at: manifestURL.deletingLastPathComponent().appendingPathComponent("screenshot.ocr.json"))
+        XCTAssertEqual(ocr["recognitionLevel"] as? String, "fast")
 
         let timing = try XCTUnwrap(manifest["timing"] as? [String: Any])
         XCTAssertNotNil(timing["screenshotOffsetMs"])
@@ -214,12 +218,14 @@ final class DriverFailureEvidenceTests: XCTestCase {
             phase: IOSUseErrorPhase.snapshot,
             retryable: true
         )
-        DriverFailureEvidence.ocrRecognizerForTesting = { _, logicalSize, scale in
-            OCRService.Result(
+        DriverFailureEvidence.ocrRecognizerForTesting = { _, logicalSize, scale, recognitionLevel in
+            XCTAssertEqual(recognitionLevel, .fast)
+            return OCRService.Result(
                 imageWidth: 1206,
                 imageHeight: 2622,
                 logicalSize: logicalSize,
                 scale: scale,
+                recognitionLevel: recognitionLevel,
                 observations: []
             )
         }

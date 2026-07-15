@@ -4,6 +4,22 @@ import ImageIO
 import Vision
 
 struct OCRService {
+    enum RecognitionLevel: String {
+        case accurate
+        case fast
+
+        var visionValue: VNRequestTextRecognitionLevel {
+            switch self {
+            case .accurate: return .accurate
+            case .fast: return .fast
+            }
+        }
+
+        var usesLanguageCorrection: Bool {
+            self == .accurate
+        }
+    }
+
     struct Observation {
         let text: String
         let confidence: Float
@@ -16,6 +32,7 @@ struct OCRService {
         let logicalWidth: Double?
         let logicalHeight: Double?
         let scale: Double?
+        let recognitionLevel: RecognitionLevel
         let observations: [Observation]
 
         init(
@@ -23,6 +40,7 @@ struct OCRService {
             imageHeight: Int,
             logicalSize: CGSize? = nil,
             scale: Double? = nil,
+            recognitionLevel: RecognitionLevel = .accurate,
             observations: [Observation]
         ) {
             self.imageWidth = imageWidth
@@ -30,6 +48,7 @@ struct OCRService {
             self.logicalWidth = logicalSize.map { Double($0.width) }
             self.logicalHeight = logicalSize.map { Double($0.height) }
             self.scale = scale
+            self.recognitionLevel = recognitionLevel
             self.observations = observations
         }
 
@@ -50,15 +69,20 @@ struct OCRService {
         }
     }
 
-    static func recognize(data: Data, logicalSize: CGSize? = nil, scale: Double? = nil) throws -> Result {
+    static func recognize(
+        data: Data,
+        logicalSize: CGSize? = nil,
+        scale: Double? = nil,
+        recognitionLevel: RecognitionLevel = .accurate
+    ) throws -> Result {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw Error.invalidImage
         }
 
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
+        request.recognitionLevel = recognitionLevel.visionValue
+        request.usesLanguageCorrection = recognitionLevel.usesLanguageCorrection
         request.recognitionLanguages = ["zh-Hans", "en-US"]
         request.minimumTextHeight = 0.01
 
@@ -93,13 +117,15 @@ struct OCRService {
             imageHeight: image.height,
             logicalSize: logicalSize,
             scale: scale,
+            recognitionLevel: recognitionLevel,
             observations: observations
         )
     }
 
     static func format(_ result: Result) -> String {
-        guard !result.observations.isEmpty else { return "OCR (accurate): none\n" }
-        var lines = ["OCR (accurate):"]
+        let heading = "OCR (\(result.recognitionLevel.rawValue))"
+        guard !result.observations.isEmpty else { return "\(heading): none\n" }
+        var lines = ["\(heading):"]
         lines += result.observations.map { observation in
             let box = observation.boundingBox
             // Vision uses a bottom-left origin; expose the same top-left origin
@@ -139,7 +165,7 @@ struct OCRService {
         var json = [
             "{",
             "  \"schemaVersion\":2,",
-            "  \"recognitionLevel\":\"accurate\",",
+            "  \"recognitionLevel\":\"\(result.recognitionLevel.rawValue)\",",
             "  \"coordinateSpace\":\"\(coordinateSpace)\",",
             "  \"image\":{\(imageFields.joined(separator: ","))},",
             "  \"elapsedMs\":\(elapsedMs),",

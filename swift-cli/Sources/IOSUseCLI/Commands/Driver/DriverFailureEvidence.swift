@@ -74,7 +74,7 @@ enum DriverFailureEvidence {
         let warnings: [String]
     }
 
-    typealias OCRRecognizer = (Data, CGSize?, Double?) throws -> OCRService.Result
+    typealias OCRRecognizer = (Data, CGSize?, Double?, OCRService.RecognitionLevel) throws -> OCRService.Result
     static var ocrRecognizerForTesting: OCRRecognizer?
 
     static func profile(action: DriverAction, errorPayload: ForyErrorPayload) -> Profile {
@@ -157,7 +157,12 @@ enum DriverFailureEvidence {
                     defer { ocrGroup.leave() }
                     let ocrStarted = CFAbsoluteTimeGetCurrent()
                     do {
-                        let result = try recognizeOCR(data: jpeg, logicalSize: logicalSize, scale: scale)
+                        let result = try recognizeOCR(
+                            data: jpeg,
+                            logicalSize: logicalSize,
+                            scale: scale,
+                            recognitionLevel: .fast
+                        )
                         let elapsed = elapsedMilliseconds(since: ocrStarted)
                         let writtenPath = try OCRService.writeSidecar(
                             result: result,
@@ -334,11 +339,21 @@ enum DriverFailureEvidence {
         )
     }
 
-    private static func recognizeOCR(data: Data, logicalSize: CGSize?, scale: Double?) throws -> OCRService.Result {
+    private static func recognizeOCR(
+        data: Data,
+        logicalSize: CGSize?,
+        scale: Double?,
+        recognitionLevel: OCRService.RecognitionLevel
+    ) throws -> OCRService.Result {
         if let ocrRecognizerForTesting {
-            return try ocrRecognizerForTesting(data, logicalSize, scale)
+            return try ocrRecognizerForTesting(data, logicalSize, scale, recognitionLevel)
         }
-        return try OCRService.recognize(data: data, logicalSize: logicalSize, scale: scale)
+        return try OCRService.recognize(
+            data: data,
+            logicalSize: logicalSize,
+            scale: scale,
+            recognitionLevel: recognitionLevel
+        )
     }
 
     private static func elapsedMilliseconds(since startedAt: CFAbsoluteTime) -> Int {
