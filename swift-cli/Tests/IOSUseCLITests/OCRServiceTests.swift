@@ -3,6 +3,13 @@ import CoreGraphics
 @testable import IOSUseCLI
 
 final class OCRServiceTests: XCTestCase {
+    func testRecognitionLevelConfiguresVisionPerformanceMode() {
+        XCTAssertEqual(OCRService.RecognitionLevel.accurate.visionValue, .accurate)
+        XCTAssertTrue(OCRService.RecognitionLevel.accurate.usesLanguageCorrection)
+        XCTAssertEqual(OCRService.RecognitionLevel.fast.visionValue, .fast)
+        XCTAssertFalse(OCRService.RecognitionLevel.fast.usesLanguageCorrection)
+    }
+
     func testFormatUsesCompactFourDecimalCoordinates() {
         let result = OCRService.Result(
             imageWidth: 100,
@@ -54,6 +61,7 @@ final class OCRServiceTests: XCTestCase {
         let logicalSize = try XCTUnwrap(image["logicalSize"] as? [NSNumber])
 
         XCTAssertNil(object["engine"])
+        XCTAssertEqual(object["recognitionLevel"] as? String, "accurate")
         XCTAssertNil(element["framePixels"])
         XCTAssertNil(element["frameNormalized"])
         XCTAssertNil(element["frameNorm"])

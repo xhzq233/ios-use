@@ -15,6 +15,11 @@ enum RawFindVisibility {
     case only
 }
 
+enum RawFindDiagnostics {
+    case full
+    case none
+}
+
 // MARK: - rawFind (doc 6.1)
 
 /// Unified label search against an explicit cleaned snapshot.
@@ -25,10 +30,13 @@ enum RawFindVisibility {
 /// traits, c is candidate string count, q is query length, and t is candidate
 /// length used by fuzzy fallback. Effective-visible filtering adds O(n) before
 /// exact/contains/fuzzy when `visibility == .only`.
+/// `diagnostics == .none` preserves selector semantics while skipping rejected
+/// candidate discovery and ancestor materialization for polling hot paths.
 func rawFindInSnapshot(_ target: ForyTarget,
                        cs: CleanedSnapshot,
                        enableFuzzy: Bool = true,
-                       visibility: RawFindVisibility = .only) -> FindResult {
+                       visibility: RawFindVisibility = .only,
+                       diagnostics: RawFindDiagnostics = .full) -> FindResult {
     let startedAt = CFAbsoluteTimeGetCurrent()
     func finish(_ result: FindResult, detail: String) -> FindResult {
         DriverPerf.append("[perf] \(#function).total query=\"\(target.label)\" visibility=\(visibility) \(detail) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms")
@@ -57,7 +65,7 @@ func rawFindInSnapshot(_ target: ForyTarget,
 
     // 2. Fuzzy fallback when exact and contains both miss.
     if matches.isEmpty {
-        if visibility == .only {
+        if visibility == .only && diagnostics == .full {
             let rejected = contentMatches(in: cs.searchEntries, normalizedQuery: normalizedQuery).compactMap { element -> ForyErrorCandidate? in
                 guard let reason = effectiveVisibilityRejectionReason(element, in: cs.appFrame) else { return nil }
                 return makeErrorCandidate(element, rejectedBy: [reason])
@@ -91,6 +99,9 @@ func rawFindInSnapshot(_ target: ForyTarget,
                 }
             }
             if matches.isEmpty {
+                guard diagnostics == .full else {
+                    return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=traits diagnostics=none")
+                }
                 let rejected = beforeTraitFilter.map {
                     makeErrorCandidate($0, rejectedBy: [IOSUseCandidateRejection.traitMismatch])
                 }
@@ -103,6 +114,9 @@ func rawFindInSnapshot(_ target: ForyTarget,
         let beforeChildIndex = matches
         matches = beforeChildIndex.compactMap { childElement(of: $0, cindex: Int(cindex), in: cs.elements) }
         if matches.isEmpty {
+            guard diagnostics == .full else {
+                return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=cindex diagnostics=none")
+            }
             let rejected = beforeChildIndex.map {
                 makeErrorCandidate($0, rejectedBy: [IOSUseCandidateRejection.childIndexOutOfRange])
             }
@@ -113,6 +127,9 @@ func rawFindInSnapshot(_ target: ForyTarget,
         let beforeVisibilityFilter = matches
         matches = beforeVisibilityFilter.filter { isVisibleWithEffectiveGeometry($0, in: cs.appFrame) }
         if matches.isEmpty {
+            guard diagnostics == .full else {
+                return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=selectedVisibility diagnostics=none")
+            }
             let rejected = beforeVisibilityFilter.map { element in
                 makeErrorCandidate(
                     element,

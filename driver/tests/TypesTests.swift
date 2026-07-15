@@ -246,6 +246,52 @@ final class TypesTests: XCTestCase {
         }
     }
 
+    func testRawFindInSnapshot_NoDiagnosticsOmitsOffscreenCandidateCollection() {
+        let offscreen = FakeRawSnapshot(
+            label: "Bluetooth",
+            elementType: .staticText,
+            frame: CGRect(x: 0, y: 900, width: 80, height: 20),
+            isVisible: true
+        )
+        let cs = makeCleanedSnapshot([
+            makeSnapshotElement(
+                SafeSnapshot(raw: offscreen, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+            )
+        ])
+
+        switch rawFindInSnapshot(
+            ForyTarget(label: "Bluetooth"),
+            cs: cs,
+            enableFuzzy: false,
+            visibility: .only,
+            diagnostics: .none
+        ) {
+        case .notFound(let suggestions, let rejected):
+            XCTAssertTrue(suggestions.isEmpty)
+            XCTAssertTrue(rejected.isEmpty)
+        default:
+            XCTFail("Expected polling lookup to return notFound without diagnostics")
+        }
+    }
+
+    func testRawFindInSnapshot_NoDiagnosticsOmitsTraitMismatchCandidates() {
+        let element = makeElement(label: "Bluetooth", type: .button)
+        let cs = makeCleanedSnapshot([element])
+
+        switch rawFindInSnapshot(
+            ForyTarget(label: "Bluetooth", traits: "Cell"),
+            cs: cs,
+            enableFuzzy: false,
+            diagnostics: .none
+        ) {
+        case .notFound(let suggestions, let rejected):
+            XCTAssertTrue(suggestions.isEmpty)
+            XCTAssertTrue(rejected.isEmpty)
+        default:
+            XCTFail("Expected polling lookup to omit trait diagnostics")
+        }
+    }
+
     // MARK: - Double.sanitized
 
     func testDoubleSanitized_Finite() {
