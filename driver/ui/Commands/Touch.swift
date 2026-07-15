@@ -14,7 +14,13 @@ enum TouchCommands {
         // Path A: absolute coordinate.
         if let pt = target.point {
             guard target.traits.isEmpty, target.cindex == nil else {
-                return Codec.foryError("tap: traits/cindex require label target")
+                return try Codec.foryError(
+                    "tap: traits/cindex require a label target",
+                    category: IOSUseErrorCategory.validation,
+                    code: IOSUseErrorCode.invalidArguments,
+                    phase: IOSUseErrorPhase.validation,
+                    target: target
+                )
             }
             let point = CGPoint(x: pt.x, y: pt.y)
             try tapAtPoint(point, app: app)
@@ -28,13 +34,28 @@ enum TouchCommands {
 
         // Path B: label lookup via rawFind.
         guard !target.label.isEmpty else {
-            return Codec.foryError("tap: invalid label/point")
+            return try Codec.foryError(
+                "tap: invalid label/point target",
+                category: IOSUseErrorCategory.validation,
+                code: IOSUseErrorCode.invalidArguments,
+                phase: IOSUseErrorPhase.validation,
+                target: target
+            )
         }
         switch rawFind(target, visibility: .only) {
         case .found(let elem):
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
-                return Codec.foryError("tap: element '\(target.label)' has zero-area frame")
+                return try Codec.foryError(
+                    "tap: element '\(target.label)' has a zero-area frame",
+                    category: IOSUseErrorCategory.lookup,
+                    code: IOSUseErrorCode.elementNotActionable,
+                    phase: IOSUseErrorPhase.lookup,
+                    retryable: true,
+                    target: target,
+                    candidates: [makeErrorCandidate(elem, rejectedBy: [IOSUseCandidateRejection.zeroAreaFrame])],
+                    candidateCount: 1
+                )
             }
             let point = resolveTapPoint(frame: f, offset: args.offset, ratio: args.ratio)
             try tapAtPoint(point, app: app)
@@ -43,11 +64,11 @@ enum TouchCommands {
             )
             return try Codec.foryOK(payload)
         case .ambiguous(let matches):
-            return ambiguityResponse(target.label, matches: matches)
+            return try ambiguityResponse(target, matches: matches)
         case .fuzzy(let s):
-            return notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
-        case .notFound(let s):
-            return notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
+            return try notFoundResponse(target, suggestions: s)
+        case .notFound(let s, let rejected):
+            return try notFoundResponse(target, suggestions: s, rejected: rejected)
         }
     }
 
@@ -62,7 +83,13 @@ enum TouchCommands {
 
         if let pt = target.point {
             guard target.traits.isEmpty, target.cindex == nil else {
-                return Codec.foryError("longPress: traits/cindex require label target")
+                return try Codec.foryError(
+                    "longPress: traits/cindex require a label target",
+                    category: IOSUseErrorCategory.validation,
+                    code: IOSUseErrorCode.invalidArguments,
+                    phase: IOSUseErrorPhase.validation,
+                    target: target
+                )
             }
             let point = CGPoint(x: pt.x, y: pt.y)
             try pressAtPoint(point, duration: duration, app: app)
@@ -75,13 +102,28 @@ enum TouchCommands {
         }
 
         guard !target.label.isEmpty else {
-            return Codec.foryError("longPress: invalid label/point")
+            return try Codec.foryError(
+                "longPress: invalid label/point target",
+                category: IOSUseErrorCategory.validation,
+                code: IOSUseErrorCode.invalidArguments,
+                phase: IOSUseErrorPhase.validation,
+                target: target
+            )
         }
         switch rawFind(target, visibility: .only) {
         case .found(let elem):
             let f = elem.node.frame
             guard f.width > 0, f.height > 0 else {
-                return Codec.foryError("longPress: element '\(target.label)' has zero-area frame")
+                return try Codec.foryError(
+                    "longPress: element '\(target.label)' has a zero-area frame",
+                    category: IOSUseErrorCategory.lookup,
+                    code: IOSUseErrorCode.elementNotActionable,
+                    phase: IOSUseErrorPhase.lookup,
+                    retryable: true,
+                    target: target,
+                    candidates: [makeErrorCandidate(elem, rejectedBy: [IOSUseCandidateRejection.zeroAreaFrame])],
+                    candidateCount: 1
+                )
             }
             try pressAtPoint(CGPoint(x: f.midX, y: f.midY), duration: duration, app: app)
             let payload = ForyElementPayload(
@@ -89,11 +131,11 @@ enum TouchCommands {
             )
             return try Codec.foryOK(payload)
         case .ambiguous(let matches):
-            return ambiguityResponse(target.label, matches: matches)
+            return try ambiguityResponse(target, matches: matches)
         case .fuzzy(let s):
-            return notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
-        case .notFound(let s):
-            return notFoundResponse(target.label, suggestions: s, hint: "Try adding --traits, or verify the active app")
+            return try notFoundResponse(target, suggestions: s)
+        case .notFound(let s, let rejected):
+            return try notFoundResponse(target, suggestions: s, rejected: rejected)
         }
     }
 
@@ -101,13 +143,13 @@ enum TouchCommands {
 
     private static func tapAtPoint(_ p: CGPoint, app: XCUIApplication) throws {
         if let error = RawPointer.perform(app: app, event: .tap(p)) {
-            throw DriverError.serverError("tap synthesis failed: \(error.localizedDescription)")
+            throw DriverError.gestureFailed("tap synthesis failed: \(error.localizedDescription)")
         }
     }
 
     private static func pressAtPoint(_ p: CGPoint, duration: Double, app: XCUIApplication) throws {
         if let error = RawPointer.perform(app: app, event: .longPress(p, duration: duration)) {
-            throw DriverError.serverError("longPress synthesis failed: \(error.localizedDescription)")
+            throw DriverError.gestureFailed("longPress synthesis failed: \(error.localizedDescription)")
         }
     }
 }

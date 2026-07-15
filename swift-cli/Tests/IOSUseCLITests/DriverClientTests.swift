@@ -19,9 +19,17 @@ final class DriverClientTests: XCTestCase {
     }
 
     func testClientKeepsConnectionAfterNonFatalDriverError() throws {
-        let okPayload = try ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))
+        let fory = ForyRegistry.create()
+        let okPayload = try fory.serialize(ForyDomPayload(app: "fake"))
+        let errorPayload = try fory.serialize(ForyErrorPayload(
+            category: IOSUseErrorCategory.lookup,
+            code: IOSUseErrorCode.elementNotFound,
+            phase: IOSUseErrorPhase.lookup,
+            retryable: true,
+            target: ForyTarget(label: "missing")
+        ))
         let server = try FakeDriverServer(responses: [
-            ForyResponseFrame(ok: false, error: "driver rejected request"),
+            ForyResponseFrame(ok: false, error: "driver rejected request", payload: errorPayload),
             ForyResponseFrame(ok: true, payload: okPayload),
         ])
         defer { server.stop() }
@@ -38,9 +46,16 @@ final class DriverClientTests: XCTestCase {
     }
 
     func testClientClosesConnectionAfterFatalDriverError() throws {
-        let okPayload = try ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))
+        let fory = ForyRegistry.create()
+        let okPayload = try fory.serialize(ForyDomPayload(app: "fake"))
+        let errorPayload = try fory.serialize(ForyErrorPayload(
+            category: IOSUseErrorCategory.timeout,
+            code: IOSUseErrorCode.driverWatchdogTimeout,
+            phase: IOSUseErrorPhase.dispatch,
+            fatal: true
+        ))
         let server = try FakeDriverServer(responses: [
-            ForyResponseFrame(ok: false, error: "[FATAL] main thread stuck"),
+            ForyResponseFrame(ok: false, error: "main thread stuck", payload: errorPayload),
             ForyResponseFrame(ok: true, payload: okPayload),
         ])
         defer { server.stop() }
@@ -48,12 +63,28 @@ final class DriverClientTests: XCTestCase {
         defer { client.close() }
 
         XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
-            XCTAssertTrue(String(describing: error).contains("[FATAL] main thread stuck"))
+            XCTAssertTrue(String(describing: error).contains("[driver_watchdog_timeout] main thread stuck"))
         }
         _ = try client.dom(raw: true, fresh: true)
 
         XCTAssertEqual(server.acceptCount, 2)
         XCTAssertEqual(server.requestCommands, ["dom", "dom"])
+    }
+
+    func testClientRejectsLegacyMessageOnlyDriverError() throws {
+        let server = try FakeDriverServer(responses: [
+            ForyResponseFrame(ok: false, error: "legacy driver error", payload: Data()),
+        ])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        XCTAssertThrowsError(try client.dom(raw: false, fresh: false)) { error in
+            XCTAssertTrue(String(describing: error).contains("invalid driver error payload"))
+            XCTAssertTrue(String(describing: error).contains("empty payload"))
+        }
+
+        XCTAssertTrue(server.waitForDisconnect(timeout: 1.0))
     }
 
     func testClientSerializesWaitForLookupTargetFields() throws {

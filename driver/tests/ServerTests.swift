@@ -85,6 +85,11 @@ final class ServerTests: XCTestCase {
 
         XCTAssertFalse(first.ok)
         XCTAssertTrue(first.error.contains("unknown command"))
+        let firstPayload = try Self.errorPayload(first)
+        XCTAssertEqual(firstPayload.category, IOSUseErrorCategory.protocolFailure)
+        XCTAssertEqual(firstPayload.code, IOSUseErrorCode.unknownCommand)
+        XCTAssertEqual(firstPayload.phase, IOSUseErrorPhase.validation)
+        XCTAssertFalse(firstPayload.fatal)
         XCTAssertFalse(second.ok)
         XCTAssertTrue(second.error.contains("unknown command"))
     }
@@ -326,6 +331,10 @@ final class ServerTests: XCTestCase {
     private static func readResponse(fd: Int32) throws -> ForyResponseFrame {
         let fory = createFory()
         return try fory.deserialize(readLengthPrefixedData(fd), as: ForyResponseFrame.self)
+    }
+
+    private static func errorPayload(_ response: ForyResponseFrame) throws -> ForyErrorPayload {
+        try createFory().deserialize(response.payload, as: ForyErrorPayload.self)
     }
 
     private static func writeAll<T: DataProtocol>(fd: Int32, data: T) throws {

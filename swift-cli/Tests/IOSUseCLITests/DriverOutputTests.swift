@@ -14,22 +14,39 @@ final class DriverOutputTests: XCTestCase {
         XCTAssertEqual(IOSUseElementTypes.displayName(rawType: 999), "-")
     }
 
-    func testDriverErrorUsesDriverProvidedString() {
-        let error = DriverClientError.driverError("""
-        label '关闭' is ambiguous (2 matches)
-        matches:
-          [Application > Table > Cell[蓝牙]] Button [disabled] "关闭" (10,20,30,40)
-        suggestions: 关闭
-        hint: Try adding --traits to disambiguate
-        """)
+    func testDriverErrorFormatsStructuredCandidatesWithoutGenericHint() {
+        let candidate = ForyErrorCandidate(
+            element: ForyFindMatch(
+                elemType: 9,
+                label: "关闭",
+                rect: ForyRect(x: 10, y: 20, w: 30, h: 40),
+                traits: ["Button", "disabled"],
+                ancestors: ["Application", "Table", "Cell[蓝牙]"]
+            ),
+            rejectedBy: [IOSUseCandidateRejection.emptyVisibleFrame]
+        )
+        let payload = ForyErrorPayload(
+            category: IOSUseErrorCategory.lookup,
+            code: IOSUseErrorCode.elementNotActionable,
+            phase: IOSUseErrorPhase.lookup,
+            retryable: true,
+            target: ForyTarget(label: "关闭"),
+            candidateCount: 1,
+            suggestions: ["关闭按钮"],
+            candidates: [candidate]
+        )
+        let error = DriverClientError.driverError(
+            message: "label '关闭' is not actionable",
+            payload: payload
+        )
 
         let output = String(describing: error)
 
-        XCTAssertTrue(output.contains("label '关闭' is ambiguous"))
-        XCTAssertTrue(output.contains("matches:"))
-        XCTAssertTrue(output.contains("[Application > Table > Cell[蓝牙]] Button [disabled] \"关闭\" (10,20,30,40)"))
-        XCTAssertTrue(output.contains("suggestions: 关闭"))
-        XCTAssertTrue(output.contains("hint: Try adding --traits to disambiguate"))
+        XCTAssertTrue(output.contains("[element_not_actionable] label '关闭' is not actionable"))
+        XCTAssertTrue(output.contains("candidates:"))
+        XCTAssertTrue(output.contains("[Application > Table > Cell[蓝牙]] Button [disabled] \"关闭\" [10,20,30,40] rejected=empty_visible_frame"))
+        XCTAssertTrue(output.contains("suggestions: 关闭按钮"))
+        XCTAssertFalse(output.contains("hint:"))
     }
 
     func testFormatDomIncludesInputValues() {

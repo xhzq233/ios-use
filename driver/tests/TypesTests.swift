@@ -63,6 +63,7 @@ final class TypesTests: XCTestCase {
         placeholderValue: String? = nil,
         type: XCUIElement.ElementType = .staticText,
         frame: CGRect = CGRect(x: 0, y: 0, width: 100, height: 40),
+        visibleFrame: CGRect? = nil,
         isVisible: Bool = true
     ) -> SnapshotElement {
         let raw = FakeRawSnapshot(
@@ -72,6 +73,7 @@ final class TypesTests: XCTestCase {
             placeholderValue: placeholderValue,
             elementType: type,
             frame: frame,
+            visibleFrame: visibleFrame,
             isVisible: isVisible
         )
         let snapshot = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
@@ -159,32 +161,36 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(decoded.scrollDirection, "down")
     }
 
-    func testAmbiguityResponseUsesErrorStringWithoutPayload() {
+    func testAmbiguityResponseUsesStructuredPayloadWithoutHint() throws {
         let first = makeElement(label: "关闭", type: .button)
         let second = makeElement(label: "关闭", type: .button)
 
-        let response = ambiguityResponse("关闭", matches: [first, second])
+        let response = try ambiguityResponse(ForyTarget(label: "关闭"), matches: [first, second])
 
         XCTAssertFalse(response.ok)
-        XCTAssertTrue(response.payload.isEmpty)
         XCTAssertTrue(response.error.contains("label '关闭' is ambiguous (2 matches)"))
-        XCTAssertTrue(response.error.contains("matches:"))
-        XCTAssertTrue(response.error.contains("Button \"关闭\""))
-        XCTAssertTrue(response.error.contains("hint: Try adding --traits to disambiguate"))
+        XCTAssertFalse(response.error.contains("hint:"))
+        let payload = try createFory().deserialize(response.payload, as: ForyErrorPayload.self)
+        XCTAssertEqual(payload.category, IOSUseErrorCategory.lookup)
+        XCTAssertEqual(payload.code, IOSUseErrorCode.elementAmbiguous)
+        XCTAssertEqual(payload.candidateCount, 2)
+        XCTAssertEqual(payload.candidates.count, 2)
+        XCTAssertEqual(payload.candidates.first?.element.label, "关闭")
     }
 
-    func testNotFoundResponseUsesErrorStringWithoutPayload() {
-        let response = notFoundResponse(
-            "Bluetoth",
-            suggestions: ["Bluetooth"],
-            hint: "Try adding --traits, or verify the active app"
+    func testNotFoundResponseUsesStructuredPayloadWithoutHint() throws {
+        let response = try notFoundResponse(
+            ForyTarget(label: "Bluetoth"),
+            suggestions: ["Bluetooth"]
         )
 
         XCTAssertFalse(response.ok)
-        XCTAssertTrue(response.payload.isEmpty)
         XCTAssertTrue(response.error.contains("label 'Bluetoth' not found"))
-        XCTAssertTrue(response.error.contains("suggestions: Bluetooth"))
-        XCTAssertTrue(response.error.contains("hint: Try adding --traits, or verify the active app"))
+        XCTAssertFalse(response.error.contains("hint:"))
+        let payload = try createFory().deserialize(response.payload, as: ForyErrorPayload.self)
+        XCTAssertEqual(payload.code, IOSUseErrorCode.elementNotFound)
+        XCTAssertEqual(payload.suggestions, ["Bluetooth"])
+        XCTAssertTrue(payload.candidates.isEmpty)
     }
 
     // MARK: - resolveTapPoint
@@ -220,8 +226,9 @@ final class TypesTests: XCTestCase {
         let cs = makeCleanedSnapshot([element])
 
         switch rawFindInSnapshot(ForyTarget(label: "Bluetoth"), cs: cs, enableFuzzy: false) {
-        case .notFound(let suggestions):
+        case .notFound(let suggestions, let rejected):
             XCTAssertTrue(suggestions.isEmpty)
+            XCTAssertTrue(rejected.isEmpty)
         default:
             XCTFail("Expected notFound when fuzzy is disabled")
         }
@@ -726,8 +733,10 @@ final class TypesTests: XCTestCase {
         let cs = makeCleanedSnapshot([exactStaticText, containingButton])
 
         switch rawFindInSnapshot(ForyTarget(label: "Settings", traits: "Button"), cs: cs) {
-        case .notFound:
-            break
+        case .notFound(_, let rejected):
+            XCTAssertEqual(rejected.count, 1)
+            XCTAssertEqual(rejected.first?.element.label, "Settings")
+            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.traitMismatch])
         default:
             XCTFail("expected exact match filtered by traits to stay notFound without contains fallback")
         }
@@ -828,15 +837,18 @@ final class TypesTests: XCTestCase {
         let cs = makeCleanedSnapshot(buildCleanElements(from: root))
 
         switch rawFindInSnapshot(ForyTarget(label: "蓝牙", traits: "Cell", cindex: 2), cs: cs) {
-        case .notFound:
-            break
+        case .notFound(_, let rejected):
+            XCTAssertEqual(rejected.count, 1)
+            XCTAssertEqual(rejected.first?.element.label, "蓝牙")
+            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.childIndexOutOfRange])
         default:
             XCTFail("expected positive out-of-bounds cindex to return notFound")
         }
 
         switch rawFindInSnapshot(ForyTarget(label: "蓝牙", traits: "Cell", cindex: -2), cs: cs) {
-        case .notFound:
-            break
+        case .notFound(_, let rejected):
+            XCTAssertEqual(rejected.count, 1)
+            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.childIndexOutOfRange])
         default:
             XCTFail("expected negative out-of-bounds cindex to return notFound")
         }
@@ -871,8 +883,10 @@ final class TypesTests: XCTestCase {
         let cs = makeCleanedSnapshot(buildCleanElements(from: root))
 
         switch rawFindInSnapshot(ForyTarget(label: "配置代理", traits: "Cell", cindex: 0), cs: cs, visibility: .only) {
-        case .notFound:
-            break
+        case .notFound(_, let rejected):
+            XCTAssertEqual(rejected.count, 1)
+            XCTAssertEqual(rejected.first?.element.label, "关闭")
+            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.emptyVisibleFrame])
         default:
             XCTFail("expected .only cindex result to filter invisible selected child")
         }
@@ -940,8 +954,10 @@ final class TypesTests: XCTestCase {
         let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: offscreenLabel, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
 
         switch rawFindInSnapshot(ForyTarget(label: "配置代理"), cs: cs, visibility: .only) {
-        case .notFound:
-            break
+        case .notFound(_, let rejected):
+            XCTAssertEqual(rejected.count, 1)
+            XCTAssertEqual(rejected.first?.element.label, "配置代理")
+            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.outsideAppBounds])
         default:
             XCTFail("expected rawFindInSnapshot to return notFound when visibility is .only and matches are not effectively visible")
         }
@@ -958,8 +974,9 @@ final class TypesTests: XCTestCase {
         let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: proxyLabel, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
 
         switch rawFindInSnapshot(ForyTarget(label: "配置代理"), cs: cs, visibility: .only) {
-        case .notFound:
-            break
+        case .notFound(_, let rejected):
+            XCTAssertEqual(rejected.count, 1)
+            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.emptyVisibleFrame])
         default:
             XCTFail("expected non-icon elements with empty visibleFrame to remain not effectively visible even when frame is in bounds")
         }

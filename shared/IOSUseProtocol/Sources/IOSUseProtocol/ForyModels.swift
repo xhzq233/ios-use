@@ -91,6 +91,52 @@ public struct ForyFindMatch {
 }
 
 @ForyStruct
+public struct ForyErrorCandidate {
+    public var element: ForyFindMatch = ForyFindMatch()
+    public var rejectedBy: [String] = []
+
+    public init(element: ForyFindMatch = ForyFindMatch(), rejectedBy: [String] = []) {
+        self.element = element
+        self.rejectedBy = rejectedBy
+    }
+}
+
+@ForyStruct
+public struct ForyErrorPayload {
+    public var category: String = ""
+    public var code: String = ""
+    public var phase: String = ""
+    public var retryable: Bool = false
+    public var fatal: Bool = false
+    public var target: ForyTarget? = nil
+    public var candidateCount: Int32 = 0
+    public var suggestions: [String] = []
+    public var candidates: [ForyErrorCandidate] = []
+
+    public init(
+        category: String = "",
+        code: String = "",
+        phase: String = "",
+        retryable: Bool = false,
+        fatal: Bool = false,
+        target: ForyTarget? = nil,
+        candidateCount: Int32 = 0,
+        suggestions: [String] = [],
+        candidates: [ForyErrorCandidate] = []
+    ) {
+        self.category = category
+        self.code = code
+        self.phase = phase
+        self.retryable = retryable
+        self.fatal = fatal
+        self.target = target
+        self.candidateCount = candidateCount
+        self.suggestions = suggestions
+        self.candidates = candidates
+    }
+}
+
+@ForyStruct
 public struct ForyDomElement {
     public var traits: [String] = []
     public var childCount: Int32 = 0
@@ -356,6 +402,8 @@ public enum ForyRegistry {
         try! fory.register(ForyResponseFrame.self, name: "ForyResponseFrame")
         try! fory.register(ForyEmptyPayload.self, name: "ForyEmptyPayload")
         try! fory.register(ForyFindMatch.self, name: "ForyFindMatch")
+        try! fory.register(ForyErrorCandidate.self, name: "ForyErrorCandidate")
+        try! fory.register(ForyErrorPayload.self, name: "ForyErrorPayload")
         try! fory.register(ForyDomElement.self, name: "ForyDomElement")
         try! fory.register(ForyDomPayload.self, name: "ForyDomPayload")
         try! fory.register(ForyScreenshotPayload.self, name: "ForyScreenshotPayload")
