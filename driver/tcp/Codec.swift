@@ -114,7 +114,41 @@ final class Codec {
         return ForyResponseFrame(ok: true, error: "", payload: data)
     }
 
-    static func foryError(_ msg: String) -> ForyResponseFrame {
-        ForyResponseFrame(ok: false, error: msg, payload: Data())
+    static func foryError(
+        _ message: String,
+        category: String,
+        code: String,
+        phase: String,
+        retryable: Bool = false,
+        fatal: Bool = false,
+        target: ForyTarget? = nil,
+        suggestions: [String] = [],
+        candidates: [ForyErrorCandidate] = [],
+        candidateCount: Int? = nil
+    ) throws -> ForyResponseFrame {
+        let limitedCandidates = Array(candidates.prefix(IOSUseProtocol.errorCandidateLimit))
+        let errorPayload = ForyErrorPayload(
+            category: category,
+            code: code,
+            phase: phase,
+            retryable: retryable,
+            fatal: fatal,
+            target: target,
+            candidateCount: Int32(clamping: candidateCount ?? candidates.count),
+            suggestions: suggestions,
+            candidates: limitedCandidates
+        )
+        let data = try ForyRegistry.create().serialize(errorPayload)
+        return ForyResponseFrame(ok: false, error: message, payload: data)
+    }
+
+    static func foryError(_ error: DriverError) throws -> ForyResponseFrame {
+        try foryError(
+            error.description,
+            category: error.errorCategory,
+            code: error.errorCode,
+            phase: error.errorPhase,
+            retryable: error.isRetryable
+        )
     }
 }

@@ -10,7 +10,8 @@ enum DriverClientError: Error, CustomStringConvertible {
     case writeFailed
     case invalidFrameLength
     case maxFrameSizeExceeded
-    case driverError(String)
+    case invalidErrorPayload(String)
+    case driverError(message: String, payload: ForyErrorPayload)
 
     var description: String {
         switch self {
@@ -21,8 +22,9 @@ enum DriverClientError: Error, CustomStringConvertible {
         case .writeFailed: return "driver TCP write failed"
         case .invalidFrameLength: return "invalid driver frame length"
         case .maxFrameSizeExceeded: return "driver frame exceeds max size"
-        case .driverError(let message):
-            return message
+        case .invalidErrorPayload(let message): return "invalid driver error payload: \(message)"
+        case .driverError(let message, let payload):
+            return formatDriverError(message: message, payload: payload)
         }
     }
 
@@ -355,23 +357,50 @@ final class DriverClient: DriverCommandClient {
             let responseData = try readLengthPrefixed(fd)
             responseBytes = responseData.count
             let response = try fory.deserialize(responseData, as: ForyResponseFrame.self)
+            if response.ok {
+                appendDriverCommandLog(
+                    command: command,
+                    connectionID: commandConnectionID,
+                    ok: true,
+                    error: "",
+                    requestBytes: requestBytes,
+                    responseBytes: responseBytes,
+                    elapsedMs: elapsedMilliseconds(since: startedAt)
+                )
+                loggedResponse = true
+                return response.payload
+            }
+
+            let errorPayload: ForyErrorPayload
+            do {
+                guard !response.payload.isEmpty else {
+                    throw DriverClientError.invalidErrorPayload("empty payload for failed command '\(command)'")
+                }
+                errorPayload = try fory.deserialize(response.payload, as: ForyErrorPayload.self)
+                guard !errorPayload.category.isEmpty,
+                      !errorPayload.code.isEmpty,
+                      !errorPayload.phase.isEmpty else {
+                    throw DriverClientError.invalidErrorPayload("missing category, code, or phase for failed command '\(command)'")
+                }
+            } catch let error as DriverClientError {
+                throw error
+            } catch {
+                throw DriverClientError.invalidErrorPayload("\(error)")
+            }
             appendDriverCommandLog(
                 command: command,
                 connectionID: commandConnectionID,
-                ok: response.ok,
-                error: response.error,
+                ok: false,
+                error: "[\(errorPayload.code)] \(response.error)",
                 requestBytes: requestBytes,
                 responseBytes: responseBytes,
                 elapsedMs: elapsedMilliseconds(since: startedAt)
             )
             loggedResponse = true
-            guard response.ok else {
-                if response.error.hasPrefix("[FATAL]") {
-                    close()
-                }
-                throw DriverClientError.driverError(response.error)
+            if errorPayload.fatal {
+                close()
             }
-            return response.payload
+            throw DriverClientError.driverError(message: response.error, payload: errorPayload)
         } catch {
             if !loggedResponse {
                 appendDriverCommandLog(
@@ -445,8 +474,8 @@ final class DriverClient: DriverCommandClient {
 
     private func shouldCloseConnection(after error: Error) -> Bool {
         switch error {
-        case DriverClientError.driverError(let message):
-            return message.hasPrefix("[FATAL]")
+        case DriverClientError.driverError(_, let payload):
+            return payload.fatal
         default:
             return true
         }
@@ -573,4 +602,31 @@ final class DriverClient: DriverCommandClient {
             offset += n
         }
     }
+}
+
+func formatDriverError(message: String, payload: ForyErrorPayload) -> String {
+    var lines = ["[\(payload.code)] \(message)"]
+    if !payload.suggestions.isEmpty {
+        lines.append("suggestions: \(payload.suggestions.joined(separator: ", "))")
+    }
+    if !payload.candidates.isEmpty {
+        let shown = payload.candidates.count
+        let total = max(Int(payload.candidateCount), shown)
+        lines.append(shown == total ? "candidates:" : "candidates (showing \(shown) of \(total)):")
+        lines.append(contentsOf: payload.candidates.map { "  \(formatDriverErrorCandidate($0))" })
+    }
+    return lines.joined(separator: "\n")
+}
+
+func formatDriverErrorCandidate(_ candidate: ForyErrorCandidate) -> String {
+    let match = candidate.element
+    let ancestors = match.ancestors.joined(separator: " > ")
+    let type = IOSUseElementTypes.displayName(rawType: match.elemType)
+    let flags = match.traits.dropFirst().joined(separator: ",")
+    let flagSuffix = flags.isEmpty ? "" : " [\(flags)]"
+    let display = match.value.isEmpty ? match.label : "\(match.label)=\(match.value)"
+    let frame = match.rect.map { "[\($0.x),\($0.y),\($0.w),\($0.h)]" } ?? "[]"
+    let context = ancestors.isEmpty ? "" : "[\(ancestors)] "
+    let rejection = candidate.rejectedBy.isEmpty ? "" : " rejected=\(candidate.rejectedBy.joined(separator: ","))"
+    return "\(context)\(type)\(flagSuffix) \"\(display)\" \(frame)\(rejection)"
 }

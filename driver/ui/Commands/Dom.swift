@@ -17,7 +17,13 @@ enum DomCommands {
         if args.raw {
             invalidateSnapshot()
             guard let root = SafeSnapshot(ofApp: app) else {
-                return Codec.foryError("failed to take snapshot")
+                return try Codec.foryError(
+                    "failed to take snapshot",
+                    category: IOSUseErrorCategory.lookup,
+                    code: IOSUseErrorCode.snapshotFailed,
+                    phase: IOSUseErrorPhase.snapshot,
+                    retryable: true
+                )
             }
             let lines = formatRawTree(root, parentDisabled: false, indent: "")
             let payload = ForyDomPayload(
@@ -38,7 +44,13 @@ enum DomCommands {
         }
 
         guard let cs = getCleanedSnapshot() else {
-            return Codec.foryError("failed to take snapshot")
+            return try Codec.foryError(
+                "failed to take snapshot",
+                category: IOSUseErrorCategory.lookup,
+                code: IOSUseErrorCode.snapshotFailed,
+                phase: IOSUseErrorPhase.snapshot,
+                retryable: true
+            )
         }
         let flatElements = serializeDomFlat(from: cs.elements)
         let payload = ForyDomPayload(

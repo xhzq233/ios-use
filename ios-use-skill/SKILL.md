@@ -90,8 +90,8 @@ ios-use input --tap "搜索" --content "蓝牙"
   need disambiguation.
 - Provide `--from` when `swipe --to` must begin from a known visible scroll anchor.
 - Use coordinate targets only for visual controls that Accessibility does not expose.
-- On mutation failure, inspect the screenshot, OCR, and fresh DOM returned by the
-  command before running separate diagnostic commands.
+- On mutation failure, open the returned `Evidence:` manifest and inspect its
+  screenshot, OCR, and fresh DOM before running separate diagnostic commands.
 
 ## 5. Control Apps and inspect their logs
 

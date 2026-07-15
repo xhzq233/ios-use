@@ -9,7 +9,7 @@ enum ScreenCommands {
     static func screenshot() throws -> ForyResponseFrame {
         var error: NSError?
         guard let jpeg = XCRequestScreenshotJPEG(CGFloat(IOSUseProtocol.screenshotJpegQuality), &error) as Data? else {
-            throw DriverError.serverError("screenshot JPEG capture failed: \(error?.localizedDescription ?? "unknown error")")
+            throw DriverError.screenshotFailed("JPEG capture failed: \(error?.localizedDescription ?? "unknown error")")
         }
         let screen = UIScreen.main
         let payload = ForyScreenshotPayload(

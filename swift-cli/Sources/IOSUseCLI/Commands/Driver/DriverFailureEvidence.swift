@@ -3,6 +3,19 @@ import Foundation
 import IOSUseProtocol
 
 enum DriverFailureEvidence {
+    enum Profile: String, Equatable {
+        case none
+        case manifestOnly = "manifest-only"
+        case uiSnapshot = "ui-snapshot"
+    }
+
+    private struct Failure {
+        let message: String
+        let renderedMessage: String
+        let payload: ForyErrorPayload
+        let mutationMayHaveApplied: Bool
+    }
+
     private struct Manifest: Codable {
         struct Artifacts: Codable {
             let screenshot: String?
@@ -10,152 +23,325 @@ enum DriverFailureEvidence {
             let dom: String?
         }
 
+        struct Timing: Codable {
+            let screenshotElapsedMs: Int?
+            let screenshotOffsetMs: Int?
+            let ocrElapsedMs: Int?
+            let ocrOffsetMs: Int?
+            let domElapsedMs: Int?
+            let domOffsetMs: Int?
+            let totalElapsedMs: Int
+        }
+
+        struct ErrorInfo: Codable {
+            struct Target: Codable {
+                let label: String
+                let point: [Double]?
+                let traits: String
+                let cindex: Int32?
+            }
+
+            struct Candidate: Codable {
+                let type: String
+                let label: String
+                let value: String
+                let traits: [String]
+                let frame: [Int32]?
+                let ancestors: [String]
+                let rejectedBy: [String]
+            }
+
+            let message: String
+            let category: String
+            let code: String
+            let phase: String
+            let retryable: Bool
+            let fatal: Bool
+            let mutationMayHaveApplied: Bool
+            let target: Target?
+            let candidateCount: Int32
+            let suggestions: [String]
+            let candidates: [Candidate]
+        }
+
         let schemaVersion: Int
         let command: String
-        let error: String
+        let profile: String
         let capturedAt: String
-        let screenshotCapturedAtMs: Int?
-        let domCapturedAtMs: Int?
+        let error: ErrorInfo
+        let timing: Timing
         let artifacts: Artifacts
         let warnings: [String]
     }
 
-    static func shouldCapture(action: DriverAction) -> Bool {
-        switch action {
-        case .tap, .longPress, .input, .swipe, .dismissAlert, .home:
-            return true
-        case .dom, .screenshot, .waitFor, .activateApp, .terminateApp:
-            return false
+    typealias OCRRecognizer = (Data, CGSize?, Double?) throws -> OCRService.Result
+    static var ocrRecognizerForTesting: OCRRecognizer?
+
+    static func profile(action: DriverAction, errorPayload: ForyErrorPayload) -> Profile {
+        guard collectsFailureEvidence(action: action), !errorPayload.fatal else { return .none }
+        switch errorPayload.category {
+        case IOSUseErrorCategory.lookup:
+            return errorPayload.code == IOSUseErrorCode.elementAmbiguous ? .manifestOnly : .uiSnapshot
+        case IOSUseErrorCategory.action, IOSUseErrorCategory.postcondition:
+            return .uiSnapshot
+        default:
+            return .none
         }
     }
 
     static func append(
-        to message: String,
+        to error: Error,
         action: DriverAction,
         session: LockedDriverClientSession,
         paths: IOSUsePaths
     ) -> String {
-        guard shouldCapture(action: action), shouldCapture(error: message) else { return message }
+        guard let failure = failure(from: error) else { return String(describing: error) }
+        let evidenceProfile = profile(action: action, errorPayload: failure.payload)
+        guard evidenceProfile != .none else { return failure.renderedMessage }
 
-        var lines = [message, "", "Failure evidence (\(action.name)):"]
+        let collectionStarted = CFAbsoluteTimeGetCurrent()
         let capturedAt = Date()
-        let timestamp = String(Int(capturedAt.timeIntervalSince1970 * 1000))
         let directoryURL: URL
         do {
-            let directoryName = try ArtifactPaths.safeArtifactName("\(action.name)-failure-\(timestamp)", defaultName: "failure")
+            let directoryName = try ArtifactPaths.safeArtifactName(
+                "\(action.name)-failure-\(Int(capturedAt.timeIntervalSince1970 * 1000))",
+                defaultName: "failure"
+            )
             directoryURL = URL(fileURLWithPath: paths.artifacts, isDirectory: true)
                 .appendingPathComponent(directoryName, isDirectory: true)
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
         } catch {
-            return lines.joined(separator: "\n") + "\nEvidence unavailable: \(error)"
+            return failure.renderedMessage + "\nEvidence unavailable: \(error)"
         }
 
         var screenshotPath: String?
         var ocrPath: String?
         var domPath: String?
-        var dom: ForyDomPayload?
-        var errors: [String] = []
-        let screenshotStarted = CFAbsoluteTimeGetCurrent()
-        var screenshotCapturedAtMs: Int?
-        var domCapturedAtMs: Int?
+        var warnings: [String] = []
+        var screenshotElapsedMs: Int?
+        var screenshotOffsetMs: Int?
+        var ocrElapsedMs: Int?
+        var ocrOffsetMs: Int?
+        var domElapsedMs: Int?
+        var domOffsetMs: Int?
 
-        do {
-            try session.run { client in
-                do {
-                    let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
+        if evidenceProfile == .uiSnapshot {
+            let ocrGroup = DispatchGroup()
+            let ocrLock = NSLock()
+            var asynchronousOCRPath: String?
+            var asynchronousOCRWarning: String?
+            var asynchronousOCRElapsedMs: Int?
+            var asynchronousOCROffsetMs: Int?
+
+            do {
+                let screenshotStarted = CFAbsoluteTimeGetCurrent()
+                let capture = try session.run { client in
+                    try ScreenshotCaptureCoordinator.capture(paths: paths) {
                         try client.screenshotCapture()
                     }
-                    let data = capture.jpeg
-                    let pathURL = directoryURL.appendingPathComponent("screenshot.jpg")
-                    try data.write(to: pathURL, options: .atomic)
-                    screenshotPath = pathURL.path
-                    screenshotCapturedAtMs = Int((CFAbsoluteTimeGetCurrent() - screenshotStarted) * 1000)
-                    if let warning = capture.warning {
-                        errors.append(warning)
-                    }
+                }
+                let imageURL = directoryURL.appendingPathComponent("screenshot.jpg")
+                try capture.jpeg.write(to: imageURL, options: .atomic)
+                screenshotPath = imageURL.path
+                screenshotElapsedMs = elapsedMilliseconds(since: screenshotStarted)
+                screenshotOffsetMs = elapsedMilliseconds(since: collectionStarted)
+                if let warning = capture.warning {
+                    warnings.append(warning)
+                }
+
+                let jpeg = capture.jpeg
+                let logicalSize = capture.logicalSize.map { CGSize(width: $0.x, height: $0.y) }
+                let scale = capture.scale
+                ocrGroup.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    defer { ocrGroup.leave() }
+                    let ocrStarted = CFAbsoluteTimeGetCurrent()
                     do {
-                        let ocrStarted = CFAbsoluteTimeGetCurrent()
-                        let logicalSize = capture.logicalSize.map { CGSize(width: $0.x, height: $0.y) }
-                        let ocr = try OCRService.recognize(data: data, logicalSize: logicalSize, scale: capture.scale)
-                        let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - ocrStarted) * 1000)
-                        ocrPath = try OCRService.writeSidecar(result: ocr, imagePath: pathURL.path, elapsedMs: elapsedMs)
+                        let result = try recognizeOCR(data: jpeg, logicalSize: logicalSize, scale: scale)
+                        let elapsed = elapsedMilliseconds(since: ocrStarted)
+                        let writtenPath = try OCRService.writeSidecar(
+                            result: result,
+                            imagePath: imageURL.path,
+                            elapsedMs: elapsed
+                        )
+                        ocrLock.lock()
+                        asynchronousOCRPath = writtenPath
+                        asynchronousOCRElapsedMs = elapsed
+                        asynchronousOCROffsetMs = elapsedMilliseconds(since: collectionStarted)
+                        ocrLock.unlock()
                     } catch {
-                        errors.append("OCR unavailable: \(error)")
+                        ocrLock.lock()
+                        asynchronousOCRWarning = "OCR unavailable: \(error)"
+                        asynchronousOCRElapsedMs = elapsedMilliseconds(since: ocrStarted)
+                        asynchronousOCROffsetMs = elapsedMilliseconds(since: collectionStarted)
+                        ocrLock.unlock()
                     }
-                } catch {
-                    errors.append("screenshot unavailable: \(error)")
                 }
-
-                do {
-                    let domStarted = CFAbsoluteTimeGetCurrent()
-                    dom = try client.dom(raw: false, fresh: true, waitQuiescence: false)
-                    domCapturedAtMs = Int((CFAbsoluteTimeGetCurrent() - domStarted) * 1000)
-                } catch {
-                    errors.append("DOM unavailable: \(error)")
-                }
+            } catch {
+                warnings.append("screenshot unavailable: \(error)")
             }
-        } catch {
-            errors.append("driver evidence request failed: \(error)")
-        }
 
-        if let screenshotPath {
-            lines.append("Screenshot: \(screenshotPath)")
-        }
-        if let ocrPath {
-            lines.append("OCR sidecar: \(ocrPath)")
-        }
-        if let dom {
-            let path = directoryURL.appendingPathComponent("dom.txt")
             do {
+                let domStarted = CFAbsoluteTimeGetCurrent()
+                let dom = try session.run { client in
+                    try client.dom(raw: false, fresh: true, waitQuiescence: false)
+                }
+                domElapsedMs = elapsedMilliseconds(since: domStarted)
+                let path = directoryURL.appendingPathComponent("dom.txt")
                 try DriverOutput.formatDom(dom).write(to: path, atomically: true, encoding: .utf8)
                 domPath = path.path
-                lines.append("DOM file: \(path.path)")
+                domOffsetMs = elapsedMilliseconds(since: collectionStarted)
             } catch {
-                errors.append("DOM file unavailable: \(error)")
+                warnings.append("DOM unavailable: \(error)")
             }
-            lines.append("DOM:")
-            lines.append(DriverOutput.formatDom(dom).trimmingCharacters(in: .newlines))
-        }
-        lines.append(contentsOf: errors)
 
+            ocrGroup.wait()
+            ocrLock.lock()
+            ocrPath = asynchronousOCRPath
+            ocrElapsedMs = asynchronousOCRElapsedMs
+            ocrOffsetMs = asynchronousOCROffsetMs
+            let finalOCRWarning = asynchronousOCRWarning
+            ocrLock.unlock()
+            if let finalOCRWarning {
+                warnings.append(finalOCRWarning)
+            }
+        }
+
+        let manifestURL = directoryURL.appendingPathComponent("manifest.json")
+        let totalElapsedMs = elapsedMilliseconds(since: collectionStarted)
         let manifest = Manifest(
-            schemaVersion: 1,
+            schemaVersion: 2,
             command: action.name,
-            error: message,
+            profile: evidenceProfile.rawValue,
             capturedAt: ISO8601DateFormatter().string(from: capturedAt),
-            screenshotCapturedAtMs: screenshotCapturedAtMs,
-            domCapturedAtMs: domCapturedAtMs,
-            artifacts: Manifest.Artifacts(screenshot: screenshotPath.map { URL(fileURLWithPath: $0).lastPathComponent }, ocr: ocrPath.map { URL(fileURLWithPath: $0).lastPathComponent }, dom: domPath.map { URL(fileURLWithPath: $0).lastPathComponent }),
-            warnings: errors
+            error: errorInfo(from: failure),
+            timing: Manifest.Timing(
+                screenshotElapsedMs: screenshotElapsedMs,
+                screenshotOffsetMs: screenshotOffsetMs,
+                ocrElapsedMs: ocrElapsedMs,
+                ocrOffsetMs: ocrOffsetMs,
+                domElapsedMs: domElapsedMs,
+                domOffsetMs: domOffsetMs,
+                totalElapsedMs: totalElapsedMs
+            ),
+            artifacts: Manifest.Artifacts(
+                screenshot: screenshotPath.map { URL(fileURLWithPath: $0).lastPathComponent },
+                ocr: ocrPath.map { URL(fileURLWithPath: $0).lastPathComponent },
+                dom: domPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+            ),
+            warnings: warnings
         )
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(manifest).write(to: directoryURL.appendingPathComponent("manifest.json"), options: .atomic)
-            lines.append("Evidence manifest: \(directoryURL.appendingPathComponent("manifest.json").path)")
+            try encoder.encode(manifest).write(to: manifestURL, options: .atomic)
         } catch {
-            lines.append("Evidence manifest unavailable: \(error)")
+            return failure.renderedMessage + "\nEvidence manifest unavailable: \(error)"
         }
-        if screenshotPath == nil && dom == nil && errors.isEmpty {
-            lines.append("unavailable")
-        }
-        return lines.joined(separator: "\n")
+
+        var available: [String] = []
+        if screenshotPath != nil { available.append("screenshot") }
+        if ocrPath != nil { available.append("ocr") }
+        if domPath != nil { available.append("dom") }
+        let summary = available.isEmpty ? "" : " (\(available.joined(separator: ", ")))"
+        return failure.renderedMessage + "\nEvidence: \(manifestURL.path)\(summary)"
     }
 
-    private static func shouldCapture(error message: String) -> Bool {
-        // The driver wraps semantic command failures in driverError. Host-side
-        // validation, missing locks, and transport failures should preserve their
-        // original concise diagnostics instead of starting a second command.
-        let lowercased = message.lowercased()
-        if lowercased.contains("driver tcp") || lowercased.contains("socket ") || lowercased.contains("driver frame") {
+    private static func collectsFailureEvidence(action: DriverAction) -> Bool {
+        switch action {
+        case .tap, .longPress, .input, .swipe, .dismissAlert:
+            return true
+        case .dom, .screenshot, .waitFor, .activateApp, .terminateApp, .home:
             return false
         }
-        if lowercased.contains("driver lock") || lowercased.contains("driver.lock") {
+    }
+
+    private static func failure(from error: Error) -> Failure? {
+        if case DriverClientError.driverError(let message, let payload) = error {
+            return Failure(
+                message: message,
+                renderedMessage: formatDriverError(message: message, payload: payload),
+                payload: payload,
+                mutationMayHaveApplied: mutationMayHaveApplied(errorPayload: payload)
+            )
+        }
+        guard case DriverCommandExecutionError.postconditionFailed(let label, let underlying) = error,
+              case DriverClientError.driverError(let message, let underlyingPayload) = underlying else {
+            return nil
+        }
+        let postconditionMessage = "\(label) failed after mutation: \(message)"
+        let payload = ForyErrorPayload(
+            category: IOSUseErrorCategory.postcondition,
+            code: IOSUseErrorCode.postconditionFailed,
+            phase: IOSUseErrorPhase.postcondition,
+            retryable: underlyingPayload.retryable,
+            fatal: underlyingPayload.fatal,
+            target: underlyingPayload.target,
+            candidateCount: underlyingPayload.candidateCount,
+            suggestions: underlyingPayload.suggestions,
+            candidates: underlyingPayload.candidates
+        )
+        return Failure(
+            message: postconditionMessage,
+            renderedMessage: formatDriverError(message: postconditionMessage, payload: payload),
+            payload: payload,
+            mutationMayHaveApplied: true
+        )
+    }
+
+    static func mutationMayHaveApplied(errorPayload: ForyErrorPayload) -> Bool {
+        switch errorPayload.category {
+        case IOSUseErrorCategory.action, IOSUseErrorCategory.postcondition:
+            return true
+        default:
             return false
         }
-        if message.hasPrefix("Invalid ") || message.contains("argument") || message.contains("option '") {
-            return false
+    }
+
+    private static func errorInfo(from failure: Failure) -> Manifest.ErrorInfo {
+        let target = failure.payload.target.map { target in
+            Manifest.ErrorInfo.Target(
+                label: target.label,
+                point: target.point.map { [$0.x, $0.y] },
+                traits: target.traits,
+                cindex: target.cindex
+            )
         }
-        return true
+        let candidates = failure.payload.candidates.map { candidate in
+            let element = candidate.element
+            return Manifest.ErrorInfo.Candidate(
+                type: IOSUseElementTypes.displayName(rawType: element.elemType),
+                label: element.label,
+                value: element.value,
+                traits: element.traits,
+                frame: element.rect.map { [$0.x, $0.y, $0.w, $0.h] },
+                ancestors: element.ancestors,
+                rejectedBy: candidate.rejectedBy
+            )
+        }
+        return Manifest.ErrorInfo(
+            message: failure.message,
+            category: failure.payload.category,
+            code: failure.payload.code,
+            phase: failure.payload.phase,
+            retryable: failure.payload.retryable,
+            fatal: failure.payload.fatal,
+            mutationMayHaveApplied: failure.mutationMayHaveApplied,
+            target: target,
+            candidateCount: failure.payload.candidateCount,
+            suggestions: failure.payload.suggestions,
+            candidates: candidates
+        )
+    }
+
+    private static func recognizeOCR(data: Data, logicalSize: CGSize?, scale: Double?) throws -> OCRService.Result {
+        if let ocrRecognizerForTesting {
+            return try ocrRecognizerForTesting(data, logicalSize, scale)
+        }
+        return try OCRService.recognize(data: data, logicalSize: logicalSize, scale: scale)
+    }
+
+    private static func elapsedMilliseconds(since startedAt: CFAbsoluteTime) -> Int {
+        Int((CFAbsoluteTimeGetCurrent() - startedAt) * IOSUseProtocol.millisecondsPerSecond)
     }
 }

@@ -10,7 +10,13 @@ enum WaitForCommands {
 
         let timeout = args.timeout > 0 ? args.timeout : IOSUseProtocol.waitForDefaultTimeoutSeconds
         guard timeout > 0 else {
-            return Codec.foryError("waitFor: timeout must be > 0")
+            return try Codec.foryError(
+                "waitFor: timeout must be > 0",
+                category: IOSUseErrorCategory.validation,
+                code: IOSUseErrorCode.invalidArguments,
+                phase: IOSUseErrorPhase.validation,
+                target: args.target
+            )
         }
         let t0 = CFAbsoluteTimeGetCurrent()
 
@@ -21,7 +27,14 @@ enum WaitForCommands {
                 invalidateSnapshot()
             }
             guard let cs = getCleanedSnapshot() else {
-                return Codec.foryError("waitFor: failed to take snapshot")
+                return try Codec.foryError(
+                    "waitFor: failed to take snapshot",
+                    category: IOSUseErrorCategory.lookup,
+                    code: IOSUseErrorCode.snapshotFailed,
+                    phase: IOSUseErrorPhase.snapshot,
+                    retryable: true,
+                    target: args.target
+                )
             }
             let result = rawFindInSnapshot(args.target, cs: cs, enableFuzzy: false, visibility: .only)
 
@@ -44,7 +57,7 @@ enum WaitForCommands {
                     remainingExactMatches = matches.count
                     break
                 }
-                return ambiguityResponse(args.target.label, matches: matches)
+                return try ambiguityResponse(args.target, matches: matches)
             case .fuzzy:
                 remainingExactMatches = 0
                 break
@@ -66,7 +79,14 @@ enum WaitForCommands {
                 } else {
                     suffix = ""
                 }
-                return Codec.foryError("waitFor '\(args.target.label)' timed out after \(timeout)s\(suffix)")
+                return try Codec.foryError(
+                    "waitFor '\(args.target.label)' timed out after \(timeout)s\(suffix)",
+                    category: IOSUseErrorCategory.timeout,
+                    code: IOSUseErrorCode.waitTimedOut,
+                    phase: IOSUseErrorPhase.wait,
+                    retryable: true,
+                    target: args.target
+                )
             }
             shouldUseFreshSnapshot = true
             usleep(UInt32(IOSUseProtocol.waitForPollIntervalMilliseconds * IOSUseProtocol.microsecondsPerMillisecond))

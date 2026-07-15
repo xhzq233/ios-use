@@ -10,7 +10,12 @@ enum ProxyCommands {
 
     static func proxyCAPush(_ args: ForyProxyCAPushArgs) throws -> ForyResponseFrame {
         guard let certData = Data(base64Encoded: args.caBase64) else {
-            return Codec.foryError("invalid CA base64 payload")
+            return try Codec.foryError(
+                "invalid CA base64 payload",
+                category: IOSUseErrorCategory.validation,
+                code: IOSUseErrorCode.invalidArguments,
+                phase: IOSUseErrorPhase.validation
+            )
         }
 
         lock.lock()
@@ -21,7 +26,13 @@ enum ProxyCommands {
             let port = IOSUseProtocol.proxyCAPort
             let fd = startListener(port: port) { connFd in handleConn(connFd) }
             guard fd >= 0 else {
-                return Codec.foryError("failed to bind CA server on port \(port)")
+                return try Codec.foryError(
+                    "failed to bind CA server on port \(port)",
+                    category: IOSUseErrorCategory.action,
+                    code: IOSUseErrorCode.proxyConfigurationFailed,
+                    phase: IOSUseErrorPhase.interaction,
+                    retryable: true
+                )
             }
             serverFd = fd
             DriverLog.info("[proxy] CA server listening on port \(Int(port))")

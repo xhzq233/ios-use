@@ -13,7 +13,7 @@ enum InputCommands {
 
         let targetSummary: ForyElementSummary
         if hasTapTarget(args.target) {
-            switch tapInputTarget(args.target, app: app) {
+            switch try tapInputTarget(args.target, app: app) {
             case .success(let summary):
                 targetSummary = summary
             case .failure(let response):
@@ -24,7 +24,14 @@ enum InputCommands {
         }
 
         guard typeText(args.content) else {
-            return Codec.foryError("input: failed to type text")
+            return try Codec.foryError(
+                "input: failed to type text",
+                category: IOSUseErrorCategory.action,
+                code: IOSUseErrorCode.inputFailed,
+                phase: IOSUseErrorPhase.interaction,
+                retryable: true,
+                target: hasTapTarget(args.target) ? args.target : nil
+            )
         }
         let payload = ForyElementPayload(element: targetSummary)
         return try Codec.foryOK(payload)
@@ -40,29 +47,41 @@ private func hasTapTarget(_ target: ForyTarget) -> Bool {
     target.point != nil || !target.label.isEmpty
 }
 
-private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) -> InputTapResult {
+private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -> InputTapResult {
     let summary: ForyElementSummary
     if let point = target.point {
         guard RawPointer.perform(app: app, event: .tap(CGPoint(x: CGFloat(point.x), y: CGFloat(point.y)))) == nil else {
-            return .failure(Codec.foryError("input: failed to tap point '\(point.x),\(point.y)'"))
+            return .failure(try Codec.foryError(
+                "input: failed to tap point '\(point.x),\(point.y)'",
+                category: IOSUseErrorCategory.action,
+                code: IOSUseErrorCode.inputFailed,
+                phase: IOSUseErrorPhase.interaction,
+                retryable: true,
+                target: target
+            ))
         }
         summary = ForyElementSummary(rect: ForyRect(x: Int32(point.x.rounded()), y: Int32(point.y.rounded()), w: 0, h: 0))
     } else {
         let elem: SnapshotElement
         switch rawFind(target, visibility: .only) {
         case .found(let e): elem = e
-        case .ambiguous(let matches): return .failure(ambiguityResponse(target.label, matches: matches))
+        case .ambiguous(let matches): return .failure(try ambiguityResponse(target, matches: matches))
         case .fuzzy(let s):
-            return .failure(notFoundResponse(target.label,
-                                             suggestions: s,
-                                             hint: "Try adding --traits, or verify the active app before typing"))
-        case .notFound(let s):
-            return .failure(notFoundResponse(target.label,
-                                             suggestions: s,
-                                             hint: "Try adding --traits, or verify the active app before typing"))
+            return .failure(try notFoundResponse(target, suggestions: s))
+        case .notFound(let s, let rejected):
+            return .failure(try notFoundResponse(target, suggestions: s, rejected: rejected))
         }
         guard tapSnapshotCenter(elem.node, app: app) else {
-            return .failure(Codec.foryError("input: failed to tap '\(target.label)'"))
+            return .failure(try Codec.foryError(
+                "input: failed to tap '\(target.label)'",
+                category: IOSUseErrorCategory.action,
+                code: IOSUseErrorCode.inputFailed,
+                phase: IOSUseErrorPhase.interaction,
+                retryable: true,
+                target: target,
+                candidates: [makeErrorCandidate(elem)],
+                candidateCount: 1
+            ))
         }
         summary = makeForyElementSummary(elem.node)
     }

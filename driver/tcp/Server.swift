@@ -148,7 +148,12 @@ import Foundation
                 let foryReq = try codec.readFrame(fd)
                 let command = Command(rawValue: foryReq.command)
                 guard let command else {
-                    let errFrame = ForyResponseFrame(ok: false, error: "unknown command: \(foryReq.command)")
+                    let errFrame = try Codec.foryError(
+                        "unknown command: \(foryReq.command)",
+                        category: IOSUseErrorCategory.protocolFailure,
+                        code: IOSUseErrorCode.unknownCommand,
+                        phase: IOSUseErrorPhase.validation
+                    )
                     try codec.writeResponseFrame(fd, frame: errFrame)
                     DriverLog.info("[driver-connection] id=\(connectionID) command=\(foryReq.command) ok=false")
                     continue
@@ -157,10 +162,13 @@ import Foundation
                 let invocation = try CommandInvocation(name: command, payload: foryReq.payload, codec: codec)
                 let foryResp = try self.dispatchOnMainThread(invocation)
 
-                if !foryResp.ok && foryResp.error.hasPrefix("[FATAL]") {
-                    try codec.writeResponseFrame(fd, frame: foryResp)
-                    DriverLog.info("[driver-connection] id=\(connectionID) command=\(foryReq.command) ok=false fatal=true")
-                    break
+                if !foryResp.ok {
+                    let errorPayload = try codec.deserialize(foryResp.payload, as: ForyErrorPayload.self)
+                    if errorPayload.fatal {
+                        try codec.writeResponseFrame(fd, frame: foryResp)
+                        DriverLog.info("[driver-connection] id=\(connectionID) command=\(foryReq.command) ok=false fatal=true")
+                        break
+                    }
                 }
                 try codec.writeResponseFrame(fd, frame: foryResp)
                 DriverLog.info("[driver-connection] id=\(connectionID) command=\(foryReq.command) ok=\(foryResp.ok)")
@@ -168,8 +176,23 @@ import Foundation
                 DriverLog.info("[driver-connection] id=\(connectionID) event=eof fd=\(fd)")
                 break
             } catch {
-                let errFrame = ForyResponseFrame(ok: false, error: "\(error)")
-                _ = try? codec.writeResponseFrame(fd, frame: errFrame)
+                do {
+                    let errFrame: ForyResponseFrame
+                    if let driverError = error as? DriverError {
+                        errFrame = try Codec.foryError(driverError)
+                    } else {
+                        errFrame = try Codec.foryError(
+                            "\(error)",
+                            category: IOSUseErrorCategory.protocolFailure,
+                            code: IOSUseErrorCode.internalFailure,
+                            phase: IOSUseErrorPhase.dispatch,
+                            fatal: true
+                        )
+                    }
+                    _ = try? codec.writeResponseFrame(fd, frame: errFrame)
+                } catch {
+                    DriverLog.error("[driver-connection] id=\(connectionID) event=error-payload-failed fd=\(fd) error=\(error)")
+                }
                 DriverLog.error("[driver-connection] id=\(connectionID) event=error fd=\(fd) error=\(error)")
                 break
             }
@@ -221,13 +244,37 @@ import Foundation
             }
             cancelLock.unlock()
             let detail = commandStarted ? "after starting on the XCTest main thread" : "before starting on the XCTest main thread"
-            return ForyResponseFrame(ok: false, error: "[FATAL] Command timed out after \(IOSUseProtocol.commandTimeoutSeconds)s \(detail)")
+            return try Codec.foryError(
+                "Command timed out after \(IOSUseProtocol.commandTimeoutSeconds)s \(detail)",
+                category: IOSUseErrorCategory.timeout,
+                code: IOSUseErrorCode.driverWatchdogTimeout,
+                phase: IOSUseErrorPhase.dispatch,
+                fatal: true
+            )
         }
 
         if let error = dispatchError {
-            throw error
+            if let driverError = error as? DriverError {
+                return try Codec.foryError(driverError)
+            }
+            return try Codec.foryError(
+                "Command dispatch failed: \(error)",
+                category: IOSUseErrorCategory.internalFailure,
+                code: IOSUseErrorCode.internalFailure,
+                phase: IOSUseErrorPhase.dispatch,
+                fatal: true
+            )
         }
-        return result ?? ForyResponseFrame(ok: false, error: "Command dispatch failed: result is nil after wait")
+        if let result {
+            return result
+        }
+        return try Codec.foryError(
+            "Command dispatch failed: result is nil after wait",
+            category: IOSUseErrorCategory.internalFailure,
+            code: IOSUseErrorCode.dispatchFailed,
+            phase: IOSUseErrorPhase.dispatch,
+            fatal: true
+        )
     }
 
     // MARK: - Dispatch

@@ -667,8 +667,27 @@ func hasEffectiveVisibleGeometry(_ node: SafeSnapshot, in bounds: CGRect) -> Boo
 }
 
 /// Time complexity: O(1).
+func effectiveVisibilityRejectionReason(_ element: SnapshotElement, in bounds: CGRect) -> String? {
+    guard element.isVisible else {
+        return IOSUseCandidateRejection.snapshotInvisible
+    }
+    let frame = effectiveVisibleFrame(element.node)
+    guard frame.width > 0, frame.height > 0 else {
+        return IOSUseCandidateRejection.emptyVisibleFrame
+    }
+    guard bounds.width > 0, bounds.height > 0 else {
+        return IOSUseCandidateRejection.outsideAppBounds
+    }
+    let clipped = frame.intersection(bounds)
+    guard clipped.width > 0, clipped.height > 0 else {
+        return IOSUseCandidateRejection.outsideAppBounds
+    }
+    return nil
+}
+
+/// Time complexity: O(1).
 func isVisibleWithEffectiveGeometry(_ element: SnapshotElement, in bounds: CGRect) -> Bool {
-    element.isVisible && hasEffectiveVisibleGeometry(element.node, in: bounds)
+    effectiveVisibilityRejectionReason(element, in: bounds) == nil
 }
 
 // MARK: - Element type name

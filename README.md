@@ -50,7 +50,7 @@ Modern multimodal models do not usually allocate tokens linearly with every scre
 1. **DOM-first targeting** - Most actions use label/value text. The driver resolves coordinates internally, so the LLM does not need to guess pixel positions for standard UI.
 2. **Vision fallback** - When AX is incomplete (for example, a custom-drawn icon), the LLM can inspect a screenshot and pass raw coordinates.
 3. **Offset hybrid** — Combine both: anchor on a known label, then apply a relative offset to hit an adjacent unlabeled control.
-4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom`, or use `dom` / `waitFor` to confirm success at the semantic level.
+4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom`, or use `dom` / `waitFor` to confirm success at the semantic level. Failed UI mutations return a stable error code; actionable lookup/action failures also print one `Evidence:` manifest path that references the captured screenshot, accurate OCR, and fresh DOM when available.
 
 This means:
 

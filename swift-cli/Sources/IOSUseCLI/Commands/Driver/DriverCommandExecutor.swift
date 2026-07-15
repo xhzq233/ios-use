@@ -16,6 +16,17 @@ struct DriverCommandResult {
     var payload: DriverCommandPayload?
 }
 
+enum DriverCommandExecutionError: Error, CustomStringConvertible {
+    case postconditionFailed(label: String, underlying: Error)
+
+    var description: String {
+        switch self {
+        case .postconditionFailed(let label, let underlying):
+            return "\(label) failed after mutation: \(underlying)"
+        }
+    }
+}
+
 enum DriverCommandExecutor {
     typealias ClientRunner = ((DriverCommandClient) throws -> DriverCommandPayload?) throws -> DriverCommandPayload?
 
@@ -241,7 +252,15 @@ enum DriverCommandExecutor {
             title = "DOM after \(domAfterMs)ms"
             waitQuiescence = false
         }
-        let payload = try requiredPayload(clientRunner { .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence)) }, as: ForyDomPayload.self)
+        let payload: ForyDomPayload
+        do {
+            payload = try requiredPayload(
+                clientRunner { .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence)) },
+                as: ForyDomPayload.self
+            )
+        } catch {
+            throw DriverCommandExecutionError.postconditionFailed(label: title, underlying: error)
+        }
         var stdout = result.stdout
         if !stdout.hasSuffix("\n") {
             stdout += "\n"

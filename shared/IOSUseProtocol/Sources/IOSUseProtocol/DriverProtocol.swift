@@ -101,6 +101,8 @@ public enum IOSUseProtocol {
     public static let fuzzyMediumTypoThreshold = 2
     /// Edit distance threshold for long fuzzy queries.
     public static let fuzzyLongTypoThreshold = 3
+    /// Maximum structured candidates attached to one driver error payload.
+    public static let errorCandidateLimit = 5
     /// Scale used to round geometry values before serialization.
     public static let sanitizedDecimalScale = 10.0
 
@@ -146,6 +148,63 @@ public enum IOSUseProtocol {
     public static let osTraceActivityStartTimeoutSeconds = 5.0
     /// Short read slice used while streaming os_trace_relay activity.
     public static let osTraceActivityReadPollSeconds = 0.25
+}
+
+public enum IOSUseErrorCategory {
+    public static let validation = "validation"
+    public static let session = "session"
+    public static let protocolFailure = "protocol"
+    public static let lookup = "lookup"
+    public static let action = "action"
+    public static let timeout = "timeout"
+    public static let postcondition = "postcondition"
+    public static let internalFailure = "internal"
+
+}
+
+public enum IOSUseErrorCode {
+    public static let invalidArguments = "invalid_arguments"
+    public static let noActiveSession = "no_active_session"
+    public static let appNotFound = "app_not_found"
+    public static let elementNotFound = "element_not_found"
+    public static let elementAmbiguous = "element_ambiguous"
+    public static let elementNotActionable = "element_not_actionable"
+    public static let snapshotFailed = "snapshot_failed"
+    public static let gestureFailed = "gesture_failed"
+    public static let inputFailed = "input_failed"
+    public static let scrollBoundary = "scroll_boundary"
+    public static let scrollUnavailable = "scroll_unavailable"
+    public static let scrollLimitReached = "scroll_limit_reached"
+    public static let waitTimedOut = "wait_timed_out"
+    public static let proxyConfigurationFailed = "proxy_configuration_failed"
+    public static let unknownCommand = "unknown_command"
+    public static let driverWatchdogTimeout = "driver_watchdog_timeout"
+    public static let dispatchFailed = "dispatch_failed"
+    public static let internalFailure = "internal_failure"
+    public static let postconditionFailed = "postcondition_failed"
+
+}
+
+public enum IOSUseErrorPhase {
+    public static let validation = "validation"
+    public static let session = "session"
+    public static let lookup = "lookup"
+    public static let snapshot = "snapshot"
+    public static let interaction = "interaction"
+    public static let wait = "wait"
+    public static let dispatch = "dispatch"
+    public static let postcondition = "postcondition"
+
+}
+
+public enum IOSUseCandidateRejection {
+    public static let snapshotInvisible = "snapshot_invisible"
+    public static let emptyVisibleFrame = "empty_visible_frame"
+    public static let outsideAppBounds = "outside_app_bounds"
+    public static let zeroAreaFrame = "zero_area_frame"
+    public static let traitMismatch = "trait_mismatch"
+    public static let childIndexOutOfRange = "child_index_out_of_range"
+
 }
 
 public enum DriverCommand: String, CaseIterable, Sendable {

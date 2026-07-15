@@ -12,11 +12,49 @@ final class CodecTests: XCTestCase {
         XCTAssertTrue(resp.payload.isEmpty)
     }
 
-    func testForyError_MessageOnly() {
-        let resp = Codec.foryError("something went wrong")
+    func testForyError_SerializesStructuredPayload() throws {
+        let target = ForyTarget(label: "missing", traits: "Button")
+        let resp = try Codec.foryError(
+            "something went wrong",
+            category: IOSUseErrorCategory.lookup,
+            code: IOSUseErrorCode.elementNotFound,
+            phase: IOSUseErrorPhase.lookup,
+            retryable: true,
+            target: target,
+            suggestions: ["missing button"]
+        )
         XCTAssertFalse(resp.ok)
         XCTAssertEqual(resp.error, "something went wrong")
-        XCTAssertTrue(resp.payload.isEmpty)
+        XCTAssertFalse(resp.payload.isEmpty)
+
+        let payload = try createFory().deserialize(resp.payload, as: ForyErrorPayload.self)
+        XCTAssertEqual(payload.category, IOSUseErrorCategory.lookup)
+        XCTAssertEqual(payload.code, IOSUseErrorCode.elementNotFound)
+        XCTAssertEqual(payload.phase, IOSUseErrorPhase.lookup)
+        XCTAssertTrue(payload.retryable)
+        XCTAssertFalse(payload.fatal)
+        XCTAssertEqual(payload.target?.label, "missing")
+        XCTAssertEqual(payload.target?.traits, "Button")
+        XCTAssertEqual(payload.suggestions, ["missing button"])
+    }
+
+    func testForyError_LimitsAttachedCandidatesButPreservesTotalCount() throws {
+        let candidates = (0..<7).map { index in
+            ForyErrorCandidate(element: ForyFindMatch(label: "candidate-\(index)"))
+        }
+        let resp = try Codec.foryError(
+            "ambiguous",
+            category: IOSUseErrorCategory.lookup,
+            code: IOSUseErrorCode.elementAmbiguous,
+            phase: IOSUseErrorPhase.lookup,
+            candidates: candidates,
+            candidateCount: candidates.count
+        )
+
+        let payload = try createFory().deserialize(resp.payload, as: ForyErrorPayload.self)
+        XCTAssertEqual(payload.candidateCount, 7)
+        XCTAssertEqual(payload.candidates.count, IOSUseProtocol.errorCandidateLimit)
+        XCTAssertEqual(payload.candidates.map(\.element.label), (0..<5).map { "candidate-\($0)" })
     }
 
     func testForyOK_WithPayload() throws {

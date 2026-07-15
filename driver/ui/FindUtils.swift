@@ -7,7 +7,7 @@ enum FindResult {
     case found(SnapshotElement)
     case ambiguous(matches: [SnapshotElement])
     case fuzzy(suggestions: [String])
-    case notFound(suggestions: [String])
+    case notFound(suggestions: [String], rejected: [ForyErrorCandidate])
 }
 
 enum RawFindVisibility {
@@ -36,16 +36,16 @@ func rawFindInSnapshot(_ target: ForyTarget,
     }
 
     guard target.point == nil else {
-        return finish(.notFound(suggestions: []), detail: "result=notFound reason=pointTarget")
+        return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=pointTarget")
     }
 
     let query = target.label.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !query.isEmpty else {
-        return finish(.notFound(suggestions: []), detail: "result=notFound reason=emptyQuery")
+        return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=emptyQuery")
     }
     let normalizedQuery = normalizeSearchText(query)
     guard !normalizedQuery.isEmpty else {
-        return finish(.notFound(suggestions: []), detail: "result=notFound reason=emptyNormalizedQuery")
+        return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=emptyNormalizedQuery")
     }
 
     let searchEntries = visibility == .only
@@ -53,31 +53,28 @@ func rawFindInSnapshot(_ target: ForyTarget,
         : cs.searchEntries
 
     // 1. Exact match wins over contains across the same label + value texts.
-    var containsMatches: [SnapshotElement] = []
-    var exactMatch: SnapshotElement?
-    for entry in searchEntries {
-        if entry.normalizedTexts.contains(where: { $0 == normalizedQuery }) {
-            exactMatch = entry.element
-            break
-        }
-        if entry.normalizedTexts.contains(where: { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }) {
-            containsMatches.append(entry.element)
-        }
-    }
-
-    var matches = exactMatch.map { [$0] } ?? containsMatches
+    var matches = contentMatches(in: searchEntries, normalizedQuery: normalizedQuery)
 
     // 2. Fuzzy fallback when exact and contains both miss.
     if matches.isEmpty {
+        if visibility == .only {
+            let rejected = contentMatches(in: cs.searchEntries, normalizedQuery: normalizedQuery).compactMap { element -> ForyErrorCandidate? in
+                guard let reason = effectiveVisibilityRejectionReason(element, in: cs.appFrame) else { return nil }
+                return makeErrorCandidate(element, rejectedBy: [reason])
+            }
+            if !rejected.isEmpty {
+                return finish(.notFound(suggestions: [], rejected: rejected), detail: "result=notFound rejected=\(rejected.count) reason=visibility")
+            }
+        }
         guard enableFuzzy else {
-            return finish(.notFound(suggestions: []), detail: "result=notFound entries=\(searchEntries.count) fuzzy=false")
+            return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound entries=\(searchEntries.count) fuzzy=false")
         }
         let candidates = visibility == .only ? searchCandidates(from: searchEntries) : cs.searchCandidates
         let suggestions = fuzzySuggestions(forNormalizedQuery: normalizedQuery, from: candidates)
         if !suggestions.isEmpty {
             return finish(.fuzzy(suggestions: suggestions), detail: "result=fuzzy suggestions=\(suggestions.count) entries=\(searchEntries.count)")
         }
-        return finish(.notFound(suggestions: []), detail: "result=notFound entries=\(searchEntries.count)")
+        return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound entries=\(searchEntries.count)")
     }
 
     // 3. Trait filter (AND semantics — element must contain all specified traits).
@@ -87,21 +84,47 @@ func rawFindInSnapshot(_ target: ForyTarget,
             .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
             .filter { !$0.isEmpty }
         if !required.isEmpty {
+            let beforeTraitFilter = matches
             matches = matches.filter { element in
                 required.allSatisfy { req in
                     element.traits.contains(where: { $0.lowercased() == req })
                 }
             }
+            if matches.isEmpty {
+                let rejected = beforeTraitFilter.map {
+                    makeErrorCandidate($0, rejectedBy: [IOSUseCandidateRejection.traitMismatch])
+                }
+                return finish(.notFound(suggestions: [], rejected: rejected), detail: "result=notFound rejected=\(rejected.count) reason=traits")
+            }
         }
     }
 
-    matches = applyChildIndex(target.cindex, to: matches, in: cs)
+    if let cindex = target.cindex {
+        let beforeChildIndex = matches
+        matches = beforeChildIndex.compactMap { childElement(of: $0, cindex: Int(cindex), in: cs.elements) }
+        if matches.isEmpty {
+            let rejected = beforeChildIndex.map {
+                makeErrorCandidate($0, rejectedBy: [IOSUseCandidateRejection.childIndexOutOfRange])
+            }
+            return finish(.notFound(suggestions: [], rejected: rejected), detail: "result=notFound rejected=\(rejected.count) reason=cindex")
+        }
+    }
     if visibility == .only {
-        matches = matches.filter { isVisibleWithEffectiveGeometry($0, in: cs.appFrame) }
+        let beforeVisibilityFilter = matches
+        matches = beforeVisibilityFilter.filter { isVisibleWithEffectiveGeometry($0, in: cs.appFrame) }
+        if matches.isEmpty {
+            let rejected = beforeVisibilityFilter.map { element in
+                makeErrorCandidate(
+                    element,
+                    rejectedBy: [effectiveVisibilityRejectionReason(element, in: cs.appFrame) ?? IOSUseCandidateRejection.emptyVisibleFrame]
+                )
+            }
+            return finish(.notFound(suggestions: [], rejected: rejected), detail: "result=notFound rejected=\(rejected.count) reason=selectedVisibility")
+        }
     }
 
     if matches.isEmpty {
-        return finish(.notFound(suggestions: []), detail: "result=notFound entries=\(searchEntries.count)")
+        return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound entries=\(searchEntries.count)")
     }
     if matches.count > 1 {
         return finish(.ambiguous(matches: matches), detail: "result=ambiguous matches=\(matches.count) entries=\(searchEntries.count)")
@@ -109,11 +132,24 @@ func rawFindInSnapshot(_ target: ForyTarget,
     return finish(.found(matches[0]), detail: "result=found entries=\(searchEntries.count)")
 }
 
+private func contentMatches(in entries: [SearchEntry], normalizedQuery: String) -> [SnapshotElement] {
+    var containsMatches: [SnapshotElement] = []
+    for entry in entries {
+        if entry.normalizedTexts.contains(where: { $0 == normalizedQuery }) {
+            return [entry.element]
+        }
+        if entry.normalizedTexts.contains(where: { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }) {
+            containsMatches.append(entry.element)
+        }
+    }
+    return containsMatches
+}
+
 /// Unified label search: exact(label/value) → contains(label/value) → fuzzy → trait filter.
 /// Used by all label-based commands (find, tap, longPress, input, swipe, waitFor).
 func rawFind(_ target: ForyTarget, visibility: RawFindVisibility = .only) -> FindResult {
     guard let cs = getCleanedSnapshot() else {
-        return .notFound(suggestions: [])
+        return .notFound(suggestions: [], rejected: [])
     }
     return rawFindInSnapshot(target, cs: cs, visibility: visibility)
 }
@@ -172,11 +208,6 @@ private func matchingElements(
     where predicate: (SearchEntry) -> Bool
 ) -> [SnapshotElement] {
     entries.compactMap { predicate($0) ? $0.element : nil }
-}
-
-private func applyChildIndex(_ cindex: Int32?, to matches: [SnapshotElement], in cs: CleanedSnapshot) -> [SnapshotElement] {
-    guard let cindex else { return matches }
-    return matches.compactMap { childElement(of: $0, cindex: Int(cindex), in: cs.elements) }
 }
 
 private func childElement(of parent: SnapshotElement, cindex: Int, in elements: [SnapshotElement]) -> SnapshotElement? {
@@ -368,38 +399,46 @@ private func shouldSkipAncestorInCleanChain(_ node: SafeSnapshot) -> Bool {
     return false
 }
 
+func makeErrorCandidate(_ element: SnapshotElement, rejectedBy: [String] = []) -> ForyErrorCandidate {
+    ForyErrorCandidate(
+        element: makeForyFindMatch(element, includeAncestors: true),
+        rejectedBy: rejectedBy
+    )
+}
+
 /// Build the ambiguity response (doc 3.3).
-func ambiguityResponse(_ label: String, matches: [SnapshotElement]) -> ForyResponseFrame {
-    var lines = ["label '\(label)' is ambiguous (\(matches.count) matches)"]
-    if !matches.isEmpty {
-        lines.append("matches:")
-        for match in matches {
-            lines.append("  \(formatErrorMatch(makeForyFindMatch(match, includeAncestors: true)))")
-        }
-    }
-    lines.append("hint: Try adding --traits to disambiguate")
-    return Codec.foryError(lines.joined(separator: "\n"))
+func ambiguityResponse(_ target: ForyTarget, matches: [SnapshotElement]) throws -> ForyResponseFrame {
+    try Codec.foryError(
+        "label '\(target.label)' is ambiguous (\(matches.count) matches)",
+        category: IOSUseErrorCategory.lookup,
+        code: IOSUseErrorCode.elementAmbiguous,
+        phase: IOSUseErrorPhase.lookup,
+        retryable: true,
+        target: target,
+        candidates: matches.map { makeErrorCandidate($0) },
+        candidateCount: matches.count
+    )
 }
 
 /// Build the fuzzy / notFound payload (doc 3.3).
-func notFoundResponse(_ label: String, suggestions: [String], hint: String? = nil) -> ForyResponseFrame {
-    var lines = ["label '\(label)' not found"]
-    if !suggestions.isEmpty {
-        lines.append("suggestions: \(suggestions.joined(separator: ", "))")
-    }
-    if let hint, !hint.isEmpty {
-        lines.append("hint: \(hint)")
-    }
-    return Codec.foryError(lines.joined(separator: "\n"))
-}
-
-private func formatErrorMatch(_ match: ForyFindMatch) -> String {
-    let ancestors = match.ancestors.joined(separator: " > ")
-    let type = elementTypeName(XCUIElement.ElementType(rawValue: UInt(match.elemType)) ?? .other)
-    let flags = match.traits.dropFirst().joined(separator: ",")
-    let flagSuffix = flags.isEmpty ? "" : " [\(flags)]"
-    let display = match.value.isEmpty ? match.label : "\(match.label)=\(match.value)"
-    let rect = match.rect.map { "\($0.x),\($0.y),\($0.w),\($0.h)" } ?? ""
-    let context = ancestors.isEmpty ? "" : "[\(ancestors)] "
-    return "\(context)\(type)\(flagSuffix) \"\(display)\" (\(rect))"
+func notFoundResponse(
+    _ target: ForyTarget,
+    suggestions: [String],
+    rejected: [ForyErrorCandidate] = []
+) throws -> ForyResponseFrame {
+    let actionable = !rejected.isEmpty
+    let message = actionable
+        ? "label '\(target.label)' is not actionable"
+        : "label '\(target.label)' not found"
+    return try Codec.foryError(
+        message,
+        category: IOSUseErrorCategory.lookup,
+        code: actionable ? IOSUseErrorCode.elementNotActionable : IOSUseErrorCode.elementNotFound,
+        phase: IOSUseErrorPhase.lookup,
+        retryable: true,
+        target: target,
+        suggestions: suggestions,
+        candidates: rejected,
+        candidateCount: rejected.count
+    )
 }
