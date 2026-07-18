@@ -56,15 +56,21 @@ enum AppLifecycleService {
         if let realDeviceRunnerForTesting {
             return try realDeviceRunnerForTesting(options, udid)
         }
+        let eventSink: ((String) -> Void)? = options.session.verbose
+            ? { message in
+                FileHandle.standardError.write(Data("[coredevice] \(message)\n".utf8))
+            }
+            : nil
+        let runner = CoreDeviceAppLifecycleRunner(eventSink: eventSink)
         switch options.action {
         case .activate:
             if options.log {
                 return try AppLogCaptureService.start(bundleID: options.bundleID, udid: udid, deviceType: "real", paths: paths)
             }
-            try CoreDeviceAppLifecycleRunner().activate(bundleID: options.bundleID, udid: udid, terminateExisting: options.terminateExisting)
+            try runner.activate(bundleID: options.bundleID, udid: udid, terminateExisting: options.terminateExisting)
             return Result(message: "App \(options.bundleID) activated")
         case .terminate:
-            let terminated = try CoreDeviceAppLifecycleRunner().terminate(bundleID: options.bundleID, udid: udid)
+            let terminated = try runner.terminate(bundleID: options.bundleID, udid: udid)
             return try resultForTerminate(bundleID: options.bundleID, udid: udid, terminated: terminated, paths: paths)
         }
     }
@@ -128,55 +134,81 @@ final class CoreDeviceAppLifecycleRunner {
         var openAppService: (CoreDeviceLifecycleTunnelSession) throws -> CoreDeviceAppLifecycleServicing
         var resolveBundleExecutable: (String, String) throws -> String?
 
-        static let live = Dependencies(
-            startTunnel: { try CoreDeviceDirectTunnelRuntime(eventSink: nil).start(udid: $0) },
-            openAppService: { session in
-                try CoreDeviceAppService(client: session.connectRemoteXPCService(CoreDeviceAppService.serviceName))
-            },
-            resolveBundleExecutable: { udid, bundleID in
-                try InstallationProxyClient.withClient(udid: udid) { client in
-                    try client.installedAppInfo(
-                        bundleID: bundleID,
-                        attributes: ["CFBundleIdentifier", "CFBundleExecutable"]
-                    )?["CFBundleExecutable"] as? String
+        static let live = live(eventSink: nil)
+
+        static func live(eventSink: ((String) -> Void)?) -> Dependencies {
+            Dependencies(
+                startTunnel: { try CoreDeviceDirectTunnelRuntime(eventSink: eventSink).start(udid: $0) },
+                openAppService: { session in
+                    try CoreDeviceAppService(client: session.connectRemoteXPCService(CoreDeviceAppService.serviceName))
+                },
+                resolveBundleExecutable: { udid, bundleID in
+                    try InstallationProxyClient.withClient(udid: udid) { client in
+                        try client.installedAppInfo(
+                            bundleID: bundleID,
+                            attributes: ["CFBundleIdentifier", "CFBundleExecutable"]
+                        )?["CFBundleExecutable"] as? String
+                    }
                 }
-            }
-        )
-    }
-
-    private let dependencies: Dependencies
-
-    init(dependencies: Dependencies = .live) {
-        self.dependencies = dependencies
-    }
-
-    func activate(bundleID: String, udid: String, terminateExisting: Bool = false, standardIOIdentifier: UUID? = nil) throws {
-        try withAppService(udid: udid) { appService in
-            _ = try appService.launchApplication(
-                bundleID: bundleID,
-                arguments: [],
-                terminateExisting: terminateExisting,
-                startSuspended: false,
-                environment: [:],
-                payloadURL: nil,
-                activates: true,
-                standardIOIdentifier: standardIOIdentifier
             )
         }
     }
 
+    private let dependencies: Dependencies
+    private let eventSink: ((String) -> Void)?
+
+    init(dependencies: Dependencies = .live, eventSink: ((String) -> Void)? = nil) {
+        self.dependencies = dependencies
+        self.eventSink = eventSink
+    }
+
+    convenience init(eventSink: ((String) -> Void)?) {
+        self.init(dependencies: .live(eventSink: eventSink), eventSink: eventSink)
+    }
+
+    func activate(bundleID: String, udid: String, terminateExisting: Bool = false, standardIOIdentifier: UUID? = nil) throws {
+        try withTunnel(udid: udid) { session in
+            try withAppServiceInvocation(session: session) { appService in
+                eventSink?("launching app bundle=\(bundleID) terminateExisting=\(terminateExisting)")
+                _ = try appService.launchApplication(
+                    bundleID: bundleID,
+                    arguments: [],
+                    terminateExisting: terminateExisting,
+                    startSuspended: false,
+                    environment: [:],
+                    payloadURL: nil,
+                    activates: true,
+                    standardIOIdentifier: standardIOIdentifier
+                )
+            }
+        }
+    }
+
     func terminate(bundleID: String, udid: String) throws -> Bool {
+        eventSink?("resolving executable for bundle=\(bundleID)")
         let executableName = try? dependencies.resolveBundleExecutable(udid, bundleID)
-        return try withAppService(udid: udid) { appService in
-            let processes = try appService.listProcesses()
+        eventSink?("resolved executable=\(executableName ?? "(unknown)")")
+        return try withTunnel(udid: udid) { session in
+            let processes = try withAppServiceInvocation(session: session) { appService in
+                eventSink?("listing processes")
+                return try appService.listProcesses()
+            }
             let matching = processes.filter { token in
                 Self.process(token, matchesBundleID: bundleID, executableName: executableName)
+            }
+            for process in matching {
+                eventSink?(
+                    "matched process pid=\(process.processIdentifier) executable=\(process.executable) bundle=\(process.bundleIdentifier ?? "(none)")"
+                )
             }
             guard !matching.isEmpty else { return false }
             var killedAny = false
             for process in matching {
                 do {
-                    try appService.kill(processIdentifier: process.processIdentifier)
+                    eventSink?("sending SIGKILL pid=\(process.processIdentifier)")
+                    try withAppServiceInvocation(session: session) { appService in
+                        try appService.kill(processIdentifier: process.processIdentifier)
+                    }
                     killedAny = true
                 } catch {
                     guard Self.isAlreadyTerminatedError(error) else {
@@ -213,7 +245,10 @@ final class CoreDeviceAppLifecycleRunner {
         ) != nil
     }
 
-    private func withAppService<T>(udid: String, _ body: (CoreDeviceAppLifecycleServicing) throws -> T) throws -> T {
+    private func withTunnel<T>(
+        udid: String,
+        _ body: (CoreDeviceLifecycleTunnelSession) throws -> T
+    ) throws -> T {
         let session = try dependencies.startTunnel(udid)
         defer {
             session.close()
@@ -225,6 +260,16 @@ final class CoreDeviceAppLifecycleRunner {
         if let info = session.peerInfo, info.services[CoreDeviceAppService.serviceName] == nil {
             throw CLIParseError.invalidValue("CoreDevice appservice not available on this device. Try re-plugging the device, clearing trust, and re-pairing.")
         }
+        return try body(session)
+    }
+
+    private func withAppServiceInvocation<T>(
+        session: CoreDeviceLifecycleTunnelSession,
+        _ body: (CoreDeviceAppLifecycleServicing) throws -> T
+    ) throws -> T {
+        // CoreDevice closes this RemoteXPC stream when it is reused for another
+        // invocation. Reuse the tunnel, but scope appservice to one invocation.
+        eventSink?("opening CoreDevice appservice")
         let appService = try dependencies.openAppService(session)
         defer { appService.close() }
         return try body(appService)

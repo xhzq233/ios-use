@@ -163,25 +163,15 @@ final class CoreDeviceAppService {
     }
 
     func sendSignal(processIdentifier: Int, signal: Int) throws -> RemoteXPCValue {
-        let featureIdentifier = IOSUseProtocol.XCConstants.coreDeviceFeatureSendSignalToProcess
-        let request = coreDeviceRequest(featureIdentifier: featureIdentifier, input: [
-            "process": .dictionary([
-                "processIdentifier": .int64(Int64(processIdentifier)),
-            ]),
-            "signal": .int64(Int64(signal)),
-        ])
-        try client.sendRequest(request, wantingReply: true)
-        do {
-            let response = try client.receiveResponse(timeoutSeconds: IOSUseProtocol.XCConstants.coreDeviceRequestTimeoutSeconds)
-            if response.dictionaryValue?["CoreDevice.error"] != nil {
-                throw CoreDeviceAppServiceError.missingOutputResponse(featureIdentifier, Self.describe(response))
-            }
-            return response.dictionaryValue?["CoreDevice.output"] ?? .dictionary([:])
-        } catch CoreDeviceTCPError.connectionClosed {
-            return .dictionary([:])
-        } catch CoreDeviceTCPError.connectionReset {
-            return .dictionary([:])
-        }
+        try invoke(
+            featureIdentifier: IOSUseProtocol.XCConstants.coreDeviceFeatureSendSignalToProcess,
+            input: [
+                "process": .dictionary([
+                    "processIdentifier": .int64(Int64(processIdentifier)),
+                ]),
+                "signal": .int64(Int64(signal)),
+            ]
+        )
     }
 
     func kill(processIdentifier: Int) throws {

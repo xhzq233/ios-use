@@ -191,7 +191,7 @@ enum CLIHelp {
         case "tap":
             return driverHelp(
                 usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
-                summary: "Tap an element label or x,y coordinate.",
+                summary: "Tap an element label or one x,y coordinate target, for example: ios-use tap 67,269.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
                     "--offset-ratio <x,y>  Ratio offset from target top-left",
@@ -334,10 +334,21 @@ enum CLIHelp {
         }
     }
 
+    static func parseErrorHelp(arguments: [String]) -> String {
+        if let help = commandHelpText(arguments: arguments) {
+            return help
+        }
+        if arguments.first == "proxy",
+           let help = commandHelpText(arguments: ["proxy"]) {
+            return help
+        }
+        return rootText
+    }
+
     private static func commandHelpResult(_ arguments: [String]) -> CLIResult {
         guard let help = commandHelpText(arguments: arguments) else {
             let command = arguments.prefix { $0 != "--help" && $0 != "-h" }.joined(separator: " ")
-            return CLIErrorEnvelope(message: "unknown command '\(command)'").render()
+            return CLIErrorEnvelope(message: "unknown command '\(command)'").render(help: rootText)
         }
         return CLIResult(exitCode: 0, stdout: help)
     }

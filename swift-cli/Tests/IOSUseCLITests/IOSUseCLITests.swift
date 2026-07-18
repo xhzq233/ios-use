@@ -65,6 +65,37 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.stderr.contains("unknown option '--not-a-real-option'"))
+        XCTAssertTrue(result.stderr.contains("Usage: ios-use [--help] [--version] <command>"))
+        XCTAssertTrue(result.stdout.isEmpty)
+    }
+
+    func testParseErrorReturnsKnownCommandHelpOnStderr() {
+        let result = IOSUseCLI().run(arguments: ["tap", "67", "269", "--dom"])
+
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stderr.hasPrefix("error: unknown option '269'\n\n"))
+        XCTAssertTrue(result.stderr.contains("Usage: ios-use tap <target>"))
+        XCTAssertTrue(result.stderr.contains("ios-use tap 67,269"))
+        XCTAssertFalse(result.stderr.contains("Usage: ios-use [--help]"))
+        XCTAssertTrue(result.stdout.isEmpty)
+    }
+
+    func testParseErrorReturnsProxySubcommandHelpOnStderr() {
+        let result = IOSUseCLI().run(arguments: ["proxy", "start", "--unexpected"])
+
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stderr.contains("error: unknown option '--unexpected'"))
+        XCTAssertTrue(result.stderr.contains("Usage: ios-use proxy start"))
+        XCTAssertFalse(result.stderr.contains("Usage: ios-use proxy <command>"))
+        XCTAssertTrue(result.stdout.isEmpty)
+    }
+
+    func testUnknownProxySubcommandReturnsParentHelpOnStderr() {
+        let result = IOSUseCLI().run(arguments: ["proxy", "status"])
+
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stderr.contains("error: unknown command 'proxy status'"))
+        XCTAssertTrue(result.stderr.contains("Usage: ios-use proxy <command>"))
         XCTAssertTrue(result.stdout.isEmpty)
     }
 
@@ -999,6 +1030,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 64)
         XCTAssertTrue(result.stderr.contains("unknown command 'find'"))
+        XCTAssertTrue(result.stderr.contains("Usage: ios-use [--help] [--version] <command>"))
     }
 
     func testCLILogTimestampIncludesMilliseconds() {
