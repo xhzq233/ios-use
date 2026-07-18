@@ -793,6 +793,7 @@ final class CoreDeviceDirectTunnelRuntime {
                 eventSink?("connecting RSD through userspace TCP")
                 let client = try session.connectRemoteXPCClient(port: handshake.serverRSDPort, routeLabel: "rsd")
                 do {
+                    try client.sendDeviceHandshake()
                     session.peerInfo = try client.receivePeerInfo()
                     client.close()
                 } catch {

@@ -553,6 +553,19 @@ final class RemoteXPCClient {
         nextRootMessageID = 1
     }
 
+    func sendDeviceHandshake(uuid: UUID = UUID()) throws {
+        try sendRequest([
+            "MessageType": .string(IOSUseProtocol.XCConstants.remoteXPCDeviceHandshakeMessageType),
+            "MessagingProtocolVersion": .uint64(IOSUseProtocol.XCConstants.remoteXPCMessagingProtocolVersion),
+            "UUID": .uuid(uuid),
+            "Properties": .dictionary([
+                "RemoteXPCVersionFlags": .uint64(IOSUseProtocol.XCConstants.remoteXPCVersionFlags),
+                "SensitivePropertiesVisible": .bool(true),
+            ]),
+            "Services": .dictionary([:]),
+        ])
+    }
+
     private func initializeXPCConnection(timeoutSeconds: Double) throws {
         try writeXPCMessage(
             streamID: RemoteXPCHTTP2.rootStreamID,
@@ -770,6 +783,7 @@ enum RemoteServiceDiscoveryClient {
 
         let client = RemoteXPCClient(stream: stream)
         try client.completeClientHandshake()
+        try client.sendDeviceHandshake()
         return try client.receivePeerInfo()
     }
 

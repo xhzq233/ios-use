@@ -67,6 +67,9 @@ public extension IOSUseProtocol {
         public static let remoteXPCDirectTunnelHandshakeTimeoutSeconds = 15.0
         public static let remoteXPCDefaultRequestTimeoutSeconds = 10.0
         public static let remoteXPCPeerInfoTimeoutSeconds = 10.0
+        public static let remoteXPCDeviceHandshakeMessageType = "Handshake"
+        public static let remoteXPCMessagingProtocolVersion: UInt64 = 7
+        public static let remoteXPCVersionFlags: UInt64 = 0x0100_0000_0000_0006
 
         public static let coreDeviceTunnelRequestedMTU = 16_000
         public static let coreDeviceTunnelMaxPayloadSize = 64 * 1024

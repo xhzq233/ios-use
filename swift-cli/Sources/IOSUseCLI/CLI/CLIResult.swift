@@ -21,7 +21,11 @@ public struct CLIErrorEnvelope: Equatable, Sendable {
         self.exitCode = exitCode
     }
 
-    public func render() -> CLIResult {
-        CLIResult(exitCode: exitCode, stderr: "error: \(message)\n")
+    public func render(help: String? = nil) -> CLIResult {
+        var stderr = "error: \(message)\n"
+        if let help, !help.isEmpty {
+            stderr += "\n\(help)"
+        }
+        return CLIResult(exitCode: exitCode, stderr: stderr)
     }
 }

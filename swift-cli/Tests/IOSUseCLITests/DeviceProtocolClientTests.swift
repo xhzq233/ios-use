@@ -1205,6 +1205,40 @@ final class DeviceProtocolClientTests: XCTestCase {
         )
     }
 
+    func testRemoteXPCClientSendsDeviceHandshakeAfterTransportHandshake() throws {
+        let stream = FakeDeviceStream(reads: [remoteXPCInitializationResponses()])
+        let client = RemoteXPCClient(stream: stream)
+        let uuid = try XCTUnwrap(UUID(uuidString: "00112233-4455-6677-8899-AABBCCDDEEFF"))
+
+        try client.completeClientHandshake()
+        try client.sendDeviceHandshake(uuid: uuid)
+
+        let handshakeFrame = try RemoteXPCHTTP2.decodeFrame(stream.writes.last!)
+        XCTAssertEqual(handshakeFrame.streamID, RemoteXPCHTTP2.rootStreamID)
+        let message = try RemoteXPCWrapper.decode(handshakeFrame.payload)
+        XCTAssertEqual(message.messageID, 1)
+        XCTAssertEqual(message.flags & RemoteXPCFlags.wantingReply, 0)
+        let payload = try XCTUnwrap(message.payload?.dictionaryValue)
+        XCTAssertEqual(
+            payload["MessageType"],
+            .string(IOSUseProtocol.XCConstants.remoteXPCDeviceHandshakeMessageType)
+        )
+        XCTAssertEqual(
+            payload["MessagingProtocolVersion"],
+            .uint64(IOSUseProtocol.XCConstants.remoteXPCMessagingProtocolVersion)
+        )
+        XCTAssertEqual(payload["UUID"], .uuid(uuid))
+        XCTAssertEqual(
+            payload["Properties"]?.dictionaryValue?["RemoteXPCVersionFlags"],
+            .uint64(IOSUseProtocol.XCConstants.remoteXPCVersionFlags)
+        )
+        XCTAssertEqual(
+            payload["Properties"]?.dictionaryValue?["SensitivePropertiesVisible"],
+            .bool(true)
+        )
+        XCTAssertEqual(payload["Services"], .dictionary([:]))
+    }
+
     func testRemoteXPCClientConsumesConcatenatedWrappersInSingleDataFrame() throws {
         let empty = RemoteXPCWrapper.encodeEmpty(messageID: 0, flags: RemoteXPCFlags.alwaysSet)
         let response = try RemoteXPCWrapper.encode(
@@ -1358,6 +1392,62 @@ final class DeviceProtocolClientTests: XCTestCase {
             request["CoreDevice.coreDeviceVersion"]?.dictionaryValue?["stringValue"],
             .string(CoreDeviceAppService.versionString)
         )
+    }
+
+    func testCoreDeviceAppServiceSendSignalWaitsForReply() throws {
+        let response = try RemoteXPCWrapper.encode(
+            messageID: 1,
+            flags: RemoteXPCFlags.alwaysSet | RemoteXPCFlags.dataPresent,
+            payload: .dictionary([
+                "CoreDevice.output": .dictionary([:]),
+            ])
+        )
+        let stream = FakeDeviceStream(reads: [
+            remoteXPCInitializationResponses(
+                additional: RemoteXPCHTTP2.dataFrame(
+                    streamID: RemoteXPCHTTP2.replyStreamID,
+                    payload: response
+                )
+            ),
+        ])
+        let client = RemoteXPCClient(stream: stream)
+        try client.completeClientHandshake()
+        let service = CoreDeviceAppService(client: client)
+
+        XCTAssertEqual(
+            try service.sendSignal(processIdentifier: 123, signal: Int(SIGKILL)),
+            .dictionary([:])
+        )
+
+        let requestFrame = try RemoteXPCHTTP2.decodeFrame(stream.writes.last!)
+        let message = try RemoteXPCWrapper.decode(requestFrame.payload)
+        let request = try XCTUnwrap(message.payload?.dictionaryValue)
+        XCTAssertEqual(
+            message.flags & RemoteXPCFlags.wantingReply,
+            RemoteXPCFlags.wantingReply
+        )
+        XCTAssertEqual(
+            request["CoreDevice.featureIdentifier"],
+            .string(IOSUseProtocol.XCConstants.coreDeviceFeatureSendSignalToProcess)
+        )
+        XCTAssertEqual(
+            request["CoreDevice.input"]?.dictionaryValue?["signal"],
+            .int64(Int64(SIGKILL))
+        )
+    }
+
+    func testCoreDeviceAppServiceSendSignalPropagatesConnectionClose() throws {
+        let stream = FakeDeviceStream(
+            reads: [remoteXPCInitializationResponses()],
+            readErrorWhenEmpty: CoreDeviceTCPError.connectionClosed
+        )
+        let client = RemoteXPCClient(stream: stream)
+        try client.completeClientHandshake()
+        let service = CoreDeviceAppService(client: client)
+
+        XCTAssertThrowsError(try service.sendSignal(processIdentifier: 123, signal: Int(SIGKILL))) { error in
+            XCTAssertEqual(error as? CoreDeviceTCPError, .connectionClosed)
+        }
     }
 
     func testCoreDeviceDisplayInfoDecodesPrimaryDisplay() throws {
@@ -1930,15 +2020,23 @@ final class DeviceProtocolClientTests: XCTestCase {
 
     func testCoreDeviceAppLifecycleRunnerTerminatesMatchingBundleProcesses() throws {
         let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
-        let appService = FakeCoreDeviceAppLifecycleService()
-        appService.processes = [
+        let listService = FakeCoreDeviceAppLifecycleService()
+        listService.processes = [
             CoreDeviceProcessToken(processIdentifier: 11, executable: "file:///private/var/containers/Bundle/Application/A/Target"),
             CoreDeviceProcessToken(processIdentifier: 12, executable: "file:///private/var/containers/Bundle/Application/B/Other"),
             CoreDeviceProcessToken(processIdentifier: 13, executable: "/private/var/containers/Bundle/Application/C/Target"),
         ]
+        let firstKillService = FakeCoreDeviceAppLifecycleService()
+        let secondKillService = FakeCoreDeviceAppLifecycleService()
+        var appServices = [listService, firstKillService, secondKillService]
         let runner = CoreDeviceAppLifecycleRunner(dependencies: CoreDeviceAppLifecycleRunner.Dependencies(
             startTunnel: { _ in session },
-            openAppService: { _ in appService },
+            openAppService: { _ in
+                guard !appServices.isEmpty else {
+                    throw CLIParseError.invalidValue("unexpected extra appservice connection")
+                }
+                return appServices.removeFirst()
+            },
             resolveBundleExecutable: { udid, bundleID in
                 XCTAssertEqual(udid, "REAL-UDID")
                 XCTAssertEqual(bundleID, "com.example.app")
@@ -1949,31 +2047,44 @@ final class DeviceProtocolClientTests: XCTestCase {
         let terminated = try runner.terminate(bundleID: "com.example.app", udid: "REAL-UDID")
 
         XCTAssertTrue(terminated)
-        XCTAssertEqual(appService.killedProcessIdentifiers, [11, 13])
-        XCTAssertTrue(appService.closed)
+        XCTAssertEqual(firstKillService.killedProcessIdentifiers, [11])
+        XCTAssertEqual(secondKillService.killedProcessIdentifiers, [13])
+        XCTAssertTrue(listService.closed)
+        XCTAssertTrue(firstKillService.closed)
+        XCTAssertTrue(secondKillService.closed)
+        XCTAssertTrue(appServices.isEmpty)
         XCTAssertTrue(session.closed)
     }
 
     func testCoreDeviceAppLifecycleRunnerTreatsKillRaceAsNotRunning() throws {
         let session = try makeTunnelSession(peerInfo: RemoteXPCPeerInfo.decode(remotePeerInfoValue()))
-        let appService = FakeCoreDeviceAppLifecycleService()
-        appService.processes = [
+        let listService = FakeCoreDeviceAppLifecycleService()
+        listService.processes = [
             CoreDeviceProcessToken(processIdentifier: 11, executable: "/private/var/containers/Bundle/Application/A/App", bundleIdentifier: "com.example.app"),
         ]
-        appService.killErrors = [
+        let killService = FakeCoreDeviceAppLifecycleService()
+        killService.killErrors = [
             11: CLIParseError.invalidValue("no such process"),
         ]
+        var appServices = [listService, killService]
         let runner = CoreDeviceAppLifecycleRunner(dependencies: CoreDeviceAppLifecycleRunner.Dependencies(
             startTunnel: { _ in session },
-            openAppService: { _ in appService },
+            openAppService: { _ in
+                guard !appServices.isEmpty else {
+                    throw CLIParseError.invalidValue("unexpected extra appservice connection")
+                }
+                return appServices.removeFirst()
+            },
             resolveBundleExecutable: { _, _ in nil }
         ))
 
         let terminated = try runner.terminate(bundleID: "com.example.app", udid: "REAL-UDID")
 
         XCTAssertFalse(terminated)
-        XCTAssertEqual(appService.killedProcessIdentifiers, [11])
-        XCTAssertTrue(appService.closed)
+        XCTAssertEqual(killService.killedProcessIdentifiers, [11])
+        XCTAssertTrue(listService.closed)
+        XCTAssertTrue(killService.closed)
+        XCTAssertTrue(appServices.isEmpty)
         XCTAssertTrue(session.closed)
     }
 
@@ -2902,9 +3013,11 @@ private final class FakeDeviceStream: DeviceStream {
     var writes: [Data] = []
     private(set) var closed = false
     private var buffer: Data
+    private let readErrorWhenEmpty: Error?
 
-    init(reads: [Data]) {
+    init(reads: [Data], readErrorWhenEmpty: Error? = nil) {
         self.buffer = reads.reduce(Data(), +)
+        self.readErrorWhenEmpty = readErrorWhenEmpty
     }
 
     func write(_ data: Data) throws {
@@ -2913,6 +3026,9 @@ private final class FakeDeviceStream: DeviceStream {
 
     func readExact(byteCount: Int, timeoutSeconds: Double) throws -> Data {
         guard buffer.count >= byteCount else {
+            if let readErrorWhenEmpty {
+                throw readErrorWhenEmpty
+            }
             throw CLIParseError.invalidValue("fake stream underflow")
         }
         let out = buffer.prefix(byteCount)

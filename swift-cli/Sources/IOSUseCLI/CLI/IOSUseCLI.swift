@@ -52,13 +52,15 @@ public struct IOSUseCLI: Sendable {
         }
         switch first {
         case _ where first.hasPrefix("-"):
-            return CLIErrorEnvelope(message: "unknown option '\(first)'").render()
+            return CLIErrorEnvelope(message: "unknown option '\(first)'").render(help: CLIHelp.rootText)
         default:
             do {
                 let parsed = try CLIParser.parse(arguments)
                 return execute(parsed)
             } catch let error as CLIParseError {
-                return CLIErrorEnvelope(message: error.description).render()
+                return CLIErrorEnvelope(message: error.description).render(
+                    help: CLIHelp.parseErrorHelp(arguments: arguments)
+                )
             } catch {
                 return CLIErrorEnvelope(message: "\(error)").render()
             }
