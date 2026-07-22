@@ -150,13 +150,16 @@ enum AppCommands {
                 let nativeState = requestedApp.state
                 lastState = appState(nativeState)
                 lastBundleId = accepted[0]
-                if nativeState == .runningForeground {
-                    foregroundObserved = true
-                    Session.shared.cache(app: requestedApp)
-                    break
-                }
                 if let active = try? Session.shared.refreshActive() {
                     lastBundleId = bundleIdentifier(active)
+                }
+                if nativeState == .runningForeground,
+                   lastBundleId == accepted[0] || lastBundleId == IOSUseProtocol.springboardBundleId {
+                    foregroundObserved = true
+                    if lastBundleId == accepted[0] {
+                        Session.shared.cache(app: requestedApp)
+                    }
+                    break
                 }
             } else if let active = try? Session.shared.refreshActive() {
                 lastBundleId = bundleIdentifier(active)
@@ -189,8 +192,9 @@ enum AppCommands {
                 let expectedAppForeground: Bool? = expected.isEmpty
                     ? nil
                     : requestedApp?.state == .runningForeground
-                guard snapshotBundleAccepted(
+                guard snapshotBundleMayBeAccepted(
                     lastBundleId,
+                    expectedBundleId: expected,
                     expectedAppForeground: expectedAppForeground,
                     acceptedBundleIds: args.acceptedBundleIds
                 ) else {
@@ -204,6 +208,17 @@ enum AppCommands {
                 }
                 invalidateSnapshot()
                 if let cs = getCleanedSnapshot() {
+                    guard snapshotBundleAccepted(
+                        lastBundleId,
+                        expectedBundleId: expected,
+                        expectedAppForeground: expectedAppForeground,
+                        hasSystemAlert: cleanedSnapshotContainsSystemAlert(cs),
+                        acceptedBundleIds: args.acceptedBundleIds
+                    ) else {
+                        lastSnapshotFailure = "SpringBoard snapshot does not contain a system alert"
+                        runLoopPoll()
+                        continue
+                    }
                     let dom: ForyDomPayload?
                     if args.returnDom {
                         dom = ForyDomPayload(
@@ -262,14 +277,44 @@ enum AppCommands {
 
     static func snapshotBundleAccepted(
         _ bundleId: String,
+        expectedBundleId: String = "",
         expectedAppForeground: Bool? = nil,
+        hasSystemAlert: Bool = false,
         acceptedBundleIds: [String]
     ) -> Bool {
         let accepted = acceptedBundleIds.filter { !$0.isEmpty }
         if !accepted.isEmpty {
             return accepted.contains(bundleId)
         }
-        return expectedAppForeground ?? true
+        guard !expectedBundleId.isEmpty else { return true }
+        if bundleId == expectedBundleId { return true }
+        return bundleId == IOSUseProtocol.springboardBundleId
+            && expectedAppForeground == true
+            && hasSystemAlert
+    }
+
+    static func snapshotBundleMayBeAccepted(
+        _ bundleId: String,
+        expectedBundleId: String,
+        expectedAppForeground: Bool?,
+        acceptedBundleIds: [String]
+    ) -> Bool {
+        let accepted = acceptedBundleIds.filter { !$0.isEmpty }
+        if !accepted.isEmpty {
+            return accepted.contains(bundleId)
+        }
+        guard !expectedBundleId.isEmpty else { return true }
+        return bundleId == expectedBundleId
+            || (bundleId == IOSUseProtocol.springboardBundleId && expectedAppForeground == true)
+    }
+
+    private static func cleanedSnapshotContainsSystemAlert(_ snapshot: CleanedSnapshot) -> Bool {
+        let alertTypes: Set<UInt> = [
+            XCUIElement.ElementType.alert.rawValue,
+            XCUIElement.ElementType.sheet.rawValue,
+        ]
+        if alertTypes.contains(snapshot.rawRoot.elementType) { return true }
+        return snapshot.rawRoot.allDescendants.contains { alertTypes.contains($0.elementType) }
     }
 
     private static func runLoopPoll() {

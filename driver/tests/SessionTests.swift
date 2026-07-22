@@ -57,17 +57,56 @@ final class SessionTests: XCTestCase {
     func testActivateReadinessAllowsSystemOverlayOnlyWhileExpectedAppRemainsForeground() {
         XCTAssertTrue(AppCommands.snapshotBundleAccepted(
             "com.apple.Preferences",
+            expectedBundleId: "com.apple.Preferences",
             expectedAppForeground: true,
             acceptedBundleIds: []
         ))
         XCTAssertTrue(AppCommands.snapshotBundleAccepted(
             IOSUseProtocol.springboardBundleId,
+            expectedBundleId: "com.apple.Preferences",
             expectedAppForeground: true,
+            hasSystemAlert: true,
             acceptedBundleIds: []
         ))
         XCTAssertFalse(AppCommands.snapshotBundleAccepted(
             "com.example.other",
+            expectedBundleId: "com.apple.Preferences",
             expectedAppForeground: false,
+            acceptedBundleIds: []
+        ))
+        XCTAssertFalse(AppCommands.snapshotBundleAccepted(
+            "com.apple.mobilesafari",
+            expectedBundleId: "com.apple.Preferences",
+            expectedAppForeground: true,
+            hasSystemAlert: true,
+            acceptedBundleIds: []
+        ))
+        XCTAssertFalse(AppCommands.snapshotBundleAccepted(
+            IOSUseProtocol.springboardBundleId,
+            expectedBundleId: "com.apple.Preferences",
+            expectedAppForeground: true,
+            hasSystemAlert: false,
+            acceptedBundleIds: []
+        ))
+    }
+
+    func testActivateReadinessOnlySnapshotsExpectedAppOrSpringBoardCandidate() {
+        XCTAssertTrue(AppCommands.snapshotBundleMayBeAccepted(
+            "com.apple.Preferences",
+            expectedBundleId: "com.apple.Preferences",
+            expectedAppForeground: true,
+            acceptedBundleIds: []
+        ))
+        XCTAssertTrue(AppCommands.snapshotBundleMayBeAccepted(
+            IOSUseProtocol.springboardBundleId,
+            expectedBundleId: "com.apple.Preferences",
+            expectedAppForeground: true,
+            acceptedBundleIds: []
+        ))
+        XCTAssertFalse(AppCommands.snapshotBundleMayBeAccepted(
+            "com.apple.mobilesafari",
+            expectedBundleId: "com.apple.Preferences",
+            expectedAppForeground: true,
             acceptedBundleIds: []
         ))
     }
