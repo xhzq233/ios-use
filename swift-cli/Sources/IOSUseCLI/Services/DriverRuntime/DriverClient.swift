@@ -58,6 +58,8 @@ protocol DriverCommandClient: AnyObject {
     func home() throws
     func dismissAlert(index: Int?) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
+    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
+    func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
 }
 
 struct ScreenshotCapture {
@@ -106,6 +108,21 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+        throw CLIParseError.invalidValue("waitAppForeground is not supported by this driver client")
+    }
+
+    func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+        switch acceptedBundleIds.count {
+        case 0:
+            return try waitAppForeground(expectedBundleId: "", timeout: timeout, returnDom: returnDom)
+        case 1:
+            return try waitAppForeground(expectedBundleId: acceptedBundleIds[0], timeout: timeout, returnDom: returnDom)
+        default:
+            throw CLIParseError.invalidValue("this driver client does not support multiple accepted foreground apps")
+        }
+    }
+
     func screenshotCapture() throws -> ScreenshotCapture {
         ScreenshotCapture(jpeg: try screenshot())
     }
@@ -343,7 +360,12 @@ final class DriverClient: DriverCommandClient {
     }
 
     func activateApp(bundleId: String) throws {
-        _ = try sendRaw(ActivateAppCommand.self, args: ForyActivateAppArgs(bundleId: bundleId))
+        let payload = try fory.serialize(ForyActivateAppArgs(bundleId: bundleId))
+        _ = try sendRawPayload(
+            command: ActivateAppCommand.command.rawValue,
+            payload: payload,
+            responseTimeoutSeconds: IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(0)
+        )
     }
 
     func terminateApp(bundleId: String) throws {
@@ -360,6 +382,34 @@ final class DriverClient: DriverCommandClient {
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
         try send(ProxyCAPushCommand.self, args: ForyProxyCAPushArgs(caBase64: caBase64))
+    }
+
+    func waitAppForeground(expectedBundleId: String, timeout: Double = 0, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+        let args = ForyWaitAppForegroundArgs(
+            expectedBundleId: expectedBundleId,
+            timeout: timeout,
+            returnDom: returnDom
+        )
+        return try waitAppForeground(args: args, timeout: timeout)
+    }
+
+    func waitAppForeground(acceptedBundleIds: [String], timeout: Double = 0, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+        let args = ForyWaitAppForegroundArgs(
+            acceptedBundleIds: acceptedBundleIds,
+            timeout: timeout,
+            returnDom: returnDom
+        )
+        return try waitAppForeground(args: args, timeout: timeout)
+    }
+
+    private func waitAppForeground(args: ForyWaitAppForegroundArgs, timeout: Double) throws -> ForyWaitAppForegroundPayload {
+        let payload = try fory.serialize(args)
+        let response = try sendRawPayload(
+            command: WaitAppForegroundCommand.command.rawValue,
+            payload: payload,
+            responseTimeoutSeconds: IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(timeout)
+        )
+        return try fory.deserialize(response, as: ForyWaitAppForegroundPayload.self)
     }
 
     private func send<B: DriverCommandBinding>(_ binding: B.Type, args: B.Args) throws -> B.Payload {

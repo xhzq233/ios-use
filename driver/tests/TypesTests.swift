@@ -129,13 +129,16 @@ final class TypesTests: XCTestCase {
         let cmds: [Command] = [
             .activateApp, .terminateApp, .screenshot,
             .home, .dom, .tap, .longPress, .input, .swipe, .waitFor,
-            .proxyCAPush, .dismissAlert,
+            .proxyCAPush, .dismissAlert, .waitAppForeground,
         ]
         for cmd in cmds {
             XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")
         }
         XCTAssertEqual(cmds.count, DriverCommand.allCases.count)
         XCTAssertEqual(Command.swipe.metadata.payloadTypeName, "ForySwipePayload")
+        XCTAssertEqual(Command.waitAppForeground.metadata.argsTypeName, "ForyWaitAppForegroundArgs")
+        XCTAssertEqual(Command.waitAppForeground.metadata.payloadTypeName, "ForyWaitAppForegroundPayload")
+        XCTAssertFalse(Command.waitAppForeground.metadata.mutatesUI)
     }
 
     func testSwipePayload_UsesElementSummaryAndScrollDirection() throws {

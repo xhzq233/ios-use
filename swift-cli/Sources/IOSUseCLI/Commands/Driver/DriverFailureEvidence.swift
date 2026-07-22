@@ -3,6 +3,11 @@ import Foundation
 import IOSUseProtocol
 
 enum DriverFailureEvidence {
+    struct CollectionResult {
+        let renderedMessage: String
+        let manifestPath: String?
+    }
+
     enum Profile: String, Equatable {
         case none
         case manifestOnly = "manifest-only"
@@ -74,6 +79,23 @@ enum DriverFailureEvidence {
         let warnings: [String]
     }
 
+    private struct ScreenshotEvidence {
+        var screenshotPath: String?
+        var ocrPath: String?
+        var screenshotElapsedMs: Int?
+        var screenshotOffsetMs: Int?
+        var ocrElapsedMs: Int?
+        var ocrOffsetMs: Int?
+        var warnings: [String] = []
+    }
+
+    private struct DOMEvidence {
+        var path: String?
+        var elapsedMs: Int?
+        var offsetMs: Int?
+        var warning: String?
+    }
+
     typealias OCRRecognizer = (Data, CGSize?, Double?, OCRService.RecognitionLevel) throws -> OCRService.Result
     static var ocrRecognizerForTesting: OCRRecognizer?
 
@@ -95,9 +117,22 @@ enum DriverFailureEvidence {
         session: LockedDriverClientSession,
         paths: IOSUsePaths
     ) -> String {
-        guard let failure = failure(from: error) else { return String(describing: error) }
+        collect(to: error, action: action, session: session, paths: paths).renderedMessage
+    }
+
+    static func collect(
+        to error: Error,
+        action: DriverAction,
+        session: LockedDriverClientSession,
+        paths: IOSUsePaths
+    ) -> CollectionResult {
+        guard let failure = failure(from: error) else {
+            return CollectionResult(renderedMessage: String(describing: error), manifestPath: nil)
+        }
         let evidenceProfile = profile(action: action, errorPayload: failure.payload)
-        guard evidenceProfile != .none else { return failure.renderedMessage }
+        guard evidenceProfile != .none else {
+            return CollectionResult(renderedMessage: failure.renderedMessage, manifestPath: nil)
+        }
 
         let collectionStarted = CFAbsoluteTimeGetCurrent()
         let capturedAt = Date()
@@ -111,7 +146,10 @@ enum DriverFailureEvidence {
                 .appendingPathComponent(directoryName, isDirectory: true)
             try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
         } catch {
-            return failure.renderedMessage + "\nEvidence unavailable: \(error)"
+            return CollectionResult(
+                renderedMessage: failure.renderedMessage + "\nEvidence unavailable: \(error)",
+                manifestPath: nil
+            )
         }
 
         var screenshotPath: String?
@@ -126,89 +164,55 @@ enum DriverFailureEvidence {
         var domOffsetMs: Int?
 
         if evidenceProfile == .uiSnapshot {
-            let ocrGroup = DispatchGroup()
-            let ocrLock = NSLock()
-            var asynchronousOCRPath: String?
-            var asynchronousOCRWarning: String?
-            var asynchronousOCRElapsedMs: Int?
-            var asynchronousOCROffsetMs: Int?
+            let group = DispatchGroup()
+            let resultLock = NSLock()
+            let domSession = LockedDriverClientSession(paths: paths)
+            var screenshotEvidence = ScreenshotEvidence()
+            var domEvidence = DOMEvidence()
 
-            do {
-                let screenshotStarted = CFAbsoluteTimeGetCurrent()
-                let capture = try session.run { client in
-                    try ScreenshotCaptureCoordinator.capture(paths: paths) {
-                        try client.screenshotCapture()
-                    }
-                }
-                let imageURL = directoryURL.appendingPathComponent("screenshot.jpg")
-                try capture.jpeg.write(to: imageURL, options: .atomic)
-                screenshotPath = imageURL.path
-                screenshotElapsedMs = elapsedMilliseconds(since: screenshotStarted)
-                screenshotOffsetMs = elapsedMilliseconds(since: collectionStarted)
-                if let warning = capture.warning {
-                    warnings.append(warning)
-                }
-
-                let jpeg = capture.jpeg
-                let logicalSize = capture.logicalSize.map { CGSize(width: $0.x, height: $0.y) }
-                let scale = capture.scale
-                ocrGroup.enter()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    defer { ocrGroup.leave() }
-                    let ocrStarted = CFAbsoluteTimeGetCurrent()
-                    do {
-                        let result = try recognizeOCR(
-                            data: jpeg,
-                            logicalSize: logicalSize,
-                            scale: scale,
-                            recognitionLevel: .fast
-                        )
-                        let elapsed = elapsedMilliseconds(since: ocrStarted)
-                        let writtenPath = try OCRService.writeSidecar(
-                            result: result,
-                            imagePath: imageURL.path,
-                            elapsedMs: elapsed
-                        )
-                        ocrLock.lock()
-                        asynchronousOCRPath = writtenPath
-                        asynchronousOCRElapsedMs = elapsed
-                        asynchronousOCROffsetMs = elapsedMilliseconds(since: collectionStarted)
-                        ocrLock.unlock()
-                    } catch {
-                        ocrLock.lock()
-                        asynchronousOCRWarning = "OCR unavailable: \(error)"
-                        asynchronousOCRElapsedMs = elapsedMilliseconds(since: ocrStarted)
-                        asynchronousOCROffsetMs = elapsedMilliseconds(since: collectionStarted)
-                        ocrLock.unlock()
-                    }
-                }
-            } catch {
-                warnings.append("screenshot unavailable: \(error)")
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = collectScreenshotEvidence(
+                    session: session,
+                    paths: paths,
+                    directoryURL: directoryURL,
+                    collectionStarted: collectionStarted
+                )
+                resultLock.lock()
+                screenshotEvidence = result
+                resultLock.unlock()
+                group.leave()
             }
 
-            do {
-                let domStarted = CFAbsoluteTimeGetCurrent()
-                let dom = try session.run { client in
-                    try client.dom(raw: false, fresh: true, waitQuiescence: false)
-                }
-                domElapsedMs = elapsedMilliseconds(since: domStarted)
-                let path = directoryURL.appendingPathComponent("dom.txt")
-                try DriverOutput.formatDom(dom).write(to: path, atomically: true, encoding: .utf8)
-                domPath = path.path
-                domOffsetMs = elapsedMilliseconds(since: collectionStarted)
-            } catch {
-                warnings.append("DOM unavailable: \(error)")
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = collectDOMEvidence(
+                    session: domSession,
+                    directoryURL: directoryURL,
+                    collectionStarted: collectionStarted
+                )
+                resultLock.lock()
+                domEvidence = result
+                resultLock.unlock()
+                group.leave()
             }
 
-            ocrGroup.wait()
-            ocrLock.lock()
-            ocrPath = asynchronousOCRPath
-            ocrElapsedMs = asynchronousOCRElapsedMs
-            ocrOffsetMs = asynchronousOCROffsetMs
-            let finalOCRWarning = asynchronousOCRWarning
-            ocrLock.unlock()
-            if let finalOCRWarning {
-                warnings.append(finalOCRWarning)
+            group.wait()
+            domSession.close()
+
+            screenshotPath = screenshotEvidence.screenshotPath
+            ocrPath = screenshotEvidence.ocrPath
+            screenshotElapsedMs = screenshotEvidence.screenshotElapsedMs
+            screenshotOffsetMs = screenshotEvidence.screenshotOffsetMs
+            ocrElapsedMs = screenshotEvidence.ocrElapsedMs
+            ocrOffsetMs = screenshotEvidence.ocrOffsetMs
+            warnings.append(contentsOf: screenshotEvidence.warnings)
+
+            domPath = domEvidence.path
+            domElapsedMs = domEvidence.elapsedMs
+            domOffsetMs = domEvidence.offsetMs
+            if let warning = domEvidence.warning {
+                warnings.append(warning)
             }
         }
 
@@ -241,7 +245,10 @@ enum DriverFailureEvidence {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(manifest).write(to: manifestURL, options: .atomic)
         } catch {
-            return failure.renderedMessage + "\nEvidence manifest unavailable: \(error)"
+            return CollectionResult(
+                renderedMessage: failure.renderedMessage + "\nEvidence manifest unavailable: \(error)",
+                manifestPath: nil
+            )
         }
 
         var available: [String] = []
@@ -249,7 +256,10 @@ enum DriverFailureEvidence {
         if ocrPath != nil { available.append("ocr") }
         if domPath != nil { available.append("dom") }
         let summary = available.isEmpty ? "" : " (\(available.joined(separator: ", ")))"
-        return failure.renderedMessage + "\nEvidence: \(manifestURL.path)\(summary)"
+        return CollectionResult(
+            renderedMessage: failure.renderedMessage + "\nEvidence: \(manifestURL.path)\(summary)",
+            manifestPath: manifestURL.path
+        )
     }
 
     private static func collectsFailureEvidence(action: DriverAction) -> Bool {
@@ -258,6 +268,81 @@ enum DriverFailureEvidence {
             return true
         case .dom, .inspect, .screenshot, .waitFor, .activateApp, .terminateApp, .home:
             return false
+        }
+    }
+
+    private static func collectScreenshotEvidence(
+        session: LockedDriverClientSession,
+        paths: IOSUsePaths,
+        directoryURL: URL,
+        collectionStarted: CFAbsoluteTime
+    ) -> ScreenshotEvidence {
+        var evidence = ScreenshotEvidence()
+        do {
+            let screenshotStarted = CFAbsoluteTimeGetCurrent()
+            let capture = try session.run { client in
+                try ScreenshotCaptureCoordinator.capture(paths: paths) {
+                    try client.screenshotCapture()
+                }
+            }
+            let imageURL = directoryURL.appendingPathComponent("screenshot.jpg")
+            try capture.jpeg.write(to: imageURL, options: .atomic)
+            evidence.screenshotPath = imageURL.path
+            evidence.screenshotElapsedMs = elapsedMilliseconds(since: screenshotStarted)
+            evidence.screenshotOffsetMs = elapsedMilliseconds(since: collectionStarted)
+            if let warning = capture.warning {
+                evidence.warnings.append(warning)
+            }
+
+            let ocrStarted = CFAbsoluteTimeGetCurrent()
+            do {
+                let logicalSize = capture.logicalSize.map { CGSize(width: $0.x, height: $0.y) }
+                let result = try recognizeOCR(
+                    data: capture.jpeg,
+                    logicalSize: logicalSize,
+                    scale: capture.scale,
+                    recognitionLevel: .fast
+                )
+                let elapsed = elapsedMilliseconds(since: ocrStarted)
+                evidence.ocrPath = try OCRService.writeSidecar(
+                    result: result,
+                    imagePath: imageURL.path,
+                    elapsedMs: elapsed
+                )
+                evidence.ocrElapsedMs = elapsed
+                evidence.ocrOffsetMs = elapsedMilliseconds(since: collectionStarted)
+            } catch {
+                evidence.ocrElapsedMs = elapsedMilliseconds(since: ocrStarted)
+                evidence.ocrOffsetMs = elapsedMilliseconds(since: collectionStarted)
+                evidence.warnings.append("OCR unavailable: \(error)")
+            }
+        } catch {
+            evidence.warnings.append("screenshot unavailable: \(error)")
+        }
+        return evidence
+    }
+
+    private static func collectDOMEvidence(
+        session: LockedDriverClientSession,
+        directoryURL: URL,
+        collectionStarted: CFAbsoluteTime
+    ) -> DOMEvidence {
+        do {
+            let domStarted = CFAbsoluteTimeGetCurrent()
+            let dom = try session.run { client in
+                try client.dom(raw: false, fresh: true, waitQuiescence: false)
+            }
+            let elapsed = elapsedMilliseconds(since: domStarted)
+            let path = directoryURL.appendingPathComponent("dom.txt")
+            try DriverOutput.formatDom(dom).write(to: path, atomically: true, encoding: .utf8)
+            return DOMEvidence(
+                path: path.path,
+                elapsedMs: elapsed,
+                offsetMs: elapsedMilliseconds(since: collectionStarted),
+                warning: nil
+            )
+        } catch {
+            return DOMEvidence(warning: "DOM unavailable: \(error)")
         }
     }
 

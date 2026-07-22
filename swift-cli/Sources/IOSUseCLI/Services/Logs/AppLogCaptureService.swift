@@ -59,7 +59,11 @@ enum AppLogCaptureService {
         let pid = try launchHelper(request)
         let capture = try waitForCaptureStart(pid: pid, logFile: logFile, paths: paths)
         let status = capture.status == "running" ? "App log capture started." : "App log capture finished."
-        return AppLifecycleService.Result(message: "\(status)\nPID: \(pid)\nLog: \(logFile)")
+        return AppLifecycleService.Result(
+            message: "\(status)\nPID: \(pid)\nLog: \(logFile)",
+            logFile: logFile,
+            logCapturePid: pid
+        )
     }
 
     static func runHelper(arguments: [String], paths: IOSUsePaths) throws -> String {

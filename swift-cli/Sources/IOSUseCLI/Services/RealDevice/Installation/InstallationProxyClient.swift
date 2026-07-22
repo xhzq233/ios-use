@@ -170,6 +170,18 @@ final class InstallationProxyClient {
 }
 
 enum RealDevicePackageInstaller {
+    enum InstallerRoute: String, Equatable {
+        case devicectl
+        case installationProxy
+    }
+
+    struct InstallResult: Equatable {
+        let bundleID: String
+        let sourceVersion: AppVersionInfo
+        let installedVersion: AppVersionInfo
+        let installer: InstallerRoute
+    }
+
     enum UploadMode: Equatable {
         case file
         case directory
@@ -251,6 +263,27 @@ enum RealDevicePackageInstaller {
         }
     }
 
+    static func installPackageWithResult(
+        packagePath: String,
+        kind: AppManagementService.AppPackageKind,
+        udid: String,
+        bundleID: String?,
+        responseObserver: (([String: Any]) -> Void)? = nil
+    ) throws -> InstallResult {
+        let package: PreparedInstallPackage
+        switch kind {
+        case .ipa:
+            package = try preparedIpaPackage(ipaPath: packagePath, explicitBundleID: bundleID)
+        case .app:
+            package = try preparedAppPackage(appPath: packagePath, explicitBundleID: bundleID)
+        }
+        return try installPreparedPackageWithResult(
+            package,
+            udid: udid,
+            responseObserver: responseObserver
+        )
+    }
+
     private static func installPreparedPackage(
         _ package: PreparedInstallPackage,
         udid: String,
@@ -287,6 +320,68 @@ enum RealDevicePackageInstaller {
         }
 
         try validateInstalledPackage(package, udid: udid)
+    }
+
+    private static func installPreparedPackageWithResult(
+        _ package: PreparedInstallPackage,
+        udid: String,
+        preferDevicectl: Bool = true,
+        responseObserver: (([String: Any]) -> Void)? = nil
+    ) throws -> InstallResult {
+        if let preparedPackageInstallerForTesting {
+            try preparedPackageInstallerForTesting(package, udid, responseObserver)
+            let installed = try validateInstalledPackage(package, udid: udid)
+            return InstallResult(
+                bundleID: package.bundleID,
+                sourceVersion: package.expectedVersion,
+                installedVersion: installed,
+                installer: .installationProxy
+            )
+        }
+        if preferDevicectl,
+           let installed = try installWithDevicectlIfAvailableWithResult(package, udid: udid) {
+            return InstallResult(
+                bundleID: package.bundleID,
+                sourceVersion: package.expectedVersion,
+                installedVersion: installed,
+                installer: .devicectl
+            )
+        }
+        if let nativePackageInstallerForTesting {
+            try nativePackageInstallerForTesting(package, udid, responseObserver)
+            let installed = try validateInstalledPackage(package, udid: udid)
+            return InstallResult(
+                bundleID: package.bundleID,
+                sourceVersion: package.expectedVersion,
+                installedVersion: installed,
+                installer: .installationProxy
+            )
+        }
+        try AfcClient.withClient(udid: udid) { afc in
+            try afc.makeDirectories(packagePathPrefix)
+            try? afc.removePathRecursive(package.remotePath)
+            switch package.uploadMode {
+            case .file:
+                try afc.uploadFile(localPath: package.localPath, remotePath: package.remotePath)
+            case .directory:
+                try afc.uploadDirectory(localPath: package.localPath, remotePath: package.remotePath)
+            }
+            defer { try? afc.removePathRecursive(package.remotePath) }
+            try InstallationProxyClient.withClient(udid: udid) { client in
+                try client.install(
+                    packagePath: package.packagePath,
+                    clientOptions: package.clientOptions,
+                    responseObserver: responseObserver
+                )
+            }
+        }
+        let installed = try validateInstalledPackage(package, udid: udid)
+        return InstallResult(
+            bundleID: package.bundleID,
+            sourceVersion: package.expectedVersion,
+            installedVersion: installed,
+            installer: .installationProxy
+        )
     }
 
     static func preparedAppPackage(appPath: String, explicitBundleID: String? = nil) throws -> PreparedInstallPackage {
@@ -346,6 +441,28 @@ enum RealDevicePackageInstaller {
         throw InstallationProxyError.installFailed("devicectl install failed: \(output.isEmpty ? "exit \(result.exitCode)" : output)")
     }
 
+    private static func installWithDevicectlIfAvailableWithResult(
+        _ package: PreparedInstallPackage,
+        udid: String
+    ) throws -> AppVersionInfo? {
+        let result: Shell.RunResult
+        do {
+            result = try runDevicectl(["devicectl", "device", "install", "app", "--device", udid, package.localPath])
+        } catch {
+            return nil
+        }
+        if result.exitCode == 0 {
+            return try validateInstalledPackage(package, udid: udid)
+        }
+        let output = (result.stdout + "\n" + result.stderr).trimmingCharacters(in: .whitespacesAndNewlines)
+        if devicectlErrorAllowsFallback(output, exitCode: result.exitCode, packageKind: package.packageKind) {
+            return nil
+        }
+        throw InstallationProxyError.installFailed(
+            "devicectl install failed: \(output.isEmpty ? "exit \(result.exitCode)" : output)"
+        )
+    }
+
     private static func runDevicectl(_ arguments: [String]) throws -> Shell.RunResult {
         if let devicectlRunnerForTesting {
             return try devicectlRunnerForTesting(arguments)
@@ -388,7 +505,8 @@ enum RealDevicePackageInstaller {
             || devicectlEnvironmentUnavailable
     }
 
-    private static func validateInstalledPackage(_ package: PreparedInstallPackage, udid: String) throws {
+    @discardableResult
+    private static func validateInstalledPackage(_ package: PreparedInstallPackage, udid: String) throws -> AppVersionInfo {
         let response: [String: Any]
         if let installedAppLookupForTesting {
             response = try installedAppLookupForTesting(udid, package.bundleID)
@@ -398,6 +516,13 @@ enum RealDevicePackageInstaller {
             }
         }
         try validateInstalledApp(response: response, bundleID: package.bundleID, expectedVersion: package.expectedVersion)
+        guard let app = InstallationProxyClient.installedAppInfo(response: response, bundleID: package.bundleID) else {
+            throw InstallationProxyError.installFailed("installed app \(package.bundleID) disappeared from validated lookup response")
+        }
+        return AppVersionInfo(
+            bundleVersion: app["CFBundleVersion"] as? String,
+            shortVersion: app["CFBundleShortVersionString"] as? String
+        )
     }
 
     static func installationProxyPackagePath(forAfcPath path: String) -> String {

@@ -399,6 +399,57 @@ public struct ForyProxyCAPushArgs {
     }
 }
 
+@ForyStruct
+public struct ForyWaitAppForegroundArgs {
+    /// Empty means the currently foreground interactive application.
+    public var expectedBundleId: String = ""
+    /// When expectedBundleId is empty, wait for any foreground app in this set.
+    /// An empty set preserves the "any foreground app" behavior.
+    public var acceptedBundleIds: [String] = []
+    /// Zero selects IOSUseProtocol.appForegroundTimeoutSeconds.
+    public var timeout: Double = 0
+    /// Include the successful readiness snapshot in the response.
+    public var returnDom: Bool = false
+
+    public init(
+        expectedBundleId: String = "",
+        acceptedBundleIds: [String] = [],
+        timeout: Double = 0,
+        returnDom: Bool = false
+    ) {
+        self.expectedBundleId = expectedBundleId
+        self.acceptedBundleIds = acceptedBundleIds
+        self.timeout = timeout
+        self.returnDom = returnDom
+    }
+}
+
+@ForyStruct
+public struct ForyWaitAppForegroundPayload {
+    public var expectedBundleId: String = ""
+    public var activeBundleId: String = ""
+    public var appState: Int32 = IOSUseAppState.unknown.rawValue
+    public var snapshotReady: Bool = false
+    public var elapsed: Double = 0
+    public var dom: ForyDomPayload? = nil
+
+    public init(
+        expectedBundleId: String = "",
+        activeBundleId: String = "",
+        appState: Int32 = IOSUseAppState.unknown.rawValue,
+        snapshotReady: Bool = false,
+        elapsed: Double = 0,
+        dom: ForyDomPayload? = nil
+    ) {
+        self.expectedBundleId = expectedBundleId
+        self.activeBundleId = activeBundleId
+        self.appState = appState
+        self.snapshotReady = snapshotReady
+        self.elapsed = elapsed
+        self.dom = dom
+    }
+}
+
 public enum ForyRegistry {
     public static func create() -> Fory {
         let fory = Fory()
@@ -431,6 +482,8 @@ public enum ForyRegistry {
         try! fory.register(ForySwipeArgs.self, name: "ForySwipeArgs")
         try! fory.register(ForyDismissAlertArgs.self, name: "ForyDismissAlertArgs")
         try! fory.register(ForyProxyCAPushArgs.self, name: "ForyProxyCAPushArgs")
+        try! fory.register(ForyWaitAppForegroundArgs.self, name: "ForyWaitAppForegroundArgs")
+        try! fory.register(ForyWaitAppForegroundPayload.self, name: "ForyWaitAppForegroundPayload")
         return fory
     }
 }

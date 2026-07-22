@@ -14,6 +14,8 @@ enum DriverCommandPayload {
 struct DriverCommandResult {
     var stdout: String
     var payload: DriverCommandPayload?
+    var postDom: ForyDomPayload? = nil
+    var artifact: ScreenshotArtifactService.Result? = nil
 }
 
 enum DriverCommandExecutionError: Error, CustomStringConvertible {
@@ -75,7 +77,8 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(
                 stdout: DriverOutput.formatDom(payload) + "\nVisual evidence\n" + evidence.stdout,
-                payload: .dom(payload)
+                payload: .dom(payload),
+                artifact: evidence
             )
 
         case .waitFor(let label, let timeout, let traits, let cindex, let gone, let matchMode):
@@ -99,7 +102,6 @@ enum DriverCommandExecutor {
                     as: ScreenshotCapture.self
                 )
             }
-            let data = capture.jpeg
             let artifactWork = try ScreenshotArtifactService.start(
                 capture: capture,
                 paths: paths,
@@ -109,7 +111,11 @@ enum DriverCommandExecutor {
             )
             let artifact = try artifactWork.finish()
             ok = true
-            return DriverCommandResult(stdout: artifact.stdout, payload: .screenshot(data))
+            return DriverCommandResult(
+                stdout: artifact.stdout,
+                payload: .screenshot(capture.jpeg),
+                artifact: artifact
+            )
 
         case .tap(let target, let offset, let offsetRatio, let traits, let cindex, let postDom):
             let params = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
@@ -240,9 +246,9 @@ enum DriverCommandExecutor {
         }
         let payload: ForyDomPayload
         do {
-            payload = try requiredPayload(
-                clientRunner { .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence)) },
-                as: ForyDomPayload.self
+            payload = try postMutationDom(
+                waitQuiescence: waitQuiescence,
+                clientRunner: clientRunner
             )
         } catch {
             throw DriverCommandExecutionError.postconditionFailed(label: title, underlying: error)
@@ -253,7 +259,35 @@ enum DriverCommandExecutor {
         }
         stdout += "\n\(title)\n"
         stdout += DriverOutput.formatDom(payload)
-        return DriverCommandResult(stdout: stdout, payload: result.payload)
+        return DriverCommandResult(
+            stdout: stdout,
+            payload: result.payload,
+            postDom: payload,
+            artifact: result.artifact
+        )
+    }
+
+    private static func postMutationDom(
+        waitQuiescence: Bool,
+        clientRunner: ClientRunner
+    ) throws -> ForyDomPayload {
+        let deadline = CFAbsoluteTimeGetCurrent() + IOSUseProtocol.postMutationSnapshotRetrySeconds
+        while true {
+            do {
+                return try requiredPayload(
+                    clientRunner {
+                        .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence))
+                    },
+                    as: ForyDomPayload.self
+                )
+            } catch DriverClientError.driverError(_, let payload)
+                where payload.code == IOSUseErrorCode.snapshotFailed
+                    && payload.retryable
+                    && !payload.fatal
+                    && CFAbsoluteTimeGetCurrent() < deadline {
+                Thread.sleep(forTimeInterval: IOSUseProtocol.postMutationSnapshotRetryPollSeconds)
+            }
+        }
     }
 
     private static func appendActionLog(action: String, ok: Bool, elapsedMs: Int, paths: IOSUsePaths) {

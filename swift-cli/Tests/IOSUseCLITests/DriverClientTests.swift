@@ -170,6 +170,80 @@ final class DriverClientTests: XCTestCase {
         XCTAssertTrue(args.waitQuiescence)
     }
 
+    func testClientSerializesWaitAppForegroundAndUsesSharedDeadlineBudget() throws {
+        let fory = ForyRegistry.create()
+        let responsePayload = try fory.serialize(ForyWaitAppForegroundPayload(
+            expectedBundleId: "com.example.app",
+            activeBundleId: "com.example.app",
+            appState: IOSUseAppState.foreground.rawValue,
+            snapshotReady: true,
+            elapsed: 0.2
+        ))
+        let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: responsePayload)])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        let result = try client.waitAppForeground(
+            expectedBundleId: "com.example.app",
+            timeout: 12,
+            returnDom: false
+        )
+
+        XCTAssertTrue(result.snapshotReady)
+        let request = try XCTUnwrap(server.requestFrames.first)
+        XCTAssertEqual(request.command, DriverCommand.waitAppForeground.rawValue)
+        let args = try fory.deserialize(request.payload, as: ForyWaitAppForegroundArgs.self)
+        XCTAssertEqual(args.expectedBundleId, "com.example.app")
+        XCTAssertEqual(args.timeout, 12)
+        XCTAssertFalse(args.returnDom)
+        XCTAssertEqual(IOSUseProtocol.appForegroundWatchdogTimeoutSeconds(args.timeout), 22)
+        XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 24)
+    }
+
+    func testClientSerializesAcceptedForegroundBundleIdsForURLDispatch() throws {
+        let fory = ForyRegistry.create()
+        let responsePayload = try fory.serialize(ForyWaitAppForegroundPayload(
+            activeBundleId: "com.apple.mobilesafari",
+            appState: IOSUseAppState.foreground.rawValue,
+            snapshotReady: true,
+            elapsed: 0.3
+        ))
+        let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: responsePayload)])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        _ = try client.waitAppForeground(
+            acceptedBundleIds: ["com.apple.mobilesafari", "com.example.browser"],
+            timeout: 8,
+            returnDom: true
+        )
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        let args = try fory.deserialize(request.payload, as: ForyWaitAppForegroundArgs.self)
+        XCTAssertEqual(args.expectedBundleId, "")
+        XCTAssertEqual(args.acceptedBundleIds, ["com.apple.mobilesafari", "com.example.browser"])
+        XCTAssertEqual(args.timeout, 8)
+        XCTAssertTrue(args.returnDom)
+    }
+
+    func testLegacyDriverActivateUsesReadinessDeadlineBudget() throws {
+        let fory = ForyRegistry.create()
+        let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true)])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        try client.activateApp(bundleId: "com.example.app")
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        XCTAssertEqual(request.command, DriverCommand.activateApp.rawValue)
+        let args = try fory.deserialize(request.payload, as: ForyActivateAppArgs.self)
+        XCTAssertEqual(args.bundleId, "com.example.app")
+        XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(0), 22)
+    }
+
     func testClientWritesCommandLogToCLILog() throws {
         let fory = ForyRegistry.create()
         let payload = try fory.serialize(ForyDomPayload(app: "fake"))

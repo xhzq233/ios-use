@@ -4,7 +4,7 @@ import IOSUseProtocol
 public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
 
-    public static let version = "1.3.1"
+    public static let version = "1.3.2"
     static var driverClientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)? {
         get { DriverCommandExecution.clientFactoryForTesting }
         set { DriverCommandExecution.clientFactoryForTesting = newValue }
@@ -43,33 +43,63 @@ public struct IOSUseCLI: Sendable {
             }
         }
 
-        if let immediate = CLIHelp.immediateResult(arguments: arguments) {
+        let (machineArguments, wantsJSON) = CLIParser.extractGlobalJSONFlag(arguments)
+        if let immediate = CLIHelp.immediateResult(arguments: machineArguments) {
             return immediate
         }
 
         guard let first = arguments.first else {
             return CLIResult(exitCode: 0, stdout: Self.helpText)
         }
+        let machineCommand = machineArguments.first ?? first
         switch first {
-        case _ where first.hasPrefix("-"):
-            return CLIErrorEnvelope(message: "unknown option '\(first)'").render(help: CLIHelp.rootText)
-        default:
-            do {
-                let parsed = try CLIParser.parse(arguments)
-                return execute(parsed)
-            } catch let error as CLIParseError {
-                return CLIErrorEnvelope(message: error.description).render(
-                    help: CLIHelp.parseErrorHelp(arguments: arguments)
+        case _ where first.hasPrefix("-") && first != "--json":
+            let error = CLIParseError.unknownOption(first)
+            if wantsJSON {
+                return MachineOutput.failure(
+                    command: machineCommand,
+                    error: error,
+                    data: machineParseHelp(arguments: machineArguments),
+                    exitCode: 64
                 )
+            }
+            return CLIErrorEnvelope(message: error.description).render(help: CLIHelp.rootText)
+        default:
+            let invocation: ParsedInvocation
+            do {
+                invocation = try CLIParser.parseInvocation(arguments)
+            } catch let error as CLIParseError {
+                if wantsJSON {
+                    return MachineOutput.failure(
+                        command: machineCommand,
+                        error: error,
+                        data: machineParseHelp(arguments: machineArguments),
+                        exitCode: 64
+                    )
+                }
+                return CLIErrorEnvelope(message: error.description).render(help: CLIHelp.parseErrorHelp(arguments: arguments))
             } catch {
+                if wantsJSON {
+                    return MachineOutput.failure(
+                        command: machineCommand,
+                        error: error,
+                        data: machineParseHelp(arguments: machineArguments),
+                        exitCode: 64
+                    )
+                }
                 return CLIErrorEnvelope(message: "\(error)").render()
             }
+            return execute(invocation.command, json: invocation.json)
         }
     }
 
-    private func execute(_ parsed: ParsedCommand) -> CLIResult {
+    private func execute(_ parsed: ParsedCommand, json: Bool) -> CLIResult {
         switch parsed {
         case .status(let options):
+            if json {
+                let snapshot = StatusService.machineSnapshot(paths: paths)
+                return MachineOutput.success(command: parsed.commandName, data: snapshot.data, warnings: snapshot.warnings)
+            }
             do {
                 return CLIResult(exitCode: 0, stdout: try StatusService.status(paths: paths, verbose: options.verbose))
             } catch {
@@ -97,9 +127,19 @@ public struct IOSUseCLI: Sendable {
             }
         case .install(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try AppManagementService.install(options: options, paths: paths))
+                let result = try AppManagementService.installResult(options: options, paths: paths)
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: AppManagementService.machineInstallData(result)
+                    )
+                }
+                return CLIResult(
+                    exitCode: 0,
+                    stdout: AppManagementService.formatInstallResult(result, verbose: options.verbose)
+                )
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(command: parsed.commandName, error: error, json: json)
             }
         case .uninstall(let options):
             do {
@@ -109,9 +149,16 @@ public struct IOSUseCLI: Sendable {
             }
         case .apps(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try AppManagementService.list(options: options, paths: paths))
+                let result = try AppManagementService.listResult(options: options, paths: paths)
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: AppManagementService.machineAppsData(result)
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: try AppManagementService.formatListResult(result, json: false))
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(command: parsed.commandName, error: error, json: json)
             }
         case .ddiMount(let options):
             do {
@@ -120,9 +167,9 @@ public struct IOSUseCLI: Sendable {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .open(let options):
-            return executeOpen(options)
+            return executeOpen(options, json: json)
         case .appLifecycle(let options):
-            return executeAppLifecycle(options)
+            return executeAppLifecycle(options, json: json)
         case .oslog(let options):
             return executeOSLog(options)
         case .nslog(let options):
@@ -181,7 +228,7 @@ public struct IOSUseCLI: Sendable {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
         case .driver(let action):
-            return executeDriver(action)
+            return executeDriver(action, json: json)
         case .capture(let options):
             do {
                 return CLIResult(exitCode: 0, stdout: try CaptureService.run(options: options, paths: paths))
@@ -193,31 +240,70 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func executeOpen(_ options: OpenURLOptions, hostDeviceTypeHint: String? = nil) -> CLIResult {
+    private func executeOpen(_ options: OpenURLOptions, json: Bool, hostDeviceTypeHint: String? = nil) -> CLIResult {
         do {
-            let validatedURL = try OpenURLService.validatedURL(options.url)
-            let result: OpenURLService.OpenResult?
-            if options.session.udid != nil || hostDeviceTypeHint != nil {
-                result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: options.session.udid, deviceType: hostDeviceTypeHint, paths: paths)
-                    ?? OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+            let result: OpenURLService.OpenResult
+            if options.dom {
+                result = try OpenURLService.openWithDom(url: options.url, session: options.session, paths: paths)
             } else {
-                result = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+                let validatedURL = try OpenURLService.validatedURL(options.url)
+                let resolved: OpenURLService.OpenResult?
+                if options.session.udid != nil || hostDeviceTypeHint != nil {
+                    resolved = try OpenURLService.openHostSideIfAvailable(url: validatedURL, udid: options.session.udid, deviceType: hostDeviceTypeHint, paths: paths)
+                        ?? OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+                } else {
+                    resolved = try OpenURLService.openHostSideIfAvailable(url: validatedURL, session: options.session, paths: paths)
+                }
+                guard let resolved else {
+                    throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start` first.")
+                }
+                result = resolved
             }
-            guard let result else {
-                throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start` first.")
+            var stdout = "\(result.message)\n"
+            if let dom = result.dom {
+                stdout += "\n" + DriverOutput.formatDom(dom) + "\n"
             }
-            return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
+            if json {
+                return MachineOutput.success(command: "open", data: OpenURLService.machineData(result))
+            }
+            return CLIResult(exitCode: 0, stdout: stdout)
         } catch {
-            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            if json, let readinessError = error as? OpenURLService.ReadinessError {
+                return MachineOutput.failure(
+                    command: "open",
+                    error: error,
+                    data: OpenURLService.machineData(readinessError.hostResult),
+                    mutationMayHaveApplied: true
+                )
+            }
+            return commandFailure(command: "open", error: error, json: json)
         }
     }
 
-    private func executeAppLifecycle(_ options: AppLifecycleOptions) -> CLIResult {
+    private func executeAppLifecycle(_ options: AppLifecycleOptions, json: Bool) -> CLIResult {
         do {
-            let result = try AppLifecycleService.run(options: options, paths: paths)
-            return CLIResult(exitCode: 0, stdout: "\(result.message)\n")
+            let result = try AppLifecycleService.runWithReadiness(options: options, paths: paths)
+            var stdout = "\(result.message)\n"
+            if let dom = result.dom {
+                stdout += "\n" + DriverOutput.formatDom(dom) + "\n"
+            }
+            if json {
+                return MachineOutput.success(
+                    command: options.action.commandName,
+                    data: AppLifecycleService.machineData(options: options, result: result)
+                )
+            }
+            return CLIResult(exitCode: 0, stdout: stdout)
         } catch {
-            return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+            if json, let readinessError = error as? AppLifecycleService.ReadinessError {
+                return MachineOutput.failure(
+                    command: options.action.commandName,
+                    error: error,
+                    data: AppLifecycleService.machineData(options: options, result: readinessError.hostResult),
+                    mutationMayHaveApplied: true
+                )
+            }
+            return commandFailure(command: options.action.commandName, error: error, json: json)
         }
     }
 
@@ -234,18 +320,40 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func executeDriver(_ action: DriverAction) -> CLIResult {
+    private func executeDriver(_ action: DriverAction, json: Bool) -> CLIResult {
         let session = LockedDriverClientSession(paths: paths)
         defer { session.close() }
         do {
             let result = try DriverCommandExecutor.execute(action: action, paths: paths) { body in
                 try session.run(body)
             }
+            if json {
+                let output = result.machineOutput(for: action)
+                return MachineOutput.success(command: action.name, data: output.data, warnings: output.warnings)
+            }
             return CLIResult(exitCode: 0, stdout: result.stdout)
         } catch {
-            let message = DriverFailureEvidence.append(to: error, action: action, session: session, paths: paths)
-            return CLIErrorEnvelope(message: message, exitCode: 1).render()
+            let evidence = DriverFailureEvidence.collect(to: error, action: action, session: session, paths: paths)
+            if json {
+                return MachineOutput.failure(
+                    command: action.name,
+                    error: error,
+                    evidenceManifest: evidence.manifestPath
+                )
+            }
+            return CLIErrorEnvelope(message: evidence.renderedMessage, exitCode: 1).render()
         }
+    }
+
+    private func commandFailure(command: String, error: Error, json: Bool, exitCode: Int32 = 1) -> CLIResult {
+        if json {
+            return MachineOutput.failure(command: command, error: error, exitCode: exitCode)
+        }
+        return CLIErrorEnvelope(message: "\(error)", exitCode: exitCode).render()
+    }
+
+    private func machineParseHelp(arguments: [String]) -> MachineValue {
+        .object(["help": .string(CLIHelp.parseErrorHelp(arguments: arguments))])
     }
 
     static func isAppNotRunningError(_ error: Error) -> Bool {

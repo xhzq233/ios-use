@@ -1,13 +1,57 @@
 import Foundation
+import IOSUseProtocol
 
 enum AppLifecycleService {
-    struct Result: Equatable {
+    struct Result {
         let message: String
         let didTerminateApp: Bool?
+        let dom: ForyDomPayload?
+        let targetUdid: String?
+        let deviceType: String?
+        let readiness: ForyWaitAppForegroundPayload?
+        let logFile: String?
+        let logCapturePid: Int32?
 
-        init(message: String, didTerminateApp: Bool? = nil) {
+        init(
+            message: String,
+            didTerminateApp: Bool? = nil,
+            dom: ForyDomPayload? = nil,
+            targetUdid: String? = nil,
+            deviceType: String? = nil,
+            readiness: ForyWaitAppForegroundPayload? = nil,
+            logFile: String? = nil,
+            logCapturePid: Int32? = nil
+        ) {
             self.message = message
             self.didTerminateApp = didTerminateApp
+            self.dom = dom
+            self.targetUdid = targetUdid
+            self.deviceType = deviceType
+            self.readiness = readiness
+            self.logFile = logFile
+            self.logCapturePid = logCapturePid
+        }
+
+        func withTarget(udid: String, deviceType: String) -> Result {
+            Result(
+                message: message,
+                didTerminateApp: didTerminateApp,
+                dom: dom,
+                targetUdid: udid,
+                deviceType: deviceType,
+                readiness: readiness,
+                logFile: logFile,
+                logCapturePid: logCapturePid
+            )
+        }
+    }
+
+    struct ReadinessError: Error, CustomStringConvertible {
+        let hostResult: Result
+        let underlying: Error
+
+        var description: String {
+            "Host lifecycle mutation was dispatched (\(hostResult.message)); readiness failed: \(underlying)"
         }
     }
 
@@ -25,13 +69,121 @@ enum AppLifecycleService {
             ? activeDriver?.deviceType
             : (DeviceService.looksLikeSimulatorUDID(udid) ? "simulator" : "real")
 
+        let result: Result
         switch deviceType {
         case "simulator":
-            return try runSimulator(options: options, udid: udid, paths: paths)
+            result = try runSimulator(options: options, udid: udid, paths: paths)
         case "real":
-            return try runRealDevice(options: options, udid: udid, paths: paths)
+            result = try runRealDevice(options: options, udid: udid, paths: paths)
         default:
             throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType ?? "(missing)").")
+        }
+        return result.withTarget(udid: udid, deviceType: deviceType!)
+    }
+
+    /// Compose a host-side lifecycle mutation with the shared driver
+    /// `waitAppForeground` readiness command. Returns L2 by default; with
+    /// `--no-wait` it returns at L0 without contacting the driver.
+    static func runWithReadiness(options: AppLifecycleOptions, paths: IOSUsePaths) throws -> Result {
+        guard options.action == .activate else {
+            return try run(options: options, paths: paths)
+        }
+        if options.noWait {
+            return try run(options: options, paths: paths)
+        }
+        // Preflight: a matching active driver is required for default L2 readiness.
+        guard let activeDriver = SessionService.read(paths: paths) else {
+            throw CLIParseError.invalidValue("activateApp requires an active driver for UI readiness. Run `ios-use start`, or use --no-wait for host-only launch.")
+        }
+        let udid = try SessionService.resolveTargetUdid(
+            explicitUdid: options.session.udid,
+            paths: paths,
+            missingMessage: "activateApp requires --udid or an active driver. Run `ios-use start` or pass `--udid <UDID>`. Use --no-wait for host-only launch."
+        )
+        guard activeDriver.udid == udid else {
+            throw CLIParseError.invalidValue("activateApp target \(udid) does not match active Driver target \(activeDriver.udid). Run `ios-use stop` and `ios-use start \(udid)`, or use --no-wait for host-only launch.")
+        }
+        // Host mutation first (may start log recording).
+        let hostResult = try run(options: options, paths: paths)
+        // Then wait for L2 through the driver.
+        let readiness: ForyWaitAppForegroundPayload
+        do {
+            readiness = try DriverCommandExecution.withLockedClient(paths: paths, verbose: options.session.verbose) { client in
+                try client.waitAppForeground(
+                    expectedBundleId: options.bundleID,
+                    timeout: 0,
+                    returnDom: options.dom
+                )
+            }
+        } catch {
+            throw ReadinessError(hostResult: hostResult, underlying: error)
+        }
+        guard readiness.snapshotReady else {
+            throw ReadinessError(
+                hostResult: hostResult,
+                underlying: CLIParseError.invalidValue("Driver returned readiness without a successful snapshot")
+            )
+        }
+        var message = hostResult.message
+        if !message.hasSuffix("\n") { message += "\n" }
+        message += String(
+            format: "Readiness: UI ready | active: %@ | elapsed: %.4fs",
+            locale: Locale(identifier: "en_US_POSIX"),
+            readiness.activeBundleId,
+            readiness.elapsed
+        )
+        return Result(
+            message: message,
+            didTerminateApp: hostResult.didTerminateApp,
+            dom: readiness.dom,
+            targetUdid: hostResult.targetUdid,
+            deviceType: hostResult.deviceType,
+            readiness: readiness,
+            logFile: hostResult.logFile,
+            logCapturePid: hostResult.logCapturePid
+        )
+    }
+
+    static func machineData(options: AppLifecycleOptions, result: Result) -> MachineValue {
+        let mutationDispatched = options.action == .activate || result.didTerminateApp != false
+        var data: [String: MachineValue] = [
+            "action": .string(options.action.commandName),
+            "bundleId": .string(options.bundleID),
+            "deviceUdid": result.targetUdid.map(MachineValue.string) ?? .null,
+            "deviceType": result.deviceType.map(MachineValue.string) ?? .null,
+            "mutationDispatched": .boolean(mutationDispatched),
+            "didTerminateApp": result.didTerminateApp.map(MachineValue.boolean) ?? .null,
+            "logFile": result.logFile.map(MachineValue.string) ?? .null,
+            "logCapturePid": result.logCapturePid.map { .integer(Int($0)) } ?? .null,
+        ]
+        if let readiness = result.readiness {
+            data["readiness"] = machineReadiness(readiness)
+        } else {
+            data["readiness"] = .null
+        }
+        return .object(data)
+    }
+
+    static func machineReadiness(_ readiness: ForyWaitAppForegroundPayload) -> MachineValue {
+        .object([
+            "expectedBundleId": .string(readiness.expectedBundleId),
+            "activeBundleId": .string(readiness.activeBundleId),
+            "appState": .string(appStateName(readiness.appState)),
+            "appStateCode": .integer(Int(readiness.appState)),
+            "snapshotReady": .boolean(readiness.snapshotReady),
+            "elapsed": .double(readiness.elapsed),
+            "dom": readiness.dom.map(machineDom) ?? .null,
+        ])
+    }
+
+    private static func appStateName(_ rawValue: Int32) -> String {
+        switch IOSUseAppState(rawValue: rawValue) {
+        case .unknown: return "unknown"
+        case .notRunning: return "notRunning"
+        case .suspended: return "suspended"
+        case .background: return "background"
+        case .foreground: return "foreground"
+        case nil: return "unknown"
         }
     }
 

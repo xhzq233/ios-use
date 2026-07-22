@@ -2,65 +2,115 @@ import Foundation
 import IOSUseProtocol
 
 public enum CLIParser {
+    public static func requestsJSON(_ arguments: [String]) -> Bool {
+        extractGlobalJSONFlag(arguments).1
+    }
+
     public static func parse(_ arguments: [String]) throws -> ParsedCommand {
-        var parser = ArgumentParser(arguments)
+        try parseInvocation(arguments).command
+    }
+
+    public static func parseInvocation(_ arguments: [String]) throws -> ParsedInvocation {
+        let (normalizedArguments, json) = extractGlobalJSONFlag(arguments)
+        var parser = ArgumentParser(normalizedArguments)
         guard let command = parser.consume() else {
             throw CLIParseError.missingCommand
         }
 
+        let parsed: ParsedCommand
         switch command {
         case "status":
-            return .status(try parseStatus(&parser))
+            parsed = .status(try parseStatus(&parser))
         case "config":
-            return .config(try parseConfig(&parser))
+            parsed = .config(try parseConfig(&parser))
         case "start":
-            return .start(try parseStart(&parser))
+            parsed = .start(try parseStart(&parser))
         case "stop":
             try parser.requireEnd()
-            return .stop
+            parsed = .stop
         case "install":
-            return .install(try parseInstall(&parser))
+            parsed = .install(try parseInstall(&parser))
         case "uninstall":
-            return .uninstall(try parseUninstall(&parser))
+            parsed = .uninstall(try parseUninstall(&parser))
         case "apps":
-            return .apps(try parseApps(&parser))
+            var options = try parseApps(&parser)
+            options.json = json
+            parsed = .apps(options)
         case "ddi-mount":
-            return .ddiMount(try parseDDIMount(&parser))
+            parsed = .ddiMount(try parseDDIMount(&parser))
         case "nslog":
-            return .nslog(try parseNSLog(&parser))
+            parsed = .nslog(try parseNSLog(&parser))
         case "proxy":
-            return .proxy(try parseProxy(&parser))
+            parsed = .proxy(try parseProxy(&parser))
         case "tap":
-            return .driver(try parseTap(&parser))
+            parsed = .driver(try parseTap(&parser))
         case "longpress":
-            return .driver(try parseLongPress(&parser))
+            parsed = .driver(try parseLongPress(&parser))
         case "input":
-            return .driver(try parseInput(&parser))
+            parsed = .driver(try parseInput(&parser))
         case "swipe":
-            return .driver(try parseSwipe(&parser))
+            parsed = .driver(try parseSwipe(&parser))
         case "dom":
-            return .driver(try parseDom(&parser))
+            parsed = .driver(try parseDom(&parser))
         case "screenshot":
-            return .driver(try parseScreenshot(&parser))
+            parsed = .driver(try parseScreenshot(&parser))
         case "capture":
-            return .capture(try parseCapture(&parser))
+            parsed = .capture(try parseCapture(&parser))
         case "waitFor":
-            return .driver(try parseWaitFor(&parser))
+            parsed = .driver(try parseWaitFor(&parser))
         case "activateApp":
-            return .appLifecycle(try parseAppLifecycle(&parser, action: .activate))
+            parsed = .appLifecycle(try parseAppLifecycle(&parser, action: .activate))
         case "terminateApp":
-            return .appLifecycle(try parseAppLifecycle(&parser, action: .terminate))
+            parsed = .appLifecycle(try parseAppLifecycle(&parser, action: .terminate))
         case "home":
-            return .driver(try parseHome(&parser))
+            parsed = .driver(try parseHome(&parser))
         case "open":
-            return .open(try parseOpen(&parser))
+            parsed = .open(try parseOpen(&parser))
         case "dismissAlert":
-            return .driver(try parseDismissAlert(&parser))
+            parsed = .driver(try parseDismissAlert(&parser))
         case "oslog":
-            return .oslog(try parseOSLog(&parser))
+            parsed = .oslog(try parseOSLog(&parser))
         default:
             throw CLIParseError.unknownCommand(command)
         }
+        if json {
+            switch parsed {
+            case .status, .install, .apps, .open, .appLifecycle, .driver:
+                break
+            default:
+                throw CLIParseError.unknownOption("--json")
+            }
+        }
+        return ParsedInvocation(command: parsed, json: json)
+    }
+
+    static func extractGlobalJSONFlag(_ arguments: [String]) -> ([String], Bool) {
+        let valueOptions: Set<String> = [
+            "--apple-id", "--password", "--udid", "--path", "--name", "--pattern",
+            "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
+            "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
+            "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
+            "--match", "--fps", "--index", "--process", "--pid", "-i"
+        ]
+        var normalized: [String] = []
+        var json = false
+        var expectsValue = false
+        for argument in arguments {
+            if expectsValue {
+                normalized.append(argument)
+                expectsValue = false
+                continue
+            }
+            if argument == "--json" {
+                json = true
+                continue
+            }
+            normalized.append(argument)
+            if valueOptions.contains(argument) {
+                expectsValue = true
+            }
+        }
+        return (normalized, json)
     }
 
     private static func parseStatus(_ parser: inout ArgumentParser) throws -> StatusOptions {
@@ -279,7 +329,14 @@ public enum CLIParser {
     }
 
     private static func parseTap(_ parser: inout ArgumentParser) throws -> DriverAction {
-        let target = try parser.requiredPositional("target")
+        guard let first = parser.consume(), !first.hasPrefix("--") else {
+            throw CLIParseError.missingRequiredArgument("target")
+        }
+        var target = first
+        if isStrictNumber(first), let second = parser.peek(), isStrictNumber(second) {
+            _ = parser.consume()
+            target = "\(first),\(second)"
+        }
         var offset: String?
         var offsetRatio: String?
         var traits: String?
@@ -292,7 +349,11 @@ public enum CLIParser {
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
-            default: throw CLIParseError.unknownOption(arg)
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                throw CLIParseError.unexpectedArgument(arg)
             }
         }
         return .tap(target: target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex, postDom: postDom)
@@ -505,10 +566,15 @@ public enum CLIParser {
     private static func parseOpen(_ parser: inout ArgumentParser) throws -> OpenURLOptions {
         let url = try parser.requiredPositional("url")
         var session = SessionOptions()
+        var dom = false
         while let arg = parser.consume() {
-            try parseSession(arg, parser: &parser, session: &session)
+            if arg == "--dom" {
+                dom = true
+            } else {
+                try parseSession(arg, parser: &parser, session: &session)
+            }
         }
-        return OpenURLOptions(url: url, session: session)
+        return OpenURLOptions(url: url, session: session, dom: dom)
     }
 
     private static func parseAppLifecycle(_ parser: inout ArgumentParser, action: AppLifecycleOptions.Action) throws -> AppLifecycleOptions {
@@ -516,6 +582,8 @@ public enum CLIParser {
         var session = SessionOptions()
         var terminateExisting = false
         var log = false
+        var dom = false
+        var noWait = false
         while let arg = parser.consume() {
             switch arg {
             case "--terminateExisting":
@@ -524,6 +592,12 @@ public enum CLIParser {
             case "--log":
                 guard action == .activate else { throw CLIParseError.unknownOption(arg) }
                 log = true
+            case "--dom":
+                guard action == .activate else { throw CLIParseError.unknownOption(arg) }
+                dom = true
+            case "--no-wait":
+                guard action == .activate else { throw CLIParseError.unknownOption(arg) }
+                noWait = true
             default:
                 try parseSession(arg, parser: &parser, session: &session)
             }
@@ -531,7 +605,18 @@ public enum CLIParser {
         if log && !terminateExisting {
             throw CLIParseError.invalidValue("activateApp --log requires --terminateExisting so the app starts with a fresh stdio pipe")
         }
-        return AppLifecycleOptions(action: action, bundleID: bundleID, session: session, terminateExisting: terminateExisting, log: log)
+        if dom && noWait {
+            throw CLIParseError.invalidValue("activateApp --dom cannot be combined with --no-wait")
+        }
+        return AppLifecycleOptions(
+            action: action,
+            bundleID: bundleID,
+            session: session,
+            terminateExisting: terminateExisting,
+            log: log,
+            dom: dom,
+            noWait: noWait
+        )
     }
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -604,6 +689,10 @@ public enum CLIParser {
             throw CLIParseError.invalidValue("Invalid number: \"\(value)\"")
         }
         return doubleValue
+    }
+
+    private static func isStrictNumber(_ value: String) -> Bool {
+        (try? parseDoubleStrict(value, label: "coordinate")) != nil
     }
 
     private static func parseNonNegativeIntStrict(_ value: String, label: String) throws -> Int {
@@ -742,6 +831,11 @@ struct ArgumentParser {
         let value = arguments[index]
         index += 1
         return value
+    }
+
+    func peek() -> String? {
+        guard index < arguments.count else { return nil }
+        return arguments[index]
     }
 
     mutating func requiredPositional(_ name: String) throws -> String {

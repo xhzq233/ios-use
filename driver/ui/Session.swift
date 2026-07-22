@@ -28,13 +28,20 @@ final class Session {
             }
         }
         // Slow path: cached app gone/suspended, or it was springboard.
-        if let detected = GetActiveApplication() {
-            if detected !== _app {
-                invalidateSnapshot()
-            }
-            _app = detected
-            return detected
+        return try refreshActive()
+    }
+
+    /// Forces active-application detection even when a cached app is foreground.
+    /// Readiness uses this after observing the requested app so a system-owned
+    /// interactive overlay can own the snapshot that follows.
+    func refreshActive() throws -> XCUIApplication {
+        guard let detected = GetActiveApplication() else {
+            throw DriverError.noSession
         }
-        throw DriverError.noSession
+        if detected !== _app {
+            invalidateSnapshot()
+        }
+        _app = detected
+        return detected
     }
 }

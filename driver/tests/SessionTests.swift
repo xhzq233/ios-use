@@ -42,4 +42,24 @@ final class SessionTests: XCTestCase {
         XCTAssertFalse(shouldLaunchViaLaunchServices(state: .runningForeground))
     }
 
+    func testURLReadinessRequiresSnapshotFromAcceptedHandler() {
+        XCTAssertTrue(AppCommands.snapshotBundleAccepted("com.apple.Preferences", acceptedBundleIds: []))
+        XCTAssertTrue(AppCommands.snapshotBundleAccepted(
+            "com.apple.Preferences",
+            acceptedBundleIds: ["com.apple.Preferences"]
+        ))
+        XCTAssertFalse(AppCommands.snapshotBundleAccepted(
+            "com.apple.mobilesafari",
+            acceptedBundleIds: ["com.apple.Preferences"]
+        ))
+        XCTAssertTrue(AppCommands.snapshotBundleAccepted(
+            "com.apple.mobilesafari",
+            acceptedBundleIds: ["com.apple.mobilesafari", "com.example.browser"]
+        ))
+        XCTAssertFalse(AppCommands.snapshotBundleAccepted(
+            "com.apple.Preferences",
+            acceptedBundleIds: ["com.apple.mobilesafari", "com.example.browser"]
+        ))
+    }
+
 }

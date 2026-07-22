@@ -63,7 +63,7 @@ export const settingsAfterContactsCaseMetadata = [
   { id: 'TA-1', group: 'settings', kind: 'terminate-app', setup: 'settings home', assertion: 'stdout reports terminated', coverage: 'simulator' },
   { id: 'TA-2', group: 'settings', kind: 'terminate-app', setup: 'settings home', assertion: 'stdout reports terminated', coverage: 'simulator' },
   { id: 'AA-6', group: 'settings', kind: 'activate-app', setup: 'active driver', assertion: 'stdout plus Settings DOM postcondition', coverage: 'simulator' },
-  { id: 'OU-1', group: 'settings', kind: 'open-url', setup: 'simulator target', assertion: 'open succeeds and Safari DOM shows Example Domain', coverage: 'simulator' },
+  { id: 'OU-1', group: 'settings', kind: 'open-url', setup: 'simulator target', assertion: 'open --dom returns Safari and the page reaches Example Domain', coverage: 'simulator' },
   { id: 'OU-2', group: 'settings', kind: 'open-url-no-driver', setup: 'stopped driver', assertion: 'open succeeds without recreating driver.lock', coverage: 'simulator' },
   { id: 'OU-3', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
   { id: 'OU-4', group: 'host-bridge', kind: 'bridge', setup: 'none', assertion: 'bridged to Swift CLI unit tests', coverage: 'swift-cli-unit', requiresPrerequisite: false },
@@ -108,6 +108,7 @@ export function buildSettingsBeforeContactsCases(ctx) {
     runCaseContainsAndDomContains,
     runCaseFailsContains,
     runCaseFailsMatches,
+    runCaseMatches,
     runCli,
     runCliToFiles,
     runDomPerfCase,
@@ -256,9 +257,10 @@ export function buildSettingsAfterContactsCases(ctx) {
     { id: 'AA-6', run: () => runCaseContainsAndDomContains('AA-6', 'activated', ['activateApp', 'com.apple.Preferences'], 'App: com.apple.Preferences') },
     { id: 'OU-1', run: async () => {
       if (!selected('OU-1')) return recordSkip('OU-1');
-      console.log('[sim-test] RUN OU-1: open https://example.com and verify Safari DOM');
-      const open = runCliToFiles(['open', 'https://example.com', '--udid', sim.udid], path.join(artifactDir, 'OU-1.out'), path.join(artifactDir, 'OU-1.err'));
-      const verified = open.code === 0 && await verifyExampleDomainOpened('OU-1');
+      console.log('[sim-test] RUN OU-1: open https://example.com --dom and verify Safari DOM');
+      const open = runCliToFiles(['open', 'https://example.com', '--udid', sim.udid, '--dom'], path.join(artifactDir, 'OU-1.out'), path.join(artifactDir, 'OU-1.err'));
+      const readinessMatched = open.code === 0 && open.stdout.includes('App: com.apple.mobilesafari');
+      const verified = readinessMatched && await verifyExampleDomainOpened('OU-1');
       if (verified) recordPass('OU-1');
       else recordFail('OU-1', open.stdout + open.stderr + readFileIfExists(path.join(artifactDir, 'OU-1-verify-dom.out')) + readFileIfExists(path.join(artifactDir, 'OU-1-verify-dom.err')), open.code === 0 ? 'assertion' : 'command');
     } },

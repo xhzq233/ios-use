@@ -328,6 +328,9 @@ import Foundation
 
         case .dismissAlert(let args):
             return try AlertCommands.dismissAlert(args)
+
+        case .waitAppForeground(let args):
+            return try AppCommands.waitAppForeground(args)
         }
     }
 }
@@ -374,6 +377,9 @@ struct CommandInvocation {
 
         case .dismissAlert:
             self.arguments = .dismissAlert(payload.count > 0 ? try codec.deserialize(payload, as: ForyDismissAlertArgs.self) : nil)
+
+        case .waitAppForeground:
+            self.arguments = .waitAppForeground(payload.count > 0 ? try codec.deserialize(payload, as: ForyWaitAppForegroundArgs.self) : ForyWaitAppForegroundArgs())
         }
     }
 
@@ -381,6 +387,10 @@ struct CommandInvocation {
         switch arguments {
         case .waitFor(let args):
             return IOSUseProtocol.waitForWatchdogTimeoutSeconds(args.timeout)
+        case .waitAppForeground(let args):
+            return IOSUseProtocol.appForegroundWatchdogTimeoutSeconds(args.timeout)
+        case .activateApp:
+            return IOSUseProtocol.appForegroundWatchdogTimeoutSeconds(0)
         default:
             return Double(IOSUseProtocol.commandTimeoutSeconds)
         }
@@ -399,5 +409,6 @@ struct CommandInvocation {
         case swipe(ForySwipeArgs)
         case waitFor(ForyWaitForArgs)
         case dismissAlert(ForyDismissAlertArgs?)
+        case waitAppForeground(ForyWaitAppForegroundArgs)
     }
 }
