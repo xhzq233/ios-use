@@ -56,7 +56,7 @@ export function buildContactsCases(ctx) {
       else recordFail('IN-3', `${res.stdout}${res.stderr}${dom.stdout}${dom.stderr}`, res.code === 0 && dom.code === 0 ? 'assertion' : 'command');
       await discardContactIfNeeded();
     } },
-    { id: 'IN-4', run: () => runCaseFailsMatches('IN-4', /not inputtable|not found|keyboard|failed/i, ['input', '--tap', 'General', '--content', 'Nope', '--traits', 'Button'], settingsHome) },
+    { id: 'IN-4', run: () => runCaseFailsMatches('IN-4', /not actionable|not inputtable|not found|keyboard|failed/i, ['input', '--tap', 'General', '--content', 'Nope', '--traits', 'Button'], settingsHome) },
     { id: 'IN-5', run: () => runInputAndVerifyDom('IN-5', 'Search', 'ZZZIOSUse', 'ZZZIOSUse', ['--traits', 'Input'], async () => {
       runCli(['terminateApp', 'com.apple.MobileAddressBook']);
       runCli(['activateApp', 'com.apple.MobileAddressBook']);
