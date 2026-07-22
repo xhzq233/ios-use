@@ -45,20 +45,30 @@ final class SessionTests: XCTestCase {
     func testURLReadinessRequiresSnapshotFromAcceptedHandler() {
         XCTAssertTrue(AppCommands.snapshotBundleAccepted("com.apple.Preferences", acceptedBundleIds: []))
         XCTAssertTrue(AppCommands.snapshotBundleAccepted(
-            "com.apple.Preferences",
-            acceptedBundleIds: ["com.apple.Preferences"]
+            "com.apple.mobilesafari",
+            acceptedBundleIds: ["com.apple.mobilesafari", "com.example.browser"]
         ))
         XCTAssertFalse(AppCommands.snapshotBundleAccepted(
-            "com.apple.mobilesafari",
-            acceptedBundleIds: ["com.apple.Preferences"]
+            "com.apple.Preferences",
+            acceptedBundleIds: ["com.apple.mobilesafari", "com.example.browser"]
+        ))
+    }
+
+    func testActivateReadinessAllowsSystemOverlayOnlyWhileExpectedAppRemainsForeground() {
+        XCTAssertTrue(AppCommands.snapshotBundleAccepted(
+            "com.apple.Preferences",
+            expectedAppForeground: true,
+            acceptedBundleIds: []
         ))
         XCTAssertTrue(AppCommands.snapshotBundleAccepted(
-            "com.apple.mobilesafari",
-            acceptedBundleIds: ["com.apple.mobilesafari", "com.example.browser"]
+            IOSUseProtocol.springboardBundleId,
+            expectedAppForeground: true,
+            acceptedBundleIds: []
         ))
         XCTAssertFalse(AppCommands.snapshotBundleAccepted(
-            "com.apple.Preferences",
-            acceptedBundleIds: ["com.apple.mobilesafari", "com.example.browser"]
+            "com.example.other",
+            expectedAppForeground: false,
+            acceptedBundleIds: []
         ))
     }
 

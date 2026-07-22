@@ -186,11 +186,19 @@ enum AppCommands {
                 let active = try Session.shared.refreshActive()
                 lastBundleId = bundleIdentifier(active)
                 lastState = appState(active.state)
+                let expectedAppForeground: Bool? = expected.isEmpty
+                    ? nil
+                    : requestedApp?.state == .runningForeground
                 guard snapshotBundleAccepted(
                     lastBundleId,
-                    acceptedBundleIds: accepted
+                    expectedAppForeground: expectedAppForeground,
+                    acceptedBundleIds: args.acceptedBundleIds
                 ) else {
-                    lastSnapshotFailure = "foreground snapshot app \(lastBundleId.isEmpty ? "(none)" : lastBundleId) is not accepted"
+                    if expectedAppForeground == false {
+                        lastSnapshotFailure = "expected app \(expected) is no longer foreground"
+                    } else {
+                        lastSnapshotFailure = "foreground snapshot app \(lastBundleId.isEmpty ? "(none)" : lastBundleId) is not accepted"
+                    }
                     runLoopPoll()
                     continue
                 }
@@ -252,9 +260,16 @@ enum AppCommands {
         app.value(forKey: "bundleID") as? String ?? ""
     }
 
-    static func snapshotBundleAccepted(_ bundleId: String, acceptedBundleIds: [String]) -> Bool {
+    static func snapshotBundleAccepted(
+        _ bundleId: String,
+        expectedAppForeground: Bool? = nil,
+        acceptedBundleIds: [String]
+    ) -> Bool {
         let accepted = acceptedBundleIds.filter { !$0.isEmpty }
-        return accepted.isEmpty || accepted.contains(bundleId)
+        if !accepted.isEmpty {
+            return accepted.contains(bundleId)
+        }
+        return expectedAppForeground ?? true
     }
 
     private static func runLoopPoll() {
