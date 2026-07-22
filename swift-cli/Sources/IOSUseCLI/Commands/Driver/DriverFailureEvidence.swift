@@ -256,7 +256,7 @@ enum DriverFailureEvidence {
         switch action {
         case .tap, .longPress, .input, .swipe, .dismissAlert:
             return true
-        case .dom, .screenshot, .waitFor, .activateApp, .terminateApp, .home:
+        case .dom, .inspect, .screenshot, .waitFor, .activateApp, .terminateApp, .home:
             return false
         }
     }

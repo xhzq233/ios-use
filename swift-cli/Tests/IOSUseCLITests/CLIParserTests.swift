@@ -91,6 +91,16 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["dom", "--ocr"]),
+            .driver(.inspect(waitQuiescence: false))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["dom", "--ocr", "--wait-quiescence"]),
+            .driver(.inspect(waitQuiescence: true))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["waitFor", "--label", "Ready", "--timeout", "1.5", "--traits", "Text", "--cindex", "0"]),
             .driver(.waitFor(label: "Ready", timeout: 1.5, traits: "Text", cindex: 0))
         )
@@ -98,6 +108,23 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["waitFor", "--label", "Ready", "--gone"]),
             .driver(.waitFor(label: "Ready", timeout: nil, traits: nil, cindex: nil, gone: true))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["waitFor", "优化身形线条中", "--match", "contains", "--gone", "--timeout", "55s"]),
+            .driver(.waitFor(label: "优化身形线条中", timeout: 55, traits: nil, cindex: nil, gone: true))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["waitFor", #"优化身形线条中.*\d+%"#, "--match", "regex", "--timeout", "800ms"]),
+            .driver(.waitFor(
+                label: #"优化身形线条中.*\d+%"#,
+                timeout: 0.8,
+                traits: nil,
+                cindex: nil,
+                gone: false,
+                matchMode: .regex
+            ))
         )
 
         XCTAssertEqual(
@@ -113,6 +140,11 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["capture", "--fps", "5", "--duration", "1.5", "--name", "pose", "--keep-changed-frames"]),
             .capture(CaptureOptions(duration: 1.5, fps: 5, name: "pose", keepChangedFrames: true))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["capture", "--duration", "1500ms"]),
+            .capture(CaptureOptions(duration: 1.5, fps: 10))
         )
 
         XCTAssertEqual(
@@ -134,6 +166,11 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["longpress", "General", "--duration", "500", "--traits", "Icon", "--cindex", "-2"]),
             .driver(.longPress(target: "General", duration: 500, traits: "Icon", cindex: -2, postDom: nil))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["longpress", "General", "--duration", "0.8s"]),
+            .driver(.longPress(target: "General", duration: 800, traits: nil, cindex: nil, postDom: nil))
         )
 
         XCTAssertEqual(
@@ -159,6 +196,11 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["longpress", "General", "--dom", "100"]),
             .driver(.longPress(target: "General", duration: nil, traits: nil, cindex: nil, postDom: .afterMilliseconds(100)))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["longpress", "General", "--dom", "0.2s"]),
+            .driver(.longPress(target: "General", duration: nil, traits: nil, cindex: nil, postDom: .afterMilliseconds(200)))
         )
 
         XCTAssertEqual(
@@ -311,6 +353,18 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid number: \"abc\""))
         }
 
+        XCTAssertThrowsError(try CLIParser.parse(["waitFor", "Ready", "--label", "Again"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("waitFor target can only be provided once"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["waitFor", "[", "--match", "regex"])) { error in
+            XCTAssertTrue(String(describing: error).contains("invalid waitFor regular expression"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["waitFor", "Ready", "--timeout", "20000"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be at most 300s; use an explicit ms or s suffix"))
+        }
+
         XCTAssertThrowsError(try CLIParser.parse(["config", "--ipa", "driver.ipa"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--ipa"))
         }
@@ -345,11 +399,15 @@ final class CLIParserTests: XCTestCase {
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--fresh"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--wait-quiescence"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["dom", "--raw", "--ocr"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr"))
         }
 
         XCTAssertThrowsError(try CLIParser.parse(["find", "General"])) { error in
@@ -412,7 +470,10 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--duration must be non-negative"))
         }
         XCTAssertThrowsError(try CLIParser.parse(["waitFor", "--label", "General", "--timeout", "-1"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be non-negative"))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be greater than 0"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["waitFor", "General", "--timeout", "0"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--timeout must be greater than 0"))
         }
         XCTAssertThrowsError(try CLIParser.parse(["waitFor", "--label", "General", "--cindex", "1.2"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid integer: \"1.2\""))
@@ -433,7 +494,7 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--dom must be at least 100ms"))
         }
         XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--dom", "1.5"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .invalidValue("Invalid integer: \"1.5\""))
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("--dom must resolve to a whole number of milliseconds"))
         }
         XCTAssertThrowsError(try CLIParser.parse(["home", "--dom"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--dom"))

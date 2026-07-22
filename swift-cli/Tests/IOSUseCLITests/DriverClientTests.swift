@@ -122,6 +122,34 @@ final class DriverClientTests: XCTestCase {
         XCTAssertEqual(args.target.label, "Loading")
         XCTAssertEqual(args.timeout, 2)
         XCTAssertTrue(args.gone)
+        XCTAssertEqual(args.matchMode, IOSUseWaitForMatchMode.standard.rawValue)
+    }
+
+    func testClientSerializesWaitForRegexAndUsesSharedLongWaitBudgets() throws {
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(ForyWaitForPayload())
+        let server = try FakeDriverServer(responses: [ForyResponseFrame(ok: true, payload: payload)])
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        _ = try client.waitFor(
+            label: #"Loading \d+%"#,
+            timeout: 55,
+            traits: nil,
+            cindex: nil,
+            gone: true,
+            matchMode: .regex
+        )
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        let args = try fory.deserialize(request.payload, as: ForyWaitForArgs.self)
+        XCTAssertEqual(args.timeout, 55)
+        XCTAssertEqual(args.matchMode, IOSUseWaitForMatchMode.regex.rawValue)
+        XCTAssertEqual(IOSUseProtocol.waitForWatchdogTimeoutSeconds(args.timeout), 65)
+        XCTAssertEqual(IOSUseProtocol.waitForSocketReadTimeoutSeconds(args.timeout), 67)
+        XCTAssertEqual(IOSUseProtocol.waitForWatchdogTimeoutSeconds(0), 20)
+        XCTAssertEqual(IOSUseProtocol.waitForSocketReadTimeoutSeconds(0), 22)
     }
 
     func testClientSerializesDomWaitQuiescence() throws {

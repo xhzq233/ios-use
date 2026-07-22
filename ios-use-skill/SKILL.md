@@ -49,7 +49,7 @@ Inspect the current UI before acting:
 
 ```bash
 ios-use dom
-ios-use waitFor --label "蓝牙" --timeout 8
+ios-use waitFor "蓝牙" --timeout 8s
 ```
 
 Then perform one state-changing action and verify the new state:
@@ -64,13 +64,20 @@ ios-use input --tap "搜索" --content "蓝牙" --dom
 - After navigation, scrolling, or an element lookup failure, request a new DOM
   before choosing the next action.
 - Use bare `--dom` to wait for quiescence and return a fresh DOM. Use
-  `--dom <milliseconds>` only when a fixed post-action delay is intentional.
+  `--dom <duration>` only when a fixed post-action delay is intentional; suffix
+  explicit values with `ms` or `s`.
 - Keep actions with page-state dependencies sequential. Parallelize only independent
   read-only observations.
 - Wait for disappearance with `--gone`:
 
 ```bash
-ios-use waitFor --label "正在加载" --gone --timeout 10
+ios-use waitFor "正在加载" --gone --timeout 10s
+```
+
+For changing labels, pass a stable substring instead of copying one transient value:
+
+```bash
+ios-use waitFor "优化身形线条中" --match contains --gone --timeout 55s
 ```
 
 ## 4. Use targets deliberately
@@ -78,7 +85,7 @@ ios-use waitFor --label "正在加载" --gone --timeout 10
 ```bash
 ios-use tap "通用"
 ios-use tap "亮度" --offset-ratio 0.8,0.5
-ios-use longpress "照片" --duration 800
+ios-use longpress "照片" --duration 800ms
 ios-use swipe --dir forth --distance 300
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use input --tap "搜索" --content "蓝牙"
@@ -118,6 +125,7 @@ Do not echo signed URLs, tokens, credentials, or unrelated private log content.
 Use a screenshot when the DOM cannot describe visual state:
 
 ```bash
+ios-use dom --ocr
 ios-use screenshot --name result
 ios-use screenshot --no-ocr --name pixels-only
 ```

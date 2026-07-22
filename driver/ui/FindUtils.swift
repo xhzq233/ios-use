@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 import Fory
 
@@ -20,6 +21,12 @@ enum RawFindDiagnostics {
     case none
 }
 
+enum RawFindTextMatch {
+    case standard
+    case exact
+    case regex(NSRegularExpression)
+}
+
 // MARK: - rawFind (doc 6.1)
 
 /// Unified label search against an explicit cleaned snapshot.
@@ -36,7 +43,8 @@ func rawFindInSnapshot(_ target: ForyTarget,
                        cs: CleanedSnapshot,
                        enableFuzzy: Bool = true,
                        visibility: RawFindVisibility = .only,
-                       diagnostics: RawFindDiagnostics = .full) -> FindResult {
+                       diagnostics: RawFindDiagnostics = .full,
+                       textMatch: RawFindTextMatch = .standard) -> FindResult {
     let startedAt = CFAbsoluteTimeGetCurrent()
     func finish(_ result: FindResult, detail: String) -> FindResult {
         DriverPerf.append("[perf] \(#function).total query=\"\(target.label)\" visibility=\(visibility) \(detail) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms")
@@ -51,22 +59,32 @@ func rawFindInSnapshot(_ target: ForyTarget,
     guard !query.isEmpty else {
         return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=emptyQuery")
     }
-    let normalizedQuery = normalizeSearchText(query)
-    guard !normalizedQuery.isEmpty else {
-        return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=emptyNormalizedQuery")
+    let normalizedQuery: String
+    switch textMatch {
+    case .regex:
+        // Regex operates on the original displayed text. Do not reject valid
+        // punctuation-only expressions just because normal selector cleanup
+        // would remove their pattern characters.
+        normalizedQuery = query
+    case .standard, .exact:
+        normalizedQuery = normalizeSearchText(query)
+        guard !normalizedQuery.isEmpty else {
+            return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=emptyNormalizedQuery")
+        }
     }
 
     let searchEntries = visibility == .only
         ? cs.searchEntries.filter { isVisibleWithEffectiveGeometry($0.element, in: cs.appFrame) }
         : cs.searchEntries
 
-    // 1. Exact match wins over contains across the same label + value texts.
-    var matches = contentMatches(in: searchEntries, normalizedQuery: normalizedQuery)
+    // 1. Standard matching preserves the shared selector behavior. Explicit
+    // exact/regex modes are available to waits whose target text is dynamic.
+    var matches = contentMatches(in: searchEntries, normalizedQuery: normalizedQuery, textMatch: textMatch)
 
     // 2. Fuzzy fallback when exact and contains both miss.
     if matches.isEmpty {
         if visibility == .only && diagnostics == .full {
-            let rejected = contentMatches(in: cs.searchEntries, normalizedQuery: normalizedQuery).compactMap { element -> ForyErrorCandidate? in
+            let rejected = contentMatches(in: cs.searchEntries, normalizedQuery: normalizedQuery, textMatch: textMatch).compactMap { element -> ForyErrorCandidate? in
                 guard let reason = effectiveVisibilityRejectionReason(element, in: cs.appFrame) else { return nil }
                 return makeErrorCandidate(element, rejectedBy: [reason])
             }
@@ -74,7 +92,12 @@ func rawFindInSnapshot(_ target: ForyTarget,
                 return finish(.notFound(suggestions: [], rejected: rejected), detail: "result=notFound rejected=\(rejected.count) reason=visibility")
             }
         }
-        guard enableFuzzy else {
+        let supportsFuzzyFallback: Bool
+        switch textMatch {
+        case .standard: supportsFuzzyFallback = true
+        case .exact, .regex: supportsFuzzyFallback = false
+        }
+        guard enableFuzzy && supportsFuzzyFallback else {
             return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound entries=\(searchEntries.count) fuzzy=false")
         }
         let candidates = visibility == .only ? searchCandidates(from: searchEntries) : cs.searchCandidates
@@ -149,17 +172,36 @@ func rawFindInSnapshot(_ target: ForyTarget,
     return finish(.found(matches[0]), detail: "result=found entries=\(searchEntries.count)")
 }
 
-private func contentMatches(in entries: [SearchEntry], normalizedQuery: String) -> [SnapshotElement] {
-    var containsMatches: [SnapshotElement] = []
-    for entry in entries {
-        if entry.normalizedTexts.contains(where: { $0 == normalizedQuery }) {
-            return [entry.element]
+private func contentMatches(
+    in entries: [SearchEntry],
+    normalizedQuery: String,
+    textMatch: RawFindTextMatch
+) -> [SnapshotElement] {
+    switch textMatch {
+    case .standard:
+        var containsMatches: [SnapshotElement] = []
+        for entry in entries {
+            if entry.normalizedTexts.contains(where: { $0 == normalizedQuery }) {
+                return [entry.element]
+            }
+            if entry.normalizedTexts.contains(where: { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }) {
+                containsMatches.append(entry.element)
+            }
         }
-        if entry.normalizedTexts.contains(where: { normalizedTextContainsQuery($0, normalizedQuery: normalizedQuery) }) {
-            containsMatches.append(entry.element)
+        return containsMatches
+    case .exact:
+        return entries.compactMap { entry in
+            entry.normalizedTexts.contains(normalizedQuery) ? entry.element : nil
+        }
+    case .regex(let expression):
+        return entries.compactMap { entry in
+            let matches = entry.rawTexts.contains { text in
+                let range = NSRange(text.startIndex..<text.endIndex, in: text)
+                return expression.firstMatch(in: text, options: [], range: range) != nil
+            }
+            return matches ? entry.element : nil
         }
     }
-    return containsMatches
 }
 
 /// Unified label search: exact(label/value) → contains(label/value) → fuzzy → trait filter.

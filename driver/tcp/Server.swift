@@ -235,7 +235,9 @@ import Foundation
             }
             sem.signal()
         }
-        let waitResult = sem.wait(timeout: .now() + .seconds(IOSUseProtocol.commandTimeoutSeconds))
+        let watchdogSeconds = invocation.watchdogTimeoutSeconds
+        let watchdogMilliseconds = Int(ceil(watchdogSeconds * IOSUseProtocol.millisecondsPerSecond))
+        let waitResult = sem.wait(timeout: .now() + .milliseconds(watchdogMilliseconds))
         if waitResult == .timedOut {
             cancelLock.lock()
             let commandStarted = started
@@ -245,7 +247,7 @@ import Foundation
             cancelLock.unlock()
             let detail = commandStarted ? "after starting on the XCTest main thread" : "before starting on the XCTest main thread"
             return try Codec.foryError(
-                "Command timed out after \(IOSUseProtocol.commandTimeoutSeconds)s \(detail)",
+                "Command timed out after \(Self.formatSeconds(watchdogSeconds))s \(detail)",
                 category: IOSUseErrorCategory.timeout,
                 code: IOSUseErrorCode.driverWatchdogTimeout,
                 phase: IOSUseErrorPhase.dispatch,
@@ -275,6 +277,10 @@ import Foundation
             phase: IOSUseErrorPhase.dispatch,
             fatal: true
         )
+    }
+
+    private static func formatSeconds(_ value: Double) -> String {
+        String(format: "%.4f", locale: Locale(identifier: "en_US_POSIX"), value)
     }
 
     // MARK: - Dispatch
@@ -326,7 +332,7 @@ import Foundation
     }
 }
 
-private struct CommandInvocation {
+struct CommandInvocation {
     let name: Command
     let arguments: Arguments
 
@@ -368,6 +374,15 @@ private struct CommandInvocation {
 
         case .dismissAlert:
             self.arguments = .dismissAlert(payload.count > 0 ? try codec.deserialize(payload, as: ForyDismissAlertArgs.self) : nil)
+        }
+    }
+
+    var watchdogTimeoutSeconds: Double {
+        switch arguments {
+        case .waitFor(let args):
+            return IOSUseProtocol.waitForWatchdogTimeoutSeconds(args.timeout)
+        default:
+            return Double(IOSUseProtocol.commandTimeoutSeconds)
         }
     }
 

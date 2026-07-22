@@ -47,8 +47,48 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatDom(payload), payload: .dom(payload))
 
-        case .waitFor(let label, let timeout, let traits, let cindex, let gone):
-            let payload = try requiredPayload(clientRunner { .waitFor(try $0.waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: gone)) }, as: ForyWaitForPayload.self)
+        case .inspect(let waitQuiescence):
+            let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
+                try requiredPayload(
+                    clientRunner { .screenshotCapture(try $0.screenshotCapture()) },
+                    as: ScreenshotCapture.self
+                )
+            }
+            let artifactWork = try ScreenshotArtifactService.start(
+                capture: capture,
+                paths: paths,
+                name: nil,
+                defaultName: "dom",
+                ocr: true
+            )
+            let payload: ForyDomPayload
+            do {
+                payload = try requiredPayload(
+                    clientRunner { .dom(try $0.dom(raw: false, fresh: true, waitQuiescence: waitQuiescence)) },
+                    as: ForyDomPayload.self
+                )
+            } catch {
+                _ = try? artifactWork.finish()
+                throw error
+            }
+            let evidence = try artifactWork.finish()
+            ok = true
+            return DriverCommandResult(
+                stdout: DriverOutput.formatDom(payload) + "\nVisual evidence\n" + evidence.stdout,
+                payload: .dom(payload)
+            )
+
+        case .waitFor(let label, let timeout, let traits, let cindex, let gone, let matchMode):
+            let payload = try requiredPayload(clientRunner {
+                .waitFor(try $0.waitFor(
+                    label: label,
+                    timeout: timeout,
+                    traits: traits,
+                    cindex: cindex,
+                    gone: gone,
+                    matchMode: matchMode
+                ))
+            }, as: ForyWaitForPayload.self)
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatWaitFor(label: label, payload: payload, gone: gone), payload: .waitFor(payload))
 
@@ -60,72 +100,16 @@ enum DriverCommandExecutor {
                 )
             }
             let data = capture.jpeg
-            try FileManager.default.createDirectory(atPath: paths.artifacts, withIntermediateDirectories: true, attributes: nil)
-            let path = try ArtifactPaths.file(paths: paths, name: name, defaultName: "screenshot", extension: "jpg")
-            // Avoid leaving a stale OCR sidecar when the same artifact name is
-            // reused with `--no-ocr` or when a new recognition attempt fails.
-            let sidecarPath = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("ocr.json").path
-            try? FileManager.default.removeItem(atPath: sidecarPath)
-            // JPEG persistence and OCR are independent host-side work. Run them in
-            // parallel so accurate recognition does not unnecessarily delay the
-            // screenshot artifact becoming available.
-            let work = DispatchGroup()
-            let resultLock = NSLock()
-            var imageError: Error?
-            var ocrOutput: String?
-
-            work.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
-                defer { work.leave() }
-                do {
-                    try data.write(to: URL(fileURLWithPath: path), options: .atomic)
-                } catch {
-                    resultLock.lock()
-                    imageError = error
-                    resultLock.unlock()
-                }
-            }
-
-            if ocr {
-                work.enter()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    defer { work.leave() }
-                    do {
-                        let ocrStarted = CFAbsoluteTimeGetCurrent()
-                        let logicalSize = capture.logicalSize.map { CGSize(width: $0.x, height: $0.y) }
-                        let result = try OCRService.recognize(data: data, logicalSize: logicalSize, scale: capture.scale)
-                        let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - ocrStarted) * 1000)
-                        let writtenSidecarPath = try OCRService.writeSidecar(result: result, imagePath: path, elapsedMs: elapsedMs)
-                        let output = OCRService.format(result) + "OCR sidecar: \(writtenSidecarPath)\n"
-                        resultLock.lock()
-                        ocrOutput = output
-                        resultLock.unlock()
-                    } catch {
-                        // OCR is an evidence aid. A malformed/unsupported screenshot
-                        // must never turn a successful screenshot command into failure.
-                        resultLock.lock()
-                        ocrOutput = "OCR (accurate): unavailable (\(error))\n"
-                        resultLock.unlock()
-                    }
-                }
-            }
-            work.wait()
-            resultLock.lock()
-            let capturedImageError = imageError
-            let capturedOCROutput = ocrOutput
-            resultLock.unlock()
-            if let capturedImageError {
-                throw capturedImageError
-            }
+            let artifactWork = try ScreenshotArtifactService.start(
+                capture: capture,
+                paths: paths,
+                name: name,
+                defaultName: "screenshot",
+                ocr: ocr
+            )
+            let artifact = try artifactWork.finish()
             ok = true
-            var stdout = "Screenshot saved: \(path)\n"
-            if let warning = capture.warning {
-                stdout += "Warning: \(warning)\n"
-            }
-            if let capturedOCROutput {
-                stdout += capturedOCROutput
-            }
-            return DriverCommandResult(stdout: stdout, payload: .screenshot(data))
+            return DriverCommandResult(stdout: artifact.stdout, payload: .screenshot(data))
 
         case .tap(let target, let offset, let offsetRatio, let traits, let cindex, let postDom):
             let params = try resolveTapParams(target, offset: offset, offsetRatio: offsetRatio, traits: traits, cindex: cindex)
@@ -232,6 +216,8 @@ enum DriverCommandExecutor {
             _ = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
         case .swipe(let to, let from, _, _, let traits, let cindex, _):
             _ = try resolveSwipeParams(to: to, from: from, traits: traits, cindex: cindex)
+        case .inspect:
+            break
         default:
             break
         }

@@ -46,6 +46,7 @@ protocol DriverCommandClient: AnyObject {
     func dom(raw: Bool, fresh: Bool, waitQuiescence: Bool) throws -> ForyDomPayload
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) throws -> ForyWaitForPayload
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool) throws -> ForyWaitForPayload
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode) throws -> ForyWaitForPayload
     func screenshot() throws -> Data
     func screenshotCapture() throws -> ScreenshotCapture
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
@@ -114,6 +115,13 @@ extension DriverCommandClient {
             throw CLIParseError.invalidValue("waitFor --gone is not supported by this driver client")
         }
         return try waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex)
+    }
+
+    func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode) throws -> ForyWaitForPayload {
+        guard matchMode == .standard else {
+            throw CLIParseError.invalidValue("waitFor --match is not supported by this driver client")
+        }
+        return try waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: gone)
     }
 }
 
@@ -270,7 +278,31 @@ final class DriverClient: DriverCommandClient {
     }
 
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32? = nil, gone: Bool) throws -> ForyWaitForPayload {
-        try send(WaitForCommand.self, args: ForyWaitForArgs(target: ForyTarget(label: label, traits: traits ?? "", cindex: cindex), timeout: timeout ?? 0, gone: gone))
+        try waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: gone, matchMode: .standard)
+    }
+
+    func waitFor(
+        label: String,
+        timeout: Double?,
+        traits: String?,
+        cindex: Int32? = nil,
+        gone: Bool,
+        matchMode: IOSUseWaitForMatchMode
+    ) throws -> ForyWaitForPayload {
+        let requestedTimeout = timeout ?? 0
+        let args = ForyWaitForArgs(
+            target: ForyTarget(label: label, traits: traits ?? "", cindex: cindex),
+            timeout: requestedTimeout,
+            gone: gone,
+            matchMode: matchMode.rawValue
+        )
+        let payload = try fory.serialize(args)
+        let response = try sendRawPayload(
+            command: WaitForCommand.command.rawValue,
+            payload: payload,
+            responseTimeoutSeconds: IOSUseProtocol.waitForSocketReadTimeoutSeconds(requestedTimeout)
+        )
+        return try fory.deserialize(response, as: ForyWaitForPayload.self)
     }
 
     func screenshot() throws -> Data {
@@ -340,7 +372,7 @@ final class DriverClient: DriverCommandClient {
         return try sendRawPayload(command: binding.command.rawValue, payload: payload)
     }
 
-    private func sendRawPayload(command: String, payload: Data) throws -> Data {
+    private func sendRawPayload(command: String, payload: Data, responseTimeoutSeconds: Int? = nil) throws -> Data {
         let startedAt = CFAbsoluteTimeGetCurrent()
         var requestBytes = 0
         var responseBytes = 0
@@ -351,6 +383,7 @@ final class DriverClient: DriverCommandClient {
             let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
             requestBytes = frameData.count
             let fd = try connectedFD()
+            configureSocketTimeout(fd, seconds: responseTimeoutSeconds ?? socketTimeoutSeconds)
             didUseConnection = true
             commandConnectionID = connectionID
             try writeLengthPrefixed(fd, data: frameData)
@@ -537,7 +570,11 @@ final class DriverClient: DriverCommandClient {
         Darwin.setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &noDelay, socklen_t(MemoryLayout<Int32>.size))
         var noSigPipe: Int32 = 1
         Darwin.setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-        var timeout = timeval(tv_sec: time_t(socketTimeoutSeconds), tv_usec: 0)
+        configureSocketTimeout(fd, seconds: socketTimeoutSeconds)
+    }
+
+    private func configureSocketTimeout(_ fd: Int32, seconds: Int) {
+        var timeout = timeval(tv_sec: time_t(seconds), tv_usec: 0)
         Darwin.setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         Darwin.setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
     }

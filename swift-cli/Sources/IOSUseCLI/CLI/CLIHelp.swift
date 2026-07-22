@@ -142,25 +142,28 @@ enum CLIHelp {
             """
         case "dom":
             return driverHelp(
-                usage: "ios-use dom [--raw] [--fresh] [--wait-quiescence]",
+                usage: "ios-use dom [--raw] [--fresh] [--wait-quiescence] [--ocr]",
                 summary: "Print the current UI element tree.",
                 options: [
                     "--raw               Print raw snapshot text; cannot be combined with other dom options",
                     "--fresh             Ignore cached snapshot and rebuild",
                     "--wait-quiescence   Wait until the UI is idle before returning a fresh DOM",
+                    "--ocr               Also save a screenshot and return accurate OCR; implies a fresh DOM",
                 ]
             )
         case "waitFor":
             return driverHelp(
-                usage: "ios-use waitFor --label <label> [--timeout <seconds>] [--traits <traits>] [--cindex <index>] [--gone]",
+                usage: "ios-use waitFor <target> [--timeout <duration>] [--match <mode>] [--traits <traits>] [--cindex <index>] [--gone]",
                 summary: "Wait until an element appears or disappears.",
                 options: [
-                    "--label <label>      Target label",
-                    "--timeout <seconds>  Maximum wait time",
+                    "--label <label>      Legacy alternative to the positional target",
+                    "--timeout <duration> Maximum wait, up to 300s; accepts s/ms suffixes and defaults to seconds",
+                    "--match <mode>       contains (default; normalized exact preferred), exact, or regex",
                     "--traits <traits>    Comma-separated trait filter",
                     "--cindex <index>     Select the Nth cleaned child under a matched parent",
                     "--gone               Wait until no matching visible element remains",
-                ]
+                ],
+                footer: "Use a stable substring for changing text, for example: ios-use waitFor '优化身形线条中' --gone --timeout 55s"
             )
         case "screenshot":
             return driverHelp(
@@ -173,14 +176,14 @@ enum CLIHelp {
             )
         case "capture":
             return """
-            Usage: ios-use capture [--duration <seconds>] [--fps <number>] [--name <name>] [--keep-changed-frames]
+            Usage: ios-use capture [--duration <duration>] [--fps <number>] [--name <name>] [--keep-changed-frames]
 
             Capture a short sequence of JPEG screenshots for AI inspection.
             The output is a directory containing images and manifest.json; no video or GIF is produced.
             Run a tap first when a capture should start immediately after an interaction.
 
             Options:
-              --duration <seconds>      Capture duration; defaults to 3 and must be greater than 0
+              --duration <duration>     Capture duration; accepts s/ms suffixes, defaults to 3s
               --fps <number>            Sampling rate in (0, 10]; defaults to 10
               --name <name>             Artifact directory name
               --keep-changed-frames     Keep only visually changed frames (tolerant Logical-size tile diff)
@@ -190,30 +193,30 @@ enum CLIHelp {
             """
         case "tap":
             return driverHelp(
-                usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
+                usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
                 summary: "Tap an element label or one x,y coordinate target, for example: ios-use tap 67,269.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
                     "--offset-ratio <x,y>  Ratio offset from target top-left",
                     "--traits <traits>     Comma-separated trait filter",
                     "--cindex <index>      Select the Nth cleaned child under a matched parent",
-                    "--dom [ms]            Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",
+                    "--dom [duration]      Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
                 ]
             )
         case "longpress":
             return driverHelp(
-                usage: "ios-use longpress <target> [--duration <ms>] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
+                usage: "ios-use longpress <target> [--duration <duration>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
                 summary: "Long press an element label or x,y coordinate.",
                 options: [
-                    "--duration <ms>   Press duration in milliseconds",
+                    "--duration <duration> Press duration; accepts s/ms suffixes and defaults to milliseconds",
                     "--traits <traits>  Comma-separated trait filter",
                     "--cindex <index>   Select the Nth cleaned child under a matched parent",
-                    "--dom [ms]         Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",
+                    "--dom [duration]   Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
                 ]
             )
         case "input":
             return driverHelp(
-                usage: "ios-use input [--tap <target>] --content <text> [--delete <n>] [--enter] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
+                usage: "ios-use input [--tap <target>] --content <text> [--delete <n>] [--enter] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
                 summary: "Input text into the current keyboard focus, optionally tapping a target first.",
                 options: [
                     "--tap <target>     Optional label or x,y target to tap before typing",
@@ -222,12 +225,12 @@ enum CLIHelp {
                     "--enter            Send a trailing newline, which may trigger Enter, Done, Go, or send",
                     "--traits <traits>  Comma-separated trait filter for label tap target",
                     "--cindex <index>   Select the Nth cleaned child under a label tap target",
-                    "--dom [ms]         Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",
+                    "--dom [duration]   Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
                 ]
             )
         case "swipe":
             return driverHelp(
-                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [ms]]",
+                usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
                 summary: "Scroll toward a target or by a fixed distance.",
                 options: [
                     "--to <label>       Target element",
@@ -236,7 +239,7 @@ enum CLIHelp {
                     "--distance <px>    Fixed distance in pixels",
                     "--traits <traits>  Comma-separated trait filter for --to",
                     "--cindex <index>   Select the Nth cleaned child under a matched --to parent",
-                    "--dom [ms]         Return a fresh DOM after the mutation; without ms waits until UI is idle; ms must be >= 100",
+                    "--dom [duration]   Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
                 ]
             )
         case "activateApp":
@@ -291,7 +294,7 @@ enum CLIHelp {
             )
         case "oslog":
             return """
-            Usage: ios-use oslog [--udid <udid>] [--process <name> | --pid <pid>] [--pattern <regex>] [--flags <flags>] [--timeout <seconds>] [--verbose]
+            Usage: ios-use oslog [--udid <udid>] [--process <name> | --pid <pid>] [--pattern <regex>] [--flags <flags>] [--timeout <duration>] [--verbose]
 
             Stream OSLog output.
             Fetch defaults to the active driver.lock UDID when --udid is omitted.
@@ -302,7 +305,7 @@ enum CLIHelp {
               --pid <pid>            Filter by a single process id
               --pattern <regex>      Regex filter
               --flags <flags>        Regex flags: i, m, s
-              --timeout <seconds>    Collection or polling timeout; must be greater than 0
+              --timeout <duration>   Collection or polling timeout; accepts s/ms suffixes and defaults to seconds
               --verbose              Enable verbose output
 
             """
@@ -313,7 +316,7 @@ enum CLIHelp {
             Forms:
               ios-use nslog [--name <name>]
               ios-use nslog start [--name <name>]
-              ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <sec>] [--clearAfterRead] [--last N]
+              ios-use nslog read [--pattern <regex>] [--flags <flags>] [--timeout <duration>] [--clearAfterRead] [--last N]
               ios-use nslog stop
 
             Stream or capture NSLogger logs.
@@ -322,7 +325,7 @@ enum CLIHelp {
               --name <name>       Bonjour service name
               --pattern <regex>   Regex filter for nslog read
               --flags <flags>     Regex flags for nslog read: i, m, s
-              --timeout <sec>     Wait for a matching line while capture is running
+              --timeout <duration> Wait for a matching line; accepts s/ms suffixes and defaults to seconds
               --clearAfterRead    Truncate the capture log after reading
               --last N            Print only the last N matching lines (N > 0)
 
@@ -353,7 +356,7 @@ enum CLIHelp {
         return CLIResult(exitCode: 0, stdout: help)
     }
 
-    private static func driverHelp(usage: String, summary: String, options: [String] = []) -> String {
+    private static func driverHelp(usage: String, summary: String, options: [String] = [], footer: String? = nil) -> String {
         var lines = [
             "Usage: \(usage)",
             "",
@@ -364,6 +367,9 @@ enum CLIHelp {
         if !options.isEmpty {
             lines += ["", "Options:"]
             lines += options.map { "  \($0)" }
+        }
+        if let footer {
+            lines += ["", footer]
         }
         return lines.joined(separator: "\n") + "\n\n"
     }

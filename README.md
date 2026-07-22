@@ -50,7 +50,7 @@ Modern multimodal models do not usually allocate tokens linearly with every scre
 1. **DOM-first targeting** - Most actions use label/value text. The driver resolves coordinates internally, so the LLM does not need to guess pixel positions for standard UI.
 2. **Vision fallback** - When AX is incomplete (for example, a custom-drawn icon), the LLM can inspect a screenshot and pass raw coordinates.
 3. **Offset hybrid** — Combine both: anchor on a known label, then apply a relative offset to hit an adjacent unlabeled control.
-4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom`, or use `dom` / `waitFor` to confirm success at the semantic level. Failed UI mutations return a stable error code; actionable lookup/action failures also print one `Evidence:` manifest path that references the captured screenshot, fast OCR, and fresh DOM when available.
+4. **Deterministic feedback** - Callers can request a fresh DOM after mutations with `--dom`, use `dom` / `waitFor` to confirm semantic state, or use `dom --ocr` to collect a fresh tree and near-contemporaneous visual evidence in one command. Failed UI mutations return a stable error code; actionable lookup/action failures also print one `Evidence:` manifest path that references the captured screenshot, fast OCR, and fresh DOM when available.
 
 This means:
 
@@ -126,7 +126,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `config` | Install or update the on-device driver. |
 | `start` / `stop` | Select or release the current automation target. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID. |
-| `dom` | Print the current UI tree for inspection and planning. |
+| `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
 | `input` | Type into the current keyboard focus, optionally tapping a target first. |
@@ -141,11 +141,12 @@ Typical manual loop:
 ```bash
 ios-use activateApp com.apple.Preferences
 ios-use dom
-ios-use waitFor --label "蓝牙" --timeout 5
+ios-use waitFor "蓝牙" --timeout 5s
 ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
 ios-use input --tap "搜索" --content "蓝牙"
 ios-use screenshot --name settings-home
+ios-use dom --ocr  # one-shot AX + visual inspection when the channels disagree
 
 # Short visual sequence; run the interaction separately so the capture primitive stays composable.
 ios-use tap "站姿1" && ios-use capture --fps 10 --duration 3 --name pose-sweep
@@ -155,10 +156,22 @@ Repeatable sequences are ordinary shell scripts, so they can use variables, cond
 
 ```bash
 set -euo pipefail
-ios-use waitFor --label "蓝牙" --timeout 8
+ios-use waitFor "蓝牙" --timeout 8s
 ios-use tap "蓝牙"
 ios-use dom
 ```
+
+For changing labels, wait on a stable substring or use an explicit regex instead of
+copying one transient value such as a percentage:
+
+```bash
+ios-use waitFor "优化身形线条中" --match contains --gone --timeout 55s
+ios-use waitFor '优化身形线条中.*\d+%' --match regex --gone --timeout 55s
+```
+
+Time options accept `s` and `ms` suffixes. Bare `waitFor`, `capture`, and log
+timeouts are seconds; bare long-press and post-mutation `--dom` durations are
+milliseconds.
 
 ## Performance Snapshot
 

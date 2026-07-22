@@ -37,7 +37,7 @@ a real device:
 
 ```bash
 ios-use dom --fresh
-ios-use waitFor --label "Settings" --timeout 5
+ios-use waitFor "Settings" --timeout 5s
 ios-use tap "Settings"
 ios-use screenshot
 ios-use stop
