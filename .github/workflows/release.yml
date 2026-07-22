@@ -11,7 +11,7 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
 env:
@@ -30,18 +30,51 @@ jobs:
         id: resolve_tag
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            release_tag="${{ github.ref_name }}"
           elif [ -n "${{ inputs.tag }}" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            release_tag="${{ inputs.tag }}"
           else
             echo "Release workflow must run from a tag push or workflow_dispatch tag input." >&2
             exit 1
           fi
+          case "$release_tag" in
+            v*) ;;
+            *)
+              echo "Release tag must start with v, for example v1.3.2." >&2
+              exit 1
+              ;;
+          esac
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ steps.resolve_tag.outputs.tag }}
+
+      - name: Refuse an existing asset set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.resolve_tag.outputs.tag }}
+        run: |
+          set +e
+          release_probe="$(gh api --include "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>&1)"
+          probe_status=$?
+          set -e
+          http_status="$(printf '%s\n' "$release_probe" | awk 'NR == 1 { print $2 }')"
+          if [ "$http_status" = "404" ]; then
+            exit 0
+          fi
+          if [ "$probe_status" -ne 0 ] || [ "$http_status" != "200" ]; then
+            echo "Unable to inspect release $RELEASE_TAG (HTTP ${http_status:-unknown})." >&2
+            exit 1
+          fi
+          existing_assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          if [ -n "$existing_assets" ]; then
+            echo "Release $RELEASE_TAG already has assets; refusing a mixed or overwritten asset set:" >&2
+            printf '%s\n' "$existing_assets" >&2
+            echo "Publish a new version instead of retrying this tag." >&2
+            exit 1
+          fi
 
       - name: Install xcodegen
         run: brew install xcodegen
@@ -73,19 +106,11 @@ jobs:
           IOS_USE_RELEASE_VERSION: ${{ steps.resolve_tag.outputs.tag }}
         run: bash scripts/release_build.sh
 
-      - name: Remove stale release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.resolve_tag.outputs.tag }}
-        run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            for asset in ios-use-darwin-arm64 driver.ipa driver-sim.ipa SHA256SUMS; do
-              gh release delete-asset "$RELEASE_TAG" "$asset" --yes 2>/dev/null || true
-            done
-          fi
-
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.resolve_tag.outputs.tag }}
           files: release/*
+          body_path: release/CHANGELOG-${{ steps.resolve_tag.outputs.tag }}.md
+          overwrite_files: false
+          fail_on_unmatched_files: true

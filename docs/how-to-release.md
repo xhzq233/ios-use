@@ -25,13 +25,15 @@ This script:
 2. Verifies `./ios-use --version` matches `IOS_USE_RELEASE_VERSION` when provided.
 3. Builds the real-device and simulator driver IPAs.
 4. Stages release assets under `release/`.
-5. Writes `release/SHA256SUMS`.
+5. Stages the matching versioned changelog.
+6. Writes `release/SHA256SUMS` for every staged content asset.
 
 Expected assets:
 
 - `release/ios-use-darwin-arm64`
 - `release/driver.ipa`
 - `release/driver-sim.ipa`
+- `release/CHANGELOG-v1.2.0.md`
 - `release/SHA256SUMS`
 
 ## 3. Sanity Check
@@ -51,7 +53,7 @@ git diff --check
 Commit the version bump, then create the release tag:
 
 ```bash
-git add README.md swift-cli/Sources/IOSUseCLI/CLI/IOSUseCLI.swift swift-cli/Tests/IOSUseCLITests/DeviceProtocolClientTests.swift
+git add README.md release-notes/CHANGELOG-v1.2.0.md swift-cli/Sources/IOSUseCLI/CLI/IOSUseCLI.swift
 git commit -m "chore(release): bump version to 1.2.0"
 git tag v1.2.0
 ```
@@ -69,6 +71,12 @@ git push origin v1.2.0
 
 Pushing the tag triggers `.github/workflows/release.yml`.
 
+Release assets are immutable through the workflow: it refuses to start when the
+tag's Release already contains any asset. The upload action is additionally
+configured to skip, rather than overwrite, an unexpected duplicate filename. Do not
+retry a partially uploaded tag because a second build could produce checksums for
+different bytes. Fix the issue and publish a new patch version instead.
+
 ## 6. Watch The GitHub Release
 
 The release workflow runs on tag pushes that match `v*` and uploads:
@@ -76,13 +84,14 @@ The release workflow runs on tag pushes that match `v*` and uploads:
 - `ios-use-darwin-arm64`
 - `driver.ipa`
 - `driver-sim.ipa`
+- `CHANGELOG-vX.Y.Z.md`
 - `SHA256SUMS`
 
 To watch it:
 
 1. Open the GitHub Actions run for the `Build & Release` workflow.
 2. Confirm `scripts/release_build.sh` passes its version check.
-3. Confirm the upload step publishes all four assets.
+3. Confirm the upload step publishes all five assets.
 4. Open the GitHub Release page for the tag and verify the assets are attached.
 
 ## 7. Release Checklist
@@ -92,4 +101,4 @@ To watch it:
 - `release/` contains all expected assets.
 - `git diff --check` passes.
 - The tag is pushed to origin.
-- The GitHub Release has all four uploaded assets.
+- The GitHub Release has all five uploaded assets.
