@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 enum OpenURLService {
     static var realDeviceURLLauncherForTesting: ((String, String) throws -> Void)?
@@ -58,6 +59,42 @@ enum OpenURLService {
 
     struct OpenResult {
         let message: String
+        let dom: ForyDomPayload?
+        let url: String?
+        let targetUdid: String?
+        let deviceType: String?
+        let registeredHandlers: [String]
+        let schemeLookupVerified: Bool?
+        let readiness: ForyWaitAppForegroundPayload?
+
+        init(
+            message: String,
+            dom: ForyDomPayload? = nil,
+            url: String? = nil,
+            targetUdid: String? = nil,
+            deviceType: String? = nil,
+            registeredHandlers: [String] = [],
+            schemeLookupVerified: Bool? = nil,
+            readiness: ForyWaitAppForegroundPayload? = nil
+        ) {
+            self.message = message
+            self.dom = dom
+            self.url = url
+            self.targetUdid = targetUdid
+            self.deviceType = deviceType
+            self.registeredHandlers = registeredHandlers
+            self.schemeLookupVerified = schemeLookupVerified
+            self.readiness = readiness
+        }
+    }
+
+    struct ReadinessError: Error, CustomStringConvertible {
+        let hostResult: OpenResult
+        let underlying: Error
+
+        var description: String {
+            "URL dispatch was accepted (\(hostResult.message)); foreground DOM readiness failed: \(underlying)"
+        }
     }
 
     static func validatedURL(_ url: String) throws -> String {
@@ -82,7 +119,7 @@ enum OpenURLService {
         if activeDriver?.udid == targetUdid {
             if activeDriver?.deviceType == "simulator" {
                 try openSimulator(url: validated, udid: targetUdid)
-                return OpenResult(message: "Opened URL: \(validated)")
+                return OpenResult(message: "Opened URL: \(validated)", url: validated, targetUdid: targetUdid, deviceType: "simulator")
             }
             return try openRealDevice(url: validated, udid: targetUdid)
         }
@@ -92,9 +129,75 @@ enum OpenURLService {
                 return nil
             }
             try openSimulator(url: validated, udid: targetUdid)
-            return OpenResult(message: "Opened URL: \(validated)")
+            return OpenResult(message: "Opened URL: \(validated)", url: validated, targetUdid: targetUdid, deviceType: "simulator")
         }
         return try openRealDevice(url: validated, udid: targetUdid)
+    }
+
+    /// Dispatch the URL, wait for a registered handler when one is known, then
+    /// obtain one fresh DOM. This is observation convenience, not proof that the
+    /// deep-link destination finished loading.
+    static func openWithDom(url: String, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult {
+        let activeDriver = try SessionService.requireDriverLock(paths: paths)
+        let targetUdid = try SessionService.resolveTargetUdid(
+            explicitUdid: session.udid,
+            paths: paths,
+            missingMessage: "open --dom requires an active Driver target. Run `ios-use start` first."
+        )
+        guard activeDriver.udid == targetUdid else {
+            throw CLIParseError.invalidValue("open --dom target \(targetUdid) does not match active Driver target \(activeDriver.udid). Run `ios-use stop` and `ios-use start \(targetUdid)`.")
+        }
+        let base = try openHostSideIfAvailable(url: url, session: session, paths: paths)
+        guard let base else {
+            throw CLIParseError.invalidValue("open target is unavailable. Pass a USB real device UDID, pass a booted Simulator UDID, or run `ios-use start` first.")
+        }
+        if base.deviceType == "real", base.schemeLookupVerified != true {
+            throw ReadinessError(
+                hostResult: base,
+                underlying: CLIParseError.invalidValue("open --dom cannot verify the target App because URL handler lookup failed; retry the lookup, or compose `open` and `dom` explicitly")
+            )
+        }
+        let acceptedBundleIds = readinessBundleIds(url: url, result: base)
+        let readiness: ForyWaitAppForegroundPayload
+        do {
+            readiness = try DriverCommandExecution.withLockedClient(paths: paths, verbose: session.verbose) { client in
+                try client.waitAppForeground(
+                    acceptedBundleIds: acceptedBundleIds,
+                    timeout: 0,
+                    returnDom: true
+                )
+            }
+        } catch {
+            throw ReadinessError(hostResult: base, underlying: error)
+        }
+        guard readiness.snapshotReady else {
+            throw ReadinessError(
+                hostResult: base,
+                underlying: CLIParseError.invalidValue("Driver returned readiness without a successful snapshot")
+            )
+        }
+        return OpenResult(
+            message: base.message,
+            dom: readiness.dom,
+            url: base.url,
+            targetUdid: base.targetUdid,
+            deviceType: base.deviceType,
+            registeredHandlers: base.registeredHandlers,
+            schemeLookupVerified: base.schemeLookupVerified,
+            readiness: readiness
+        )
+    }
+
+    static func readinessBundleIds(url: String, result: OpenResult) -> [String] {
+        if result.schemeLookupVerified == true, !result.registeredHandlers.isEmpty {
+            return result.registeredHandlers
+        }
+        guard result.deviceType == "simulator",
+              let scheme = URLComponents(string: url)?.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return []
+        }
+        return ["com.apple.mobilesafari"]
     }
 
     static func openHostSideIfAvailable(url: String, udid: String?, deviceType: String?, paths: IOSUsePaths) throws -> OpenResult? {
@@ -105,7 +208,7 @@ enum OpenURLService {
                 throw CLIParseError.invalidValue("openURL requires a simulator UDID")
             }
             try openSimulator(url: validated, udid: udid)
-            return OpenResult(message: "Opened URL: \(validated)")
+            return OpenResult(message: "Opened URL: \(validated)", url: validated, targetUdid: udid, deviceType: "simulator")
         case "real":
             guard let udid, !udid.isEmpty else {
                 throw CLIParseError.invalidValue("openURL requires a real device UDID")
@@ -135,11 +238,36 @@ enum OpenURLService {
         try openRealDeviceURL(url: url, udid: udid)
 
         if lookup.lookupFailed {
-            return OpenResult(message: "Sent URL request: \(url) (unable to verify scheme registration)")
+            return OpenResult(
+                message: "Sent URL request: \(url) (unable to verify scheme registration)",
+                url: url,
+                targetUdid: udid,
+                deviceType: "real",
+                schemeLookupVerified: false
+            )
         }
 
         let handlers = lookup.registeredHandlers.joined(separator: ", ")
-        return OpenResult(message: "Opened URL: \(url) (handler: \(handlers))")
+        return OpenResult(
+            message: "Opened URL: \(url) (handler: \(handlers))",
+            url: url,
+            targetUdid: udid,
+            deviceType: "real",
+            registeredHandlers: lookup.registeredHandlers,
+            schemeLookupVerified: true
+        )
+    }
+
+    static func machineData(_ result: OpenResult) -> MachineValue {
+        .object([
+            "url": result.url.map(MachineValue.string) ?? .null,
+            "deviceUdid": result.targetUdid.map(MachineValue.string) ?? .null,
+            "deviceType": result.deviceType.map(MachineValue.string) ?? .null,
+            "mutationDispatched": .boolean(true),
+            "schemeLookupVerified": result.schemeLookupVerified.map(MachineValue.boolean) ?? .null,
+            "registeredHandlers": .array(result.registeredHandlers.map(MachineValue.string)),
+            "readiness": result.readiness.map(AppLifecycleService.machineReadiness) ?? .null,
+        ])
     }
 
     private static func openRealDeviceURL(url: String, udid: String) throws {

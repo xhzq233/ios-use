@@ -72,10 +72,10 @@ final class IOSUseCLITests: XCTestCase {
     }
 
     func testParseErrorReturnsKnownCommandHelpOnStderr() {
-        let result = IOSUseCLI().run(arguments: ["tap", "67", "269", "--dom"])
+        let result = IOSUseCLI().run(arguments: ["tap", "67", "269", "270", "--dom"])
 
         XCTAssertEqual(result.exitCode, 64)
-        XCTAssertTrue(result.stderr.hasPrefix("error: unknown option '269'\n\n"))
+        XCTAssertTrue(result.stderr.hasPrefix("error: unexpected argument '270'\n\n"))
         XCTAssertTrue(result.stderr.contains("Usage: ios-use tap <target>"))
         XCTAssertTrue(result.stderr.contains("ios-use tap 67,269"))
         XCTAssertFalse(result.stderr.contains("Usage: ios-use [--help]"))
@@ -231,6 +231,70 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
+    func testStatusJSONReturnsVersionedTypedEnvelope() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-status-json-\(UUID().uuidString)")
+            .path
+        DeviceService.listDevicesOverrideForTesting = { simulatorOnly, _ in
+            simulatorOnly ? [] : [IOSDevice(name: "Phone", version: "18.0", udid: "REAL-1", kind: .real)]
+        }
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["status", "--json"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stderr.isEmpty)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        XCTAssertEqual(envelope["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(envelope["ok"] as? Bool, true)
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        XCTAssertEqual((data["cli"] as? [String: Any])?["version"] as? String, IOSUseCLI.version)
+        XCTAssertEqual(((data["connectedDevices"] as? [[String: Any]])?.first)?["udid"] as? String, "REAL-1")
+    }
+
+    func testStatusJSONMayPrecedeCommand() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-leading-json-\(UUID().uuidString)")
+            .path
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["--json", "status"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stderr.isEmpty)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        XCTAssertEqual(envelope["ok"] as? Bool, true)
+        XCTAssertEqual(envelope["command"] as? String, "status")
+    }
+
+    func testJSONParseFailureGoesOnlyToStderrWithStructuredClassification() throws {
+        let result = IOSUseCLI().run(arguments: ["tap", "General", "extra", "--json"])
+
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stdout.isEmpty)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stderr.utf8)) as? [String: Any])
+        XCTAssertEqual(envelope["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(envelope["ok"] as? Bool, false)
+        let error = try XCTUnwrap(envelope["error"] as? [String: Any])
+        XCTAssertEqual(error["category"] as? String, IOSUseErrorCategory.validation)
+        XCTAssertEqual(error["code"] as? String, "unexpected_argument")
+        XCTAssertEqual(error["mutationMayHaveApplied"] as? Bool, false)
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        XCTAssertTrue((data["help"] as? String)?.contains("Usage: ios-use tap <target>") == true)
+    }
+
+    func testLeadingJSONParseFailureUsesCommandNameAndCommandHelp() throws {
+        let result = IOSUseCLI().run(arguments: ["--json", "tap"])
+
+        XCTAssertEqual(result.exitCode, 64)
+        XCTAssertTrue(result.stdout.isEmpty)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stderr.utf8)) as? [String: Any])
+        XCTAssertEqual(envelope["command"] as? String, "tap")
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        XCTAssertTrue((data["help"] as? String)?.contains("Usage: ios-use tap <target>") == true)
+    }
+
     func testAppLifecycleHelpIsHostSide() {
         let result = IOSUseCLI().run(arguments: ["activateApp", "--help"])
 
@@ -306,6 +370,7 @@ final class IOSUseCLITests: XCTestCase {
         var installs: [(String, String, String?)] = []
         AppManagementService.installerForTesting = { ipa, udid, bundleID in
             installs.append((ipa, udid, bundleID))
+            return self.installResult(bundleID: bundleID ?? "com.example.app")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("install is host-only and must not create a driver client")
@@ -362,6 +427,7 @@ final class IOSUseCLITests: XCTestCase {
             let capture = try XCTUnwrap(AppLogCaptureService.readState(paths: paths)?.lastCapture)
             XCTAssertEqual(capture.status, "stopped")
             XCTAssertNil(capture.helperPID)
+            return self.installResult(bundleID: "com.example.app")
         }
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
@@ -396,6 +462,7 @@ final class IOSUseCLITests: XCTestCase {
         var installs: [(String, String, String?)] = []
         AppManagementService.installerForTesting = { ipa, udid, bundleID in
             installs.append((ipa, udid, bundleID))
+            return self.installResult(bundleID: bundleID ?? "com.example.app")
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("install is host-only and must not create a driver client")
@@ -409,7 +476,7 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(installs.map(\.1), ["LOCK-REAL"])
-        XCTAssertTrue(result.stdout.contains("Installed IPA on LOCK-REAL"))
+        XCTAssertTrue(result.stdout.contains("Installed com.example.app (version/build unknown) on LOCK-REAL"))
     }
 
     func testInstallCommandAcceptsAppBundleAndExtractsBundleID() throws {
@@ -422,6 +489,7 @@ final class IOSUseCLITests: XCTestCase {
         var installs: [(String, String, String?)] = []
         AppManagementService.installerForTesting = { package, udid, bundleID in
             installs.append((package, udid, bundleID))
+            return self.installResult(bundleID: bundleID ?? "com.example.demo")
         }
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
@@ -433,7 +501,40 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(installs.map(\.0), [appPath])
         XCTAssertEqual(installs.map(\.1), ["REAL-1"])
         XCTAssertEqual(installs.map(\.2), ["com.example.demo"])
-        XCTAssertTrue(result.stdout.contains("Installed app on REAL-1 (com.example.demo)"))
+        XCTAssertTrue(result.stdout.contains("Installed com.example.demo (version/build unknown) on REAL-1"))
+    }
+
+    func testInstallJSONReturnsVerifiedTypedReceipt() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-install-json-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let ipaPath = "\(root)/app.ipa"
+        try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app", build: "42", version: "1.3.2")
+        AppManagementService.installerForTesting = { _, _, bundleID in
+            self.installResult(
+                bundleID: bundleID ?? "com.example.app",
+                build: "42",
+                version: "1.3.2",
+                installer: .devicectl
+            )
+        }
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
+            "install", ipaPath, "--udid", "REAL-1", "--json"
+        ])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stderr.isEmpty)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        XCTAssertEqual(data["bundleId"] as? String, "com.example.app")
+        XCTAssertEqual(data["version"] as? String, "1.3.2")
+        XCTAssertEqual(data["build"] as? String, "42")
+        XCTAssertEqual(data["installer"] as? String, "devicectl")
+        XCTAssertEqual(data["verifiedOnDevice"] as? Bool, true)
+        XCTAssertNotNil(data["elapsed"] as? Double)
     }
 
     func testAppBundleInstallUsesDeveloperDirectoryPackage() throws {
@@ -587,6 +688,45 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertFalse(nativeCalled)
         XCTAssertEqual(devicectlCalls, [["devicectl", "device", "install", "app", "--device", "REAL-1", appPath]])
+    }
+
+    func testInstallPackageResultReturnsExistingValidationMetadataWithoutSecondLookup() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-install-result-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let appPath = "\(root)/Demo.app"
+        try makeMinimalVersionedApp(path: appPath, bundleID: "com.example.demo", build: "7", version: "1.2")
+        addTeardownBlock { try? FileManager.default.removeItem(atPath: root) }
+        RealDevicePackageInstaller.devicectlRunnerForTesting = { _ in
+            Shell.RunResult(stdout: "installed", stderr: "", exitCode: 0)
+        }
+        var lookupCount = 0
+        RealDevicePackageInstaller.installedAppLookupForTesting = { _, bundleID in
+            lookupCount += 1
+            return [
+                "LookupResult": [
+                    bundleID: [
+                        "CFBundleIdentifier": bundleID,
+                        "CFBundleVersion": "7",
+                        "CFBundleShortVersionString": "1.2",
+                    ],
+                ],
+            ]
+        }
+
+        let result = try RealDevicePackageInstaller.installPackageWithResult(
+            packagePath: appPath,
+            kind: .app,
+            udid: "REAL-1",
+            bundleID: "com.example.demo"
+        )
+
+        XCTAssertEqual(lookupCount, 1)
+        XCTAssertEqual(result.bundleID, "com.example.demo")
+        XCTAssertEqual(result.sourceVersion, AppVersionInfo(bundleVersion: "7", shortVersion: "1.2"))
+        XCTAssertEqual(result.installedVersion, AppVersionInfo(bundleVersion: "7", shortVersion: "1.2"))
+        XCTAssertEqual(result.installer, .devicectl)
     }
 
     func testIpaInstallFallsBackWhenDevicectlDoesNotSupportPackage() throws {
@@ -784,6 +924,7 @@ final class IOSUseCLITests: XCTestCase {
         FileManager.default.createFile(atPath: zipPath, contents: Data(), attributes: nil)
         AppManagementService.installerForTesting = { _, _, _ in
             XCTFail("unsupported package extension must fail before installation")
+            throw CLIParseError.invalidValue("unexpected installer invocation")
         }
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
@@ -805,6 +946,7 @@ final class IOSUseCLITests: XCTestCase {
         try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app")
         AppManagementService.installerForTesting = { _, _, _ in
             XCTFail("install without a target must not call installer")
+            throw CLIParseError.invalidValue("unexpected installer invocation")
         }
         addTeardownBlock {
             try? FileManager.default.removeItem(atPath: root)
@@ -827,6 +969,7 @@ final class IOSUseCLITests: XCTestCase {
         try makeMinimalIpa(path: ipaPath, bundleID: "com.example.app")
         AppManagementService.installerForTesting = { _, _, _ in
             XCTFail("simulator lock must fail before install")
+            throw CLIParseError.invalidValue("unexpected installer invocation")
         }
         AppManagementService.uninstallerForTesting = { _, _ in
             XCTFail("simulator lock must fail before uninstall")
@@ -1334,7 +1477,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(lock.sessionIdentifier, "STUCK")
     }
 
-    func testRealDeviceActivateAppUsesHostSideRunner() throws {
+    func testRealDeviceActivateAppNoWaitUsesHostSideRunner() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-real-activate-\(UUID().uuidString)")
             .path
@@ -1353,11 +1496,128 @@ final class IOSUseCLITests: XCTestCase {
             try? FileManager.default.removeItem(atPath: root)
         }
 
-        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["activateApp", "com.apple.Preferences", "--udid", "REAL-ACTIVE"])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["activateApp", "com.apple.Preferences", "--udid", "REAL-ACTIVE", "--no-wait"])
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "App com.apple.Preferences activated\n")
         XCTAssertEqual(calls.map { [$0.0.action.commandName, $0.0.bundleID, $0.1, "\($0.0.terminateExisting)", "\($0.0.log)"] }, [["activateApp", "com.apple.Preferences", "REAL-ACTIVE", "false", "false"]])
+    }
+
+    func testActivateAppDefaultsToReadinessAndReusesReturnedDom() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-activate-ready-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-ACTIVE", deviceType: "real", paths: paths)
+        var events: [String] = []
+        AppLifecycleService.realDeviceRunnerForTesting = { options, udid in
+            events.append("host:\(udid)")
+            return AppLifecycleService.Result(message: "App \(options.bundleID) activated")
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(waitAppForegroundHandler: { expected, timeout, returnDom in
+                events.append("driver:\(expected)")
+                XCTAssertEqual(timeout, 0)
+                XCTAssertTrue(returnDom)
+                return ForyWaitAppForegroundPayload(
+                    expectedBundleId: expected,
+                    activeBundleId: expected,
+                    appState: IOSUseAppState.foreground.rawValue,
+                    snapshotReady: true,
+                    elapsed: 0.125,
+                    dom: ForyDomPayload(
+                        app: expected,
+                        windowSize: ForyPoint(x: 402, y: 874),
+                        elements: [ForyDomElement(traits: ["Button"], label: "Ready")]
+                    )
+                )
+            })
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            AppLifecycleService.realDeviceRunnerForTesting = nil
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
+            "activateApp", "com.example.app", "--dom"
+        ])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(events, ["host:REAL-ACTIVE", "driver:com.example.app"])
+        XCTAssertTrue(result.stdout.contains("Readiness: UI ready | active: com.example.app | elapsed: 0.1250s"))
+        XCTAssertTrue(result.stdout.contains("Ready [Button]"))
+    }
+
+    func testActivateAppTargetMismatchFailsBeforeHostMutation() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-activate-mismatch-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-A", deviceType: "real", paths: paths)
+        AppLifecycleService.realDeviceRunnerForTesting = { _, _ in
+            XCTFail("mismatched readiness target must fail before host launch")
+            return AppLifecycleService.Result(message: "unexpected")
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("mismatched readiness target must fail before Driver connection")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            AppLifecycleService.realDeviceRunnerForTesting = nil
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
+            "activateApp", "com.example.app", "--udid", "REAL-B"
+        ])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("does not match active Driver target REAL-A"))
+    }
+
+    func testActivateAppJSONUsesTypedEnvelopeAndKeepsHumanTextOutOfStdout() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-activate-json-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-JSON", deviceType: "real", paths: paths)
+        AppLifecycleService.realDeviceRunnerForTesting = { options, _ in
+            AppLifecycleService.Result(message: "App \(options.bundleID) activated")
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(waitAppForegroundHandler: { expected, _, returnDom in
+                XCTAssertFalse(returnDom)
+                return ForyWaitAppForegroundPayload(
+                    expectedBundleId: expected,
+                    activeBundleId: expected,
+                    appState: IOSUseAppState.foreground.rawValue,
+                    snapshotReady: true,
+                    elapsed: 0.2
+                )
+            })
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            AppLifecycleService.realDeviceRunnerForTesting = nil
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
+            "activateApp", "com.example.app", "--json"
+        ])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stderr.isEmpty)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        XCTAssertEqual(envelope["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(envelope["ok"] as? Bool, true)
+        XCTAssertEqual(envelope["command"] as? String, "activateApp")
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        XCTAssertEqual(data["bundleId"] as? String, "com.example.app")
+        XCTAssertEqual((data["readiness"] as? [String: Any])?["snapshotReady"] as? Bool, true)
+        XCTAssertFalse(result.stdout.contains("App com.example.app activated\nReadiness:"))
     }
 
     func testMutatingCommandCanAppendFreshDom() throws {
@@ -1395,6 +1655,55 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("DOM after 100ms\nApp: com.example"))
         XCTAssertTrue(result.stdout.contains("App: com.example"))
         XCTAssertTrue(result.stdout.contains("- Ready [Text] (1,2,3,4)"))
+    }
+
+    func testMutatingCommandRetriesTransientPostDomAndReturnsTypedJSON() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-post-dom-retry-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-POST-DOM", deviceType: "simulator", paths: paths)
+        var domCalls = 0
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(
+                domHandler: { _, fresh, _ in
+                    XCTAssertTrue(fresh)
+                    domCalls += 1
+                    if domCalls == 1 {
+                        throw DriverClientError.driverError(
+                            message: "snapshot warming up",
+                            payload: ForyErrorPayload(
+                                category: IOSUseErrorCategory.lookup,
+                                code: IOSUseErrorCode.snapshotFailed,
+                                phase: IOSUseErrorPhase.snapshot,
+                                retryable: true
+                            )
+                        )
+                    }
+                    return ForyDomPayload(app: "com.example", elements: [
+                        ForyDomElement(traits: ["Text"], label: "Ready")
+                    ])
+                },
+                tapHandler: { target, _, _, _, _ in
+                    ForyElementPayload(elemType: 9, label: target.label, rect: ForyRect(x: 1, y: 2, w: 3, h: 4))
+                }
+            )
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
+            "tap", "Continue", "--dom", "100", "--json"
+        ])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(domCalls, 2)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        XCTAssertEqual((data["element"] as? [String: Any])?["label"] as? String, "Continue")
+        XCTAssertEqual((data["postDom"] as? [String: Any])?["app"] as? String, "com.example")
     }
 
     func testDomOCRReturnsFreshDomAndRunsAccurateOCRAlongsideDomFetch() throws {
@@ -1545,7 +1854,10 @@ final class IOSUseCLITests: XCTestCase {
         var calls: [(AppLifecycleOptions, String)] = []
         AppLifecycleService.realDeviceRunnerForTesting = { options, udid in
             calls.append((options, udid))
-            return AppLifecycleService.Result(message: "App \(options.bundleID) not running, skipped terminate")
+            return AppLifecycleService.Result(
+                message: "App \(options.bundleID) not running, skipped terminate",
+                didTerminateApp: false
+            )
         }
         IOSUseCLI.driverClientFactoryForTesting = { _ in
             XCTFail("host-side terminateApp must not create a driver client")
@@ -1561,7 +1873,22 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "App com.apple.Preferences not running, skipped terminate\n")
-        XCTAssertEqual(calls.map { [$0.0.action.commandName, $0.0.bundleID, $0.1] }, [["terminateApp", "com.apple.Preferences", "REAL-TERM"]])
+
+        let jsonResult = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
+            arguments: ["terminateApp", "com.apple.Preferences", "--json"]
+        )
+        XCTAssertEqual(jsonResult.exitCode, 0)
+        let envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(jsonResult.stdout.utf8)) as? [String: Any])
+        let data = try XCTUnwrap(envelope["data"] as? [String: Any])
+        XCTAssertEqual(data["mutationDispatched"] as? Bool, false)
+        XCTAssertEqual(data["didTerminateApp"] as? Bool, false)
+        XCTAssertEqual(
+            calls.map { [$0.0.action.commandName, $0.0.bundleID, $0.1] },
+            [
+                ["terminateApp", "com.apple.Preferences", "REAL-TERM"],
+                ["terminateApp", "com.apple.Preferences", "REAL-TERM"],
+            ]
+        )
     }
 
     func testHostSideAppLifecycleRequiresUdidOrActiveLock() {
@@ -1575,7 +1902,7 @@ final class IOSUseCLITests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["activateApp", "com.apple.Preferences"])
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("activateApp requires --udid or an active driver"))
+        XCTAssertTrue(result.stderr.contains("activateApp requires an active driver for UI readiness"))
     }
 
     func testDriverCommandWithoutLockFailsBeforeClientOrDiscovery() throws {
@@ -1698,6 +2025,133 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(shellCalls.count, 1)
         XCTAssertEqual(shellCalls.first?.0, "xcrun")
         XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", "SIM-1", "retouch://debug"])
+    }
+
+    func testOpenURLDomUsesSharedForegroundReadinessAfterDispatch() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-dom-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-1", deviceType: "simulator", paths: paths)
+        var events: [String] = []
+        Shell.runResultOverrideForTesting = { _, arguments, _ in
+            events.append("open:\(arguments.last ?? "")")
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(waitAppForegroundHandler: { expected, timeout, returnDom in
+                events.append("readiness")
+                XCTAssertEqual(expected, "")
+                XCTAssertEqual(timeout, 0)
+                XCTAssertTrue(returnDom)
+                return ForyWaitAppForegroundPayload(
+                    activeBundleId: "com.example.app",
+                    appState: IOSUseAppState.foreground.rawValue,
+                    snapshotReady: true,
+                    elapsed: 0.1,
+                    dom: ForyDomPayload(app: "com.example.app", elements: [
+                        ForyDomElement(traits: ["Text"], label: "Destination")
+                    ])
+                )
+            })
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            Shell.runResultOverrideForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
+            "open", "retouch://debug", "--dom"
+        ])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(events, ["open:retouch://debug", "readiness"])
+        XCTAssertTrue(result.stdout.contains("App: com.example.app"))
+        XCTAssertTrue(result.stdout.contains("Destination [Text]"))
+    }
+
+    func testOpenURLDomWaitsForVerifiedRealDeviceHandlerInsteadOfCurrentForegroundApp() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-dom-handler-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-1", deviceType: "real", paths: paths)
+        var events: [String] = []
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { scheme, udid in
+            XCTAssertEqual(scheme, "https")
+            XCTAssertEqual(udid, "REAL-1")
+            return OpenURLService.SchemeRegistry.LookupResult(
+                registeredHandlers: ["com.apple.mobilesafari"],
+                lookupFailed: false
+            )
+        }
+        OpenURLService.realDeviceURLLauncherForTesting = { url, udid in
+            XCTAssertEqual(url, "https://example.com")
+            XCTAssertEqual(udid, "REAL-1")
+            events.append("open")
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(waitAppForegroundHandler: { expected, timeout, returnDom in
+                events.append("readiness:\(expected)")
+                XCTAssertEqual(timeout, 0)
+                XCTAssertTrue(returnDom)
+                return ForyWaitAppForegroundPayload(
+                    expectedBundleId: expected,
+                    activeBundleId: expected,
+                    appState: IOSUseAppState.foreground.rawValue,
+                    snapshotReady: true,
+                    elapsed: 0.25,
+                    dom: ForyDomPayload(app: expected)
+                )
+            })
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+            OpenURLService.realDeviceURLLauncherForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
+            "open", "https://example.com", "--dom"
+        ])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(events, ["open", "readiness:com.apple.mobilesafari"])
+        XCTAssertTrue(result.stdout.contains("App: com.apple.mobilesafari"))
+    }
+
+    func testOpenURLDomRejectsUnverifiableRealDeviceHandlerAfterDispatch() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-dom-unverified-handler-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "REAL-1", deviceType: "real", paths: paths)
+        OpenURLService.SchemeRegistry.lookupOverrideForTesting = { _, _ in
+            OpenURLService.SchemeRegistry.LookupResult(registeredHandlers: [], lookupFailed: true)
+        }
+        var dispatched = false
+        OpenURLService.realDeviceURLLauncherForTesting = { _, _ in dispatched = true }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            XCTFail("unverified real-device URL handler must not return an unrelated Driver snapshot")
+            return FakeDriverCommandClient()
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+            OpenURLService.SchemeRegistry.lookupOverrideForTesting = nil
+            OpenURLService.realDeviceURLLauncherForTesting = nil
+            IOSUseCLI.driverClientFactoryForTesting = nil
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: [
+            "open", "retouch://debug", "--dom"
+        ])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(dispatched)
+        XCTAssertTrue(result.stderr.contains("URL dispatch was accepted"))
+        XCTAssertTrue(result.stderr.contains("cannot verify the target App"))
     }
 
     func testOpenURLExplicitBootedSimulatorUsesSimctlWithoutConfig() {
@@ -2081,8 +2535,9 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(commands.contains("dom"))
         XCTAssertTrue(commands.contains("waitFor"))
         XCTAssertTrue(commands.contains("dismissAlert"))
+        XCTAssertTrue(commands.contains("waitAppForeground"))
         XCTAssertFalse(commands.contains("health"))
-        XCTAssertEqual(commands.count, 12)
+        XCTAssertEqual(commands.count, 13)
     }
 
     func testDriverCommandMetadataBindsArgsAndPayloadTypes() {
@@ -2258,6 +2713,21 @@ final class IOSUseCLITests: XCTestCase {
         _ = try Shell.run("zip", arguments: ["-r", "-q", path] + zipInputs, cwd: tmp)
     }
 
+    private func installResult(
+        bundleID: String,
+        build: String? = nil,
+        version: String? = nil,
+        installer: RealDevicePackageInstaller.InstallerRoute = .installationProxy
+    ) -> RealDevicePackageInstaller.InstallResult {
+        let versionInfo = AppVersionInfo(bundleVersion: build, shortVersion: version)
+        return RealDevicePackageInstaller.InstallResult(
+            bundleID: bundleID,
+            sourceVersion: versionInfo,
+            installedVersion: versionInfo,
+            installer: installer
+        )
+    }
+
     private func makeMinimalApp(path: String, bundleID: String) throws {
         try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
         let plist: [String: Any] = [
@@ -2301,6 +2771,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     private let activateHandler: (String) throws -> Void
     private let terminateHandler: (String) throws -> Void
     private let screenshotHandler: () throws -> ScreenshotCapture
+    private let waitAppForegroundHandler: (String, Double, Bool) throws -> ForyWaitAppForegroundPayload
 
     init(
         domHandler: @escaping (Bool, Bool, Bool) throws -> ForyDomPayload = { _, _, _ in
@@ -2317,6 +2788,9 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         },
         screenshotHandler: @escaping () throws -> ScreenshotCapture = {
             throw CLIParseError.invalidValue("unexpected screenshot")
+        },
+        waitAppForegroundHandler: @escaping (String, Double, Bool) throws -> ForyWaitAppForegroundPayload = { _, _, _ in
+            throw CLIParseError.invalidValue("unexpected waitAppForeground")
         }
     ) {
         self.domHandler = domHandler
@@ -2324,6 +2798,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         self.activateHandler = activateHandler
         self.terminateHandler = terminateHandler
         self.screenshotHandler = screenshotHandler
+        self.waitAppForegroundHandler = waitAppForegroundHandler
     }
 
     func close() {}
@@ -2379,4 +2854,9 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
         throw CLIParseError.invalidValue("unexpected proxyCAPush")
     }
+
+    func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
+        try waitAppForegroundHandler(expectedBundleId, timeout, returnDom)
+    }
+
 }

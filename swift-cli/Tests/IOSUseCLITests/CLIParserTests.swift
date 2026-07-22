@@ -164,6 +164,16 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["tap", "67", "269", "--dom"]),
+            .driver(.tap(target: "67,269", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: .afterQuiescence))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["tap", "-1.5", "269"]),
+            .driver(.tap(target: "-1.5,269", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: nil))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["longpress", "General", "--duration", "500", "--traits", "Icon", "--cindex", "-2"]),
             .driver(.longPress(target: "General", duration: 500, traits: "Icon", cindex: -2, postDom: nil))
         )
@@ -242,6 +252,21 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["activateApp", "com.apple.Preferences", "--dom", "--udid", "REAL-1"]),
+            .appLifecycle(AppLifecycleOptions(
+                action: .activate,
+                bundleID: "com.apple.Preferences",
+                session: SessionOptions(udid: "REAL-1"),
+                dom: true
+            ))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["activateApp", "com.apple.Preferences", "--no-wait"]),
+            .appLifecycle(AppLifecycleOptions(action: .activate, bundleID: "com.apple.Preferences", noWait: true))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["terminateApp", "com.apple.Preferences", "--udid", "REAL-1"]),
             .appLifecycle(AppLifecycleOptions(action: .terminate, bundleID: "com.apple.Preferences", session: SessionOptions(udid: "REAL-1")))
         )
@@ -249,6 +274,11 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parse(["open", "https://example.com"]),
             .open(OpenURLOptions(url: "https://example.com"))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["open", "https://example.com", "--dom"]),
+            .open(OpenURLOptions(url: "https://example.com", dom: true))
         )
 
         XCTAssertEqual(
@@ -513,6 +543,46 @@ final class CLIParserTests: XCTestCase {
         }
         XCTAssertThrowsError(try CLIParser.parse(["terminateApp", "com.example", "--terminateExisting"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownOption("--terminateExisting"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["activateApp", "com.example", "--dom", "--no-wait"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .invalidValue("activateApp --dom cannot be combined with --no-wait"))
+        }
+
+        XCTAssertThrowsError(try CLIParser.parse(["tap", "67", "269", "270"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unexpectedArgument("270"))
+        }
+    }
+
+    func testParsesGlobalJSONWithoutStealingOptionValues() throws {
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["--json", "status"]),
+            ParsedInvocation(command: .status(StatusOptions()), json: true)
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["status", "--json"]),
+            ParsedInvocation(command: .status(StatusOptions()), json: true)
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["tap", "General", "--json"]),
+            ParsedInvocation(
+                command: .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: nil)),
+                json: true
+            )
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["input", "--content", "--json"]),
+            ParsedInvocation(
+                command: .driver(.input(tap: nil, content: "--json", delete: 0, enter: false, traits: nil, cindex: nil, postDom: nil)),
+                json: false
+            )
+        )
+        XCTAssertFalse(CLIParser.requestsJSON(["proxy", "start", "-i", "--json"]))
+        XCTAssertThrowsError(try CLIParser.parseInvocation(["proxy", "start", "-i", "--json"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .missingOptionValue("-i"))
+        }
+        XCTAssertThrowsError(try CLIParser.parseInvocation(["config", "--list", "--json"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownOption("--json"))
         }
     }
 }

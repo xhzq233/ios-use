@@ -8,11 +8,39 @@ enum AppManagementService {
         let applicationType: String
     }
 
-    static var installerForTesting: ((String, String, String?) throws -> Void)?
+    struct InstallReceipt: Equatable {
+        let sourcePath: String
+        let packageKind: AppPackageKind
+        let deviceUdid: String
+        let bundleId: String
+        let version: String?
+        let build: String?
+        let installer: RealDevicePackageInstaller.InstallerRoute
+        let verifiedOnDevice: Bool
+        let elapsed: Double
+    }
+
+    struct InstallCommandResult {
+        let receipt: InstallReceipt
+        let installerResponses: [String]
+    }
+
+    struct AppListResult {
+        let deviceUdid: String
+        let apps: [AppInfo]
+    }
+
+    static var installerForTesting: ((String, String, String?) throws -> RealDevicePackageInstaller.InstallResult)?
     static var uninstallerForTesting: ((String, String) throws -> Void)?
     static var appsProviderForTesting: ((String, Bool) throws -> [AppInfo])?
 
     static func install(options: AppInstallOptions, paths: IOSUsePaths) throws -> String {
+        let result = try installResult(options: options, paths: paths)
+        return formatInstallResult(result, verbose: options.verbose)
+    }
+
+    static func installResult(options: AppInstallOptions, paths: IOSUsePaths) throws -> InstallCommandResult {
+        let startedAt = CFAbsoluteTimeGetCurrent()
         let packageKind = try AppPackageKind(path: options.ipaPath)
         let targetUdid = try resolveRealDeviceTargetUdid(
             explicitUdid: options.udid,
@@ -29,20 +57,76 @@ enum AppManagementService {
             if let bundleID, !bundleID.isEmpty {
                 try AppLogCaptureService.stopCaptureForInstall(bundleID: bundleID, udid: targetUdid, paths: paths)
             }
+            let installed: RealDevicePackageInstaller.InstallResult
             if let installerForTesting {
-                try installerForTesting(options.ipaPath, targetUdid, bundleID)
+                installed = try installerForTesting(options.ipaPath, targetUdid, bundleID)
             } else {
-                try RealDevicePackageInstaller.installPackage(packagePath: options.ipaPath, kind: packageKind, udid: targetUdid, bundleID: bundleID) { response in
+                installed = try RealDevicePackageInstaller.installPackageWithResult(packagePath: options.ipaPath, kind: packageKind, udid: targetUdid, bundleID: bundleID) { response in
                     if options.verbose {
                         responseFrames.append(response)
                     }
                 }
             }
+            let receipt = InstallReceipt(
+                sourcePath: URL(fileURLWithPath: options.ipaPath).standardizedFileURL.path,
+                packageKind: packageKind,
+                deviceUdid: targetUdid,
+                bundleId: installed.bundleID,
+                version: installed.installedVersion.shortVersion,
+                build: installed.installedVersion.bundleVersion,
+                installer: installed.installer,
+                verifiedOnDevice: true,
+                elapsed: ((CFAbsoluteTimeGetCurrent() - startedAt) * 10_000).rounded() / 10_000
+            )
+            return InstallCommandResult(
+                receipt: receipt,
+                installerResponses: responseFrames.map(InstallationProxyClient.responseSummary)
+            )
         } catch {
             throw errorWithVerboseResponses(error, frames: responseFrames, verbose: options.verbose)
         }
-        let suffix = bundleID.map { " (\($0))" } ?? ""
-        return verboseResponsePrefix(responseFrames) + "Installed \(packageKind.displayName) on \(targetUdid)\(suffix)\n"
+    }
+
+    static func formatInstallResult(_ result: InstallCommandResult, verbose: Bool) -> String {
+        let receipt = result.receipt
+        let version = receipt.version.flatMap { $0.isEmpty ? nil : $0 }
+        let build = receipt.build.flatMap { $0.isEmpty ? nil : $0 }
+        let identity: String
+        switch (version, build) {
+        case (.some(let version), .some(let build)):
+            identity = "\(receipt.bundleId) \(version) (\(build))"
+        case (.some(let version), nil):
+            identity = "\(receipt.bundleId) \(version) (build unknown)"
+        case (nil, .some(let build)):
+            identity = "\(receipt.bundleId) (version unknown) (\(build))"
+        case (nil, nil):
+            identity = "\(receipt.bundleId) (version/build unknown)"
+        }
+        var output = ""
+        if verbose, !result.installerResponses.isEmpty {
+            output += "installer responses:\n" + result.installerResponses.joined(separator: "\n") + "\n"
+        }
+        output += "Installed \(identity) on \(receipt.deviceUdid)\n"
+        output += "Package: \(receipt.packageKind.machineName) via \(receipt.installer.rawValue)\n"
+        output += "Verified: device lookup matched\n"
+        output += String(format: "Elapsed: %.4fs\n", locale: Locale(identifier: "en_US_POSIX"), receipt.elapsed)
+        return output
+    }
+
+    static func machineInstallData(_ result: InstallCommandResult) -> MachineValue {
+        let receipt = result.receipt
+        return .object([
+            "sourcePath": .string(receipt.sourcePath),
+            "packageKind": .string(receipt.packageKind.machineName),
+            "deviceUdid": .string(receipt.deviceUdid),
+            "bundleId": .string(receipt.bundleId),
+            "version": receipt.version.map(MachineValue.string) ?? .null,
+            "build": receipt.build.map(MachineValue.string) ?? .null,
+            "installer": .string(receipt.installer.rawValue),
+            "verifiedOnDevice": .boolean(receipt.verifiedOnDevice),
+            "elapsed": .double(receipt.elapsed),
+            "installerResponses": .array(result.installerResponses.map(MachineValue.string)),
+        ])
     }
 
     static func uninstall(options: AppUninstallOptions, paths: IOSUsePaths) throws -> String {
@@ -83,6 +167,11 @@ enum AppManagementService {
     }
 
     static func list(options: AppsOptions, paths: IOSUsePaths) throws -> String {
+        let result = try listResult(options: options, paths: paths)
+        return try formatListResult(result, json: options.json)
+    }
+
+    static func listResult(options: AppsOptions, paths: IOSUsePaths) throws -> AppListResult {
         let targetUdid = try resolveRealDeviceTargetUdid(
             explicitUdid: options.udid,
             paths: paths,
@@ -115,8 +204,12 @@ enum AppManagementService {
         let sorted = apps.sorted { lhs, rhs in
             lhs.bundleID.localizedStandardCompare(rhs.bundleID) == .orderedAscending
         }
-        if options.json {
-            let rows = sorted.map {
+        return AppListResult(deviceUdid: targetUdid, apps: sorted)
+    }
+
+    static func formatListResult(_ result: AppListResult, json: Bool) throws -> String {
+        if json {
+            let rows = result.apps.map {
                 [
                     "bundleId": $0.bundleID,
                     "name": $0.displayName,
@@ -127,10 +220,10 @@ enum AppManagementService {
             let data = try JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])
             return String(data: data, encoding: .utf8)! + "\n"
         }
-        guard !sorted.isEmpty else {
-            return "No apps found on \(targetUdid)\n"
+        guard !result.apps.isEmpty else {
+            return "No apps found on \(result.deviceUdid)\n"
         }
-        return sorted.map { app in
+        return result.apps.map { app in
             var line = "\(app.bundleID)"
             if !app.displayName.isEmpty, app.displayName != app.bundleID {
                 line += " | \(app.displayName)"
@@ -143,6 +236,20 @@ enum AppManagementService {
             }
             return line
         }.joined(separator: "\n") + "\n"
+    }
+
+    static func machineAppsData(_ result: AppListResult) -> MachineValue {
+        .object([
+            "deviceUdid": .string(result.deviceUdid),
+            "apps": .array(result.apps.map { app in
+                .object([
+                    "bundleId": .string(app.bundleID),
+                    "name": .string(app.displayName),
+                    "version": .string(app.version),
+                    "applicationType": .string(app.applicationType),
+                ])
+            }),
+        ])
     }
 
     private static func resolveRealDeviceTargetUdid(
@@ -187,6 +294,13 @@ enum AppManagementService {
         var displayName: String {
             switch self {
             case .ipa: return "IPA"
+            case .app: return "app"
+            }
+        }
+
+        var machineName: String {
+            switch self {
+            case .ipa: return "ipa"
             case .app: return "app"
             }
         }

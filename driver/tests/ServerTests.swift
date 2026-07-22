@@ -36,6 +36,36 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.waitForSocketReadTimeoutSeconds(args.timeout), 312)
     }
 
+    func testWaitAppForegroundInvocationDerivesWatchdogFromRequestedDeadline() throws {
+        let args = ForyWaitAppForegroundArgs(
+            expectedBundleId: "com.example.app",
+            timeout: 12,
+            returnDom: true
+        )
+        let payload = try ForyRegistry.create().serialize(args)
+        let invocation = try CommandInvocation(
+            name: .waitAppForeground,
+            payload: payload,
+            codec: Codec.Context()
+        )
+
+        XCTAssertEqual(invocation.watchdogTimeoutSeconds, 22)
+        XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 24)
+    }
+
+    func testWaitAppForegroundInvocationBoundsMalformedWatchdogDeadline() throws {
+        let args = ForyWaitAppForegroundArgs(timeout: .infinity)
+        let payload = try ForyRegistry.create().serialize(args)
+        let invocation = try CommandInvocation(
+            name: .waitAppForeground,
+            payload: payload,
+            codec: Codec.Context()
+        )
+
+        XCTAssertEqual(invocation.watchdogTimeoutSeconds, 310)
+        XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 312)
+    }
+
     func testSecondConnectionIsAcceptedWhileFirstConnectionStaysOpen() throws {
         DriverServer.shared.stop()
         let port = try Self.freePort()

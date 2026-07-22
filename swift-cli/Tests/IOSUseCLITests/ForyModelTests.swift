@@ -81,4 +81,37 @@ final class ForyModelTests: XCTestCase {
 
         XCTAssertEqual(decoded.caBase64, "abc123")
     }
+
+    func testWaitAppForegroundModelsRoundTripBackendNeutralStateAndOptionalDom() throws {
+        let fory = ForyRegistry.create()
+        let args = ForyWaitAppForegroundArgs(
+            acceptedBundleIds: ["com.example.app", "com.example.other"],
+            timeout: 4.5,
+            returnDom: true
+        )
+        let decodedArgs = try fory.deserialize(try fory.serialize(args), as: ForyWaitAppForegroundArgs.self)
+        XCTAssertEqual(decodedArgs.expectedBundleId, "")
+        XCTAssertEqual(decodedArgs.acceptedBundleIds, ["com.example.app", "com.example.other"])
+        XCTAssertEqual(decodedArgs.timeout, 4.5)
+        XCTAssertTrue(decodedArgs.returnDom)
+
+        let payload = ForyWaitAppForegroundPayload(
+            expectedBundleId: "com.example.app",
+            activeBundleId: "com.apple.springboard",
+            appState: IOSUseAppState.foreground.rawValue,
+            snapshotReady: true,
+            elapsed: 0.125,
+            dom: ForyDomPayload(app: "com.apple.springboard")
+        )
+        let decodedPayload = try fory.deserialize(
+            try fory.serialize(payload),
+            as: ForyWaitAppForegroundPayload.self
+        )
+        XCTAssertEqual(decodedPayload.expectedBundleId, "com.example.app")
+        XCTAssertEqual(decodedPayload.activeBundleId, "com.apple.springboard")
+        XCTAssertEqual(decodedPayload.appState, IOSUseAppState.foreground.rawValue)
+        XCTAssertTrue(decodedPayload.snapshotReady)
+        XCTAssertEqual(decodedPayload.elapsed, 0.125)
+        XCTAssertEqual(decodedPayload.dom?.app, "com.apple.springboard")
+    }
 }

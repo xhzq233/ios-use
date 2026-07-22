@@ -1,6 +1,94 @@
 import Foundation
 
 public enum StatusService {
+    static func machineSnapshot(paths: IOSUsePaths) -> (data: MachineValue, warnings: [String]) {
+        let configured = DeviceService.configuredDevices(paths: paths)
+        var warnings: [String] = []
+        let devices: [IOSDevice]
+        do {
+            devices = try DeviceService.listDevices(simulatorOnly: false, paths: paths)
+        } catch {
+            devices = []
+            warnings.append("connected device lookup failed: \(error)")
+        }
+
+        let deviceValues = devices.map { device -> MachineValue in
+            let config = configured[device.udid]
+            var value: [String: MachineValue] = [
+                "name": .string(device.name),
+                "version": .string(device.version),
+                "udid": .string(device.udid),
+                "kind": .string(device.kind.rawValue),
+                "configured": .boolean(config != nil),
+                "driverUpdateRequired": .boolean(config?.needsDriverUpdate ?? false),
+            ]
+            if let metadata = device.metadata {
+                value["metadata"] = .object([
+                    "productType": metadata.productType.map(MachineValue.string) ?? .null,
+                    "productName": metadata.productName.map(MachineValue.string) ?? .null,
+                    "buildVersion": metadata.buildVersion.map(MachineValue.string) ?? .null,
+                    "batteryCurrentCapacity": metadata.batteryCurrentCapacity.map(MachineValue.integer) ?? .null,
+                    "status": metadata.status.map(MachineValue.string) ?? .null,
+                    "detail": metadata.detail.map(MachineValue.string) ?? .null,
+                ])
+            }
+            return .object(value)
+        }
+
+        let driver: MachineValue
+        do {
+            if let info = try SessionService.readDriverLockInfo(paths: paths) {
+                let config = configured[info.udid]
+                driver = .object([
+                    "status": .string("running"),
+                    "udid": .string(info.udid),
+                    "deviceName": .string(info.deviceName),
+                    "deviceVersion": .string(info.deviceVersion),
+                    "deviceType": .string(info.deviceType),
+                    "startedAt": .integer(info.startedAt),
+                    "holderPid": info.holderPid.map(MachineValue.integer) ?? .null,
+                    "runnerPid": info.runnerPid.map(MachineValue.integer) ?? .null,
+                    "startMode": info.startMode.map(MachineValue.string) ?? .null,
+                    "sessionIdentifier": info.sessionIdentifier.map(MachineValue.string) ?? .null,
+                    "bundleId": info.bundleId.map(MachineValue.string) ?? .null,
+                    "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
+                    "versionMatchesCli": .boolean(config?.driverVersion == IOSUseCLI.version),
+                ])
+            } else {
+                driver = .object(["status": .string("notRunning")])
+            }
+        } catch {
+            driver = .object([
+                "status": .string("invalid"),
+                "error": .string(String(describing: error)),
+            ])
+            warnings.append("driver.lock is invalid: \(error)")
+        }
+
+        let configValues = ConfigService.listEntries(paths: paths).map { entry in
+            MachineValue.object([
+                "udid": .string(entry.udid),
+                "bundleId": .string(entry.bundleId),
+                "driverVersion": .string(entry.driverVersion),
+                "versionMatchesCli": .boolean(entry.driverVersion == IOSUseCLI.version),
+                "signingExpiresAt": entry.signingExpiresAt.map {
+                    .string(ISO8601DateFormatter().string(from: $0))
+                } ?? .null,
+            ])
+        }
+        let activeUdid = (try? SessionService.readDriverLockInfo(paths: paths))?.udid
+        return (
+            .object([
+                "cli": .object(["version": .string(IOSUseCLI.version)]),
+                "selectedTarget": activeUdid.map(MachineValue.string) ?? .null,
+                "connectedDevices": .array(deviceValues),
+                "driver": driver,
+                "configuredDevices": .array(configValues),
+            ]),
+            warnings
+        )
+    }
+
     public static func status(paths: IOSUsePaths, verbose: Bool = false) throws -> String {
         let configuredDevices = DeviceService.configuredDevices(paths: paths)
         var lines: [String] = []

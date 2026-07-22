@@ -49,12 +49,13 @@ enum CLIHelp {
         switch command {
         case "status":
             return """
-            Usage: ios-use status [--verbose]
+            Usage: ios-use status [--verbose] [--json]
 
             Show connected devices, capture processes, proxy state, and config state.
 
             Options:
               --verbose    Enable verbose device output
+              --json       Print the common machine-readable envelope
 
             """
         case "config":
@@ -92,7 +93,7 @@ enum CLIHelp {
             """
         case "install":
             return """
-            Usage: ios-use install <ipa|app> [--udid <udid>] [--verbose]
+            Usage: ios-use install <ipa|app> [--udid <udid>] [--verbose] [--json]
 
             Install a signed IPA or .app bundle on a USB real device using devicectl when available,
             with native AFC and installation_proxy fallback.
@@ -101,6 +102,7 @@ enum CLIHelp {
             Options:
               --udid <udid>  Target USB real device UDID; overrides active driver.lock
               --verbose      Enable verbose output
+              --json         Print the verified install receipt as JSON
 
             """
         case "uninstall":
@@ -194,7 +196,7 @@ enum CLIHelp {
         case "tap":
             return driverHelp(
                 usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Tap an element label or one x,y coordinate target, for example: ios-use tap 67,269.",
+                summary: "Tap a label/value target. Coordinates are a fallback: ios-use tap 67,269 or ios-use tap 67 269.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
                     "--offset-ratio <x,y>  Ratio offset from target top-left",
@@ -244,22 +246,25 @@ enum CLIHelp {
             )
         case "activateApp":
             return """
-            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--terminateExisting] [--log] [--verbose]
+            Usage: ios-use activateApp <bundleId> [--udid <udid>] [--terminateExisting] [--log] [--dom | --no-wait] [--verbose] [--json]
 
             Activate an app by bundle ID using host-side device services.
-            Defaults to the active driver.lock UDID when --udid is omitted.
+            By default, waits for the app to reach foreground and for one fresh UI snapshot.
             With --log, starts a background app stdio capture and returns a log file path.
 
             Options:
               --udid <udid>          Target USB real device or booted Simulator UDID; overrides active driver.lock
               --terminateExisting    Relaunch the app instead of activating an existing process
               --log                  Capture stdout/stderr; requires --terminateExisting
+              --dom                  Return the fresh DOM already obtained by readiness
+              --no-wait              Return after host launch dispatch without contacting the Driver
               --verbose              Enable verbose output
+              --json                 Print the common machine-readable envelope
 
             """
         case "terminateApp":
             return """
-            Usage: ios-use terminateApp <bundleId> [--udid <udid>] [--verbose]
+            Usage: ios-use terminateApp <bundleId> [--udid <udid>] [--verbose] [--json]
 
             Terminate an app by bundle ID using host-side device services.
             Defaults to the active driver.lock UDID when --udid is omitted.
@@ -267,6 +272,7 @@ enum CLIHelp {
             Options:
               --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
               --verbose      Enable verbose output
+              --json         Print the common machine-readable envelope
 
             """
         case "home":
@@ -276,14 +282,16 @@ enum CLIHelp {
             )
         case "open":
             return """
-            Usage: ios-use open <url> [--udid <udid>] [--verbose]
+            Usage: ios-use open <url> [--udid <udid>] [--dom] [--verbose] [--json]
 
             Open a URL on the device using host-side device services.
             Defaults to the active driver.lock UDID when --udid is omitted.
 
             Options:
               --udid <udid>  Target USB real device or booted Simulator UDID; overrides active driver.lock
+              --dom          Return the first fresh DOM available after URL dispatch
               --verbose      Enable verbose output
+              --json         Print the common machine-readable envelope
 
             """
         case "dismissAlert":
@@ -357,16 +365,18 @@ enum CLIHelp {
     }
 
     private static func driverHelp(usage: String, summary: String, options: [String] = [], footer: String? = nil) -> String {
+        let renderedUsage = usage.contains("--json") ? usage : usage + " [--json]"
         var lines = [
-            "Usage: \(usage)",
+            "Usage: \(renderedUsage)",
             "",
             summary,
             "",
             "Requires an active driver.lock. Run `ios-use start` first.",
         ]
-        if !options.isEmpty {
+        let renderedOptions = options + ["--json               Print the common machine-readable envelope"]
+        if !renderedOptions.isEmpty {
             lines += ["", "Options:"]
-            lines += options.map { "  \($0)" }
+            lines += renderedOptions.map { "  \($0)" }
         }
         if let footer {
             lines += ["", footer]

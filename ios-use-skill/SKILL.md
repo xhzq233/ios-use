@@ -28,7 +28,8 @@ ios-use start <udid>
 - Run `config` on first use, after upgrading ios-use, when `status` reports
   `driver update required`, or when signing has expired.
 - Run `start` before `dom`, `tap`, `longpress`, `swipe`, `input`, `waitFor`,
-  `screenshot`, `capture`, `home`, `dismissAlert`, or device-backed proxy commands.
+  `screenshot`, `capture`, `home`, `dismissAlert`, default `activateApp`,
+  `open --dom`, or device-backed proxy commands.
 - Treat the device selected by `start` as the target for all UI commands. To switch
   devices, run `ios-use stop`, then `ios-use start <new-udid>`.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
@@ -104,11 +105,20 @@ ios-use input --tap "搜索" --content "蓝牙"
 
 ```bash
 ios-use activateApp com.example.app
+ios-use activateApp com.example.app --dom
+ios-use activateApp com.example.app --no-wait
 ios-use activateApp com.example.app --terminateExisting --log
 ios-use terminateApp com.example.app
 ios-use open "https://example.com"
+ios-use open "https://example.com" --dom
 ios-use dismissAlert
 ```
+
+- Normal `activateApp` waits for the App to reach the foreground and for one fresh
+  UI snapshot. Add `--dom` to return that snapshot, or use `--no-wait` only when
+  host launch acknowledgement is sufficient.
+- `open` only dispatches the URL by default. Add `--dom` for immediate foreground
+  UI evidence, then use `waitFor` for the destination condition that matters.
 
 When `activateApp --terminateExisting --log` prints a log path, query the file with
 standard shell tools:

@@ -25,6 +25,7 @@ ios-use dom
 ```
 
 After `start`, screen-driving commands target the selected device. To switch devices, run `ios-use stop`, then `ios-use start <other-udid>`.
+`activateApp` returns after the requested app is foreground and one fresh UI snapshot succeeds; add `--dom` to return that same snapshot, or `--no-wait` for host-only launch dispatch.
 
 ## Why ios-use
 
@@ -79,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/instal
 The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To install a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.3.1
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.3.2
 ```
 
 Intel Macs should compile locally instead:
@@ -125,7 +126,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
 | `config` | Install or update the on-device driver. |
 | `start` / `stop` | Select or release the current automation target. |
-| `activateApp` / `terminateApp` | Open or close an app by bundle ID. |
+| `activateApp` / `terminateApp` | Open or close an app by bundle ID; activation is UI-ready by default. |
 | `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
 | `tap` / `longpress` | Act on a label or coordinate. |
 | `swipe` | Scroll by direction/distance or toward a target label. |
@@ -139,8 +140,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 Typical manual loop:
 
 ```bash
-ios-use activateApp com.apple.Preferences
-ios-use dom
+ios-use activateApp com.apple.Preferences --dom
 ios-use waitFor "蓝牙" --timeout 5s
 ios-use tap "通用"
 ios-use swipe --to "开发者" --from "蓝牙"
@@ -148,8 +148,20 @@ ios-use input --tap "搜索" --content "蓝牙"
 ios-use screenshot --name settings-home
 ios-use dom --ocr  # one-shot AX + visual inspection when the channels disagree
 
+# Coordinate fallback for a visual-only control; semantic targets remain preferred.
+ios-use tap 67 269
+
 # Short visual sequence; run the interaction separately so the capture primitive stays composable.
 ios-use tap "站姿1" && ios-use capture --fps 10 --duration 3 --name pose-sweep
+```
+
+Status, App install/list/lifecycle, DOM/screenshot/wait, and UI action commands support
+`--json` and emit one versioned envelope suitable for scripts and agents. For example:
+
+```bash
+ios-use status --json
+ios-use activateApp com.apple.Preferences --dom --json
+ios-use tap "通用" --json
 ```
 
 Repeatable sequences are ordinary shell scripts, so they can use variables, conditionals, and the same CLI commands without another DSL:

@@ -7,6 +7,14 @@ enum ScreenshotArtifactService {
 
     struct Result {
         let stdout: String
+        let imagePath: String
+        let ocrSidecarPath: String?
+        let warning: String?
+        let pixelSize: ForyPoint?
+        let logicalSize: ForyPoint?
+        let scale: Double?
+        let geometrySource: String?
+        let performance: ScreenshotCapturePerformance?
     }
 
     final class Work {
@@ -16,6 +24,7 @@ enum ScreenshotArtifactService {
         private let lock = NSLock()
         private var imageError: Error?
         private var ocrOutput: String?
+        private var ocrSidecarPath: String?
 
         fileprivate init(
             capture: ScreenshotCapture,
@@ -64,6 +73,7 @@ enum ScreenshotArtifactService {
                     let output = OCRService.format(result) + "OCR sidecar: \(writtenPath)\n"
                     lock.lock()
                     ocrOutput = output
+                    ocrSidecarPath = writtenPath
                     lock.unlock()
                 } catch {
                     lock.lock()
@@ -78,6 +88,7 @@ enum ScreenshotArtifactService {
             lock.lock()
             let capturedImageError = imageError
             let capturedOCROutput = ocrOutput
+            let capturedOCRSidecarPath = ocrSidecarPath
             lock.unlock()
             if let capturedImageError {
                 throw capturedImageError
@@ -90,7 +101,17 @@ enum ScreenshotArtifactService {
             if let capturedOCROutput {
                 stdout += capturedOCROutput
             }
-            return Result(stdout: stdout)
+            return Result(
+                stdout: stdout,
+                imagePath: path,
+                ocrSidecarPath: capturedOCRSidecarPath,
+                warning: capture.warning,
+                pixelSize: capture.pixelSize,
+                logicalSize: capture.logicalSize,
+                scale: capture.scale,
+                geometrySource: capture.geometrySource,
+                performance: capture.performance
+            )
         }
     }
 

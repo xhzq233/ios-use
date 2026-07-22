@@ -39,6 +39,16 @@ public enum ParsedCommand: Equatable, Sendable {
     }
 }
 
+public struct ParsedInvocation: Equatable, Sendable {
+    public var command: ParsedCommand
+    public var json: Bool
+
+    public init(command: ParsedCommand, json: Bool = false) {
+        self.command = command
+        self.json = json
+    }
+}
+
 public struct StatusOptions: Equatable, Sendable {
     public var verbose = false
 
@@ -134,10 +144,12 @@ public struct DDIMountOptions: Equatable, Sendable {
 public struct OpenURLOptions: Equatable, Sendable {
     public var url: String
     public var session: SessionOptions
+    public var dom: Bool
 
-    public init(url: String, session: SessionOptions = SessionOptions()) {
+    public init(url: String, session: SessionOptions = SessionOptions(), dom: Bool = false) {
         self.url = url
         self.session = session
+        self.dom = dom
     }
 }
 
@@ -159,13 +171,25 @@ public struct AppLifecycleOptions: Equatable, Sendable {
     public var session: SessionOptions
     public var terminateExisting: Bool
     public var log: Bool
+    public var dom: Bool
+    public var noWait: Bool
 
-    public init(action: Action, bundleID: String, session: SessionOptions = SessionOptions(), terminateExisting: Bool = false, log: Bool = false) {
+    public init(
+        action: Action,
+        bundleID: String,
+        session: SessionOptions = SessionOptions(),
+        terminateExisting: Bool = false,
+        log: Bool = false,
+        dom: Bool = false,
+        noWait: Bool = false
+    ) {
         self.action = action
         self.bundleID = bundleID
         self.session = session
         self.terminateExisting = terminateExisting
         self.log = log
+        self.dom = dom
+        self.noWait = noWait
     }
 }
 

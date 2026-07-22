@@ -77,61 +77,57 @@ enum WaitForCommands {
 
         var shouldUseFreshSnapshot = false
         var remainingMatches = 0
+        var lastSnapshotFailure: String?
         while true {
             if shouldUseFreshSnapshot {
                 invalidateSnapshot()
             }
-            guard let cs = getCleanedSnapshot() else {
-                return try Codec.foryError(
-                    "waitFor: failed to take snapshot",
-                    category: IOSUseErrorCategory.lookup,
-                    code: IOSUseErrorCode.snapshotFailed,
-                    phase: IOSUseErrorPhase.snapshot,
-                    retryable: true,
-                    target: args.target
+            if let cs = getCleanedSnapshot() {
+                lastSnapshotFailure = nil
+                // Polling only needs selector state. Skip rejected-candidate diagnostics
+                // so every miss does not rescan the full DOM or build ancestor chains.
+                let result = rawFindInSnapshot(
+                    args.target,
+                    cs: cs,
+                    enableFuzzy: false,
+                    visibility: .only,
+                    diagnostics: .none,
+                    textMatch: textMatch
                 )
-            }
-            // Polling only needs selector state. Skip rejected-candidate diagnostics
-            // so every miss does not rescan the full DOM or build ancestor chains.
-            let result = rawFindInSnapshot(
-                args.target,
-                cs: cs,
-                enableFuzzy: false,
-                visibility: .only,
-                diagnostics: .none,
-                textMatch: textMatch
-            )
 
-            switch result {
-            case .found(let elem):
-                if args.gone {
-                    // A gone wait only succeeds after an observation with no visible selector match.
-                    // Keep polling through ambiguous snapshots as well; a duplicate is still visible.
-                    remainingMatches = 1
-                    break
-                }
-                let elapsed = CFAbsoluteTimeGetCurrent() - t0
-                let payload = ForyWaitForPayload(
-                    element: makeForyElementSummary(elem.node),
-                    waited: Double(elapsed).sanitized
-                )
-                return try Codec.foryOK(payload)
-            case .ambiguous(let matches):
-                if args.gone {
-                    remainingMatches = matches.count
-                    break
-                }
-                return try ambiguityResponse(args.target, matches: matches)
-            case .fuzzy:
-                remainingMatches = 0
-                break
-            case .notFound:
-                remainingMatches = 0
-                if args.gone {
+                switch result {
+                case .found(let elem):
+                    if args.gone {
+                        // A gone wait only succeeds after an observation with no visible selector match.
+                        // Keep polling through ambiguous snapshots as well; a duplicate is still visible.
+                        remainingMatches = 1
+                        break
+                    }
                     let elapsed = CFAbsoluteTimeGetCurrent() - t0
-                    let payload = ForyWaitForPayload(waited: Double(elapsed).sanitized)
+                    let payload = ForyWaitForPayload(
+                        element: makeForyElementSummary(elem.node),
+                        waited: Double(elapsed).sanitized
+                    )
                     return try Codec.foryOK(payload)
+                case .ambiguous(let matches):
+                    if args.gone {
+                        remainingMatches = matches.count
+                        break
+                    }
+                    return try ambiguityResponse(args.target, matches: matches)
+                case .fuzzy:
+                    remainingMatches = 0
+                    break
+                case .notFound:
+                    remainingMatches = 0
+                    if args.gone {
+                        let elapsed = CFAbsoluteTimeGetCurrent() - t0
+                        let payload = ForyWaitForPayload(waited: Double(elapsed).sanitized)
+                        return try Codec.foryOK(payload)
+                    }
                 }
+            } else {
+                lastSnapshotFailure = "failed to take a fresh snapshot"
             }
 
             let elapsed = CFAbsoluteTimeGetCurrent() - t0
@@ -143,8 +139,9 @@ enum WaitForCommands {
                 } else {
                     suffix = ""
                 }
+                let snapshotSuffix = lastSnapshotFailure.map { "; last snapshot failure: \($0)" } ?? ""
                 return try Codec.foryError(
-                    "waitFor '\(args.target.label)' timed out after \(timeout)s\(suffix)",
+                    "waitFor '\(args.target.label)' timed out after \(timeout)s\(suffix)\(snapshotSuffix)",
                     category: IOSUseErrorCategory.timeout,
                     code: IOSUseErrorCode.waitTimedOut,
                     phase: IOSUseErrorPhase.wait,

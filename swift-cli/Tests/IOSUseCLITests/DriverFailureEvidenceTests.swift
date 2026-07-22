@@ -55,7 +55,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
         XCTAssertTrue(DriverFailureEvidence.mutationMayHaveApplied(errorPayload: actionFailure))
     }
 
-    func testUIFailureCapturesScreenshotThenOverlapsFastOCRWithFreshDOM() throws {
+    func testUIFailureStartsScreenshotAndFreshDOMInParallelThenOverlapsFastOCR() throws {
         let fixture = try makeFixture(name: "ui-snapshot")
         defer { try? FileManager.default.removeItem(atPath: fixture.root) }
         let concurrency = EvidenceConcurrencyProbe()
@@ -99,7 +99,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
                     XCTAssertFalse(raw)
                     XCTAssertTrue(fresh)
                     XCTAssertFalse(waitQuiescence)
-                    concurrency.domDidRunWhileOCRActive()
+                    concurrency.domDidStartAndRunWhileOCRActive()
                     return ForyDomPayload(
                         app: "com.example",
                         windowSize: ForyPoint(x: 402, y: 874),
@@ -107,7 +107,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
                     )
                 },
                 screenshotHandler: {
-                    concurrency.screenshotDidRun()
+                    concurrency.screenshotDidStartAndWaitForDOM()
                     return ScreenshotCapture(
                         jpeg: Data("fake-jpeg".utf8),
                         pixelSize: ForyPoint(x: 1206, y: 2622),
@@ -133,6 +133,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
         XCTAssertFalse(result.stderr.contains("screenshot.jpg"))
         XCTAssertEqual(result.stderr.components(separatedBy: "Evidence:").count - 1, 1)
         XCTAssertTrue(concurrency.didCaptureScreenshotBeforeOCR)
+        XCTAssertTrue(concurrency.didStartScreenshotAndDOMConcurrently)
         XCTAssertTrue(concurrency.didObserveDOMDuringOCR)
 
         let manifestURL = try evidenceManifestURL(from: result.stderr)
@@ -233,17 +234,13 @@ final class DriverFailureEvidenceTests: XCTestCase {
             EvidenceDriverClient(
                 domHandler: { _, fresh, _ in
                     XCTAssertTrue(fresh)
-                    let call = stateLock.withLock { () -> Int in
+                    stateLock.withLock {
                         domCalls += 1
-                        return domCalls
                     }
-                    if call == 1 {
-                        throw DriverClientError.driverError(
-                            message: "failed to take snapshot",
-                            payload: underlyingPayload
-                        )
-                    }
-                    return ForyDomPayload(app: "com.example")
+                    throw DriverClientError.driverError(
+                        message: "failed to take snapshot",
+                        payload: underlyingPayload
+                    )
                 },
                 screenshotHandler: {
                     ScreenshotCapture(
@@ -269,7 +266,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
         XCTAssertEqual(error["code"] as? String, IOSUseErrorCode.postconditionFailed)
         XCTAssertEqual(error["phase"] as? String, IOSUseErrorPhase.postcondition)
         XCTAssertEqual(error["mutationMayHaveApplied"] as? Bool, true)
-        XCTAssertEqual(stateLock.withLock { domCalls }, 2)
+        XCTAssertGreaterThan(stateLock.withLock { domCalls }, 1)
     }
 
     func testMissingDriverDoesNotCreateFailureEvidence() throws {
@@ -317,10 +314,13 @@ final class DriverFailureEvidenceTests: XCTestCase {
 
 private final class EvidenceConcurrencyProbe {
     private let lock = NSLock()
+    private let screenshotStarted = DispatchSemaphore(value: 0)
+    private let domStarted = DispatchSemaphore(value: 0)
     private let ocrStarted = DispatchSemaphore(value: 0)
     private var screenshotCaptured = false
     private var ocrActive = false
     private var screenshotBeforeOCR = false
+    private var screenshotAndDOMConcurrent = false
     private var domDuringOCR = false
 
     var didCaptureScreenshotBeforeOCR: Bool {
@@ -331,8 +331,17 @@ private final class EvidenceConcurrencyProbe {
         lock.withLock { domDuringOCR }
     }
 
-    func screenshotDidRun() {
-        lock.withLock { screenshotCaptured = true }
+    var didStartScreenshotAndDOMConcurrently: Bool {
+        lock.withLock { screenshotAndDOMConcurrent }
+    }
+
+    func screenshotDidStartAndWaitForDOM() {
+        screenshotStarted.signal()
+        let observedDOM = domStarted.wait(timeout: .now() + 1) == .success
+        lock.withLock {
+            screenshotCaptured = true
+            screenshotAndDOMConcurrent = observedDOM
+        }
     }
 
     func ocrDidStart() {
@@ -347,9 +356,14 @@ private final class EvidenceConcurrencyProbe {
         lock.withLock { ocrActive = false }
     }
 
-    func domDidRunWhileOCRActive() {
+    func domDidStartAndRunWhileOCRActive() {
+        let observedScreenshot = screenshotStarted.wait(timeout: .now() + 1) == .success
+        domStarted.signal()
         _ = ocrStarted.wait(timeout: .now() + 1)
-        lock.withLock { domDuringOCR = ocrActive }
+        lock.withLock {
+            screenshotAndDOMConcurrent = screenshotAndDOMConcurrent || observedScreenshot
+            domDuringOCR = ocrActive
+        }
     }
 }
 
@@ -433,4 +447,5 @@ private final class EvidenceDriverClient: DriverCommandClient {
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
         throw CLIParseError.invalidValue("unexpected proxyCAPush")
     }
+
 }

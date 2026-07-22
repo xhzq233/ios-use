@@ -10,6 +10,16 @@ public enum IOSUseWaitForMatchMode: Int32, Sendable, CaseIterable, Equatable {
     case regex = 2
 }
 
+/// Backend-neutral application state used on the Driver wire. Backends map
+/// their native process/scene state into this enum instead of exposing XCTest.
+public enum IOSUseAppState: Int32, Sendable, CaseIterable, Equatable {
+    case unknown = 0
+    case notRunning = 1
+    case suspended = 2
+    case background = 3
+    case foreground = 4
+}
+
 public enum IOSUseProtocol {
     // MARK: Driver TCP / Fory frame limits
 
@@ -52,6 +62,9 @@ public enum IOSUseProtocol {
     public static let millisecondsPerSecond = 1000.0
     /// Minimum explicit `--dom <ms>` delay. Bare `--dom` uses quiescence instead.
     public static let minimumPostDomMilliseconds = 100
+    /// Retry window for a transient fresh-snapshot miss after a UI mutation.
+    public static let postMutationSnapshotRetrySeconds = 1.0
+    public static let postMutationSnapshotRetryPollSeconds = 0.05
 
     // MARK: Driver UI semantics
 
@@ -63,6 +76,10 @@ public enum IOSUseProtocol {
     public static let appTerminationTimeoutSeconds = 5.0
     /// App lifecycle polling interval used by activate/terminate waits.
     public static let appStatePollIntervalSeconds = 0.05
+    /// Extra watchdog time for an in-flight foreground/snapshot sample.
+    public static let appForegroundWatchdogGraceSeconds = Double(commandTimeoutSeconds)
+    /// Extra time for the host to receive a readiness timeout response.
+    public static let appForegroundSocketGraceSeconds = 2.0
     /// `waitFor` default timeout when caller omits `--timeout`.
     public static let waitForDefaultTimeoutSeconds = 10.0
     /// Upper bound for an explicit UI wait. This also catches accidental millisecond values such as 20000.
@@ -141,6 +158,22 @@ public enum IOSUseProtocol {
         Int(ceil(waitForWatchdogTimeoutSeconds(requested) + waitForSocketGraceSeconds))
     }
 
+    public static func resolvedAppForegroundTimeoutSeconds(_ requested: Double) -> Double {
+        requested > 0 ? requested : appForegroundTimeoutSeconds
+    }
+
+    public static func appForegroundWatchdogTimeoutSeconds(_ requested: Double) -> Double {
+        let resolved = resolvedAppForegroundTimeoutSeconds(requested)
+        let bounded = resolved.isFinite
+            ? min(resolved, waitForMaximumTimeoutSeconds)
+            : waitForMaximumTimeoutSeconds
+        return bounded + appForegroundWatchdogGraceSeconds
+    }
+
+    public static func appForegroundSocketReadTimeoutSeconds(_ requested: Double) -> Int {
+        Int(ceil(appForegroundWatchdogTimeoutSeconds(requested) + appForegroundSocketGraceSeconds))
+    }
+
     // MARK: Host-side logs / proxy
 
     /// Real-device oslog default collection window when caller omits timeout.
@@ -217,6 +250,8 @@ public enum IOSUseErrorCode {
     public static let dispatchFailed = "dispatch_failed"
     public static let internalFailure = "internal_failure"
     public static let postconditionFailed = "postcondition_failed"
+    public static let appForegroundTimedOut = "app_foreground_timed_out"
+    public static let appSnapshotTimedOut = "app_snapshot_timed_out"
 
 }
 
@@ -255,6 +290,7 @@ public enum DriverCommand: String, CaseIterable, Sendable {
     case swipe
     case waitFor
     case dismissAlert
+    case waitAppForeground
 }
 
 public struct DriverCommandMetadata: Equatable, Sendable {
@@ -332,6 +368,12 @@ public enum DismissAlertCommand: DriverCommandBinding {
     public static let command = DriverCommand.dismissAlert
 }
 
+public enum WaitAppForegroundCommand: DriverCommandBinding {
+    public typealias Args = ForyWaitAppForegroundArgs
+    public typealias Payload = ForyWaitAppForegroundPayload
+    public static let command = DriverCommand.waitAppForeground
+}
+
 public enum ProxyCAPushCommand: DriverCommandBinding {
     public typealias Args = ForyProxyCAPushArgs
     public typealias Payload = ForyProxyPayload
@@ -365,6 +407,8 @@ public extension DriverCommand {
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyWaitForArgs.self), payloadTypeName: String(describing: ForyWaitForPayload.self), mutatesUI: false)
         case .dismissAlert:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyDismissAlertArgs.self), payloadTypeName: String(describing: ForyAlertPayload.self), mutatesUI: true)
+        case .waitAppForeground:
+            DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyWaitAppForegroundArgs.self), payloadTypeName: String(describing: ForyWaitAppForegroundPayload.self), mutatesUI: false)
         }
     }
 }
