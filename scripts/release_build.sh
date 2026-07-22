@@ -11,10 +11,10 @@ bash "$ROOT_DIR/scripts/build_swift_cli.sh"
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
 printf '[release-build] Swift CLI completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 
+ACTUAL_VERSION="$("$ROOT_DIR/ios-use" --version | tr -d '[:space:]')"
 if [ -n "${IOS_USE_RELEASE_VERSION:-}" ]; then
   STEP_STARTED_AT="$(date +%s)"
   EXPECTED_VERSION="${IOS_USE_RELEASE_VERSION#v}"
-  ACTUAL_VERSION="$("$ROOT_DIR/ios-use" --version | tr -d '[:space:]')"
   if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
     echo "[release-build] ERROR: binary version $ACTUAL_VERSION does not match release tag $IOS_USE_RELEASE_VERSION" >&2
     exit 1
@@ -38,15 +38,22 @@ cp "$ROOT_DIR/ios-use" "$RELEASE_DIR/ios-use-darwin-arm64"
 chmod +x "$RELEASE_DIR/ios-use-darwin-arm64"
 cp "$ROOT_DIR/driver/build/driver.ipa" "$RELEASE_DIR/driver.ipa"
 cp "$ROOT_DIR/driver/build/driver-sim.ipa" "$RELEASE_DIR/driver-sim.ipa"
+CHANGELOG_ASSET="CHANGELOG-v$ACTUAL_VERSION.md"
+CHANGELOG_SOURCE="$ROOT_DIR/release-notes/$CHANGELOG_ASSET"
+if [ ! -s "$CHANGELOG_SOURCE" ]; then
+  echo "[release-build] ERROR: missing or empty release changelog: $CHANGELOG_SOURCE" >&2
+  exit 1
+fi
+cp "$CHANGELOG_SOURCE" "$RELEASE_DIR/$CHANGELOG_ASSET"
 
-for asset in ios-use-darwin-arm64 driver.ipa driver-sim.ipa; do
+for asset in ios-use-darwin-arm64 driver.ipa driver-sim.ipa "$CHANGELOG_ASSET"; do
   if [ ! -s "$RELEASE_DIR/$asset" ]; then
     echo "[release-build] ERROR: missing or empty release asset: $asset" >&2
     exit 1
   fi
 done
 
-(cd "$RELEASE_DIR" && shasum -a 256 ios-use-darwin-arm64 driver.ipa driver-sim.ipa > SHA256SUMS)
+(cd "$RELEASE_DIR" && shasum -a 256 ios-use-darwin-arm64 driver.ipa driver-sim.ipa "$CHANGELOG_ASSET" > SHA256SUMS)
 
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
 printf '[release-build] Asset staging completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"

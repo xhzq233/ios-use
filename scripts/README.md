@@ -82,4 +82,5 @@ The GitHub release workflow builds and uploads:
 | `ios-use-darwin-arm64` | Prebuilt Apple Silicon macOS CLI binary. Intel Macs use `scripts/install.sh --build-from-source`. |
 | `driver.ipa` | Real-device XCTest driver IPA. |
 | `driver-sim.ipa` | Simulator XCTest driver IPA. |
-| `SHA256SUMS` | Checksums for uploaded release assets. |
+| `CHANGELOG-vX.Y.Z.md` | Focused changes and upgrade notes for that release. |
+| `SHA256SUMS` | Checksums for all uploaded content assets. |
