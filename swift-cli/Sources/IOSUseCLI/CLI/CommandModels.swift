@@ -1,4 +1,5 @@
 import Foundation
+import IOSUseProtocol
 
 public enum ParsedCommand: Equatable, Sendable {
     case status(StatusOptions)
@@ -219,8 +220,9 @@ public enum DriverAction: Equatable, Sendable {
     case input(tap: String?, content: String, delete: Int, enter: Bool, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case swipe(to: String?, from: String?, dir: String?, distance: Double?, traits: String?, cindex: Int32?, postDom: PostDomMode?)
     case dom(raw: Bool, fresh: Bool, waitQuiescence: Bool)
+    case inspect(waitQuiescence: Bool)
     case screenshot(name: String?, ocr: Bool)
-    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool)
+    case waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode)
     case activateApp(bundleId: String)
     case terminateApp(bundleId: String)
     case home
@@ -233,6 +235,7 @@ public enum DriverAction: Equatable, Sendable {
         case .input: return "input"
         case .swipe: return "swipe"
         case .dom: return "dom"
+        case .inspect: return "dom"
         case .screenshot: return "screenshot"
         case .waitFor: return "waitFor"
         case .activateApp: return "activateApp"
@@ -246,7 +249,11 @@ public enum DriverAction: Equatable, Sendable {
 public extension DriverAction {
     /// Source-compatible convenience for callers that do not need disappearance semantics.
     static func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?) -> DriverAction {
-        .waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: false)
+        .waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: false, matchMode: .standard)
+    }
+
+    static func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool) -> DriverAction {
+        .waitFor(label: label, timeout: timeout, traits: traits, cindex: cindex, gone: gone, matchMode: .standard)
     }
 
     /// Source-compatible convenience for callers that use the default accurate OCR.

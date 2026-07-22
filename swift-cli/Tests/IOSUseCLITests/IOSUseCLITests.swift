@@ -1,5 +1,6 @@
 import XCTest
 import Darwin
+import CoreGraphics
 import IOSUseProtocol
 @testable import IOSUseCLI
 
@@ -15,6 +16,7 @@ final class IOSUseCLITests: XCTestCase {
         DeviceService.resetCacheForTesting()
         DriverClient.usbmuxConnectorForTesting = nil
         IOSUseCLI.driverClientFactoryForTesting = nil
+        ScreenshotArtifactService.ocrRecognizerForTesting = nil
         AppLifecycleService.realDeviceRunnerForTesting = nil
         AppLifecycleService.simulatorRunnerForTesting = nil
         AppLogCaptureService.executablePathOverrideForTesting = nil
@@ -1395,6 +1397,84 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stdout.contains("- Ready [Text] (1,2,3,4)"))
     }
 
+    func testDomOCRReturnsFreshDomAndRunsAccurateOCRAlongsideDomFetch() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-dom-ocr-\(UUID().uuidString)")
+            .path
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-DOM-OCR", deviceType: "simulator", paths: paths)
+        let ocrStarted = DispatchSemaphore(value: 0)
+        let domStarted = DispatchSemaphore(value: 0)
+        var calls: [String] = []
+
+        ScreenshotArtifactService.ocrRecognizerForTesting = { _, logicalSize, scale, recognitionLevel in
+            XCTAssertEqual(recognitionLevel, .accurate)
+            XCTAssertEqual(logicalSize, CGSize(width: 100, height: 200))
+            XCTAssertEqual(scale, 3)
+            ocrStarted.signal()
+            guard domStarted.wait(timeout: .now() + 1) == .success else {
+                throw CLIParseError.invalidValue("DOM did not overlap OCR")
+            }
+            return OCRService.Result(
+                imageWidth: 300,
+                imageHeight: 600,
+                logicalSize: logicalSize,
+                scale: scale,
+                observations: [
+                    OCRService.Observation(
+                        text: "视觉横幅",
+                        confidence: 1,
+                        boundingBox: CGRect(x: 0.1, y: 0.8, width: 0.5, height: 0.1)
+                    )
+                ]
+            )
+        }
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(
+                domHandler: { raw, fresh, waitQuiescence in
+                    XCTAssertFalse(raw)
+                    XCTAssertTrue(fresh)
+                    XCTAssertFalse(waitQuiescence)
+                    guard ocrStarted.wait(timeout: .now() + 1) == .success else {
+                        throw CLIParseError.invalidValue("OCR did not start before DOM")
+                    }
+                    calls.append("dom")
+                    domStarted.signal()
+                    return ForyDomPayload(
+                        app: "com.example",
+                        elements: [ForyDomElement(traits: ["Text"], label: "AX 文本", rect: ForyRect(x: 1, y: 2, w: 3, h: 4))]
+                    )
+                },
+                screenshotHandler: {
+                    calls.append("screenshot")
+                    return ScreenshotCapture(
+                        jpeg: Data("fixture-jpeg".utf8),
+                        logicalSize: ForyPoint(x: 100, y: 200),
+                        scale: 3
+                    )
+                }
+            )
+        }
+        addTeardownBlock {
+            IOSUseCLI.driverClientFactoryForTesting = nil
+            ScreenshotArtifactService.ocrRecognizerForTesting = nil
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(arguments: ["dom", "--ocr"])
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertEqual(calls, ["screenshot", "dom"])
+        XCTAssertTrue(result.stdout.contains("App: com.example"))
+        XCTAssertTrue(result.stdout.contains("- AX 文本 [Text] (1,2,3,4)"))
+        XCTAssertTrue(result.stdout.contains("Visual evidence"))
+        XCTAssertTrue(result.stdout.contains("Screenshot saved: \(root)/artifacts/dom.jpg"))
+        XCTAssertTrue(result.stdout.contains("OCR (accurate):"))
+        XCTAssertTrue(result.stdout.contains("视觉横幅 [10.0000,20.0000,50.0000,20.0000]"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/artifacts/dom.jpg"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: "\(root)/artifacts/dom.ocr.json"))
+    }
+
     func testMutatingCommandBareDomWaitsForQuiescence() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-post-dom-quiescence-\(UUID().uuidString)")
@@ -2220,6 +2300,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     private let tapHandler: (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload
     private let activateHandler: (String) throws -> Void
     private let terminateHandler: (String) throws -> Void
+    private let screenshotHandler: () throws -> ScreenshotCapture
 
     init(
         domHandler: @escaping (Bool, Bool, Bool) throws -> ForyDomPayload = { _, _, _ in
@@ -2233,12 +2314,16 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         },
         terminateHandler: @escaping (String) throws -> Void = { _ in
             throw CLIParseError.invalidValue("unexpected terminateApp")
+        },
+        screenshotHandler: @escaping () throws -> ScreenshotCapture = {
+            throw CLIParseError.invalidValue("unexpected screenshot")
         }
     ) {
         self.domHandler = domHandler
         self.tapHandler = tapHandler
         self.activateHandler = activateHandler
         self.terminateHandler = terminateHandler
+        self.screenshotHandler = screenshotHandler
     }
 
     func close() {}
@@ -2252,7 +2337,11 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     }
 
     func screenshot() throws -> Data {
-        throw CLIParseError.invalidValue("unexpected screenshot")
+        try screenshotHandler().jpeg
+    }
+
+    func screenshotCapture() throws -> ScreenshotCapture {
+        try screenshotHandler()
     }
 
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {

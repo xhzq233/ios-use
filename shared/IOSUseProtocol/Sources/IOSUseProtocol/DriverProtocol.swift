@@ -1,6 +1,15 @@
 import Foundation
 import Fory
 
+public enum IOSUseWaitForMatchMode: Int32, Sendable, CaseIterable, Equatable {
+    /// Existing selector behavior: normalized exact match first, then normalized substring.
+    case standard = 0
+    /// Require a normalized full label/value match.
+    case exact = 1
+    /// Interpret the target as an ICU regular expression over the displayed label/value.
+    case regex = 2
+}
+
 public enum IOSUseProtocol {
     // MARK: Driver TCP / Fory frame limits
 
@@ -22,6 +31,11 @@ public enum IOSUseProtocol {
     public static let commandTimeoutSeconds = 10
     /// Host-side socket read timeout. Must outlive the driver command watchdog long enough to receive the fatal frame.
     public static let commandSocketReadTimeoutSeconds = commandTimeoutSeconds + 2
+    /// Extra time allowed for one normal in-flight driver operation (usually a
+    /// snapshot) to finish after a `waitFor` deadline.
+    public static let waitForWatchdogGraceSeconds = Double(commandTimeoutSeconds)
+    /// Extra time for the host to receive a driver timeout response after its watchdog fires.
+    public static let waitForSocketGraceSeconds = 2.0
     /// Initial delay before holder probes real-device driver TCP readiness after XCTest start returns.
     public static let realDeviceDriverReadinessInitialDelayMicroseconds = 200_000
     /// Poll interval while holder waits for real-device driver TCP readiness.
@@ -51,6 +65,8 @@ public enum IOSUseProtocol {
     public static let appStatePollIntervalSeconds = 0.05
     /// `waitFor` default timeout when caller omits `--timeout`.
     public static let waitForDefaultTimeoutSeconds = 10.0
+    /// Upper bound for an explicit UI wait. This also catches accidental millisecond values such as 20000.
+    public static let waitForMaximumTimeoutSeconds = 300.0
     /// `waitFor` raw-find polling interval.
     public static let waitForPollIntervalMilliseconds = 100
     /// Conversion used by `usleep` callers.
@@ -105,6 +121,25 @@ public enum IOSUseProtocol {
     public static let errorCandidateLimit = 5
     /// Scale used to round geometry values before serialization.
     public static let sanitizedDecimalScale = 10.0
+
+    public static func resolvedWaitForTimeoutSeconds(_ requested: Double) -> Double {
+        requested > 0 ? requested : waitForDefaultTimeoutSeconds
+    }
+
+    public static func waitForWatchdogTimeoutSeconds(_ requested: Double) -> Double {
+        let resolved = resolvedWaitForTimeoutSeconds(requested)
+        // The driver validates the original request on the main thread. Bound
+        // the pre-dispatch watchdog calculation first so a malformed wire value
+        // such as infinity cannot overflow when converted to milliseconds.
+        let bounded = resolved.isFinite
+            ? min(resolved, waitForMaximumTimeoutSeconds)
+            : waitForMaximumTimeoutSeconds
+        return bounded + waitForWatchdogGraceSeconds
+    }
+
+    public static func waitForSocketReadTimeoutSeconds(_ requested: Double) -> Int {
+        Int(ceil(waitForWatchdogTimeoutSeconds(requested) + waitForSocketGraceSeconds))
+    }
 
     // MARK: Host-side logs / proxy
 

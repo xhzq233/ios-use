@@ -745,6 +745,75 @@ final class TypesTests: XCTestCase {
         }
     }
 
+    func testRawFindInSnapshot_StandardModeTracksDynamicTextByStableSubstring() {
+        let element = makeElement(label: "优化身形线条中... 17%", type: .staticText)
+        let cs = makeCleanedSnapshot([element])
+
+        switch rawFindInSnapshot(
+            ForyTarget(label: "优化身形线条中"),
+            cs: cs,
+            enableFuzzy: false,
+            textMatch: .standard
+        ) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "优化身形线条中... 17%")
+        default:
+            XCTFail("expected standard matching to find a stable substring in dynamic text")
+        }
+    }
+
+    func testRawFindInSnapshot_ExactModeRejectsDynamicSuffix() {
+        let element = makeElement(label: "优化身形线条中... 17%", type: .staticText)
+        let cs = makeCleanedSnapshot([element])
+
+        switch rawFindInSnapshot(
+            ForyTarget(label: "优化身形线条中"),
+            cs: cs,
+            textMatch: .exact
+        ) {
+        case .notFound:
+            break
+        default:
+            XCTFail("expected exact matching to reject a dynamic suffix")
+        }
+    }
+
+    func testRawFindInSnapshot_RegexModeMatchesDynamicPercentage() throws {
+        let element = makeElement(label: "优化身形线条中... 17%", type: .staticText)
+        let cs = makeCleanedSnapshot([element])
+        let expression = try NSRegularExpression(pattern: #"^优化身形线条中.*\d+%$"#)
+
+        switch rawFindInSnapshot(
+            ForyTarget(label: expression.pattern),
+            cs: cs,
+            enableFuzzy: false,
+            textMatch: .regex(expression)
+        ) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "优化身形线条中... 17%")
+        default:
+            XCTFail("expected regex matching to track a changing percentage")
+        }
+    }
+
+    func testRawFindInSnapshot_RegexModeDoesNotNormalizePatternCharactersAway() throws {
+        let element = makeElement(label: "A", type: .staticText)
+        let cs = makeCleanedSnapshot([element])
+        let expression = try NSRegularExpression(pattern: ".")
+
+        switch rawFindInSnapshot(
+            ForyTarget(label: expression.pattern),
+            cs: cs,
+            enableFuzzy: false,
+            textMatch: .regex(expression)
+        ) {
+        case .found:
+            break
+        default:
+            XCTFail("expected punctuation-only regex syntax to remain valid")
+        }
+    }
+
     func testRawFindInSnapshot_ExactMatchWinsOverLongerContainsMatches() {
         let exact = makeElement(label: "ic album zoom simple-1", type: .button)
         let longer = makeElement(label: "ic album zoom simple-10", type: .button)

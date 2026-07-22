@@ -4,7 +4,12 @@ import IOSUseProtocol
 final class ForyModelTests: XCTestCase {
     func testForyRegistryCanSerializeRequestFrame() throws {
         let fory = ForyRegistry.create()
-        let payload = try fory.serialize(ForyWaitForArgs(target: ForyTarget(label: "General", traits: "Cell", cindex: -1), timeout: 1.5, gone: true))
+        let payload = try fory.serialize(ForyWaitForArgs(
+            target: ForyTarget(label: "General", traits: "Cell", cindex: -1),
+            timeout: 1.5,
+            gone: true,
+            matchMode: IOSUseWaitForMatchMode.regex.rawValue
+        ))
         let frame = ForyRequestFrame(command: DriverCommand.waitFor.rawValue, payload: payload)
         let encoded = try fory.serialize(frame)
         let decoded = try fory.deserialize(encoded, as: ForyRequestFrame.self)
@@ -16,6 +21,7 @@ final class ForyModelTests: XCTestCase {
         XCTAssertEqual(args.target.cindex, -1)
         XCTAssertEqual(args.timeout, 1.5)
         XCTAssertTrue(args.gone)
+        XCTAssertEqual(args.matchMode, IOSUseWaitForMatchMode.regex.rawValue)
     }
 
     func testForyRegistryCanSerializeResponseFrame() throws {

@@ -203,7 +203,7 @@ public enum CLIParser {
                     switch readArg {
                     case "--pattern": options.pattern = try parser.valueAllowingLeadingDash(for: readArg)
                     case "--flags": options.flags = try parser.value(for: readArg)
-                    case "--timeout": options.timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: readArg), label: readArg)
+                    case "--timeout": options.timeout = try parseNonNegativeDurationSecondsStrict(parser.valueAllowingLeadingDash(for: readArg), label: readArg)
                     case "--clearAfterRead": options.clearAfterRead = true
                     case "--last": options.last = try parsePositiveIntStrict(parser.value(for: readArg), label: readArg)
                     default: throw CLIParseError.unknownOption(readArg)
@@ -306,7 +306,7 @@ public enum CLIParser {
         var postDom: PostDomMode?
         while let arg = parser.consume() {
             switch arg {
-            case "--duration": duration = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--duration": duration = try parseNonNegativeDurationMillisecondsStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--dom": postDom = try parsePostDomMode(&parser, option: arg)
@@ -371,16 +371,21 @@ public enum CLIParser {
         var raw = false
         var fresh = false
         var waitQuiescence = false
+        var ocr = false
         while let arg = parser.consume() {
             switch arg {
             case "--raw": raw = true
             case "--fresh": fresh = true
             case "--wait-quiescence": waitQuiescence = true
+            case "--ocr": ocr = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        if raw && (fresh || waitQuiescence) {
-            throw CLIParseError.invalidValue("dom --raw cannot be combined with --fresh or --wait-quiescence")
+        if raw && (fresh || waitQuiescence || ocr) {
+            throw CLIParseError.invalidValue("dom --raw cannot be combined with --fresh, --wait-quiescence, or --ocr")
+        }
+        if ocr {
+            return .inspect(waitQuiescence: waitQuiescence)
         }
         return .dom(raw: raw, fresh: fresh || waitQuiescence, waitQuiescence: waitQuiescence)
     }
@@ -389,7 +394,7 @@ public enum CLIParser {
         guard let value = parser.optionalValueAllowingLeadingDash() else {
             return .afterQuiescence
         }
-        let milliseconds = try parseNonNegativeIntStrict(value, label: option)
+        let milliseconds = try parseNonNegativeDurationMillisecondsStrict(value, label: option)
         guard milliseconds >= IOSUseProtocol.minimumPostDomMilliseconds else {
             throw CLIParseError.invalidValue("\(option) must be at least \(IOSUseProtocol.minimumPostDomMilliseconds)ms")
         }
@@ -417,7 +422,7 @@ public enum CLIParser {
         while let arg = parser.consume() {
             switch arg {
             case "--duration":
-                duration = try parsePositiveDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+                duration = try parsePositiveDurationSecondsStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--fps":
                 fps = try parsePositiveDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
                 guard fps <= 10 else {
@@ -442,17 +447,54 @@ public enum CLIParser {
         var traits: String?
         var cindex: Int32?
         var gone = false
+        var matchMode = IOSUseWaitForMatchMode.standard
         while let arg = parser.consume() {
             switch arg {
-            case "--label": label = try parser.value(for: arg)
-            case "--timeout": timeout = try parseNonNegativeDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--label":
+                guard label == nil else { throw CLIParseError.invalidValue("waitFor target can only be provided once") }
+                label = try parser.value(for: arg)
+            case "--timeout":
+                timeout = try parsePositiveDurationSecondsStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+                guard timeout! <= IOSUseProtocol.waitForMaximumTimeoutSeconds else {
+                    throw CLIParseError.invalidValue("--timeout must be at most \(Int(IOSUseProtocol.waitForMaximumTimeoutSeconds))s; use an explicit ms or s suffix")
+                }
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--gone": gone = true
-            default: throw CLIParseError.unknownOption(arg)
+            case "--match":
+                let value = try parser.value(for: arg)
+                switch value {
+                case "contains": matchMode = .standard
+                case "exact": matchMode = .exact
+                case "regex": matchMode = .regex
+                default: throw CLIParseError.invalidValue("--match must be contains, exact, or regex")
+                }
+            default:
+                if arg.hasPrefix("-") {
+                    throw CLIParseError.unknownOption(arg)
+                }
+                guard label == nil else { throw CLIParseError.unexpectedArgument(arg) }
+                label = arg
             }
         }
-        return .waitFor(label: try require(label, option: "--label"), timeout: timeout, traits: traits, cindex: cindex, gone: gone)
+        guard let resolvedLabel = label else {
+            throw CLIParseError.missingRequiredArgument("target")
+        }
+        if matchMode == .regex {
+            do {
+                _ = try NSRegularExpression(pattern: resolvedLabel)
+            } catch {
+                throw CLIParseError.invalidValue("invalid waitFor regular expression: \(error.localizedDescription)")
+            }
+        }
+        return .waitFor(
+            label: resolvedLabel,
+            timeout: timeout,
+            traits: traits,
+            cindex: cindex,
+            gone: gone,
+            matchMode: matchMode
+        )
     }
 
     private static func parseHome(_ parser: inout ArgumentParser) throws -> DriverAction {
@@ -514,7 +556,7 @@ public enum CLIParser {
             switch arg {
             case "--pattern": pattern = try parser.valueAllowingLeadingDash(for: arg)
             case "--flags": flags = try parser.value(for: arg)
-            case "--timeout": timeout = try parsePositiveDoubleStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--timeout": timeout = try parsePositiveDurationSecondsStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
             case "--process":
                 guard process == nil else { throw CLIParseError.invalidValue("--process can only be provided once") }
                 guard pid == nil else { throw CLIParseError.invalidValue("--process and --pid are mutually exclusive") }
@@ -594,6 +636,62 @@ public enum CLIParser {
             throw CLIParseError.invalidValue("\(label) must be greater than 0")
         }
         return parsed
+    }
+
+    private enum BareDurationUnit {
+        case seconds
+        case milliseconds
+    }
+
+    private static func parseDurationSecondsStrict(
+        _ value: String,
+        label: String,
+        bareUnit: BareDurationUnit = .seconds
+    ) throws -> Double {
+        let lowercased = value.lowercased()
+        let number: String
+        let unit: BareDurationUnit
+        if lowercased.hasSuffix("ms") {
+            number = String(lowercased.dropLast(2))
+            unit = .milliseconds
+        } else if lowercased.hasSuffix("s") {
+            number = String(lowercased.dropLast())
+            unit = .seconds
+        } else {
+            number = value
+            unit = bareUnit
+        }
+        let parsed = try parseDoubleStrict(number, label: label)
+        return unit == .milliseconds ? parsed / IOSUseProtocol.millisecondsPerSecond : parsed
+    }
+
+    private static func parseNonNegativeDurationSecondsStrict(_ value: String, label: String) throws -> Double {
+        let parsed = try parseDurationSecondsStrict(value, label: label)
+        guard parsed >= 0 else {
+            throw CLIParseError.invalidValue("\(label) must be non-negative")
+        }
+        return parsed
+    }
+
+    private static func parsePositiveDurationSecondsStrict(_ value: String, label: String) throws -> Double {
+        let parsed = try parseDurationSecondsStrict(value, label: label)
+        guard parsed > 0 else {
+            throw CLIParseError.invalidValue("\(label) must be greater than 0")
+        }
+        return parsed
+    }
+
+    private static func parseNonNegativeDurationMillisecondsStrict(_ value: String, label: String) throws -> Int {
+        let seconds = try parseDurationSecondsStrict(value, label: label, bareUnit: .milliseconds)
+        guard seconds >= 0 else {
+            throw CLIParseError.invalidValue("\(label) must be non-negative")
+        }
+        let milliseconds = seconds * IOSUseProtocol.millisecondsPerSecond
+        let roundedMilliseconds = milliseconds.rounded()
+        guard milliseconds <= Double(Int.max), abs(milliseconds - roundedMilliseconds) < 0.000_001 else {
+            throw CLIParseError.invalidValue("\(label) must resolve to a whole number of milliseconds")
+        }
+        return Int(roundedMilliseconds)
     }
 
 }
