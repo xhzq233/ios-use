@@ -149,12 +149,13 @@ enum AppCommands {
             if let requestedApp {
                 let nativeState = requestedApp.state
                 lastState = appState(nativeState)
-                lastBundleId = accepted[0]
+                var detectedBundleId: String?
                 if let active = try? Session.shared.refreshActive() {
                     lastBundleId = bundleIdentifier(active)
+                    detectedBundleId = lastBundleId
                 }
                 if nativeState == .runningForeground,
-                   lastBundleId == accepted[0] || lastBundleId == IOSUseProtocol.springboardBundleId {
+                   foregroundBundleAccepted(detectedBundleId, expectedBundleId: accepted[0]) {
                     foregroundObserved = true
                     if lastBundleId == accepted[0] {
                         Session.shared.cache(app: requestedApp)
@@ -291,6 +292,11 @@ enum AppCommands {
         return bundleId == IOSUseProtocol.springboardBundleId
             && expectedAppForeground == true
             && hasSystemAlert
+    }
+
+    static func foregroundBundleAccepted(_ bundleId: String?, expectedBundleId: String) -> Bool {
+        guard let bundleId else { return false }
+        return bundleId == expectedBundleId || bundleId == IOSUseProtocol.springboardBundleId
     }
 
     static func snapshotBundleMayBeAccepted(

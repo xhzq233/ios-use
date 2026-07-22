@@ -29,7 +29,7 @@
 - `open --dom` waits for a verified real-device URL handler. If handler lookup is
   unavailable, it reports that dispatch may have applied instead of returning an
   unrelated foreground DOM.
-- Activation readiness can return a system-owned first-launch overlay only while
-  the requested App itself remains foreground; an actual App switch keeps polling.
+- Activation readiness can return a SpringBoard-owned first-launch alert or sheet
+  only while the requested App itself remains foreground; an actual App switch keeps polling.
 - CLI and Driver versions must match. Re-run `ios-use config --udid <UDID>` after
   upgrading.
