@@ -111,4 +111,23 @@ final class SessionTests: XCTestCase {
         ))
     }
 
+    func testActivateReadinessRequiresAnObservedForegroundBundle() {
+        XCTAssertFalse(AppCommands.foregroundBundleAccepted(
+            nil,
+            expectedBundleId: "com.apple.Preferences"
+        ))
+        XCTAssertFalse(AppCommands.foregroundBundleAccepted(
+            "com.apple.mobilesafari",
+            expectedBundleId: "com.apple.Preferences"
+        ))
+        XCTAssertTrue(AppCommands.foregroundBundleAccepted(
+            "com.apple.Preferences",
+            expectedBundleId: "com.apple.Preferences"
+        ))
+        XCTAssertTrue(AppCommands.foregroundBundleAccepted(
+            IOSUseProtocol.springboardBundleId,
+            expectedBundleId: "com.apple.Preferences"
+        ))
+    }
+
 }
