@@ -41,6 +41,11 @@ public enum IOSUseProtocol {
     public static let commandTimeoutSeconds = 10
     /// Host-side socket read timeout. Must outlive the driver command watchdog long enough to receive the fatal frame.
     public static let commandSocketReadTimeoutSeconds = commandTimeoutSeconds + 2
+    /// Label-target swipes may perform up to `maxScrollCount` gestures before
+    /// returning a semantic boundary or limit result.
+    public static let labelSwipeWatchdogTimeoutSeconds = 60.0
+    /// Host-side socket read timeout for a label-target swipe.
+    public static let labelSwipeSocketReadTimeoutSeconds = 62
     /// Extra time allowed for one normal in-flight driver operation (usually a
     /// snapshot) to finish after a `waitFor` deadline.
     public static let waitForWatchdogGraceSeconds = Double(commandTimeoutSeconds)
@@ -156,6 +161,22 @@ public enum IOSUseProtocol {
 
     public static func waitForSocketReadTimeoutSeconds(_ requested: Double) -> Int {
         Int(ceil(waitForWatchdogTimeoutSeconds(requested) + waitForSocketGraceSeconds))
+    }
+
+    public static func swipeUsesLabelTarget(_ args: ForySwipeArgs) -> Bool {
+        args.toTarget.point == nil && !args.toTarget.label.isEmpty
+    }
+
+    public static func swipeWatchdogTimeoutSeconds(_ args: ForySwipeArgs) -> Double {
+        swipeUsesLabelTarget(args)
+            ? labelSwipeWatchdogTimeoutSeconds
+            : Double(commandTimeoutSeconds)
+    }
+
+    public static func swipeSocketReadTimeoutSeconds(_ args: ForySwipeArgs) -> Int {
+        swipeUsesLabelTarget(args)
+            ? labelSwipeSocketReadTimeoutSeconds
+            : commandSocketReadTimeoutSeconds
     }
 
     public static func resolvedAppForegroundTimeoutSeconds(_ requested: Double) -> Double {
