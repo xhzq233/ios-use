@@ -66,6 +66,36 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 312)
     }
 
+    func testLabelSwipeInvocationUsesLongCommandDeadline() throws {
+        let args = ForySwipeArgs(
+            toTarget: ForyTarget(label: "Developer"),
+            fromTarget: ForyTarget(label: "Bluetooth")
+        )
+        let payload = try ForyRegistry.create().serialize(args)
+        let invocation = try CommandInvocation(name: .swipe, payload: payload, codec: Codec.Context())
+
+        XCTAssertTrue(IOSUseProtocol.swipeUsesLabelTarget(args))
+        XCTAssertEqual(invocation.watchdogTimeoutSeconds, 60)
+        XCTAssertEqual(IOSUseProtocol.swipeSocketReadTimeoutSeconds(args), 62)
+    }
+
+    func testPointAndDistanceSwipeInvocationsKeepDefaultCommandDeadline() throws {
+        let pointArgs = ForySwipeArgs(toTarget: ForyTarget(point: ForyPoint(x: 20, y: 40)))
+        let distanceArgs = ForySwipeArgs(
+            distance: 200,
+            dir: IOSUseProtocol.XCConstants.swipeDirectionForth
+        )
+
+        for args in [pointArgs, distanceArgs] {
+            let payload = try ForyRegistry.create().serialize(args)
+            let invocation = try CommandInvocation(name: .swipe, payload: payload, codec: Codec.Context())
+
+            XCTAssertFalse(IOSUseProtocol.swipeUsesLabelTarget(args))
+            XCTAssertEqual(invocation.watchdogTimeoutSeconds, 10)
+            XCTAssertEqual(IOSUseProtocol.swipeSocketReadTimeoutSeconds(args), 12)
+        }
+    }
+
     func testSecondConnectionIsAcceptedWhileFirstConnectionStaysOpen() throws {
         DriverServer.shared.stop()
         let port = try Self.freePort()

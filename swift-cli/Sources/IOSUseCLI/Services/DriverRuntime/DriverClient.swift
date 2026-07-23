@@ -356,7 +356,19 @@ final class DriverClient: DriverCommandClient {
         case "back": dirValue = IOSUseProtocol.XCConstants.swipeDirectionBack
         default: dirValue = IOSUseProtocol.XCConstants.swipeDirectionUnspecified
         }
-        return try send(SwipeCommand.self, args: ForySwipeArgs(toTarget: to.withLookup(traits: traits, cindex: cindex), fromTarget: from, distance: distance ?? 0, dir: dirValue))
+        let args = ForySwipeArgs(
+            toTarget: to.withLookup(traits: traits, cindex: cindex),
+            fromTarget: from,
+            distance: distance ?? 0,
+            dir: dirValue
+        )
+        let payload = try fory.serialize(args)
+        let response = try sendRawPayload(
+            command: SwipeCommand.command.rawValue,
+            payload: payload,
+            responseTimeoutSeconds: IOSUseProtocol.swipeSocketReadTimeoutSeconds(args)
+        )
+        return try fory.deserialize(response, as: ForySwipePayload.self)
     }
 
     func activateApp(bundleId: String) throws {

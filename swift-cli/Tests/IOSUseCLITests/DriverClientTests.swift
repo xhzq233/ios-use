@@ -125,6 +125,33 @@ final class DriverClientTests: XCTestCase {
         XCTAssertEqual(args.matchMode, IOSUseWaitForMatchMode.standard.rawValue)
     }
 
+    func testClientUsesLongSocketDeadlineForLabelSwipe() throws {
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(ForySwipePayload())
+        let server = try FakeDriverServer(
+            responses: [ForyResponseFrame(ok: true, payload: payload)],
+            responseDelay: 1.2
+        )
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port), socketTimeoutSeconds: 1)
+        defer { client.close() }
+
+        _ = try client.swipe(
+            to: ForyTarget(label: "Developer"),
+            from: ForyTarget(label: "Bluetooth"),
+            distance: nil,
+            dir: nil,
+            traits: nil,
+            cindex: nil
+        )
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        XCTAssertEqual(request.command, DriverCommand.swipe.rawValue)
+        let args = try fory.deserialize(request.payload, as: ForySwipeArgs.self)
+        XCTAssertTrue(IOSUseProtocol.swipeUsesLabelTarget(args))
+        XCTAssertEqual(IOSUseProtocol.swipeSocketReadTimeoutSeconds(args), 62)
+    }
+
     func testClientSerializesWaitForRegexAndUsesSharedLongWaitBudgets() throws {
         let fory = ForyRegistry.create()
         let payload = try fory.serialize(ForyWaitForPayload())
@@ -335,10 +362,12 @@ final class FakeDriverServer {
     private var requests: [ForyRequestFrame] = []
     private let fory = ForyRegistry.create()
     private let disconnectSem = DispatchSemaphore(value: 0)
+    private let responseDelay: TimeInterval
 
     init(responseCount: Int) throws {
         let payload = (try? ForyRegistry.create().serialize(ForyDomPayload(app: "fake"))) ?? Data()
         self.responses = (0..<responseCount).map { _ in ForyResponseFrame(ok: true, payload: payload) }
+        self.responseDelay = 0
         let fd = try Self.makeListenSocket()
         self.listenFD = fd.listenFD
         self.port = fd.port
@@ -347,8 +376,9 @@ final class FakeDriverServer {
         worker.start()
     }
 
-    init(responses: [ForyResponseFrame]) throws {
+    init(responses: [ForyResponseFrame], responseDelay: TimeInterval = 0) throws {
         self.responses = responses
+        self.responseDelay = responseDelay
         let fd = try Self.makeListenSocket()
         self.listenFD = fd.listenFD
         self.port = fd.port
@@ -463,6 +493,9 @@ final class FakeDriverServer {
             let response = responses[nextResponseIndex]
             nextResponseIndex += 1
             lock.unlock()
+            if responseDelay > 0 {
+                Thread.sleep(forTimeInterval: responseDelay)
+            }
             guard let frame = try? fory.serialize(response) else { return }
             try? writeFrame(fd: clientFD, data: frame)
         }

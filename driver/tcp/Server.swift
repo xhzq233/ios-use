@@ -391,6 +391,8 @@ struct CommandInvocation {
             return IOSUseProtocol.appForegroundWatchdogTimeoutSeconds(args.timeout)
         case .activateApp:
             return IOSUseProtocol.appForegroundWatchdogTimeoutSeconds(0)
+        case .swipe(let args):
+            return IOSUseProtocol.swipeWatchdogTimeoutSeconds(args)
         default:
             return Double(IOSUseProtocol.commandTimeoutSeconds)
         }
