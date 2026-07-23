@@ -19,6 +19,13 @@
   reusing the existing verification lookup.
 - `tap 67 269` is accepted as a coordinate fallback alongside `tap 67,269`; semantic
   label/value targeting remains the preferred interface.
+- Semantic label swipes now use a 60-second Driver watchdog and a matching
+  62-second host read deadline, allowing multi-gesture searches to finish without
+  the generic 10-second command timeout. Coordinate and fixed-distance swipes keep
+  the shorter deadline.
+- Root, `tap`, and `swipe` help now restore the DOM-label-first workflow after
+  context compaction and show how to compose stable UI routes with ordinary shell.
+  The installed operational playbook carries the same concise recovery guidance.
 
 ## Notes
 
