@@ -7,6 +7,15 @@ enum CLIHelp {
 
         Swift CLI for ios-use.
 
+        Agent recovery:
+          After context compaction or when resuming iOS device work, re-read:
+            ~/.ios-use/skill/SKILL.md
+          Use ordinary shell; compose workflows from stable semantic labels returned by DOM:
+            ios-use dom &&
+              ios-use swipe --to "<target>" --from "<visible-anchor>" --dom &&
+              ios-use tap "<target>" --dom
+          Coordinates and fixed-distance swipes are last-resort fallbacks.
+
         Options:
           -h, --help       Show help
           -V, --version    Show version
@@ -196,14 +205,19 @@ enum CLIHelp {
         case "tap":
             return driverHelp(
                 usage: "ios-use tap <target> [--offset <x,y>] [--offset-ratio <x,y>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Tap a label/value target. Coordinates are a fallback: ios-use tap 67,269 or ios-use tap 67 269.",
+                summary: "Tap a stable semantic label or value shown by DOM.",
                 options: [
                     "--offset <x,y>        Pixel offset from target top-left",
                     "--offset-ratio <x,y>  Ratio offset from target top-left",
                     "--traits <traits>     Comma-separated trait filter",
                     "--cindex <index>      Select the Nth cleaned child under a matched parent",
                     "--dom [duration]      Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
-                ]
+                ],
+                footer: """
+                Preferred: ios-use tap "通用" --dom
+                Use coordinates only when Accessibility exposes no usable label or value; prefer a label-relative --offset or --offset-ratio first.
+                Last-resort coordinate forms: ios-use tap 67,269 or ios-use tap 67 269
+                """
             )
         case "longpress":
             return driverHelp(
@@ -233,7 +247,7 @@ enum CLIHelp {
         case "swipe":
             return driverHelp(
                 usage: "ios-use swipe [--to <label>] [--from <label|x,y>] [--dir forth|back] [--distance <px>] [--traits <traits>] [--cindex <index>] [--dom [duration]]",
-                summary: "Scroll toward a target or by a fixed distance.",
+                summary: "Scroll toward a stable semantic DOM label; use a fixed distance only as a fallback.",
                 options: [
                     "--to <label>       Target element",
                     "--from <label|x,y> Anchor element or coordinate",
@@ -242,7 +256,12 @@ enum CLIHelp {
                     "--traits <traits>  Comma-separated trait filter for --to",
                     "--cindex <index>   Select the Nth cleaned child under a matched --to parent",
                     "--dom [duration]   Return a fresh DOM after the mutation; bare values default to ms; minimum 100ms",
-                ]
+                ],
+                footer: """
+                Preferred for an off-screen target: ios-use swipe --to "开发者" --from "蓝牙" --dom
+                Use the exact displayed target and a currently visible DOM label or value from the same scroll container for --from.
+                Use coordinate anchors or --dir/--distance only when Accessibility exposes no usable semantic target.
+                """
             )
         case "activateApp":
             return """

@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Operate iOS real devices and Simulators with the ios-use CLI. Use for session setup, DOM-first UI inspection, tap/swipe/input actions, app lifecycle, screenshots and short captures, log collection, proxy capture, signing recovery, and device troubleshooting."
+description: "Operate iOS devices and Simulators with ios-use for setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and troubleshooting. Re-read after context compaction or resuming iOS work. Build shell workflows from stable semantic DOM labels."
 ---
 
 # ios-use Operational Playbook
@@ -67,8 +67,6 @@ ios-use input --tap "搜索" --content "蓝牙" --dom
 - Use bare `--dom` to wait for quiescence and return a fresh DOM. Use
   `--dom <duration>` only when a fixed post-action delay is intentional; suffix
   explicit values with `ms` or `s`.
-- Keep actions with page-state dependencies sequential. Parallelize only independent
-  read-only observations.
 - Wait for disappearance with `--gone`:
 
 ```bash
@@ -81,14 +79,44 @@ For changing labels, pass a stable substring instead of copying one transient va
 ios-use waitFor "优化身形线条中" --match contains --gone --timeout 55s
 ```
 
+### Compose repeatable workflows with shell
+
+Build repeatable shell workflows from stable semantic labels returned by `dom`. DOM
+snapshots, frames, and layout can change; persist their labels in scripts, never
+their coordinates.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+bundle_id='com.example.app'
+entry_label='入口'
+target_label='目标'
+visible_anchor='当前可见项'
+
+ios-use activateApp "$bundle_id" --dom
+ios-use waitFor "$entry_label" --timeout 10s
+ios-use tap "$entry_label" --dom
+ios-use swipe --to "$target_label" --from "$visible_anchor" --dom
+ios-use tap "$target_label" --dom
+```
+
+- After an exploratory route succeeds, preserve its displayed labels and waits in
+  a project-owned `.sh` script. Keep App-specific routes out of this playbook.
+- Join short dependent command sequences with `&&`; in scripts, use fail-fast
+  behavior so a later mutation does not run after an earlier failure.
+- Use `waitFor` for loading and action `--dom` output for current state. Keep
+  page-dependent UI actions sequential; parallelize only independent read-only
+  observations.
+
 ## 4. Use targets deliberately
 
 ```bash
 ios-use tap "通用"
 ios-use tap "亮度" --offset-ratio 0.8,0.5
 ios-use longpress "照片" --duration 800ms
-ios-use swipe --dir forth --distance 300
 ios-use swipe --to "开发者" --from "蓝牙"
+ios-use swipe --dir forth --distance 300
 ios-use input --tap "搜索" --content "蓝牙"
 ```
 
@@ -96,8 +124,11 @@ ios-use input --tap "搜索" --content "蓝牙"
   line, traits, or coordinates into a label target.
 - Use `--traits` or `--cindex` only when the DOM shows duplicate candidates that
   need disambiguation.
-- Provide `--from` when `swipe --to` must begin from a known visible scroll anchor.
-- Use coordinate targets only for visual controls that Accessibility does not expose.
+- Prefer `swipe --to ... --from ...` for a labeled off-screen target. Use its exact
+  displayed text and a currently visible anchor from the same scroll container.
+- Use coordinate taps, coordinate anchors, or fixed-distance swipes only when
+  Accessibility exposes no usable semantic target. Prefer a label-relative offset
+  before an absolute coordinate.
 - On mutation failure, open the returned `Evidence:` manifest and inspect its
   screenshot, OCR, and fresh DOM before running separate diagnostic commands.
 

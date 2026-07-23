@@ -62,6 +62,37 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(result.stderr.isEmpty)
     }
 
+    func testRootHelpRestoresSemanticShellWorkflow() {
+        let result = IOSUseCLI().run(arguments: ["--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("After context compaction or when resuming iOS device work"))
+        XCTAssertTrue(result.stdout.contains("~/.ios-use/skill/SKILL.md"))
+        XCTAssertTrue(result.stdout.contains("Use ordinary shell; compose workflows from stable semantic labels returned by DOM"))
+        XCTAssertTrue(result.stdout.contains("ios-use swipe --to \"<target>\" --from \"<visible-anchor>\" --dom"))
+        XCTAssertTrue(result.stdout.contains("ios-use tap \"<target>\" --dom"))
+        XCTAssertTrue(result.stdout.contains("Coordinates and fixed-distance swipes are last-resort fallbacks"))
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testTapAndSwipeHelpPreferSemanticTargetsBeforeCoordinateFallbacks() throws {
+        let tap = IOSUseCLI().run(arguments: ["tap", "--help"])
+        let swipe = IOSUseCLI().run(arguments: ["swipe", "--help"])
+
+        XCTAssertEqual(tap.exitCode, 0)
+        let semanticTap = try XCTUnwrap(tap.stdout.range(of: "Preferred: ios-use tap \"通用\" --dom"))
+        let coordinateTap = try XCTUnwrap(tap.stdout.range(of: "Last-resort coordinate forms: ios-use tap 67,269"))
+        XCTAssertLessThan(semanticTap.lowerBound, coordinateTap.lowerBound)
+        XCTAssertTrue(tap.stdout.contains("prefer a label-relative --offset or --offset-ratio first"))
+
+        XCTAssertEqual(swipe.exitCode, 0)
+        XCTAssertTrue(swipe.stdout.contains("Preferred for an off-screen target: ios-use swipe --to \"开发者\" --from \"蓝牙\" --dom"))
+        XCTAssertTrue(swipe.stdout.contains("currently visible DOM label or value from the same scroll container for --from"))
+        XCTAssertTrue(swipe.stdout.contains("Use coordinate anchors or --dir/--distance only"))
+        XCTAssertTrue(tap.stderr.isEmpty)
+        XCTAssertTrue(swipe.stderr.isEmpty)
+    }
+
     func testUnknownOptionFailsBeforeAnySessionWork() {
         let result = IOSUseCLI().run(arguments: ["--not-a-real-option"])
 
