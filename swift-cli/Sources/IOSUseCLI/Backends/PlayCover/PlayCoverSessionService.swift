@@ -41,14 +41,14 @@ enum PlayCoverSessionService {
         paths: IOSUsePaths
     ) throws -> String {
         if let explicitAppPath, !explicitAppPath.isEmpty {
-            return URL(fileURLWithPath: explicitAppPath)
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
-                .path
+            return try PlayCoverManagedAppService.resolveExplicitApp(
+                explicitAppPath,
+                paths: paths
+            )
         }
         guard let reference = try readPreparedReference(paths: paths) else {
             throw PlayCoverBackendError.launchFailed(
-                "no prepared App is selected; run `ios-use playcover prepare ...` or pass `--app <prepared.app>`"
+                "no prepared App is selected; pass `--app <source-or-prepared.app>`"
             )
         }
         return reference.appPath

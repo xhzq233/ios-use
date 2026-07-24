@@ -219,6 +219,16 @@ install_binary() {
   mkdir -p "$target_dir" "$HOME/.ios-use/runtime"
   install -m 755 "$OUTFILE" "$target_dir/ios-use"
 
+  local playcover_runtime_src="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
+  local playcover_runtime_dst="$HOME/.ios-use/playcover/IOSUsePlayRuntime.framework"
+  if [[ -d "$playcover_runtime_src" &&
+        -x "$playcover_runtime_src/IOSUsePlayRuntime" ]]; then
+    mkdir -p "$HOME/.ios-use/playcover"
+    rm -rf "$playcover_runtime_dst"
+    cp -R "$playcover_runtime_src" "$playcover_runtime_dst"
+    echo "Installed source-built PlayCover runtime to $playcover_runtime_dst"
+  fi
+
   install_driver_artifact "driver.ipa" "$HOME/.ios-use/driver.ipa"
   install_driver_artifact "driver-sim.ipa" "$HOME/.ios-use/driver-sim.ipa"
 

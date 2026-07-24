@@ -195,25 +195,30 @@ and 1290 x 2796 native pixels.
 
 ```bash
 bash scripts/build_swift_cli.sh --debug
-bash scripts/build_playcover_runtime.sh
 
 ./ios-use playcover inspect /path/to/Source.app
-./ios-use playcover prepare /path/to/Source.app \
-  --output /path/to/Prepared.app \
-  --runtime .ios-use/playcover/IOSUsePlayRuntime.framework
-./ios-use start --playcover
+./ios-use start --playcover --app /path/to/Source.app
 ./ios-use status
 ./ios-use stop
 ```
 
-`prepare` refuses to replace an existing output. It APFS-clones the source,
+On Apple silicon with the iPhoneOS SDK available, the local CLI build also
+builds the default injected runtime. `start --playcover --app` accepts either
+an unmodified iPhoneOS App or an already prepared App. A source App is
+automatically prepared into `IOS_USE_HOME/playcover/prepared/`, verified, and
+launched; the same verified generation is reused while its source, runtime,
+profile, and preparation revision are unchanged.
+
+The advanced `playcover prepare` toolbox remains available for an explicit
+output/runtime path. It refuses to replace an existing output. It APFS-clones the source,
 validates and converts each supported Mach-O, injects one runtime dependency,
 applies narrow Mac sandbox entitlements, signs each nested binary and the App,
 then verifies the complete generation. `start --playcover` succeeds only after the runtime
 reports matching UIKit/native geometry and a 430 x 932 AppKit content area.
 
-The successful `prepare` output becomes the default for
-`start --playcover`; pass `--app /path/to/Prepared.app` to override it.
+An automatically or explicitly prepared output becomes the default for a later
+bare `start --playcover`; pass `--app /path/to/Source-or-Prepared.app` to
+select and launch another App in one invocation.
 `driver.lock` keeps PlayCover selected until normal `ios-use stop`, so
 session-bound commands cannot fall back to an XCTest device. This is still the
 first backend slice: lifecycle, profile, conversion, signing, and runtime
@@ -286,7 +291,15 @@ bash scripts/build_driver.sh
 bash scripts/ci_test.sh
 ```
 
-`bash scripts/build_swift_cli.sh` builds the local workspace CLI to repo-root `./ios-use`; use that binary for development instead of a global `ios-use`. `bash scripts/build_driver.sh` defaults to Debug and writes development IPAs under `IOS_USE_HOME`, or cwd `.ios-use/` when unset. `scripts/ci_test.sh` is the default CI/local Swift-only validation path. Full Simulator command matrix tests use `bash scripts/ci_full_simulator.sh --driver-ipa <driver-sim.ipa>`. See `scripts/README.md` for the script index.
+`bash scripts/build_swift_cli.sh` builds the local workspace CLI to repo-root
+`./ios-use`; on supported Apple silicon development hosts it also keeps the
+default PlayCover runtime under `.ios-use/playcover/` up to date. Use that
+binary for development instead of a global `ios-use`.
+`bash scripts/build_driver.sh` defaults to Debug and writes development IPAs
+under `IOS_USE_HOME`, or cwd `.ios-use/` when unset. `scripts/ci_test.sh` is the
+default CI/local Swift-only validation path. Full Simulator command matrix
+tests use `bash scripts/ci_full_simulator.sh --driver-ipa <driver-sim.ipa>`.
+See `scripts/README.md` for the script index.
 
 ## Acknowledgments
 

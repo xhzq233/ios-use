@@ -384,6 +384,15 @@ final class IOSUseCLITests: XCTestCase {
         }
     }
 
+    func testPlayCoverStartHelpDocumentsDirectSourceLaunch() {
+        let result = IOSUseCLI().run(arguments: ["start", "--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("--app <source-or-prepared.app>"))
+        XCTAssertTrue(result.stdout.contains("automatically prepares"))
+        XCTAssertFalse(result.stdout.contains("--app <prepared.app>"))
+    }
+
     func testDriverDeploymentTargetsStayAtIOS17() throws {
         let repoRoot = repositoryRootForTest()
         let driverProject = try String(contentsOf: repoRoot.appendingPathComponent("driver/project.yml"))

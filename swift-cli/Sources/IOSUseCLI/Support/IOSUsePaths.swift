@@ -14,6 +14,8 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let playcover: String
     public let playcoverHello: String
     public let playcoverLastPrepared: String
+    public let playcoverPrepared: String
+    public let playcoverRuntime: String
 
     public static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> IOSUsePaths {
         let configured = configuredRoot(environment: environment)
@@ -30,7 +32,9 @@ public struct IOSUsePaths: Equatable, Sendable {
             artifacts: "\(configured.root)/artifacts",
             playcover: "\(configured.root)/playcover",
             playcoverHello: "\(configured.root)/playcover/hello",
-            playcoverLastPrepared: "\(configured.root)/playcover/last-prepared.json"
+            playcoverLastPrepared: "\(configured.root)/playcover/last-prepared.json",
+            playcoverPrepared: "\(configured.root)/playcover/prepared",
+            playcoverRuntime: "\(configured.root)/playcover/IOSUsePlayRuntime.framework"
         )
     }
 

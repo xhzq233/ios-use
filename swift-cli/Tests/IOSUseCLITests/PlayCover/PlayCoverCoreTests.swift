@@ -129,6 +129,34 @@ final class PlayCoverCoreTests: XCTestCase {
             paths.playcoverLastPrepared,
             root.appendingPathComponent("playcover/last-prepared.json").path
         )
+        XCTAssertEqual(
+            paths.playcoverPrepared,
+            root.appendingPathComponent("playcover/prepared").path
+        )
+        XCTAssertEqual(
+            paths.playcoverRuntime,
+            root.appendingPathComponent(
+                "playcover/IOSUsePlayRuntime.framework"
+            ).path
+        )
+    }
+
+    func testRuntimeCandidatesPreferManagedHomeThenExecutableLayouts() {
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": "/state/ios-use"]
+        )
+
+        XCTAssertEqual(
+            PlayCoverManagedAppService.runtimeCandidates(
+                paths: paths,
+                executablePath: "/opt/ios-use/bin/ios-use"
+            ),
+            [
+                "/state/ios-use/playcover/IOSUsePlayRuntime.framework",
+                "/opt/ios-use/bin/.ios-use/playcover/IOSUsePlayRuntime.framework",
+                "/opt/ios-use/share/ios-use/playcover/IOSUsePlayRuntime.framework",
+            ]
+        )
     }
 
     func testLaunchEnvironmentDoesNotForwardUnrelatedCredentials() {

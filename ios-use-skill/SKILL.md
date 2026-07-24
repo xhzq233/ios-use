@@ -24,18 +24,18 @@ ios-use config --udid <udid>
 ios-use start <udid>
 ```
 
-For a source-built experimental PlayCover backend, prepare the App once and
-start the most recent successful output:
+For a source-built experimental PlayCover backend, pass either an unmodified
+iPhoneOS App or an already prepared App and start it directly:
 
 ```bash
-ios-use playcover prepare <source.app> \
-  --output <prepared.app> \
-  --runtime <IOSUsePlayRuntime.framework>
-ios-use start --playcover
+ios-use start --playcover --app <source-or-prepared.app>
 ```
 
-Pass `--app <prepared.app>` to `start --playcover` to override the remembered
-output. Run ordinary `ios-use stop` before switching backends.
+The source build supplies the default runtime. A source App is prepared into
+managed ios-use state and launched in the same command; a complete prepared App
+is verified and launched directly. Later, bare `ios-use start --playcover`
+reuses the most recent successful generation. Run ordinary `ios-use stop`
+before switching backends.
 
 - Connect real devices over USB and use iOS 17.4 or later.
 - Run `config` on first use, after upgrading ios-use, when `status` reports
@@ -231,6 +231,9 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
   label/value, then add `--traits` or `--cindex` only if needed.
 - DDI missing or mismatched: use `ddi-mount`, the fallback archive above, and an
   exact device-version match.
+- PlayCover reports that no default runtime was found: rebuild the source CLI
+  with `bash scripts/build_swift_cli.sh --debug` on Apple silicon with the
+  iPhoneOS SDK available, then retry the same `start --playcover --app` command.
 - altsign HTTP 4xx: verify Apple Developer account state and interactive
   authentication, then retry `config`.
 - altsign HTTP 5xx: check network, VPN, or proxy conditions and retry later; do not

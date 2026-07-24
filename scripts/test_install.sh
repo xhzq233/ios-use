@@ -36,6 +36,12 @@ cat > "$ROOT_DIR/ios-use" <<'CLI'
 echo 1.0.3
 CLI
 chmod +x "$ROOT_DIR/ios-use"
+mkdir -p "$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
+cat > "$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" <<'RUNTIME'
+#!/bin/sh
+echo runtime
+RUNTIME
+chmod +x "$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework/IOSUsePlayRuntime"
 SCRIPT
 chmod +x "$FAKE_SOURCE/scripts/build_swift_cli.sh"
 (cd "$FAKE_SOURCE_PARENT" && tar -czf "$FAKE_TARBALL" ios-use-fake)
@@ -162,6 +168,10 @@ if [[ ! -x "$BUILD_HOME/.ios-use/altsign-cli/altsign-cli" ]]; then
   echo "[install-test] ERROR: install did not download altsign-cli" >&2
   exit 1
 fi
+if [[ ! -x "$BUILD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
+  echo "[install-test] ERROR: build-from-source install did not install the PlayCover runtime" >&2
+  exit 1
+fi
 if [[ -e "$BUILD_HOME/.ios-use/flows/proxy_configca.yaml" ]]; then
   echo "[install-test] ERROR: install kept a bundled legacy Flow recipe" >&2
   exit 1
@@ -184,6 +194,10 @@ if [[ "$DOWNLOAD_PATH" != "$DOWNLOAD_HOME/bin/ios-use" || ! -x "$DOWNLOAD_PATH" 
 fi
 if ! grep -q 'remote skill fixture' "$DOWNLOAD_HOME/.ios-use/skill/SKILL.md"; then
   echo "[install-test] ERROR: release download install did not use bootstrapped remote skill" >&2
+  exit 1
+fi
+if [[ -e "$DOWNLOAD_HOME/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then
+  echo "[install-test] ERROR: prebuilt install invented an unavailable PlayCover runtime" >&2
   exit 1
 fi
 

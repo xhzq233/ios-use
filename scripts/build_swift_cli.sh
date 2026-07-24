@@ -37,3 +37,40 @@ mv "$TMP_BIN" "$ROOT_DIR/ios-use"
 trap - EXIT
 
 echo "[swift-cli] Built $ROOT_DIR/ios-use"
+
+PLAYCOVER_RUNTIME="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
+PLAYCOVER_RUNTIME_EXECUTABLE="$PLAYCOVER_RUNTIME/IOSUsePlayRuntime"
+PLAYCOVER_RUNTIME_NEEDS_BUILD="false"
+
+if [ "$(uname -m)" = "arm64" ]; then
+  if xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1; then
+    if [ ! -x "$PLAYCOVER_RUNTIME_EXECUTABLE" ]; then
+      PLAYCOVER_RUNTIME_NEEDS_BUILD="true"
+    else
+      for source in \
+        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntime.m" \
+        "$ROOT_DIR/playcover-runtime/Info.plist" \
+        "$ROOT_DIR/scripts/build_playcover_runtime.sh"; do
+        if [ "$source" -nt "$PLAYCOVER_RUNTIME_EXECUTABLE" ]; then
+          PLAYCOVER_RUNTIME_NEEDS_BUILD="true"
+          break
+        fi
+      done
+    fi
+
+    if [ "$PLAYCOVER_RUNTIME_NEEDS_BUILD" = "true" ]; then
+      PLAYCOVER_RUNTIME_ARGS=()
+      if [ -e "$PLAYCOVER_RUNTIME" ]; then
+        PLAYCOVER_RUNTIME_ARGS+=(--replace)
+      fi
+      bash "$ROOT_DIR/scripts/build_playcover_runtime.sh" \
+        "${PLAYCOVER_RUNTIME_ARGS[@]}"
+    else
+      echo "[swift-cli] PlayCover runtime is up to date: $PLAYCOVER_RUNTIME"
+    fi
+  else
+    echo "[swift-cli] PlayCover runtime skipped: the iPhoneOS SDK is unavailable"
+  fi
+else
+  echo "[swift-cli] PlayCover runtime skipped: Apple silicon is required"
+fi

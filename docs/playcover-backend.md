@@ -31,7 +31,11 @@ hash or dimensions do not match.
 The GUI-free preparation path is:
 
 ```text
-ios-use playcover
+ios-use start --playcover --app <App.app>
+  -> PlayCoverManagedAppService
+     -> prepared marker verification, or iPhoneOS source classification
+     -> default runtime discovery
+     -> deterministic managed generation selection
   -> PlayCoverService
      -> bounded Mach-O inspection/conversion
      -> APFS clone + runtime embedding
@@ -47,8 +51,9 @@ ios-use playcover
 Lifecycle uses the normal active-session surface:
 
 ```text
-ios-use start --playcover
-  -> last-prepared.json (or explicit --app)
+ios-use start --playcover [--app <source-or-prepared.app>]
+  -> explicit source prepare/reuse, explicit prepared verification,
+     or last-prepared.json
   -> verify + launch + runtime hello
   -> driver.lock { deviceType: playcover, app, pid, profile hash }
   -> all session-bound commands resolve PlayCover until ios-use stop
@@ -72,35 +77,56 @@ offset provides enough capacity. The main executable receives exactly one
 
 ```bash
 bash scripts/build_swift_cli.sh --debug
-bash scripts/build_playcover_runtime.sh
 
 ./ios-use playcover inspect /path/to/Source.app --json
+./ios-use start --playcover --app /path/to/Source.app
+./ios-use status
+./ios-use stop
+```
 
+The local Swift CLI build keeps
+`.ios-use/playcover/IOSUsePlayRuntime.framework` up to date when running on
+Apple silicon with the iPhoneOS SDK. A source-built install copies that runtime
+to `IOS_USE_HOME/playcover/`. The normal start command discovers it
+automatically; callers do not pass a runtime path.
+
+For explicit output control or backend debugging, the lower-level toolbox is
+still available:
+
+```bash
 ./ios-use playcover prepare /path/to/Source.app \
   --output /path/to/Prepared.app \
   --runtime .ios-use/playcover/IOSUsePlayRuntime.framework \
   --json
 
 ./ios-use playcover verify /path/to/Prepared.app --json
-./ios-use start --playcover
-./ios-use status
-./ios-use stop
 ```
 
-Successful preparation records
-`IOS_USE_HOME/playcover/last-prepared.json`. Use
-`ios-use start --playcover --app /path/to/Prepared.app --timeout 20s` to
-override that selection. The active backend, exact App path, PID, bundle, and
-profile hash are stored in the ordinary `driver.lock`; normal `ios-use stop`
-validates and terminates only that App process before clearing the lock.
+`start --playcover --app` first detects complete preparation markers. A marked
+App must verify successfully and is never silently treated as source after a
+verification failure. An unmodified iPhoneOS App is prepared under
+`IOS_USE_HOME/playcover/prepared/`; a deterministic key covers source tree
+metadata, source executable and Info.plist contents, runtime tree metadata and
+executable contents, the fixed profile hash, and the preparation revision.
+Existing keyed output is reused only after full verification. Preparation
+never overwrites a keyed output.
+
+Successful automatic or explicit preparation records
+`IOS_USE_HOME/playcover/last-prepared.json`, so bare `ios-use start
+--playcover` remains available. The active backend, exact App path, PID, bundle,
+and profile hash are stored in the ordinary `driver.lock`; normal `ios-use
+stop` validates and terminates only that App process before clearing the lock.
 
 All session-bound commands consult this lock. Driver commands therefore route to
 PlayCover and cannot silently use XCTest, although DOM/actions currently return
 an explicit unsupported-capability error until the injected runtime transport
 is implemented.
 
-Mutable backend state and hello records resolve through `IOSUsePaths` under
-`IOS_USE_HOME/playcover/`. The App is signed with a narrow Mac sandbox profile;
+Mutable backend state, managed generations, the installed runtime, and hello
+records resolve through `IOSUsePaths` under `IOS_USE_HOME/playcover/`. A local
+workspace runtime next to the repo-root CLI and a conventional
+`../share/ios-use/playcover/` installed layout are fallback discovery
+locations. The App is signed with a narrow Mac sandbox profile;
 restricted iOS application/team/keychain entitlements are not preserved.
 Launch forwards only a small allowlist of ordinary locale/home variables, so
 unrelated caller credentials are not inherited by the App.

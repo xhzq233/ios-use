@@ -85,18 +85,21 @@ enum CLIHelp {
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
-                   ios-use start --playcover [--app <prepared.app>] [--timeout <duration>]
+                   ios-use start --playcover [--app <source-or-prepared.app>] [--timeout <duration>]
 
-            Start a configured XCTest driver or a prepared PlayCover App and
+            Start a configured XCTest driver or a PlayCover App and
             record it as the active backend in driver.lock.
             Defaults to the first connected USB real device when udid is omitted.
-            --playcover defaults to the most recent successful
-            `ios-use playcover prepare` output when --app is omitted.
+            PlayCover automatically prepares an unmodified iPhoneOS App into
+            managed IOS_USE_HOME state, or verifies and directly launches an
+            already prepared App. When --app is omitted, it uses the most recent
+            successful prepared generation.
 
             Options:
               --verbose                    Enable verbose XCTest output
               --playcover                  Select the PlayCover backend
-              --app <prepared.app>          Override the last prepared App
+              --app <source-or-prepared.app>
+                                           Prepare if needed, then launch this App
               --timeout <duration>          Wait up to 60 seconds for runtime hello; default 15s
 
             """

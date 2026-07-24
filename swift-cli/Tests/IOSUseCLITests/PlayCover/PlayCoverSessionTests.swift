@@ -6,6 +6,12 @@ final class PlayCoverSessionTests: XCTestCase {
     override func tearDown() {
         PlayCoverSessionService.launchOverrideForTesting = nil
         PlayCoverSessionService.terminateOverrideForTesting = nil
+        PlayCoverManagedAppService.inspectOverrideForTesting = nil
+        PlayCoverManagedAppService.verifyOverrideForTesting = nil
+        PlayCoverManagedAppService.prepareOverrideForTesting = nil
+        PlayCoverManagedAppService.runtimePathOverrideForTesting = nil
+        PlayCoverManagedAppService.executablePathOverrideForTesting = nil
+        PlayCoverManagedAppService.generationKeyOverrideForTesting = nil
         IOSUseCLI.driverClientFactoryForTesting = nil
         super.tearDown()
     }
@@ -72,6 +78,11 @@ final class PlayCoverSessionTests: XCTestCase {
             manifest(appPath: rememberedApp),
             paths: paths
         )
+        try markAsPrepared(explicitApp)
+        PlayCoverManagedAppService.verifyOverrideForTesting = { appPath in
+            XCTAssertEqual(appPath, explicitApp)
+            return self.verification(appPath: appPath)
+        }
 
         PlayCoverSessionService.launchOverrideForTesting = { appPath, timeout in
             XCTAssertEqual(appPath, explicitApp)
@@ -131,6 +142,11 @@ final class PlayCoverSessionTests: XCTestCase {
         try Data("not-a-directory".utf8).write(
             to: URL(fileURLWithPath: "\(root)/state")
         )
+        let preparedApp = "\(root)/Prepared.app"
+        try markAsPrepared(preparedApp)
+        PlayCoverManagedAppService.verifyOverrideForTesting = { appPath in
+            self.verification(appPath: appPath)
+        }
         PlayCoverSessionService.launchOverrideForTesting = { appPath, _ in
             self.launchResult(appPath: appPath)
         }
@@ -143,13 +159,221 @@ final class PlayCoverSessionTests: XCTestCase {
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
             arguments: [
                 "start", "--playcover",
-                "--app", "\(root)/Prepared.app",
+                "--app", preparedApp,
             ]
         )
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertEqual(terminated, ["\(root)/Prepared.app"])
+        XCTAssertEqual(terminated, [preparedApp])
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.driverLock))
+    }
+
+    func testExplicitSourceAppIsPreparedWithDefaultRuntimeAndLaunched() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let sourceApp = "\(root)/Source.app"
+        let runtime = try makeRuntimeFramework(root: root)
+        let inspection = try sourceInspection(appPath: sourceApp)
+        let generationKey = String(repeating: "a", count: 64)
+        let expectedOutput = "\(paths.playcoverPrepared)/com.example.demo-\(generationKey.prefix(16)).app"
+
+        PlayCoverManagedAppService.inspectOverrideForTesting = { appPath in
+            XCTAssertEqual(appPath, sourceApp)
+            return inspection
+        }
+        PlayCoverManagedAppService.runtimePathOverrideForTesting = { _ in runtime }
+        PlayCoverManagedAppService.generationKeyOverrideForTesting = { actual, runtimePath in
+            XCTAssertEqual(actual, inspection)
+            XCTAssertEqual(runtimePath, runtime)
+            return generationKey
+        }
+        var preparations: [(String, String, String)] = []
+        PlayCoverManagedAppService.prepareOverrideForTesting = {
+            source,
+            output,
+            runtimePath,
+            _
+            in
+            preparations.append((source, output, runtimePath))
+            return self.manifest(
+                appPath: output,
+                sourceAppPath: source,
+                profileHash: inspection.profileHash
+            )
+        }
+        PlayCoverSessionService.launchOverrideForTesting = { appPath, timeout in
+            XCTAssertEqual(appPath, expectedOutput)
+            XCTAssertEqual(timeout, 15)
+            return self.launchResult(
+                appPath: appPath,
+                profileHash: inspection.profileHash
+            )
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
+            arguments: ["start", "--playcover", "--app", sourceApp]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(preparations.count, 1)
+        XCTAssertEqual(preparations.first?.0, sourceApp)
+        XCTAssertEqual(preparations.first?.1, expectedOutput)
+        XCTAssertEqual(preparations.first?.2, runtime)
+        XCTAssertEqual(
+            try PlayCoverSessionService.readPreparedReference(paths: paths)?.appPath,
+            expectedOutput
+        )
+        XCTAssertEqual(
+            try SessionService.readDriverLockInfo(paths: paths)?.playCoverAppPath,
+            expectedOutput
+        )
+    }
+
+    func testExplicitPreparedAppLaunchesWithoutRuntimeOrPrepare() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let preparedApp = "\(root)/Prepared.app"
+        try markAsPrepared(preparedApp)
+
+        PlayCoverManagedAppService.verifyOverrideForTesting = { appPath in
+            XCTAssertEqual(appPath, preparedApp)
+            return self.verification(appPath: appPath)
+        }
+        PlayCoverManagedAppService.inspectOverrideForTesting = { _ in
+            XCTFail("prepared App must not be inspected as a source")
+            throw PlayCoverBackendError.invalidApp("unexpected inspection")
+        }
+        PlayCoverManagedAppService.runtimePathOverrideForTesting = { _ in
+            XCTFail("prepared App must not resolve a standalone runtime")
+            throw PlayCoverBackendError.missingRuntime("unexpected resolution")
+        }
+        PlayCoverManagedAppService.prepareOverrideForTesting = { _, _, _, _ in
+            XCTFail("prepared App must not be prepared again")
+            throw PlayCoverBackendError.prepareFailed("unexpected preparation")
+        }
+        PlayCoverSessionService.launchOverrideForTesting = { appPath, _ in
+            self.launchResult(appPath: appPath)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
+            arguments: ["start", "--playcover", "--app", preparedApp]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(
+            try SessionService.readDriverLockInfo(
+                paths: IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+            )?.playCoverAppPath,
+            preparedApp
+        )
+    }
+
+    func testManagedSourceGenerationIsVerifiedAndReused() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let sourceApp = "\(root)/Source.app"
+        let runtime = try makeRuntimeFramework(root: root)
+        let inspection = try sourceInspection(appPath: sourceApp)
+        let generationKey = String(repeating: "b", count: 64)
+        let output = "\(paths.playcoverPrepared)/com.example.demo-\(generationKey.prefix(16)).app"
+        try FileManager.default.createDirectory(
+            atPath: output,
+            withIntermediateDirectories: true
+        )
+
+        PlayCoverManagedAppService.inspectOverrideForTesting = { _ in inspection }
+        PlayCoverManagedAppService.runtimePathOverrideForTesting = { _ in runtime }
+        PlayCoverManagedAppService.generationKeyOverrideForTesting = { _, _ in
+            generationKey
+        }
+        var verified: [String] = []
+        PlayCoverManagedAppService.verifyOverrideForTesting = { appPath in
+            verified.append(appPath)
+            return self.verification(
+                appPath: appPath,
+                sourceAppPath: sourceApp,
+                profileHash: inspection.profileHash
+            )
+        }
+        PlayCoverManagedAppService.prepareOverrideForTesting = { _, _, _, _ in
+            XCTFail("an existing verified managed generation must be reused")
+            throw PlayCoverBackendError.prepareFailed("unexpected preparation")
+        }
+        PlayCoverSessionService.launchOverrideForTesting = { appPath, _ in
+            self.launchResult(
+                appPath: appPath,
+                profileHash: inspection.profileHash
+            )
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
+            arguments: ["start", "--playcover", "--app", sourceApp]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(verified, [output])
+        XCTAssertEqual(
+            try PlayCoverSessionService.readPreparedReference(paths: paths)?.appPath,
+            output
+        )
+    }
+
+    func testSourceStartReportsMissingDefaultRuntimeBeforePreparing() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let sourceApp = "\(root)/Source.app"
+        let inspection = try sourceInspection(appPath: sourceApp)
+
+        PlayCoverManagedAppService.inspectOverrideForTesting = { _ in inspection }
+        PlayCoverManagedAppService.executablePathOverrideForTesting = {
+            "\(root)/bin/ios-use"
+        }
+        PlayCoverManagedAppService.prepareOverrideForTesting = { _, _, _, _ in
+            XCTFail("missing runtime must fail before preparation")
+            throw PlayCoverBackendError.prepareFailed("unexpected preparation")
+        }
+        PlayCoverSessionService.launchOverrideForTesting = { _, _ in
+            XCTFail("missing runtime must fail before launch")
+            return self.launchResult(appPath: "/unused.app")
+        }
+
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
+            arguments: ["start", "--playcover", "--app", sourceApp]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("no default runtime was found"))
+        XCTAssertTrue(result.stderr.contains("build_swift_cli.sh --debug"))
+        XCTAssertNil(try SessionService.readDriverLockInfo(paths: paths))
+    }
+
+    func testMalformedPreparedAppDoesNotFallBackToSourcePreparation() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let preparedApp = "\(root)/Broken.app"
+        try markAsPrepared(preparedApp)
+
+        PlayCoverManagedAppService.verifyOverrideForTesting = { _ in
+            throw PlayCoverBackendError.verificationFailed("broken fixture")
+        }
+        PlayCoverManagedAppService.inspectOverrideForTesting = { _ in
+            XCTFail("a marked prepared App must not fall back to source inspection")
+            throw PlayCoverBackendError.invalidApp("unexpected inspection")
+        }
+        PlayCoverManagedAppService.prepareOverrideForTesting = { _, _, _, _ in
+            XCTFail("a malformed prepared App must not be overwritten")
+            throw PlayCoverBackendError.prepareFailed("unexpected preparation")
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
+            arguments: ["start", "--playcover", "--app", preparedApp]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains("broken fixture"))
     }
 
     func testStopFailurePreservesPlayCoverSessionLock() throws {
@@ -231,31 +455,129 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     }
 
-    private func launchResult(appPath: String) -> PlayCoverSessionService.LaunchResult {
+    private func launchResult(
+        appPath: String,
+        profileHash: String = "profile-hash"
+    ) -> PlayCoverSessionService.LaunchResult {
         PlayCoverSessionService.LaunchResult(
             appPath: appPath,
             bundleIdentifier: "com.example.demo",
-            profileHash: "profile-hash",
+            profileHash: profileHash,
             productType: "iPhone16,2",
             pid: 4242
         )
     }
 
-    private func manifest(appPath: String) -> PlayCoverPrepareManifest {
+    private func manifest(
+        appPath: String,
+        sourceAppPath: String = "/fixtures/Demo.app",
+        profileHash: String = "profile-hash"
+    ) -> PlayCoverPrepareManifest {
         PlayCoverPrepareManifest(
             schemaVersion: 1,
             backend: "playcover-headless",
-            sourceAppPath: "/fixtures/Demo.app",
+            sourceAppPath: sourceAppPath,
             preparedAppPath: appPath,
             bundleIdentifier: "com.example.demo",
             executableName: "Demo",
-            profileHash: "profile-hash",
+            profileHash: profileHash,
             runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
             runtimeFrameworkName: "IOSUsePlayRuntime.framework",
             convertedMachOs: ["Demo"],
             preparedAt: "2026-07-25T00:00:00Z",
             helloPath: "/state/hello.json"
         )
+    }
+
+    private func verification(
+        appPath: String,
+        sourceAppPath: String = "/fixtures/Demo.app",
+        profileHash: String = "profile-hash"
+    ) -> PlayCoverVerification {
+        PlayCoverVerification(
+            manifest: manifest(
+                appPath: appPath,
+                sourceAppPath: sourceAppPath,
+                profileHash: profileHash
+            ),
+            profile: .vphoneDefault,
+            mainExecutable: machOInspection(
+                path: "\(appPath)/Demo",
+                platform: PlayCoverMachO.platformMacCatalyst,
+                runtimeInjected: true
+            ),
+            signatureValid: true
+        )
+    }
+
+    private func sourceInspection(appPath: String) throws -> PlayCoverAppInspection {
+        let profile = PlayCoverDeviceProfile.vphoneDefault
+        return PlayCoverAppInspection(
+            appPath: appPath,
+            bundleIdentifier: "com.example.demo",
+            executableName: "Demo",
+            executablePath: "\(appPath)/Demo",
+            profile: profile,
+            profileHash: try profile.stableHash(),
+            mainExecutable: machOInspection(
+                path: "\(appPath)/Demo",
+                platform: PlayCoverMachO.platformIPhoneOS,
+                runtimeInjected: false
+            )
+        )
+    }
+
+    private func machOInspection(
+        path: String,
+        platform: UInt32,
+        runtimeInjected: Bool
+    ) -> PlayCoverMachOInspection {
+        PlayCoverMachOInspection(
+            path: path,
+            cpuType: 0x0100_000c,
+            fileType: 2,
+            commandCount: 3,
+            commandBytes: 200,
+            firstSectionOffset: 4096,
+            availableCommandPadding: 3800,
+            platform: platform,
+            minimumOS: 0x000d_0000,
+            sdk: 0x001a_0000,
+            encrypted: false,
+            runtimeInjected: runtimeInjected
+        )
+    }
+
+    private func markAsPrepared(_ appPath: String) throws {
+        let app = URL(fileURLWithPath: appPath, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: app,
+            withIntermediateDirectories: true
+        )
+        try Data("{}".utf8).write(
+            to: app.appendingPathComponent(PlayCoverService.manifestFilename)
+        )
+    }
+
+    private func makeRuntimeFramework(root: String) throws -> String {
+        let framework = URL(fileURLWithPath: root, isDirectory: true)
+            .appendingPathComponent(
+                PlayCoverService.runtimeFrameworkName,
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: framework,
+            withIntermediateDirectories: true
+        )
+        let executable = framework.appendingPathComponent(
+            PlayCoverService.runtimeExecutableName
+        )
+        try Data("runtime".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        return framework.path
     }
 
     private func temporaryRoot() throws -> String {
