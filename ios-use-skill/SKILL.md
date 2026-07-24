@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Operate iOS devices and Simulators with ios-use for setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and troubleshooting. Re-read after context compaction or resuming iOS work. Build shell workflows from stable semantic DOM labels."
+description: "Operate iOS devices, Simulators, and the experimental PlayCover backend with ios-use for setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and troubleshooting. Re-read after context compaction or resuming iOS work. Build shell workflows from stable semantic DOM labels."
 ---
 
 # ios-use Operational Playbook
@@ -24,6 +24,19 @@ ios-use config --udid <udid>
 ios-use start <udid>
 ```
 
+For a source-built experimental PlayCover backend, prepare the App once and
+start the most recent successful output:
+
+```bash
+ios-use playcover prepare <source.app> \
+  --output <prepared.app> \
+  --runtime <IOSUsePlayRuntime.framework>
+ios-use start --playcover
+```
+
+Pass `--app <prepared.app>` to `start --playcover` to override the remembered
+output. Run ordinary `ios-use stop` before switching backends.
+
 - Connect real devices over USB and use iOS 17.4 or later.
 - Run `config` on first use, after upgrading ios-use, when `status` reports
   `driver update required`, or when signing has expired.
@@ -32,6 +45,10 @@ ios-use start <udid>
   `open --dom`, or device-backed proxy commands.
 - Treat the device selected by `start` as the target for all UI commands. To switch
   devices, run `ios-use stop`, then `ios-use start <new-udid>`.
+- Treat PlayCover selected by `start --playcover` the same way: subsequent
+  session-bound commands cannot fall back to XCTest. Until the injected
+  automation transport is available, DOM/actions return an explicit PlayCover
+  capability error.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
   whether an individual command accepts `--udid`.
 

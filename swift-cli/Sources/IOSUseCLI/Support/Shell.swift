@@ -36,11 +36,21 @@ enum Shell {
         try runCaptured(executable, arguments: arguments, cwd: cwd, combineStderr: true)
     }
 
-    static func runWithResult(_ executable: String, arguments: [String], cwd: String? = nil) throws -> RunResult {
+    static func runWithResult(
+        _ executable: String,
+        arguments: [String],
+        cwd: String? = nil,
+        environment: [String: String]? = nil
+    ) throws -> RunResult {
         if let override = runResultOverrideForTesting {
             return try override(executable, arguments, cwd)
         }
-        return try runCapturedWithResult(executable, arguments: arguments, cwd: cwd)
+        return try runCapturedWithResult(
+            executable,
+            arguments: arguments,
+            cwd: cwd,
+            environment: environment
+        )
     }
 
     static func runData(_ executable: String, arguments: [String], cwd: String? = nil) throws -> Data {
@@ -138,10 +148,18 @@ enum Shell {
         return output
     }
 
-    private static func runCapturedWithResult(_ executable: String, arguments: [String], cwd: String?) throws -> RunResult {
+    private static func runCapturedWithResult(
+        _ executable: String,
+        arguments: [String],
+        cwd: String?,
+        environment: [String: String]?
+    ) throws -> RunResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = [executable] + arguments
+        if let environment {
+            process.environment = environment
+        }
         if let cwd {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         }

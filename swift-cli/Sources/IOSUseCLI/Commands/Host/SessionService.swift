@@ -13,6 +13,8 @@ public enum SessionService {
         public let sessionIdentifier: String?
         public let bundleId: String?
         public let controlSocketPath: String?
+        public let playCoverAppPath: String?
+        public let profileHash: String?
 
         public init(
             udid: String,
@@ -25,7 +27,9 @@ public enum SessionService {
             startMode: String? = nil,
             sessionIdentifier: String? = nil,
             bundleId: String? = nil,
-            controlSocketPath: String? = nil
+            controlSocketPath: String? = nil,
+            playCoverAppPath: String? = nil,
+            profileHash: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
@@ -38,6 +42,8 @@ public enum SessionService {
             self.sessionIdentifier = sessionIdentifier
             self.bundleId = bundleId
             self.controlSocketPath = controlSocketPath
+            self.playCoverAppPath = playCoverAppPath
+            self.profileHash = profileHash
         }
 
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
@@ -52,7 +58,9 @@ public enum SessionService {
                 startMode: startMode,
                 sessionIdentifier: metadata.sessionIdentifier,
                 bundleId: metadata.bundleId ?? bundleId,
-                controlSocketPath: metadata.controlSocketPath ?? controlSocketPath
+                controlSocketPath: metadata.controlSocketPath ?? controlSocketPath,
+                playCoverAppPath: playCoverAppPath,
+                profileHash: profileHash
             )
         }
     }
@@ -105,13 +113,7 @@ public enum SessionService {
     }
 
     public static func start(udid requestedUdid: String?, paths: IOSUsePaths, verbose: Bool) throws -> String {
-        if let current = try readDriverLockInfo(paths: paths) {
-            if isIncompleteRealDriverLock(current) {
-                try cleanupIncompleteRealDriverLock(current, paths: paths)
-            } else {
-                throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
-            }
-        }
+        try prepareForStart(paths: paths)
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         let info = try resolveDriverInfo(udid: udid, paths: paths)
         let signingWarning = ConfigService.startSigningWarning(udid: udid, paths: paths)
@@ -151,6 +153,50 @@ public enum SessionService {
         return (signingWarning ?? "") + "Driver started for \(udid)\n"
     }
 
+    public static func startPlayCover(
+        appPath: String?,
+        timeout: Double,
+        paths: IOSUsePaths
+    ) throws -> String {
+        try prepareForStart(paths: paths)
+        var launch: PlayCoverSessionService.LaunchResult?
+        do {
+            let result = try PlayCoverSessionService.launch(
+                explicitAppPath: appPath,
+                timeout: timeout,
+                paths: paths
+            )
+            launch = result
+            try writeDriverLock(
+                info: PlayCoverSessionService.makeSessionInfo(from: result),
+                paths: paths
+            )
+            return "PlayCover session started for \(result.bundleIdentifier) (pid \(result.pid))\n"
+        } catch {
+            if let launch {
+                do {
+                    _ = try PlayCoverSessionService.terminate(appPath: launch.appPath)
+                } catch let cleanupError {
+                    throw CLIParseError.invalidValue(
+                        "PlayCover start failed after launch, and cleanup failed: \(cleanupError). Original error: \(error)"
+                    )
+                }
+            }
+            clearDriverLock(paths: paths)
+            throw error
+        }
+    }
+
+    private static func prepareForStart(paths: IOSUsePaths) throws {
+        if let current = try readDriverLockInfo(paths: paths) {
+            if isIncompleteRealDriverLock(current) {
+                try cleanupIncompleteRealDriverLock(current, paths: paths)
+            } else {
+                throw CLIParseError.invalidValue("Driver already started for \(current.udid). Run `ios-use stop` before starting another driver.")
+            }
+        }
+    }
+
     private static func errorWithSigningWarning(_ warning: String?, error: Error) -> Error {
         guard let warning, !warning.isEmpty else {
             return error
@@ -184,6 +230,17 @@ public enum SessionService {
 
     public static func stop(paths: IOSUsePaths) throws -> String {
         let current = try requireDriverLock(paths: paths)
+        if current.deviceType == PlayCoverSessionService.deviceType {
+            let pid = try PlayCoverSessionService.terminate(session: current)
+            do {
+                try DriverSessionStore.removeDriverLock(paths: paths)
+            } catch {
+                throw CLIParseError.invalidValue(
+                    "PlayCover App stopped, but failed to remove \(paths.driverLock): \(error)"
+                )
+            }
+            return "PlayCover App stopped (pid \(pid))\nPlayCover session stopped\n"
+        }
         var output = try DriverLifecycleService.terminateDriver(
             for: current,
             paths: paths,

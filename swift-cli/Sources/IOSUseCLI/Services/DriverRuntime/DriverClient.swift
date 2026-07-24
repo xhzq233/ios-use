@@ -156,6 +156,11 @@ final class LockedDriverClientSession {
 
     func run<T>(_ body: (DriverCommandClient) throws -> T) throws -> T {
         let lock = try lockedInfo()
+        if lock.deviceType == PlayCoverSessionService.deviceType {
+            throw PlayCoverBackendError.capabilityUnavailable(
+                "in-process UI automation"
+            )
+        }
         do {
             return try body(currentClient(for: lock))
         } catch {

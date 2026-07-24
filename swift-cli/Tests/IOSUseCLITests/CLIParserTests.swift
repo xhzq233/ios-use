@@ -34,6 +34,26 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["start", "--playcover"]),
+            .start(StartOptions(playCover: true))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse([
+                "start", "--playcover",
+                "--app", "/work/Demo.app",
+                "--timeout", "800ms",
+            ]),
+            .start(
+                StartOptions(
+                    playCover: true,
+                    appPath: "/work/Demo.app",
+                    timeout: 0.8
+                )
+            )
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["install", "app.ipa", "--udid", "REAL-1", "--verbose"]),
             .install(AppInstallOptions(ipaPath: "app.ipa", udid: "REAL-1", verbose: true))
         )
@@ -77,6 +97,91 @@ final class CLIParserTests: XCTestCase {
             try CLIParser.parse(["ddi-mount"]),
             .ddiMount(DDIMountOptions())
         )
+    }
+
+    func testParsesPlayCoverCommands() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["playcover", "inspect", "/fixtures/Demo.app"]),
+            .playcover(.inspect(appPath: "/fixtures/Demo.app"))
+        )
+        XCTAssertEqual(
+            try CLIParser.parse([
+                "playcover", "prepare", "/fixtures/Demo.app",
+                "--output", "/work/Demo.app",
+                "--runtime", "/build/IOSUsePlayRuntime.framework",
+            ]),
+            .playcover(
+                .prepare(
+                    PlayCoverPrepareOptions(
+                        appPath: "/fixtures/Demo.app",
+                        outputPath: "/work/Demo.app",
+                        runtimePath: "/build/IOSUsePlayRuntime.framework"
+                    )
+                )
+            )
+        )
+        XCTAssertEqual(
+            try CLIParser.parse(["playcover", "verify", "/work/Demo.app"]),
+            .playcover(.verify(appPath: "/work/Demo.app"))
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["--json", "playcover", "inspect", "/fixtures/Demo.app"]),
+            ParsedInvocation(
+                command: .playcover(.inspect(appPath: "/fixtures/Demo.app")),
+                json: true
+            )
+        )
+    }
+
+    func testRejectsInvalidPlayCoverArguments() {
+        XCTAssertThrowsError(try CLIParser.parse(["playcover"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .missingRequiredArgument("playcover command"))
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["playcover", "prepare", "/fixtures/Demo.app"])
+        ) { error in
+            XCTAssertEqual(error as? CLIParseError, .missingRequiredOption("--output"))
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "playcover", "prepare", "/fixtures/Demo.app",
+                "--output", "/work/Demo.app",
+            ])
+        ) { error in
+            XCTAssertEqual(error as? CLIParseError, .missingRequiredOption("--runtime"))
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--playcover", "--timeout", "61s"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--timeout must be at most 60 seconds")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "SIM-1", "--playcover"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("a device UDID cannot be used with --playcover")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--app", "/work/Demo.app"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app and --timeout require --playcover")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["playcover", "launch", "/work/Demo.app"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .unknownCommand("playcover launch")
+            )
+        }
     }
 
     func testParsesDriverReadCommands() throws {

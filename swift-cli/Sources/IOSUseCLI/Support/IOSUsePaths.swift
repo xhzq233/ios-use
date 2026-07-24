@@ -11,6 +11,9 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let appLogState: String
     public let logs: String
     public let artifacts: String
+    public let playcover: String
+    public let playcoverHello: String
+    public let playcoverLastPrepared: String
 
     public static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> IOSUsePaths {
         let configured = configuredRoot(environment: environment)
@@ -24,7 +27,10 @@ public struct IOSUsePaths: Equatable, Sendable {
             nslogState: "\(configured.root)/state/nslog-state.json",
             appLogState: "\(configured.root)/state/app-log.json",
             logs: "\(configured.root)/logs",
-            artifacts: "\(configured.root)/artifacts"
+            artifacts: "\(configured.root)/artifacts",
+            playcover: "\(configured.root)/playcover",
+            playcoverHello: "\(configured.root)/playcover/hello",
+            playcoverLastPrepared: "\(configured.root)/playcover/last-prepared.json"
         )
     }
 

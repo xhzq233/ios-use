@@ -51,8 +51,12 @@ public enum StatusService {
                     "startMode": info.startMode.map(MachineValue.string) ?? .null,
                     "sessionIdentifier": info.sessionIdentifier.map(MachineValue.string) ?? .null,
                     "bundleId": info.bundleId.map(MachineValue.string) ?? .null,
+                    "playcoverAppPath": info.playCoverAppPath.map(MachineValue.string) ?? .null,
+                    "profileHash": info.profileHash.map(MachineValue.string) ?? .null,
                     "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
-                    "versionMatchesCli": .boolean(config?.driverVersion == IOSUseCLI.version),
+                    "versionMatchesCli": info.deviceType == PlayCoverSessionService.deviceType
+                        ? .null
+                        : .boolean(config?.driverVersion == IOSUseCLI.version),
                 ])
             } else {
                 driver = .object(["status": .string("notRunning")])
@@ -149,6 +153,12 @@ public enum StatusService {
             }
             if let sessionIdentifier = info.sessionIdentifier, !sessionIdentifier.isEmpty {
                 parts.append("session: \(sessionIdentifier)")
+            }
+            if let appPath = info.playCoverAppPath, !appPath.isEmpty {
+                parts.append("app: \(appPath)")
+            }
+            if let profileHash = info.profileHash, !profileHash.isEmpty {
+                parts.append("profile: \(profileHash)")
             }
             return ["  - \(parts.joined(separator: " | "))"]
         } catch {

@@ -42,6 +42,8 @@ public enum CLIParser {
             parsed = .nslog(try parseNSLog(&parser))
         case "proxy":
             parsed = .proxy(try parseProxy(&parser))
+        case "playcover":
+            parsed = .playcover(try parsePlayCover(&parser))
         case "tap":
             parsed = .driver(try parseTap(&parser))
         case "longpress":
@@ -75,7 +77,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .status, .install, .apps, .open, .appLifecycle, .driver:
+            case .status, .install, .apps, .open, .appLifecycle, .driver, .playcover:
                 break
             default:
                 throw CLIParseError.unknownOption("--json")
@@ -90,7 +92,8 @@ public enum CLIParser {
             "--flags", "--timeout", "--last", "--capture-mode", "--filter", "--interface",
             "--offset", "--offset-ratio", "--traits", "--cindex", "--duration", "--tap",
             "--label", "--content", "--delete", "--to", "--from", "--dir", "--distance",
-            "--match", "--fps", "--index", "--process", "--pid", "-i"
+            "--match", "--fps", "--index", "--process", "--pid", "--output", "--runtime",
+            "--app", "-i"
         ]
         var normalized: [String] = []
         var json = false
@@ -140,11 +143,82 @@ public enum CLIParser {
         return options
     }
 
+    private static func parsePlayCover(_ parser: inout ArgumentParser) throws -> PlayCoverCommand {
+        guard let subcommand = parser.consume() else {
+            throw CLIParseError.missingRequiredArgument("playcover command")
+        }
+        switch subcommand {
+        case "inspect":
+            let appPath = try parser.requiredPositional("app")
+            try parser.requireEnd()
+            return .inspect(appPath: appPath)
+        case "prepare":
+            let appPath = try parser.requiredPositional("app")
+            var outputPath: String?
+            var runtimePath: String?
+            while let argument = parser.consume() {
+                switch argument {
+                case "--output":
+                    guard outputPath == nil else {
+                        throw CLIParseError.invalidValue("--output may only be specified once")
+                    }
+                    outputPath = try parser.value(for: argument)
+                case "--runtime":
+                    guard runtimePath == nil else {
+                        throw CLIParseError.invalidValue("--runtime may only be specified once")
+                    }
+                    runtimePath = try parser.value(for: argument)
+                default:
+                    if argument.hasPrefix("-") {
+                        throw CLIParseError.unknownOption(argument)
+                    }
+                    throw CLIParseError.unexpectedArgument(argument)
+                }
+            }
+            guard let outputPath else {
+                throw CLIParseError.missingRequiredOption("--output")
+            }
+            guard let runtimePath else {
+                throw CLIParseError.missingRequiredOption("--runtime")
+            }
+            return .prepare(
+                PlayCoverPrepareOptions(
+                    appPath: appPath,
+                    outputPath: outputPath,
+                    runtimePath: runtimePath
+                )
+            )
+        case "verify":
+            let appPath = try parser.requiredPositional("app")
+            try parser.requireEnd()
+            return .verify(appPath: appPath)
+        default:
+            throw CLIParseError.unknownCommand("playcover \(subcommand)")
+        }
+    }
+
     private static func parseStart(_ parser: inout ArgumentParser) throws -> StartOptions {
         var options = StartOptions()
+        var timeoutWasProvided = false
         while let arg = parser.consume() {
             switch arg {
             case "--verbose": options.verbose = true
+            case "--playcover":
+                options.playCover = true
+            case "--app":
+                guard options.appPath == nil else {
+                    throw CLIParseError.invalidValue("--app may only be provided once")
+                }
+                options.appPath = try parser.value(for: arg)
+            case "--timeout":
+                options.timeout = try parsePositiveDurationSecondsStrict(
+                    try parser.value(for: arg),
+                    label: "--timeout"
+                )
+                timeoutWasProvided = true
+                guard options.timeout <= 60 else {
+                    throw CLIParseError.invalidValue("--timeout must be at most 60 seconds")
+                }
             default:
                 if arg.hasPrefix("-") {
                     throw CLIParseError.unknownOption(arg)
@@ -154,6 +228,13 @@ public enum CLIParser {
                 }
                 options.udid = arg
             }
+        }
+        if options.playCover {
+            guard options.udid == nil else {
+                throw CLIParseError.invalidValue("a device UDID cannot be used with --playcover")
+            }
+        } else if options.appPath != nil || timeoutWasProvided {
+            throw CLIParseError.invalidValue("--app and --timeout require --playcover")
         }
         return options
     }

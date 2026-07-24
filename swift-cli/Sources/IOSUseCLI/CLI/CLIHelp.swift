@@ -22,7 +22,7 @@ enum CLIHelp {
 
         Commands:
           status, config, start, stop, dom, waitFor, screenshot, capture, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
+          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, proxy, playcover, oslog, nslog
 
         """
     }
@@ -85,19 +85,27 @@ enum CLIHelp {
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
+                   ios-use start --playcover [--app <prepared.app>] [--timeout <duration>]
 
-            Start the configured driver and record the active driver lock.
+            Start a configured XCTest driver or a prepared PlayCover App and
+            record it as the active backend in driver.lock.
             Defaults to the first connected USB real device when udid is omitted.
+            --playcover defaults to the most recent successful
+            `ios-use playcover prepare` output when --app is omitted.
 
             Options:
-              --verbose    Enable verbose output
+              --verbose                    Enable verbose XCTest output
+              --playcover                  Select the PlayCover backend
+              --app <prepared.app>          Override the last prepared App
+              --timeout <duration>          Wait up to 60 seconds for runtime hello; default 15s
 
             """
         case "stop":
             return """
             Usage: ios-use stop
 
-            Stop the active driver from driver.lock and clear the driver lock.
+            Stop the active XCTest driver or exact PlayCover process recorded
+            in driver.lock, then clear the active backend.
 
             """
         case "install":
@@ -359,6 +367,8 @@ enum CLIHelp {
             """
         case "proxy":
             return proxyHelp(arguments: rest)
+        case "playcover":
+            return playcoverHelp(arguments: rest)
         default:
             return nil
         }
@@ -370,6 +380,10 @@ enum CLIHelp {
         }
         if arguments.first == "proxy",
            let help = commandHelpText(arguments: ["proxy"]) {
+            return help
+        }
+        if arguments.first == "playcover",
+           let help = commandHelpText(arguments: ["playcover"]) {
             return help
         }
         return rootText
@@ -478,6 +492,66 @@ enum CLIHelp {
             Usage: ios-use proxy doctor
 
             Check local proxy prerequisites and current proxy state.
+
+            """
+        default:
+            return nil
+        }
+    }
+
+    private static func playcoverHelp(arguments: [String]) -> String? {
+        let subcommand = arguments.first { $0 != "--help" && $0 != "-h" }
+        switch subcommand {
+        case nil:
+            return """
+            Usage: ios-use playcover <command>
+
+            Prepare and run an iPhone App as a headless Mac Catalyst process.
+            The fixed first profile is 430 x 932 logical points at 3x
+            (1290 x 2796 native pixels), matching the current vPhone default.
+
+            Commands:
+              inspect      Inspect the source App without modifying it
+              prepare      Clone, convert, inject, and ad-hoc sign a new App
+              verify       Verify a prepared App, runtime, profile, and signature
+
+            Lifecycle:
+              ios-use start --playcover
+              ios-use stop
+
+            """
+        case "inspect":
+            return """
+            Usage: ios-use playcover inspect <app> [--json]
+
+            Inspect the main executable, encryption state, load-command padding,
+            and fixed iPhone profile without modifying the App.
+
+            """
+        case "prepare":
+            return """
+            Usage: ios-use playcover prepare <app> --output <prepared.app> --runtime <IOSUsePlayRuntime.framework> [--json]
+
+            Create a new APFS-cloned App, convert its arm64 iPhoneOS Mach-Os,
+            embed one ios-use runtime, inject one LC_LOAD_DYLIB into the main
+            executable, and ad-hoc sign the result.
+
+            The source App is never modified. The output must not already exist.
+            A successful prepare selects the output for the next
+            `ios-use start --playcover`.
+
+            Options:
+              --output <prepared.app>                    Explicit destination
+              --runtime <IOSUsePlayRuntime.framework>    Built runtime framework
+              --json                                     Print the common machine-readable envelope
+
+            """
+        case "verify":
+            return """
+            Usage: ios-use playcover verify <prepared.app> [--json]
+
+            Verify the transaction manifest, fixed profile, embedded runtime,
+            converted main executable, load command, and code signature.
 
             """
         default:

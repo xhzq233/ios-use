@@ -8,12 +8,17 @@ Run scripts from the repository root unless noted otherwise.
 | --- | --- |
 | `scripts/build_swift_cli.sh [--debug]` | Build the Swift CLI and copy the single local binary to repo-root `./ios-use`. Release is the default. |
 | `scripts/build_driver.sh [--debug\|--release] [--simulator-only]` | Generate the Xcode project and build driver IPA artifacts. Debug is the default and writes `IOS_USE_HOME`, or cwd `.ios-use/` when unset; release writes `driver/build/`. |
+| `scripts/build_playcover_runtime.sh [--output <IOSUsePlayRuntime.framework>] [--replace]` | Build the arm64 iPhoneOS runtime, rewrite it to Mac Catalyst, and ad-hoc sign the framework used by the headless PlayCover backend. |
 
 Local dev run standard:
 
 ```bash
 bash scripts/build_swift_cli.sh --debug
 ./ios-use --help
+
+bash scripts/build_playcover_runtime.sh
+./ios-use playcover --help
+./ios-use start --help
 ```
 
 Use `./ios-use`, not global `ios-use`, when validating current workspace changes.

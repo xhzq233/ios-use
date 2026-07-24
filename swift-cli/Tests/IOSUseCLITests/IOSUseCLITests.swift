@@ -366,6 +366,10 @@ final class IOSUseCLITests: XCTestCase {
             (["proxy", "stop", "--help"], "Usage: ios-use proxy stop"),
             (["proxy", "configca", "--help"], "Usage: ios-use proxy configca"),
             (["proxy", "doctor", "--help"], "Usage: ios-use proxy doctor"),
+            (["playcover", "--help"], "Usage: ios-use playcover <command>"),
+            (["playcover", "inspect", "--help"], "Usage: ios-use playcover inspect"),
+            (["playcover", "prepare", "--help"], "Usage: ios-use playcover prepare"),
+            (["playcover", "verify", "--help"], "Usage: ios-use playcover verify"),
             (["oslog", "--help"], "Usage: ios-use oslog"),
             (["nslog", "--help"], "Usage: ios-use nslog"),
         ]

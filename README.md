@@ -136,6 +136,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `oslog` / `nslog` | Capture system logs or app-side NSLogger output. |
 | `proxy` | Capture HTTP/HTTPS traffic through mitmproxy. |
 | `open` | Open a URL or custom scheme on a device. |
+| `playcover` | Experimentally inspect, prepare, and verify an unencrypted arm64 iPhone App for the PlayCover backend. |
 
 Typical manual loop:
 
@@ -185,6 +186,41 @@ Time options accept `s` and `ms` suffixes. Bare `waitFor`, `capture`, and log
 timeouts are seconds; bare long-press and post-mutation `--dom` durations are
 milliseconds.
 
+### Experimental Headless PlayCover Backend
+
+The source-build-only `playcover` command runs a disposable copy of an
+unencrypted, thin arm64 iPhone App on Apple silicon without the PlayCover GUI.
+Its first immutable profile matches vPhone: 430 x 932 logical points, 3x scale,
+and 1290 x 2796 native pixels.
+
+```bash
+bash scripts/build_swift_cli.sh --debug
+bash scripts/build_playcover_runtime.sh
+
+./ios-use playcover inspect /path/to/Source.app
+./ios-use playcover prepare /path/to/Source.app \
+  --output /path/to/Prepared.app \
+  --runtime .ios-use/playcover/IOSUsePlayRuntime.framework
+./ios-use start --playcover
+./ios-use status
+./ios-use stop
+```
+
+`prepare` refuses to replace an existing output. It APFS-clones the source,
+validates and converts each supported Mach-O, injects one runtime dependency,
+applies narrow Mac sandbox entitlements, signs each nested binary and the App,
+then verifies the complete generation. `start --playcover` succeeds only after the runtime
+reports matching UIKit/native geometry and a 430 x 932 AppKit content area.
+
+The successful `prepare` output becomes the default for
+`start --playcover`; pass `--app /path/to/Prepared.app` to override it.
+`driver.lock` keeps PlayCover selected until normal `ios-use stop`, so
+session-bound commands cannot fall back to an XCTest device. This is still the
+first backend slice: lifecycle, profile, conversion, signing, and runtime
+evidence are implemented. DOM/actions route to the PlayCover backend but return
+an explicit capability error until the injected automation transport lands.
+See [docs/playcover-backend.md](docs/playcover-backend.md).
+
 ## Performance Snapshot
 
 The benchmark below compares `ios-use` against the full `Appium Server -> WebDriverAgent` stack on the same real-device Settings scenario. Lower is better.
@@ -232,6 +268,7 @@ See [examples/proxy/README.md](examples/proxy/README.md) for prerequisites and s
 swift-cli/             Swift CLI, command parsing, config, proxy, logs, and host tools
 shared/IOSUseProtocol/ Shared Swift RPC types and Fory frame models
 driver/                Swift XCTest driver
+playcover-runtime/     Minimal injected headless Mac Catalyst runtime
 examples/proxy/        Copyable shell recipes for proxy device setup
 scripts/               Install, build, test, and benchmark utilities
 docs/                  Public documentation
@@ -256,6 +293,7 @@ bash scripts/ci_test.sh
 - **[WebDriverAgent](https://github.com/appium/WebDriverAgent)**: This project borrows heavily from the ideas and implementation patterns established by WebDriverAgent. Gesture synthesis, snapshot handling, scrolling behavior, and parts of the driver architecture were shaped by studying WDA's source.
 - **[appium-xcuitest-driver](https://github.com/appium/appium-xcuitest-driver)**: The CLI and session behavior were informed by how the Appium XCUITest ecosystem exposes XCTest automation to users.
 - **[Appium](https://github.com/appium/appium)**: Appium helped establish the mental model for cross-device automation workflows, including action-oriented commands and reusable sessions.
+- **[PlayCover](https://github.com/PlayCover/PlayCover)** and **[PlayTools](https://github.com/PlayCover/PlayTools)**: The experimental headless backend derives its verified Mach-O conversion, interposition, and UIKit/AppKit bridge approach from these projects. Exact source revisions and license provenance are recorded in [docs/playcover-backend.md](docs/playcover-backend.md).
 
 ## License
 

@@ -94,6 +94,9 @@ public struct IOSUseCLI: Sendable {
     }
 
     private func execute(_ parsed: ParsedCommand, json: Bool) -> CLIResult {
+        if let routedFailure = playCoverRoutingFailure(for: parsed, json: json) {
+            return routedFailure
+        }
         switch parsed {
         case .status(let options):
             if json {
@@ -121,7 +124,24 @@ public struct IOSUseCLI: Sendable {
             }
         case .start(let options):
             do {
-                return CLIResult(exitCode: 0, stdout: try SessionService.start(udid: options.udid, paths: paths, verbose: options.verbose))
+                if options.playCover {
+                    return CLIResult(
+                        exitCode: 0,
+                        stdout: try SessionService.startPlayCover(
+                            appPath: options.appPath,
+                            timeout: options.timeout,
+                            paths: paths
+                        )
+                    )
+                }
+                return CLIResult(
+                    exitCode: 0,
+                    stdout: try SessionService.start(
+                        udid: options.udid,
+                        paths: paths,
+                        verbose: options.verbose
+                    )
+                )
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
@@ -227,6 +247,8 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .playcover(let command):
+            return executePlayCover(command, json: json)
         case .driver(let action):
             return executeDriver(action, json: json)
         case .capture(let options):
@@ -237,6 +259,104 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        }
+    }
+
+    private func executePlayCover(_ command: PlayCoverCommand, json: Bool) -> CLIResult {
+        let commandName = "playcover \(command.subcommand)"
+        do {
+            switch command {
+            case .inspect(let appPath):
+                let inspection = try PlayCoverService.inspect(appPath: appPath)
+                if json {
+                    return MachineOutput.success(
+                        command: commandName,
+                        data: playcoverInspectionData(inspection)
+                    )
+                }
+                let macho = inspection.mainExecutable
+                return CLIResult(
+                    exitCode: 0,
+                    stdout: """
+                    App: \(inspection.appPath)
+                    Bundle ID: \(inspection.bundleIdentifier)
+                    Executable: \(inspection.executableName)
+                    Mach-O: arm64, platform \(playcoverPlatformName(macho.platform)), encrypted \(macho.encrypted ? "yes" : "no")
+                    Load-command padding: \(macho.availableCommandPadding) bytes
+                    Profile: \(inspection.profile.logicalWidth) x \(inspection.profile.logicalHeight) points @\(formatScale(inspection.profile.scale))x (\(inspection.profile.nativeWidth) x \(inspection.profile.nativeHeight) pixels)
+                    Profile hash: \(inspection.profileHash)
+
+                    """
+                )
+            case .prepare(let options):
+                let manifest = try PlayCoverService.prepare(
+                    sourceAppPath: options.appPath,
+                    outputAppPath: options.outputPath,
+                    runtimeFrameworkPath: options.runtimePath,
+                    paths: paths
+                )
+                try PlayCoverSessionService.recordPrepared(manifest, paths: paths)
+                if json {
+                    return MachineOutput.success(
+                        command: commandName,
+                        data: playcoverManifestData(manifest)
+                    )
+                }
+                return CLIResult(
+                    exitCode: 0,
+                    stdout: """
+                    Prepared: \(manifest.preparedAppPath)
+                    Bundle ID: \(manifest.bundleIdentifier)
+                    Converted Mach-Os: \(manifest.convertedMachOs.count)
+                    Profile: 430 x 932 points @3x (1290 x 2796 pixels)
+                    Profile hash: \(manifest.profileHash)
+                    Runtime hello: \(manifest.helloPath)
+
+                    """
+                )
+            case .verify(let appPath):
+                let verification = try PlayCoverService.verify(appPath: appPath)
+                if json {
+                    return MachineOutput.success(
+                        command: commandName,
+                        data: playcoverVerificationData(verification)
+                    )
+                }
+                return CLIResult(
+                    exitCode: 0,
+                    stdout: """
+                    Verified: \(verification.manifest.preparedAppPath)
+                    Signature: valid
+                    Runtime load command: present
+                    Profile: \(verification.profile.logicalWidth) x \(verification.profile.logicalHeight) points @\(formatScale(verification.profile.scale))x
+
+                    """
+                )
+            }
+        } catch {
+            return commandFailure(command: commandName, error: error, json: json)
+        }
+    }
+
+    private func playCoverRoutingFailure(
+        for command: ParsedCommand,
+        json: Bool
+    ) -> CLIResult? {
+        guard SessionService.read(paths: paths)?.deviceType
+                == PlayCoverSessionService.deviceType else {
+            return nil
+        }
+        switch command {
+        case .status, .config, .start, .stop, .playcover, .driver, .capture:
+            return nil
+        case .proxy(.doctor):
+            return nil
+        default:
+            return commandFailure(
+                command: command.commandName,
+                error: PlayCoverBackendError.capabilityUnavailable(command.commandName),
+                json: json
+            )
         }
     }
 
@@ -350,6 +470,85 @@ public struct IOSUseCLI: Sendable {
             return MachineOutput.failure(command: command, error: error, exitCode: exitCode)
         }
         return CLIErrorEnvelope(message: "\(error)", exitCode: exitCode).render()
+    }
+
+    private func playcoverInspectionData(_ inspection: PlayCoverAppInspection) -> MachineValue {
+        .object([
+            "appPath": .string(inspection.appPath),
+            "bundleIdentifier": .string(inspection.bundleIdentifier),
+            "executableName": .string(inspection.executableName),
+            "profile": playcoverProfileData(inspection.profile),
+            "profileHash": .string(inspection.profileHash),
+            "mainExecutable": playcoverMachOData(inspection.mainExecutable),
+        ])
+    }
+
+    private func playcoverManifestData(_ manifest: PlayCoverPrepareManifest) -> MachineValue {
+        .object([
+            "backend": .string(manifest.backend),
+            "sourceAppPath": .string(manifest.sourceAppPath),
+            "preparedAppPath": .string(manifest.preparedAppPath),
+            "bundleIdentifier": .string(manifest.bundleIdentifier),
+            "executableName": .string(manifest.executableName),
+            "profileHash": .string(manifest.profileHash),
+            "runtimeLoadPath": .string(manifest.runtimeLoadPath),
+            "convertedMachOs": .array(manifest.convertedMachOs.map(MachineValue.string)),
+            "preparedAt": .string(manifest.preparedAt),
+            "helloPath": .string(manifest.helloPath),
+        ])
+    }
+
+    private func playcoverVerificationData(_ verification: PlayCoverVerification) -> MachineValue {
+        .object([
+            "manifest": playcoverManifestData(verification.manifest),
+            "profile": playcoverProfileData(verification.profile),
+            "mainExecutable": playcoverMachOData(verification.mainExecutable),
+            "signatureValid": .boolean(verification.signatureValid),
+        ])
+    }
+
+    private func playcoverProfileData(_ profile: PlayCoverDeviceProfile) -> MachineValue {
+        .object([
+            "identifier": .string(profile.identifier),
+            "productType": .string(profile.productType),
+            "hardwareTarget": .string(profile.hardwareTarget),
+            "logicalWidth": .integer(profile.logicalWidth),
+            "logicalHeight": .integer(profile.logicalHeight),
+            "nativeWidth": .integer(profile.nativeWidth),
+            "nativeHeight": .integer(profile.nativeHeight),
+            "scale": .double(profile.scale),
+            "pixelsPerInch": .integer(profile.pixelsPerInch),
+            "orientation": .string(profile.orientation),
+        ])
+    }
+
+    private func playcoverMachOData(_ inspection: PlayCoverMachOInspection) -> MachineValue {
+        .object([
+            "path": .string(inspection.path),
+            "cpuType": .integer(Int(inspection.cpuType)),
+            "fileType": .integer(Int(inspection.fileType)),
+            "commandCount": .integer(Int(inspection.commandCount)),
+            "commandBytes": .integer(Int(inspection.commandBytes)),
+            "firstSectionOffset": .integer(Int(inspection.firstSectionOffset)),
+            "availableCommandPadding": .integer(Int(inspection.availableCommandPadding)),
+            "platform": inspection.platform.map { .integer(Int($0)) } ?? .null,
+            "platformName": .string(playcoverPlatformName(inspection.platform)),
+            "encrypted": .boolean(inspection.encrypted),
+            "runtimeInjected": .boolean(inspection.runtimeInjected),
+        ])
+    }
+
+    private func playcoverPlatformName(_ platform: UInt32?) -> String {
+        switch platform {
+        case PlayCoverMachO.platformIPhoneOS: return "iPhoneOS"
+        case PlayCoverMachO.platformMacCatalyst: return "Mac Catalyst"
+        case .some(let value): return "\(value)"
+        case nil: return "unknown"
+        }
+    }
+
+    private func formatScale(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(value)
     }
 
     private func machineParseHelp(arguments: [String]) -> MachineValue {

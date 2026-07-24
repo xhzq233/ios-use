@@ -21,13 +21,15 @@ enum DriverSessionStore {
               let deviceType = raw["deviceType"] as? String, !deviceType.isEmpty else {
             throw CLIParseError.invalidValue("Invalid driver.lock: missing udid/deviceType.")
         }
-        guard deviceType == "real" || deviceType == "simulator" else {
+        guard deviceType == "real"
+                || deviceType == "simulator"
+                || deviceType == PlayCoverSessionService.deviceType else {
             throw CLIParseError.invalidValue("Invalid driver.lock: unknown deviceType \(deviceType).")
         }
         guard let startedAt = raw["startedAt"] as? Int else {
             throw CLIParseError.invalidValue("Invalid driver.lock: missing startedAt.")
         }
-        return SessionService.Info(
+        let info = SessionService.Info(
             udid: udid,
             deviceName: raw["deviceName"] as? String ?? "",
             deviceVersion: raw["deviceVersion"] as? String ?? "",
@@ -38,8 +40,21 @@ enum DriverSessionStore {
             startMode: raw["startMode"] as? String,
             sessionIdentifier: raw["sessionIdentifier"] as? String,
             bundleId: raw["bundleId"] as? String,
-            controlSocketPath: raw["controlSocketPath"] as? String
+            controlSocketPath: raw["controlSocketPath"] as? String,
+            playCoverAppPath: raw["playcoverAppPath"] as? String,
+            profileHash: raw["profileHash"] as? String
         )
+        if deviceType == PlayCoverSessionService.deviceType {
+            guard let appPath = info.playCoverAppPath, !appPath.isEmpty,
+                  let bundleId = info.bundleId, !bundleId.isEmpty,
+                  let profileHash = info.profileHash, !profileHash.isEmpty,
+                  let runnerPid = info.runnerPid, runnerPid > 0 else {
+                throw CLIParseError.invalidValue(
+                    "Invalid driver.lock: incomplete PlayCover session."
+                )
+            }
+        }
+        return info
     }
 
     static func requireInfo(paths: IOSUsePaths) throws -> SessionService.Info {
@@ -63,6 +78,10 @@ enum DriverSessionStore {
         if let runnerPid = info.runnerPid {
             root["runnerPid"] = runnerPid
         }
+        if info.deviceType == PlayCoverSessionService.deviceType,
+           let startMode = info.startMode {
+            root["startMode"] = startMode
+        }
         if let sessionIdentifier = info.sessionIdentifier {
             root["sessionIdentifier"] = sessionIdentifier
         }
@@ -71,6 +90,12 @@ enum DriverSessionStore {
         }
         if let controlSocketPath = info.controlSocketPath {
             root["controlSocketPath"] = controlSocketPath
+        }
+        if let playCoverAppPath = info.playCoverAppPath {
+            root["playcoverAppPath"] = playCoverAppPath
+        }
+        if let profileHash = info.profileHash {
+            root["profileHash"] = profileHash
         }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
