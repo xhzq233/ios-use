@@ -56,7 +56,7 @@ protocol DriverCommandClient: AnyObject {
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
     func home() throws
-    func dismissAlert(index: Int?) throws -> ForyAlertPayload
+    func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
@@ -393,8 +393,14 @@ final class DriverClient: DriverCommandClient {
         _ = try sendRawPayload(command: DriverCommand.home.rawValue, payload: Data())
     }
 
-    func dismissAlert(index: Int?) throws -> ForyAlertPayload {
-        try send(DismissAlertCommand.self, args: ForyDismissAlertArgs(index: index.map(Int32.init) ?? IOSUseProtocol.XCConstants.defaultAlertButtonIndex))
+    func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload {
+        let payload = try fory.serialize(args)
+        let response = try sendRawPayload(
+            command: DismissAlertCommand.command.rawValue,
+            payload: payload,
+            responseTimeoutSeconds: IOSUseProtocol.dismissAlertSocketReadTimeoutSeconds(args.wait)
+        )
+        return try fory.deserialize(response, as: ForyAlertPayload.self)
     }
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
@@ -725,6 +731,24 @@ func formatDriverError(message: String, payload: ForyErrorPayload) -> String {
     var lines = ["[\(payload.code)] \(message)"]
     if !payload.suggestions.isEmpty {
         lines.append("suggestions: \(payload.suggestions.joined(separator: ", "))")
+    }
+    if let alert = payload.alert {
+        let context = [alert.surface, alert.kind].filter { !$0.isEmpty }.joined(separator: " ")
+        if !context.isEmpty {
+            lines.append("Alert: \(context)")
+        }
+        if !alert.buttons.isEmpty {
+            let shown = alert.buttons.count
+            let total = max(Int(alert.buttonCount), shown)
+            lines.append(shown == total ? "Candidates:" : "Candidates (showing \(shown) of \(total)):")
+            lines.append(contentsOf: alert.buttons.map { button in
+                let identifier = button.identifier.isEmpty ? "" : " id=\"\(button.identifier)\""
+                let frame = button.frame.map {
+                    "[\($0.x),\($0.y),\($0.w),\($0.h)]"
+                } ?? "[]"
+                return "  [\(button.queryIndex)] \"\(button.label)\"\(identifier) hittable=\(button.hittable) frame=\(frame)"
+            })
+        }
     }
     if !payload.candidates.isEmpty {
         let shown = payload.candidates.count

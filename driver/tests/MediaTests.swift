@@ -45,10 +45,29 @@ final class MediaTests: XCTestCase {
         XCTAssertEqual(library.createCount, 0)
     }
 
+    func testRestrictedImportFailsWithoutRequestPromptOrMutation() throws {
+        let library = FakeMediaPhotoLibrary(status: .restricted)
+        let prompt = FakePhotosPromptHandler()
+        MediaCommands.photoLibraryFactoryForTesting = { library }
+        MediaCommands.promptHandlerForTesting = prompt
+
+        let response = try execute(args: photoArgs())
+        let error = try errorPayload(response)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(error.category, IOSUseErrorCategory.authorization)
+        XCTAssertEqual(error.code, IOSUseErrorCode.photosAddPermissionRestricted)
+        XCTAssertEqual(error.phase, IOSUseErrorPhase.authorization)
+        XCTAssertEqual(library.requestCount, 0)
+        XCTAssertEqual(prompt.handleCount, 0)
+        XCTAssertEqual(library.createCount, 0)
+    }
+
     func testNotDeterminedRequestsOnceHandlesPromptAndImports() throws {
         let library = FakeMediaPhotoLibrary(status: .notDetermined)
         let prompt = FakePhotosPromptHandler()
-        prompt.handler = { completion in
+        prompt.handler = { trigger, completion in
+            trigger()
             library.completeAuthorization(.allowed)
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
                 completion(.handled(text: "Photos", button: "Allow"))
@@ -73,7 +92,7 @@ final class MediaTests: XCTestCase {
     func testNotDeterminedExternalAuthorizationReportsPromptNotHandled() throws {
         let library = FakeMediaPhotoLibrary(status: .notDetermined)
         let prompt = FakePhotosPromptHandler()
-        prompt.handler = { completion in
+        prompt.handler = { _, completion in
             library.completeAuthorization(.allowed)
             completion(.notHandled)
         }
@@ -87,7 +106,7 @@ final class MediaTests: XCTestCase {
         )
 
         XCTAssertTrue(response.ok)
-        XCTAssertEqual(library.requestCount, 1)
+        XCTAssertEqual(library.requestCount, 0)
         XCTAssertEqual(prompt.handleCount, 1)
         XCTAssertEqual(library.createCount, 1)
         XCTAssertFalse(payload.permissionPromptHandled)
@@ -96,8 +115,19 @@ final class MediaTests: XCTestCase {
     func testUnsafeFirstPromptReturnsInteractionRequiredWithoutImport() throws {
         let library = FakeMediaPhotoLibrary(status: .notDetermined)
         let prompt = FakePhotosPromptHandler()
-        prompt.handler = {
-            $0(.interactionRequired("buttons were ambiguous"))
+        prompt.handler = { trigger, completion in
+            trigger()
+            completion(.interactionRequired(
+                code: IOSUseErrorCode.alertAmbiguous,
+                diagnostic: "buttons were ambiguous",
+                alert: ForyAlertPayload(
+                    surface: "springboard",
+                    kind: "alert",
+                    buttonCount: 2,
+                    requestedSelection: "visualPrimary",
+                    reason: "buttons were ambiguous"
+                )
+            ))
         }
         MediaCommands.photoLibraryFactoryForTesting = { library }
         MediaCommands.promptHandlerForTesting = prompt
@@ -107,8 +137,58 @@ final class MediaTests: XCTestCase {
 
         XCTAssertFalse(response.ok)
         XCTAssertEqual(error.category, IOSUseErrorCategory.authorization)
-        XCTAssertEqual(error.code, IOSUseErrorCode.photosPermissionInteractionRequired)
+        XCTAssertEqual(error.code, IOSUseErrorCode.alertAmbiguous)
+        XCTAssertEqual(error.alert?.buttonCount, 2)
         XCTAssertTrue(response.error.contains("buttons were ambiguous"))
+        XCTAssertEqual(library.requestCount, 1)
+        XCTAssertEqual(library.createCount, 0)
+    }
+
+    func testPreexistingAlertPreventsAuthorizationRequestAndImport() throws {
+        let library = FakeMediaPhotoLibrary(status: .notDetermined)
+        let prompt = FakePhotosPromptHandler()
+        prompt.handler = { _, completion in
+            completion(.interactionRequired(
+                code: IOSUseErrorCode.preexistingAlert,
+                diagnostic: "pre-existing alert",
+                alert: ForyAlertPayload(
+                    surface: "springboard",
+                    kind: "alert",
+                    buttonCount: 1,
+                    requestedSelection: "visualPrimary",
+                    reason: "pre-existing alert"
+                )
+            ))
+        }
+        MediaCommands.photoLibraryFactoryForTesting = { library }
+        MediaCommands.promptHandlerForTesting = prompt
+
+        let response = try execute(args: photoArgs())
+        let error = try errorPayload(response)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(error.code, IOSUseErrorCode.preexistingAlert)
+        XCTAssertEqual(error.alert?.reason, "pre-existing alert")
+        XCTAssertEqual(library.requestCount, 0)
+        XCTAssertEqual(library.createCount, 0)
+    }
+
+    func testHandledPromptStillFailsWhenAuthorizationBecomesDenied() throws {
+        let library = FakeMediaPhotoLibrary(status: .notDetermined)
+        let prompt = FakePhotosPromptHandler()
+        prompt.handler = { trigger, completion in
+            trigger()
+            library.completeAuthorization(.denied)
+            completion(.handled(text: "permission", button: "primary"))
+        }
+        MediaCommands.photoLibraryFactoryForTesting = { library }
+        MediaCommands.promptHandlerForTesting = prompt
+
+        let response = try execute(args: photoArgs())
+        let error = try errorPayload(response)
+
+        XCTAssertFalse(response.ok)
+        XCTAssertEqual(error.code, IOSUseErrorCode.photosAddPermissionDenied)
         XCTAssertEqual(library.requestCount, 1)
         XCTAssertEqual(library.createCount, 0)
     }
@@ -210,15 +290,24 @@ private final class FakeMediaPhotoLibrary: MediaPhotoLibrary {
 }
 
 private final class FakePhotosPromptHandler: PhotosPermissionPromptHandling {
-    var handler: ((@escaping (PhotosPermissionPromptOutcome) -> Void) -> Void)?
+    var handler: ((
+        _ trigger: @escaping () -> Void,
+        _ completion: @escaping (PhotosPermissionPromptOutcome) -> Void
+    ) -> Void)?
     private(set) var handleCount = 0
 
     func handle(
         deadline: Date,
+        canTrigger: @escaping () -> Bool,
+        trigger: @escaping () -> Void,
         shouldStop: @escaping () -> Bool,
         completion: @escaping (PhotosPermissionPromptOutcome) -> Void
     ) {
         handleCount += 1
-        handler?(completion)
+        guard canTrigger() else {
+            completion(.notHandled)
+            return
+        }
+        handler?(trigger, completion)
     }
 }

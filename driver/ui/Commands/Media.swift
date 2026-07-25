@@ -2,15 +2,17 @@ import Foundation
 import Photos
 import UniformTypeIdentifiers
 
-enum PhotosPermissionPromptOutcome: Equatable {
+enum PhotosPermissionPromptOutcome {
     case handled(text: String, button: String)
     case notHandled
-    case interactionRequired(String)
+    case interactionRequired(code: String, diagnostic: String, alert: ForyAlertPayload?)
 }
 
 protocol PhotosPermissionPromptHandling {
     func handle(
         deadline: Date,
+        canTrigger: @escaping () -> Bool,
+        trigger: @escaping () -> Void,
         shouldStop: @escaping () -> Bool,
         completion: @escaping (PhotosPermissionPromptOutcome) -> Void
     )
@@ -19,12 +21,16 @@ protocol PhotosPermissionPromptHandling {
 private struct SystemPhotosPermissionPromptHandler: PhotosPermissionPromptHandling {
     func handle(
         deadline: Date,
+        canTrigger: @escaping () -> Bool,
+        trigger: @escaping () -> Void,
         shouldStop: @escaping () -> Bool,
         completion: @escaping (PhotosPermissionPromptOutcome) -> Void
     ) {
         DispatchQueue.main.async {
-            AlertCommands.handlePhotosAddPermissionPrompt(
+            AlertCommands.handleTriggeredPhotosAddPermissionPrompt(
                 deadline: deadline,
+                canTrigger: canTrigger,
+                trigger: trigger,
                 shouldStop: shouldStop,
                 completion: completion
             )
@@ -400,6 +406,7 @@ enum MediaCommands {
         let code: String
         let phase: String
         var retryable = false
+        var alert: ForyAlertPayload? = nil
 
         func response() throws -> ForyResponseFrame {
             try Codec.foryError(
@@ -407,7 +414,8 @@ enum MediaCommands {
                 category: category,
                 code: code,
                 phase: phase,
-                retryable: retryable
+                retryable: retryable,
+                alert: alert
             )
         }
     }
@@ -470,18 +478,26 @@ enum MediaCommands {
         commandDeadline: Date
     ) -> Result<PermissionResolution, MediaFailure> {
         let coordinator = MediaAuthorizationCoordinator()
-        library.requestAuthorization {
-            coordinator.setAuthorization($0)
-        }
         let promptDeadline = min(
             commandDeadline,
             Date().addingTimeInterval(IOSUseProtocol.mediaPermissionPromptDiscoveryTimeoutSeconds)
         )
         promptHandler.handle(
             deadline: promptDeadline,
+            canTrigger: {
+                library.authorizationStatus() == .notDetermined
+            },
+            trigger: {
+                library.requestAuthorization {
+                    coordinator.setAuthorization($0)
+                }
+            },
             shouldStop: { coordinator.shouldStop() }
-        ) {
-            coordinator.setPrompt($0)
+        ) { outcome in
+            coordinator.setPrompt(outcome)
+            if case .notHandled = outcome {
+                coordinator.setAuthorization(library.authorizationStatus())
+            }
         }
 
         while Date() < commandDeadline {
@@ -532,11 +548,12 @@ enum MediaCommands {
                 }
             }
 
-            if case .interactionRequired(let diagnostic)? = snapshot.prompt {
+            if case .interactionRequired(let code, let diagnostic, let alert)? = snapshot.prompt {
                 coordinator.stop()
                 return .failure(permissionFailure(
                     message: "Photos permission requires manual interaction: \(diagnostic)",
-                    code: IOSUseErrorCode.photosPermissionInteractionRequired
+                    code: code,
+                    alert: alert
                 ))
             }
             coordinator.waitForChange(
@@ -551,12 +568,17 @@ enum MediaCommands {
         ))
     }
 
-    private static func permissionFailure(message: String, code: String) -> MediaFailure {
+    private static func permissionFailure(
+        message: String,
+        code: String,
+        alert: ForyAlertPayload? = nil
+    ) -> MediaFailure {
         MediaFailure(
             message: message,
             category: IOSUseErrorCategory.authorization,
             code: code,
-            phase: IOSUseErrorPhase.authorization
+            phase: IOSUseErrorPhase.authorization,
+            alert: alert
         )
     }
 

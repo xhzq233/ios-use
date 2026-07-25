@@ -36,7 +36,16 @@ enum ProxyDeviceAutomation {
         append(&output, try execute(.terminateApp(bundleId: "com.apple.mobilesafari"), session: session, activeDriver: activeDriver, paths: paths, interruptMonitor: interruptMonitor))
         append(&output, try open(url: "http://127.0.0.1:9088/ca.cer", activeDriver: activeDriver, paths: paths, interruptMonitor: interruptMonitor))
         append(&output, try execute(tap("允许", traits: "Button"), session: session, activeDriver: activeDriver, paths: paths, interruptMonitor: interruptMonitor))
-        append(&output, try execute(.dismissAlert(index: nil), session: session, activeDriver: activeDriver, paths: paths, interruptMonitor: interruptMonitor))
+        append(
+            &output,
+            try execute(
+                .dismissAlert(DismissAlertOptions(selection: .onlyButton)),
+                session: session,
+                activeDriver: activeDriver,
+                paths: paths,
+                interruptMonitor: interruptMonitor
+            )
+        )
 
         append(&output, try execute(.activateApp(bundleId: "com.apple.Preferences"), session: session, activeDriver: activeDriver, paths: paths, interruptMonitor: interruptMonitor))
         append(&output, try execute(.waitFor(label: "已下载描述文件", timeout: 5, traits: nil, cindex: nil), session: session, activeDriver: activeDriver, paths: paths, interruptMonitor: interruptMonitor))

@@ -2584,6 +2584,130 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertFalse(DriverCommand.mediaImport.metadata.mutatesUI)
     }
 
+    func testDismissAlertSendsGuardedSelectionAndReturnsHumanAndJSONDetails() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-dismiss-alert-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-ALERT", deviceType: "simulator", paths: paths)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        var received: [ForyDismissAlertArgs] = []
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(dismissAlertHandler: { args in
+                received.append(args)
+                return ForyAlertPayload(
+                    dismissed: true,
+                    surface: "springboard",
+                    kind: "alert",
+                    text: "Runner request",
+                    buttonCount: 2,
+                    buttons: [
+                        ForyAlertButton(
+                            queryIndex: 1,
+                            label: "Allow",
+                            hittable: true,
+                            frame: ForyRect(x: 120, y: 300, w: 120, h: 44)
+                        ),
+                    ],
+                    requestedSelection: "visualPrimary",
+                    selectionStrategy: "visualPrimaryHeuristic",
+                    selectedIndex: 1,
+                    button: "Allow",
+                    layoutDirection: "leftToRight",
+                    layoutDirectionSource: "runnerEffective"
+                )
+            })
+        }
+        let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+
+        let human = cli.run(arguments: [
+            "dismissAlert", "--primary", "--scope", "springboard", "--wait", "3s",
+        ])
+        let json = cli.run(arguments: [
+            "dismissAlert", "--primary", "--scope", "springboard", "--wait", "3s", "--json",
+        ])
+
+        XCTAssertEqual(
+            human.stdout,
+            "Button \"Allow\" dismissed alert (selection=visualPrimaryHeuristic, index=1)\n"
+        )
+        XCTAssertEqual(json.exitCode, 0)
+        XCTAssertTrue(json.stdout.contains(#""requestedSelection" : "visualPrimary""#))
+        XCTAssertTrue(json.stdout.contains(#""layoutDirectionSource" : "runnerEffective""#))
+        XCTAssertTrue(json.stdout.contains(#""queryIndex" : 1"#))
+        XCTAssertEqual(received.count, 2)
+        XCTAssertTrue(received.allSatisfy {
+            $0.selection == IOSUseAlertSelectionMode.visualPrimary.rawValue
+                && $0.scope == IOSUseAlertScope.springboard.rawValue
+                && $0.wait == 3
+        })
+    }
+
+    func testDismissAlertFailureReturnsBoundedAlertContextInHumanAndJSON() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-dismiss-alert-error-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-ALERT", deviceType: "simulator", paths: paths)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let alert = ForyAlertPayload(
+            surface: "springboard",
+            kind: "alert",
+            text: "private alert text",
+            buttonCount: 2,
+            buttons: [
+                ForyAlertButton(
+                    queryIndex: 0,
+                    label: "Cancel",
+                    hittable: true,
+                    frame: ForyRect(x: 0, y: 0, w: 100, h: 44)
+                ),
+                ForyAlertButton(
+                    queryIndex: 1,
+                    label: "Continue",
+                    hittable: true,
+                    frame: ForyRect(x: 100, y: 0, w: 100, h: 44)
+                ),
+            ],
+            requestedSelection: "onlyButton",
+            reason: "2 hittable buttons require an explicit selection"
+        )
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(dismissAlertHandler: { _ in
+                throw DriverClientError.driverError(
+                    message: "2 hittable buttons require an explicit selection",
+                    payload: ForyErrorPayload(
+                        category: IOSUseErrorCategory.lookup,
+                        code: IOSUseErrorCode.alertAmbiguous,
+                        phase: IOSUseErrorPhase.lookup,
+                        alert: alert
+                    )
+                )
+            })
+        }
+        let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+
+        let human = cli.run(arguments: ["dismissAlert"])
+        let json = cli.run(arguments: ["dismissAlert", "--json"])
+
+        XCTAssertEqual(human.exitCode, 1)
+        XCTAssertTrue(human.stderr.contains("[alert_ambiguous]"))
+        XCTAssertTrue(human.stderr.contains("Candidates:"))
+        XCTAssertTrue(human.stderr.contains("[1] \"Continue\""))
+        XCTAssertEqual(json.exitCode, 1)
+        XCTAssertTrue(json.stderr.contains(#""code" : "alert_ambiguous""#))
+        XCTAssertTrue(json.stderr.contains(#""buttonCount" : 2"#))
+        XCTAssertTrue(json.stderr.contains(#""requestedSelection" : "onlyButton""#))
+    }
+
     func testMediaImportSendsTypedBytesAndReturnsHumanAndJSONReceipts() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-media-import-\(UUID().uuidString)")
@@ -2893,6 +3017,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     private let screenshotHandler: () throws -> ScreenshotCapture
     private let waitAppForegroundHandler: (String, Double, Bool) throws -> ForyWaitAppForegroundPayload
     private let mediaImportHandler: (ForyMediaImportArgs) throws -> ForyMediaImportPayload
+    private let dismissAlertHandler: (ForyDismissAlertArgs) throws -> ForyAlertPayload
 
     init(
         domHandler: @escaping (Bool, Bool, Bool) throws -> ForyDomPayload = { _, _, _ in
@@ -2915,6 +3040,9 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         },
         mediaImportHandler: @escaping (ForyMediaImportArgs) throws -> ForyMediaImportPayload = { _ in
             throw CLIParseError.invalidValue("unexpected media import")
+        },
+        dismissAlertHandler: @escaping (ForyDismissAlertArgs) throws -> ForyAlertPayload = { _ in
+            throw CLIParseError.invalidValue("unexpected dismissAlert")
         }
     ) {
         self.domHandler = domHandler
@@ -2924,6 +3052,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         self.screenshotHandler = screenshotHandler
         self.waitAppForegroundHandler = waitAppForegroundHandler
         self.mediaImportHandler = mediaImportHandler
+        self.dismissAlertHandler = dismissAlertHandler
     }
 
     func close() {}
@@ -2972,8 +3101,8 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected home")
     }
 
-    func dismissAlert(index: Int?) throws -> ForyAlertPayload {
-        throw CLIParseError.invalidValue("unexpected dismissAlert")
+    func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload {
+        try dismissAlertHandler(args)
     }
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {

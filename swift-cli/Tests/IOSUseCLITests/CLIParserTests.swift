@@ -283,7 +283,28 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["dismissAlert", "--index", "0"]),
-            .driver(.dismissAlert(index: 0))
+            .driver(.dismissAlert(DismissAlertOptions(selection: .index(0))))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse([
+                "dismissAlert", "--primary", "--scope", "springboard", "--wait", "3s",
+            ]),
+            .driver(.dismissAlert(DismissAlertOptions(
+                selection: .visualPrimary,
+                scope: .springboard,
+                wait: 3
+            )))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["dismissAlert", "--label", "Allow"]),
+            .driver(.dismissAlert(DismissAlertOptions(selection: .label("Allow"))))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["dismissAlert"]),
+            .driver(.dismissAlert(DismissAlertOptions()))
         )
 
         XCTAssertEqual(
@@ -533,6 +554,24 @@ final class CLIParserTests: XCTestCase {
         }
         XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--index", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--index must be non-negative"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--primary", "--only-button"])) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--index, --label, --primary, and --only-button are mutually exclusive")
+            )
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--scope", "other"])) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--scope must be one of: springboard, app, any")
+            )
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--wait", "31s"])) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--wait must be at most 30.0s")
+            )
         }
         XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--dom", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--dom must be non-negative"))

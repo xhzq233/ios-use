@@ -315,9 +315,16 @@ enum CLIHelp {
             """
         case "dismissAlert":
             return driverHelp(
-                usage: "ios-use dismissAlert [--index <index>]",
-                summary: "Dismiss a system alert.",
-                options: ["--index <index>  Button index; defaults to the last button"]
+                usage: "ios-use dismissAlert [--index <index> | --label <label> | --primary | --only-button] [--scope springboard|app|any] [--wait <duration>]",
+                summary: "Dismiss an alert only when its button selection is explicit or unambiguous.",
+                options: [
+                    "--index <index>          Select the exact XCTest query-result index",
+                    "--label <label>          Select one exact normalized button label",
+                    "--primary                Select the visual trailing/top button heuristic",
+                    "--only-button            Require exactly one hittable button; this is the default",
+                    "--scope <scope>           springboard, app, or any; defaults to any",
+                    "--wait <duration>         Bounded alert wait; defaults to 0 (one check), maximum 30s",
+                ]
             )
         case "media":
             return mediaHelp(arguments: rest)

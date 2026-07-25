@@ -936,30 +936,6 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(elementTypeName(.webView), "Web")
     }
 
-    // MARK: - resolveButtonIndex logic
-
-    func testResolveButtonIndex_EmptyButtons_ReturnsNil() {
-        XCTAssertNil(AlertCommands.resolveButtonIndex(buttonCount: 0, requestedIndex: nil))
-        XCTAssertNil(AlertCommands.resolveButtonIndex(buttonCount: 0, requestedIndex: 0))
-    }
-
-    func testResolveButtonIndex_NoIndex_ReturnsLast() {
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 1, requestedIndex: nil), 0)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: nil), 1)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: nil), 2)
-    }
-
-    func testResolveButtonIndex_ValidIndex_ReturnsThat() {
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 0), 0)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 1), 1)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 2), 2)
-    }
-
-    func testResolveButtonIndex_OutOfBounds_FallsBackToLast() {
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: 5), 1)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: -1), 1)
-    }
-
     // MARK: - rawFindInSnapshot
 
     func testRawFindInSnapshot_FindsByValueContains() {

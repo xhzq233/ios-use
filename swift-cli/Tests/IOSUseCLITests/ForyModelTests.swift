@@ -148,4 +148,60 @@ final class ForyModelTests: XCTestCase {
         XCTAssertEqual(decodedPayload.assetLocalIdentifier, "asset/1")
         XCTAssertTrue(decodedPayload.permissionPromptHandled)
     }
+
+    func testGuardedAlertModelsRoundTripSelectionCandidatesAndErrorContext() throws {
+        let fory = ForyRegistry.create()
+        let args = ForyDismissAlertArgs(
+            selection: IOSUseAlertSelectionMode.visualPrimary.rawValue,
+            scope: IOSUseAlertScope.springboard.rawValue,
+            wait: 3
+        )
+        let decodedArgs = try fory.deserialize(
+            try fory.serialize(args),
+            as: ForyDismissAlertArgs.self
+        )
+        XCTAssertEqual(decodedArgs.selection, IOSUseAlertSelectionMode.visualPrimary.rawValue)
+        XCTAssertEqual(decodedArgs.scope, IOSUseAlertScope.springboard.rawValue)
+        XCTAssertEqual(decodedArgs.wait, 3)
+
+        let alert = ForyAlertPayload(
+            dismissed: false,
+            surface: "springboard",
+            kind: "alert",
+            text: "Runner request",
+            buttonCount: 2,
+            buttons: [
+                ForyAlertButton(
+                    queryIndex: 1,
+                    label: "Allow",
+                    identifier: "allow",
+                    hittable: true,
+                    frame: ForyRect(x: 100, y: 200, w: 80, h: 44)
+                ),
+            ],
+            requestedSelection: "visualPrimary",
+            selectionStrategy: "visualPrimaryHeuristic",
+            selectedIndex: 1,
+            button: "Allow",
+            layoutDirection: "leftToRight",
+            layoutDirectionSource: "runnerEffective",
+            reason: "fixture"
+        )
+        let error = ForyErrorPayload(
+            category: IOSUseErrorCategory.lookup,
+            code: IOSUseErrorCode.alertAmbiguous,
+            phase: IOSUseErrorPhase.lookup,
+            alert: alert
+        )
+        let decodedError = try fory.deserialize(
+            try fory.serialize(error),
+            as: ForyErrorPayload.self
+        )
+
+        XCTAssertEqual(decodedError.alert?.surface, "springboard")
+        XCTAssertEqual(decodedError.alert?.buttonCount, 2)
+        XCTAssertEqual(decodedError.alert?.buttons.first?.queryIndex, 1)
+        XCTAssertEqual(decodedError.alert?.buttons.first?.frame?.w, 80)
+        XCTAssertEqual(decodedError.alert?.layoutDirectionSource, "runnerEffective")
+    }
 }

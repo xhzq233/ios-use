@@ -142,7 +142,7 @@ ios-use activateApp com.example.app --terminateExisting --log
 ios-use terminateApp com.example.app
 ios-use open "https://example.com"
 ios-use open "https://example.com" --dom
-ios-use dismissAlert
+ios-use dismissAlert --only-button
 ```
 
 - Normal `activateApp` waits for the App to reach the foreground and for one fresh
@@ -150,6 +150,10 @@ ios-use dismissAlert
   host launch acknowledgement is sufficient.
 - `open` only dispatches the URL by default. Add `--dom` for immediate foreground
   UI evidence, then use `waitFor` for the destination condition that matters.
+- `dismissAlert` requires an explicit or unambiguous button choice. Use
+  `--only-button` for a one-button alert, `--label` or `--index` for a known
+  multi-button alert, and `--primary` only when the visual trailing/top heuristic
+  is intentional.
 
 When `activateApp --terminateExisting --log` prints a log path, query the file with
 standard shell tools:

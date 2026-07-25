@@ -131,7 +131,8 @@ final class Codec {
         target: ForyTarget? = nil,
         suggestions: [String] = [],
         candidates: [ForyErrorCandidate] = [],
-        candidateCount: Int? = nil
+        candidateCount: Int? = nil,
+        alert: ForyAlertPayload? = nil
     ) throws -> ForyResponseFrame {
         let limitedCandidates = Array(candidates.prefix(IOSUseProtocol.errorCandidateLimit))
         let errorPayload = ForyErrorPayload(
@@ -143,7 +144,8 @@ final class Codec {
             target: target,
             candidateCount: Int32(clamping: candidateCount ?? candidates.count),
             suggestions: suggestions,
-            candidates: limitedCandidates
+            candidates: limitedCandidates,
+            alert: alert
         )
         let data = try ForyRegistry.create().serialize(errorPayload)
         return ForyResponseFrame(ok: false, error: message, payload: data)

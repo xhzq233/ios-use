@@ -10,6 +10,19 @@ public enum IOSUseWaitForMatchMode: Int32, Sendable, CaseIterable, Equatable {
     case regex = 2
 }
 
+public enum IOSUseAlertSelectionMode: Int32, Sendable, CaseIterable, Equatable {
+    case onlyButton = 0
+    case index = 1
+    case label = 2
+    case visualPrimary = 3
+}
+
+public enum IOSUseAlertScope: Int32, Sendable, CaseIterable, Equatable {
+    case any = 0
+    case springboard = 1
+    case activeApp = 2
+}
+
 /// Backend-neutral application state used on the Driver wire. Backends map
 /// their native process/scene state into this enum instead of exposing XCTest.
 public enum IOSUseAppState: Int32, Sendable, CaseIterable, Equatable {
@@ -56,6 +69,18 @@ public enum IOSUseProtocol {
     public static let mediaPermissionPromptDiscoveryTimeoutSeconds = 8.0
     /// Main-thread polling interval while looking for the newly requested Photos prompt.
     public static let mediaPermissionPromptPollIntervalSeconds = 0.1
+    /// Maximum standalone alert observation window.
+    public static let alertWaitMaximumTimeoutSeconds = 30.0
+    /// Poll interval for standalone and triggered alert observation.
+    public static let alertPollIntervalSeconds = 0.1
+    /// Extra watchdog budget for alert discovery, snapshot verification, and tap.
+    public static let alertWatchdogGraceSeconds = 2.0
+    /// Extra host-side socket budget after the Driver alert watchdog.
+    public static let alertSocketGraceSeconds = 2.0
+    /// Maximum alert text included in command payloads and diagnostics.
+    public static let alertTextLimit = 600
+    /// Maximum label or identifier length included for an alert button.
+    public static let alertButtonTextLimit = 200
     /// Extra time allowed for one normal in-flight driver operation (usually a
     /// snapshot) to finish after a `waitFor` deadline.
     public static let waitForWatchdogGraceSeconds = Double(commandTimeoutSeconds)
@@ -171,6 +196,17 @@ public enum IOSUseProtocol {
 
     public static func waitForSocketReadTimeoutSeconds(_ requested: Double) -> Int {
         Int(ceil(waitForWatchdogTimeoutSeconds(requested) + waitForSocketGraceSeconds))
+    }
+
+    public static func dismissAlertWatchdogTimeoutSeconds(_ requested: Double) -> Double {
+        let bounded = requested.isFinite
+            ? min(max(0, requested), alertWaitMaximumTimeoutSeconds)
+            : alertWaitMaximumTimeoutSeconds
+        return max(Double(commandTimeoutSeconds), bounded + alertWatchdogGraceSeconds)
+    }
+
+    public static func dismissAlertSocketReadTimeoutSeconds(_ requested: Double) -> Int {
+        Int(ceil(dismissAlertWatchdogTimeoutSeconds(requested) + alertSocketGraceSeconds))
     }
 
     public static func swipeUsesLabelTarget(_ args: ForySwipeArgs) -> Bool {
@@ -293,6 +329,12 @@ public enum IOSUseErrorCode {
     public static let photosPermissionInteractionRequired = "photos_permission_interaction_required"
     public static let mediaImportTimedOut = "media_import_timed_out"
     public static let mediaImportFailed = "media_import_failed"
+    public static let alertAmbiguous = "alert_ambiguous"
+    public static let alertSelectionInvalid = "alert_selection_invalid"
+    public static let alertChangedBeforeAction = "alert_changed_before_action"
+    public static let preexistingAlert = "preexisting_alert"
+    public static let alertNotFound = "alert_not_found"
+    public static let alertWaitTimedOut = "alert_wait_timed_out"
 
 }
 

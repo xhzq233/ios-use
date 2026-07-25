@@ -632,14 +632,69 @@ public enum CLIParser {
     }
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
-        var index: Int?
+        var selection: AlertSelectionOption?
+        var scope: AlertScopeOption?
+        var wait: Double?
+
+        func select(_ value: AlertSelectionOption) throws {
+            guard selection == nil else {
+                throw CLIParseError.invalidValue(
+                    "--index, --label, --primary, and --only-button are mutually exclusive"
+                )
+            }
+            selection = value
+        }
+
         while let arg = parser.consume() {
             switch arg {
-            case "--index": index = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--index":
+                try select(.index(try parseNonNegativeIntStrict(
+                    parser.valueAllowingLeadingDash(for: arg),
+                    label: arg
+                )))
+            case "--label":
+                let label = try parser.valueAllowingLeadingDash(for: arg)
+                guard !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw CLIParseError.invalidValue("--label must not be empty")
+                }
+                try select(.label(label))
+            case "--primary":
+                try select(.visualPrimary)
+            case "--only-button":
+                try select(.onlyButton)
+            case "--scope":
+                guard scope == nil else {
+                    throw CLIParseError.invalidValue("--scope can only be provided once")
+                }
+                let value = try parser.value(for: arg)
+                guard let parsed = AlertScopeOption(rawValue: value) else {
+                    throw CLIParseError.invalidValue(
+                        "--scope must be one of: springboard, app, any"
+                    )
+                }
+                scope = parsed
+            case "--wait":
+                guard wait == nil else {
+                    throw CLIParseError.invalidValue("--wait can only be provided once")
+                }
+                let value = try parseNonNegativeDurationSecondsStrict(
+                    parser.valueAllowingLeadingDash(for: arg),
+                    label: arg
+                )
+                guard value <= IOSUseProtocol.alertWaitMaximumTimeoutSeconds else {
+                    throw CLIParseError.invalidValue(
+                        "--wait must be at most \(IOSUseProtocol.alertWaitMaximumTimeoutSeconds)s"
+                    )
+                }
+                wait = value
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .dismissAlert(index: index)
+        return .dismissAlert(DismissAlertOptions(
+            selection: selection ?? .onlyButton,
+            scope: scope ?? .any,
+            wait: wait ?? 0
+        ))
     }
 
     private static func parseOSLog(_ parser: inout ArgumentParser) throws -> OSLogOptions {

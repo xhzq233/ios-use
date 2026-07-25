@@ -4,7 +4,7 @@ import IOSUseProtocol
 public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
 
-    public static let version = "1.3.3"
+    public static let version = "1.3.4"
     static var driverClientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)? {
         get { DriverCommandExecution.clientFactoryForTesting }
         set { DriverCommandExecution.clientFactoryForTesting = newValue }
@@ -351,6 +351,7 @@ public struct IOSUseCLI: Sendable {
                 return MachineOutput.failure(
                     command: action.name,
                     error: error,
+                    data: machineDriverErrorData(error),
                     evidenceManifest: evidence.manifestPath
                 )
             }
@@ -360,7 +361,12 @@ public struct IOSUseCLI: Sendable {
 
     private func commandFailure(command: String, error: Error, json: Bool, exitCode: Int32 = 1) -> CLIResult {
         if json {
-            return MachineOutput.failure(command: command, error: error, exitCode: exitCode)
+            return MachineOutput.failure(
+                command: command,
+                error: error,
+                data: machineDriverErrorData(error),
+                exitCode: exitCode
+            )
         }
         return CLIErrorEnvelope(message: "\(error)", exitCode: exitCode).render()
     }

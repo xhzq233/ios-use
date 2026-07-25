@@ -887,7 +887,7 @@ async function openContactsNewContact() {
   runCli(['terminateApp', 'com.apple.MobileAddressBook']);
   runCli(['activateApp', 'com.apple.MobileAddressBook']);
   await sleep(1000);
-  runCli(['dismissAlert']);
+  runCli(['dismissAlert', '--only-button']);
 
   const formVisible = () => runCli(['waitFor', '--label', 'Last name', '--traits', 'Input', '--timeout', '0.5']).code === 0;
   if (formVisible()) return;
@@ -905,7 +905,7 @@ async function openContactsNewContact() {
 
     runCli(['tap', 'close', '--traits', 'Button']);
     await sleep(500);
-    runCli(['dismissAlert']);
+    runCli(['dismissAlert', '--label', 'Discard Changes']);
     if (formVisible()) return;
   }
 
@@ -957,7 +957,7 @@ async function verifyExampleDomainOpened(id) {
 async function discardContactIfNeeded() {
   runCli(['tap', 'close', '--traits', 'Button']);
   await sleep(500);
-  runCli(['dismissAlert']);
+  runCli(['dismissAlert', '--label', 'Discard Changes']);
 }
 
 async function openContactsDiscardAlert() {

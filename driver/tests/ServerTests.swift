@@ -66,6 +66,28 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 312)
     }
 
+    func testDismissAlertInvocationDerivesAndBoundsWatchdogFromWait() throws {
+        for (wait, expectedWatchdog, expectedSocket) in [
+            (3.0, 10.0, 12),
+            (20.0, 22.0, 24),
+            (Double.infinity, 32.0, 34),
+        ] {
+            let args = ForyDismissAlertArgs(wait: wait)
+            let payload = try ForyRegistry.create().serialize(args)
+            let invocation = try CommandInvocation(
+                name: .dismissAlert,
+                payload: payload,
+                codec: Codec.Context()
+            )
+
+            XCTAssertEqual(invocation.watchdogTimeoutSeconds, expectedWatchdog)
+            XCTAssertEqual(
+                IOSUseProtocol.dismissAlertSocketReadTimeoutSeconds(args.wait),
+                expectedSocket
+            )
+        }
+    }
+
     func testLabelSwipeInvocationUsesLongCommandDeadline() throws {
         let args = ForySwipeArgs(
             toTarget: ForyTarget(label: "Developer"),

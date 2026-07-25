@@ -205,8 +205,12 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(stdout: "Pressed Home\n", payload: nil)
 
-        case .dismissAlert(let index):
-            let payload = try requiredPayload(clientRunner { .alert(try $0.dismissAlert(index: index)) }, as: ForyAlertPayload.self)
+        case .dismissAlert(let options):
+            let args = dismissAlertArgs(options)
+            let payload = try requiredPayload(
+                clientRunner { .alert(try $0.dismissAlert(args: args)) },
+                as: ForyAlertPayload.self
+            )
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatAlert(payload), payload: .alert(payload))
         }
@@ -227,6 +231,43 @@ enum DriverCommandExecutor {
         default:
             break
         }
+    }
+
+    static func dismissAlertArgs(_ options: DismissAlertOptions) -> ForyDismissAlertArgs {
+        let selection: IOSUseAlertSelectionMode
+        let index: Int32
+        let label: String
+        switch options.selection {
+        case .onlyButton:
+            selection = .onlyButton
+            index = -1
+            label = ""
+        case .index(let value):
+            selection = .index
+            index = Int32(clamping: value)
+            label = ""
+        case .label(let value):
+            selection = .label
+            index = -1
+            label = value
+        case .visualPrimary:
+            selection = .visualPrimary
+            index = -1
+            label = ""
+        }
+        let scope: IOSUseAlertScope
+        switch options.scope {
+        case .any: scope = .any
+        case .springboard: scope = .springboard
+        case .app: scope = .activeApp
+        }
+        return ForyDismissAlertArgs(
+            selection: selection.rawValue,
+            index: index,
+            label: label,
+            scope: scope.rawValue,
+            wait: options.wait
+        )
     }
 
     private static func appendPostDomIfNeeded(_ result: DriverCommandResult, postDom: PostDomMode?, clientRunner: ClientRunner) throws -> DriverCommandResult {

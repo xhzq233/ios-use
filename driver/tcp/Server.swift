@@ -454,7 +454,11 @@ struct CommandInvocation {
             self.arguments = .waitFor(try codec.deserialize(payload, as: ForyWaitForArgs.self))
 
         case .dismissAlert:
-            self.arguments = .dismissAlert(payload.count > 0 ? try codec.deserialize(payload, as: ForyDismissAlertArgs.self) : nil)
+            self.arguments = .dismissAlert(
+                payload.count > 0
+                    ? try codec.deserialize(payload, as: ForyDismissAlertArgs.self)
+                    : ForyDismissAlertArgs()
+            )
 
         case .waitAppForeground:
             self.arguments = .waitAppForeground(payload.count > 0 ? try codec.deserialize(payload, as: ForyWaitAppForegroundArgs.self) : ForyWaitAppForegroundArgs())
@@ -474,6 +478,8 @@ struct CommandInvocation {
             return IOSUseProtocol.appForegroundWatchdogTimeoutSeconds(0)
         case .swipe(let args):
             return IOSUseProtocol.swipeWatchdogTimeoutSeconds(args)
+        case .dismissAlert(let args):
+            return IOSUseProtocol.dismissAlertWatchdogTimeoutSeconds(args.wait)
         case .mediaImport:
             return IOSUseProtocol.mediaImportWatchdogTimeoutSeconds
         default:
@@ -493,7 +499,7 @@ struct CommandInvocation {
         case input(ForyInputArgs)
         case swipe(ForySwipeArgs)
         case waitFor(ForyWaitForArgs)
-        case dismissAlert(ForyDismissAlertArgs?)
+        case dismissAlert(ForyDismissAlertArgs)
         case waitAppForeground(ForyWaitAppForegroundArgs)
         case mediaImport(ForyMediaImportArgs)
     }
