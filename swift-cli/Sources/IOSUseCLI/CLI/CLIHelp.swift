@@ -22,7 +22,7 @@ enum CLIHelp {
 
         Commands:
           status, config, start, stop, dom, waitFor, screenshot, capture, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
+          activateApp, terminateApp, home, open, dismissAlert, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
     }
@@ -319,6 +319,8 @@ enum CLIHelp {
                 summary: "Dismiss a system alert.",
                 options: ["--index <index>  Button index; defaults to the last button"]
             )
+        case "media":
+            return mediaHelp(arguments: rest)
         case "oslog":
             return """
             Usage: ios-use oslog [--udid <udid>] [--process <name> | --pid <pid>] [--pattern <regex>] [--flags <flags>] [--timeout <duration>] [--verbose]
@@ -370,6 +372,10 @@ enum CLIHelp {
         }
         if arguments.first == "proxy",
            let help = commandHelpText(arguments: ["proxy"]) {
+            return help
+        }
+        if arguments.first == "media",
+           let help = commandHelpText(arguments: ["media"]) {
             return help
         }
         return rootText
@@ -478,6 +484,39 @@ enum CLIHelp {
             Usage: ios-use proxy doctor
 
             Check local proxy prerequisites and current proxy state.
+
+            """
+        default:
+            return nil
+        }
+    }
+
+    private static func mediaHelp(arguments: [String]) -> String? {
+        let subcommand = arguments.first { $0 != "--help" && $0 != "-h" }
+        switch subcommand {
+        case nil:
+            return """
+            Usage: ios-use media <command>
+
+            Add local media to the connected device through the active Driver.
+
+            Commands:
+              import    Add one photo or video to the device Photos library
+
+            """
+        case "import":
+            return """
+            Usage: ios-use media import <photo-or-video> [--json]
+
+            Add one local photo or video to the device Photos library.
+            The first import requests Photos add-only access and safely accepts
+            the newly caused Runner permission prompt when it is unambiguous.
+
+            Requires an active driver.lock. Run `ios-use start` first.
+            Use an ordinary shell loop to import multiple files.
+
+            Options:
+              --json    Print the common machine-readable envelope
 
             """
         default:

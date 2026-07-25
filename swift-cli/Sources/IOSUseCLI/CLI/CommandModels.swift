@@ -15,6 +15,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case oslog(OSLogOptions)
     case driver(DriverAction)
     case capture(CaptureOptions)
+    case mediaImport(MediaImportOptions)
     case nslog(NSLogOptions)
     case proxy(ProxyCommand)
 
@@ -33,6 +34,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .oslog: return "oslog"
         case .driver(let action): return action.name
         case .capture: return "capture"
+        case .mediaImport: return "media import"
         case .nslog: return "nslog"
         case .proxy(let command): return "proxy \(command.subcommand)"
         }
@@ -230,6 +232,14 @@ public struct CaptureOptions: Equatable, Sendable {
         self.fps = fps
         self.name = name
         self.keepChangedFrames = keepChangedFrames
+    }
+}
+
+public struct MediaImportOptions: Equatable, Sendable {
+    public var path: String
+
+    public init(path: String) {
+        self.path = path
     }
 }
 

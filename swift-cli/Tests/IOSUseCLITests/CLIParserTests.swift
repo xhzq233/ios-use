@@ -370,6 +370,26 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
+    func testParsesMediaImportAndGlobalJSON() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["media", "import", "/tmp/fixture.heic"]),
+            .mediaImport(MediaImportOptions(path: "/tmp/fixture.heic"))
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["media", "import", "/tmp/fixture.mov", "--json"]),
+            ParsedInvocation(
+                command: .mediaImport(MediaImportOptions(path: "/tmp/fixture.mov")),
+                json: true
+            )
+        )
+        XCTAssertThrowsError(try CLIParser.parse(["media", "export", "/tmp/fixture.heic"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownCommand("media export"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["media", "import"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .missingRequiredArgument("photo-or-video"))
+        }
+    }
+
     func testRejectsInvalidValuesAndUnknownOptions() {
         XCTAssertThrowsError(try CLIParser.parse(["devices"])) { error in
             XCTAssertEqual(error as? CLIParseError, .unknownCommand("devices"))

@@ -450,6 +450,53 @@ public struct ForyWaitAppForegroundPayload {
     }
 }
 
+@ForyStruct
+public struct ForyMediaImportArgs {
+    /// `photo` or `video`.
+    public var kind: String = ""
+    public var originalFilename: String = ""
+    public var uniformTypeIdentifier: String = ""
+    public var byteCount: Int64 = 0
+    public var data: Data = Data()
+
+    public init(
+        kind: String = "",
+        originalFilename: String = "",
+        uniformTypeIdentifier: String = "",
+        byteCount: Int64 = 0,
+        data: Data = Data()
+    ) {
+        self.kind = kind
+        self.originalFilename = originalFilename
+        self.uniformTypeIdentifier = uniformTypeIdentifier
+        self.byteCount = byteCount
+        self.data = data
+    }
+}
+
+@ForyStruct
+public struct ForyMediaImportPayload {
+    public var kind: String = ""
+    public var originalFilename: String = ""
+    public var byteCount: Int64 = 0
+    public var assetLocalIdentifier: String = ""
+    public var permissionPromptHandled: Bool = false
+
+    public init(
+        kind: String = "",
+        originalFilename: String = "",
+        byteCount: Int64 = 0,
+        assetLocalIdentifier: String = "",
+        permissionPromptHandled: Bool = false
+    ) {
+        self.kind = kind
+        self.originalFilename = originalFilename
+        self.byteCount = byteCount
+        self.assetLocalIdentifier = assetLocalIdentifier
+        self.permissionPromptHandled = permissionPromptHandled
+    }
+}
+
 public enum ForyRegistry {
     public static func create() -> Fory {
         let fory = Fory()
@@ -484,6 +531,8 @@ public enum ForyRegistry {
         try! fory.register(ForyProxyCAPushArgs.self, name: "ForyProxyCAPushArgs")
         try! fory.register(ForyWaitAppForegroundArgs.self, name: "ForyWaitAppForegroundArgs")
         try! fory.register(ForyWaitAppForegroundPayload.self, name: "ForyWaitAppForegroundPayload")
+        try! fory.register(ForyMediaImportArgs.self, name: "ForyMediaImportArgs")
+        try! fory.register(ForyMediaImportPayload.self, name: "ForyMediaImportPayload")
         return fory
     }
 }

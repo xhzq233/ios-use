@@ -114,6 +114,13 @@ final class Codec {
         return ForyResponseFrame(ok: true, error: "", payload: data)
     }
 
+    /// Background command lanes use a fresh serializer so Fory instances remain
+    /// thread-confined. UI commands should continue using `foryOK`.
+    static func foryOKFromAnyThread<P>(_ payload: P) throws -> ForyResponseFrame {
+        let data = try ForyRegistry.create().serialize(payload)
+        return ForyResponseFrame(ok: true, error: "", payload: data)
+    }
+
     static func foryError(
         _ message: String,
         category: String,

@@ -114,4 +114,38 @@ final class ForyModelTests: XCTestCase {
         XCTAssertEqual(decodedPayload.elapsed, 0.125)
         XCTAssertEqual(decodedPayload.dom?.app, "com.apple.springboard")
     }
+
+    func testMediaImportModelsRoundTripBinaryPayloadAndReceipt() throws {
+        let fory = ForyRegistry.create()
+        let args = ForyMediaImportArgs(
+            kind: "photo",
+            originalFilename: "fixture.heic",
+            uniformTypeIdentifier: "public.heic",
+            byteCount: 4,
+            data: Data([0, 1, 2, 3])
+        )
+        let decodedArgs = try fory.deserialize(
+            try fory.serialize(args),
+            as: ForyMediaImportArgs.self
+        )
+        XCTAssertEqual(decodedArgs.kind, "photo")
+        XCTAssertEqual(decodedArgs.originalFilename, "fixture.heic")
+        XCTAssertEqual(decodedArgs.uniformTypeIdentifier, "public.heic")
+        XCTAssertEqual(decodedArgs.byteCount, 4)
+        XCTAssertEqual(decodedArgs.data, Data([0, 1, 2, 3]))
+
+        let payload = ForyMediaImportPayload(
+            kind: "photo",
+            originalFilename: "fixture.heic",
+            byteCount: 4,
+            assetLocalIdentifier: "asset/1",
+            permissionPromptHandled: true
+        )
+        let decodedPayload = try fory.deserialize(
+            try fory.serialize(payload),
+            as: ForyMediaImportPayload.self
+        )
+        XCTAssertEqual(decodedPayload.assetLocalIdentifier, "asset/1")
+        XCTAssertTrue(decodedPayload.permissionPromptHandled)
+    }
 }

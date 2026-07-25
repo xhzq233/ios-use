@@ -46,6 +46,16 @@ public enum IOSUseProtocol {
     public static let labelSwipeWatchdogTimeoutSeconds = 60.0
     /// Host-side socket read timeout for a label-target swipe.
     public static let labelSwipeSocketReadTimeoutSeconds = 62
+    /// End-to-end deadline for one PhotoKit asset creation request.
+    public static let mediaImportTimeoutSeconds = 120.0
+    /// Driver dispatch watchdog; leaves room for the media command to return its own timeout.
+    public static let mediaImportWatchdogTimeoutSeconds = mediaImportTimeoutSeconds + 2.0
+    /// Host-side socket read timeout for media import.
+    public static let mediaImportSocketReadTimeoutSeconds = Int(mediaImportWatchdogTimeoutSeconds) + 2
+    /// Short window in which a newly requested Photos prompt must become inspectable.
+    public static let mediaPermissionPromptDiscoveryTimeoutSeconds = 8.0
+    /// Main-thread polling interval while looking for the newly requested Photos prompt.
+    public static let mediaPermissionPromptPollIntervalSeconds = 0.1
     /// Extra time allowed for one normal in-flight driver operation (usually a
     /// snapshot) to finish after a `waitFor` deadline.
     public static let waitForWatchdogGraceSeconds = Double(commandTimeoutSeconds)
@@ -247,6 +257,7 @@ public enum IOSUseErrorCategory {
     public static let action = "action"
     public static let timeout = "timeout"
     public static let postcondition = "postcondition"
+    public static let authorization = "authorization"
     public static let internalFailure = "internal"
 
 }
@@ -273,6 +284,15 @@ public enum IOSUseErrorCode {
     public static let postconditionFailed = "postcondition_failed"
     public static let appForegroundTimedOut = "app_foreground_timed_out"
     public static let appSnapshotTimedOut = "app_snapshot_timed_out"
+    public static let mediaSourceUnreadable = "media_source_unreadable"
+    public static let unsupportedMediaType = "unsupported_media_type"
+    public static let driverFrameTooLarge = "driver_frame_too_large"
+    public static let photosAddPermissionDenied = "photos_add_permission_denied"
+    public static let photosAddPermissionRestricted = "photos_add_permission_restricted"
+    public static let photosAuthorizationTimedOut = "photos_authorization_timed_out"
+    public static let photosPermissionInteractionRequired = "photos_permission_interaction_required"
+    public static let mediaImportTimedOut = "media_import_timed_out"
+    public static let mediaImportFailed = "media_import_failed"
 
 }
 
@@ -285,6 +305,7 @@ public enum IOSUseErrorPhase {
     public static let wait = "wait"
     public static let dispatch = "dispatch"
     public static let postcondition = "postcondition"
+    public static let authorization = "authorization"
 
 }
 
@@ -313,6 +334,7 @@ public enum DriverCommand: String, CaseIterable, Sendable {
     case waitFor
     case dismissAlert
     case waitAppForeground
+    case mediaImport
 }
 
 public struct DriverCommandMetadata: Equatable, Sendable {
@@ -402,6 +424,12 @@ public enum ProxyCAPushCommand: DriverCommandBinding {
     public static let command = DriverCommand.proxyCAPush
 }
 
+public enum MediaImportCommand: DriverCommandBinding {
+    public typealias Args = ForyMediaImportArgs
+    public typealias Payload = ForyMediaImportPayload
+    public static let command = DriverCommand.mediaImport
+}
+
 public extension DriverCommand {
     var metadata: DriverCommandMetadata {
         switch self {
@@ -431,6 +459,8 @@ public extension DriverCommand {
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyDismissAlertArgs.self), payloadTypeName: String(describing: ForyAlertPayload.self), mutatesUI: true)
         case .waitAppForeground:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyWaitAppForegroundArgs.self), payloadTypeName: String(describing: ForyWaitAppForegroundPayload.self), mutatesUI: false)
+        case .mediaImport:
+            DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyMediaImportArgs.self), payloadTypeName: String(describing: ForyMediaImportPayload.self), mutatesUI: false)
         }
     }
 }

@@ -38,6 +38,7 @@ import Foundation
     }
     private var nextConnectionID = 1
     private let connectionLock = DispatchQueue(label: "com.xcuidriver.connectionLock")
+    private let photoLibraryIO = DispatchQueue(label: "com.iosuse.photoLibraryIO", qos: .userInitiated)
     private var acceptLoopSem: DispatchSemaphore?
 
     var isRunning: Bool { running }
@@ -160,7 +161,9 @@ import Foundation
                 }
 
                 let invocation = try CommandInvocation(name: command, payload: foryReq.payload, codec: codec)
-                let foryResp = try self.dispatchOnMainThread(invocation)
+                let foryResp = invocation.name == .mediaImport
+                    ? try self.dispatchOnPhotoLibraryQueue(invocation)
+                    : try self.dispatchOnMainThread(invocation)
 
                 if !foryResp.ok {
                     let errorPayload = try codec.deserialize(foryResp.payload, as: ForyErrorPayload.self)
@@ -283,6 +286,78 @@ import Foundation
         String(format: "%.4f", locale: Locale(identifier: "en_US_POSIX"), value)
     }
 
+    private func dispatchOnPhotoLibraryQueue(_ invocation: CommandInvocation) throws -> ForyResponseFrame {
+        let sem = DispatchSemaphore(value: 0)
+        let stateLock = NSLock()
+        var result: ForyResponseFrame?
+        var dispatchError: Error?
+        var cancelled = false
+        var started = false
+
+        photoLibraryIO.async {
+            stateLock.lock()
+            let shouldSkip = cancelled
+            if !shouldSkip {
+                started = true
+            }
+            stateLock.unlock()
+            if shouldSkip {
+                sem.signal()
+                return
+            }
+
+            do {
+                let startedAt = CFAbsoluteTimeGetCurrent()
+                DriverLog.info("[driver] background dispatch start command=\(invocation.name.rawValue) lane=photoLibraryIO")
+                let response = try self.execute(invocation)
+                DriverLog.info("[driver] background dispatch finish command=\(invocation.name.rawValue) lane=photoLibraryIO ok=\(response.ok) elapsed=\(DriverPerf.elapsedMilliseconds(since: startedAt))ms")
+                result = response
+            } catch {
+                DriverLog.error("[driver] background dispatch error command=\(invocation.name.rawValue) lane=photoLibraryIO error=\(error)")
+                dispatchError = error
+            }
+            sem.signal()
+        }
+
+        let watchdogSeconds = invocation.watchdogTimeoutSeconds
+        let watchdogMilliseconds = Int(ceil(watchdogSeconds * IOSUseProtocol.millisecondsPerSecond))
+        if sem.wait(timeout: .now() + .milliseconds(watchdogMilliseconds)) == .timedOut {
+            stateLock.lock()
+            let commandStarted = started
+            if !commandStarted {
+                cancelled = true
+            }
+            stateLock.unlock()
+            let detail = commandStarted ? "after starting on photoLibraryIO" : "before starting on photoLibraryIO"
+            return try Codec.foryError(
+                "Media import timed out after \(Self.formatSeconds(watchdogSeconds))s \(detail)",
+                category: IOSUseErrorCategory.action,
+                code: IOSUseErrorCode.mediaImportTimedOut,
+                phase: IOSUseErrorPhase.interaction,
+                retryable: false
+            )
+        }
+        if let dispatchError {
+            return try Codec.foryError(
+                "Media import dispatch failed: \(dispatchError)",
+                category: IOSUseErrorCategory.internalFailure,
+                code: IOSUseErrorCode.internalFailure,
+                phase: IOSUseErrorPhase.dispatch,
+                fatal: true
+            )
+        }
+        if let result {
+            return result
+        }
+        return try Codec.foryError(
+            "Media import dispatch failed: result is nil after wait",
+            category: IOSUseErrorCategory.internalFailure,
+            code: IOSUseErrorCode.dispatchFailed,
+            phase: IOSUseErrorPhase.dispatch,
+            fatal: true
+        )
+    }
+
     // MARK: - Dispatch
 
     private func execute(_ invocation: CommandInvocation) throws -> ForyResponseFrame {
@@ -331,6 +406,9 @@ import Foundation
 
         case .waitAppForeground(let args):
             return try AppCommands.waitAppForeground(args)
+
+        case .mediaImport(let args):
+            return try MediaCommands.importMedia(args)
         }
     }
 }
@@ -380,6 +458,9 @@ struct CommandInvocation {
 
         case .waitAppForeground:
             self.arguments = .waitAppForeground(payload.count > 0 ? try codec.deserialize(payload, as: ForyWaitAppForegroundArgs.self) : ForyWaitAppForegroundArgs())
+
+        case .mediaImport:
+            self.arguments = .mediaImport(try codec.deserialize(payload, as: ForyMediaImportArgs.self))
         }
     }
 
@@ -393,6 +474,8 @@ struct CommandInvocation {
             return IOSUseProtocol.appForegroundWatchdogTimeoutSeconds(0)
         case .swipe(let args):
             return IOSUseProtocol.swipeWatchdogTimeoutSeconds(args)
+        case .mediaImport:
+            return IOSUseProtocol.mediaImportWatchdogTimeoutSeconds
         default:
             return Double(IOSUseProtocol.commandTimeoutSeconds)
         }
@@ -412,5 +495,6 @@ struct CommandInvocation {
         case waitFor(ForyWaitForArgs)
         case dismissAlert(ForyDismissAlertArgs?)
         case waitAppForeground(ForyWaitAppForegroundArgs)
+        case mediaImport(ForyMediaImportArgs)
     }
 }

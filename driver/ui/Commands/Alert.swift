@@ -36,6 +36,50 @@ enum AlertCommands {
         return buttonCount - 1
     }
 
+    static func handlePhotosAddPermissionPrompt(
+        deadline: Date,
+        shouldStop: @escaping () -> Bool,
+        completion: @escaping (PhotosPermissionPromptOutcome) -> Void
+    ) {
+        precondition(Thread.isMainThread)
+        let springboard = XCUIApplication(bundleIdentifier: IOSUseProtocol.springboardBundleId)
+        var lastDiagnostic = "no system alert became visible"
+
+        func poll() {
+            if shouldStop() {
+                completion(.notHandled)
+                return
+            }
+
+            if let alert = inspectAlert(in: springboard) {
+                switch classifyPhotosPermissionAlert(alert) {
+                case .safe(let button):
+                    let label = button.label
+                    button.tap()
+                    DriverLog.info("[alert] accepted Runner Photos add-only prompt with '\(label)'")
+                    completion(.handled(text: alert.text, button: label))
+                    return
+                case .ownedButUnsafe(let diagnostic):
+                    completion(.interactionRequired(diagnostic))
+                    return
+                case .unrelated(let diagnostic):
+                    lastDiagnostic = diagnostic
+                }
+            }
+
+            guard Date() < deadline else {
+                completion(.interactionRequired(lastDiagnostic))
+                return
+            }
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + IOSUseProtocol.mediaPermissionPromptPollIntervalSeconds,
+                execute: poll
+            )
+        }
+
+        poll()
+    }
+
     private static func tryDismissAlert(in app: XCUIApplication, index: Int) -> ForyResponseFrame? {
         guard let alertElement = findAlertElement(in: app) else { return nil }
 
@@ -83,5 +127,62 @@ enum AlertCommands {
             }
         }
         return result.joined(separator: "\n")
+    }
+
+    private struct AlertInspection {
+        let text: String
+        let buttons: [XCUIElement]
+    }
+
+    private enum PhotosAlertClassification {
+        case safe(XCUIElement)
+        case ownedButUnsafe(String)
+        case unrelated(String)
+    }
+
+    private static func inspectAlert(in app: XCUIApplication) -> AlertInspection? {
+        guard let alert = findAlertElement(in: app) else { return nil }
+        return AlertInspection(
+            text: collectAlertText(alert),
+            buttons: alert.descendants(matching: .button).allElementsBoundByIndex
+        )
+    }
+
+    private static func classifyPhotosPermissionAlert(_ alert: AlertInspection) -> PhotosAlertClassification {
+        let normalizedText = alert.text.lowercased()
+        let identifiesRunner = normalizedText.contains("iosusedriver")
+            || normalizedText.contains("ios-use")
+        let identifiesPhotos = normalizedText.contains("photo")
+            || normalizedText.contains("照片")
+            || normalizedText.contains("相片")
+        let buttonSummary = alert.buttons.map {
+            let identifier = $0.identifier.isEmpty ? "<none>" : $0.identifier
+            return "\($0.label)[id=\(identifier),hittable=\($0.isHittable)]"
+        }.joined(separator: ", ")
+        let diagnostic = clippedDiagnostic(
+            "alertText=\(alert.text.replacingOccurrences(of: "\n", with: " | ")); buttons=\(buttonSummary)"
+        )
+
+        guard identifiesRunner && identifiesPhotos else {
+            return .unrelated("a non-Photos or non-Runner alert is blocking prompt discovery; \(diagnostic)")
+        }
+        guard alert.buttons.count == 2 else {
+            return .ownedButUnsafe("Runner Photos prompt has \(alert.buttons.count) buttons instead of 2; \(diagnostic)")
+        }
+
+        let positiveLabels: Set<String> = ["allow", "允许", "允許"]
+        let positive = alert.buttons.filter {
+            positiveLabels.contains($0.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
+        guard positive.count == 1, positive[0].isHittable else {
+            return .ownedButUnsafe("Runner Photos prompt has no unique hittable allow action; \(diagnostic)")
+        }
+        return .safe(positive[0])
+    }
+
+    private static func clippedDiagnostic(_ value: String) -> String {
+        let limit = 600
+        guard value.count > limit else { return value }
+        return String(value.prefix(limit)) + "…"
     }
 }

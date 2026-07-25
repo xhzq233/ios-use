@@ -237,6 +237,19 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .mediaImport(let options):
+            do {
+                let result = try MediaImportService.run(options: options, paths: paths)
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: MediaImportService.machineData(result)
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: MediaImportService.format(result))
+            } catch {
+                return commandFailure(command: parsed.commandName, error: error, json: json)
+            }
         }
     }
 

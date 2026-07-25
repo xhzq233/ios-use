@@ -42,6 +42,8 @@ public enum CLIParser {
             parsed = .nslog(try parseNSLog(&parser))
         case "proxy":
             parsed = .proxy(try parseProxy(&parser))
+        case "media":
+            parsed = .mediaImport(try parseMedia(&parser))
         case "tap":
             parsed = .driver(try parseTap(&parser))
         case "longpress":
@@ -75,7 +77,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .status, .install, .apps, .open, .appLifecycle, .driver:
+            case .status, .install, .apps, .open, .appLifecycle, .driver, .mediaImport:
                 break
             default:
                 throw CLIParseError.unknownOption("--json")
@@ -326,6 +328,16 @@ public enum CLIParser {
         default:
             throw CLIParseError.unknownCommand("proxy \(subcommand)")
         }
+    }
+
+    private static func parseMedia(_ parser: inout ArgumentParser) throws -> MediaImportOptions {
+        let subcommand = try parser.requiredPositional("subcommand")
+        guard subcommand == "import" else {
+            throw CLIParseError.unknownCommand("media \(subcommand)")
+        }
+        let path = try parser.requiredPositional("photo-or-video")
+        try parser.requireEnd()
+        return MediaImportOptions(path: path)
     }
 
     private static func parseTap(_ parser: inout ArgumentParser) throws -> DriverAction {

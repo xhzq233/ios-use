@@ -144,6 +144,45 @@ stamp_driver_version() {
   done
 }
 
+PHOTO_LIBRARY_ADD_USAGE_DESCRIPTION="Allow ios-use to add automation fixtures to the Photos library."
+
+stamp_runner_photo_library_usage() {
+  local app_path="$1"
+  local plist="$app_path/Info.plist"
+  if [ ! -f "$plist" ]; then
+    echo "[build] ERROR: Runner Info.plist not found at $plist"
+    exit 1
+  fi
+
+  /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription $PHOTO_LIBRARY_ADD_USAGE_DESCRIPTION" "$plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string $PHOTO_LIBRARY_ADD_USAGE_DESCRIPTION" "$plist"
+
+  local stamped
+  stamped="$(/usr/libexec/PlistBuddy -c 'Print :NSPhotoLibraryAddUsageDescription' "$plist" 2>/dev/null || true)"
+  if [ "$stamped" != "$PHOTO_LIBRARY_ADD_USAGE_DESCRIPTION" ]; then
+    echo "[build] ERROR: failed to stamp NSPhotoLibraryAddUsageDescription into $plist"
+    exit 1
+  fi
+}
+
+verify_packaged_runner_photo_library_usage() {
+  local ipa="$1"
+  local plist_entry
+  plist_entry="$(unzip -Z1 "$ipa" | awk '$0 ~ "^Payload/[^/]+[.]app/Info[.]plist$" { print; exit }')"
+  if [ -z "$plist_entry" ]; then
+    echo "[build] ERROR: Runner Info.plist missing from $ipa"
+    exit 1
+  fi
+
+  local packaged
+  packaged="$(unzip -p "$ipa" "$plist_entry" \
+    | plutil -extract NSPhotoLibraryAddUsageDescription raw -o - - 2>/dev/null || true)"
+  if [ "$packaged" != "$PHOTO_LIBRARY_ADD_USAGE_DESCRIPTION" ]; then
+    echo "[build] ERROR: packaged Runner is missing NSPhotoLibraryAddUsageDescription: $ipa"
+    exit 1
+  fi
+}
+
 add_simulator_testing_interop_shim() {
   local app_path="$1"
   local frameworks_path="$app_path/Frameworks"
@@ -199,6 +238,7 @@ if [ "$SIMULATOR_ONLY" != true ]; then
   fi
   echo "[build] Built xctest wrapper: $XCTEST_WRAPPER_PATH"
   stamp_driver_version "$XCTEST_WRAPPER_PATH"
+  stamp_runner_photo_library_usage "$XCTEST_WRAPPER_PATH"
 
   # Strip XC frameworks and libXCTestSwiftSupport.dylib for iOS 17+ compatibility.
   # On iOS 17+, device already has these frameworks / dylibs.
@@ -229,6 +269,7 @@ if [ "$SIMULATOR_ONLY" != true ]; then
   echo "[build] Packaging device IPA..."
   STEP_STARTED_AT="$(date +%s)"
   package_ipa "$XCTEST_WRAPPER_PATH" "$IPA_OUTPUT"
+  verify_packaged_runner_photo_library_usage "$IPA_OUTPUT"
   STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
   printf '[build] iOS device packaging completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 else
@@ -257,6 +298,7 @@ if [ ! -d "$XCTEST_WRAPPER_PATH" ]; then
 fi
 echo "[build] Built Simulator xctest wrapper: $XCTEST_WRAPPER_PATH"
 stamp_driver_version "$XCTEST_WRAPPER_PATH"
+stamp_runner_photo_library_usage "$XCTEST_WRAPPER_PATH"
 
 echo "[build] Adding Simulator TestingInterop shim..."
 STEP_STARTED_AT="$(date +%s)"
@@ -269,6 +311,7 @@ printf '[build] Simulator TestingInterop shim completed in %dm%02ds\n' "$((STEP_
 echo "[build] Packaging simulator IPA..."
 STEP_STARTED_AT="$(date +%s)"
 package_ipa "$XCTEST_WRAPPER_PATH" "$SIM_IPA_OUTPUT"
+verify_packaged_runner_photo_library_usage "$SIM_IPA_OUTPUT"
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
 printf '[build] Simulator packaging completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"
 TOTAL_ELAPSED=$(($(date +%s) - BUILD_STARTED_AT))

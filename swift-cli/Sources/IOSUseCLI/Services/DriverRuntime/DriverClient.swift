@@ -60,6 +60,7 @@ protocol DriverCommandClient: AnyObject {
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
+    func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload
 }
 
 struct ScreenshotCapture {
@@ -108,6 +109,10 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload {
+        throw CLIParseError.invalidValue("media import is not supported by this driver client")
+    }
+
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
         throw CLIParseError.invalidValue("waitAppForeground is not supported by this driver client")
     }
@@ -424,6 +429,16 @@ final class DriverClient: DriverCommandClient {
         return try fory.deserialize(response, as: ForyWaitAppForegroundPayload.self)
     }
 
+    func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload {
+        let payload = try fory.serialize(args)
+        let response = try sendRawPayload(
+            command: MediaImportCommand.command.rawValue,
+            payload: payload,
+            responseTimeoutSeconds: IOSUseProtocol.mediaImportSocketReadTimeoutSeconds
+        )
+        return try fory.deserialize(response, as: ForyMediaImportPayload.self)
+    }
+
     private func send<B: DriverCommandBinding>(_ binding: B.Type, args: B.Args) throws -> B.Payload {
         let payload = try sendRaw(binding, args: args)
         return try fory.deserialize(payload, as: B.Payload.self)
@@ -444,6 +459,9 @@ final class DriverClient: DriverCommandClient {
         do {
             let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
             requestBytes = frameData.count
+            guard frameData.count <= IOSUseProtocol.maxFrameSizeBytes else {
+                throw DriverClientError.maxFrameSizeExceeded
+            }
             let fd = try connectedFD()
             configureSocketTimeout(fd, seconds: responseTimeoutSeconds ?? socketTimeoutSeconds)
             didUseConnection = true

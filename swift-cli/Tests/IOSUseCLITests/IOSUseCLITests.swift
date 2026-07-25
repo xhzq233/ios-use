@@ -2567,8 +2567,9 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(commands.contains("waitFor"))
         XCTAssertTrue(commands.contains("dismissAlert"))
         XCTAssertTrue(commands.contains("waitAppForeground"))
+        XCTAssertTrue(commands.contains("mediaImport"))
         XCTAssertFalse(commands.contains("health"))
-        XCTAssertEqual(commands.count, 13)
+        XCTAssertEqual(commands.count, 14)
     }
 
     func testDriverCommandMetadataBindsArgsAndPayloadTypes() {
@@ -2578,6 +2579,94 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertNil(DriverCommand.home.metadata.argsTypeName)
         XCTAssertNil(DriverCommand.home.metadata.payloadTypeName)
+        XCTAssertEqual(DriverCommand.mediaImport.metadata.argsTypeName, "ForyMediaImportArgs")
+        XCTAssertEqual(DriverCommand.mediaImport.metadata.payloadTypeName, "ForyMediaImportPayload")
+        XCTAssertFalse(DriverCommand.mediaImport.metadata.mutatesUI)
+    }
+
+    func testMediaImportSendsTypedBytesAndReturnsHumanAndJSONReceipts() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-media-import-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let source = URL(fileURLWithPath: root).appendingPathComponent("fixture.png")
+        let bytes = Data([0x89, 0x50, 0x4e, 0x47])
+        try bytes.write(to: source)
+        let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
+        try writeDriverLock(udid: "SIM-MEDIA", deviceType: "simulator", paths: paths)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        var received: [ForyMediaImportArgs] = []
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(mediaImportHandler: { args in
+                received.append(args)
+                return ForyMediaImportPayload(
+                    kind: args.kind,
+                    originalFilename: args.originalFilename,
+                    byteCount: args.byteCount,
+                    assetLocalIdentifier: "asset/fixture",
+                    permissionPromptHandled: received.count == 1
+                )
+            })
+        }
+        let cli = IOSUseCLI(environment: ["IOS_USE_HOME": root])
+
+        let human = cli.run(arguments: ["media", "import", source.path])
+        let json = cli.run(arguments: ["media", "import", source.path, "--json"])
+
+        XCTAssertEqual(human.exitCode, 0)
+        XCTAssertEqual(
+            human.stdout,
+            "Imported photo fixture.png (4 bytes, asset asset/fixture)\n"
+        )
+        XCTAssertEqual(json.exitCode, 0)
+        XCTAssertTrue(json.stdout.contains(#""command" : "media import""#))
+        XCTAssertTrue(json.stdout.contains(#""assetLocalIdentifier" : "asset/fixture""#))
+        XCTAssertTrue(json.stdout.contains(#""permissionPromptHandled" : false"#))
+        XCTAssertEqual(received.count, 2)
+        XCTAssertTrue(received.allSatisfy { $0.kind == "photo" })
+        XCTAssertTrue(received.allSatisfy { $0.originalFilename == "fixture.png" })
+        XCTAssertTrue(received.allSatisfy { $0.uniformTypeIdentifier == "public.png" })
+        XCTAssertTrue(received.allSatisfy { $0.byteCount == 4 && $0.data == bytes })
+    }
+
+    func testMediaImportValidationUsesClassifiedJSONAndMediaHelp() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-media-invalid-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        let source = URL(fileURLWithPath: root).appendingPathComponent("fixture.txt")
+        try Data("not media".utf8).write(to: source)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
+            arguments: ["media", "import", source.path, "--json"]
+        )
+        let parseFailure = IOSUseCLI(environment: ["IOS_USE_HOME": root]).run(
+            arguments: ["media", "export", source.path]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stderr.contains(#""category" : "validation""#))
+        XCTAssertTrue(result.stderr.contains(#""code" : "unsupported_media_type""#))
+        XCTAssertTrue(result.stderr.contains(#""phase" : "validation""#))
+        XCTAssertTrue(result.stdout.isEmpty)
+        XCTAssertEqual(parseFailure.exitCode, 64)
+        XCTAssertTrue(parseFailure.stderr.contains("unknown command 'media export'"))
+        XCTAssertTrue(parseFailure.stderr.contains("Usage: ios-use media <command>"))
+    }
+
+    func testMediaImportHelpExplainsOneFileAndShellComposition() {
+        let result = IOSUseCLI().run(arguments: ["media", "import", "--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout.contains("Usage: ios-use media import <photo-or-video> [--json]"))
+        XCTAssertTrue(result.stdout.contains("Use an ordinary shell loop to import multiple files"))
+        XCTAssertTrue(result.stderr.isEmpty)
     }
 
     // MARK: - SchemeRegistry.parseSchemeHandlers
@@ -2803,6 +2892,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
     private let terminateHandler: (String) throws -> Void
     private let screenshotHandler: () throws -> ScreenshotCapture
     private let waitAppForegroundHandler: (String, Double, Bool) throws -> ForyWaitAppForegroundPayload
+    private let mediaImportHandler: (ForyMediaImportArgs) throws -> ForyMediaImportPayload
 
     init(
         domHandler: @escaping (Bool, Bool, Bool) throws -> ForyDomPayload = { _, _, _ in
@@ -2822,6 +2912,9 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         },
         waitAppForegroundHandler: @escaping (String, Double, Bool) throws -> ForyWaitAppForegroundPayload = { _, _, _ in
             throw CLIParseError.invalidValue("unexpected waitAppForeground")
+        },
+        mediaImportHandler: @escaping (ForyMediaImportArgs) throws -> ForyMediaImportPayload = { _ in
+            throw CLIParseError.invalidValue("unexpected media import")
         }
     ) {
         self.domHandler = domHandler
@@ -2830,6 +2923,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         self.terminateHandler = terminateHandler
         self.screenshotHandler = screenshotHandler
         self.waitAppForegroundHandler = waitAppForegroundHandler
+        self.mediaImportHandler = mediaImportHandler
     }
 
     func close() {}
@@ -2888,6 +2982,10 @@ private final class FakeDriverCommandClient: DriverCommandClient {
 
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
         try waitAppForegroundHandler(expectedBundleId, timeout, returnDom)
+    }
+
+    func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload {
+        try mediaImportHandler(args)
     }
 
 }
