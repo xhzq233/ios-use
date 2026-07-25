@@ -290,6 +290,7 @@ public enum IOSUseErrorPhase {
 
 public enum IOSUseCandidateRejection {
     public static let snapshotInvisible = "snapshot_invisible"
+    public static let ancestorInvisible = "ancestor_invisible"
     public static let emptyVisibleFrame = "empty_visible_frame"
     public static let outsideAppBounds = "outside_app_bounds"
     public static let zeroAreaFrame = "zero_area_frame"

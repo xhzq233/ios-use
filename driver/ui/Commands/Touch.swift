@@ -44,20 +44,25 @@ enum TouchCommands {
         }
         switch rawFind(target, visibility: .only) {
         case .found(let elem):
-            let f = elem.node.frame
-            guard f.width > 0, f.height > 0 else {
+            guard let frame = interactionFrame(elem.node) else {
                 return try Codec.foryError(
-                    "tap: element '\(target.label)' has a zero-area frame",
+                    "tap: element '\(target.label)' has no interaction frame",
                     category: IOSUseErrorCategory.lookup,
                     code: IOSUseErrorCode.elementNotActionable,
                     phase: IOSUseErrorPhase.lookup,
                     retryable: true,
                     target: target,
-                    candidates: [makeErrorCandidate(elem, rejectedBy: [IOSUseCandidateRejection.zeroAreaFrame])],
+                    candidates: [makeErrorCandidate(
+                        elem,
+                        rejectedBy: [
+                            interactionFrameRejectionReason(elem.node, in: elem.node.appFrame)
+                                ?? IOSUseCandidateRejection.zeroAreaFrame
+                        ]
+                    )],
                     candidateCount: 1
                 )
             }
-            let point = resolveTapPoint(frame: f, offset: args.offset, ratio: args.ratio)
+            let point = resolveTapPoint(frame: frame, offset: args.offset, ratio: args.ratio)
             try tapAtPoint(point, app: app)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
@@ -112,20 +117,25 @@ enum TouchCommands {
         }
         switch rawFind(target, visibility: .only) {
         case .found(let elem):
-            let f = elem.node.frame
-            guard f.width > 0, f.height > 0 else {
+            guard let frame = interactionFrame(elem.node) else {
                 return try Codec.foryError(
-                    "longPress: element '\(target.label)' has a zero-area frame",
+                    "longPress: element '\(target.label)' has no interaction frame",
                     category: IOSUseErrorCategory.lookup,
                     code: IOSUseErrorCode.elementNotActionable,
                     phase: IOSUseErrorPhase.lookup,
                     retryable: true,
                     target: target,
-                    candidates: [makeErrorCandidate(elem, rejectedBy: [IOSUseCandidateRejection.zeroAreaFrame])],
+                    candidates: [makeErrorCandidate(
+                        elem,
+                        rejectedBy: [
+                            interactionFrameRejectionReason(elem.node, in: elem.node.appFrame)
+                                ?? IOSUseCandidateRejection.zeroAreaFrame
+                        ]
+                    )],
                     candidateCount: 1
                 )
             }
-            try pressAtPoint(CGPoint(x: f.midX, y: f.midY), duration: duration, app: app)
+            try pressAtPoint(CGPoint(x: frame.midX, y: frame.midY), duration: duration, app: app)
             let payload = ForyElementPayload(
                 element: makeForyElementSummary(elem.node)
             )

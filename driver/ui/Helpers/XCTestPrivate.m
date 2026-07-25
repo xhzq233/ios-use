@@ -859,6 +859,7 @@ BOOL SnapshotMatchesElement(id a, id b) {
 }
 
 - (id)raw { return _raw; }
+- (CGRect)appFrame { return _appFrame; }
 
 // MARK: Properties
 

@@ -35,8 +35,9 @@ enum RawFindTextMatch {
 /// the indexed element count, s is the number of precomputed searchable texts
 /// per element, m is the number of text matches, r is the number of requested
 /// traits, c is candidate string count, q is query length, and t is candidate
-/// length used by fuzzy fallback. Effective-visible filtering adds O(n) before
-/// exact/contains/fuzzy when `visibility == .only`.
+/// length used by fuzzy fallback. Interaction-frame filtering adds O(n * h)
+/// before exact/contains/fuzzy when `visibility == .only`, where h is the raw
+/// snapshot ancestor depth used only when visibleFrame is invalid.
 /// `diagnostics == .none` preserves selector semantics while skipping rejected
 /// candidate discovery and ancestor materialization for polling hot paths.
 func rawFindInSnapshot(_ target: ForyTarget,
@@ -74,7 +75,7 @@ func rawFindInSnapshot(_ target: ForyTarget,
     }
 
     let searchEntries = visibility == .only
-        ? cs.searchEntries.filter { isVisibleWithEffectiveGeometry($0.element, in: cs.appFrame) }
+        ? cs.searchEntries.filter { hasInteractionFrame($0.element, in: cs.appFrame) }
         : cs.searchEntries
 
     // 1. Standard matching preserves the shared selector behavior. Explicit
@@ -85,7 +86,7 @@ func rawFindInSnapshot(_ target: ForyTarget,
     if matches.isEmpty {
         if visibility == .only && diagnostics == .full {
             let rejected = contentMatches(in: cs.searchEntries, normalizedQuery: normalizedQuery, textMatch: textMatch).compactMap { element -> ForyErrorCandidate? in
-                guard let reason = effectiveVisibilityRejectionReason(element, in: cs.appFrame) else { return nil }
+                guard let reason = interactionFrameRejectionReason(element, in: cs.appFrame) else { return nil }
                 return makeErrorCandidate(element, rejectedBy: [reason])
             }
             if !rejected.isEmpty {
@@ -148,7 +149,7 @@ func rawFindInSnapshot(_ target: ForyTarget,
     }
     if visibility == .only {
         let beforeVisibilityFilter = matches
-        matches = beforeVisibilityFilter.filter { isVisibleWithEffectiveGeometry($0, in: cs.appFrame) }
+        matches = beforeVisibilityFilter.filter { hasInteractionFrame($0, in: cs.appFrame) }
         if matches.isEmpty {
             guard diagnostics == .full else {
                 return finish(.notFound(suggestions: [], rejected: []), detail: "result=notFound reason=selectedVisibility diagnostics=none")
@@ -156,7 +157,7 @@ func rawFindInSnapshot(_ target: ForyTarget,
             let rejected = beforeVisibilityFilter.map { element in
                 makeErrorCandidate(
                     element,
-                    rejectedBy: [effectiveVisibilityRejectionReason(element, in: cs.appFrame) ?? IOSUseCandidateRejection.emptyVisibleFrame]
+                    rejectedBy: [interactionFrameRejectionReason(element, in: cs.appFrame) ?? IOSUseCandidateRejection.emptyVisibleFrame]
                 )
             }
             return finish(.notFound(suggestions: [], rejected: rejected), detail: "result=notFound rejected=\(rejected.count) reason=selectedVisibility")

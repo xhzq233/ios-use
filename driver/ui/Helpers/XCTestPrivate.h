@@ -53,6 +53,7 @@ BOOL SnapshotMatchesElement(id _Nonnull a, id _Nonnull b);
 @property (nonatomic, readonly, nullable) NSString *value;
 @property (nonatomic, readonly, nullable) NSString *placeholderValue;
 @property (nonatomic, readonly) NSUInteger elementType;
+@property (nonatomic, readonly) CGRect appFrame;
 @property (nonatomic, readonly) CGRect frame;
 @property (nonatomic, readonly) CGRect visibleFrame;
 @property (nonatomic, readonly) BOOL isVisible;
