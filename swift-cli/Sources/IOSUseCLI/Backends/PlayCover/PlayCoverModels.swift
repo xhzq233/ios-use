@@ -133,6 +133,94 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
     public let convertedMachOs: [String]
     public let preparedAt: String
     public let helloPath: String
+    public let preparedGenerationID: String
+    public let runtimeBootstrapPath: String
+    public let runtimeSocketPath: String
+
+    public init(
+        schemaVersion: Int,
+        backend: String,
+        sourceAppPath: String,
+        preparedAppPath: String,
+        bundleIdentifier: String,
+        executableName: String,
+        profileHash: String,
+        runtimeLoadPath: String,
+        runtimeFrameworkName: String,
+        convertedMachOs: [String],
+        preparedAt: String,
+        helloPath: String,
+        preparedGenerationID: String,
+        runtimeBootstrapPath: String,
+        runtimeSocketPath: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.backend = backend
+        self.sourceAppPath = sourceAppPath
+        self.preparedAppPath = preparedAppPath
+        self.bundleIdentifier = bundleIdentifier
+        self.executableName = executableName
+        self.profileHash = profileHash
+        self.runtimeLoadPath = runtimeLoadPath
+        self.runtimeFrameworkName = runtimeFrameworkName
+        self.convertedMachOs = convertedMachOs
+        self.preparedAt = preparedAt
+        self.helloPath = helloPath
+        self.preparedGenerationID = preparedGenerationID
+        self.runtimeBootstrapPath = runtimeBootstrapPath
+        self.runtimeSocketPath = runtimeSocketPath
+    }
+}
+
+/// The signed, flattened runtime configuration embedded in a prepared App.
+///
+/// Its schema is intentionally independent of `PlayCoverDeviceProfile` so the
+/// device profile hash remains stable while the runtime/bootstrap contract can
+/// evolve.
+struct PlayCoverSignedRuntimeProfile: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let deviceProfileSchemaVersion: Int
+    let backend: String
+    let identifier: String
+    let productType: String
+    let hardwareTarget: String
+    let logicalWidth: Int
+    let logicalHeight: Int
+    let nativeWidth: Int
+    let nativeHeight: Int
+    let scale: Double
+    let pixelsPerInch: Int
+    let orientation: String
+    let profileHash: String
+    let helloPath: String
+    let preparedGenerationID: String
+    let runtimeBootstrapPath: String
+    let runtimeSocketPath: String
+
+    var deviceProfile: PlayCoverDeviceProfile {
+        PlayCoverDeviceProfile(
+            schemaVersion: deviceProfileSchemaVersion,
+            identifier: identifier,
+            productType: productType,
+            hardwareTarget: hardwareTarget,
+            logicalWidth: logicalWidth,
+            logicalHeight: logicalHeight,
+            nativeWidth: nativeWidth,
+            nativeHeight: nativeHeight,
+            scale: scale,
+            pixelsPerInch: pixelsPerInch,
+            orientation: orientation
+        )
+    }
+}
+
+struct PlayCoverRuntimeBootstrap: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let launchNonce: String
+    let runtimeSocketPath: String
+    let profileHash: String
+    let bundleIdentifier: String
+    let preparedGenerationID: String
 }
 
 public struct PlayCoverVerification: Codable, Equatable, Sendable {
@@ -144,6 +232,10 @@ public struct PlayCoverVerification: Codable, Equatable, Sendable {
 
 public struct PlayCoverHello: Codable, Equatable, Sendable {
     public let schemaVersion: Int
+    public let launchNonce: String?
+    public let preparedGenerationID: String?
+    public let runtimeInstanceID: String?
+    public let runtimeSocketPath: String?
     public let pid: Int32
     public let bundleIdentifier: String
     public let profileHash: String
@@ -155,6 +247,42 @@ public struct PlayCoverHello: Codable, Equatable, Sendable {
     public let windowWidth: Double?
     public let windowHeight: Double?
     public let stage: String
+
+    public init(
+        schemaVersion: Int,
+        launchNonce: String? = nil,
+        preparedGenerationID: String? = nil,
+        runtimeInstanceID: String? = nil,
+        runtimeSocketPath: String? = nil,
+        pid: Int32,
+        bundleIdentifier: String,
+        profileHash: String,
+        logicalWidth: Double,
+        logicalHeight: Double,
+        nativeWidth: Double,
+        nativeHeight: Double,
+        scale: Double,
+        windowWidth: Double?,
+        windowHeight: Double?,
+        stage: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.launchNonce = launchNonce
+        self.preparedGenerationID = preparedGenerationID
+        self.runtimeInstanceID = runtimeInstanceID
+        self.runtimeSocketPath = runtimeSocketPath
+        self.pid = pid
+        self.bundleIdentifier = bundleIdentifier
+        self.profileHash = profileHash
+        self.logicalWidth = logicalWidth
+        self.logicalHeight = logicalHeight
+        self.nativeWidth = nativeWidth
+        self.nativeHeight = nativeHeight
+        self.scale = scale
+        self.windowWidth = windowWidth
+        self.windowHeight = windowHeight
+        self.stage = stage
+    }
 }
 
 public enum PlayCoverBackendError: Error, Equatable, CustomStringConvertible, Sendable {

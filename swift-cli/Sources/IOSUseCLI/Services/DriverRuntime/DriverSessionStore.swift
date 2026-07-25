@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 enum DriverSessionStore {
     static func clear(paths: IOSUsePaths) {
@@ -42,7 +45,11 @@ enum DriverSessionStore {
             bundleId: raw["bundleId"] as? String,
             controlSocketPath: raw["controlSocketPath"] as? String,
             playCoverAppPath: raw["playcoverAppPath"] as? String,
-            profileHash: raw["profileHash"] as? String
+            profileHash: raw["profileHash"] as? String,
+            playCoverRuntimeSocketPath: raw["playcoverRuntimeSocketPath"] as? String,
+            playCoverLaunchNonce: raw["playcoverLaunchNonce"] as? String,
+            playCoverPreparedGenerationID: raw["playcoverPreparedGenerationID"] as? String,
+            playCoverRuntimeInstanceID: raw["playcoverRuntimeInstanceID"] as? String
         )
         if deviceType == PlayCoverSessionService.deviceType {
             guard let appPath = info.playCoverAppPath, !appPath.isEmpty,
@@ -51,6 +58,14 @@ enum DriverSessionStore {
                   let runnerPid = info.runnerPid, runnerPid > 0 else {
                 throw CLIParseError.invalidValue(
                     "Invalid driver.lock: incomplete PlayCover session."
+                )
+            }
+            guard info.playCoverRuntimeSocketPath?.isEmpty == false,
+                  info.playCoverLaunchNonce?.isEmpty == false,
+                  info.playCoverPreparedGenerationID?.isEmpty == false,
+                  info.playCoverRuntimeInstanceID?.isEmpty == false else {
+                throw CLIParseError.invalidValue(
+                    "Invalid driver.lock: incomplete PlayCover runtime identity."
                 )
             }
         }
@@ -97,10 +112,22 @@ enum DriverSessionStore {
         if let profileHash = info.profileHash {
             root["profileHash"] = profileHash
         }
+        if let socketPath = info.playCoverRuntimeSocketPath {
+            root["playcoverRuntimeSocketPath"] = socketPath
+        }
+        if let launchNonce = info.playCoverLaunchNonce {
+            root["playcoverLaunchNonce"] = launchNonce
+        }
+        if let generationID = info.playCoverPreparedGenerationID {
+            root["playcoverPreparedGenerationID"] = generationID
+        }
+        if let runtimeInstanceID = info.playCoverRuntimeInstanceID {
+            root["playcoverRuntimeInstanceID"] = runtimeInstanceID
+        }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: URL(fileURLWithPath: paths.driverLock), options: .atomic)
+        try writePrivateAtomically(data, to: paths.driverLock)
     }
 
     static func clearDriverLock(paths: IOSUsePaths) {
@@ -116,5 +143,91 @@ enum DriverSessionStore {
             }
             throw error
         }
+    }
+
+    private static func writePrivateAtomically(
+        _ data: Data,
+        to path: String
+    ) throws {
+        #if canImport(Darwin)
+        var existing = stat()
+        if Darwin.lstat(path, &existing) == 0 {
+            guard (existing.st_mode & mode_t(S_IFMT))
+                    == mode_t(S_IFREG),
+                  existing.st_uid == geteuid() else {
+                throw CLIParseError.invalidValue(
+                    "Refusing to replace driver.lock because it is not an owned regular file."
+                )
+            }
+        } else if errno != ENOENT {
+            throw CLIParseError.invalidValue(
+                "Cannot inspect driver.lock before writing: errno \(errno)."
+            )
+        }
+        let destination = URL(fileURLWithPath: path)
+        let temporaryPath = destination.deletingLastPathComponent()
+            .appendingPathComponent(
+                ".driver-lock-\(UUID().uuidString).tmp"
+            )
+            .path
+        let descriptor = Darwin.open(
+            temporaryPath,
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            throw CLIParseError.invalidValue(
+                "Cannot create private driver.lock: errno \(errno)."
+            )
+        }
+        var removeTemporary = true
+        defer {
+            Darwin.close(descriptor)
+            if removeTemporary {
+                Darwin.unlink(temporaryPath)
+            }
+        }
+        try data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else {
+                return
+            }
+            var offset = 0
+            while offset < buffer.count {
+                let written = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    buffer.count - offset
+                )
+                if written > 0 {
+                    offset += written
+                    continue
+                }
+                if written < 0, errno == EINTR {
+                    continue
+                }
+                throw CLIParseError.invalidValue(
+                    "Cannot write private driver.lock: errno \(errno)."
+                )
+            }
+        }
+        guard Darwin.fsync(descriptor) == 0,
+              Darwin.fchmod(descriptor, 0o600) == 0 else {
+            throw CLIParseError.invalidValue(
+                "Cannot secure private driver.lock: errno \(errno)."
+            )
+        }
+        guard Darwin.rename(temporaryPath, path) == 0 else {
+            throw CLIParseError.invalidValue(
+                "Cannot install private driver.lock: errno \(errno)."
+            )
+        }
+        removeTemporary = false
+        #else
+        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: path
+        )
+        #endif
     }
 }

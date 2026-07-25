@@ -199,6 +199,7 @@ bash scripts/build_swift_cli.sh --debug
 ./ios-use playcover inspect /path/to/Source.app
 ./ios-use start --playcover --app /path/to/Source.app
 ./ios-use status
+./ios-use screenshot
 ./ios-use stop
 ```
 
@@ -213,17 +214,21 @@ The advanced `playcover prepare` toolbox remains available for an explicit
 output/runtime path. It refuses to replace an existing output. It APFS-clones the source,
 validates and converts each supported Mach-O, injects one runtime dependency,
 applies narrow Mac sandbox entitlements, signs each nested binary and the App,
-then verifies the complete generation. `start --playcover` succeeds only after the runtime
-reports matching UIKit/native geometry and a 430 x 932 AppKit content area.
+then verifies the complete generation. `start --playcover` succeeds only after
+the CLI directly authenticates the injected Runtime over its private Unix
+socket and verifies 430 x 932 UIKit geometry, 1290 x 2796 native geometry, and
+an approximately uniform AppKit presentation scale.
 
 An automatically or explicitly prepared output becomes the default for a later
 bare `start --playcover`; pass `--app /path/to/Source-or-Prepared.app` to
 select and launch another App in one invocation.
 `driver.lock` keeps PlayCover selected until normal `ios-use stop`, so
-session-bound commands cannot fall back to an XCTest device. This is still the
-first backend slice: lifecycle, profile, conversion, signing, and runtime
-evidence are implemented. DOM/actions route to the PlayCover backend but return
-an explicit capability error until the injected automation transport lands.
+session-bound commands cannot fall back to an XCTest device. `status` and
+`screenshot` reconnect directly to the same injected Runtime identity;
+screenshots use ScreenCaptureKit to capture the exact PID/window, crop the
+AppKit content, and normalize it to 1290 x 2796 with 430 x 932 @3x metadata.
+macOS Screen Recording permission is required. DOM/actions route to the
+PlayCover backend but still return an explicit capability error.
 See [docs/playcover-backend.md](docs/playcover-backend.md).
 
 ## Performance Snapshot

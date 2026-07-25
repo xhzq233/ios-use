@@ -9,6 +9,11 @@ public struct IOSUseCLI: Sendable {
         get { DriverCommandExecution.clientFactoryForTesting }
         set { DriverCommandExecution.clientFactoryForTesting = newValue }
     }
+    static var playCoverDriverClientFactoryForTesting:
+        ((SessionService.Info) -> DriverCommandClient)? {
+        get { DriverCommandExecution.playCoverClientFactoryForTesting }
+        set { DriverCommandExecution.playCoverClientFactoryForTesting = newValue }
+    }
 
     public let paths: IOSUsePaths
     public let outputSink: CLIOutputSink?
@@ -310,7 +315,9 @@ public struct IOSUseCLI: Sendable {
                     Converted Mach-Os: \(manifest.convertedMachOs.count)
                     Profile: 430 x 932 points @3x (1290 x 2796 pixels)
                     Profile hash: \(manifest.profileHash)
-                    Runtime hello: \(manifest.helloPath)
+                    Prepared generation: \(manifest.preparedGenerationID)
+                    Runtime socket: \(manifest.runtimeSocketPath)
+                    Runtime bootstrap: \(manifest.runtimeBootstrapPath)
 
                     """
                 )
@@ -347,8 +354,41 @@ public struct IOSUseCLI: Sendable {
             return nil
         }
         switch command {
-        case .status, .config, .start, .stop, .playcover, .driver, .capture:
+        case .status, .config, .start, .stop, .playcover, .capture:
             return nil
+        case .driver(let action):
+            switch action {
+            case .screenshot:
+                return nil
+            case .activateApp:
+                return commandFailure(
+                    command: action.name,
+                    error: PlayCoverDriverClientError
+                        .lifecycleCommandUnsupported("activateApp"),
+                    json: json
+                )
+            case .terminateApp:
+                return commandFailure(
+                    command: action.name,
+                    error: PlayCoverDriverClientError
+                        .lifecycleCommandUnsupported("terminateApp"),
+                    json: json
+                )
+            case .home:
+                return commandFailure(
+                    command: action.name,
+                    error: PlayCoverDriverClientError
+                        .lifecycleCommandUnsupported("home"),
+                    json: json
+                )
+            default:
+                return commandFailure(
+                    command: action.name,
+                    error: PlayCoverDriverClientError
+                        .capabilityUnavailable(action.name),
+                    json: json
+                )
+            }
         case .proxy(.doctor):
             return nil
         default:
@@ -494,6 +534,10 @@ public struct IOSUseCLI: Sendable {
             "runtimeLoadPath": .string(manifest.runtimeLoadPath),
             "convertedMachOs": .array(manifest.convertedMachOs.map(MachineValue.string)),
             "preparedAt": .string(manifest.preparedAt),
+            "schemaVersion": .integer(manifest.schemaVersion),
+            "preparedGenerationID": .string(manifest.preparedGenerationID),
+            "runtimeBootstrapPath": .string(manifest.runtimeBootstrapPath),
+            "runtimeSocketPath": .string(manifest.runtimeSocketPath),
             "helloPath": .string(manifest.helloPath),
         ])
     }

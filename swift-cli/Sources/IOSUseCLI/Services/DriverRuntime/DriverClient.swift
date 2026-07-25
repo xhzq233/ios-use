@@ -99,6 +99,8 @@ struct ScreenshotCapturePerformance: Codable, Equatable {
 
 enum DriverCommandExecution {
     static var clientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)?
+    static var playCoverClientFactoryForTesting:
+        ((SessionService.Info) -> DriverCommandClient)?
 
     static func withLockedClient<T>(paths: IOSUsePaths, verbose: Bool = false, _ body: (DriverCommandClient) throws -> T) throws -> T {
         let session = LockedDriverClientSession(paths: paths, verbose: verbose)
@@ -156,15 +158,11 @@ final class LockedDriverClientSession {
 
     func run<T>(_ body: (DriverCommandClient) throws -> T) throws -> T {
         let lock = try lockedInfo()
-        if lock.deviceType == PlayCoverSessionService.deviceType {
-            throw PlayCoverBackendError.capabilityUnavailable(
-                "in-process UI automation"
-            )
-        }
         do {
             return try body(currentClient(for: lock))
         } catch {
-            guard (error as? DriverClientError)?.isRecoverableConnectFailure == true,
+            guard lock.deviceType != PlayCoverSessionService.deviceType,
+                  (error as? DriverClientError)?.isRecoverableConnectFailure == true,
                   !didRecoverConnectFailure else {
                 throw error
             }
@@ -196,7 +194,14 @@ final class LockedDriverClientSession {
 
     private func replaceClient(for info: SessionService.Info) -> DriverCommandClient {
         closeClient()
-        let next = DriverCommandExecution.clientFactoryForTesting?(info) ?? DriverClient(session: info, paths: paths)
+        let next: DriverCommandClient
+        if info.deviceType == PlayCoverSessionService.deviceType {
+            next = DriverCommandExecution.playCoverClientFactoryForTesting?(info)
+                ?? PlayCoverDriverClient(session: info)
+        } else {
+            next = DriverCommandExecution.clientFactoryForTesting?(info)
+                ?? DriverClient(session: info, paths: paths)
+        }
         client = next
         return next
     }

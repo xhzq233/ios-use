@@ -49,6 +49,9 @@ if [ "$(uname -m)" = "arm64" ]; then
     else
       for source in \
         "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntime.m" \
+        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntime.h" \
+        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeSocket.m" \
+        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeSocket.h" \
         "$ROOT_DIR/playcover-runtime/Info.plist" \
         "$ROOT_DIR/scripts/build_playcover_runtime.sh"; do
         if [ "$source" -nt "$PLAYCOVER_RUNTIME_EXECUTABLE" ]; then

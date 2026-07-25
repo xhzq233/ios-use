@@ -4,7 +4,7 @@ import Foundation
 /// Resolves a caller-supplied App into one verified, launchable PlayCover
 /// generation without exposing runtime or output-path plumbing in `start`.
 enum PlayCoverManagedAppService {
-    static let preparationRevision = 1
+    static let preparationRevision = 3
 
     static var inspectOverrideForTesting: ((String) throws -> PlayCoverAppInspection)?
     static var verifyOverrideForTesting: ((String) throws -> PlayCoverVerification)?
@@ -245,7 +245,8 @@ enum PlayCoverManagedAppService {
         source: PlayCoverAppInspection,
         outputPath: String
     ) throws {
-        guard standardizedPath(manifest.sourceAppPath) == source.appPath,
+        guard manifest.schemaVersion == 2,
+              standardizedPath(manifest.sourceAppPath) == source.appPath,
               standardizedPath(manifest.preparedAppPath)
                 == standardizedPath(outputPath),
               manifest.bundleIdentifier == source.bundleIdentifier,

@@ -13,6 +13,7 @@ final class PlayCoverSessionTests: XCTestCase {
         PlayCoverManagedAppService.executablePathOverrideForTesting = nil
         PlayCoverManagedAppService.generationKeyOverrideForTesting = nil
         IOSUseCLI.driverClientFactoryForTesting = nil
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = nil
         super.tearDown()
     }
 
@@ -42,6 +43,12 @@ final class PlayCoverSessionTests: XCTestCase {
         )
         XCTAssertEqual(launches.map(\.0), [preparedApp])
         XCTAssertEqual(launches.map(\.1), [15])
+        XCTAssertEqual(
+            try PlayCoverSessionService.readPreparedReference(
+                paths: paths
+            )?.preparedGenerationID,
+            "prepared-generation"
+        )
 
         let lock = try XCTUnwrap(try SessionService.readDriverLockInfo(paths: paths))
         XCTAssertEqual(lock.udid, "playcover:com.example.demo")
@@ -51,6 +58,17 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertEqual(lock.bundleId, "com.example.demo")
         XCTAssertEqual(lock.playCoverAppPath, preparedApp)
         XCTAssertEqual(lock.profileHash, "profile-hash")
+        XCTAssertEqual(lock.playCoverRuntimeSocketPath, "/state/run/runtime.sock")
+        XCTAssertEqual(lock.playCoverLaunchNonce, "launch-nonce")
+        XCTAssertEqual(lock.playCoverPreparedGenerationID, "prepared-generation")
+        XCTAssertEqual(lock.playCoverRuntimeInstanceID, "runtime-instance")
+        let lockAttributes = try FileManager.default.attributesOfItem(
+            atPath: paths.driverLock
+        )
+        XCTAssertEqual(
+            (lockAttributes[.posixPermissions] as? NSNumber)?.intValue,
+            0o600
+        )
 
         var terminated: [String] = []
         PlayCoverSessionService.terminateOverrideForTesting = { appPath in
@@ -409,8 +427,11 @@ final class PlayCoverSessionTests: XCTestCase {
         )
 
         XCTAssertEqual(result.exitCode, 1)
-        XCTAssertTrue(result.stderr.contains("PlayCover active session"))
-        XCTAssertTrue(result.stderr.contains("IOSUsePlayRuntime automation transport"))
+        XCTAssertTrue(
+            result.stderr.contains(
+                "PlayCover Runtime capability `dom` is not implemented yet"
+            )
+        )
     }
 
     func testHostTargetCommandDoesNotFallBackToDeviceBackend() throws {
@@ -464,7 +485,11 @@ final class PlayCoverSessionTests: XCTestCase {
             bundleIdentifier: "com.example.demo",
             profileHash: profileHash,
             productType: "iPhone16,2",
-            pid: 4242
+            pid: 4242,
+            runtimeSocketPath: "/state/run/runtime.sock",
+            launchNonce: "launch-nonce",
+            preparedGenerationID: "prepared-generation",
+            runtimeInstanceID: "runtime-instance"
         )
     }
 
@@ -474,7 +499,7 @@ final class PlayCoverSessionTests: XCTestCase {
         profileHash: String = "profile-hash"
     ) -> PlayCoverPrepareManifest {
         PlayCoverPrepareManifest(
-            schemaVersion: 1,
+            schemaVersion: 2,
             backend: "playcover-headless",
             sourceAppPath: sourceAppPath,
             preparedAppPath: appPath,
@@ -485,7 +510,10 @@ final class PlayCoverSessionTests: XCTestCase {
             runtimeFrameworkName: "IOSUsePlayRuntime.framework",
             convertedMachOs: ["Demo"],
             preparedAt: "2026-07-25T00:00:00Z",
-            helloPath: "/state/hello.json"
+            helloPath: "/state/run/hello.json",
+            preparedGenerationID: "prepared-generation",
+            runtimeBootstrapPath: "/state/run/bootstrap.json",
+            runtimeSocketPath: "/state/run/runtime.sock"
         )
     }
 

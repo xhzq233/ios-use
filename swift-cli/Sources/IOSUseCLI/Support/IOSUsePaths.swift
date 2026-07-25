@@ -12,6 +12,9 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let logs: String
     public let artifacts: String
     public let playcover: String
+    public let playcoverRun: String
+    public let playcoverRuntimeBootstrap: String
+    public let playcoverRuntimeSocket: String
     public let playcoverHello: String
     public let playcoverLastPrepared: String
     public let playcoverPrepared: String
@@ -31,7 +34,10 @@ public struct IOSUsePaths: Equatable, Sendable {
             logs: "\(configured.root)/logs",
             artifacts: "\(configured.root)/artifacts",
             playcover: "\(configured.root)/playcover",
-            playcoverHello: "\(configured.root)/playcover/hello",
+            playcoverRun: "\(configured.root)/playcover/run",
+            playcoverRuntimeBootstrap: "\(configured.root)/playcover/run/bootstrap.json",
+            playcoverRuntimeSocket: "\(configured.root)/playcover/run/runtime.sock",
+            playcoverHello: "\(configured.root)/playcover/run/hello.json",
             playcoverLastPrepared: "\(configured.root)/playcover/last-prepared.json",
             playcoverPrepared: "\(configured.root)/playcover/prepared",
             playcoverRuntime: "\(configured.root)/playcover/IOSUsePlayRuntime.framework"

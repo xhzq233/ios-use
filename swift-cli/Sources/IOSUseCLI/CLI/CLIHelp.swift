@@ -100,7 +100,7 @@ enum CLIHelp {
               --playcover                  Select the PlayCover backend
               --app <source-or-prepared.app>
                                            Prepare if needed, then launch this App
-              --timeout <duration>          Wait up to 60 seconds for runtime hello; default 15s
+              --timeout <duration>          Wait up to 60 seconds for direct Runtime socket hello; default 15s
 
             """
         case "stop":

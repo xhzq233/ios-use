@@ -15,6 +15,10 @@ public enum SessionService {
         public let controlSocketPath: String?
         public let playCoverAppPath: String?
         public let profileHash: String?
+        public let playCoverRuntimeSocketPath: String?
+        public let playCoverLaunchNonce: String?
+        public let playCoverPreparedGenerationID: String?
+        public let playCoverRuntimeInstanceID: String?
 
         public init(
             udid: String,
@@ -29,7 +33,11 @@ public enum SessionService {
             bundleId: String? = nil,
             controlSocketPath: String? = nil,
             playCoverAppPath: String? = nil,
-            profileHash: String? = nil
+            profileHash: String? = nil,
+            playCoverRuntimeSocketPath: String? = nil,
+            playCoverLaunchNonce: String? = nil,
+            playCoverPreparedGenerationID: String? = nil,
+            playCoverRuntimeInstanceID: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
@@ -44,6 +52,10 @@ public enum SessionService {
             self.controlSocketPath = controlSocketPath
             self.playCoverAppPath = playCoverAppPath
             self.profileHash = profileHash
+            self.playCoverRuntimeSocketPath = playCoverRuntimeSocketPath
+            self.playCoverLaunchNonce = playCoverLaunchNonce
+            self.playCoverPreparedGenerationID = playCoverPreparedGenerationID
+            self.playCoverRuntimeInstanceID = playCoverRuntimeInstanceID
         }
 
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
@@ -60,7 +72,11 @@ public enum SessionService {
                 bundleId: metadata.bundleId ?? bundleId,
                 controlSocketPath: metadata.controlSocketPath ?? controlSocketPath,
                 playCoverAppPath: playCoverAppPath,
-                profileHash: profileHash
+                profileHash: profileHash,
+                playCoverRuntimeSocketPath: playCoverRuntimeSocketPath,
+                playCoverLaunchNonce: playCoverLaunchNonce,
+                playCoverPreparedGenerationID: playCoverPreparedGenerationID,
+                playCoverRuntimeInstanceID: playCoverRuntimeInstanceID
             )
         }
     }
@@ -175,7 +191,7 @@ public enum SessionService {
         } catch {
             if let launch {
                 do {
-                    _ = try PlayCoverSessionService.terminate(appPath: launch.appPath)
+                    _ = try PlayCoverSessionService.terminate(result: launch)
                 } catch let cleanupError {
                     throw CLIParseError.invalidValue(
                         "PlayCover start failed after launch, and cleanup failed: \(cleanupError). Original error: \(error)"

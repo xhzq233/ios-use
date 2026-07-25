@@ -39,7 +39,7 @@ public enum StatusService {
         do {
             if let info = try SessionService.readDriverLockInfo(paths: paths) {
                 let config = configured[info.udid]
-                driver = .object([
+                var fields: [String: MachineValue] = [
                     "status": .string("running"),
                     "udid": .string(info.udid),
                     "deviceName": .string(info.deviceName),
@@ -57,7 +57,21 @@ public enum StatusService {
                     "versionMatchesCli": info.deviceType == PlayCoverSessionService.deviceType
                         ? .null
                         : .boolean(config?.driverVersion == IOSUseCLI.version),
-                ])
+                ]
+                if info.deviceType == PlayCoverSessionService.deviceType {
+                    switch playCoverRuntimeHealth(info: info, diagnostics: true) {
+                    case .success(let payload):
+                        fields["runtime"] = playCoverRuntimeMachineValue(payload)
+                    case .failure(let error):
+                        fields["runtime"] = .object([
+                            "status": .string("unreachable"),
+                            "identityVerified": .boolean(false),
+                            "error": .string(String(describing: error)),
+                        ])
+                        warnings.append("PlayCover runtime health check failed: \(error)")
+                    }
+                }
+                driver = .object(fields)
             } else {
                 driver = .object(["status": .string("notRunning")])
             }
@@ -102,7 +116,7 @@ public enum StatusService {
         lines.append("")
 
         lines.append("Driver:")
-        lines.append(contentsOf: driverLines(paths: paths))
+        lines.append(contentsOf: driverLines(paths: paths, verbose: verbose))
         lines.append("")
 
         lines.append("App log:")
@@ -133,7 +147,10 @@ public enum StatusService {
         }
     }
 
-    private static func driverLines(paths: IOSUsePaths) -> [String] {
+    private static func driverLines(
+        paths: IOSUsePaths,
+        verbose: Bool
+    ) -> [String] {
         do {
             guard let info = try SessionService.readDriverLockInfo(paths: paths) else {
                 return ["  not running (no driver.lock)"]
@@ -160,10 +177,139 @@ public enum StatusService {
             if let profileHash = info.profileHash, !profileHash.isEmpty {
                 parts.append("profile: \(profileHash)")
             }
+            if info.deviceType == PlayCoverSessionService.deviceType {
+                switch playCoverRuntimeHealth(
+                    info: info,
+                    diagnostics: verbose
+                ) {
+                case .success(let payload):
+                    parts.append("runtime: reachable")
+                    parts.append("runtime instance: \(payload.runtimeInstanceID)")
+                    if let socketPath = info.playCoverRuntimeSocketPath {
+                        parts.append("socket: \(socketPath)")
+                    }
+                    if verbose {
+                        parts.append(
+                            "geometry: \(formatRuntimeNumber(payload.logicalWidth))"
+                                + "x\(formatRuntimeNumber(payload.logicalHeight))"
+                                + " @\(formatRuntimeNumber(payload.scale))x"
+                        )
+                        parts.append("runtime stage: \(payload.stage)")
+                        parts.append(
+                            "capabilities: \(payload.capabilities.joined(separator: ","))"
+                        )
+                    }
+                case .failure(let error):
+                    parts.append("runtime: unreachable (\(error))")
+                }
+            }
             return ["  - \(parts.joined(separator: " | "))"]
         } catch {
             return ["  invalid driver.lock: \(error)"]
         }
+    }
+
+    private static func playCoverRuntimeHealth(
+        info: SessionService.Info,
+        diagnostics: Bool
+    ) -> Result<PlayCoverRuntimeResponsePayload, Error> {
+        guard let socketPath = info.playCoverRuntimeSocketPath,
+              !socketPath.isEmpty,
+              let launchNonce = info.playCoverLaunchNonce,
+              !launchNonce.isEmpty else {
+            return .failure(
+                CLIParseError.invalidValue(
+                    "Invalid driver.lock: PlayCover runtime socket identity is incomplete."
+                )
+            )
+        }
+        do {
+            let client = PlayCoverRuntimeClient(
+                socketPath: socketPath,
+                launchNonce: launchNonce,
+                timeoutSeconds: 0.75
+            )
+            let payload = diagnostics
+                ? try client.diagnostics()
+                : try client.ping()
+            try validatePlayCoverRuntimeIdentity(payload, info: info)
+            return .success(payload)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private static func validatePlayCoverRuntimeIdentity(
+        _ payload: PlayCoverRuntimeResponsePayload,
+        info: SessionService.Info
+    ) throws {
+        guard payload.protocolVersion == PlayCoverRuntimeClient.schemaVersion,
+              Int(payload.pid) == info.runnerPid,
+              payload.bundleIdentifier == info.bundleId,
+              payload.profileHash == info.profileHash,
+              payload.preparedGenerationID == info.playCoverPreparedGenerationID,
+              payload.runtimeSocketPath == info.playCoverRuntimeSocketPath,
+              payload.runtimeInstanceID == info.playCoverRuntimeInstanceID else {
+            throw CLIParseError.invalidValue(
+                "PlayCover runtime identity no longer matches the active session."
+            )
+        }
+    }
+
+    private static func playCoverRuntimeMachineValue(
+        _ payload: PlayCoverRuntimeResponsePayload
+    ) -> MachineValue {
+        var fields: [String: MachineValue] = [
+            "status": .string("reachable"),
+            "identityVerified": .boolean(true),
+            "protocolVersion": .integer(payload.protocolVersion),
+            "pid": .integer(Int(payload.pid)),
+            "bundleIdentifier": .string(payload.bundleIdentifier),
+            "profileHash": .string(payload.profileHash),
+            "preparedGenerationID": .string(payload.preparedGenerationID),
+            "runtimeSocketPath": .string(payload.runtimeSocketPath),
+            "runtimeInstanceID": .string(payload.runtimeInstanceID),
+            "capabilities": .array(payload.capabilities.map(MachineValue.string)),
+            "logicalWidth": .double(payload.logicalWidth),
+            "logicalHeight": .double(payload.logicalHeight),
+            "nativeWidth": .double(payload.nativeWidth),
+            "nativeHeight": .double(payload.nativeHeight),
+            "scale": .double(payload.scale),
+            "windowWidth": payload.windowWidth.map(MachineValue.double) ?? .null,
+            "windowHeight": payload.windowHeight.map(MachineValue.double) ?? .null,
+            "stage": .string(payload.stage),
+        ]
+        if let observed = payload.observed {
+            fields["observed"] = .object(
+                observed.mapValues(playCoverRuntimeJSONMachineValue)
+            )
+        }
+        return .object(fields)
+    }
+
+    private static func playCoverRuntimeJSONMachineValue(
+        _ value: PlayCoverRuntimeJSONValue
+    ) -> MachineValue {
+        switch value {
+        case .null:
+            return .null
+        case .bool(let value):
+            return .boolean(value)
+        case .number(let value):
+            return .double(value)
+        case .string(let value):
+            return .string(value)
+        case .array(let values):
+            return .array(values.map(playCoverRuntimeJSONMachineValue))
+        case .object(let values):
+            return .object(values.mapValues(playCoverRuntimeJSONMachineValue))
+        }
+    }
+
+    private static func formatRuntimeNumber(_ value: Double) -> String {
+        value.rounded() == value
+            ? String(Int(value))
+            : String(format: "%.3f", value)
     }
 
     private static func appLogLines(paths: IOSUsePaths) -> [String] {

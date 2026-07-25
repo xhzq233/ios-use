@@ -2,13 +2,14 @@
 
 ## Status
 
-This backend is experimental and source-build-only. Its first working slice
-provides deterministic profile, prepare, verify, launch, and terminate
-operations for unencrypted thin arm64 iPhone Apps on Apple silicon.
+This backend is experimental and source-build-only. Its current slice provides
+deterministic profile, prepare, verify, launch, direct Runtime diagnostics,
+window screenshot, capture reuse, and terminate operations for unencrypted
+thin arm64 iPhone Apps on Apple silicon.
 
-The current slice does not yet expose the ios-use DOM/action protocol. The
+The current slice does not yet expose DOM, wait, touch, or input commands. The
 injected runtime is deliberately bounded to device/profile compatibility,
-UIKit/AppKit geometry, and a versioned hello record.
+UIKit/AppKit geometry, and a versioned local Unix-socket protocol.
 
 ## Fixed Device Profile
 
@@ -26,6 +27,11 @@ The profile is immutable for one prepared generation. The host writes its
 stable SHA-256 hash into the App, and `launch` rejects runtime evidence whose
 hash or dimensions do not match.
 
+UIKit stays in a 430 x 932 logical coordinate space. macOS may uniformly scale
+the physical AppKit presentation down to fit the available display; that
+presentation size is not a second logical coordinate system. Screenshots are
+normalized back to 1290 x 2796 and carry 430 x 932 @3x metadata.
+
 ## Architecture
 
 The GUI-free preparation path is:
@@ -40,13 +46,21 @@ ios-use start --playcover --app <App.app>
      -> bounded Mach-O inspection/conversion
      -> APFS clone + runtime embedding
      -> per-Mach-O and top-level ad-hoc signing
-     -> launch with a credential-minimized environment
+     -> NSWorkspace launch with an exact PID
+        and credential-minimized environment
   -> IOSUsePlayRuntime.framework
      -> iPhone model/platform interposition
-     -> UIScreen/FBS fixed geometry
-     -> dynamically loaded AppKit window bridge
-     -> bounded JSON hello
+     -> UIScreen/FBS/scene fixed geometry
+     -> key UIKit window to AppKit window bridge
+     -> private runtime.sock listener
+  -> PlayCoverRuntimeClient
+     -> direct AF_UNIX hello/ping/diagnostics
+     -> peer UID + launch nonce + generation/instance validation
 ```
+
+There is no PlayCover backend server or helper process. The wire format is
+versioned JSON with a four-byte big-endian length, a 64 KiB frame limit, and
+one request per Unix-socket connection. It has no TCP fallback.
 
 Lifecycle uses the normal active-session surface:
 
@@ -54,8 +68,8 @@ Lifecycle uses the normal active-session surface:
 ios-use start --playcover [--app <source-or-prepared.app>]
   -> explicit source prepare/reuse, explicit prepared verification,
      or last-prepared.json
-  -> verify + launch + runtime hello
-  -> driver.lock { deviceType: playcover, app, pid, profile hash }
+  -> private bootstrap + verify + launch + direct runtime hello
+  -> driver.lock { app, pid, profile/generation, socket, nonce, runtime instance }
   -> all session-bound commands resolve PlayCover until ios-use stop
 ```
 
@@ -81,8 +95,17 @@ bash scripts/build_swift_cli.sh --debug
 ./ios-use playcover inspect /path/to/Source.app --json
 ./ios-use start --playcover --app /path/to/Source.app
 ./ios-use status
+./ios-use screenshot
 ./ios-use stop
 ```
+
+`screenshot` asks the Runtime for fresh PID/window/geometry identity, captures
+that exact window with ScreenCaptureKit, removes the AppKit frame/title area,
+and writes the normal ios-use JPEG artifact at 1290 x 2796. On first use, grant
+the executing terminal or ios-use host Screen Recording access in System
+Settings > Privacy & Security > Screen & System Audio Recording, then restart
+the command. Permission denial is reported explicitly; it does not fall back
+to a partial in-process render.
 
 The local Swift CLI build keeps
 `.ios-use/playcover/IOSUsePlayRuntime.framework` up to date when running on
@@ -114,16 +137,25 @@ never overwrites a keyed output.
 Successful automatic or explicit preparation records
 `IOS_USE_HOME/playcover/last-prepared.json`, so bare `ios-use start
 --playcover` remains available. The active backend, exact App path, PID, bundle,
-and profile hash are stored in the ordinary `driver.lock`; normal `ios-use
-stop` validates and terminates only that App process before clearing the lock.
+profile/generation, Runtime socket/instance, and launch nonce are stored in the
+owner-only ordinary `driver.lock`; normal `ios-use stop` validates the signed
+generation and the complete live Runtime identity, then checks the PID and
+exact executable path before terminating only that App process and clearing
+matching state. Lifecycle is host-owned: the Runtime does not implement
+shutdown, activateApp, or terminateApp RPCs.
+
+This backend has not been released yet. Its manifest, `last-prepared.json`, and
+PlayCover `driver.lock` readers accept only the current complete schema; there
+is no migration path for local development intermediates.
 
 All session-bound commands consult this lock. Driver commands therefore route to
-PlayCover and cannot silently use XCTest, although DOM/actions currently return
-an explicit unsupported-capability error until the injected runtime transport
-is implemented.
+PlayCover and cannot silently use XCTest. Screenshot/capture use the PlayCover
+window capture path; DOM/actions currently return an explicit
+unsupported-capability error.
 
-Mutable backend state, managed generations, the installed runtime, and hello
-records resolve through `IOSUsePaths` under `IOS_USE_HOME/playcover/`. A local
+Mutable backend state, managed generations, the installed runtime, private
+bootstrap/socket, and rollback identity record resolve through `IOSUsePaths`
+under `IOS_USE_HOME/playcover/`. A local
 workspace runtime next to the repo-root CLI and a conventional
 `../share/ios-use/playcover/` installed layout are fallback discovery
 locations. The App is signed with a narrow Mac sandbox profile;

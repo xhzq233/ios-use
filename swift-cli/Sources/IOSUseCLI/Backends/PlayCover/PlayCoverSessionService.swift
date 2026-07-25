@@ -8,6 +8,7 @@ enum PlayCoverSessionService {
         let appPath: String
         let bundleIdentifier: String
         let profileHash: String
+        let preparedGenerationID: String
     }
 
     struct LaunchResult: Equatable, Sendable {
@@ -16,6 +17,32 @@ enum PlayCoverSessionService {
         let profileHash: String
         let productType: String
         let pid: Int32
+        let runtimeSocketPath: String?
+        let launchNonce: String?
+        let preparedGenerationID: String?
+        let runtimeInstanceID: String?
+
+        init(
+            appPath: String,
+            bundleIdentifier: String,
+            profileHash: String,
+            productType: String,
+            pid: Int32,
+            runtimeSocketPath: String? = nil,
+            launchNonce: String? = nil,
+            preparedGenerationID: String? = nil,
+            runtimeInstanceID: String? = nil
+        ) {
+            self.appPath = appPath
+            self.bundleIdentifier = bundleIdentifier
+            self.profileHash = profileHash
+            self.productType = productType
+            self.pid = pid
+            self.runtimeSocketPath = runtimeSocketPath
+            self.launchNonce = launchNonce
+            self.preparedGenerationID = preparedGenerationID
+            self.runtimeInstanceID = runtimeInstanceID
+        }
     }
 
     static var launchOverrideForTesting: ((String, Double) throws -> LaunchResult)?
@@ -27,10 +54,11 @@ enum PlayCoverSessionService {
     ) throws {
         try writeReference(
             PreparedReference(
-                schemaVersion: 1,
+                schemaVersion: 2,
                 appPath: manifest.preparedAppPath,
                 bundleIdentifier: manifest.bundleIdentifier,
-                profileHash: manifest.profileHash
+                profileHash: manifest.profileHash,
+                preparedGenerationID: manifest.preparedGenerationID
             ),
             paths: paths
         )
@@ -74,23 +102,37 @@ enum PlayCoverSessionService {
                 bundleIdentifier: verification.manifest.bundleIdentifier,
                 profileHash: verification.manifest.profileHash,
                 productType: verification.profile.productType,
-                pid: hello.pid
+                pid: hello.pid,
+                runtimeSocketPath: verification.manifest.runtimeSocketPath,
+                launchNonce: hello.launchNonce,
+                preparedGenerationID: hello.preparedGenerationID,
+                runtimeInstanceID: hello.runtimeInstanceID
             )
         }
-        guard result.pid > 0 else {
+        guard result.pid > 0,
+              let runtimeSocketPath = result.runtimeSocketPath,
+              !runtimeSocketPath.isEmpty,
+              let launchNonce = result.launchNonce,
+              !launchNonce.isEmpty,
+              let preparedGenerationID = result.preparedGenerationID,
+              !preparedGenerationID.isEmpty,
+              let runtimeInstanceID = result.runtimeInstanceID,
+              !runtimeInstanceID.isEmpty else {
             throw PlayCoverBackendError.launchFailed(
-                "runtime hello returned an invalid pid"
+                "runtime hello returned incomplete session identity"
             )
         }
         return result
     }
 
     @discardableResult
-    static func terminate(appPath: String) throws -> Int32 {
+    static func terminate(result: LaunchResult) throws -> Int32 {
         if let terminateOverrideForTesting {
-            return try terminateOverrideForTesting(appPath)
+            return try terminateOverrideForTesting(result.appPath)
         }
-        return try PlayCoverService.terminate(appPath: appPath)
+        return try PlayCoverService.terminate(
+            session: makeSessionInfo(from: result)
+        )
     }
 
     static func terminate(session: SessionService.Info) throws -> Int32 {
@@ -98,10 +140,21 @@ enum PlayCoverSessionService {
               let appPath = session.playCoverAppPath,
               !appPath.isEmpty else {
             throw CLIParseError.invalidValue(
-                "Invalid driver.lock: PlayCover session is missing playcoverAppPath."
+                "Invalid driver.lock: PlayCover App identity is incomplete."
             )
         }
-        return try terminate(appPath: appPath)
+        if let terminateOverrideForTesting {
+            return try terminateOverrideForTesting(appPath)
+        }
+        guard session.playCoverRuntimeSocketPath?.isEmpty == false,
+              session.playCoverLaunchNonce?.isEmpty == false,
+              session.playCoverPreparedGenerationID?.isEmpty == false,
+              session.playCoverRuntimeInstanceID?.isEmpty == false else {
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: PlayCover runtime identity is incomplete."
+            )
+        }
+        return try PlayCoverService.terminate(session: session)
     }
 
     static func makeSessionInfo(from result: LaunchResult) -> SessionService.Info {
@@ -114,7 +167,11 @@ enum PlayCoverSessionService {
             startMode: deviceType,
             bundleId: result.bundleIdentifier,
             playCoverAppPath: result.appPath,
-            profileHash: result.profileHash
+            profileHash: result.profileHash,
+            playCoverRuntimeSocketPath: result.runtimeSocketPath,
+            playCoverLaunchNonce: result.launchNonce,
+            playCoverPreparedGenerationID: result.preparedGenerationID,
+            playCoverRuntimeInstanceID: result.runtimeInstanceID
         )
     }
 
@@ -125,12 +182,17 @@ enum PlayCoverSessionService {
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: paths.playcoverLastPrepared))
             let reference = try JSONDecoder().decode(PreparedReference.self, from: data)
-            guard reference.schemaVersion == 1,
-                  !reference.appPath.isEmpty,
+            guard !reference.appPath.isEmpty,
                   !reference.bundleIdentifier.isEmpty,
-                  !reference.profileHash.isEmpty else {
+                  !reference.profileHash.isEmpty,
+                  !reference.preparedGenerationID.isEmpty else {
                 throw PlayCoverBackendError.launchFailed(
                     "last prepared App record is incomplete"
+                )
+            }
+            guard reference.schemaVersion == 2 else {
+                throw PlayCoverBackendError.launchFailed(
+                    "last prepared App record schema is unsupported"
                 )
             }
             return reference
