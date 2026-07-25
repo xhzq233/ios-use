@@ -358,7 +358,7 @@ public struct IOSUseCLI: Sendable {
             return nil
         case .driver(let action):
             switch action {
-            case .screenshot:
+            case .dom, .inspect, .screenshot, .waitFor:
                 return nil
             case .activateApp:
                 return commandFailure(

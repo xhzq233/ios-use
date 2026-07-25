@@ -89,6 +89,36 @@ final class ScreenshotCaptureCoordinatorTests: XCTestCase {
         XCTAssertEqual(capture.geometrySource, "screenshot-rect-pixels")
     }
 
+    func testPreservesDriverScreenshotWarning() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-screenshot-warning-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root.path]
+        )
+        let jpeg = try makeJPEG(width: 40, height: 80)
+
+        let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
+            ScreenshotCapture(
+                jpeg: jpeg,
+                scale: 2,
+                warning: "runtime compositor fallback is incomplete"
+            )
+        }
+
+        XCTAssertEqual(
+            capture.warning,
+            "runtime compositor fallback is incomplete"
+        )
+    }
+
     private func realDevicePaths() throws -> (IOSUsePaths, URL) {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-screenshot-coordinator-\(UUID().uuidString)", isDirectory: true)

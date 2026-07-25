@@ -50,6 +50,10 @@ if [ "$(uname -m)" = "arm64" ]; then
       for source in \
         "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntime.m" \
         "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntime.h" \
+        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeDOM.m" \
+        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeDOM.h" \
+        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
+        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeScreenshot.h" \
         "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeSocket.m" \
         "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeSocket.h" \
         "$ROOT_DIR/playcover-runtime/Info.plist" \

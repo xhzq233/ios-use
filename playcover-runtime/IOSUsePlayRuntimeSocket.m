@@ -1,4 +1,6 @@
 #import "IOSUsePlayRuntimeSocket.h"
+#import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlayRuntimeScreenshot.h"
 
 #import <UIKit/UIKit.h>
 #import <arpa/inet.h>
@@ -14,9 +16,11 @@
 #import <sys/un.h>
 #import <unistd.h>
 
-static const NSUInteger IOSUseMaximumFrameSize = 64 * 1024;
+static const NSUInteger IOSUseMaximumRequestFrameSize = 64 * 1024;
+static const NSUInteger IOSUseMaximumResponseFrameSize = 16 * 1024 * 1024;
 static const NSTimeInterval IOSUseSocketTimeoutSeconds = 5.0;
 static const NSTimeInterval IOSUseMainThreadSnapshotTimeoutSeconds = 0.2;
+static const NSInteger IOSUseMaximumConcurrentConnections = 4;
 
 static NSDictionary<NSString *, id> *IOSUseRuntimeProfile;
 static NSDictionary<NSString *, id> *IOSUseRuntimeBootstrap;
@@ -169,7 +173,8 @@ static NSData *IOSUseReadPrivateRegularFile(NSString *path, NSError **error) {
             }
             return nil;
         }
-        if (data.length + (NSUInteger)count > IOSUseMaximumFrameSize) {
+        if (data.length + (NSUInteger)count >
+            IOSUseMaximumRequestFrameSize) {
             close(fileDescriptor);
             if (error != NULL) {
                 *error = [NSError errorWithDomain:NSCocoaErrorDomain
@@ -442,6 +447,23 @@ static BOOL IOSUseWriteExactly(
         remaining -= (size_t)count;
     }
     return YES;
+}
+
+static void IOSUseClearSocketReadTimeout(int fileDescriptor) {
+    // SO_RCVTIMEO bounds only request-frame reads. Once the complete request is
+    // authenticated, a waitFor may intentionally remain idle for up to 300s;
+    // peer cancellation uses MSG_DONTWAIT and must not inherit the 5s read cap.
+    struct timeval noTimeout = {
+        .tv_sec = 0,
+        .tv_usec = 0,
+    };
+    (void)setsockopt(
+        fileDescriptor,
+        SOL_SOCKET,
+        SO_RCVTIMEO,
+        &noTimeout,
+        (socklen_t)sizeof(noTimeout)
+    );
 }
 
 static NSDictionary<NSString *, NSNumber *> *IOSUseRectJSON(CGRect rect) {
@@ -1055,7 +1077,14 @@ static NSDictionary<NSString *, id> *IOSUseSnapshot(BOOL includeObserved) {
             @"runtimeInstanceID": IOSUseRuntimeInstanceID,
             @"preparedGenerationID": IOSUseRuntimeProfile[@"preparedGenerationID"],
             @"runtimeSocketPath": IOSUseRuntimeProfile[@"runtimeSocketPath"],
-            @"capabilities": @[@"hello", @"ping", @"diagnostics"],
+            @"capabilities": @[
+                @"hello",
+                @"ping",
+                @"diagnostics",
+                @"screenshot",
+                @"dom",
+                @"waitFor",
+            ],
             @"logicalWidth": @(logical.size.width),
             @"logicalHeight": @(logical.size.height),
             @"nativeWidth": @(native.size.width),
@@ -1122,7 +1151,14 @@ static NSDictionary<NSString *, id> *IOSUsePingSnapshot(void) {
         @"runtimeInstanceID": IOSUseRuntimeInstanceID,
         @"preparedGenerationID": IOSUseRuntimeProfile[@"preparedGenerationID"],
         @"runtimeSocketPath": IOSUseRuntimeProfile[@"runtimeSocketPath"],
-        @"capabilities": @[@"hello", @"ping", @"diagnostics"],
+        @"capabilities": @[
+            @"hello",
+            @"ping",
+            @"diagnostics",
+            @"screenshot",
+            @"dom",
+            @"waitFor",
+        ],
         @"logicalWidth": IOSUseRuntimeProfile[@"logicalWidth"],
         @"logicalHeight": IOSUseRuntimeProfile[@"logicalHeight"],
         @"nativeWidth": IOSUseRuntimeProfile[@"nativeWidth"],
@@ -1139,18 +1175,88 @@ static NSDictionary<NSString *, id> *IOSUseErrorResponse(
     NSString *code,
     NSString *message
 ) {
+    NSDictionary<NSString *, id> *error = @{
+        @"code": code,
+        @"message": message,
+    };
     return @{
         @"schemaVersion": @1,
         @"requestId": requestID ?: @"",
         @"ok": @NO,
-        @"error": @{
-            @"code": code,
-            @"message": message,
-        },
+        @"error": error,
     };
 }
 
-static NSDictionary<NSString *, id> *IOSUseHandleRequest(id object) {
+static NSDictionary<NSString *, id> *IOSUseCommandErrorResponse(
+    NSString *requestID,
+    NSDictionary<NSString *, id> *error
+) {
+    return @{
+        @"schemaVersion": @1,
+        @"requestId": requestID ?: @"",
+        @"ok": @NO,
+        @"error": error,
+    };
+}
+
+static NSDictionary<NSString *, id> *IOSUseStructuredSocketErrorResponse(
+    NSString *requestID,
+    NSString *code,
+    NSString *message,
+    NSString *category
+) {
+    return IOSUseCommandErrorResponse(
+        requestID,
+        @{
+            @"code": code,
+            @"message": message,
+            @"details": @{
+                @"category": category,
+                @"phase": @"dispatch",
+                @"retryable": @NO,
+                @"fatal": @NO,
+                @"candidateCount": @0,
+                @"candidates": @[],
+                @"suggestions": @[],
+            },
+        }
+    );
+}
+
+static NSMutableDictionary<NSString *, id> *IOSUseCommandPayload(void) {
+    NSMutableDictionary<NSString *, id> *payload =
+        [IOSUsePingSnapshot() mutableCopy];
+    if (payload != nil) {
+        payload[@"windowWidth"] = payload[@"logicalWidth"];
+        payload[@"windowHeight"] = payload[@"logicalHeight"];
+        payload[@"stage"] = @"window-configured";
+    }
+    return payload;
+}
+
+static BOOL IOSUseSocketPeerDisconnected(int connection) {
+    uint8_t byte = 0;
+    ssize_t count = recv(
+        connection,
+        &byte,
+        sizeof(byte),
+        MSG_PEEK | MSG_DONTWAIT
+    );
+    if (count == 0) {
+        return YES;
+    }
+    if (count > 0) {
+        return NO;
+    }
+    return errno != EAGAIN &&
+        errno != EWOULDBLOCK &&
+        errno != EINTR;
+}
+
+static NSDictionary<NSString *, id> *IOSUseHandleRequest(
+    id object,
+    int connection
+) {
     if (![object isKindOfClass:NSDictionary.class]) {
         return IOSUseErrorResponse(
             @"",
@@ -1168,8 +1274,12 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(id object) {
         @"command",
         @"launchNonce",
     ]];
-    if (request.count != expectedKeys.count ||
-        ![[NSSet setWithArray:request.allKeys] isEqualToSet:expectedKeys] ||
+    NSMutableSet<NSString *> *allowedKeys = [expectedKeys mutableCopy];
+    [allowedKeys addObject:@"arguments"];
+    NSSet<NSString *> *actualKeys =
+        [NSSet setWithArray:request.allKeys];
+    if (![expectedKeys isSubsetOfSet:actualKeys] ||
+        ![actualKeys isSubsetOfSet:allowedKeys] ||
         !IOSUseIsSchemaVersionOne(request[@"schemaVersion"]) ||
         requestID.length == 0 ||
         !IOSUseIsNonemptyString(request[@"command"]) ||
@@ -1190,17 +1300,106 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(id object) {
 
     NSString *command = request[@"command"];
     NSDictionary<NSString *, id> *payload;
+    BOOL commandRequiresArguments =
+        [command isEqualToString:@"dom"] ||
+        [command isEqualToString:@"waitFor"];
+    if (commandRequiresArguments != (request[@"arguments"] != nil) ||
+        (request[@"arguments"] != nil &&
+         ![request[@"arguments"] isKindOfClass:NSDictionary.class])) {
+        return IOSUseErrorResponse(
+            requestID,
+            @"invalid_request",
+            commandRequiresArguments
+                ? @"command requires an arguments object"
+                : @"command does not accept arguments"
+        );
+    }
     if ([command isEqualToString:@"hello"]) {
         payload = IOSUseSnapshot(NO);
     } else if ([command isEqualToString:@"ping"]) {
         payload = IOSUsePingSnapshot();
     } else if ([command isEqualToString:@"diagnostics"]) {
         payload = IOSUseSnapshot(YES);
+    } else if ([command isEqualToString:@"screenshot"]) {
+        NSString *failureCode = nil;
+        NSString *failureMessage = nil;
+        NSDictionary<NSString *, id> *screenshot =
+            IOSUsePlayRuntimeScreenshotCommand(
+                IOSUseRuntimeProfile,
+                &failureCode,
+                &failureMessage
+            );
+        if (screenshot == nil) {
+            return IOSUseCommandErrorResponse(
+                requestID,
+                @{
+                    @"code": failureCode ?: @"screenshot_unavailable",
+                    @"message": failureMessage ?:
+                        @"in-process screenshot capture failed",
+                }
+            );
+        }
+        NSMutableDictionary<NSString *, id> *commandPayload =
+            IOSUseCommandPayload();
+        commandPayload[@"screenshot"] = screenshot;
+        payload = commandPayload;
+    } else if ([command isEqualToString:@"dom"]) {
+        NSDictionary<NSString *, id> *commandError = nil;
+        NSDictionary<NSString *, id> *dom =
+            IOSUsePlayRuntimeDOMCommand(
+                request[@"arguments"],
+                &commandError
+            );
+        if (dom == nil) {
+            return IOSUseCommandErrorResponse(
+                requestID,
+                commandError ?: @{
+                    @"code": @"internal_failure",
+                    @"message": @"runtime DOM command failed",
+                }
+            );
+        }
+        NSMutableDictionary<NSString *, id> *commandPayload =
+            IOSUseCommandPayload();
+        if (commandPayload != nil) {
+            commandPayload[@"dom"] = dom;
+            NSDictionary *windowSize = dom[@"windowSize"];
+            if ([windowSize isKindOfClass:NSDictionary.class]) {
+                commandPayload[@"windowWidth"] =
+                    windowSize[@"x"] ?: commandPayload[@"windowWidth"];
+                commandPayload[@"windowHeight"] =
+                    windowSize[@"y"] ?: commandPayload[@"windowHeight"];
+            }
+        }
+        payload = commandPayload;
+    } else if ([command isEqualToString:@"waitFor"]) {
+        NSDictionary<NSString *, id> *commandError = nil;
+        NSDictionary<NSString *, id> *waitFor =
+            IOSUsePlayRuntimeWaitForCommand(
+                request[@"arguments"],
+                ^BOOL{
+                    return IOSUseSocketPeerDisconnected(connection);
+                },
+                &commandError
+            );
+        if (waitFor == nil) {
+            return IOSUseCommandErrorResponse(
+                requestID,
+                commandError ?: @{
+                    @"code": @"internal_failure",
+                    @"message": @"runtime waitFor command failed",
+                }
+            );
+        }
+        NSMutableDictionary<NSString *, id> *commandPayload =
+            IOSUseCommandPayload();
+        commandPayload[@"waitFor"] = waitFor;
+        payload = commandPayload;
     } else {
         return IOSUseErrorResponse(
             requestID,
             @"unsupported_command",
-            @"supported commands are hello, ping, and diagnostics"
+            @"supported commands are hello, ping, diagnostics, screenshot, dom, and waitFor"
         );
     }
     if (payload == nil) {
@@ -1235,11 +1434,13 @@ static void IOSUseServeConnection(int connection) {
         return;
     }
     uint32_t frameLength = ntohl(networkLength);
-    if (frameLength == 0 || frameLength > IOSUseMaximumFrameSize) {
-        NSDictionary *response = IOSUseErrorResponse(
+    if (frameLength == 0 ||
+        frameLength > IOSUseMaximumRequestFrameSize) {
+        NSDictionary *response = IOSUseStructuredSocketErrorResponse(
             @"",
             @"invalid_frame",
-            @"frame length must be between 1 and 65536 bytes"
+            @"frame length must be between 1 and 65536 bytes",
+            @"protocol"
         );
         NSError *error = nil;
         NSData *data = [NSJSONSerialization dataWithJSONObject:response
@@ -1261,6 +1462,7 @@ static void IOSUseServeConnection(int connection) {
     if (!IOSUseReadExactly(connection, frame.mutableBytes, frameLength)) {
         return;
     }
+    IOSUseClearSocketReadTimeout(connection);
     NSError *error = nil;
     NSString *utf8 = [[NSString alloc] initWithData:frame
                                            encoding:NSUTF8StringEncoding];
@@ -1278,11 +1480,38 @@ static void IOSUseServeConnection(int connection) {
                 ? @"frame is not valid UTF-8"
                 : @"frame is not valid JSON"
         )
-        : IOSUseHandleRequest(object);
+        : IOSUseHandleRequest(object, connection);
+    NSString *requestID =
+        [object isKindOfClass:NSDictionary.class] &&
+        IOSUseIsNonemptyString(object[@"requestId"])
+            ? object[@"requestId"]
+            : @"";
     NSData *responseData = [NSJSONSerialization dataWithJSONObject:response
                                                             options:0
                                                               error:&error];
-    if (responseData == nil || responseData.length > IOSUseMaximumFrameSize) {
+    if (responseData == nil) {
+        response = IOSUseStructuredSocketErrorResponse(
+            requestID,
+            @"internal_failure",
+            @"runtime response could not be encoded as JSON",
+            @"internal"
+        );
+        responseData = [NSJSONSerialization dataWithJSONObject:response
+                                                       options:0
+                                                         error:NULL];
+    } else if (responseData.length > IOSUseMaximumResponseFrameSize) {
+        response = IOSUseStructuredSocketErrorResponse(
+            requestID,
+            @"response_too_large",
+            @"runtime response exceeded the 16777216-byte limit",
+            @"internal"
+        );
+        responseData = [NSJSONSerialization dataWithJSONObject:response
+                                                       options:0
+                                                         error:NULL];
+    }
+    if (responseData == nil ||
+        responseData.length > IOSUseMaximumResponseFrameSize) {
         return;
     }
     uint32_t responseLength = htonl((uint32_t)responseData.length);
@@ -1384,11 +1613,17 @@ void IOSUsePlayRuntimeStartSocket(NSDictionary<NSString *, id> *profile) {
         IOSUseRuntimeSocketFailureStage = nil;
         IOSUseRuntimeSocketFailureErrno = nil;
         os_unfair_lock_unlock(&IOSUseRuntimeStateLock);
-        dispatch_queue_t queue = dispatch_queue_create(
-            "io.ios-use.play-runtime.socket",
+        dispatch_queue_t acceptQueue = dispatch_queue_create(
+            "io.ios-use.play-runtime.socket.accept",
             DISPATCH_QUEUE_SERIAL
         );
-        dispatch_async(queue, ^{
+        dispatch_queue_t connectionQueue = dispatch_queue_create(
+            "io.ios-use.play-runtime.socket.connections",
+            DISPATCH_QUEUE_CONCURRENT
+        );
+        dispatch_semaphore_t connectionSlots =
+            dispatch_semaphore_create(IOSUseMaximumConcurrentConnections);
+        dispatch_async(acceptQueue, ^{
             NSLog(@"[ios-use-play] runtime socket listening at %@", socketPath);
             for (;;) {
                 @autoreleasepool {
@@ -1417,8 +1652,25 @@ void IOSUsePlayRuntimeStartSocket(NSDictionary<NSString *, id> *profile) {
                     IOSUseRuntimeSocketFailureStage = nil;
                     IOSUseRuntimeSocketFailureErrno = nil;
                     os_unfair_lock_unlock(&IOSUseRuntimeStateLock);
-                    IOSUseServeConnection(connection);
-                    close(connection);
+                    dispatch_semaphore_wait(
+                        connectionSlots,
+                        DISPATCH_TIME_FOREVER
+                    );
+                    dispatch_async(connectionQueue, ^{
+                        @autoreleasepool {
+                            @try {
+                                IOSUseServeConnection(connection);
+                            } @catch (NSException *exception) {
+                                NSLog(
+                                    @"[ios-use-play] runtime request failed with exception %@",
+                                    exception.name
+                                );
+                            } @finally {
+                                close(connection);
+                                dispatch_semaphore_signal(connectionSlots);
+                            }
+                        }
+                    });
                 }
             }
         });

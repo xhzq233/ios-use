@@ -5,6 +5,9 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case hello
     case ping
     case diagnostics
+    case screenshot
+    case dom
+    case waitFor
 }
 
 indirect enum PlayCoverRuntimeJSONValue: Codable, Equatable, Sendable {
@@ -76,6 +79,169 @@ struct PlayCoverRuntimeResponsePayload: Codable, Equatable, Sendable {
     let stage: String
     let observed: [String: PlayCoverRuntimeJSONValue]?
     let diagnostics: [String: PlayCoverRuntimeJSONValue]?
+    let screenshot: PlayCoverRuntimeScreenshotPayload?
+    let dom: PlayCoverRuntimeDOMPayload?
+    let waitFor: PlayCoverRuntimeWaitForPayload?
+
+    init(
+        protocolVersion: Int,
+        pid: Int32,
+        bundleIdentifier: String,
+        profileHash: String,
+        preparedGenerationID: String,
+        runtimeSocketPath: String,
+        runtimeInstanceID: String,
+        launchNonce: String,
+        capabilities: [String],
+        logicalWidth: Double,
+        logicalHeight: Double,
+        nativeWidth: Double,
+        nativeHeight: Double,
+        scale: Double,
+        windowWidth: Double?,
+        windowHeight: Double?,
+        stage: String,
+        observed: [String: PlayCoverRuntimeJSONValue]?,
+        diagnostics: [String: PlayCoverRuntimeJSONValue]?,
+        screenshot: PlayCoverRuntimeScreenshotPayload? = nil,
+        dom: PlayCoverRuntimeDOMPayload? = nil,
+        waitFor: PlayCoverRuntimeWaitForPayload? = nil
+    ) {
+        self.protocolVersion = protocolVersion
+        self.pid = pid
+        self.bundleIdentifier = bundleIdentifier
+        self.profileHash = profileHash
+        self.preparedGenerationID = preparedGenerationID
+        self.runtimeSocketPath = runtimeSocketPath
+        self.runtimeInstanceID = runtimeInstanceID
+        self.launchNonce = launchNonce
+        self.capabilities = capabilities
+        self.logicalWidth = logicalWidth
+        self.logicalHeight = logicalHeight
+        self.nativeWidth = nativeWidth
+        self.nativeHeight = nativeHeight
+        self.scale = scale
+        self.windowWidth = windowWidth
+        self.windowHeight = windowHeight
+        self.stage = stage
+        self.observed = observed
+        self.diagnostics = diagnostics
+        self.screenshot = screenshot
+        self.dom = dom
+        self.waitFor = waitFor
+    }
+}
+
+struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
+    let jpegBase64: String
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let logicalWidth: Double
+    let logicalHeight: Double
+    let scale: Double
+    let source: String
+    let complete: Bool
+}
+
+struct PlayCoverRuntimeDOMArguments: Codable, Equatable, Sendable {
+    let raw: Bool
+    let fresh: Bool
+    let waitQuiescence: Bool
+}
+
+struct PlayCoverRuntimeWaitTarget: Codable, Equatable, Sendable {
+    let label: String
+    let traits: String
+    let cindex: Int32?
+}
+
+struct PlayCoverRuntimeWaitForArguments: Codable, Equatable, Sendable {
+    let target: PlayCoverRuntimeWaitTarget
+    let timeout: Double
+    let gone: Bool
+    let matchMode: Int32
+}
+
+enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
+    case dom(PlayCoverRuntimeDOMArguments)
+    case waitFor(PlayCoverRuntimeWaitForArguments)
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .dom(let arguments):
+            try arguments.encode(to: encoder)
+        case .waitFor(let arguments):
+            try arguments.encode(to: encoder)
+        }
+    }
+}
+
+struct PlayCoverRuntimeRect: Codable, Equatable, Sendable {
+    let x: Double
+    let y: Double
+    let w: Double
+    let h: Double
+}
+
+struct PlayCoverRuntimeDOMElement: Codable, Equatable, Sendable {
+    let nodeId: String
+    let elemType: Int32
+    let traits: [String]
+    let childCount: Int32
+    let label: String
+    let value: String
+    let rect: PlayCoverRuntimeRect?
+}
+
+struct PlayCoverRuntimeDOMPayload: Codable, Equatable, Sendable {
+    let app: String
+    let windowSize: PlayCoverRuntimePoint
+    let raw: String
+    let snapshotGeneration: Int64
+    let elements: [PlayCoverRuntimeDOMElement]
+}
+
+struct PlayCoverRuntimePoint: Codable, Equatable, Sendable {
+    let x: Double
+    let y: Double
+}
+
+struct PlayCoverRuntimeElementSummary: Codable, Equatable, Sendable {
+    let elemType: Int32
+    let label: String
+    let rect: PlayCoverRuntimeRect?
+    let ancestors: [String]
+}
+
+struct PlayCoverRuntimeWaitForPayload: Codable, Equatable, Sendable {
+    let element: PlayCoverRuntimeElementSummary
+    let waited: Double
+    let snapshotGeneration: Int64
+}
+
+struct PlayCoverRuntimeErrorElement: Codable, Equatable, Sendable {
+    let elemType: Int32
+    let label: String
+    let rect: PlayCoverRuntimeRect?
+    let traits: [String]
+    let value: String
+    let ancestors: [String]
+}
+
+struct PlayCoverRuntimeErrorCandidate: Codable, Equatable, Sendable {
+    let element: PlayCoverRuntimeErrorElement
+    let rejectedBy: [String]
+}
+
+struct PlayCoverRuntimeErrorDetails: Codable, Equatable, Sendable {
+    let category: String
+    let phase: String
+    let retryable: Bool
+    let fatal: Bool
+    let target: PlayCoverRuntimeWaitTarget?
+    let candidateCount: Int32
+    let candidates: [PlayCoverRuntimeErrorCandidate]
+    let suggestions: [String]
 }
 
 enum PlayCoverRuntimeSocketPathError: Equatable, Sendable {
@@ -106,7 +272,11 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
     case requestIDMismatch
     case launchNonceMismatch
     case malformedResponse(String)
-    case remoteError(code: String, message: String)
+    case remoteError(
+        code: String,
+        message: String,
+        details: PlayCoverRuntimeErrorDetails?
+    )
 
     var description: String {
         switch self {
@@ -156,7 +326,7 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
             return "PlayCover runtime response launch nonce does not match the session"
         case .malformedResponse(let reason):
             return "malformed PlayCover runtime response: \(reason)"
-        case .remoteError(let code, let message):
+        case .remoteError(let code, let message, _):
             return "PlayCover runtime error \(code): \(message)"
         }
     }
@@ -169,8 +339,10 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
 /// exactly one bounded JSON frame, and closes the connection.
 final class PlayCoverRuntimeClient {
     static let schemaVersion = 1
-    static let maximumBodyBytes = 64 * 1024
+    static let maximumRequestBodyBytes = 64 * 1024
+    static let maximumResponseBodyBytes = 16 * 1024 * 1024
     static let defaultTimeoutSeconds: TimeInterval = 5
+    static let screenshotTimeoutSeconds: TimeInterval = 15
 
     private let socketPath: String
     private let launchNonce: String
@@ -204,7 +376,30 @@ final class PlayCoverRuntimeClient {
         try request(.diagnostics)
     }
 
+    func screenshot() throws -> PlayCoverRuntimeResponsePayload {
+        try request(.screenshot)
+    }
+
+    func dom(
+        _ arguments: PlayCoverRuntimeDOMArguments
+    ) throws -> PlayCoverRuntimeResponsePayload {
+        try request(.dom, arguments: .dom(arguments))
+    }
+
+    func waitFor(
+        _ arguments: PlayCoverRuntimeWaitForArguments
+    ) throws -> PlayCoverRuntimeResponsePayload {
+        try request(.waitFor, arguments: .waitFor(arguments))
+    }
+
     func request(_ command: PlayCoverRuntimeCommand) throws -> PlayCoverRuntimeResponsePayload {
+        try request(command, arguments: nil)
+    }
+
+    private func request(
+        _ command: PlayCoverRuntimeCommand,
+        arguments: PlayCoverRuntimeRequestArguments?
+    ) throws -> PlayCoverRuntimeResponsePayload {
         guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
             throw PlayCoverRuntimeClientError.invalidTimeout
         }
@@ -214,7 +409,8 @@ final class PlayCoverRuntimeClient {
             schemaVersion: Self.schemaVersion,
             requestId: requestID,
             command: command,
-            launchNonce: launchNonce
+            launchNonce: launchNonce,
+            arguments: arguments
         )
 
         let requestBody: Data
@@ -225,10 +421,11 @@ final class PlayCoverRuntimeClient {
         } catch {
             throw PlayCoverRuntimeClientError.requestEncodingFailed
         }
-        guard !requestBody.isEmpty, requestBody.count <= Self.maximumBodyBytes else {
+        guard !requestBody.isEmpty,
+              requestBody.count <= Self.maximumRequestBodyBytes else {
             throw PlayCoverRuntimeClientError.requestFrameTooLarge(
                 actualBytes: requestBody.count,
-                maximumBytes: Self.maximumBodyBytes
+                maximumBytes: Self.maximumRequestBodyBytes
             )
         }
 
@@ -488,10 +685,10 @@ final class PlayCoverRuntimeClient {
         guard length > 0 else {
             throw PlayCoverRuntimeClientError.emptyResponseFrame
         }
-        guard length <= UInt32(Self.maximumBodyBytes) else {
+        guard length <= UInt32(Self.maximumResponseBodyBytes) else {
             throw PlayCoverRuntimeClientError.responseFrameTooLarge(
                 actualBytes: Int(length),
-                maximumBytes: Self.maximumBodyBytes
+                maximumBytes: Self.maximumResponseBodyBytes
             )
         }
         return try readExactly(
@@ -705,7 +902,8 @@ final class PlayCoverRuntimeClient {
         }
         throw PlayCoverRuntimeClientError.remoteError(
             code: redact(remote.code),
-            message: redact(remote.message)
+            message: redact(remote.message),
+            details: remote.details
         )
     }
 
@@ -718,11 +916,12 @@ final class PlayCoverRuntimeClient {
 }
 
 private extension PlayCoverRuntimeClient {
-    struct RequestEnvelope: Codable {
+    struct RequestEnvelope: Encodable {
         let schemaVersion: Int
         let requestId: String
         let command: PlayCoverRuntimeCommand
         let launchNonce: String
+        let arguments: PlayCoverRuntimeRequestArguments?
     }
 
     struct ResponseEnvelope: Codable {
@@ -736,5 +935,6 @@ private extension PlayCoverRuntimeClient {
     struct RemoteError: Codable {
         let code: String
         let message: String
+        let details: PlayCoverRuntimeErrorDetails?
     }
 }

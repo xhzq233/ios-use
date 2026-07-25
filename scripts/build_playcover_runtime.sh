@@ -78,6 +78,8 @@ echo "[playcover-runtime] Building iPhoneOS arm64 dylib..."
   -current_version 1.0.0 \
   -compatibility_version 1.0.0 \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntime.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeDOM.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeSocket.m" \
   -o "$IOS_USE_RUNTIME_RAW"
 

@@ -99,11 +99,19 @@ enum ScreenshotCaptureCoordinator {
             displayInfoServiceElapsedMs: displayMeasurement?.serviceElapsedMs,
             totalElapsedMs: totalElapsedMs
         )
+        let warningParts = [
+            rawScreenshot.warning,
+            geometry.warning,
+        ]
+        .compactMap { $0 }
+        let warning = warningParts.isEmpty
+            ? nil
+            : warningParts.joined(separator: "; ")
         log(
             paths: paths,
             performance: performance,
             geometrySource: geometry.source,
-            warning: geometry.warning
+            warning: warning
         )
         return ScreenshotCapture(
             jpeg: rawScreenshot.jpeg,
@@ -111,7 +119,7 @@ enum ScreenshotCaptureCoordinator {
             logicalSize: geometry.logicalSize,
             scale: geometry.scale,
             geometrySource: geometry.source,
-            warning: geometry.warning,
+            warning: warning,
             performance: performance
         )
     }

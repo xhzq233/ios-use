@@ -412,7 +412,7 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertNotNil(try SessionService.readDriverLockInfo(paths: paths))
     }
 
-    func testDriverCommandRoutesToPlayCoverWithoutCreatingXCTestClient() throws {
+    func testDOMRoutesToPlayCoverWithoutCreatingXCTestClient() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(atPath: root) }
         let paths = IOSUsePaths.resolve(environment: ["IOS_USE_HOME": root])
@@ -429,9 +429,10 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(
             result.stderr.contains(
-                "PlayCover Runtime capability `dom` is not implemented yet"
+                "PlayCover runtime Unix socket connect failed"
             )
         )
+        XCTAssertFalse(result.stderr.contains("not implemented yet"))
     }
 
     func testHostTargetCommandDoesNotFallBackToDeviceBackend() throws {

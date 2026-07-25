@@ -99,13 +99,20 @@ bash scripts/build_swift_cli.sh --debug
 ./ios-use stop
 ```
 
-`screenshot` asks the Runtime for fresh PID/window/geometry identity, captures
-that exact window with ScreenCaptureKit, removes the AppKit frame/title area,
-and writes the normal ios-use JPEG artifact at 1290 x 2796. On first use, grant
-the executing terminal or ios-use host Screen Recording access in System
-Settings > Privacy & Security > Screen & System Audio Recording, then restart
-the command. Permission denial is reported explicitly; it does not fall back
-to a partial in-process render.
+`screenshot` is a direct Runtime command over the private Unix socket. The
+injected Runtime captures the target process's own window compositor, removes
+the AppKit frame/title area, normalizes the result, and returns a bounded JPEG
+payload. The CLI verifies the active Runtime identity, fixed 430 x 932 @3x
+profile, JPEG format, and exact 1290 x 2796 raster before writing the normal
+ios-use artifact. This path does not use ScreenCaptureKit and does not require
+macOS Screen Recording permission. Runtime compositor fallbacks are reported
+in screenshot metadata instead of silently switching to host screen capture.
+
+`dom` and `waitFor` are also direct Runtime commands. They use the injected
+process's UIKit accessibility tree and return the same semantic payloads used
+by the other ios-use backends. App lifecycle remains owned by
+`start --playcover` and `stop`; mutation commands not yet implemented by the
+PlayCover Runtime fail explicitly rather than falling back to another backend.
 
 The local Swift CLI build keeps
 `.ios-use/playcover/IOSUsePlayRuntime.framework` up to date when running on

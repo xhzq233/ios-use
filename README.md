@@ -224,11 +224,12 @@ bare `start --playcover`; pass `--app /path/to/Source-or-Prepared.app` to
 select and launch another App in one invocation.
 `driver.lock` keeps PlayCover selected until normal `ios-use stop`, so
 session-bound commands cannot fall back to an XCTest device. `status` and
-`screenshot` reconnect directly to the same injected Runtime identity;
-screenshots use ScreenCaptureKit to capture the exact PID/window, crop the
-AppKit content, and normalize it to 1290 x 2796 with 430 x 932 @3x metadata.
-macOS Screen Recording permission is required. DOM/actions route to the
-PlayCover backend but still return an explicit capability error.
+the supported `dom`, `waitFor`, and `screenshot` commands reconnect directly
+to the same injected Runtime identity. Screenshots are captured inside the
+target process from its own window compositor and normalized to 1290 x 2796
+with 430 x 932 @3x metadata; they do not use ScreenCaptureKit or require macOS
+Screen Recording permission. Other UI actions route to the PlayCover backend
+but still return an explicit capability error.
 See [docs/playcover-backend.md](docs/playcover-backend.md).
 
 ## Performance Snapshot

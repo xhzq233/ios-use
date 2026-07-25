@@ -12,6 +12,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             XCTAssertEqual(request["schemaVersion"] as? Int, 1)
             XCTAssertEqual(request["command"] as? String, "hello")
             XCTAssertEqual(request["launchNonce"] as? String, nonce)
+            XCTAssertNil(request["arguments"])
             let requestID = try XCTUnwrap(request["requestId"] as? String)
             XCTAssertNotNil(UUID(uuidString: requestID))
             return .json(
@@ -87,6 +88,233 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         }
     }
 
+    func testScreenshotSendsCommandAndDecodesTypedPayload() throws {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xD9])
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            XCTAssertEqual(request["command"] as? String, "screenshot")
+            XCTAssertNil(request["arguments"])
+            let requestID = try XCTUnwrap(
+                request["requestId"] as? String
+            )
+            var payload = self.payload(
+                nonce: "nonce",
+                socketPath: fixture.socketPath
+            )
+            payload["capabilities"] = [
+                "hello",
+                "ping",
+                "diagnostics",
+                "screenshot",
+            ]
+            payload["screenshot"] = [
+                "jpegBase64": jpeg.base64EncodedString(),
+                "pixelWidth": 1_290,
+                "pixelHeight": 2_796,
+                "logicalWidth": 430.0,
+                "logicalHeight": 932.0,
+                "scale": 3.0,
+                "source": "cgwindow-self",
+                "complete": true,
+            ]
+            return .json(
+                try self.response(
+                    requestID: requestID,
+                    payload: payload
+                )
+            )
+        }
+
+        let result = try PlayCoverRuntimeClient(
+            socketPath: fixture.socketPath,
+            launchNonce: "nonce",
+            timeoutSeconds:
+                PlayCoverRuntimeClient.screenshotTimeoutSeconds
+        ).screenshot()
+        try server.wait()
+
+        XCTAssertEqual(
+            result.screenshot,
+            PlayCoverRuntimeScreenshotPayload(
+                jpegBase64: jpeg.base64EncodedString(),
+                pixelWidth: 1_290,
+                pixelHeight: 2_796,
+                logicalWidth: 430,
+                logicalHeight: 932,
+                scale: 3,
+                source: "cgwindow-self",
+                complete: true
+            )
+        )
+        XCTAssertNil(result.dom)
+        XCTAssertNil(result.waitFor)
+    }
+
+    func testDOMSendsTypedArgumentsAndDecodesTypedPayload() throws {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            XCTAssertEqual(request["command"] as? String, "dom")
+            let arguments = try XCTUnwrap(
+                request["arguments"] as? [String: Any]
+            )
+            XCTAssertEqual(arguments["raw"] as? Bool, true)
+            XCTAssertEqual(arguments["fresh"] as? Bool, false)
+            XCTAssertEqual(
+                arguments["waitQuiescence"] as? Bool,
+                true
+            )
+            let requestID = try XCTUnwrap(request["requestId"] as? String)
+            var payload = self.payload(
+                nonce: "nonce",
+                socketPath: fixture.socketPath
+            )
+            payload["capabilities"] = [
+                "hello", "ping", "diagnostics", "dom", "waitFor",
+            ]
+            payload["dom"] = [
+                "app": "Demo",
+                "windowSize": ["x": 430.0, "y": 932.0],
+                "raw": "Application, Demo",
+                "snapshotGeneration": 12,
+                "elements": [
+                    [
+                        "nodeId": "g12-n1",
+                        "elemType": 1,
+                        "traits": ["Button"],
+                        "childCount": 0,
+                        "label": "Continue",
+                        "value": "",
+                        "rect": [
+                            "x": 12.25,
+                            "y": 34.5,
+                            "w": 120.75,
+                            "h": 44.0,
+                        ],
+                    ],
+                ],
+            ]
+            return .json(
+                try self.response(
+                    requestID: requestID,
+                    payload: payload
+                )
+            )
+        }
+
+        let result = try PlayCoverRuntimeClient(
+            socketPath: fixture.socketPath,
+            launchNonce: "nonce"
+        ).dom(
+            PlayCoverRuntimeDOMArguments(
+                raw: true,
+                fresh: false,
+                waitQuiescence: true
+            )
+        )
+        try server.wait()
+
+        let dom = try XCTUnwrap(result.dom)
+        XCTAssertEqual(dom.app, "Demo")
+        XCTAssertEqual(dom.windowSize, PlayCoverRuntimePoint(x: 430, y: 932))
+        XCTAssertEqual(dom.raw, "Application, Demo")
+        XCTAssertEqual(dom.snapshotGeneration, 12)
+        XCTAssertEqual(dom.elements.count, 1)
+        XCTAssertEqual(dom.elements[0].nodeId, "g12-n1")
+        XCTAssertEqual(
+            dom.elements[0].rect,
+            PlayCoverRuntimeRect(
+                x: 12.25,
+                y: 34.5,
+                w: 120.75,
+                h: 44
+            )
+        )
+        XCTAssertNil(result.waitFor)
+    }
+
+    func testWaitForSendsTypedArgumentsAndDecodesTypedPayload() throws {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            XCTAssertEqual(request["command"] as? String, "waitFor")
+            let arguments = try XCTUnwrap(
+                request["arguments"] as? [String: Any]
+            )
+            let target = try XCTUnwrap(
+                arguments["target"] as? [String: Any]
+            )
+            XCTAssertEqual(target["label"] as? String, "Continue")
+            XCTAssertEqual(target["traits"] as? String, "Button")
+            XCTAssertEqual(target["cindex"] as? Int, 2)
+            XCTAssertEqual(arguments["timeout"] as? Double, 7.5)
+            XCTAssertEqual(arguments["gone"] as? Bool, true)
+            XCTAssertEqual(arguments["matchMode"] as? Int, 2)
+            let requestID = try XCTUnwrap(request["requestId"] as? String)
+            var payload = self.payload(
+                nonce: "nonce",
+                socketPath: fixture.socketPath
+            )
+            payload["capabilities"] = [
+                "hello", "ping", "diagnostics", "dom", "waitFor",
+            ]
+            payload["waitFor"] = [
+                "element": [
+                    "elemType": 1,
+                    "label": "Continue",
+                    "rect": [
+                        "x": 10.0,
+                        "y": 20.0,
+                        "w": 30.0,
+                        "h": 40.0,
+                    ],
+                    "ancestors": ["Demo", "Sheet"],
+                ],
+                "waited": 0.125,
+                "snapshotGeneration": 13,
+            ]
+            return .json(
+                try self.response(
+                    requestID: requestID,
+                    payload: payload
+                )
+            )
+        }
+
+        let result = try PlayCoverRuntimeClient(
+            socketPath: fixture.socketPath,
+            launchNonce: "nonce",
+            timeoutSeconds: 20
+        ).waitFor(
+            PlayCoverRuntimeWaitForArguments(
+                target: PlayCoverRuntimeWaitTarget(
+                    label: "Continue",
+                    traits: "Button",
+                    cindex: 2
+                ),
+                timeout: 7.5,
+                gone: true,
+                matchMode: 2
+            )
+        )
+        try server.wait()
+
+        let waitFor = try XCTUnwrap(result.waitFor)
+        XCTAssertEqual(waitFor.element.elemType, 1)
+        XCTAssertEqual(waitFor.element.label, "Continue")
+        XCTAssertEqual(waitFor.element.ancestors, ["Demo", "Sheet"])
+        XCTAssertEqual(waitFor.waited, 0.125)
+        XCTAssertEqual(waitFor.snapshotGeneration, 13)
+        XCTAssertNil(result.dom)
+    }
+
     func testSuccessfulResponseWithWrongNonceIsRejectedWithoutExposingNonce() throws {
         let fixture = try RuntimeClientFixture()
         defer { fixture.remove() }
@@ -150,10 +378,121 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 error as? PlayCoverRuntimeClientError,
                 .remoteError(
                     code: "nonceMismatch",
-                    message: "rejected <redacted>"
+                    message: "rejected <redacted>",
+                    details: nil
                 )
             )
             XCTAssertFalse(String(describing: error).contains(nonce))
+        }
+        try server.wait()
+    }
+
+    func testSemanticRemoteErrorDecodesTypedDetails() throws {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            let requestID = try XCTUnwrap(request["requestId"] as? String)
+            return .json(
+                try JSONSerialization.data(withJSONObject: [
+                    "schemaVersion": 1,
+                    "requestId": requestID,
+                    "ok": false,
+                    "error": [
+                        "code": "element_ambiguous",
+                        "message": "multiple elements matched",
+                        "details": [
+                            "category": "lookup",
+                            "phase": "lookup",
+                            "retryable": false,
+                            "fatal": false,
+                            "target": [
+                                "label": "Continue",
+                                "traits": "Button",
+                                "cindex": 1,
+                            ],
+                            "candidateCount": 2,
+                            "candidates": [
+                                [
+                                    "element": [
+                                        "elemType": 1,
+                                        "label": "Continue",
+                                        "rect": [
+                                            "x": 1.0,
+                                            "y": 2.0,
+                                            "w": 3.0,
+                                            "h": 4.0,
+                                        ],
+                                        "traits": ["Button"],
+                                        "value": "",
+                                        "ancestors": ["Demo"],
+                                    ],
+                                    "rejectedBy": ["trait_mismatch"],
+                                ],
+                            ],
+                            "suggestions": ["Pass --cindex"],
+                        ],
+                    ],
+                ])
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverRuntimeClient(
+                socketPath: fixture.socketPath,
+                launchNonce: "nonce"
+            ).waitFor(
+                PlayCoverRuntimeWaitForArguments(
+                    target: PlayCoverRuntimeWaitTarget(
+                        label: "Continue",
+                        traits: "Button",
+                        cindex: nil
+                    ),
+                    timeout: 1,
+                    gone: false,
+                    matchMode: 0
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? PlayCoverRuntimeClientError,
+                .remoteError(
+                    code: "element_ambiguous",
+                    message: "multiple elements matched",
+                    details: PlayCoverRuntimeErrorDetails(
+                        category: "lookup",
+                        phase: "lookup",
+                        retryable: false,
+                        fatal: false,
+                        target: PlayCoverRuntimeWaitTarget(
+                            label: "Continue",
+                            traits: "Button",
+                            cindex: 1
+                        ),
+                        candidateCount: 2,
+                        candidates: [
+                            PlayCoverRuntimeErrorCandidate(
+                                element: PlayCoverRuntimeErrorElement(
+                                    elemType: 1,
+                                    label: "Continue",
+                                    rect: PlayCoverRuntimeRect(
+                                        x: 1,
+                                        y: 2,
+                                        w: 3,
+                                        h: 4
+                                    ),
+                                    traits: ["Button"],
+                                    value: "",
+                                    ancestors: ["Demo"]
+                                ),
+                                rejectedBy: ["trait_mismatch"]
+                            ),
+                        ],
+                        suggestions: ["Pass --cindex"]
+                    )
+                )
+            )
         }
         try server.wait()
     }
@@ -191,7 +530,11 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         let fixture = try RuntimeClientFixture()
         defer { fixture.remove() }
         let server = try FakeUnixRuntimeServer(socketPath: fixture.socketPath) { _ in
-            .lengthOnly(UInt32(PlayCoverRuntimeClient.maximumBodyBytes + 1))
+            .lengthOnly(
+                UInt32(
+                    PlayCoverRuntimeClient.maximumResponseBodyBytes + 1
+                )
+            )
         }
 
         XCTAssertThrowsError(
@@ -203,18 +546,53 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             XCTAssertEqual(
                 $0 as? PlayCoverRuntimeClientError,
                 .responseFrameTooLarge(
-                    actualBytes: PlayCoverRuntimeClient.maximumBodyBytes + 1,
-                    maximumBytes: PlayCoverRuntimeClient.maximumBodyBytes
+                    actualBytes:
+                        PlayCoverRuntimeClient.maximumResponseBodyBytes + 1,
+                    maximumBytes:
+                        PlayCoverRuntimeClient.maximumResponseBodyBytes
                 )
             )
         }
         try server.wait()
     }
 
+    func testResponseLargerThanRequestCapIsAcceptedWithinResponseCap() throws {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let largeValue = String(repeating: "x", count: 96 * 1_024)
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            let requestID = try XCTUnwrap(request["requestId"] as? String)
+            var payload = self.payload(
+                nonce: "nonce",
+                socketPath: fixture.socketPath
+            )
+            payload["observed"] = ["large": largeValue]
+            return .json(
+                try self.response(
+                    requestID: requestID,
+                    payload: payload
+                )
+            )
+        }
+
+        let result = try PlayCoverRuntimeClient(
+            socketPath: fixture.socketPath,
+            launchNonce: "nonce"
+        ).diagnostics()
+        try server.wait()
+
+        XCTAssertEqual(
+            result.observed?["large"],
+            .string(largeValue)
+        )
+    }
+
     func testOversizedRequestIsRejectedBeforeConnecting() {
         let nonce = String(
             repeating: "n",
-            count: PlayCoverRuntimeClient.maximumBodyBytes
+            count: PlayCoverRuntimeClient.maximumRequestBodyBytes
         )
 
         XCTAssertThrowsError(
@@ -228,7 +606,10 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 return XCTFail("unexpected error: \($0)")
             }
             XCTAssertGreaterThan(actual, maximum)
-            XCTAssertEqual(maximum, PlayCoverRuntimeClient.maximumBodyBytes)
+            XCTAssertEqual(
+                maximum,
+                PlayCoverRuntimeClient.maximumRequestBodyBytes
+            )
             XCTAssertFalse(String(describing: $0).contains(nonce))
         }
     }
