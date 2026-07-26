@@ -65,6 +65,9 @@ run_non_live() {
   bash "$ROOT_DIR/scripts/build_swift_cli.sh"
   echo "[playcover-gate] Building the UIKit/SwiftUI/WKWebView/Metal fixture..."
   bash "$ROOT_DIR/playcover-fixtures/build.sh"
+  echo "[playcover-gate] Verifying non-GUI transparent-host contracts..."
+  bash "$ROOT_DIR/scripts/test_playcover_fixture_live.sh" --static
+  bash "$ROOT_DIR/scripts/test_playcover_external_app_live.sh" --static
   echo "[playcover-gate] Running compositor and PlayChain harnesses..."
   bash "$ROOT_DIR/scripts/test_playcover_cgshw_compositor.sh"
   bash "$ROOT_DIR/scripts/test_playcover_playchain.sh"
@@ -81,14 +84,13 @@ run_non_live() {
 
 run_live() {
   require_apple_silicon_xcode 78
-
   bash "$ROOT_DIR/scripts/build_swift_cli.sh"
   echo "[playcover-live] Running versioned fixture acceptance matrix..."
-  bash "$ROOT_DIR/scripts/test_playcover_fixture_live.sh"
+  bash "$ROOT_DIR/scripts/test_playcover_fixture_live.sh" --live
   echo "[playcover-live] Running isolated Runtime protocol/crash stress matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"
   echo "[playcover-live] Running configured external-App live/stress workflow..."
-  bash "$ROOT_DIR/scripts/test_playcover_external_app_live.sh"
+  bash "$ROOT_DIR/scripts/test_playcover_external_app_live.sh" --live
   echo "[playcover-live] external-App live/stress gate passed"
 }
 

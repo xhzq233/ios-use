@@ -7,8 +7,9 @@ IOS_USE_POPUP_MODE="source"
 
 usage() {
   cat <<'USAGE'
-Usage: playcover-fixtures/test_uikit_popup_contract.sh [--source|--live]
+Usage: playcover-fixtures/test_uikit_popup_contract.sh [--static|--source|--live]
 
+--static  Alias for --source. This mode never launches an App or posts input.
 --source  Verify the deterministic in-window popup source contract (default).
 --live    Also exercise an already-active, isolated PlayCover fixture session:
           Runtime touch and a real global AppKit mouse event must activate the
@@ -23,6 +24,7 @@ if [[ $# -gt 1 ]]; then
 fi
 if [[ $# -eq 1 ]]; then
   case "$1" in
+    --static) IOS_USE_POPUP_MODE="source" ;;
     --source) IOS_USE_POPUP_MODE="source" ;;
     --live) IOS_USE_POPUP_MODE="live" ;;
     --help|-h)
@@ -163,12 +165,37 @@ rg -q -- "com.iosuse.playfixture" \
   "$IOS_USE_POPUP_TEMP/status.json" ||
   fail_contract "active session is not the PlayCover acceptance fixture"
 jq -e '
-  .data.driver.runtime.status == "healthy" and
-  .data.driver.runtime.logicalWidth > 0 and
-  .data.driver.runtime.logicalHeight > 0 and
-  .data.driver.runtime.diagnostics.observed.appKit.cgWindowBounds != null
+  .data.driver.runtime as $runtime |
+  ($runtime.diagnostics.runtime.window) as $window |
+  ($window.canvasCapture) as $capture |
+  $runtime.status == "healthy" and
+  $runtime.logicalWidth == 430 and
+  $runtime.logicalHeight == 932 and
+  $runtime.nativeWidth == 1290 and
+  $runtime.nativeHeight == 2796 and
+  $runtime.scale == 3 and
+  $window.status == "configured" and
+  $window.transparentHost == true and
+  $window.publicTitleBar == true and
+  $window.resizable == true and
+  $window.hostPolicy == true and
+  $window.title == "IOSUsePlayFixture" and
+  $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
+  $window.transparentSpacer == 8 and
+  ($window.displayScale | type) == "number" and
+  $window.displayScale > 0 and
+  ($window.inverseDisplayScale | type) == "number" and
+  (($window.displayScale * $window.inverseDisplayScale - 1) | abs) <= 0.0001 and
+  ($window.hostContentBounds | type) == "object" and
+  ($window.canvasRect | type) == "object" and
+  (($window.canvasRect.width / $window.displayScale - 430) | abs) <= 0.5 and
+  (($window.canvasRect.height / $window.displayScale - 932) | abs) <= 0.5 and
+  ($capture.canvasCGWindowRect | type) == "object" and
+  ($capture.hostContentCGWindowRect | type) == "object" and
+  (($capture.canvasCGWindowRect.width / $window.displayScale - 430) | abs) <= 0.5 and
+  (($capture.canvasCGWindowRect.height / $window.displayScale - 932) | abs) <= 0.5
 ' "$IOS_USE_POPUP_TEMP/status.json" >/dev/null ||
-  fail_contract "active fixture lacks healthy Runtime/AppKit geometry"
+  fail_contract "active fixture lacks the canonical healthy Runtime host/canvas geometry"
 
 run_cli initial-dom dom --json
 jq -e '
@@ -259,32 +286,84 @@ IOS_USE_POPUP_BEFORE_IMAGE="$(
 [[ -f "$IOS_USE_POPUP_BEFORE_IMAGE" ]] ||
   fail_contract "pre-mouse popup screenshot is unavailable"
 
-read -r IOS_USE_POPUP_GLOBAL_X IOS_USE_POPUP_GLOBAL_Y < <(
-  jq -r \
+IOS_USE_POPUP_COORDINATES="$IOS_USE_POPUP_TEMP/global-coordinates.json"
+if ! jq -e \
     -n \
     --slurpfile open "$IOS_USE_POPUP_TEMP/global-open.json" \
     --slurpfile status "$IOS_USE_POPUP_TEMP/status.json" '
-      ($open[0].data.postDom.elements[] |
-        select(.identifier == "fixture.uikit.popup.confirm") |
-        .frame) as $button |
-      ($status[0].data.driver.runtime) as $runtime |
-      ($runtime.diagnostics.observed.appKit.cgWindowBounds) as $window |
       [
-        ($window.x +
-          (($button[0] + ($button[2] / 2)) /
-            $runtime.logicalWidth * $window.width)),
-        ($window.y +
-          (($button[1] + ($button[3] / 2)) /
-            $runtime.logicalHeight * $window.height))
-      ] |
-      @tsv
-    '
+        $open[0].data.postDom.elements[] |
+        select(
+          .identifier == "fixture.uikit.popup.confirm" and
+          .state.visible == true and
+          .state.enabled == true and
+          (.frame | type) == "array" and
+          (.frame | length) == 4 and
+          .frame[2] > 0 and
+          .frame[3] > 0
+        )
+      ] as $buttons |
+      ($status[0].data.driver.runtime) as $runtime |
+      ($runtime.diagnostics.runtime.window) as $window |
+      ($window.canvasCapture.canvasCGWindowRect) as $canvas |
+      if ($buttons | length) != 1 then
+        error("expected exactly one visible popup confirmation button")
+      elif (
+        $window.canvasBounds != {"x":0,"y":0,"width":430,"height":932} or
+        ($window.displayScale | type) != "number" or
+        $window.displayScale <= 0 or
+        ($window.inverseDisplayScale | type) != "number" or
+        (($window.displayScale * $window.inverseDisplayScale - 1) | abs) > 0.0001 or
+        ($canvas | type) != "object" or
+        (($canvas.width / $window.displayScale - 430) | abs) > 0.5 or
+        (($canvas.height / $window.displayScale - 932) | abs) > 0.5
+      ) then
+        error("canonical canvas geometry is unavailable")
+      else
+        ($buttons[0].frame) as $button |
+        ($button[0] + ($button[2] / 2)) as $logicalX |
+        ($button[1] + ($button[3] / 2)) as $logicalY |
+        if (
+          $logicalX < 0 or $logicalX > 430 or
+          $logicalY < 0 or $logicalY > 932
+        ) then
+          error("popup confirmation center is outside the fixed canvas")
+        else
+          ($canvas.x + ($logicalX * $window.displayScale)) as $globalX |
+          ($canvas.y + ($logicalY * $window.displayScale)) as $globalY |
+          (($globalX - $canvas.x) * $window.inverseDisplayScale) as $inverseX |
+          (($globalY - $canvas.y) * $window.inverseDisplayScale) as $inverseY |
+          if (
+            (($inverseX - $logicalX) | abs) > 0.5 or
+            (($inverseY - $logicalY) | abs) > 0.5
+          ) then
+            error("canonical canvas inverse transform exceeds 0.5pt")
+          else
+            {
+              logicalPoint: {x: $logicalX, y: $logicalY},
+              globalPoint: {x: $globalX, y: $globalY},
+              displayScale: $window.displayScale,
+              inverseDisplayScale: $window.inverseDisplayScale,
+              canvasCGWindowRect: $canvas,
+              runnerPID: $status[0].data.driver.runnerPid,
+              snapshotGeneration: $buttons[0].snapshotGeneration
+            }
+          end
+        end
+      end
+    ' >"$IOS_USE_POPUP_COORDINATES"; then
+  fail_contract "could not map the popup button through canonical canvas geometry"
+fi
+
+read -r IOS_USE_POPUP_GLOBAL_X IOS_USE_POPUP_GLOBAL_Y < <(
+  jq -r '[.globalPoint.x, .globalPoint.y] | @tsv' \
+    "$IOS_USE_POPUP_COORDINATES"
 )
 [[ -n "$IOS_USE_POPUP_GLOBAL_X" && -n "$IOS_USE_POPUP_GLOBAL_Y" ]] ||
-  fail_contract "could not map the popup confirmation frame to global AppKit coordinates"
+  fail_contract "could not read canonical popup global coordinates"
 
 IOS_USE_POPUP_RUNNER_PID="$(
-  jq -er '.data.driver.runnerPid' "$IOS_USE_POPUP_TEMP/status.json"
+  jq -er '.runnerPID' "$IOS_USE_POPUP_COORDINATES"
 )"
 IOS_USE_POPUP_EVENT_TOKEN="$(
   printf '%s%03d\n' "$(date +%s)" "$(( $$ % 1000 ))"
@@ -301,6 +380,23 @@ if ! xcrun swift \
   cat "$IOS_USE_POPUP_TEMP/global-mouse.stderr" >&2
   fail_contract "global AppKit mouse event injection failed"
 fi
+
+jq -e \
+  --argjson token "$IOS_USE_POPUP_EVENT_TOKEN" \
+  --argjson runnerPID "$IOS_USE_POPUP_RUNNER_PID" \
+  --slurpfile coordinates "$IOS_USE_POPUP_COORDINATES" '
+    ($coordinates[0].globalPoint) as $point |
+    .operation == "click" and
+    .token == $token and
+    .targetPID == $runnerPID and
+    .targetWindowNumber > 0 and
+    .postEventAccess == true and
+    .globalPoint.x >= ($point.x - 0.5) and
+    .globalPoint.x <= ($point.x + 0.5) and
+    .globalPoint.y >= ($point.y - 0.5) and
+    .globalPoint.y <= ($point.y + 0.5)
+  ' "$IOS_USE_POPUP_TEMP/global-mouse.json" >/dev/null ||
+  fail_contract "global mouse evidence is not bound to the canonical canvas point"
 
 IOS_USE_POPUP_GLOBAL_CONFIRMED=0
 for _ in $(seq 1 30); do
@@ -322,6 +418,35 @@ for _ in $(seq 1 30); do
 done
 [[ "$IOS_USE_POPUP_GLOBAL_CONFIRMED" == "1" ]] ||
   fail_contract "global AppKit mouse did not activate the popup confirmation button"
+
+run_cli global-delivery-status status --json
+jq -e \
+  --argjson token "$IOS_USE_POPUP_EVENT_TOKEN" \
+  --slurpfile coordinates "$IOS_USE_POPUP_COORDINATES" \
+  --slurpfile mouse "$IOS_USE_POPUP_TEMP/global-mouse.json" '
+    ($coordinates[0].logicalPoint) as $point |
+    (.data.driver.runtime.diagnostics.runtime.window) as $window |
+    ($window.lastMouseDownDelivery) as $down |
+    ($window.lastMouseUpDelivery) as $up |
+    $window.status == "configured" and
+    $down.token == $token and
+    $up.token == $token and
+    $down.targetPID == $coordinates[0].runnerPID and
+    $up.targetPID == $coordinates[0].runnerPID and
+    $down.windowNumber == $mouse[0].targetWindowNumber and
+    $up.windowNumber == $mouse[0].targetWindowNumber and
+    $down.phase == "down" and
+    $up.phase == "up" and
+    $down.geometryReady == true and
+    $up.geometryReady == true and
+    $down.targetHitTest == true and
+    $up.targetHitTest == true and
+    (($down.logicalPoint.x - $point.x) | abs) <= 0.5 and
+    (($down.logicalPoint.y - $point.y) | abs) <= 0.5 and
+    (($up.logicalPoint.x - $point.x) | abs) <= 0.5 and
+    (($up.logicalPoint.y - $point.y) | abs) <= 0.5
+  ' "$IOS_USE_POPUP_TEMP/global-delivery-status.json" >/dev/null ||
+  fail_contract "global popup mouse delivery did not round-trip through the canvas within 0.5pt"
 
 run_cli global-after \
   screenshot --name uikit-popup-global-after --json

@@ -60,9 +60,9 @@ stale entries both fail.
 The imported sources are compiled into one mixed Objective-C/Swift Mac Catalyst
 framework by `playcover-runtime/project.yml` and
 `scripts/build_playcover_runtime.sh`. ios-use-owned files outside this directory
-provide the fixed device contract, borderless AppKit policy, UDS automation, and
-capture diagnostics. They do not replace the imported loader, screen, touch,
-swizzle, or PlayChain implementations.
+provide the fixed device contract, Simulator-style transparent AppKit host,
+UDS automation, and capture diagnostics. They do not replace the imported
+loader, screen, touch, swizzle, or PlayChain implementations.
 
 The only packaging changes are project membership, Catalyst compilation flags,
 and public headers required to link the Runtime. The release package keeps the
@@ -82,7 +82,7 @@ the compositor probe.
 
 | Upstream symbol | Catalyst treatment | Reason and differential gate |
 | --- | --- | --- |
-| `init`, `screenCount`, `mousePoint`, `windowFrame`, `mainScreenFrame`, `isMainScreenEqualToFirst`, `isFullscreen`, `setMenuBarVisible` | Delegated to `IOSUsePlayAppKitBridge`. | The bridge enforces the fixed, borderless 430 × 932 window and reports the same host observations. Runtime build plus CGSHW compositor smoke is the executable differential gate. |
+| `init`, `screenCount`, `mousePoint`, `windowFrame`, `mainScreenFrame`, `isMainScreenEqualToFirst`, `isFullscreen`, `setMenuBarVisible` | Delegated to `IOSUsePlayAppKitBridge`. | The bridge presents a public transparent, resizable Simulator-style host while preserving a fixed 430 × 932 inner canvas and reports both host and canvas observations. Runtime build plus CGSHW compositor smoke is the executable differential gate. |
 | `hideCursor`, `hideCursorMove`, `warpCursor`, `unhideCursor` | Explicit no-op. | Cursor capture/warping belongs to PlayCover's interactive desktop GUI and would alter the user's host pointer. ios-use injects touch through the retained `Toucher`/`PTFakeMetaTouch` path instead. |
 | `terminateApplication` | Explicit no-op. | Lifecycle is host-owned by `ios-use stop`; an in-process GUI callback must not terminate an arbitrary app. |
 | `setupKeyboard`, `setupMouseMoved`, `setupMouseButton`, `setupScrollWheel` | Explicit no-op after accepting the protocol callbacks. | Upstream uses local AppKit monitors for keymapping/editor interaction. ios-use has no GUI keymap/editor and routes supported automation through Runtime UDS and the touch backend. |

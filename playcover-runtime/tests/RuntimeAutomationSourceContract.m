@@ -326,7 +326,7 @@ int main(int argc, const char *argv[]) {
         );
         NSString *configureFixedWindow = FunctionBody(
             appKitBridge,
-            @"configureFixedWindow:"
+            @"+ (BOOL)configureFixedWindow:"
         );
         NSString *activeAppKitAccessibility = FunctionBody(
             appKitBridge,
@@ -343,6 +343,10 @@ int main(int argc, const char *argv[]) {
         NSString *appKitLogicalFrame = FunctionBody(
             appKitBridge,
             @"IOSUseBridgeAccessibilityLogicalFrame"
+        );
+        NSString *appKitScreenToCanvas = FunctionBody(
+            appKitBridge,
+            @"IOSUseBridgeAppKitScreenRectToCanvasLogicalRect"
         );
         NSString *collectAppKitAccessibility = FunctionBody(
             appKitBridge,
@@ -557,13 +561,6 @@ int main(int argc, const char *argv[]) {
                 ) < Position(
                     configureFixedWindow,
                     @"@\"makeKeyAndOrderFront:\""
-                ) &&
-                Position(
-                    configureFixedWindow,
-                    @"@\"makeKeyAndOrderFront:\""
-                ) < Position(
-                    configureFixedWindow,
-                    @"@\"orderFrontRegardless\""
                 ),
             @"configureFixedWindow must exactly map the deterministic "
              "background UIKit candidate without an AppKit key-window "
@@ -577,11 +574,17 @@ int main(int argc, const char *argv[]) {
                 [configureFixedWindow containsString:
                     @"IOSUsePlayDeviceLogicalHeight"] &&
                 [configureFixedWindow containsString:
-                    @"IOSUseBridgeRectIsDeviceScreen(content)"] &&
+                    @"IOSUseBridgeRectIsDeviceScreen(uiWindow.bounds)"] &&
                 [configureFixedWindow containsString:
-                    @"IOSUseBridgeRectIsDeviceScreen(bounds)"] &&
+                    @"IOSUseBridgeRectIsDeviceScreen(canvasBounds)"] &&
                 [configureFixedWindow containsString:
-                    @"IOSUseBridgeWindowPolicyIsFixed(window)"] &&
+                    @"IOSUseBridgeWindowPolicyIsHost(window)"] &&
+                [configureFixedWindow containsString:
+                    @"IOSUseBridgeLockSceneToFixedCanvas"] &&
+                [configureFixedWindow containsString:
+                    @"IOSUseBridgeInstallHostCanvas"] &&
+                [configureFixedWindow containsString:
+                    @"IOSUseBridgeUpdateHostCanvasLayout"] &&
                 [configureFixedWindow containsString:
                     @"if (exact && usedBackgroundActivationFallback)"] &&
                 [configureFixedWindow containsString:
@@ -590,7 +593,7 @@ int main(int argc, const char *argv[]) {
                     @"strict foreground key-window selection"] &&
                 Position(
                     configureFixedWindow,
-                    @"@\"orderFrontRegardless\""
+                    @"@\"makeKeyAndOrderFront:\""
                 ) < Position(
                     configureFixedWindow,
                     @"if (exact && usedBackgroundActivationFallback)"
@@ -609,9 +612,10 @@ int main(int argc, const char *argv[]) {
                     configureFixedWindow,
                     @"IOSUsePlayWindowStatus = exact "
                 ),
-            @"a background activation pass must retain every fixed-geometry "
-             "check, then return transiently so screenshot settling retries "
-             "through strict foreground selection"
+            @"a background activation pass must retain fixed UIKit/canvas "
+             "geometry and transparent-host checks, then return transiently "
+             "so screenshot settling retries through strict foreground "
+             "selection"
         );
         Require(
             [appKitBridge containsString:
@@ -697,13 +701,17 @@ int main(int argc, const char *argv[]) {
                 [appKitBridge containsString:
                     @"#import \"IOSUsePlayDevice.h\""] &&
                 [appKitLogicalFrame containsString:
+                    @"IOSUseBridgeAppKitScreenRectToCanvasLogicalRect"] &&
+                [appKitScreenToCanvas containsString:
                     @"NSSelectorFromString(@\"convertRectFromScreen:\")"] &&
-                [appKitLogicalFrame containsString:
-                    @"IOSUsePlayDeviceLogicalHeight -"] &&
-                [appKitLogicalFrame containsString:
-                    @"CGRectGetMaxY(localFrame)"],
-            @"AppKit screen frames must be converted through the selected "
-             "window into the fixed 932-point top-left logical space"
+                [appKitScreenToCanvas containsString:
+                    @"NSSelectorFromString(@\"convertRect:fromView:\")"] &&
+                [appKitScreenToCanvas containsString:
+                    @"CGRectIntersection"] &&
+                [appKitScreenToCanvas containsString:
+                    @"IOSUsePlayMapHostContentRectToCanvas"],
+            @"AppKit screen frames must enter the transparent host, clip to "
+             "its canvas, and use the shared fixed logical inverse transform"
         );
         Require(
             [dom containsString:

@@ -103,6 +103,25 @@ xcrun clang \
 
 "$IOS_USE_SMOKE_TEMP/WindowCompositorBackingScaleTests"
 
+xcrun clang \
+  -fobjc-arc \
+  -fmodules \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -framework Foundation \
+  -framework CoreGraphics \
+  -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
+  -I "$IOS_USE_REPO_ROOT/swift-cli/Sources/IOSUsePlayDevice/include" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayWindowCompositor.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/HostCanvasContractTests.m" \
+  -o "$IOS_USE_SMOKE_TEMP/HostCanvasContractTests"
+
+"$IOS_USE_SMOKE_TEMP/HostCanvasContractTests" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayAppKitBridge.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeSocket.m"
+
 if [ "$IOS_USE_DETERMINISTIC_ONLY" = "true" ]; then
   echo "[cgshw-smoke] PASS deterministic compositor contracts"
   exit 0

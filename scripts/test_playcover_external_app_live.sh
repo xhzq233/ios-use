@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CLI="$ROOT_DIR/ios-use"
+MODE="static"
 SCENARIO_PATH="${IOS_USE_PLAYCOVER_LIVE_SCENARIO:-}"
 PRIVATE_EVIDENCE_ROOT="${IOS_USE_PLAYCOVER_PRIVATE_EVIDENCE_DIR:-}"
 ATTESTATION_ROOT="${IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR:-}"
@@ -29,10 +30,16 @@ GENERATION_KEY=""
 GATE_PASSED=0
 MOUSE_SEQUENCE=0
 RETAINED_SCREENSHOT=""
+EXPECTED_HOST_TITLE=""
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/test_playcover_external_app_live.sh
+Usage: scripts/test_playcover_external_app_live.sh [--static|--live]
+
+--static  Verify the transparent-host source contract only. It does not need a
+          GUI session, private scenario, or PostEvent permission.
+--live    Run the generic external-App PlayCover live/stress gate. This
+          requires the private runner inputs below.
 
 Run the generic external-App PlayCover live/stress gate. Required private
 runner inputs:
@@ -49,8 +56,14 @@ redacted pass attestation. Missing prerequisites exit with EX_CONFIG (78).
 USAGE
 }
 
-if [[ $# -ne 0 ]]; then
+if [[ $# -gt 1 ]]; then
+  usage >&2
+  exit 64
+fi
+if [[ $# -eq 1 ]]; then
   case "${1:-}" in
+    --static) MODE="static" ;;
+    --live) MODE="live" ;;
     --help|-h)
       usage
       exit 0
@@ -72,6 +85,13 @@ config_fail() {
   echo "[playcover-external-live] EX_CONFIG: $*" >&2
   exit 78
 }
+
+if [[ "$MODE" == "static" ]]; then
+  bash "$ROOT_DIR/playcover-fixtures/test_transparent_host_contract.sh" \
+    --static
+  echo "[playcover-external-live] PASS static transparent-host contract"
+  exit 0
+fi
 
 if [[ -z "$SCENARIO_PATH" ]]; then
   config_fail "IOS_USE_PLAYCOVER_LIVE_SCENARIO is required"
@@ -299,14 +319,39 @@ run_cli() {
   fi
 }
 
+expected_host_title_for_app() {
+  local app_path="$1"
+  local info_path="$app_path/Info.plist"
+  local key
+  local value
+  for key in CFBundleDisplayName CFBundleName CFBundleIdentifier; do
+    value="$(
+      /usr/bin/plutil -extract "$key" raw "$info_path" 2>/dev/null || true
+    )"
+    if [[ -n "$value" && "$value" != "(null)" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done
+  return 1
+}
+
 assert_status() {
   local case_name="$1"
   if ! jq -e \
       --arg generation "$GENERATION_KEY" \
       --arg sourceApp "$LIVE_APP" \
       --arg sourceExecutable "$SOURCE_EXECUTABLE" \
-      --arg bundleIdentifier "$LIVE_BUNDLE_ID" '
+      --arg bundleIdentifier "$LIVE_BUNDLE_ID" \
+      --arg title "$EXPECTED_HOST_TITLE" '
       .data.driver as $driver |
+      ($driver.runtime) as $runtime |
+      ($runtime.diagnostics.runtime.window) as $window |
+      ($window.canvasCapture) as $capture |
+      ($window.hostContentBounds) as $host |
+      ($window.canvasRect) as $canvas |
+      ($capture.hostContentCGWindowRect) as $hostCG |
+      ($capture.canvasCGWindowRect) as $canvasCG |
       $driver.playcoverAppPath != $sourceApp and
       ($driver.playcoverAppPath |
         contains("/playcover/prepared/" + $generation + "/")) and
@@ -318,14 +363,14 @@ assert_status() {
       .data.driver.playcoverGenerationKey == $generation and
       (.data.driver.runnerPid | type) == "number" and
       .data.driver.runnerPid > 0 and
-      .data.driver.runtime.status == "healthy" and
-      .data.driver.runtime.identityVerified == true and
-      .data.driver.runtime.logicalWidth == 430 and
-      .data.driver.runtime.logicalHeight == 932 and
-      .data.driver.runtime.nativeWidth == 1290 and
-      .data.driver.runtime.nativeHeight == 2796 and
-      .data.driver.runtime.scale == 3 and
-      (.data.driver.runtime.diagnostics.runtime.rendering |
+      $runtime.status == "healthy" and
+      $runtime.identityVerified == true and
+      $runtime.logicalWidth == 430 and
+      $runtime.logicalHeight == 932 and
+      $runtime.nativeWidth == 1290 and
+      $runtime.nativeHeight == 2796 and
+      $runtime.scale == 3 and
+      ($runtime.diagnostics.runtime.rendering |
         .syntheticChrome == false and
         .safeAreaOverride == false and
         (.fullFrame |
@@ -336,15 +381,49 @@ assert_status() {
           .uncropped == true and
           .safeAreaCropped == false and
           .identityMapping == true)) and
-      (.data.driver.runtime.diagnostics.observed.appKit |
-        .status == "configured" and
-        .borderless == 1 and
-        .hasShadow == false and
-        .movable == false and
-        .fixedSizePolicy == true and
-        .identityTransform == true and
-        .mouseMonitorReady == true and
-        .cgWindowBounds != null)
+      $window.status == "configured" and
+      $window.transparentHost == true and
+      $window.publicTitleBar == true and
+      $window.resizable == true and
+      $window.hostPolicy == true and
+      $window.title == $title and
+      $capture.title == $title and
+      $window.applicationActive == true and
+      $window.windowKey == true and
+      $window.mouseMonitorReady == true and
+      $window.identityTransform == true and
+      $window.borderless == false and
+      $window.hasShadow == false and
+      $window.movable == true and
+      $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
+      $window.sceneMinimumSize == {"width":430,"height":932} and
+      $window.sceneMaximumSize == {"width":430,"height":932} and
+      $window.transparentSpacer == 8 and
+      ($window.displayScale | type) == "number" and
+      $window.displayScale > 0 and
+      ($window.inverseDisplayScale | type) == "number" and
+      (($window.displayScale * $window.inverseDisplayScale - 1) | abs) <=
+        0.0001 and
+      ($host | type) == "object" and
+      ($canvas | type) == "object" and
+      ($hostCG | type) == "object" and
+      ($canvasCG | type) == "object" and
+      (($canvas.width / $window.displayScale - 430) | abs) <= 0.5 and
+      (($canvas.height / $window.displayScale - 932) | abs) <= 0.5 and
+      (($canvasCG.width / $window.displayScale - 430) | abs) <= 0.5 and
+      (($canvasCG.height / $window.displayScale - 932) | abs) <= 0.5 and
+      (($canvasCG.width - $canvas.width) | abs) <= 0.5 and
+      (($canvasCG.height - $canvas.height) | abs) <= 0.5 and
+      $canvas.x >= ($host.x - 0.5) and
+      $canvas.y >= ($host.y - 0.5) and
+      ($canvas.x + $canvas.width) <= ($host.x + $host.width + 0.5) and
+      ($canvas.y + $canvas.height) <= ($host.y + $host.height + 0.5) and
+      (($canvas.y + $canvas.height + $window.transparentSpacer -
+        ($host.y + $host.height)) | abs) <= 0.5 and
+      (($canvasCG.x - ($hostCG.x + $canvas.x - $host.x)) | abs) <= 0.5 and
+      (($canvasCG.y - ($hostCG.y + $host.y + $host.height -
+        $canvas.y - $canvas.height)) | abs) <= 0.5 and
+      (($canvasCG.y - $hostCG.y - $window.transparentSpacer) | abs) <= 0.5
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name does not prove the exact healthy external App/AppKit session"
   fi
@@ -352,7 +431,7 @@ assert_status() {
 
 assert_screenshot() {
   local case_name="$1"
-  if ! jq -e '
+  if ! jq -e --arg title "$EXPECTED_HOST_TITLE" '
       .data.pixelSize == [1290,2796] and
       .data.logicalSize == [430,932] and
       .data.runtimeEvidence.complete == true and
@@ -376,7 +455,32 @@ assert_screenshot() {
         .allWindowGeometryInsideDevice == true and
         .baseWindowCoversDevice == true and
         .requestedCapturedCountMatch == true and
-        .windowSetStableDuringCapture == true)
+        .windowSetStableDuringCapture == true) and
+      (.data.runtimeEvidence.appKitWindowEvidence as $window |
+        ($window.canvasCapture) as $capture |
+        $window.status == "configured" and
+        $window.transparentHost == true and
+        $window.publicTitleBar == true and
+        $window.resizable == true and
+        $window.hostPolicy == true and
+        $window.title == $title and
+        $capture.title == $title and
+        $window.canvasBounds ==
+          {"x":0,"y":0,"width":430,"height":932} and
+        $window.transparentSpacer == 8 and
+        ($window.displayScale | type) == "number" and
+        $window.displayScale > 0 and
+        (($window.canvasRect.width / $window.displayScale - 430) | abs) <=
+          0.5 and
+        (($window.canvasRect.height / $window.displayScale - 932) | abs) <=
+          0.5 and
+        (($capture.canvasCGWindowRect.width /
+          $window.displayScale - 430) | abs) <= 0.5 and
+        (($capture.canvasCGWindowRect.height /
+          $window.displayScale - 932) | abs) <= 0.5 and
+        (($capture.canvasCGWindowRect.y -
+          $capture.hostContentCGWindowRect.y -
+          $window.transparentSpacer) | abs) <= 0.5)
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name is not a complete 1290x2796 device screenshot"
   fi
@@ -479,7 +583,8 @@ derive_mouse_coordinates() {
       --arg tab "$tab_label" \
       --slurpfile status "$RUN_DIR/${status_case}.stdout" '
         ($status[0].data.driver.runtime) as $runtime |
-        ($runtime.diagnostics.observed.appKit.cgWindowBounds) as $window |
+        ($runtime.diagnostics.runtime.window) as $window |
+        ($window.canvasCapture.canvasCGWindowRect) as $canvas |
         [.data.elements[] |
           select(
             .label == $tab and
@@ -495,31 +600,52 @@ derive_mouse_coordinates() {
         ] as $matches |
         if ($matches | length) != 1 then
           error("fresh DOM does not contain one bottom tab named " + $tab)
+        elif (
+          $window.canvasBounds !=
+            {"x":0,"y":0,"width":430,"height":932} or
+          ($window.displayScale | type) != "number" or
+          $window.displayScale <= 0 or
+          ($window.inverseDisplayScale | type) != "number" or
+          (($window.displayScale * $window.inverseDisplayScale - 1) | abs) >
+            0.0001 or
+          ($canvas | type) != "object" or
+          (($canvas.width / $window.displayScale - 430) | abs) > 0.5 or
+          (($canvas.height / $window.displayScale - 932) | abs) > 0.5
+        ) then
+          error("canonical canvas geometry is unavailable")
         else
           ($matches[0].frame) as $frame |
           ($frame[0] + ($frame[2] / 2)) as $logicalX |
           ($frame[1] + ($frame[3] / 2)) as $logicalY |
-          {
-            label: $tab,
-            snapshotGeneration: $matches[0].snapshotGeneration,
-            frame: $frame,
-            logicalPoint: {
-              x: $logicalX,
-              y: $logicalY
-            },
-            globalPoint: {
-              x: (
-                $window.x +
-                ($logicalX / $runtime.logicalWidth * $window.width)
-              ),
-              y: (
-                $window.y +
-                ($logicalY / $runtime.logicalHeight * $window.height)
-              )
-            },
-            runnerPID: $status[0].data.driver.runnerPid,
-            cgWindowBounds: $window
-          }
+          ($canvas.x + ($logicalX * $window.displayScale)) as $globalX |
+          ($canvas.y + ($logicalY * $window.displayScale)) as $globalY |
+          (($globalX - $canvas.x) * $window.inverseDisplayScale) as $inverseX |
+          (($globalY - $canvas.y) * $window.inverseDisplayScale) as $inverseY |
+          if (
+            (($inverseX - $logicalX) | abs) > 0.5 or
+            (($inverseY - $logicalY) | abs) > 0.5
+          ) then
+            error("canonical canvas inverse transform exceeds 0.5pt")
+          else
+            {
+              label: $tab,
+              snapshotGeneration: $matches[0].snapshotGeneration,
+              frame: $frame,
+              logicalPoint: {
+                x: $logicalX,
+                y: $logicalY
+              },
+              globalPoint: {
+                x: $globalX,
+                y: $globalY
+              },
+              displayScale: $window.displayScale,
+              inverseDisplayScale: $window.inverseDisplayScale,
+              canvasCGWindowRect: $canvas,
+              runnerPID: $status[0].data.driver.runnerPid,
+              mouseDeliveryCountBefore: $window.mouseDeliveryCount
+            }
+          end
         end
       ' \
       "$RUN_DIR/${dom_case}.stdout" \
@@ -586,6 +712,7 @@ run_mouse_helper() {
   if ! jq -e \
       --argjson token "$event_token" \
       --argjson pid "$runner_pid" '
+        .operation == "click" and
         .token == $token and
         .targetPID == $pid and
         .postEventAccess == true
@@ -603,7 +730,7 @@ run_mouse_helper() {
       --argjson pid "$runner_pid" \
       --slurpfile coordinates "$coordinates_file" '
         ($coordinates[0].logicalPoint) as $point |
-        (.data.driver.runtime.diagnostics.observed.appKit) as $appKit |
+        (.data.driver.runtime.diagnostics.runtime.window) as $appKit |
         ($appKit.lastMouseDownDelivery) as $down |
         ($appKit.lastMouseUpDelivery) as $up |
         $down.token == $token and
@@ -614,6 +741,10 @@ run_mouse_helper() {
         $up.phase == "up" and
         $down.geometryReady == true and
         $up.geometryReady == true and
+        $down.targetHitTest == true and
+        $up.targetHitTest == true and
+        $down.sequence > $coordinates[0].mouseDeliveryCountBefore and
+        $up.sequence > $down.sequence and
         $down.logicalPoint.x >= ($point.x - 0.5) and
         $down.logicalPoint.x <= ($point.x + 0.5) and
         $down.logicalPoint.y >= ($point.y - 0.5) and
@@ -992,6 +1123,9 @@ bundle_identifier="$(
 if [[ "$bundle_identifier" != "$LIVE_BUNDLE_ID" ]]; then
   config_fail "the scenario bundle identifier does not match the App"
 fi
+EXPECTED_HOST_TITLE="$(expected_host_title_for_app "$LIVE_APP")" ||
+  config_fail "external App has no readable title-bar fallback metadata"
+printf '%s\n' "$EXPECTED_HOST_TITLE" >"$RUN_DIR/expected-host-title"
 printf '%s\n' "$SOURCE_EXECUTABLE" >"$RUN_DIR/source-executable-path"
 if ! SOURCE_HASH_BEFORE="$(source_executable_hash)"; then
   config_fail "could not hash the external App source executable"

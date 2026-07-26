@@ -1056,6 +1056,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch(mismatch.1)
         }
+        try validateTransparentHost(geometry.host)
     }
 
     private static func validNaturalSafeArea(
@@ -1078,6 +1079,162 @@ final class PlayCoverDriverClient: DriverCommandClient {
         }
         return safeArea.top + safeArea.bottom <= logicalSize.height
             && safeArea.left + safeArea.right <= logicalSize.width
+    }
+
+    private static func validateTransparentHost(
+        _ host: PlayCoverRuntimeHostGeometry?
+    ) throws {
+        guard let host else {
+            throw PlayCoverDriverClientError
+                .runtimeGeometryMismatch("transparent host diagnostics")
+        }
+        let expectedCanvasWidth =
+            Self.logicalSize.width * host.displayScale
+        let expectedCanvasHeight =
+            Self.logicalSize.height * host.displayScale
+        let checks: [(Bool, String)] = [
+            (
+                host.status == "configured" && host.hostPolicy,
+                "transparent host policy"
+            ),
+            (
+                host.transparent && host.publicTitleBar &&
+                    host.titleVisible && host.resizable,
+                "transparent host presentation"
+            ),
+            (
+                !host.title.isEmpty && host.title == host.titleExpected,
+                "transparent host title"
+            ),
+            (
+                host.displayScale.isFinite && host.displayScale >= 0.5 &&
+                    host.inverseDisplayScale.isFinite &&
+                    approximatelyEqual(
+                        host.inverseDisplayScale,
+                        1 / host.displayScale
+                    ),
+                "transparent host display scale"
+            ),
+            (
+                approximatelyEqual(host.transparentSpacer, 8),
+                "transparent host spacer"
+            ),
+            (
+                validHostFrame(host.canvasBounds) &&
+                    approximatelyEqual(host.canvasBounds.x, 0) &&
+                    approximatelyEqual(host.canvasBounds.y, 0) &&
+                    approximatelyEqual(
+                        host.canvasBounds.width,
+                        Self.logicalSize.width
+                    ) &&
+                    approximatelyEqual(
+                        host.canvasBounds.height,
+                        Self.logicalSize.height
+                    ),
+                "fixed canvas bounds"
+            ),
+            (
+                validHostFrame(host.frame) &&
+                    validHostFrame(host.contentBounds) &&
+                    validHostFrame(host.canvasRect) &&
+                    approximatelyEqual(
+                        host.canvasRect.width,
+                        expectedCanvasWidth
+                    ) &&
+                    approximatelyEqual(
+                        host.canvasRect.height,
+                        expectedCanvasHeight
+                    ) &&
+                    hostFrameContains(
+                        host.contentBounds,
+                        host.canvasRect
+                    ) &&
+                    approximatelyEqual(
+                        host.canvasRect.y + host.canvasRect.height +
+                            host.transparentSpacer,
+                        host.contentBounds.y + host.contentBounds.height
+                    ),
+                "transparent host canvas layout"
+            ),
+            (
+                host.capture.ready && host.capture.error == nil &&
+                    (host.capture.hostWindowNumber ?? 0) > 0 &&
+                    validHostFrame(host.capture.hostContentCGWindowRect) &&
+                    validHostFrame(host.capture.hostCGWindowBounds) &&
+                    validHostFrame(host.capture.canvasCGWindowRect) &&
+                    approximatelyEqual(
+                        host.capture.hostCGWindowBounds.width,
+                        host.frame.width
+                    ) &&
+                    approximatelyEqual(
+                        host.capture.hostCGWindowBounds.height,
+                        host.frame.height
+                    ) &&
+                    approximatelyEqual(
+                        host.capture.hostContentCGWindowRect.width,
+                        host.contentBounds.width
+                    ) &&
+                    approximatelyEqual(
+                        host.capture.hostContentCGWindowRect.height,
+                        host.contentBounds.height
+                    ) &&
+                    approximatelyEqual(
+                        host.capture.canvasCGWindowRect.width,
+                        host.canvasRect.width
+                    ) &&
+                    approximatelyEqual(
+                        host.capture.canvasCGWindowRect.height,
+                        host.canvasRect.height
+                    ) &&
+                    hostFrameContains(
+                        host.capture.hostCGWindowBounds,
+                        host.capture.hostContentCGWindowRect
+                    ) &&
+                    hostFrameContains(
+                        host.capture.hostCGWindowBounds,
+                        host.capture.canvasCGWindowRect
+                    ) &&
+                    approximatelyEqual(
+                        host.capture.canvasCGWindowRect.x,
+                        host.capture.hostContentCGWindowRect.x +
+                            host.canvasRect.x - host.contentBounds.x
+                    ) &&
+                    approximatelyEqual(
+                        host.capture.canvasCGWindowRect.y,
+                        host.capture.hostContentCGWindowRect.y +
+                            (host.contentBounds.y +
+                                host.contentBounds.height -
+                                host.canvasRect.y -
+                                host.canvasRect.height)
+                    ),
+                "transparent host canvas capture"
+            ),
+        ]
+        if let mismatch = checks.first(where: { !$0.0 }) {
+            throw PlayCoverDriverClientError
+                .runtimeGeometryMismatch(mismatch.1)
+        }
+    }
+
+    private static func validHostFrame(
+        _ frame: PlayCoverRuntimeFrame
+    ) -> Bool {
+        [frame.x, frame.y, frame.width, frame.height]
+            .allSatisfy(\.isFinite) &&
+            frame.width > 0 && frame.height > 0
+    }
+
+    private static func hostFrameContains(
+        _ container: PlayCoverRuntimeFrame,
+        _ candidate: PlayCoverRuntimeFrame
+    ) -> Bool {
+        let tolerance = 0.01
+        return candidate.x >= container.x - tolerance &&
+            candidate.y >= container.y - tolerance &&
+            candidate.x + candidate.width <=
+                container.x + container.width + tolerance &&
+            candidate.y + candidate.height <=
+                container.y + container.height + tolerance
     }
 
     private static func validateScreenshotFullFrame(

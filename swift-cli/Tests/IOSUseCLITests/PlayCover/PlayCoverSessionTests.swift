@@ -1278,6 +1278,59 @@ final class PlayCoverSessionTests: XCTestCase {
             runtimeIdentityVerified(afterIdentity),
             true
         )
+
+        StatusService.playCoverDiagnosticsForTesting = { _ in
+            self.makeRuntimePayload(
+                manifest: manifest,
+                hostPolicy: false
+            )
+        }
+        let hostMismatch = StatusService.machineSnapshot(
+            paths: fixture.paths
+        ).data
+        XCTAssertEqual(
+            runtimeIdentityVerified(hostMismatch),
+            true
+        )
+        let hostMismatchText = try StatusService.status(paths: fixture.paths)
+        XCTAssertTrue(hostMismatchText.contains("runtime: unhealthy"))
+        XCTAssertTrue(
+            hostMismatchText.contains("transparent host policy")
+        )
+
+        StatusService.playCoverDiagnosticsForTesting = { _ in
+            self.makeRuntimePayload(
+                manifest: manifest,
+                hostCaptureError: "canvas capture unavailable"
+            )
+        }
+        let captureMismatch = StatusService.machineSnapshot(
+            paths: fixture.paths
+        ).data
+        XCTAssertEqual(
+            runtimeIdentityVerified(captureMismatch),
+            true
+        )
+        guard case .object(let captureRoot) = captureMismatch,
+              case .object(let captureDriver)? = captureRoot["driver"],
+              case .object(let captureRuntime)? = captureDriver["runtime"],
+              case .object(let captureHost)? = captureRuntime["host"],
+              case .object(let capture)? = captureHost["capture"] else {
+            return XCTFail("unhealthy Runtime must retain host capture diagnostics")
+        }
+        XCTAssertEqual(
+            capture["error"],
+            .string("canvas capture unavailable")
+        )
+        let captureMismatchText = try StatusService.status(
+            paths: fixture.paths
+        )
+        XCTAssertTrue(captureMismatchText.contains("runtime: unhealthy"))
+        XCTAssertTrue(
+            captureMismatchText.contains(
+                "host capture: canvas capture unavailable"
+            )
+        )
     }
 
     func testSessionSocketNameIsDerivedAndLengthBounded()
@@ -1343,7 +1396,9 @@ final class PlayCoverSessionTests: XCTestCase {
     private func makeRuntimePayload(
         manifest: PlayCoverPrepareManifest,
         logicalWidth: Double =
-            Double(IOSUsePlayDeviceLogicalWidth)
+            Double(IOSUsePlayDeviceLogicalWidth),
+        hostPolicy: Bool = true,
+        hostCaptureError: String? = nil
     ) -> PlayCoverRuntimeResponsePayload {
         .init(
             pid: 4_242,
@@ -1375,9 +1430,109 @@ final class PlayCoverSessionTests: XCTestCase {
                     left: 3,
                     bottom: 29,
                     right: 4
-                )
+                ),
+                host: hostCaptureError.map {
+                    makeUnavailableTransparentHostGeometry(
+                        hostPolicy: hostPolicy,
+                        error: $0
+                    )
+                } ?? makeTransparentHostGeometry(hostPolicy: hostPolicy)
             ),
             stage: "ready"
+        )
+    }
+
+    private func makeTransparentHostGeometry(
+        hostPolicy: Bool = true
+    )
+        -> PlayCoverRuntimeHostGeometry
+    {
+        .init(
+            status: "configured",
+            hostPolicy: hostPolicy,
+            frame: .init(x: 40, y: 30, width: 430, height: 980),
+            contentBounds: .init(x: 0, y: 0, width: 430, height: 940),
+            canvasRect: .init(x: 0, y: 0, width: 430, height: 932),
+            canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
+            displayScale: 1,
+            inverseDisplayScale: 1,
+            transparentSpacer: 8,
+            transparent: true,
+            publicTitleBar: true,
+            titleVisible: true,
+            resizable: true,
+            title: "Fixture",
+            titleExpected: "Fixture",
+            capture: .init(
+                ready: true,
+                error: nil,
+                hostContentCGWindowRect: .init(
+                    x: 40,
+                    y: 30,
+                    width: 430,
+                    height: 940
+                ),
+                hostCGWindowBounds: .init(
+                    x: 40,
+                    y: 10,
+                    width: 430,
+                    height: 980
+                ),
+                canvasCGWindowRect: .init(
+                    x: 40,
+                    y: 38,
+                    width: 430,
+                    height: 932
+                ),
+                hostWindowNumber: 17
+            )
+        )
+    }
+
+    private func makeUnavailableTransparentHostGeometry(
+        hostPolicy: Bool,
+        error: String
+    ) -> PlayCoverRuntimeHostGeometry {
+        let host = makeTransparentHostGeometry(hostPolicy: hostPolicy)
+        return .init(
+            status: host.status,
+            hostPolicy: host.hostPolicy,
+            frame: host.frame,
+            contentBounds: host.contentBounds,
+            canvasRect: host.canvasRect,
+            canvasBounds: host.canvasBounds,
+            displayScale: host.displayScale,
+            inverseDisplayScale: host.inverseDisplayScale,
+            transparentSpacer: host.transparentSpacer,
+            transparent: host.transparent,
+            publicTitleBar: host.publicTitleBar,
+            titleVisible: host.titleVisible,
+            resizable: host.resizable,
+            title: host.title,
+            titleExpected: host.titleExpected,
+            capture: .init(
+                ready: false,
+                error: error,
+                hostContentCGWindowRect: .init(
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0
+                ),
+                hostCGWindowBounds: .init(
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0
+                ),
+                canvasCGWindowRect: .init(
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0
+                ),
+                hostWindowNumber: nil
+            )
         )
     }
 

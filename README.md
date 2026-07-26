@@ -234,13 +234,15 @@ all use that exact PID, executable, session, and prepared generation.
 Lifecycle remains host-owned: `activateApp`, `terminateApp`, `home`, and DDI
 operations are explicitly unsupported while a PlayCover session is active.
 
-The Runtime fixes a completely borderless, non-resizable 430 x 932 AppKit
-window without cropping or adding a host UI layer over the App root.
-Screenshots capture only the target process's own complete compositor surfaces,
-including Metal, then produce a strict 1290 x 2796 frame. The Runtime never
-draws synthetic time, battery, Dynamic Island, status glyphs, or Home
-Indicator. The path does not use ScreenCaptureKit or request Screen Recording
-permission.
+The Runtime presents the App in a transparent, resizable Simulator-style host:
+the public AppKit title bar uses the App name, then an 8pt transparent desktop
+gap, then a uniformly scaled render canvas. The inner UIKit canvas remains
+fixed at 430 x 932 logical points regardless of the host size. Host decoration
+and the gap are never target coordinates or evidence. Screenshots capture only
+the target process's complete canvas compositor surfaces, including Metal, and
+always produce a strict 1290 x 2796 frame. The Runtime never draws synthetic
+time, battery, Dynamic Island, status glyphs, or Home Indicator. The path does
+not use ScreenCaptureKit or request Screen Recording permission.
 See [docs/playcover-backend.md](docs/playcover-backend.md).
 
 ## Performance Snapshot

@@ -56,11 +56,31 @@ IOS_USE_HOME=/path/to/isolated-fixture-home \
 ```
 
 Live mode consumes the active session without starting or stopping it. It
-requires Accessibility/PostEvent permission for the invoking terminal and
-uses the popup button's fresh DOM frame plus the exact AppKit window bounds
-to derive the global mouse point. Set `IOS_USE_POPUP_EVIDENCE_DIR` to a new
+requires an unlocked GUI session and Accessibility/PostEvent permission for the
+invoking terminal, and uses the popup button's fresh DOM frame plus Runtime
+`canvasCGWindowRect` and `displayScale` to derive the global mouse point. It
+never maps target coordinates from the outer host window. Set
+`IOS_USE_POPUP_EVIDENCE_DIR` to a new
 path when the JSON responses and mouse-event record must be retained instead
 of using an automatically removed temporary directory.
+
+The transparent Simulator-style host has a static contract that does not need
+a GUI session or a built fixture App:
+
+```bash
+bash playcover-fixtures/test_transparent_host_contract.sh --static
+bash scripts/test_playcover_fixture_live.sh --static
+```
+
+The fixture matrix is deliberately opt-in. In an unlocked GUI session it
+verifies the public App title bar, the 8pt transparent spacer below it, two host
+resizes with a uniform display scale, fixed canvas-only screenshot/capture
+output, and titlebar/spacer/canvas-exterior clicks that do not change the App
+DOM:
+
+```bash
+bash scripts/test_playcover_fixture_live.sh --live
+```
 
 The fixture writes `Documents/geometry.json` and exposes the same value as
 `fixture.uikit.geometry`. The required fixed render contract is:
@@ -79,8 +99,8 @@ rejected by the PlayCover Runtime rather than hidden by screenshot resizing.
 This fixture is only one part of the unified backend gate. A passing mock DOM
 or UIKit-only image is insufficient: the final PlayCover path must also prove
 real touch/input, Metal plus UIKit composition, complete uncropped App
-rendering without synthetic chrome, signing, session identity, and the
-configured external-App live workflow.
+rendering without synthetic chrome or host decoration, signing, session
+identity, and the configured external-App live workflow.
 
 `runtime_socket_probe.swift` is intentionally a bounded negative-test client,
 not an automation API. The unified live gate uses it only against a fixture

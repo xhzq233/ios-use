@@ -1054,6 +1054,232 @@ static BOOL RunMetalSmoke(
     return passed;
 }
 
+static BOOL HostContentCGWindowRect(
+    NSWindow *window,
+    NSView *contentView,
+    CGRect *contentCGWindowRect
+) {
+    if (window == nil || contentView == nil || window.screen == nil) {
+        return NO;
+    }
+    NSRect windowLocal = [contentView convertRect:contentView.bounds
+                                           toView:nil];
+    NSRect screenRect = [window convertRectToScreen:windowLocal];
+    CGRect mainDisplayBounds = CGDisplayBounds(CGMainDisplayID());
+    if (NSIsEmptyRect(screenRect) || CGRectIsEmpty(mainDisplayBounds)) {
+        return NO;
+    }
+    CGRect resolved = CGRectMake(
+        screenRect.origin.x,
+        CGRectGetMaxY(mainDisplayBounds) - NSMaxY(screenRect),
+        screenRect.size.width,
+        screenRect.size.height
+    );
+    if (CGRectIsEmpty(resolved)) {
+        return NO;
+    }
+    if (contentCGWindowRect != NULL) {
+        *contentCGWindowRect = resolved;
+    }
+    return YES;
+}
+
+static BOOL RunTransparentHostCanvasSmoke(
+    CGSHWCaptureWindowListFunction capture,
+    CGSMainConnectionIDFunction mainConnection
+) {
+    NSScreen *screen = NSScreen.mainScreen;
+    CGSize contentSize = CGSizeMake(
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight +
+            IOSUsePlayHostCanvasSpacerPoints
+    );
+    if (screen == nil || screen.visibleFrame.size.width < contentSize.width ||
+        screen.visibleFrame.size.height < contentSize.height) {
+        fprintf(stderr, "[cgshw-smoke] screen cannot fit transparent host\n");
+        return NO;
+    }
+    NSRect contentRect = NSMakeRect(
+        floor(NSMidX(screen.visibleFrame) - contentSize.width / 2.0),
+        floor(NSMidY(screen.visibleFrame) - contentSize.height / 2.0),
+        contentSize.width,
+        contentSize.height
+    );
+    NSWindowStyleMask style = NSWindowStyleMaskTitled |
+        NSWindowStyleMaskClosable |
+        NSWindowStyleMaskMiniaturizable |
+        NSWindowStyleMaskResizable;
+    NSWindow *window = [[NSWindow alloc]
+        initWithContentRect:contentRect
+                  styleMask:style
+                    backing:NSBackingStoreBuffered
+                      defer:NO];
+    window.title = @"Transparent Host Smoke";
+    window.titlebarAppearsTransparent = YES;
+    window.titleVisibility = NSWindowTitleVisible;
+    window.opaque = NO;
+    window.backgroundColor = NSColor.clearColor;
+    window.hasShadow = NO;
+    window.movable = YES;
+    NSView *hostContent = [[NSView alloc]
+        initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
+    hostContent.wantsLayer = YES;
+    hostContent.layer.backgroundColor = NSColor.clearColor.CGColor;
+    window.contentView = hostContent;
+    [window setContentSize:contentSize];
+    [window orderFront:nil];
+    [window displayIfNeeded];
+    PumpRunLoop(0.2);
+    IOSUsePlayHostCanvasLayout layout;
+    NSString *layoutFailure = nil;
+    BOOL layoutReady = IOSUsePlayResolveHostCanvasLayout(
+        hostContent.bounds,
+        &layout,
+        &layoutFailure
+    );
+    NSView *canvas = [[NSView alloc] initWithFrame:layout.canvasRect];
+    canvas.bounds = NSMakeRect(
+        0,
+        0,
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight
+    );
+    canvas.wantsLayer = YES;
+    canvas.layer.backgroundColor = NSColor.greenColor.CGColor;
+    [hostContent addSubview:canvas];
+    [window displayIfNeeded];
+    PumpRunLoop(0.1);
+
+    CGRect hostCGBounds = CGRectZero;
+    CGRect contentCGBounds = CGRectZero;
+    BOOL metadataReady = OwnWindowMetadata(
+        (CGWindowID)window.windowNumber,
+        NULL,
+        &hostCGBounds
+    );
+    BOOL contentReady = HostContentCGWindowRect(
+        window,
+        hostContent,
+        &contentCGBounds
+    );
+    CGRect canvasCGBounds = CGRectNull;
+    NSString *canvasFailure = nil;
+    BOOL canvasReady = layoutReady && contentReady &&
+        IOSUsePlayResolveCanvasCGWindowRect(
+            contentCGBounds,
+            layout,
+            &canvasCGBounds,
+            &canvasFailure
+        );
+    CGImageRef raw = metadataReady && canvasReady
+        ? CaptureWindow(
+            capture,
+            mainConnection,
+            (CGWindowID)window.windowNumber
+        )
+        : NULL;
+    CGRect logicalRect = CGRectNull;
+    NSDictionary<NSString *, id> *cropEvidence = nil;
+    NSString *cropFailure = nil;
+    CGImageRef normalized = raw == NULL ? NULL :
+        IOSUsePlayCropAndNormalizeCanvasCapture(
+            raw,
+            hostCGBounds,
+            canvasCGBounds,
+            layout.displayScale,
+            &logicalRect,
+            &cropEvidence,
+            &cropFailure
+        );
+    uint8_t center[4] = {0};
+    NSDictionary<NSString *, NSNumber *> *sourceCrop =
+        cropEvidence[@"sourcePixelCropRect"];
+    BOOL cropExcludesHost = [cropEvidence[@"canvasOnly"] boolValue] &&
+        [cropEvidence[@"hostDecorationsExcluded"] boolValue] &&
+        [sourceCrop[@"y"] doubleValue] > 0;
+    BOOL canvasBoundsFixed =
+        fabs(canvas.bounds.size.width - IOSUsePlayDeviceLogicalWidth) < 0.01 &&
+        fabs(canvas.bounds.size.height - IOSUsePlayDeviceLogicalHeight) < 0.01 &&
+        fabs(canvas.frame.origin.x - layout.canvasRect.origin.x) < 0.01 &&
+        fabs(canvas.frame.origin.y - layout.canvasRect.origin.y) < 0.01 &&
+        fabs(canvas.frame.size.width - layout.canvasRect.size.width) < 0.01 &&
+        fabs(canvas.frame.size.height - layout.canvasRect.size.height) < 0.01;
+    BOOL spacerReady = fabs(
+        NSMaxY(canvas.frame) + IOSUsePlayHostCanvasSpacerPoints -
+            NSMaxY(hostContent.bounds)
+    ) < 0.01;
+    BOOL passed = layoutReady && metadataReady && contentReady &&
+        canvasReady && raw != NULL && normalized != NULL &&
+        CGRectEqualToRect(
+            logicalRect,
+            CGRectMake(
+                0,
+                0,
+                IOSUsePlayDeviceLogicalWidth,
+                IOSUsePlayDeviceLogicalHeight
+            )
+        ) &&
+        CGImageGetWidth(normalized) == IOSUsePlayDeviceNativeWidth &&
+        CGImageGetHeight(normalized) == IOSUsePlayDeviceNativeHeight &&
+        SampleCenter(normalized, center) && PixelIsGreen(center) &&
+        cropExcludesHost && canvasBoundsFixed && spacerReady && !window.opaque &&
+        window.titlebarAppearsTransparent &&
+        window.titleVisibility == NSWindowTitleVisible &&
+        (window.styleMask & NSWindowStyleMaskTitled) != 0 &&
+        (window.styleMask & NSWindowStyleMaskResizable) != 0;
+    fprintf(
+        stderr,
+        "[cgshw-smoke] transparent-host raw=%zux%zu normalized=%zux%zu "
+        "scale=%.3f crop-y=%.1f canvas=%d spacer=%d title=%d title-visible=%d resizable=%d "
+        "host=(%.1f,%.1f,%.1f,%.1f) content=(%.1f,%.1f,%.1f,%.1f) "
+        "canvas-cg=(%.1f,%.1f,%.1f,%.1f) logical=(%.1f,%.1f,%.1f,%.1f) pass=%d%s%s\n",
+        raw == NULL ? 0 : CGImageGetWidth(raw),
+        raw == NULL ? 0 : CGImageGetHeight(raw),
+        normalized == NULL ? 0 : CGImageGetWidth(normalized),
+        normalized == NULL ? 0 : CGImageGetHeight(normalized),
+        layout.displayScale,
+        [sourceCrop[@"y"] doubleValue],
+        canvasBoundsFixed,
+        spacerReady,
+        (window.styleMask & NSWindowStyleMaskTitled) != 0,
+        window.titleVisibility == NSWindowTitleVisible,
+        (window.styleMask & NSWindowStyleMaskResizable) != 0,
+        hostCGBounds.origin.x,
+        hostCGBounds.origin.y,
+        hostCGBounds.size.width,
+        hostCGBounds.size.height,
+        contentCGBounds.origin.x,
+        contentCGBounds.origin.y,
+        contentCGBounds.size.width,
+        contentCGBounds.size.height,
+        canvasCGBounds.origin.x,
+        canvasCGBounds.origin.y,
+        canvasCGBounds.size.width,
+        canvasCGBounds.size.height,
+        logicalRect.origin.x,
+        logicalRect.origin.y,
+        logicalRect.size.width,
+        logicalRect.size.height,
+        passed,
+        layoutFailure == nil && canvasFailure == nil && cropFailure == nil
+            ? ""
+            : " failure=",
+        cropFailure != nil
+            ? cropFailure.UTF8String
+            : (canvasFailure != nil
+                ? canvasFailure.UTF8String
+                : (layoutFailure == nil ? "" : layoutFailure.UTF8String))
+    );
+    if (normalized != NULL) {
+        CGImageRelease(normalized);
+    }
+    if (raw != NULL) {
+        CGImageRelease(raw);
+    }
+    [window orderOut:nil];
+    return passed;
+}
+
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
@@ -1111,6 +1337,10 @@ int main(void) {
             mainConnection
         );
         BOOL metal = RunMetalSmoke(capture, mainConnection);
+        BOOL transparentHost = RunTransparentHostCanvasSmoke(
+            capture,
+            mainConnection
+        );
         BOOL postflight = CGPreflightScreenCaptureAccess();
         BOOL permissionStayedDenied =
             !enforceDenied || !postflight;
@@ -1124,6 +1354,7 @@ int main(void) {
             !layer ||
             !originAndZOrder ||
             !metal ||
+            !transparentHost ||
             !permissionStayedDenied) {
             return 1;
         }

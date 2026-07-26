@@ -54,6 +54,8 @@ enum {
 @property(nonatomic) NSInteger orderedWindowsIndex;
 @property(nonatomic) NSInteger parentWindowNumber;
 @property(nonatomic, strong)
+    NSDictionary<NSString *, id> *canvasCropEvidence;
+@property(nonatomic, strong)
     NSMutableArray<NSDictionary<NSString *, id> *> *uiWindowEvidence;
 @end
 
@@ -149,6 +151,16 @@ static BOOL IOSUseScreenshotApproximatelyEqual(
     CGFloat rhs
 ) {
     return fabs(lhs - rhs) <= IOSUseScreenshotGeometryTolerance;
+}
+
+static BOOL IOSUseScreenshotRectsApproximatelyEqual(
+    CGRect lhs,
+    CGRect rhs
+) {
+    return IOSUseScreenshotApproximatelyEqual(lhs.origin.x, rhs.origin.x) &&
+        IOSUseScreenshotApproximatelyEqual(lhs.origin.y, rhs.origin.y) &&
+        IOSUseScreenshotApproximatelyEqual(lhs.size.width, rhs.size.width) &&
+        IOSUseScreenshotApproximatelyEqual(lhs.size.height, rhs.size.height);
 }
 
 static BOOL IOSUseScreenshotRectIsDeviceSize(CGRect rect) {
@@ -555,11 +567,19 @@ IOSUseScreenshotCollectNativeWindows(
     IOSUseCGWindowListCopyWindowInfo copyWindowInfo,
     uint32_t *baseWindowNumber,
     CGRect *deviceFrame,
+    CGRect *canvasCGWindowRect,
+    CGFloat *canvasDisplayScale,
     NSUInteger *visibleUIKitWindowCount,
     NSUInteger *mappedUIKitWindowCount,
     NSString **failureCode,
     NSString **failureMessage
 ) {
+    if (canvasCGWindowRect != NULL) {
+        *canvasCGWindowRect = CGRectNull;
+    }
+    if (canvasDisplayScale != NULL) {
+        *canvasDisplayScale = 0;
+    }
     id application = IOSUseScreenshotNSApplication();
     NSArray *applicationWindows = IOSUseScreenshotArraySelector(
         application,
@@ -786,15 +806,56 @@ IOSUseScreenshotCollectNativeWindows(
         );
         return nil;
     }
-    CGRect baseFrame = baseRecord.frame;
-    if (!IOSUseScreenshotRectIsDeviceSize(baseFrame)) {
+    // The visible NSWindow is a Simulator-style host, not the device. Its
+    // title bar, transparent spacer, margins, and resize scale must never
+    // leak into target geometry. The bridge supplies the exact fixed canvas
+    // in global CGWindow coordinates, which is authoritative for every
+    // native window below.
+    NSError *canvasGeometryError = nil;
+    NSDictionary<NSString *, id> *canvasGeometry =
+        [IOSUsePlayAppKitBridge
+            canvasCaptureGeometryWithError:&canvasGeometryError];
+    CGRect resolvedCanvasCGWindowRect = CGRectNull;
+    CGFloat resolvedCanvasDisplayScale =
+        [canvasGeometry[@"displayScale"] doubleValue];
+    if (canvasGeometry == nil ||
+        !IOSUseScreenshotRectFromJSON(
+            canvasGeometry[@"canvasCGWindowRect"],
+            &resolvedCanvasCGWindowRect
+        ) ||
+        !isfinite(resolvedCanvasDisplayScale) ||
+        resolvedCanvasDisplayScale <= 0) {
         IOSUseScreenshotSetFailure(
-            @"compositor_primary_geometry_invalid",
-            [NSString stringWithFormat:
-                @"primary AppKit window is not the fixed %ldx%ld device",
-                (long)IOSUsePlayDeviceLogicalWidth,
-                (long)IOSUsePlayDeviceLogicalHeight
-            ],
+            @"compositor_canvas_geometry_unavailable",
+            canvasGeometryError.localizedDescription ?:
+                @"transparent host did not expose exact canvas geometry",
+            failureCode,
+            failureMessage
+        );
+        return nil;
+    }
+    CGRect resolvedCanvasDeviceFrame = CGRectNull;
+    NSString *canvasResolveFailure = nil;
+    if (!IOSUsePlayResolveCGWindowRectInCanvas(
+            resolvedCanvasCGWindowRect,
+            resolvedCanvasCGWindowRect,
+            resolvedCanvasDisplayScale,
+            &resolvedCanvasDeviceFrame,
+            &canvasResolveFailure
+        ) ||
+        !IOSUseScreenshotRectIsDeviceSize(resolvedCanvasDeviceFrame) ||
+        !IOSUseScreenshotApproximatelyEqual(
+            resolvedCanvasDeviceFrame.origin.x,
+            0
+        ) ||
+        !IOSUseScreenshotApproximatelyEqual(
+            resolvedCanvasDeviceFrame.origin.y,
+            0
+        )) {
+        IOSUseScreenshotSetFailure(
+            @"compositor_canvas_geometry_invalid",
+            canvasResolveFailure ?:
+                @"transparent host canvas is not the fixed logical device",
             failureCode,
             failureMessage
         );
@@ -808,23 +869,12 @@ IOSUseScreenshotCollectNativeWindows(
     if (cgMetadata == nil) {
         return nil;
     }
-    NSDictionary *baseCGMetadata =
-        cgMetadata[@(baseRecord.windowNumber)];
-    CGRect baseCGWindowBounds = CGRectZero;
-    if (baseCGMetadata == nil ||
-        ![baseCGMetadata[@"onscreen"] boolValue] ||
-        !IOSUseScreenshotRectFromJSON(
-            baseCGMetadata[@"bounds"],
-            &baseCGWindowBounds
-        )) {
-        IOSUseScreenshotSetFailure(
-            @"compositor_primary_geometry_invalid",
-            @"primary AppKit window has no exact CGWindow bounds",
-            failureCode,
-            failureMessage
-        );
-        return nil;
-    }
+    NSMutableArray<IOSUseScreenshotNativeWindow *> *canvasRecords =
+        [NSMutableArray array];
+    NSMutableDictionary<
+        NSNumber *,
+        IOSUseScreenshotNativeWindow *
+    > *canvasWindowsByNumber = [NSMutableDictionary dictionary];
     for (IOSUseScreenshotNativeWindow *record
          in windowsByNumber.allValues) {
         if (!IOSUseScreenshotFiniteRect(record.frame) ||
@@ -876,28 +926,37 @@ IOSUseScreenshotCollectNativeWindows(
             );
             return nil;
         }
-        CGRect deviceLogicalRect = CGRectZero;
-        NSString *relativeFailure = nil;
-        if (!IOSUsePlayValidateRelativeWindowGeometry(
-                baseFrame,
-                baseCGWindowBounds,
-                record.frame,
+        CGRect deviceLogicalRect = CGRectNull;
+        NSString *canvasIntersectionFailure = nil;
+        BOOL intersectsCanvas =
+            IOSUsePlayResolveCGWindowRectInCanvas(
                 cgBounds,
+                resolvedCanvasCGWindowRect,
+                resolvedCanvasDisplayScale,
                 &deviceLogicalRect,
-                &relativeFailure
-            )) {
-            IOSUseScreenshotSetFailure(
-                @"compositor_window_geometry_mismatch",
-                [NSString stringWithFormat:
-                    @"visible AppKit window %u geometry mismatch: %@",
-                    record.windowNumber,
-                    relativeFailure ?:
-                        @"AppKit/CGWindow geometry is inconsistent"
-                ],
-                failureCode,
-                failureMessage
+                &canvasIntersectionFailure
             );
-            return nil;
+        if (!intersectsCanvas) {
+            // A native title bar/panel outside the canvas is deliberately not
+            // a target capture source. A mapped UIKit window, however, must
+            // be visible in the fixed canvas or the screenshot is incomplete.
+            if (record == baseRecord ||
+                record.uiWindowEvidence.count > 0) {
+                IOSUseScreenshotSetFailure(
+                    @"compositor_window_outside_canvas",
+                    [NSString stringWithFormat:
+                        @"target AppKit window %u is outside the fixed "
+                        @"canvas: %@",
+                        record.windowNumber,
+                        canvasIntersectionFailure ?:
+                            @"no canvas intersection"
+                    ],
+                    failureCode,
+                    failureMessage
+                );
+                return nil;
+            }
+            continue;
         }
         record.cgWindowBounds = cgBounds;
         record.deviceLogicalRect = deviceLogicalRect;
@@ -912,9 +971,31 @@ IOSUseScreenshotCollectNativeWindows(
             orderedIndex == NSNotFound
                 ? -1
                 : (NSInteger)orderedIndex;
+        [canvasRecords addObject:record];
+        canvasWindowsByNumber[@(record.windowNumber)] = record;
+    }
+    if (![canvasRecords containsObject:baseRecord] ||
+        !IOSUseScreenshotRectIsDeviceSize(
+            baseRecord.deviceLogicalRect
+        ) ||
+        !IOSUseScreenshotApproximatelyEqual(
+            baseRecord.deviceLogicalRect.origin.x,
+            0
+        ) ||
+        !IOSUseScreenshotApproximatelyEqual(
+            baseRecord.deviceLogicalRect.origin.y,
+            0
+        )) {
+        IOSUseScreenshotSetFailure(
+            @"compositor_primary_geometry_invalid",
+            @"primary AppKit host does not cover the complete fixed canvas",
+            failureCode,
+            failureMessage
+        );
+        return nil;
     }
     NSArray<IOSUseScreenshotNativeWindow *> *records =
-        [windowsByNumber.allValues
+        [canvasRecords
             sortedArrayUsingComparator:^NSComparisonResult(
                 IOSUseScreenshotNativeWindow *left,
                 IOSUseScreenshotNativeWindow *right
@@ -949,7 +1030,7 @@ IOSUseScreenshotCollectNativeWindows(
     }
     if (!IOSUseScreenshotValidateChildOrder(
             records,
-            windowsByNumber,
+            canvasWindowsByNumber,
             failureCode,
             failureMessage
         )) {
@@ -959,12 +1040,13 @@ IOSUseScreenshotCollectNativeWindows(
         *baseWindowNumber = baseRecord.windowNumber;
     }
     if (deviceFrame != NULL) {
-        *deviceFrame = CGRectMake(
-            0,
-            0,
-            IOSUsePlayDeviceLogicalWidth,
-            IOSUsePlayDeviceLogicalHeight
-        );
+        *deviceFrame = resolvedCanvasDeviceFrame;
+    }
+    if (canvasCGWindowRect != NULL) {
+        *canvasCGWindowRect = resolvedCanvasCGWindowRect;
+    }
+    if (canvasDisplayScale != NULL) {
+        *canvasDisplayScale = resolvedCanvasDisplayScale;
     }
     return records;
 }
@@ -1020,6 +1102,8 @@ IOSUseScreenshotCompositorEvidence(
     NSArray<NSDictionary<NSString *, id> *> *sourceEvidence,
     uint32_t baseWindowNumber,
     CGRect deviceFrame,
+    CGRect canvasCGWindowRect,
+    CGFloat canvasDisplayScale,
     NSUInteger visibleUIKitWindowCount,
     NSUInteger mappedUIKitWindowCount,
     NSUInteger capturedWindowCount,
@@ -1060,6 +1144,7 @@ IOSUseScreenshotCompositorEvidence(
                 @(window.uiWindowEvidence.count),
             @"uiWindows": window.uiWindowEvidence,
             @"captureGeometry": geometry,
+            @"canvasCrop": window.canvasCropEvidence ?: @{},
         }];
     }
     return @{
@@ -1076,6 +1161,11 @@ IOSUseScreenshotCompositorEvidence(
         @"capturedWindowCount": @(capturedWindowCount),
         @"baseWindowNumber": @(baseWindowNumber),
         @"deviceFrame": IOSUseScreenshotRectJSON(deviceFrame),
+        @"canvasCGWindowRect":
+            IOSUseScreenshotRectJSON(canvasCGWindowRect),
+        @"canvasDisplayScale": @(canvasDisplayScale),
+        @"canvasOnly": @YES,
+        @"hostDecorationsExcluded": @YES,
         @"syntheticChrome": @NO,
         @"fullFrame": IOSUseScreenshotFullFrameEvidence(
             identityMapping
@@ -1093,6 +1183,8 @@ IOSUseScreenshotCompositorEvidence(
                 (BOOL)(windows.count == capturedWindowCount)
             ),
             @"baseWindowCoversDevice": @YES,
+            @"nativeWindowsCroppedToCanvas": @YES,
+            @"hostDecorationsExcluded": @YES,
             @"syntheticChrome": @NO,
             @"fullFrameUncropped": @YES,
             @"safeAreaCropped": @NO,
@@ -1211,6 +1303,8 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
 
     uint32_t baseWindowNumber = 0;
     CGRect deviceFrame = CGRectZero;
+    CGRect canvasCGWindowRect = CGRectNull;
+    CGFloat canvasDisplayScale = 0;
     NSUInteger visibleUIKitWindowCount = 0;
     NSUInteger mappedUIKitWindowCount = 0;
     NSArray<IOSUseScreenshotNativeWindow *> *windows =
@@ -1218,6 +1312,8 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
             copyWindowInfo,
             &baseWindowNumber,
             &deviceFrame,
+            &canvasCGWindowRect,
+            &canvasDisplayScale,
             &visibleUIKitWindowCount,
             &mappedUIKitWindowCount,
             failureCode,
@@ -1299,6 +1395,8 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
     }
     uint32_t postBaseWindowNumber = 0;
     CGRect postDeviceFrame = CGRectZero;
+    CGRect postCanvasCGWindowRect = CGRectNull;
+    CGFloat postCanvasDisplayScale = 0;
     NSUInteger postVisibleUIKitWindowCount = 0;
     NSUInteger postMappedUIKitWindowCount = 0;
     NSArray<IOSUseScreenshotNativeWindow *> *postWindows =
@@ -1306,6 +1404,8 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
             copyWindowInfo,
             &postBaseWindowNumber,
             &postDeviceFrame,
+            &postCanvasCGWindowRect,
+            &postCanvasDisplayScale,
             &postVisibleUIKitWindowCount,
             &postMappedUIKitWindowCount,
             failureCode,
@@ -1320,6 +1420,18 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
     BOOL planStable =
         beforePlan != NULL &&
         afterPlan != NULL &&
+        IOSUseScreenshotRectsApproximatelyEqual(
+            deviceFrame,
+            postDeviceFrame
+        ) &&
+        IOSUseScreenshotRectsApproximatelyEqual(
+            canvasCGWindowRect,
+            postCanvasCGWindowRect
+        ) &&
+        IOSUseScreenshotApproximatelyEqual(
+            canvasDisplayScale,
+            postCanvasDisplayScale
+        ) &&
         postVisibleUIKitWindowCount ==
             visibleUIKitWindowCount &&
         postMappedUIKitWindowCount ==
@@ -1355,6 +1467,58 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
         return NULL;
     }
 
+    // CGSHW returns the whole native NSWindow. For the Simulator-style host
+    // that includes title bar/chrome and the transparent spacer, so turn
+    // every raw capture into an explicitly canvas-only fixed @3x source
+    // before the compositor sees it.
+    for (NSUInteger index = 0; index < windows.count; index += 1) {
+        IOSUseScreenshotNativeWindow *window = windows[index];
+        CGRect croppedLogicalRect = CGRectNull;
+        NSDictionary<NSString *, id> *cropEvidence = nil;
+        NSString *cropFailure = nil;
+        CGImageRef normalized =
+            IOSUsePlayCropAndNormalizeCanvasCapture(
+                capturedImages[index],
+                window.cgWindowBounds,
+                canvasCGWindowRect,
+                canvasDisplayScale,
+                &croppedLogicalRect,
+                &cropEvidence,
+                &cropFailure
+            );
+        if (normalized == NULL ||
+            !IOSUseScreenshotRectsApproximatelyEqual(
+                croppedLogicalRect,
+                window.deviceLogicalRect
+            )) {
+            if (normalized != NULL) {
+                CGImageRelease(normalized);
+            }
+            for (NSUInteger releaseIndex = 0;
+                 releaseIndex < capturedCount;
+                 releaseIndex += 1) {
+                CGImageRelease(capturedImages[releaseIndex]);
+            }
+            free(capturedImages);
+            IOSUseScreenshotSetFailure(
+                @"compositor_canvas_crop_failed",
+                [NSString stringWithFormat:
+                    @"CGSHW window %u could not be isolated to the fixed "
+                    @"canvas: %@",
+                    window.windowNumber,
+                    cropFailure ?:
+                        @"crop geometry changed while capturing"
+                ],
+                failureCode,
+                failureMessage
+            );
+            return NULL;
+        }
+        CGImageRelease(capturedImages[index]);
+        capturedImages[index] = normalized;
+        window.canvasCropEvidence = cropEvidence ?: @{};
+    }
+
     IOSUsePlayWindowCapture *captures = calloc(
         windows.count,
         sizeof(IOSUsePlayWindowCapture)
@@ -1378,10 +1542,10 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
         IOSUseScreenshotNativeWindow *window = windows[index];
         captures[index] = (IOSUsePlayWindowCapture){
             .image = capturedImages[index],
-            .appKitFrame = window.frame,
+            .appKitFrame = window.deviceLogicalRect,
             .deviceLogicalRect =
                 window.deviceLogicalRect,
-            .backingScale = window.backingScale,
+            .backingScale = IOSUsePlayDeviceScale,
             .windowNumber = window.windowNumber,
         };
     }
@@ -1435,6 +1599,8 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
                 sourceEvidence ?: @[],
                 baseWindowNumber,
                 deviceFrame,
+                canvasCGWindowRect,
+                canvasDisplayScale,
                 visibleUIKitWindowCount,
                 mappedUIKitWindowCount,
                 capturedCount,

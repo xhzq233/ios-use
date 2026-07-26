@@ -890,6 +890,59 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
     }
 
+    private func makeTransparentHostGeometry(
+        status: String = "configured",
+        hostPolicy: Bool = true,
+        title: String = "Fixture",
+        titleExpected: String = "Fixture",
+        captureReady: Bool = true,
+        captureError: String? = nil,
+        hostFrameWidth: Double = 430,
+        canvasCGX: Double = 40,
+        canvasCGY: Double = 38
+    ) -> PlayCoverRuntimeHostGeometry {
+        .init(
+            status: status,
+            hostPolicy: hostPolicy,
+            frame: .init(x: 40, y: 30, width: hostFrameWidth, height: 980),
+            contentBounds: .init(x: 0, y: 0, width: 430, height: 940),
+            canvasRect: .init(x: 0, y: 0, width: 430, height: 932),
+            canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
+            displayScale: 1,
+            inverseDisplayScale: 1,
+            transparentSpacer: 8,
+            transparent: true,
+            publicTitleBar: true,
+            titleVisible: true,
+            resizable: true,
+            title: title,
+            titleExpected: titleExpected,
+            capture: .init(
+                ready: captureReady,
+                error: captureError,
+                hostContentCGWindowRect: .init(
+                    x: 40,
+                    y: 30,
+                    width: 430,
+                    height: 940
+                ),
+                hostCGWindowBounds: .init(
+                    x: 40,
+                    y: 10,
+                    width: 430,
+                    height: 980
+                ),
+                canvasCGWindowRect: .init(
+                    x: canvasCGX,
+                    y: canvasCGY,
+                    width: 430,
+                    height: 932
+                ),
+                hostWindowNumber: 17
+            )
+        )
+    }
+
     private func makeGeometry(
         logicalWidth: Double =
             Double(IOSUsePlayDeviceLogicalWidth),
@@ -914,7 +967,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 width: Double(IOSUsePlayDeviceLogicalWidth),
                 height: Double(IOSUsePlayDeviceLogicalHeight)
             ),
-            safeArea: safeArea
+            safeArea: safeArea,
+            host: makeTransparentHostGeometry()
         )
     }
 
@@ -953,6 +1007,234 @@ final class PlayCoverDriverClientTests: XCTestCase {
                     .runtimeGeometryMismatch("safe-area diagnostics")
                 )
             }
+        }
+    }
+
+    func testFixedDeviceRejectsMissingOrInvalidTransparentHost()
+        throws
+    {
+        var missingHost = makeGeometry()
+        missingHost = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: nil
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                missingHost,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch("transparent host diagnostics")
+            )
+        }
+
+        let invalidHost = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeTransparentHostGeometry(hostPolicy: false)
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                invalidHost,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch("transparent host policy")
+            )
+        }
+
+        let invalidCapture = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeTransparentHostGeometry(
+                captureReady: false,
+                captureError: "canvas unavailable"
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                invalidCapture,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch("transparent host canvas capture")
+            )
+        }
+
+        let titleMismatch = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeTransparentHostGeometry(title: "Wrong")
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                titleMismatch,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch("transparent host title")
+            )
+        }
+
+        let shiftedCapture = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeTransparentHostGeometry(canvasCGX: 41)
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                shiftedCapture,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch("transparent host canvas capture")
+            )
+        }
+
+        let hostBoundsMismatch = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeTransparentHostGeometry(hostFrameWidth: 429)
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                hostBoundsMismatch,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch("transparent host canvas capture")
+            )
+        }
+    }
+
+    func testRuntimeGeometryDecodesTransparentHostFromJSON()
+        throws
+    {
+        let json = Data(
+            """
+            {
+              "logical":{"width":430,"height":932},
+              "native":{"width":1290,"height":2796},
+              "scale":3,
+              "window":{"width":430,"height":932},
+              "safeArea":{"top":0,"left":0,"bottom":0,"right":0},
+              "host":{
+                "status":"configured","hostPolicy":true,
+                "frame":{"x":40,"y":30,"width":430,"height":980},
+                "contentBounds":{"x":0,"y":0,"width":430,"height":940},
+                "canvasRect":{"x":0,"y":0,"width":430,"height":932},
+                "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
+                "displayScale":1,"inverseDisplayScale":1,
+                "transparentSpacer":8,"transparent":true,
+                "publicTitleBar":true,"titleVisible":true,"resizable":true,
+                "title":"Fixture","titleExpected":"Fixture",
+                "capture":{
+                  "ready":true,"error":null,"hostWindowNumber":17,
+                  "hostContentCGWindowRect":{"x":40,"y":30,"width":430,"height":940},
+                  "hostCGWindowBounds":{"x":40,"y":10,"width":430,"height":980},
+                  "canvasCGWindowRect":{"x":40,"y":38,"width":430,"height":932}
+                }
+              }
+            }
+            """.utf8
+        )
+        let geometry = try JSONDecoder().decode(
+            PlayCoverRuntimeGeometry.self,
+            from: json
+        )
+        XCTAssertEqual(geometry.host?.status, "configured")
+        XCTAssertEqual(geometry.host?.capture.ready, true)
+        XCTAssertEqual(geometry.host?.capture.hostWindowNumber, 17)
+    }
+
+    func testRuntimeGeometryDecodesUnavailableCanvasCaptureFromJSON()
+        throws
+    {
+        // Runtime must retain a schema-valid host object while the AppKit
+        // canvas has no CG capture geometry yet.  Otherwise `status` loses
+        // the capture error during JSON decoding and misreports identity as
+        // unverified.
+        let json = Data(
+            """
+            {
+              "logical":{"width":430,"height":932},
+              "native":{"width":1290,"height":2796},
+              "scale":3,
+              "window":{"width":430,"height":932},
+              "safeArea":{"top":0,"left":0,"bottom":0,"right":0},
+              "host":{
+                "status":"configured","hostPolicy":true,
+                "frame":{"x":40,"y":30,"width":430,"height":980},
+                "contentBounds":{"x":0,"y":0,"width":430,"height":940},
+                "canvasRect":{"x":0,"y":0,"width":430,"height":932},
+                "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
+                "displayScale":1,"inverseDisplayScale":1,
+                "transparentSpacer":8,"transparent":true,
+                "publicTitleBar":true,"titleVisible":true,"resizable":true,
+                "title":"Fixture","titleExpected":"Fixture",
+                "capture":{
+                  "ready":false,"error":"canvas capture unavailable",
+                  "hostWindowNumber":null,
+                  "hostContentCGWindowRect":{"x":0,"y":0,"width":0,"height":0},
+                  "hostCGWindowBounds":{"x":0,"y":0,"width":0,"height":0},
+                  "canvasCGWindowRect":{"x":0,"y":0,"width":0,"height":0}
+                }
+              }
+            }
+            """.utf8
+        )
+        let geometry = try JSONDecoder().decode(
+            PlayCoverRuntimeGeometry.self,
+            from: json
+        )
+        XCTAssertEqual(geometry.host?.status, "configured")
+        XCTAssertEqual(geometry.host?.capture.ready, false)
+        XCTAssertEqual(
+            geometry.host?.capture.error,
+            "canvas capture unavailable"
+        )
+        XCTAssertEqual(geometry.host?.capture.canvasCGWindowRect.width, 0)
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch("transparent host canvas capture")
+            )
         }
     }
 

@@ -71,15 +71,36 @@ public enum StatusService {
                         fields["runtime"] = playCoverRuntimeMachineValue(payload)
                     case .unhealthy(
                         let error,
-                        let identityVerified
+                        let identityVerified,
+                        let payload
                     ):
                         fields["status"] = .string("unhealthy")
-                        fields["runtime"] = .object([
+                        var runtime: [String: MachineValue] = [
                             "status": .string("unhealthy"),
                             "identityVerified":
                                 .boolean(identityVerified),
                             "error": .string(error),
-                        ])
+                        ]
+                        // A Runtime which authenticated successfully but
+                        // failed the fixed-device/host contract must retain
+                        // its structured diagnostics.  In particular, this
+                        // keeps a canvas-capture error observable instead of
+                        // making it look like a socket/identity failure.
+                        if let payload {
+                            runtime["stage"] = .string(payload.stage)
+                            if let host = payload.geometry.host {
+                                runtime["host"] =
+                                    playCoverRuntimeHostMachineValue(host)
+                            }
+                            if let diagnostics = payload.diagnostics {
+                                runtime["diagnostics"] = .object(
+                                    diagnostics.mapValues(
+                                        playCoverRuntimeJSONMachineValue
+                                    )
+                                )
+                            }
+                        }
+                        fields["runtime"] = .object(runtime)
                         warnings.append("PlayCover runtime health check failed: \(error)")
                     case .stale(let error):
                         fields["status"] = .string("stale")
@@ -221,9 +242,13 @@ public enum StatusService {
                     parts.append(
                         "capabilities: \(payload.capabilities.joined(separator: ","))"
                     )
-                case .unhealthy(let error, _):
+                case .unhealthy(let error, _, let payload):
                     parts[0] = "unhealthy"
                     parts.append("runtime: unhealthy (\(error))")
+                    if let captureError = payload?.geometry.host?.capture.error,
+                       !captureError.isEmpty {
+                        parts.append("host capture: \(captureError)")
+                    }
                 case .stale(let error):
                     parts[0] = "stale"
                     parts.append("runtime: stale (\(error))")
@@ -239,7 +264,8 @@ public enum StatusService {
         case healthy(PlayCoverRuntimeResponsePayload)
         case unhealthy(
             String,
-            identityVerified: Bool
+            identityVerified: Bool,
+            payload: PlayCoverRuntimeResponsePayload?
         )
         case stale(String)
     }
@@ -268,7 +294,8 @@ public enum StatusService {
             return .unhealthy(
                 "cannot verify recorded App process identity: "
                     + "errno \(errorNumber)",
-                identityVerified: false
+                identityVerified: false,
+                payload: nil
             )
         }
         guard PlayCoverRuntimeClient.canonicalPath(actualExecutable)
@@ -294,7 +321,8 @@ public enum StatusService {
         } catch {
             return .unhealthy(
                 String(describing: error),
-                identityVerified: false
+                identityVerified: false,
+                payload: nil
             )
         }
         do {
@@ -302,7 +330,8 @@ public enum StatusService {
         } catch {
             return .unhealthy(
                 String(describing: error),
-                identityVerified: false
+                identityVerified: false,
+                payload: nil
             )
         }
         do {
@@ -314,7 +343,8 @@ public enum StatusService {
         } catch {
             return .unhealthy(
                 String(describing: error),
-                identityVerified: true
+                identityVerified: true,
+                payload: payload
             )
         }
     }
@@ -368,6 +398,9 @@ public enum StatusService {
                 observed.mapValues(playCoverRuntimeJSONMachineValue)
             )
         }
+        if let host = payload.geometry.host {
+            fields["host"] = playCoverRuntimeHostMachineValue(host)
+        }
         if let diagnostics = payload.diagnostics {
             fields["diagnostics"] = .object(
                 diagnostics.mapValues(
@@ -376,6 +409,49 @@ public enum StatusService {
             )
         }
         return .object(fields)
+    }
+
+    private static func playCoverRuntimeHostMachineValue(
+        _ host: PlayCoverRuntimeHostGeometry
+    ) -> MachineValue {
+        func frame(_ value: PlayCoverRuntimeFrame) -> MachineValue {
+            .object([
+                "x": .double(value.x),
+                "y": .double(value.y),
+                "width": .double(value.width),
+                "height": .double(value.height),
+            ])
+        }
+        return .object([
+            "status": .string(host.status),
+            "hostPolicy": .boolean(host.hostPolicy),
+            "frame": frame(host.frame),
+            "contentBounds": frame(host.contentBounds),
+            "canvasRect": frame(host.canvasRect),
+            "canvasBounds": frame(host.canvasBounds),
+            "displayScale": .double(host.displayScale),
+            "inverseDisplayScale": .double(host.inverseDisplayScale),
+            "transparentSpacer": .double(host.transparentSpacer),
+            "transparent": .boolean(host.transparent),
+            "publicTitleBar": .boolean(host.publicTitleBar),
+            "titleVisible": .boolean(host.titleVisible),
+            "resizable": .boolean(host.resizable),
+            "title": .string(host.title),
+            "titleExpected": .string(host.titleExpected),
+            "capture": .object([
+                "ready": .boolean(host.capture.ready),
+                "error": host.capture.error.map(MachineValue.string) ?? .null,
+                "hostContentCGWindowRect":
+                    frame(host.capture.hostContentCGWindowRect),
+                "hostCGWindowBounds":
+                    frame(host.capture.hostCGWindowBounds),
+                "canvasCGWindowRect":
+                    frame(host.capture.canvasCGWindowRect),
+                "hostWindowNumber": host.capture.hostWindowNumber.map {
+                    .integer(Int($0))
+                } ?? .null,
+            ]),
+        ])
     }
 
     static func playCoverRuntimeJSONMachineValue(

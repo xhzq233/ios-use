@@ -9,6 +9,7 @@
 #import <arpa/inet.h>
 #import <errno.h>
 #import <fcntl.h>
+#import <limits.h>
 #import <os/lock.h>
 #import <sys/socket.h>
 #import <sys/stat.h>
@@ -249,6 +250,326 @@ static NSArray<NSString *> *IOSUseCapabilities(void) {
     ];
 }
 
+/// The public `geometry.window` remains the immutable UIKit target canvas.
+/// Keep the independently resizable AppKit host in a separate diagnostic
+/// object so clients never mistake title-bar or host dimensions for iPhone
+/// coordinates.
+static NSDictionary<NSString *, NSNumber *> *IOSUseSocketZeroRect(void) {
+    return @{
+        @"x": @0,
+        @"y": @0,
+        @"width": @0,
+        @"height": @0,
+    };
+}
+
+static BOOL IOSUseSocketHasFiniteRectFields(id value) {
+    if (![value isKindOfClass:NSDictionary.class]) {
+        return NO;
+    }
+    NSDictionary *dictionary = value;
+    for (NSString *key in @[@"x", @"y", @"width", @"height"]) {
+        id rawNumber = dictionary[key];
+        if (![rawNumber isKindOfClass:NSNumber.class] ||
+            !isfinite([(NSNumber *)rawNumber doubleValue])) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static BOOL IOSUseSocketHasPositiveRectFields(id value) {
+    if (!IOSUseSocketHasFiniteRectFields(value)) {
+        return NO;
+    }
+    NSDictionary *dictionary = value;
+    return [dictionary[@"width"] doubleValue] > 0 &&
+        [dictionary[@"height"] doubleValue] > 0;
+}
+
+static NSDictionary<NSString *, NSNumber *> *IOSUseSocketStableRect(
+    id value
+) {
+    if (!IOSUseSocketHasFiniteRectFields(value)) {
+        return IOSUseSocketZeroRect();
+    }
+    NSDictionary *dictionary = value;
+    return @{
+        @"x": @([dictionary[@"x"] doubleValue]),
+        @"y": @([dictionary[@"y"] doubleValue]),
+        @"width": @([dictionary[@"width"] doubleValue]),
+        @"height": @([dictionary[@"height"] doubleValue]),
+    };
+}
+
+static NSDictionary<NSString *, NSNumber *> *IOSUseSocketPreferredRect(
+    id preferred,
+    id fallback
+) {
+    return IOSUseSocketStableRect(
+        IOSUseSocketHasPositiveRectFields(preferred) ? preferred : fallback
+    );
+}
+
+static NSNumber *IOSUseSocketStableFiniteNumber(id value) {
+    if (![value isKindOfClass:NSNumber.class] ||
+        !isfinite([(NSNumber *)value doubleValue])) {
+        return @0;
+    }
+    return @([(NSNumber *)value doubleValue]);
+}
+
+static NSNumber *IOSUseSocketStableBool(id value) {
+    return @([value isKindOfClass:NSNumber.class] &&
+        [(NSNumber *)value boolValue]);
+}
+
+static NSString *IOSUseSocketStableString(id value) {
+    return [value isKindOfClass:NSString.class] ? value : @"";
+}
+
+static id IOSUseSocketStableOptionalInteger(id value) {
+    if (![value isKindOfClass:NSNumber.class] ||
+        CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) {
+        return NSNull.null;
+    }
+    double number = [(NSNumber *)value doubleValue];
+    if (!isfinite(number) || trunc(number) != number ||
+        number < (double)LLONG_MIN || number > (double)LLONG_MAX) {
+        return NSNull.null;
+    }
+    return @([(NSNumber *)value longLongValue]);
+}
+
+static id IOSUseSocketStableCaptureError(
+    id value,
+    BOOL captureDiagnosticsAreComplete
+) {
+    if ([value isKindOfClass:NSString.class]) {
+        return value;
+    }
+    if (value != nil && value != NSNull.null) {
+        NSString *description = [value description];
+        if (description.length > 0) {
+            return description;
+        }
+    }
+    return captureDiagnosticsAreComplete
+        ? (id)NSNull.null
+        : @"canvas capture diagnostics are unavailable";
+}
+
+static NSDictionary<NSString *, id> *IOSUseHostGeometry(
+    NSDictionary<NSString *, id> *hooks
+) {
+    id rawWindow = hooks[@"window"];
+    NSDictionary<NSString *, id> *window =
+        [rawWindow isKindOfClass:NSDictionary.class]
+            ? rawWindow
+            : @{};
+    id rawCapture = window[@"canvasCapture"];
+    NSDictionary<NSString *, id> *capture =
+        [rawCapture isKindOfClass:NSDictionary.class]
+            ? rawCapture
+            : @{};
+    BOOL captureDiagnosticsAreComplete =
+        IOSUseSocketHasPositiveRectFields(
+            capture[@"hostContentCGWindowRect"]
+        ) &&
+        IOSUseSocketHasPositiveRectFields(
+            capture[@"hostCGWindowBounds"]
+        ) &&
+        IOSUseSocketHasPositiveRectFields(
+            capture[@"canvasCGWindowRect"]
+        );
+    id captureError = IOSUseSocketStableCaptureError(
+        capture[@"error"],
+        captureDiagnosticsAreComplete
+    );
+    BOOL captureReady = capture[@"error"] == nil &&
+        captureDiagnosticsAreComplete;
+    return @{
+        @"frame": IOSUseSocketPreferredRect(
+            window[@"hostFrame"],
+            window[@"frame"]
+        ),
+        @"status": [window[@"status"] isKindOfClass:NSString.class]
+            ? window[@"status"]
+            : @"not-configured",
+        @"hostPolicy": IOSUseSocketStableBool(window[@"hostPolicy"]),
+        @"contentBounds": IOSUseSocketStableRect(
+            window[@"hostContentBounds"]
+        ),
+        @"canvasRect": IOSUseSocketStableRect(window[@"canvasRect"]),
+        @"canvasBounds": IOSUseSocketStableRect(window[@"canvasBounds"]),
+        @"displayScale": IOSUseSocketStableFiniteNumber(
+            window[@"displayScale"]
+        ),
+        @"inverseDisplayScale": IOSUseSocketStableFiniteNumber(
+            window[@"inverseDisplayScale"]
+        ),
+        @"transparentSpacer": IOSUseSocketStableFiniteNumber(
+            window[@"transparentSpacer"]
+        ),
+        @"transparent": IOSUseSocketStableBool(
+            window[@"transparentHost"]
+        ),
+        @"publicTitleBar": IOSUseSocketStableBool(
+            window[@"publicTitleBar"]
+        ),
+        @"titleVisible": IOSUseSocketStableBool(window[@"titleVisible"]),
+        @"resizable": IOSUseSocketStableBool(window[@"resizable"]),
+        @"title": IOSUseSocketStableString(window[@"title"]),
+        @"titleExpected": IOSUseSocketStableString(
+            window[@"titleExpected"]
+        ),
+        @"capture": @{
+            @"ready": @(captureReady),
+            @"error": captureError,
+            @"hostContentCGWindowRect": IOSUseSocketStableRect(
+                capture[@"hostContentCGWindowRect"]
+            ),
+            @"hostCGWindowBounds": IOSUseSocketStableRect(
+                capture[@"hostCGWindowBounds"]
+            ),
+            @"canvasCGWindowRect": IOSUseSocketStableRect(
+                capture[@"canvasCGWindowRect"]
+            ),
+            @"hostWindowNumber": IOSUseSocketStableOptionalInteger(
+                capture[@"hostWindowNumber"]
+            ),
+        },
+    };
+}
+
+static BOOL IOSUseSocketRectFromJSON(id value, CGRect *rect) {
+    if (![value isKindOfClass:NSDictionary.class]) {
+        return NO;
+    }
+    NSDictionary *dictionary = value;
+    for (NSString *key in @[@"x", @"y", @"width", @"height"]) {
+        if (![dictionary[key] isKindOfClass:NSNumber.class]) {
+            return NO;
+        }
+    }
+    CGRect result = CGRectMake(
+        [dictionary[@"x"] doubleValue],
+        [dictionary[@"y"] doubleValue],
+        [dictionary[@"width"] doubleValue],
+        [dictionary[@"height"] doubleValue]
+    );
+    if (!isfinite(result.origin.x) || !isfinite(result.origin.y) ||
+        !isfinite(result.size.width) || !isfinite(result.size.height) ||
+        result.size.width <= 0 || result.size.height <= 0) {
+        return NO;
+    }
+    if (rect != NULL) {
+        *rect = result;
+    }
+    return YES;
+}
+
+static BOOL IOSUseSocketContainsRect(CGRect outer, CGRect inner) {
+    return CGRectGetMinX(inner) >= CGRectGetMinX(outer) - 0.01 &&
+        CGRectGetMinY(inner) >= CGRectGetMinY(outer) - 0.01 &&
+        CGRectGetMaxX(inner) <= CGRectGetMaxX(outer) + 0.01 &&
+        CGRectGetMaxY(inner) <= CGRectGetMaxY(outer) + 0.01;
+}
+
+static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
+    NSDictionary<NSString *, id> *capture =
+        [host[@"capture"] isKindOfClass:NSDictionary.class]
+            ? host[@"capture"]
+            : @{};
+    CGRect frame = CGRectZero;
+    CGRect contentBounds = CGRectZero;
+    CGRect canvasBounds = CGRectZero;
+    CGRect canvasRect = CGRectZero;
+    CGRect hostContentCGWindowRect = CGRectZero;
+    CGRect hostCGWindowBounds = CGRectZero;
+    CGRect canvasCGWindowRect = CGRectZero;
+    CGFloat displayScale = [host[@"displayScale"] doubleValue];
+    CGFloat inverseDisplayScale =
+        [host[@"inverseDisplayScale"] doubleValue];
+    CGFloat spacer = [host[@"transparentSpacer"] doubleValue];
+    NSString *title = [host[@"title"] isKindOfClass:NSString.class]
+        ? host[@"title"]
+        : @"";
+    NSString *expectedTitle =
+        [host[@"titleExpected"] isKindOfClass:NSString.class]
+            ? host[@"titleExpected"]
+            : @"";
+    NSNumber *hostWindowNumber =
+        [capture[@"hostWindowNumber"] isKindOfClass:NSNumber.class]
+            ? capture[@"hostWindowNumber"]
+            : nil;
+    BOOL captureErrorIsNull = capture[@"error"] == NSNull.null;
+    return [host[@"status"] isEqualToString:@"configured"] &&
+        [host[@"hostPolicy"] boolValue] &&
+        [host[@"transparent"] boolValue] &&
+        [host[@"publicTitleBar"] boolValue] &&
+        [host[@"titleVisible"] boolValue] &&
+        [host[@"resizable"] boolValue] &&
+        title.length > 0 && [title isEqualToString:expectedTitle] &&
+        isfinite(displayScale) && displayScale > 0 &&
+        isfinite(inverseDisplayScale) &&
+        fabs(displayScale * inverseDisplayScale - 1.0) <= 0.01 &&
+        fabs(spacer - 8.0) <= 0.01 &&
+        IOSUseSocketRectFromJSON(host[@"frame"], &frame) &&
+        IOSUseSocketRectFromJSON(
+            host[@"contentBounds"],
+            &contentBounds
+        ) &&
+        IOSUseSocketRectFromJSON(host[@"canvasBounds"], &canvasBounds) &&
+        fabs(canvasBounds.origin.x) <= 0.01 &&
+        fabs(canvasBounds.origin.y) <= 0.01 &&
+        fabs(canvasBounds.size.width - IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
+        fabs(canvasBounds.size.height - IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
+        IOSUseSocketRectFromJSON(host[@"canvasRect"], &canvasRect) &&
+        IOSUseSocketContainsRect(contentBounds, canvasRect) &&
+        fabs(CGRectGetMaxY(canvasRect) + spacer -
+            CGRectGetMaxY(contentBounds)) <= 0.01 &&
+        fabs(canvasRect.size.width / displayScale -
+            IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
+        fabs(canvasRect.size.height / displayScale -
+            IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
+        IOSUseSocketRectFromJSON(
+            capture[@"hostContentCGWindowRect"],
+            &hostContentCGWindowRect
+        ) &&
+        IOSUseSocketRectFromJSON(
+            capture[@"hostCGWindowBounds"],
+            &hostCGWindowBounds
+        ) &&
+        IOSUseSocketRectFromJSON(
+            capture[@"canvasCGWindowRect"],
+            &canvasCGWindowRect
+        ) &&
+        [capture[@"ready"] boolValue] &&
+        captureErrorIsNull && hostWindowNumber != nil &&
+        hostWindowNumber.unsignedLongLongValue > 0 &&
+        IOSUseSocketContainsRect(
+            hostCGWindowBounds,
+            hostContentCGWindowRect
+        ) &&
+        IOSUseSocketContainsRect(hostCGWindowBounds, canvasCGWindowRect) &&
+        fabs(
+            canvasCGWindowRect.origin.x -
+                (hostContentCGWindowRect.origin.x +
+                    canvasRect.origin.x - contentBounds.origin.x)
+        ) <= 0.01 &&
+        fabs(
+            canvasCGWindowRect.origin.y -
+                (hostContentCGWindowRect.origin.y +
+                    CGRectGetMaxY(contentBounds) -
+                    CGRectGetMaxY(canvasRect))
+        ) <= 0.01 &&
+        fabs(canvasCGWindowRect.size.width / displayScale -
+            IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
+        fabs(canvasCGWindowRect.size.height / displayScale -
+            IOSUsePlayDeviceLogicalHeight) <= 0.01;
+}
+
 static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
     __block NSDictionary<NSString *, id> *geometry;
     __block NSString *stage;
@@ -273,6 +594,10 @@ static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
         UIView *rootView = keyWindow.rootViewController.view;
         UIEdgeInsets safeArea =
             rootView == nil ? UIEdgeInsetsZero : rootView.safeAreaInsets;
+        NSDictionary<NSString *, id> *hooks =
+            IOSUsePlayRuntimeHookDiagnostics();
+        NSDictionary<NSString *, id> *hostGeometry =
+            IOSUseHostGeometry(hooks);
         geometry = @{
             @"logical": @{
                 @"width": @(logical.size.width),
@@ -283,10 +608,13 @@ static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
                 @"height": @(native.size.height),
             },
             @"scale": @(screen.scale),
+            // This is intentionally UIKit's fixed logical canvas, not the
+            // independently resizable transparent AppKit host.
             @"window": @{
                 @"width": @(windowBounds.size.width),
                 @"height": @(windowBounds.size.height),
             },
+            @"host": hostGeometry,
             @"safeArea": @{
                 @"top": @(safeArea.top),
                 @"left": @(safeArea.left),
@@ -294,8 +622,6 @@ static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
                 @"right": @(safeArea.right),
             },
         };
-        NSDictionary<NSString *, id> *hooks =
-            IOSUsePlayRuntimeHookDiagnostics();
         BOOL exact =
             fabs(logical.size.width -
                 IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
@@ -311,10 +637,14 @@ static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
             fabs(windowBounds.size.height -
                 IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
             [hooks[@"configurationStage"]
-                isEqualToString:@"window-configured"];
+                isEqualToString:@"window-configured"] &&
+            IOSUseHostGeometryReady(hostGeometry);
+        NSString *configurationStage = hooks[@"configurationStage"];
         stage = exact
             ? @"ready"
-            : hooks[@"configurationStage"] ?: @"geometry-mismatch";
+            : [configurationStage isEqualToString:@"window-configured"]
+                ? @"host-geometry-mismatch"
+                : configurationStage ?: @"geometry-mismatch";
     };
     if (NSThread.isMainThread) {
         capture();

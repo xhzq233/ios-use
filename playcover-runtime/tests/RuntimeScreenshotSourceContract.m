@@ -195,7 +195,7 @@ int main(int argc, const char *argv[]) {
         );
         NSString *bridgeConfiguration = FunctionBody(
             bridge,
-            @"configureFixedWindow:"
+            @"+ (BOOL)configureFixedWindow:"
         );
         BOOL passed = YES;
         passed &= Require(
@@ -203,9 +203,16 @@ int main(int argc, const char *argv[]) {
                 [collector containsString:
                     @"IOSUsePlayUnionCaptureWindows"] &&
                 [collector containsString:
-                    @"IOSUsePlayValidateRelativeWindowGeometry"],
-            @"collector must union native alerts and validate exact "
-            @"AppKit/CG window geometry"
+                    @"canvasCaptureGeometryWithError"] &&
+                [collector containsString:
+                    @"IOSUsePlayResolveCGWindowRectInCanvas"] &&
+                [collector containsString:
+                    @"compositor_window_outside_canvas"] &&
+                capture != nil &&
+                [capture containsString:
+                    @"IOSUsePlayCropAndNormalizeCanvasCapture"],
+            @"collector must union native windows, derive exact fixed canvas "
+            @"geometry, and crop every native source to that canvas"
         );
         passed &= Require(
             capture != nil &&
@@ -274,6 +281,9 @@ int main(int argc, const char *argv[]) {
                     @"@\"identityMapping\":"] &&
                 payload != nil &&
                 [payload containsString:@"@\"syntheticChrome\": @NO"] &&
+                [runtime containsString:@"@\"canvasOnly\": @YES"] &&
+                [runtime containsString:
+                    @"@\"hostDecorationsExcluded\": @YES"] &&
                 [payload containsString:@"@\"fullFrame\":"] &&
                 composite != nil &&
                 [composite containsString:
@@ -282,8 +292,8 @@ int main(int argc, const char *argv[]) {
                 ![runtime containsString:@"systemChromeEvidence"] &&
                 ![runtime containsString:@"containsSystemChrome"] &&
                 ![runtime containsString:@"systemChromeMapped"],
-            @"screenshot must prove a full uncropped identity-mapped frame "
-            @"without a Runtime-owned system-chrome overlay"
+            @"screenshot must prove a full fixed-canvas identity-mapped "
+            @"frame without Runtime-owned chrome or host decoration pixels"
         );
         passed &= Require(
             [bridge containsString:
@@ -295,11 +305,13 @@ int main(int argc, const char *argv[]) {
                 OccurrenceCount(
                     bridgeWindowGeometry,
                     @"IOSUseBridgeExactOnscreenCGWindowMetadata"
-                ) == 2 &&
+                ) >= 1 &&
                 [bridgeWindowGeometry containsString:
-                    @"IOSUsePlayValidateRelativeWindowGeometry"],
+                    @"IOSUseBridgeHostCanvasCaptureGeometry"] &&
+                [bridgeWindowGeometry containsString:
+                    @"IOSUsePlayResolveCGWindowRectInCanvas"],
             @"native alert placement must resolve exact same-PID onscreen "
-            @"CGWindow identities for the base and alert"
+            @"CGWindow identities through the fixed host canvas"
         );
         passed &= Require(
             bridgeAlertSelection != nil &&
@@ -323,40 +335,38 @@ int main(int argc, const char *argv[]) {
         passed &= Require(
             bridgeAlertControlGeometry != nil &&
                 [bridgeAlertControlGeometry containsString:
-                    @"IOSUsePlayResolveLocalAppKitRect"] &&
+                    @"convertRect:toView:"] &&
+                [bridgeAlertControlGeometry containsString:
+                    @"convertRectToScreen:"] &&
+                [bridgeAlertControlGeometry containsString:
+                    @"IOSUseBridgeAppKitScreenRectToCanvasLogicalRect"] &&
                 ![bridgeAlertControlGeometry containsString:
                     @"alertFrame.origin"],
-            @"native alert controls must translate local bottom-left "
-            @"coordinates through the CG-derived alert rect"
+            @"native alert controls must route button-local geometry through "
+            @"the alert window's AppKit screen rect and shared canvas inverse transform"
         );
         passed &= Require(
-            bridgeFocusableWindow != nil &&
-                [bridgeFocusableWindow containsString:
-                    @"object_getClass(window)"] &&
-                [bridgeFocusableWindow containsString:
-                    @"class_getInstanceMethod"] &&
-                [bridgeFocusableWindow containsString:
-                    @"method_getTypeEncoding"] &&
-                [bridgeFocusableWindow containsString:
-                    @"class_addMethod"] &&
-                [bridgeFocusableWindow containsString:
-                    @"method_setImplementation"] &&
-                [bridgeFocusableWindow containsString:
-                    @"canBecomeKeyWindow"] &&
-                [bridgeFocusableWindow containsString:
-                    @"canBecomeMainWindow"] &&
+            bridgeFocusableWindow == nil &&
                 bridgeWindowPolicy != nil &&
                 [bridgeWindowPolicy containsString:
-                    @"IOSUseBridgeMakeBorderlessWindowFocusable(window)"] &&
+                    @"publicHostStyleMask"] &&
                 [bridgeWindowPolicy containsString:
-                    @"@\"setStyleMask:\", 0"] &&
+                    @"@\"setStyleMask:\""] &&
+                [bridgeWindowPolicy containsString:
+                    @"@\"setOpaque:\", NO"] &&
+                [bridgeWindowPolicy containsString:
+                    @"@\"setTitlebarAppearsTransparent:\", YES"] &&
+                [bridgeWindowPolicy containsString:
+                    @"IOSUseBridgeHostTitle()"] &&
+                [bridgeWindowPolicy containsString:
+                    @"@\"setContentMinSize:\""] &&
                 [bridgeWindowPolicy containsString:
                     @"@\"setIgnoresMouseEvents:\", NO"] &&
                 [bridgeWindowPolicy containsString:
                     @"@\"setAcceptsMouseMovedEvents:\", YES"],
-            @"the exact Catalyst app-window class must keep an ABI-matched "
-             @"key/main focus policy when the fixed window becomes truly "
-             @"borderless and mouse-interactive"
+            @"the visible Catalyst window must remain a public, transparent, "
+            @"mouse-interactive Simulator-style host rather than a private "
+            @"borderless device window"
         );
         passed &= Require(
             bridgeMouseMonitor != nil &&
@@ -365,7 +375,11 @@ int main(int argc, const char *argv[]) {
                 [bridgeMouseMonitor containsString:
                     @"kCGEventSourceUnixProcessID"] &&
                 [bridgeMouseMonitor containsString:
-                    @"IOSUseBridgeWindowLogicalFrame"] &&
+                    @"IOSUsePlayMapHostContentPointToCanvas"] &&
+                [bridgeMouseMonitor containsString:
+                    @"IOSUseBridgeUpdateHostCanvasLayout"] &&
+                [bridgeMouseMonitor containsString:
+                    @"targetHitTest"] &&
                 [bridgeMouseMonitor containsString:
                     @"IOSUsePlayLastMouseDownDelivery"] &&
                 [bridgeMouseMonitor containsString:
@@ -374,12 +388,10 @@ int main(int argc, const char *argv[]) {
                     @"IOSUsePlayMouseDeliveryCount"] &&
                 bridgeConfiguration != nil &&
                 [bridgeConfiguration containsString:
-                    @"IOSUseBridgeInstallMouseLocalMonitor"] &&
-                [bridgeConfiguration containsString:
-                    @"IOSUseBridgeCGWindowIsInsideVisibleFrame"],
+                    @"IOSUseBridgeInstallMouseLocalMonitor"],
             @"AppKit mouse evidence must retain tagged down/up identity, "
-             @"translate through exact CG window geometry, and only report "
-             @"ready when the physical window is on the visible display"
+            @"inverse-map host content through the fixed canvas, and reject "
+            @"title-bar/gap/outside points as non-target hit tests"
         );
         passed &= Require(
             ![runtime containsString:@"CGRequestScreenCaptureAccess"] &&

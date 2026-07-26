@@ -39,11 +39,15 @@ The Runtime does not read a device profile or bootstrap file. Fixed geometry
 is not persisted in the session or cache key. A header change alters the
 Runtime build hash and therefore selects a new prepared generation naturally.
 
-The AppKit window is borderless and non-resizable. Its frame,
-`contentLayoutRect`, and content-view bounds must all be exactly 430 x 932
-points with an identity AppKit-to-UIKit logical transform. A display that
-cannot fit that window causes start to fail; the backend does not introduce a
-second scaled coordinate system.
+The outer AppKit window is a transparent, resizable Simulator-style host. Its
+public title bar displays `CFBundleDisplayName`, falling back to
+`CFBundleName` and then the bundle ID. Below the title bar it retains an 8pt
+transparent spacer that exposes the desktop. The host applies only a uniform
+display scale and explicit origin to the inner render canvas; its local bounds
+and the UIKit scene remain exactly 430 x 932 points. Input removes that origin
+and applies the inverse scale before target hit testing, while title-bar,
+spacer, and outside-canvas points are rejected. A host cannot shrink below the
+explicit 0.5x complete-canvas policy.
 
 The full device frame is the target App's complete 430 x 932 logical rendering.
 The Runtime does not create a fallback system-chrome window or draw synthetic
@@ -63,7 +67,7 @@ ios-use start --playcover [--app <source-or-managed-prepared.app>]
      -> NSWorkspace launch with exact environment and PID
   -> IOSUsePlayRuntime.framework
      -> pinned PlayTools platform/geometry/keychain hooks
-     -> fixed AppKit window and complete App compositor
+     -> transparent resizable AppKit host, fixed canvas, and complete App compositor
      -> DOM, wait, touch/input, compositor, URL, and diagnostics
      -> owner-only AF_UNIX listener
   -> PlayCoverRuntimeClient
@@ -174,16 +178,19 @@ resolves selectors against one fresh snapshot, performs a UIKit hit test in
 pixel condition. Text input first verifies the supported first responder;
 secure, custom, or unsupported input returns a structured error.
 
-Screenshot and capture read only the target process's WindowServer backing
-surfaces, including Metal, with no synthetic chrome overlay. They do not use
+Screenshot and capture crop and normalize only the inner fixed canvas from the
+target process's WindowServer backing surfaces, including Metal. The AppKit
+title bar, traffic lights, transparent spacer, desktop, and host decoration
+are excluded, and no synthetic chrome overlay is created. They do not use
 ScreenCaptureKit or request Screen Recording permission. A frame is accepted
 only when source surfaces are live, complete, nontransparent, geometrically
 consistent, and produce the strict 1290 x 2796 output. UIKit-only rendering is
 diagnostic and cannot silently replace the compositor.
 
 `status` performs a fresh Runtime ping and reports the actual observed
-UIScreen, scene, safe-area, AppKit-window, backing-scale, mouse-transform, and
-capture geometry. `open` delivers only to the exact active target. Unified
+UIScreen, scene, safe-area, host frame, canvas rect, display/inverse input
+scale, backing scale, and canvas-capture geometry. `open` delivers only to the
+exact active target. Unified
 logs are constrained to the exact PID/executable, and failure evidence keeps
 screenshot and DOM generations coherent.
 

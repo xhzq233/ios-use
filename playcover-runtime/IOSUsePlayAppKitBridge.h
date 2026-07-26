@@ -27,6 +27,9 @@ NS_ASSUME_NONNULL_BEGIN
                                 error:
         (NSError * _Nullable * _Nullable)error;
 + (NSDictionary<NSString *, id> * _Nullable)
+    canvasCaptureGeometryWithError:
+        (NSError * _Nullable * _Nullable)error;
++ (NSDictionary<NSString *, id> * _Nullable)
     dismissTransientTextInputWindows:
         (NSError * _Nullable * _Nullable)error;
 + (NSArray<NSDictionary<NSString *, id> *> * _Nullable)

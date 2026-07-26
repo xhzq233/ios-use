@@ -162,7 +162,8 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
                     left: 3,
                     bottom: 29,
                     right: 4
-                )
+                ),
+                host: nil
             ),
             stage: "ready",
             diagnostics: [

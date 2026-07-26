@@ -16,7 +16,7 @@ enum ProbeFailure: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "usage: appkit_mouse_event.swift <global-x> <global-y> <token> <target-pid>"
+            return "usage: appkit_mouse_event.swift <global-x> <global-y> <token> <target-pid> | --drag <start-x> <start-y> <end-x> <end-y> <token> <target-pid>"
         case .invalid(let field):
             return "invalid \(field)"
         case .permission:
@@ -38,30 +38,49 @@ enum ProbeFailure: Error, CustomStringConvertible {
 }
 
 do {
-    guard CommandLine.arguments.count == 5 else {
+    let arguments = CommandLine.arguments
+    let isDrag = arguments.count == 8 && arguments[1] == "--drag"
+    guard arguments.count == 5 || isDrag else {
         throw ProbeFailure.usage
     }
     guard
-        let x = Double(CommandLine.arguments[1]),
-        x.isFinite
+        let startX = Double(arguments[isDrag ? 2 : 1]),
+        startX.isFinite
     else {
-        throw ProbeFailure.invalid("global-x")
+        throw ProbeFailure.invalid("start-x")
     }
     guard
-        let y = Double(CommandLine.arguments[2]),
-        y.isFinite
+        let startY = Double(arguments[isDrag ? 3 : 2]),
+        startY.isFinite
     else {
-        throw ProbeFailure.invalid("global-y")
+        throw ProbeFailure.invalid("start-y")
+    }
+    let endX: Double
+    let endY: Double
+    if isDrag {
+        guard
+            let parsedEndX = Double(arguments[4]),
+            parsedEndX.isFinite,
+            let parsedEndY = Double(arguments[5]),
+            parsedEndY.isFinite
+        else {
+            throw ProbeFailure.invalid("drag-end")
+        }
+        endX = parsedEndX
+        endY = parsedEndY
+    } else {
+        endX = startX
+        endY = startY
     }
     guard
-        let token = Int64(CommandLine.arguments[3]),
+        let token = Int64(arguments[isDrag ? 6 : 3]),
         token > 0,
         token <= 9_007_199_254_740_991
     else {
         throw ProbeFailure.invalid("token")
     }
     guard
-        let targetPID = Int32(CommandLine.arguments[4]),
+        let targetPID = Int32(arguments[isDrag ? 7 : 4]),
         targetPID > 0
     else {
         throw ProbeFailure.invalid("target-pid")
@@ -89,14 +108,15 @@ do {
         options: [.activateAllWindows]
     )
     Thread.sleep(forTimeInterval: 0.05)
-    let point = CGPoint(x: x, y: y)
+    let startPoint = CGPoint(x: startX, y: startY)
+    let endPoint = CGPoint(x: endX, y: endY)
     guard
         let rawWindows = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly],
             kCGNullWindowID
         ) as? [[String: Any]]
     else {
-        throw ProbeFailure.targetWindowAtPoint(targetPID, point)
+        throw ProbeFailure.targetWindowAtPoint(targetPID, startPoint)
     }
     var targetWindowNumber: UInt32?
     for row in rawWindows {
@@ -118,7 +138,7 @@ do {
                 let bounds = CGRect(
                     dictionaryRepresentation: rawBounds as CFDictionary
                 ),
-                bounds.contains(point)
+                bounds.contains(startPoint)
             {
                 break
             }
@@ -128,7 +148,7 @@ do {
             let bounds = CGRect(
                 dictionaryRepresentation: rawBounds as CFDictionary
             ),
-            bounds.contains(point)
+            bounds.contains(startPoint)
         else {
             continue
         }
@@ -136,40 +156,40 @@ do {
         break
     }
     guard let targetWindowNumber else {
-        throw ProbeFailure.targetWindowAtPoint(targetPID, point)
+        throw ProbeFailure.targetWindowAtPoint(targetPID, startPoint)
     }
     guard
         let source = CGEventSource(stateID: .hidSystemState),
         let moved = CGEvent(
             mouseEventSource: source,
             mouseType: .mouseMoved,
-            mouseCursorPosition: CGPoint(x: x, y: y),
+            mouseCursorPosition: startPoint,
             mouseButton: .left
         ),
         let down = CGEvent(
             mouseEventSource: source,
             mouseType: .leftMouseDown,
-            mouseCursorPosition: CGPoint(x: x, y: y),
+            mouseCursorPosition: startPoint,
             mouseButton: .left
         ),
         let up = CGEvent(
             mouseEventSource: source,
             mouseType: .leftMouseUp,
-            mouseCursorPosition: CGPoint(x: x, y: y),
+            mouseCursorPosition: endPoint,
             mouseButton: .left
         )
     else {
         throw ProbeFailure.eventCreation
     }
-    let warpResult = CGWarpMouseCursorPosition(point)
+    let warpResult = CGWarpMouseCursorPosition(startPoint)
     guard warpResult == .success else {
         throw ProbeFailure.cursorWarp(warpResult)
     }
     Thread.sleep(forTimeInterval: 0.05)
     guard
         let cursorEvent = CGEvent(source: nil),
-        abs(cursorEvent.location.x - point.x) <= 0.5,
-        abs(cursorEvent.location.y - point.y) <= 0.5
+        abs(cursorEvent.location.x - startPoint.x) <= 0.5,
+        abs(cursorEvent.location.y - startPoint.y) <= 0.5
     else {
         throw ProbeFailure.cursorPosition(
             CGEvent(source: nil)?.location ?? .zero
@@ -185,17 +205,40 @@ do {
     down.setDoubleValueField(.mouseEventPressure, value: 1)
     up.setDoubleValueField(.mouseEventPressure, value: 0)
     down.post(tap: .cghidEventTap)
-    Thread.sleep(forTimeInterval: 0.02)
+    if isDrag {
+        Thread.sleep(forTimeInterval: 0.03)
+        guard let dragged = CGEvent(
+            mouseEventSource: source,
+            mouseType: .leftMouseDragged,
+            mouseCursorPosition: endPoint,
+            mouseButton: .left
+        ) else {
+            throw ProbeFailure.eventCreation
+        }
+        dragged.setIntegerValueField(
+            .eventSourceUserData,
+            value: token
+        )
+        dragged.setIntegerValueField(.mouseEventClickState, value: 1)
+        dragged.setDoubleValueField(.mouseEventPressure, value: 1)
+        dragged.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.06)
+    } else {
+        Thread.sleep(forTimeInterval: 0.02)
+    }
     up.post(tap: .cghidEventTap)
 
     let output: [String: Any] = [
+        "operation": isDrag ? "drag" : "click",
         "token": token,
         "sourcePID": ProcessInfo.processInfo.processIdentifier,
         "targetPID": targetPID,
         "targetWindowNumber": targetWindowNumber,
         "activationRequested": activationRequested,
         "targetActiveBeforePost": targetApplication.isActive,
-        "globalPoint": ["x": x, "y": y],
+        "globalPoint": ["x": endX, "y": endY],
+        "startPoint": ["x": startX, "y": startY],
+        "endPoint": ["x": endX, "y": endY],
         "postEventAccess": true,
     ]
     let data = try JSONSerialization.data(

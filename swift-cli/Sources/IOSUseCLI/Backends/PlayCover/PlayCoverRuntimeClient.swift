@@ -109,12 +109,46 @@ struct PlayCoverRuntimeSafeArea: Codable, Equatable, Sendable {
     let right: Double
 }
 
+/// The public AppKit host is intentionally independent from the fixed UIKit
+/// device canvas.  It is still part of Runtime readiness: without this
+/// contract a resizable host could report a healthy 430x932 UIKit scene while
+/// its visible canvas, title, capture crop, or inverse input transform is
+/// invalid.
+struct PlayCoverRuntimeHostCaptureGeometry: Codable, Equatable, Sendable {
+    let ready: Bool
+    let error: String?
+    let hostContentCGWindowRect: PlayCoverRuntimeFrame
+    let hostCGWindowBounds: PlayCoverRuntimeFrame
+    let canvasCGWindowRect: PlayCoverRuntimeFrame
+    let hostWindowNumber: Int64?
+}
+
+struct PlayCoverRuntimeHostGeometry: Codable, Equatable, Sendable {
+    let status: String
+    let hostPolicy: Bool
+    let frame: PlayCoverRuntimeFrame
+    let contentBounds: PlayCoverRuntimeFrame
+    let canvasRect: PlayCoverRuntimeFrame
+    let canvasBounds: PlayCoverRuntimeFrame
+    let displayScale: Double
+    let inverseDisplayScale: Double
+    let transparentSpacer: Double
+    let transparent: Bool
+    let publicTitleBar: Bool
+    let titleVisible: Bool
+    let resizable: Bool
+    let title: String
+    let titleExpected: String
+    let capture: PlayCoverRuntimeHostCaptureGeometry
+}
+
 struct PlayCoverRuntimeGeometry: Codable, Equatable, Sendable {
     let logical: PlayCoverRuntimeSize
     let native: PlayCoverRuntimeSize
     let scale: Double
     let window: PlayCoverRuntimeSize
     let safeArea: PlayCoverRuntimeSafeArea
+    let host: PlayCoverRuntimeHostGeometry?
 }
 
 struct PlayCoverRuntimeTarget: Codable, Equatable, Sendable {

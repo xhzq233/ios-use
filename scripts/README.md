@@ -37,9 +37,11 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
 | `scripts/audit_playcover_upstreams.sh [--cache-dir <path>] [--metadata-only]` | Re-clone or reuse pinned PlayCover/PlayTools/inject/Yams checkouts; require script pins, provenance pins, SwiftPM resolutions, licenses, expected vendored file sets, and local-patch sets to agree exactly. `--metadata-only` runs the hermetic closure without cloning. |
 | `scripts/test_playcover_packaging_contract.sh` | Hermetic packaging audit tests, including negative cases for a deleted expected source, a one-sided provenance pin change, and a mismatched Yams resolution. |
-| `scripts/test_playcover_backend.sh --non-live` | Unified Apple-silicon hosted gate: upstream audit, fresh workspace CLI/Runtime build and analysis, fixture build, compositor/PlayChain smoke, vendored Swift tests, and release-installed execution. `--live` adds the public fixture matrix, isolated Runtime protocol/crash stress, and configured generic external-App live gate; missing private runner inputs fail explicitly. |
+| `scripts/test_playcover_backend.sh --non-live` | Unified Apple-silicon hosted gate: upstream audit, fresh workspace CLI/Runtime build and analysis, fixture build, non-GUI transparent-host contract, compositor/PlayChain smoke, vendored Swift tests, and release-installed execution. `--live` adds the public fixture matrix, isolated Runtime protocol/crash stress, and configured generic external-App live gate; it requires the private runner inputs. |
+| `scripts/test_playcover_fixture_live.sh [--static\|--live]` | `--static` verifies the public Simulator-style transparent-host/fixed-canvas contract without launching an App or requiring a GUI. `--live` runs the fixture matrix in an unlocked GUI session, including title bar, 8pt transparent gap, two host resizes, canvas-only capture, inverse-scale global mouse, and decoration miss-hit checks. |
 | `scripts/test_playcover_runtime_stress_live.sh` | Isolated public-fixture live gate for oversized/malformed Runtime frames, continued listener health, exact Runtime-endpoint loss handling, App crash/stale classification, and safe host-only cleanup. |
-| `scripts/test_playcover_external_app_live.sh` | Generic 20-cycle external-App UI/mouse/lifecycle gate. It reads an operator-private schema-v1 scenario, keeps raw evidence outside the public checkout, and can emit a separate redacted commit-bound attestation. |
+| `scripts/test_playcover_external_app_live.sh [--static\|--live]` | `--static` verifies the same host source contract without private inputs or a GUI. `--live` is the generic 20-cycle external-App UI/mouse/lifecycle gate; it requires explicit authorization, a private schema-v1 scenario, and an evidence directory outside the checkout. Global target input is mapped only from Runtime `canvasCGWindowRect` plus `displayScale`, never the outer host frame. |
+| `playcover-fixtures/test_transparent_host_contract.sh --static` | Hermetic source contract for the public AppKit title bar, transparent 8pt spacer, resizable fixed canvas, canonical Runtime geometry, canvas-only crop, and live-gate mode/mapping policy. |
 | `scripts/test_playcover_installed_layout.sh [--release-dir <path>]` | Without an argument, package the fresh local CLI/Runtime. With `--release-dir`, consume the exact release-build output. Both paths verify checksums, install a read-only Runtime through `install.sh`, run fixture start/status/stop outside the source tree with a separate `IOS_USE_HOME`, and prove the installed framework is unchanged. |
 | `scripts/test_simulator_commands.mjs` | Node-based Simulator command case runner used by full Simulator validation. |
 | `scripts/ios_use_test_simulator.js` | Shared helper used by driver unit tests and Simulator command tests to create/boot the fixed `IOSUseTest` Simulator. |
@@ -61,9 +63,9 @@ GitHub CI uses `.github/workflows/ci.yml` for script syntax/packaging metadata,
 Swift CLI, driver unit, and hosted PlayCover non-live gates in parallel. Changes
 to release workflow paths and release notes trigger that CI. The external-App
 live/stress gate is an explicit dispatch-only schema-v1 entry on an
-operator-provided runner; raw scenario/evidence stay runner-private and CI
-uploads only the redacted attestation. Hosted CI does not assume that private
-runner is reachable. The full Simulator UI replay lives in
+operator-provided, unlocked GUI runner; raw scenario/evidence stay
+runner-private and CI uploads only the redacted attestation. Hosted CI does not
+assume that private runner is reachable. The full Simulator UI replay lives in
 `.github/workflows/simulator.yml` and is manual-only.
 
 ## Install And Benchmark
