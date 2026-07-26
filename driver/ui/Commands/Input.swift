@@ -10,6 +10,17 @@ enum InputCommands {
     static func input(_ args: ForyInputArgs) throws -> ForyResponseFrame {
         let app = try Session.shared.ensureActive()
         defer { invalidateSnapshot() }
+        guard args.deleteCount >= 0,
+              args.deleteCount <= 1_048_576 else {
+            return try Codec.foryError(
+                "input: deleteCount must be between 0 and 1048576",
+                category: IOSUseErrorCategory.validation,
+                code: IOSUseErrorCode.invalidArguments,
+                phase: IOSUseErrorPhase.validation,
+                retryable: false,
+                target: hasTapTarget(args.target) ? args.target : nil
+            )
+        }
 
         let targetSummary: ForyElementSummary
         if hasTapTarget(args.target) {
@@ -23,7 +34,14 @@ enum InputCommands {
             targetSummary = ForyElementSummary()
         }
 
-        guard typeText(args.content) else {
+        let effectiveContent =
+            String(
+                repeating: "\u{7F}",
+                count: Int(args.deleteCount)
+            )
+            + args.content
+            + (args.enter ? "\n" : "")
+        guard typeText(effectiveContent) else {
             return try Codec.foryError(
                 "input: failed to type text",
                 category: IOSUseErrorCategory.action,

@@ -45,29 +45,66 @@ enum DriverSessionStore {
             bundleId: raw["bundleId"] as? String,
             controlSocketPath: raw["controlSocketPath"] as? String,
             playCoverAppPath: raw["playcoverAppPath"] as? String,
-            profileHash: raw["profileHash"] as? String,
-            playCoverRuntimeSocketPath: raw["playcoverRuntimeSocketPath"] as? String,
-            playCoverLaunchNonce: raw["playcoverLaunchNonce"] as? String,
-            playCoverPreparedGenerationID: raw["playcoverPreparedGenerationID"] as? String,
-            playCoverRuntimeInstanceID: raw["playcoverRuntimeInstanceID"] as? String
+            playCoverExecutablePath:
+                raw["playcoverExecutablePath"] as? String,
+            playCoverGenerationKey:
+                raw["playcoverGenerationKey"] as? String,
+            playCoverRuntimeSocketPath:
+                raw["playcoverRuntimeSocketPath"] as? String
         )
         if deviceType == PlayCoverSessionService.deviceType {
             guard let appPath = info.playCoverAppPath, !appPath.isEmpty,
+                  let executablePath = info.playCoverExecutablePath,
+                  !executablePath.isEmpty,
+                  let generationKey = info.playCoverGenerationKey,
+                  !generationKey.isEmpty,
                   let bundleId = info.bundleId, !bundleId.isEmpty,
-                  let profileHash = info.profileHash, !profileHash.isEmpty,
+                  let sessionID = info.sessionIdentifier,
+                  !sessionID.isEmpty,
+                  let runtimeSocket = info.playCoverRuntimeSocketPath,
+                  !runtimeSocket.isEmpty,
                   let runnerPid = info.runnerPid, runnerPid > 0 else {
                 throw CLIParseError.invalidValue(
                     "Invalid driver.lock: incomplete PlayCover session."
                 )
             }
-            guard info.playCoverRuntimeSocketPath?.isEmpty == false,
-                  info.playCoverLaunchNonce?.isEmpty == false,
-                  info.playCoverPreparedGenerationID?.isEmpty == false,
-                  info.playCoverRuntimeInstanceID?.isEmpty == false else {
+            let expectedSocket: String
+            do {
+                expectedSocket = try paths.playCoverRuntimeSocketPath(
+                    sessionID: sessionID
+                )
+            } catch {
                 throw CLIParseError.invalidValue(
-                    "Invalid driver.lock: incomplete PlayCover runtime identity."
+                    "Invalid driver.lock: PlayCover sessionID cannot "
+                        + "derive its Runtime socket."
                 )
             }
+            guard canonicalPath(runtimeSocket)
+                    == canonicalPath(expectedSocket) else {
+                throw CLIParseError.invalidValue(
+                    "Invalid driver.lock: PlayCover Runtime socket does "
+                        + "not match its sessionID."
+                )
+            }
+            guard isManagedPreparedApp(
+                appPath,
+                generationKey: generationKey,
+                paths: paths
+            ) else {
+                throw CLIParseError.invalidValue(
+                    "Invalid driver.lock: PlayCover App is not the "
+                        + "recorded generation under this IOS_USE_HOME."
+                )
+            }
+            guard canonicalPath(executablePath).hasPrefix(
+                canonicalPath(appPath) + "/"
+            ) else {
+                throw CLIParseError.invalidValue(
+                    "Invalid driver.lock: PlayCover executable is outside "
+                        + "the managed App."
+                )
+            }
+            try validateOwnedRunDirectory(paths.playcoverRun)
         }
         return info
     }
@@ -109,20 +146,14 @@ enum DriverSessionStore {
         if let playCoverAppPath = info.playCoverAppPath {
             root["playcoverAppPath"] = playCoverAppPath
         }
-        if let profileHash = info.profileHash {
-            root["profileHash"] = profileHash
+        if let executablePath = info.playCoverExecutablePath {
+            root["playcoverExecutablePath"] = executablePath
+        }
+        if let generationKey = info.playCoverGenerationKey {
+            root["playcoverGenerationKey"] = generationKey
         }
         if let socketPath = info.playCoverRuntimeSocketPath {
             root["playcoverRuntimeSocketPath"] = socketPath
-        }
-        if let launchNonce = info.playCoverLaunchNonce {
-            root["playcoverLaunchNonce"] = launchNonce
-        }
-        if let generationID = info.playCoverPreparedGenerationID {
-            root["playcoverPreparedGenerationID"] = generationID
-        }
-        if let runtimeInstanceID = info.playCoverRuntimeInstanceID {
-            root["playcoverRuntimeInstanceID"] = runtimeInstanceID
         }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)
@@ -228,6 +259,59 @@ enum DriverSessionStore {
             [.posixPermissions: 0o600],
             ofItemAtPath: path
         )
+        #endif
+    }
+
+    private static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+
+    private static func isManagedPreparedApp(
+        _ appPath: String,
+        generationKey: String,
+        paths: IOSUsePaths
+    ) -> Bool {
+        guard let canonicalApp = try?
+                PlayCoverManagedAppService
+                    .validatedManagedPreparedAppPath(
+                        appPath,
+                        paths: paths
+                    ) else {
+            return false
+        }
+        let canonicalRoot = URL(
+            fileURLWithPath: paths.playcoverPrepared,
+            isDirectory: true
+        ).standardizedFileURL.path
+        let app = URL(
+            fileURLWithPath: canonicalApp,
+            isDirectory: true
+        )
+        return app.pathExtension == "app"
+            && app.deletingLastPathComponent().lastPathComponent
+                == generationKey
+            && app.deletingLastPathComponent()
+                .deletingLastPathComponent().path == canonicalRoot
+    }
+
+    private static func validateOwnedRunDirectory(
+        _ path: String
+    ) throws {
+        #if canImport(Darwin)
+        var info = stat()
+        guard Darwin.lstat(path, &info) == 0,
+              (info.st_mode & mode_t(S_IFMT))
+                == mode_t(S_IFDIR),
+              info.st_uid == geteuid(),
+              (info.st_mode & 0o077) == 0 else {
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: PlayCover Runtime directory is "
+                    + "not an owner-only directory."
+            )
+        }
         #endif
     }
 }

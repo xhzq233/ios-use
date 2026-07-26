@@ -145,15 +145,28 @@ enum DriverCommandExecutor {
 
         case .input(let tap, let content, let delete, let enter, let traits, let cindex, let postDom):
             let tapTarget = try resolveInputTapTarget(tap, traits: traits, cindex: cindex)
-            let deletePrefix = String(repeating: "\u{7F}", count: delete)
-            let effectiveContent = deletePrefix + content + (enter ? "\n" : "")
-            _ = try clientRunner {
-                try $0.input(tap: tapTarget, content: effectiveContent)
-                return nil
-            }
+            let payload = try requiredPayload(
+                clientRunner {
+                    .element(
+                        try $0.input(
+                            tap: tapTarget,
+                            content: content,
+                            deleteCount: delete,
+                            enter: enter,
+                            traits: traits,
+                            cindex: cindex
+                        )
+                    )
+                },
+                as: ForyElementPayload.self
+            )
             let targetDescription = tap.map { " after tapping \"\($0)\"" } ?? ""
             let result = try appendPostDomIfNeeded(
-                DriverCommandResult(stdout: "Input \"\(effectiveContent)\"\(targetDescription)\n", payload: nil),
+                DriverCommandResult(
+                    stdout: "Input \"\(content)\"\(targetDescription)"
+                        + " delete=\(delete) enter=\(enter)\n",
+                    payload: .element(payload)
+                ),
                 postDom: postDom,
                 clientRunner: clientRunner
             )

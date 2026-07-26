@@ -138,7 +138,7 @@ final class DriverFailureEvidenceTests: XCTestCase {
 
         let manifestURL = try evidenceManifestURL(from: result.stderr)
         let manifest = try jsonObject(at: manifestURL)
-        XCTAssertEqual(manifest["schemaVersion"] as? Int, 2)
+        XCTAssertEqual(manifest["schemaVersion"] as? Int, 3)
         XCTAssertEqual(manifest["command"] as? String, "tap")
         XCTAssertEqual(manifest["profile"] as? String, "ui-snapshot")
 
@@ -420,7 +420,10 @@ private final class EvidenceDriverClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected longPress")
     }
 
-    func input(tap: ForyTarget?, content: String) throws {
+    func input(
+        tap: ForyTarget?,
+        content: String
+    ) throws -> ForyElementPayload {
         throw CLIParseError.invalidValue("unexpected input")
     }
 

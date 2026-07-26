@@ -1,6 +1,8 @@
 #import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlayAppKitBridge.h"
 
 #import <UIKit/UIKit.h>
+#import <WebKit/WebKit.h>
 #import <objc/message.h>
 #import <stdatomic.h>
 #import <unistd.h>
@@ -13,6 +15,9 @@ static const NSUInteger IOSUseDOMMaximumStringLength = 4096;
 static const NSUInteger IOSUseDOMMaximumTotalStringBytes = 512 * 1024;
 static const NSUInteger IOSUseDOMMaximumRawStringBytes = 512 * 1024;
 static const NSUInteger IOSUseDOMMaximumErrorCandidates = 5;
+static const NSUInteger IOSUseDOMMaximumWebElementCount = 512;
+static const NSUInteger IOSUseDOMMaximumWebTraversalCount = 4096;
+static const NSUInteger IOSUseDOMMaximumAppKitElementCount = 512;
 static const NSTimeInterval IOSUseDOMMainThreadTimeoutSeconds = 2.0;
 static const NSTimeInterval IOSUseDOMWaitDefaultSeconds = 10.0;
 static const NSTimeInterval IOSUseDOMWaitMaximumSeconds = 300.0;
@@ -27,11 +32,16 @@ typedef unsigned long long (*IOSUseDOMSendUnsignedLongLong)(id, SEL);
 typedef CGRect (*IOSUseDOMSendRect)(id, SEL);
 
 @interface IOSUseDOMNode : NSObject
+@property(nonatomic, weak, nullable) id object;
 @property(nonatomic, copy) NSString *nodeID;
+@property(nonatomic) unsigned long long generation;
 @property(nonatomic) NSInteger elementType;
 @property(nonatomic, copy) NSString *typeName;
 @property(nonatomic, copy, nullable) NSString *label;
 @property(nonatomic, copy, nullable) NSString *value;
+@property(nonatomic, copy, nullable) NSString *identifier;
+@property(nonatomic, copy, nullable) NSString *hint;
+@property(nonatomic, copy) NSString *className;
 @property(nonatomic) CGRect rect;
 @property(nonatomic) BOOL hasRect;
 @property(nonatomic) BOOL disabled;
@@ -81,6 +91,62 @@ typedef CGRect (*IOSUseDOMSendRect)(id, SEL);
 
 @implementation IOSUseDOMCaptureContext
 @end
+
+@interface IOSUseDOMWebAccessibilityElement : UIAccessibilityElement
+@property(nonatomic, weak) WKWebView *webView;
+@property(nonatomic) NSUInteger webOrdinal;
+@property(nonatomic, copy) NSString *webIdentity;
+@property(nonatomic, copy) NSString *webRole;
+@property(nonatomic, copy) NSString *webTag;
+@property(nonatomic, copy) NSString *webLabel;
+@property(nonatomic, copy) NSString *webIdentifier;
+@property(nonatomic) CGRect webLocalFrame;
+@property(nonatomic) CGRect webScreenFrame;
+@property(nonatomic) BOOL webDisabled;
+@property(nonatomic) BOOL webSecure;
+@end
+
+@implementation IOSUseDOMWebAccessibilityElement
+@end
+
+@interface IOSUseDOMAppKitAccessibilityElement : UIAccessibilityElement
+@property(nonatomic, copy) NSString *appKitRole;
+@property(nonatomic) BOOL appKitFocused;
+@end
+
+@implementation IOSUseDOMAppKitAccessibilityElement
+
+- (BOOL)accessibilityElementIsFocused {
+    return self.appKitFocused;
+}
+
+@end
+
+@interface IOSUseDOMWebBridgeRecord : NSObject
+@property(nonatomic, weak) WKWebView *webView;
+@property(nonatomic) unsigned long long generation;
+@property(nonatomic, copy) NSString *nodeID;
+@property(nonatomic) NSUInteger ordinal;
+@property(nonatomic, copy) NSString *identity;
+@property(nonatomic, copy) NSString *role;
+@property(nonatomic, copy) NSString *tag;
+@property(nonatomic, copy) NSString *label;
+@property(nonatomic, copy) NSString *serializedLabel;
+@property(nonatomic, copy) NSString *identifier;
+@property(nonatomic) CGRect localFrame;
+@property(nonatomic) CGRect screenFrame;
+@property(nonatomic) BOOL disabled;
+@property(nonatomic) BOOL secure;
+@end
+
+@implementation IOSUseDOMWebBridgeRecord
+@end
+
+static NSMutableDictionary<
+    NSString *,
+    IOSUseDOMWebBridgeRecord *
+> *IOSUseDOMWebBridgeRecords;
+static unsigned long long IOSUseDOMWebBridgeGeneration;
 
 @interface IOSUseDOMSnapshotRequest : NSObject
 @property(nonatomic) CFAbsoluteTime expiresAt;
@@ -268,6 +334,47 @@ static BOOL IOSUseDOMBoolValue(
     }
 }
 
+static NSString * _Nullable IOSUseDOMLiveInputValue(id object) {
+    @try {
+        if ([object isKindOfClass:UITextField.class]) {
+            UITextField *field = object;
+            if (field.secureTextEntry) {
+                return field.hasText ? @"••••" : nil;
+            }
+            return field.text;
+        }
+        if ([object isKindOfClass:UITextView.class]) {
+            return [(UITextView *)object text];
+        }
+        if ([object isKindOfClass:UISearchBar.class]) {
+            return [(UISearchBar *)object text];
+        }
+        if (![object conformsToProtocol:@protocol(UITextInput)]) {
+            return nil;
+        }
+        id<UITextInput> textInput = object;
+        if (IOSUseDOMBoolValue(
+                object,
+                @selector(isSecureTextEntry),
+                NO
+            )) {
+            return [(id<UIKeyInput>)object hasText]
+                ? @"••••"
+                : nil;
+        }
+        UITextRange *document = [
+            textInput
+            textRangeFromPosition:textInput.beginningOfDocument
+            toPosition:textInput.endOfDocument
+        ];
+        return document == nil
+            ? nil
+            : [textInput textInRange:document];
+    } @catch (__unused NSException *exception) {
+        return nil;
+    }
+}
+
 static unsigned long long IOSUseDOMAccessibilityTraits(id object) {
     SEL selector = NSSelectorFromString(@"accessibilityTraits");
     if (object == nil || ![object respondsToSelector:selector]) {
@@ -310,15 +417,21 @@ static NSString * _Nullable IOSUseDOMBoundedString(
             NSCharacterSet.whitespaceAndNewlineCharacterSet
             mutableCopy
         ];
-        [trim addCharactersInString:@"\u200B\u200C\u200D\u2060\uFEFF"];
+        // ZWNJ and ZWJ participate in rendered grapheme shaping and must
+        // survive DOM serialization (for example, family emoji). Strip only
+        // zero-width spacing/control marks that do not carry that meaning.
+        [trim addCharactersInString:@"\u200B\u2060\uFEFF"];
         trimCharacters = trim.copy;
 
         NSMutableCharacterSet *invalid = [
             NSCharacterSet.controlCharacterSet
             mutableCopy
         ];
-        [invalid removeCharactersInString:@"\t\n\r"];
-        [invalid addCharactersInString:@"\u200B\u200C\u200D\u2060\uFEFF"];
+        // Foundation includes Unicode format controls in
+        // controlCharacterSet. Preserve the two shaping controls explicitly
+        // while continuing to remove other accessibility-string controls.
+        [invalid removeCharactersInString:@"\t\n\r\u200C\u200D"];
+        [invalid addCharactersInString:@"\u200B\u2060\uFEFF"];
         invalidCharacters = invalid.copy;
     });
     string = [string stringByTrimmingCharactersInSet:trimCharacters];
@@ -394,12 +507,16 @@ static NSArray * _Nullable IOSUseDOMContainerElements(
     } @catch (__unused NSException *exception) {
         return nil;
     }
-    if (count < 0) {
+    if (count < 0 || count == NSNotFound) {
         return nil;
     }
     if ((NSUInteger)count > IOSUseDOMMaximumChildrenPerNode) {
-        context.failureMessage =
-            @"accessibility container exceeded the 2048-child limit";
+        context.failureMessage = [NSString stringWithFormat:
+            @"accessibility container %@ reported %ld children, exceeding "
+             "the 2048-child limit",
+            NSStringFromClass([object class]) ?: @"NSObject",
+            (long)count
+        ];
         return nil;
     }
     NSMutableArray *elements =
@@ -452,12 +569,1048 @@ static NSArray *IOSUseDOMUniqueChildren(
     return unique;
 }
 
+static NSString *IOSUseDOMFixedWebBridgeScript(void) {
+    static NSString *script;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        // This is the bridge's complete program. callAsyncJavaScript passes
+        // only fixed-name data arguments into an isolated WKContentWorld;
+        // callers cannot supply JavaScript, selectors, or DOM paths.
+        script =
+            @"const elementLimit=512,traversalLimit=4096;"
+             "const allowedRoles=new Set("
+               "['button','link','input','heading','text']);"
+             "const normalize=value=>{"
+               "const raw=String(value??'');"
+               "if(raw.length>4096)return null;"
+               "return raw.replace(/\\s+/g,' ').trim();"
+             "};"
+             "const structuralIdentity=element=>{"
+               "const parts=[];let current=element,depth=0;"
+               "while(current&&current.nodeType===Node.ELEMENT_NODE){"
+                 "if(depth>=64)return null;"
+                 "let index=0,sibling=current;"
+                 "while((sibling=sibling.previousElementSibling)!==null)"
+                   "index+=1;"
+                 "parts.push(current.tagName.toLowerCase()+':'+index);"
+                 "current=current.parentElement;depth+=1;"
+               "}"
+               "return parts.reverse().join('/');"
+             "};"
+             "const describe=element=>{"
+               "const tag=element.tagName.toLowerCase();"
+               "const declaredRole=normalize("
+                 "element.getAttribute('role'));"
+               "if(declaredRole===null)return {invalid:true};"
+               "const implicitRole=({"
+                 "button:'button',a:'link',input:'input',"
+                 "textarea:'input',select:'input',h1:'heading',"
+                 "h2:'heading',h3:'heading',h4:'heading',"
+                 "h5:'heading',h6:'heading',p:'text'"
+               "})[tag]||'';"
+               "const role=declaredRole||implicitRole;"
+               "if(!allowedRoles.has(role))return null;"
+               "const style=getComputedStyle(element);"
+               "const frame=element.getBoundingClientRect();"
+               "const viewport=window.visualViewport;"
+               "const viewportWidth=viewport?"
+                 "viewport.width:window.innerWidth;"
+               "const viewportHeight=viewport?"
+                 "viewport.height:window.innerHeight;"
+               "if(element.hidden||"
+                  "element.getAttribute('aria-hidden')==='true'||"
+                  "style.display==='none'||"
+                  "style.visibility==='hidden'||"
+                  "Number(style.opacity)<=0||"
+                  "frame.width<=0||frame.height<=0||"
+                  "frame.right<=0||frame.bottom<=0||"
+                  "frame.left>=viewportWidth||"
+                  "frame.top>=viewportHeight)return null;"
+               "const rendered=normalize("
+                 "element.innerText||element.textContent);"
+               "const ariaLabel=normalize("
+                 "element.getAttribute('aria-label'));"
+               "const placeholder=normalize("
+                 "element.getAttribute('placeholder'));"
+               "const identifier=normalize(element.id);"
+               "if(rendered===null||ariaLabel===null||"
+                  "placeholder===null||identifier===null)"
+                 "return {invalid:true};"
+               "const label=ariaLabel||placeholder||rendered;"
+               "const rawValue=('value'in element)?"
+                 "String(element.value??''):"
+                 "((role==='text'||role==='heading')?"
+                   "rendered:'');"
+               "if(rawValue.length>4096)return {invalid:true};"
+               "if(!label&&!rawValue)return null;"
+               "const identity=structuralIdentity(element);"
+               "if(identity===null||identity.length>4096)"
+                 "return {invalid:true};"
+               "const viewportOffsetX=viewport?"
+                 "viewport.offsetLeft:0;"
+               "const viewportOffsetY=viewport?"
+                 "viewport.offsetTop:0;"
+               "const viewportScale=viewport?viewport.scale:1;"
+               "const inputType=tag==='input'?"
+                 "(normalize(element.getAttribute('type'))||'text')"
+                   ".toLowerCase():'';"
+               "return {element,identity,role,tag,label,"
+                 "value:rawValue,identifier,inputType,"
+                 "secure:tag==='input'&&inputType==='password',"
+                 "disabled:Boolean(element.disabled)||"
+                   "element.getAttribute('aria-disabled')==='true',"
+                 "readOnly:Boolean(element.readOnly),"
+                 "selected:element.getAttribute("
+                   "'aria-selected')==='true',"
+                 "focused:document.activeElement===element,"
+                 "x:(frame.left-viewportOffsetX)*viewportScale,"
+                 "y:(frame.top-viewportOffsetY)*viewportScale,"
+                 "width:frame.width*viewportScale,"
+                 "height:frame.height*viewportScale};"
+             "};"
+             "const enumerate=()=>{"
+               "const out=[];"
+               "const walker=document.createTreeWalker("
+                 "document.documentElement,NodeFilter.SHOW_ELEMENT);"
+               "let element=walker.currentNode,visited=0,invalid=false;"
+               "while(element&&out.length<elementLimit&&"
+                     "visited<traversalLimit){"
+                 "const descriptor=describe(element);"
+                 "if(descriptor&&descriptor.invalid)invalid=true;"
+                 "else if(descriptor){"
+                   "descriptor.ordinal=out.length;"
+                   "out.push(descriptor);"
+                 "}"
+                 "visited+=1;element=walker.nextNode();"
+               "}"
+               "return {elements:out,invalid,"
+                 "truncated:Boolean(element),visited};"
+             "};"
+             "if(operation==='snapshot'){"
+               "const scan=enumerate();"
+               "return {"
+                 "elements:scan.elements.map(item=>({"
+                   "ordinal:item.ordinal,identity:item.identity,"
+                   "role:item.role,tag:item.tag,label:item.label,"
+                   "value:item.value,identifier:item.identifier,"
+                   "inputType:item.inputType,secure:item.secure,"
+                   "disabled:item.disabled,readOnly:item.readOnly,"
+                   "selected:item.selected,focused:item.focused,"
+                   "x:item.x,y:item.y,width:item.width,"
+                   "height:item.height"
+                 "})),"
+                 "invalid:scan.invalid,truncated:scan.truncated,"
+                 "visited:scan.visited"
+               "};"
+             "}"
+             "if(operation==='inputState'){"
+               "const element=document.activeElement;"
+               "if(!element||"
+                  "!['INPUT','TEXTAREA'].includes(element.tagName))"
+                 "return {status:'inactive'};"
+               "const item=describe(element);"
+               "if(!item||item.invalid||item.role!=='input')"
+                 "return {status:'inactive'};"
+               "const value=String(element.value??'');"
+               "const inputType=element.tagName==='INPUT'?"
+                 "(normalize(element.getAttribute('type'))||'text')"
+                   ".toLowerCase():'';"
+               "return {status:'active',value,inputType,"
+                 "identity:item.identity,role:item.role,tag:item.tag,"
+                 "label:item.label,identifier:item.identifier,"
+                 "x:item.x,y:item.y,width:item.width,height:item.height,"
+                 "secure:element.tagName==='INPUT'&&"
+                   "inputType==='password',"
+                 "disabled:Boolean(element.disabled)||"
+                   "element.getAttribute('aria-disabled')==='true',"
+                 "readOnly:Boolean(element.readOnly),"
+                 "selectionStart:Number.isInteger("
+                   "element.selectionStart)?element.selectionStart:-1,"
+                 "selectionEnd:Number.isInteger("
+                   "element.selectionEnd)?element.selectionEnd:-1};"
+             "}"
+             "if(operation!=='activate'&&operation!=='focusInput')"
+               "return {status:'failed',reason:'operation'};"
+             "if(!Number.isInteger(ordinal)||ordinal<0||"
+                "ordinal>=elementLimit)"
+               "return {status:'failed',reason:'ordinal'};"
+             "const scan=enumerate();"
+             "if(scan.invalid||scan.truncated)"
+               "return {status:'failed',reason:'bounded-scan'};"
+             "const item=scan.elements[ordinal];"
+             "if(!item)return {status:'stale',reason:'ordinal'};"
+             "const frameMatches="
+               "Math.abs(item.x-expectedX)<=0.5&&"
+               "Math.abs(item.y-expectedY)<=0.5&&"
+               "Math.abs(item.width-expectedWidth)<=0.5&&"
+               "Math.abs(item.height-expectedHeight)<=0.5;"
+             "if(item.identity!==expectedIdentity||"
+                "item.role!==expectedRole||item.tag!==expectedTag||"
+                "item.label!==expectedLabel||"
+                "item.identifier!==expectedIdentifier||"
+                "item.disabled!==expectedDisabled||"
+                "item.secure!==expectedSecure||!frameMatches)"
+               "return {status:'stale',reason:'identity'};"
+             "if(item.disabled)"
+               "return {status:'unsupported',reason:'disabled'};"
+             "if(operation==='activate'){"
+               "if(!['button','link'].includes(item.role))"
+                 "return {status:'unsupported',reason:'role'};"
+               "if(!(item.element instanceof HTMLElement))"
+                 "return {status:'unsupported',reason:'custom'};"
+               "HTMLElement.prototype.click.call(item.element);"
+               "return {status:'performed',operation:'activate',"
+                 "freshValidated:true,performed:true};"
+             "}"
+             "if(item.role!=='input')"
+               "return {status:'unsupported',reason:'role'};"
+             "if(item.secure)"
+               "return {status:'unsupported',reason:'secure'};"
+             "if(!['input','textarea'].includes(item.tag))"
+               "return {status:'unsupported',reason:'custom'};"
+             "const textTypes=new Set("
+               "['text','search','email','url','tel']);"
+             "if(item.tag==='input'&&!textTypes.has(item.inputType))"
+               "return {status:'unsupported',reason:'custom'};"
+             "if(item.readOnly)"
+               "return {status:'unsupported',reason:'read-only'};"
+             "HTMLElement.prototype.focus.call("
+               "item.element,{preventScroll:true});"
+             "if(document.activeElement!==item.element)"
+               "return {status:'failed',reason:'focus'};"
+             "return {status:'performed',operation:'focusInput',"
+               "freshValidated:true,performed:true,focused:true};";
+    });
+    return script;
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseDOMFixedWebBridgeArguments(NSString *operation) {
+    return @{
+        @"operation": operation,
+        @"ordinal": @0,
+        @"expectedIdentity": @"",
+        @"expectedRole": @"",
+        @"expectedTag": @"",
+        @"expectedLabel": @"",
+        @"expectedIdentifier": @"",
+        @"expectedDisabled": @NO,
+        @"expectedSecure": @NO,
+        @"expectedX": @0,
+        @"expectedY": @0,
+        @"expectedWidth": @0,
+        @"expectedHeight": @0,
+    };
+}
+
+static id _Nullable IOSUseDOMEvaluateFixedWebBridge(
+    WKWebView *webView,
+    NSDictionary<NSString *, id> *arguments,
+    NSTimeInterval timeout,
+    NSString * _Nullable *failureMessage
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"WKWebView accessibility bridge is main-only"
+    );
+    __block id rawResult = nil;
+    __block NSError *evaluationError = nil;
+    __block BOOL completed = NO;
+    if (@available(iOS 14.0, macCatalyst 14.0, *)) {
+        WKContentWorld *contentWorld = [WKContentWorld
+            worldWithName:@"io.ios-use.runtime.accessibility"];
+        [webView
+            callAsyncJavaScript:IOSUseDOMFixedWebBridgeScript()
+                       arguments:arguments
+                         inFrame:nil
+                  inContentWorld:contentWorld
+               completionHandler:^(id result, NSError *error) {
+            rawResult = result;
+            evaluationError = error;
+            completed = YES;
+        }];
+    } else {
+        if (failureMessage != NULL) {
+            *failureMessage =
+                @"WKWebView fixed accessibility bridge requires iOS 14 or newer";
+        }
+        return nil;
+    }
+    CFAbsoluteTime deadline =
+        CFAbsoluteTimeGetCurrent() + timeout;
+    while (!completed && CFAbsoluteTimeGetCurrent() < deadline) {
+        CFRunLoopRunInMode(
+            kCFRunLoopDefaultMode,
+            MIN(0.01, deadline - CFAbsoluteTimeGetCurrent()),
+            true
+        );
+    }
+    if (!completed) {
+        if (failureMessage != NULL) {
+            *failureMessage =
+                @"WKWebView accessibility bridge timed out";
+        }
+        return nil;
+    }
+    if (evaluationError != nil) {
+        if (failureMessage != NULL) {
+            *failureMessage =
+                evaluationError.localizedDescription ?:
+                    @"WKWebView accessibility bridge failed";
+        }
+        return nil;
+    }
+    return rawResult;
+}
+
+static NSArray * _Nullable IOSUseDOMWebAccessibilityElements(
+    WKWebView *webView,
+    IOSUseDOMCaptureContext *context
+) {
+    // A tab selection can instantiate and start a WKWebView in the same
+    // touch turn. Do not turn that bounded, observable loading state into a
+    // snapshot failure: the native WKWebView node remains in the DOM and
+    // waitFor will take a fresh bridged snapshot after navigation settles.
+    if (webView.loading ||
+        webView.URL == nil ||
+        webView.estimatedProgress < 1.0) {
+        return @[];
+    }
+    NSString *failureMessage = nil;
+    id rawResult = IOSUseDOMEvaluateFixedWebBridge(
+        webView,
+        IOSUseDOMFixedWebBridgeArguments(@"snapshot"),
+        0.75,
+        &failureMessage
+    );
+    if (![rawResult isKindOfClass:NSDictionary.class]) {
+        context.failureMessage =
+            failureMessage ?:
+                @"WKWebView accessibility bridge returned invalid data";
+        return nil;
+    }
+    NSDictionary *result = rawResult;
+    NSArray *elements = [result[@"elements"] isKindOfClass:NSArray.class]
+        ? result[@"elements"]
+        : nil;
+    if (elements == nil ||
+        [result[@"invalid"] boolValue] ||
+        [result[@"truncated"] boolValue] ||
+        !IOSUseDOMIsInteger(result[@"visited"]) ||
+        [result[@"visited"] unsignedIntegerValue] >
+            IOSUseDOMMaximumWebTraversalCount ||
+        elements.count > IOSUseDOMMaximumWebElementCount) {
+        context.failureMessage =
+            elements == nil
+                ? @"WKWebView accessibility bridge omitted its element list"
+                : @"WKWebView accessibility bridge exceeded its fixed bounds";
+        return nil;
+    }
+
+    NSMutableArray *proxies =
+        [NSMutableArray arrayWithCapacity:elements.count];
+    for (id candidate in elements) {
+        if (![candidate isKindOfClass:NSDictionary.class]) {
+            context.failureMessage =
+                @"WKWebView accessibility bridge returned a non-object element";
+            return nil;
+        }
+        NSDictionary *entry = candidate;
+        NSArray<NSString *> *numberKeys = @[
+            @"ordinal", @"x", @"y", @"width", @"height"
+        ];
+        BOOL validNumbers = YES;
+        for (NSString *key in numberKeys) {
+            if (!IOSUseDOMIsNumber(entry[key]) ||
+                !isfinite([entry[key] doubleValue])) {
+                validNumbers = NO;
+                break;
+            }
+        }
+        NSString *role = [entry[@"role"] isKindOfClass:NSString.class]
+            ? entry[@"role"]
+            : nil;
+        NSString *label = [entry[@"label"] isKindOfClass:NSString.class]
+            ? entry[@"label"]
+            : nil;
+        NSString *value = [entry[@"value"] isKindOfClass:NSString.class]
+            ? entry[@"value"]
+            : nil;
+        NSString *identity =
+            [entry[@"identity"] isKindOfClass:NSString.class]
+                ? entry[@"identity"]
+                : nil;
+        NSString *tag = [entry[@"tag"] isKindOfClass:NSString.class]
+            ? entry[@"tag"]
+            : nil;
+        NSString *identifier =
+            [entry[@"identifier"] isKindOfClass:NSString.class]
+                ? entry[@"identifier"]
+                : nil;
+        if (!validNumbers ||
+            role.length == 0 ||
+            ![@[
+                @"button", @"link", @"input", @"heading", @"text"
+            ] containsObject:role] ||
+            identity.length == 0 ||
+            tag.length == 0 ||
+            identifier == nil ||
+            (label.length == 0 && value.length == 0) ||
+            [entry[@"ordinal"] unsignedIntegerValue] != proxies.count ||
+            [entry[@"width"] doubleValue] <= 0 ||
+            [entry[@"height"] doubleValue] <= 0 ||
+            !IOSUseDOMIsBoolean(entry[@"secure"]) ||
+            !IOSUseDOMIsBoolean(entry[@"disabled"]) ||
+            !IOSUseDOMIsBoolean(entry[@"selected"]) ||
+            !IOSUseDOMIsBoolean(entry[@"focused"])) {
+            context.failureMessage =
+                @"WKWebView accessibility bridge returned an invalid element";
+            return nil;
+        }
+        CGRect localFrame = CGRectMake(
+            [entry[@"x"] doubleValue],
+            [entry[@"y"] doubleValue],
+            [entry[@"width"] doubleValue],
+            [entry[@"height"] doubleValue]
+        );
+        CGRect screenFrame = [webView convertRect:localFrame toView:nil];
+        if (!IOSUseDOMRectHasArea(screenFrame)) {
+            context.failureMessage =
+                @"WKWebView accessibility bridge returned invalid geometry";
+            return nil;
+        }
+        IOSUseDOMWebAccessibilityElement *proxy = [
+            [IOSUseDOMWebAccessibilityElement alloc]
+            initWithAccessibilityContainer:webView
+        ];
+        proxy.webView = webView;
+        proxy.webOrdinal = [entry[@"ordinal"] unsignedIntegerValue];
+        proxy.webIdentity = identity;
+        proxy.webRole = role;
+        proxy.webTag = tag;
+        proxy.webLabel = label ?: @"";
+        proxy.webIdentifier = identifier;
+        proxy.webLocalFrame = localFrame;
+        proxy.webScreenFrame = screenFrame;
+        proxy.webDisabled = [entry[@"disabled"] boolValue];
+        proxy.webSecure = [entry[@"secure"] boolValue];
+        proxy.isAccessibilityElement = YES;
+        proxy.accessibilityLabel = label;
+        proxy.accessibilityValue = value;
+        proxy.accessibilityIdentifier =
+            identifier;
+        proxy.accessibilityHint = [entry[@"secure"] boolValue]
+            ? @"ios-use:secure-web-input"
+            : nil;
+        proxy.accessibilityFrame = screenFrame;
+        UIAccessibilityTraits traits = UIAccessibilityTraitNone;
+        if ([role isEqualToString:@"button"]) {
+            traits |= UIAccessibilityTraitButton;
+        } else if ([role isEqualToString:@"link"]) {
+            traits |= UIAccessibilityTraitLink;
+        } else if ([role isEqualToString:@"heading"] ||
+                   [role isEqualToString:@"text"]) {
+            traits |= UIAccessibilityTraitStaticText;
+        }
+        if ([entry[@"disabled"] boolValue]) {
+            traits |= UIAccessibilityTraitNotEnabled;
+        }
+        if ([entry[@"selected"] boolValue]) {
+            traits |= UIAccessibilityTraitSelected;
+        }
+        proxy.accessibilityTraits = traits;
+        [proxies addObject:proxy];
+    }
+    return proxies;
+}
+
+static NSArray<IOSUseDOMAppKitAccessibilityElement *> * _Nullable
+IOSUseDOMAppKitAccessibilityElements(
+    UIWindow *primaryWindow,
+    IOSUseDOMCaptureContext *context
+) {
+    NSError *bridgeError = nil;
+    NSArray<NSDictionary<NSString *, id> *> *entries = [
+        IOSUsePlayAppKitBridge
+        activeAccessibilityElementsWithError:&bridgeError
+    ];
+    if (entries == nil) {
+        context.failureMessage = bridgeError.localizedDescription ?:
+            @"AppKit accessibility bridge failed";
+        return nil;
+    }
+    if (entries.count > IOSUseDOMMaximumAppKitElementCount) {
+        context.failureMessage =
+            @"AppKit accessibility bridge exceeded 512 elements";
+        return nil;
+    }
+    NSMutableArray<IOSUseDOMAppKitAccessibilityElement *> *proxies =
+        [NSMutableArray arrayWithCapacity:entries.count];
+    NSSet<NSString *> *allowedRoles = [NSSet setWithArray:@[
+        @"button",
+        @"link",
+        @"text",
+        @"heading",
+    ]];
+    for (id candidate in entries) {
+        if (![candidate isKindOfClass:NSDictionary.class]) {
+            context.failureMessage =
+                @"AppKit accessibility bridge returned a non-object element";
+            return nil;
+        }
+        NSDictionary<NSString *, id> *entry = candidate;
+        NSString *role = [entry[@"role"] isKindOfClass:NSString.class]
+            ? entry[@"role"]
+            : nil;
+        NSString *label = [entry[@"label"] isKindOfClass:NSString.class]
+            ? entry[@"label"]
+            : nil;
+        NSString *value = [entry[@"value"] isKindOfClass:NSString.class]
+            ? entry[@"value"]
+            : nil;
+        NSString *identifier =
+            [entry[@"identifier"] isKindOfClass:NSString.class]
+                ? entry[@"identifier"]
+                : nil;
+        NSDictionary<NSString *, id> *frame =
+            [entry[@"frame"] isKindOfClass:NSDictionary.class]
+                ? entry[@"frame"]
+                : nil;
+        NSArray<NSString *> *numberKeys =
+            @[@"x", @"y", @"width", @"height"];
+        BOOL validNumbers = frame != nil;
+        for (NSString *key in numberKeys) {
+            if (!IOSUseDOMIsNumber(frame[key]) ||
+                !isfinite([frame[key] doubleValue])) {
+                validNumbers = NO;
+                break;
+            }
+        }
+        if (![allowedRoles containsObject:role ?: @""] ||
+            label == nil ||
+            value == nil ||
+            identifier == nil ||
+            (label.length == 0 &&
+             value.length == 0 &&
+             identifier.length == 0) ||
+            !validNumbers ||
+            [frame[@"width"] doubleValue] <= 0 ||
+            [frame[@"height"] doubleValue] <= 0 ||
+            !IOSUseDOMIsBoolean(entry[@"enabled"]) ||
+            !IOSUseDOMIsBoolean(entry[@"selected"]) ||
+            !IOSUseDOMIsBoolean(entry[@"focused"])) {
+            context.failureMessage =
+                @"AppKit accessibility bridge returned an invalid element";
+            return nil;
+        }
+        if (([role isEqualToString:@"text"] ||
+             [role isEqualToString:@"heading"]) &&
+            label.length == 0 &&
+            value.length > 0) {
+            label = value;
+            value = @"";
+        } else if (label.length > 0 &&
+                   [label isEqualToString:value]) {
+            value = @"";
+        }
+        CGRect logicalFrame = CGRectMake(
+            [frame[@"x"] doubleValue],
+            [frame[@"y"] doubleValue],
+            [frame[@"width"] doubleValue],
+            [frame[@"height"] doubleValue]
+        );
+        if (!IOSUseDOMRectHasArea(logicalFrame)) {
+            context.failureMessage =
+                @"AppKit accessibility bridge returned invalid geometry";
+            return nil;
+        }
+        IOSUseDOMAppKitAccessibilityElement *proxy = [
+            [IOSUseDOMAppKitAccessibilityElement alloc]
+            initWithAccessibilityContainer:primaryWindow
+        ];
+        proxy.appKitRole = role;
+        proxy.appKitFocused = [entry[@"focused"] boolValue];
+        proxy.isAccessibilityElement = YES;
+        proxy.accessibilityLabel = label.length > 0
+            ? label
+            : identifier;
+        proxy.accessibilityValue =
+            value.length > 0 ? value : nil;
+        proxy.accessibilityIdentifier =
+            identifier.length > 0 ? identifier : nil;
+        proxy.accessibilityFrame = logicalFrame;
+        UIAccessibilityTraits traits = UIAccessibilityTraitNone;
+        if ([role isEqualToString:@"button"]) {
+            traits |= UIAccessibilityTraitButton;
+        } else if ([role isEqualToString:@"link"]) {
+            traits |= UIAccessibilityTraitLink;
+        } else {
+            traits |= UIAccessibilityTraitStaticText;
+            if ([role isEqualToString:@"heading"]) {
+                traits |= UIAccessibilityTraitHeader;
+            }
+        }
+        if (![entry[@"enabled"] boolValue]) {
+            traits |= UIAccessibilityTraitNotEnabled;
+        }
+        if ([entry[@"selected"] boolValue]) {
+            traits |= UIAccessibilityTraitSelected;
+        }
+        proxy.accessibilityTraits = traits;
+        [proxies addObject:proxy];
+    }
+    return proxies;
+}
+
+static IOSUseDOMWebBridgeRecord * _Nullable
+IOSUseDOMWebBridgeRecordForElement(
+    NSDictionary<NSString *, id> *element
+);
+
+static BOOL IOSUseDOMWebFrameMatches(
+    CGRect left,
+    CGRect right,
+    CGFloat tolerance
+);
+
+NSDictionary<NSString *, id> *IOSUsePlayRuntimeWebInputState(
+    UIView *hitView,
+    NSDictionary<NSString *, id> *bridgedElement,
+    NSString **failureMessage
+) {
+    NSCAssert(NSThread.isMainThread, @"Web input state is main-only");
+    WKWebView *webView = nil;
+    for (UIView *view = hitView;
+         view != nil;
+         view = view.superview) {
+        if ([view isKindOfClass:WKWebView.class]) {
+            webView = (WKWebView *)view;
+            break;
+        }
+    }
+    if (webView == nil) {
+        if (failureMessage != NULL) {
+            *failureMessage =
+                @"active text responder is not contained by a WKWebView";
+        }
+        return nil;
+    }
+    NSString *evaluationFailure = nil;
+    id rawState = IOSUseDOMEvaluateFixedWebBridge(
+        webView,
+        IOSUseDOMFixedWebBridgeArguments(@"inputState"),
+        0.75,
+        &evaluationFailure
+    );
+    if (![rawState isKindOfClass:NSDictionary.class] ||
+        ![rawState[@"status"] isEqualToString:@"active"]) {
+        if (failureMessage != NULL) {
+            *failureMessage = evaluationFailure ?:
+                @"WKWebView has no active public HTML text control";
+        }
+        return nil;
+    }
+    NSDictionary *state = rawState;
+    if (![state[@"value"] isKindOfClass:NSString.class] ||
+        [state[@"value"] length] > IOSUseDOMMaximumStringLength ||
+        ![state[@"identity"] isKindOfClass:NSString.class] ||
+        ![state[@"role"] isEqualToString:@"input"] ||
+        ![state[@"tag"] isKindOfClass:NSString.class] ||
+        ![state[@"label"] isKindOfClass:NSString.class] ||
+        ![state[@"identifier"] isKindOfClass:NSString.class] ||
+        !IOSUseDOMIsNumber(state[@"x"]) ||
+        !IOSUseDOMIsNumber(state[@"y"]) ||
+        !IOSUseDOMIsNumber(state[@"width"]) ||
+        !IOSUseDOMIsNumber(state[@"height"]) ||
+        !IOSUseDOMIsBoolean(state[@"secure"]) ||
+        !IOSUseDOMIsBoolean(state[@"disabled"]) ||
+        !IOSUseDOMIsBoolean(state[@"readOnly"]) ||
+        !IOSUseDOMIsInteger(state[@"selectionStart"]) ||
+        !IOSUseDOMIsInteger(state[@"selectionEnd"])) {
+        if (failureMessage != NULL) {
+            *failureMessage =
+                @"WKWebView returned malformed active text state";
+        }
+        return nil;
+    }
+    if (bridgedElement != nil) {
+        IOSUseDOMWebBridgeRecord *record =
+            IOSUseDOMWebBridgeRecordForElement(bridgedElement);
+        BOOL selectedInputStillActive =
+            record != nil &&
+            record.webView == webView &&
+            [state[@"identity"] isEqualToString:record.identity] &&
+            [state[@"role"] isEqualToString:record.role] &&
+            [state[@"tag"] isEqualToString:record.tag] &&
+            [state[@"label"] isEqualToString:record.label] &&
+            [state[@"identifier"]
+                isEqualToString:record.identifier];
+        if (!selectedInputStillActive) {
+            if (failureMessage != NULL) {
+                *failureMessage =
+                    @"the active HTML input no longer matches the freshly selected Web proxy";
+            }
+            return nil;
+        }
+    }
+    return state;
+}
+
+static IOSUseDOMWebBridgeRecord * _Nullable
+IOSUseDOMWebBridgeRecordForElement(
+    NSDictionary<NSString *, id> *element
+) {
+    if (![element isKindOfClass:NSDictionary.class] ||
+        ![element[@"class"]
+            isEqualToString:
+                NSStringFromClass(
+                    IOSUseDOMWebAccessibilityElement.class
+                )] ||
+        ![element[@"nodeID"] isKindOfClass:NSString.class] ||
+        !IOSUseDOMIsInteger(element[@"snapshotGeneration"])) {
+        return nil;
+    }
+    IOSUseDOMWebBridgeRecord *record =
+        IOSUseDOMWebBridgeRecords[element[@"nodeID"]];
+    if (record == nil ||
+        record.generation !=
+            [element[@"snapshotGeneration"] unsignedLongLongValue] ||
+        record.generation != IOSUseDOMWebBridgeGeneration) {
+        return nil;
+    }
+    return record;
+}
+
+BOOL IOSUsePlayRuntimeIsWebAccessibilityElement(
+    NSDictionary<NSString *, id> *element
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"Web accessibility provenance is main-only"
+    );
+    return [element isKindOfClass:NSDictionary.class] &&
+        [element[@"class"]
+            isEqualToString:
+                NSStringFromClass(
+                    IOSUseDOMWebAccessibilityElement.class
+                )] &&
+        [element[@"nodeID"] isKindOfClass:NSString.class] &&
+        IOSUseDOMIsInteger(element[@"snapshotGeneration"]);
+}
+
+static BOOL IOSUseDOMWebFrameMatches(
+    CGRect left,
+    CGRect right,
+    CGFloat tolerance
+) {
+    return fabs(left.origin.x - right.origin.x) <= tolerance &&
+        fabs(left.origin.y - right.origin.y) <= tolerance &&
+        fabs(left.size.width - right.size.width) <= tolerance &&
+        fabs(left.size.height - right.size.height) <= tolerance;
+}
+
+NSDictionary<NSString *, id> *
+IOSUsePlayRuntimePerformWebAccessibilityAction(
+    UIView *hitView,
+    NSDictionary<NSString *, id> *element,
+    IOSUsePlayRuntimeWebAccessibilityAction action,
+    NSString **failureCode,
+    NSString **failureMessage
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"Web accessibility actions are main-only"
+    );
+    IOSUseDOMWebBridgeRecord *record =
+        IOSUseDOMWebBridgeRecordForElement(element);
+    if (record == nil) {
+        if (failureCode != NULL) {
+            *failureCode = @"web_bridge_stale";
+        }
+        if (failureMessage != NULL) {
+            *failureMessage =
+                @"the selected Web element is not from the current fresh Runtime snapshot";
+        }
+        return nil;
+    }
+    WKWebView *webView = nil;
+    for (UIView *view = hitView;
+         view != nil;
+         view = view.superview) {
+        if ([view isKindOfClass:WKWebView.class]) {
+            webView = (WKWebView *)view;
+            break;
+        }
+    }
+    NSDictionary *frame = element[@"frame"];
+    CGRect serializedFrame =
+        [frame isKindOfClass:NSDictionary.class] &&
+        IOSUseDOMIsNumber(frame[@"x"]) &&
+        IOSUseDOMIsNumber(frame[@"y"]) &&
+        IOSUseDOMIsNumber(frame[@"width"]) &&
+        IOSUseDOMIsNumber(frame[@"height"])
+            ? CGRectMake(
+                [frame[@"x"] doubleValue],
+                [frame[@"y"] doubleValue],
+                [frame[@"width"] doubleValue],
+                [frame[@"height"] doubleValue]
+            )
+            : CGRectNull;
+    NSString *expectedType = @{
+        @"button": @"Button",
+        @"link": @"Link",
+        @"input": @"Input",
+        @"heading": @"Text",
+        @"text": @"Text",
+    }[record.role];
+    BOOL serializedMatches =
+        webView != nil &&
+        webView == record.webView &&
+        [element[@"label"]
+            isEqualToString:record.serializedLabel] &&
+        [element[@"identifier"] isEqualToString:record.identifier] &&
+        [element[@"type"] isEqualToString:expectedType] &&
+        !CGRectIsNull(serializedFrame) &&
+        IOSUseDOMWebFrameMatches(
+            serializedFrame,
+            record.screenFrame,
+            0.01
+        );
+    if (!serializedMatches) {
+        if (failureCode != NULL) {
+            *failureCode = @"web_bridge_stale";
+        }
+        if (failureMessage != NULL) {
+            *failureMessage =
+                @"the selected Web element metadata no longer matches its Runtime proxy";
+        }
+        return nil;
+    }
+    NSString *operation = nil;
+    switch (action) {
+        case IOSUsePlayRuntimeWebAccessibilityActionActivate:
+            operation = @"activate";
+            break;
+        case IOSUsePlayRuntimeWebAccessibilityActionFocusInput:
+            operation = @"focusInput";
+            break;
+        default:
+            if (failureCode != NULL) {
+                *failureCode = @"web_action_unsupported";
+            }
+            if (failureMessage != NULL) {
+                *failureMessage =
+                    @"the requested Web accessibility action is unsupported";
+            }
+            return nil;
+    }
+    NSMutableDictionary<NSString *, id> *arguments =
+        [IOSUseDOMFixedWebBridgeArguments(operation) mutableCopy];
+    [arguments addEntriesFromDictionary:@{
+        @"ordinal": @(record.ordinal),
+        @"expectedIdentity": record.identity,
+        @"expectedRole": record.role,
+        @"expectedTag": record.tag,
+        @"expectedLabel": record.label,
+        @"expectedIdentifier": record.identifier,
+        @"expectedDisabled": @(record.disabled),
+        @"expectedSecure": @(record.secure),
+        @"expectedX": @(record.localFrame.origin.x),
+        @"expectedY": @(record.localFrame.origin.y),
+        @"expectedWidth": @(record.localFrame.size.width),
+        @"expectedHeight": @(record.localFrame.size.height),
+    }];
+    NSString *evaluationFailure = nil;
+    id rawEvidence = IOSUseDOMEvaluateFixedWebBridge(
+        webView,
+        arguments,
+        0.75,
+        &evaluationFailure
+    );
+    if (![rawEvidence isKindOfClass:NSDictionary.class]) {
+        if (failureCode != NULL) {
+            *failureCode = @"web_bridge_failed";
+        }
+        if (failureMessage != NULL) {
+            *failureMessage = evaluationFailure ?:
+                @"the fixed Web accessibility bridge returned invalid evidence";
+        }
+        return nil;
+    }
+    NSString *status =
+        [rawEvidence[@"status"] isKindOfClass:NSString.class]
+            ? rawEvidence[@"status"]
+            : @"";
+    NSString *reason =
+        [rawEvidence[@"reason"] isKindOfClass:NSString.class]
+            ? rawEvidence[@"reason"]
+            : @"";
+    BOOL performed =
+        [status isEqualToString:@"performed"] &&
+        IOSUseDOMIsBoolean(rawEvidence[@"performed"]) &&
+        [rawEvidence[@"performed"] boolValue] &&
+        IOSUseDOMIsBoolean(rawEvidence[@"freshValidated"]) &&
+        [rawEvidence[@"freshValidated"] boolValue] &&
+        [rawEvidence[@"operation"] isEqualToString:operation];
+    if (action ==
+        IOSUsePlayRuntimeWebAccessibilityActionFocusInput) {
+        performed = performed &&
+            IOSUseDOMIsBoolean(rawEvidence[@"focused"]) &&
+            [rawEvidence[@"focused"] boolValue];
+    }
+    if (!performed) {
+        if (failureCode != NULL) {
+            if ([status isEqualToString:@"stale"]) {
+                *failureCode = @"web_bridge_stale";
+            } else if ([reason isEqualToString:@"disabled"]) {
+                *failureCode = @"web_action_disabled";
+            } else if ([reason isEqualToString:@"secure"]) {
+                *failureCode = @"web_secure_input";
+            } else if ([reason isEqualToString:@"custom"] ||
+                       [reason isEqualToString:@"read-only"] ||
+                       [reason isEqualToString:@"role"]) {
+                *failureCode =
+                    action ==
+                        IOSUsePlayRuntimeWebAccessibilityActionFocusInput
+                        ? @"web_custom_input"
+                        : @"web_action_unsupported";
+            } else if ([reason isEqualToString:@"focus"]) {
+                *failureCode = @"web_focus_failed";
+            } else {
+                *failureCode = @"web_bridge_failed";
+            }
+        }
+        if (failureMessage != NULL) {
+            if ([reason isEqualToString:@"disabled"]) {
+                *failureMessage = @"the fresh Web element is disabled";
+            } else if ([reason isEqualToString:@"secure"]) {
+                *failureMessage =
+                    @"secure Web text input is unsupported";
+            } else if ([reason isEqualToString:@"custom"] ||
+                       [reason isEqualToString:@"read-only"] ||
+                       [reason isEqualToString:@"role"]) {
+                *failureMessage =
+                    @"the Web element does not expose a supported public accessibility action";
+            } else if ([reason isEqualToString:@"focus"]) {
+                *failureMessage =
+                    @"the fresh Web input did not become the active HTML control";
+            } else if ([status isEqualToString:@"stale"]) {
+                *failureMessage =
+                    @"the selected Web element changed during fresh action revalidation";
+            } else {
+                *failureMessage = evaluationFailure ?:
+                    @"the fixed Web accessibility action did not report successful delivery";
+            }
+        }
+        return nil;
+    }
+    return @{
+        @"backend":
+            @"wkwebview-runtime-fixed-accessibility-bridge",
+        @"operation": operation,
+        @"freshElementValidated": @YES,
+        @"snapshotGeneration": @(record.generation),
+        @"nodeID": record.nodeID,
+        @"role": record.role,
+        @"tag": record.tag,
+        @"label": record.serializedLabel,
+        @"identifier": record.identifier,
+        @"frame": @{
+            @"x": @(record.screenFrame.origin.x),
+            @"y": @(record.screenFrame.origin.y),
+            @"width": @(record.screenFrame.size.width),
+            @"height": @(record.screenFrame.size.height),
+        },
+        @"performed": @YES,
+    };
+}
+
+static void IOSUseDOMResetWebBridgeRecords(
+    unsigned long long generation
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"Web accessibility registry is main-only"
+    );
+    IOSUseDOMWebBridgeRecords = [NSMutableDictionary dictionary];
+    IOSUseDOMWebBridgeGeneration = generation;
+}
+
+static void IOSUseDOMRegisterWebBridgeElement(
+    IOSUseDOMWebAccessibilityElement *proxy,
+    IOSUseDOMNode *node
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"Web accessibility registry is main-only"
+    );
+    if (proxy == nil ||
+        node == nil ||
+        proxy.webView == nil ||
+        proxy.webIdentity.length == 0 ||
+        IOSUseDOMWebBridgeRecords.count >=
+            IOSUseDOMMaximumWebElementCount ||
+        IOSUseDOMWebBridgeGeneration != node.generation) {
+        return;
+    }
+    IOSUseDOMWebBridgeRecord *record =
+        [IOSUseDOMWebBridgeRecord new];
+    record.webView = proxy.webView;
+    record.generation = node.generation;
+    record.nodeID = node.nodeID;
+    record.ordinal = proxy.webOrdinal;
+    record.identity = proxy.webIdentity;
+    record.role = proxy.webRole;
+    record.tag = proxy.webTag;
+    record.label = node.label ?: proxy.webLabel ?: @"";
+    record.serializedLabel = record.label;
+    record.identifier =
+        node.identifier ?: proxy.webIdentifier ?: @"";
+    record.localFrame = proxy.webLocalFrame;
+    record.screenFrame = proxy.webScreenFrame;
+    record.disabled = proxy.webDisabled;
+    record.secure = proxy.webSecure;
+    IOSUseDOMWebBridgeRecords[node.nodeID] = record;
+}
+
+static BOOL IOSUseDOMViewIsActuallyVisibleInWindow(UIView *view);
+
 static NSArray *IOSUseDOMChildren(
     id object,
     BOOL accessibilityElement,
+    BOOL hierarchyVisible,
     BOOL *hasAutomationChildren,
     IOSUseDOMCaptureContext *context
 ) {
+    if (!hierarchyVisible) {
+        if (hasAutomationChildren != NULL) {
+            *hasAutomationChildren = NO;
+        }
+        return @[];
+    }
+    if (hierarchyVisible &&
+        [object isKindOfClass:WKWebView.class] &&
+        IOSUseDOMViewIsActuallyVisibleInWindow(object)) {
+        NSArray *webAccessibilityElements =
+            IOSUseDOMWebAccessibilityElements(
+                object,
+                context
+            );
+        if (context.failureMessage != nil) {
+            return @[];
+        }
+        if (webAccessibilityElements.count > 0) {
+            if (hasAutomationChildren != NULL) {
+                *hasAutomationChildren = YES;
+            }
+            return IOSUseDOMUniqueChildren(
+                webAccessibilityElements,
+                object,
+                context
+            );
+        }
+    }
+
     BOOL respondsToAutomation = NO;
     NSArray *automation = IOSUseDOMArrayForSelector(
         object,
@@ -468,16 +1621,23 @@ static NSArray *IOSUseDOMChildren(
         if (hasAutomationChildren != NULL) {
             *hasAutomationChildren = YES;
         }
-        return IOSUseDOMUniqueChildren(automation, object, context);
+        return IOSUseDOMUniqueChildren(
+            automation,
+            object,
+            context
+        );
     }
     if (hasAutomationChildren != NULL) {
         *hasAutomationChildren = NO;
     }
 
-    // UIKit accessibility elements are opaque leaves by default. Private
-    // automationElements is the one explicit signal that their descendants
-    // remain part of the automation tree.
-    if (accessibilityElement && ![object isKindOfClass:UIWindow.class]) {
+    // Accessibility elements are opaque leaves unless the XCTest-style
+    // automation source above explicitly exposes descendants. Recursing into
+    // every backing SwiftUI hosting subview in addition to its accessibility
+    // container is both duplicate work and can exceed the bounded main-thread
+    // snapshot deadline.
+    if (accessibilityElement &&
+        ![object isKindOfClass:UIWindow.class]) {
         return @[];
     }
 
@@ -486,6 +1646,9 @@ static NSArray *IOSUseDOMChildren(
         NSSelectorFromString(@"accessibilityElements"),
         NULL
     );
+    if (context.failureMessage != nil) {
+        return @[];
+    }
     if (accessibilityElements.count > 0) {
         return IOSUseDOMUniqueChildren(
             accessibilityElements,
@@ -493,21 +1656,26 @@ static NSArray *IOSUseDOMChildren(
             context
         );
     }
-    if (context.failureMessage != nil) {
-        return @[];
-    }
 
     NSArray *containerElements = IOSUseDOMContainerElements(object, context);
-    if (containerElements.count > 0) {
-        return IOSUseDOMUniqueChildren(containerElements, object, context);
-    }
     if (context.failureMessage != nil) {
         return @[];
+    }
+    if (containerElements.count > 0) {
+        return IOSUseDOMUniqueChildren(
+            containerElements,
+            object,
+            context
+        );
     }
 
     if ([object isKindOfClass:UIView.class]) {
         NSArray<UIView *> *subviews = [(UIView *)object subviews];
-        return IOSUseDOMUniqueChildren(subviews, object, context);
+        return IOSUseDOMUniqueChildren(
+            subviews ?: @[],
+            object,
+            context
+        );
     }
     (void)respondsToAutomation;
     return @[];
@@ -532,6 +1700,72 @@ static BOOL IOSUseDOMObjectHierarchyVisible(id object) {
         return NO;
     }
     return YES;
+}
+
+static BOOL IOSUseDOMViewIsActuallyVisibleInWindow(UIView *view) {
+    UIWindow *window = view.window;
+    if (window == nil || window.hidden || window.alpha <= 0.01) {
+        return NO;
+    }
+    for (UIView *current = view;
+         current != nil;
+         current = current.superview) {
+        if (current.hidden ||
+            current.alpha <= 0.01 ||
+            current.accessibilityElementsHidden) {
+            return NO;
+        }
+    }
+    CGRect rect = [view convertRect:view.bounds toView:window];
+    return IOSUseDOMRectHasArea(rect) &&
+        IOSUseDOMRectHasArea(
+            CGRectIntersection(rect, window.bounds)
+        );
+}
+
+static BOOL IOSUseDOMIsNativeAlertMirrorRoot(id object) {
+    if (![object isKindOfClass:UIView.class]) {
+        return NO;
+    }
+    NSString *className = NSStringFromClass([object class]) ?: @"";
+    return [className containsString:@"UIAlertController"] &&
+        [className containsString:@"MacView"] &&
+        [IOSUsePlayAppKitBridge hasVisibleNativeAlert];
+}
+
+static CGRect IOSUseDOMNativeAlertAdjustedRect(
+    id object,
+    NSString *label,
+    CGRect fallback
+) {
+    if (IOSUseDOMIsNativeAlertMirrorRoot(object)) {
+        CGRect panelFrame = [IOSUsePlayAppKitBridge nativeAlertFrame];
+        return CGRectIsNull(panelFrame) ? fallback : panelFrame;
+    }
+    if (label.length == 0 ||
+        ![IOSUsePlayAppKitBridge hasVisibleNativeAlert]) {
+        return fallback;
+    }
+    for (NSDictionary<NSString *, id> *action in
+         [IOSUsePlayAppKitBridge nativeAlertActions]) {
+        if (![action[@"label"] isEqualToString:label]) {
+            continue;
+        }
+        NSDictionary<NSString *, id> *frame = action[@"frame"];
+        if (!IOSUseDOMIsNumber(frame[@"x"]) ||
+            !IOSUseDOMIsNumber(frame[@"y"]) ||
+            !IOSUseDOMIsNumber(frame[@"width"]) ||
+            !IOSUseDOMIsNumber(frame[@"height"])) {
+            return fallback;
+        }
+        return CGRectMake(
+            [frame[@"x"] doubleValue],
+            [frame[@"y"] doubleValue],
+            [frame[@"width"] doubleValue],
+            [frame[@"height"] doubleValue]
+        );
+    }
+    return fallback;
 }
 
 static BOOL IOSUseDOMObjectClipsDescendants(id object) {
@@ -581,6 +1815,23 @@ static NSInteger IOSUseDOMElementType(
     id object,
     unsigned long long accessibilityTraits
 ) {
+    if ([object isKindOfClass:IOSUseDOMWebAccessibilityElement.class]) {
+        NSString *role =
+            ((IOSUseDOMWebAccessibilityElement *)object).webRole;
+        if ([role isEqualToString:@"input"]) {
+            return 49;
+        }
+        if ([role isEqualToString:@"button"]) {
+            return 9;
+        }
+        if ([role isEqualToString:@"link"]) {
+            return 42;
+        }
+        if ([role isEqualToString:@"heading"] ||
+            [role isEqualToString:@"text"]) {
+            return 48;
+        }
+    }
     if ([object isKindOfClass:UIWindow.class]) {
         return 4;
     }
@@ -794,21 +2045,56 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     if (context.failureMessage != nil) {
         return nil;
     }
-    NSString *label = identifier;
-    if (label.length == 0) {
-        id labelObject = IOSUseDOMObjectValue(
-            object,
-            NSSelectorFromString(@"accessibilityLabel")
-        );
-        label = IOSUseDOMBoundedString(labelObject, context);
-        if (context.failureMessage != nil) {
-            return nil;
-        }
-    }
-    id valueObject = IOSUseDOMObjectValue(
+    id labelObject = IOSUseDOMObjectValue(
         object,
-        NSSelectorFromString(@"accessibilityValue")
+        NSSelectorFromString(@"accessibilityLabel")
     );
+    NSString *label = IOSUseDOMBoundedString(labelObject, context);
+    if (context.failureMessage != nil) {
+        return nil;
+    }
+    id visibleLabelObject = nil;
+    if ([object isKindOfClass:UILabel.class]) {
+        visibleLabelObject = [(UILabel *)object text];
+    } else if ([object isKindOfClass:UIButton.class]) {
+        visibleLabelObject = [(UIButton *)object currentTitle];
+    } else if ([object isKindOfClass:UITextField.class]) {
+        visibleLabelObject = [(UITextField *)object placeholder];
+    } else if ([object isKindOfClass:UISearchBar.class]) {
+        visibleLabelObject = [(UISearchBar *)object placeholder];
+    }
+    NSString *visibleLabel = IOSUseDOMBoundedString(
+        visibleLabelObject,
+        context
+    );
+    if (context.failureMessage != nil) {
+        return nil;
+    }
+    // UIKitMacHelper can report accessibilityIdentifier as
+    // accessibilityLabel for ordinary UIKit views. Preserve an explicit
+    // semantic label, but prefer the actual rendered control text when the
+    // reported label is empty or merely duplicates the identifier.
+    if (visibleLabel.length > 0 &&
+        (label.length == 0 ||
+         [label isEqualToString:identifier])) {
+        label = visibleLabel;
+    }
+    id hintObject = IOSUseDOMObjectValue(
+        object,
+        NSSelectorFromString(@"accessibilityHint")
+    );
+    NSString *hint = IOSUseDOMBoundedString(hintObject, context);
+    if (context.failureMessage != nil) {
+        return nil;
+    }
+    NSString *liveInputValue =
+        IOSUseDOMLiveInputValue(object);
+    id valueObject = liveInputValue.length > 0
+        ? liveInputValue
+        : IOSUseDOMObjectValue(
+            object,
+            NSSelectorFromString(@"accessibilityValue")
+        );
     NSString *value = IOSUseDOMBoundedString(valueObject, context);
     if (context.failureMessage != nil) {
         return nil;
@@ -830,7 +2116,8 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     }
 
     BOOL hierarchyVisible =
-        ancestorVisible && IOSUseDOMObjectHierarchyVisible(object);
+        IOSUseDOMIsNativeAlertMirrorRoot(object) ||
+        (ancestorVisible && IOSUseDOMObjectHierarchyVisible(object));
     BOOL enabled = (accessibilityTraits & UIAccessibilityTraitNotEnabled) == 0;
     if ([object isKindOfClass:UIControl.class]) {
         enabled = enabled && [(UIControl *)object isEnabled];
@@ -849,7 +2136,11 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     if ([object isKindOfClass:UIResponder.class]) {
         focused = focused || [(UIResponder *)object isFirstResponder];
     }
-    CGRect rect = IOSUseDOMObjectRect(object);
+    CGRect rect = IOSUseDOMNativeAlertAdjustedRect(
+        object,
+        label,
+        IOSUseDOMObjectRect(object)
+    );
     BOOL hasRect = IOSUseDOMRectHasArea(rect);
     CGRect effectiveClip = ancestorClip;
     if (hasRect && IOSUseDOMObjectClipsDescendants(object)) {
@@ -867,6 +2158,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     NSArray *childObjects = IOSUseDOMChildren(
         object,
         isAccessibilityElement,
+        hierarchyVisible,
         &hasAutomationChildren,
         context
     );
@@ -893,16 +2185,21 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     }
 
     IOSUseDOMNode *node = [IOSUseDOMNode new];
+    node.object = object;
     node.nodeID = [NSString stringWithFormat:
         @"g%llu-n%lu",
         context.generation,
         (unsigned long)context.nextNodeOrdinal
     ];
     context.nextNodeOrdinal += 1;
+    node.generation = context.generation;
     node.elementType = IOSUseDOMElementType(object, accessibilityTraits);
     node.typeName = IOSUseDOMElementTypeName(node.elementType);
-    node.label = label;
+    node.label = label.length > 0 ? label : identifier;
     node.value = value;
+    node.identifier = identifier;
+    node.hint = hint;
+    node.className = NSStringFromClass([object class]) ?: @"NSObject";
     node.rect = rect;
     node.hasRect = hasRect;
     node.disabled = disabled;
@@ -915,8 +2212,120 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
         label,
         value
     );
+    if ([object
+            isKindOfClass:
+                IOSUseDOMWebAccessibilityElement.class]) {
+        IOSUseDOMRegisterWebBridgeElement(
+            (IOSUseDOMWebAccessibilityElement *)object,
+            node
+        );
+    }
     (void)hasAutomationChildren;
     return node;
+}
+
+static NSInteger IOSUseDOMAppKitElementType(
+    IOSUseDOMAppKitAccessibilityElement *proxy
+) {
+    if ([proxy.appKitRole isEqualToString:@"button"]) {
+        return 9;
+    }
+    if ([proxy.appKitRole isEqualToString:@"link"]) {
+        return 42;
+    }
+    return 48;
+}
+
+static BOOL IOSUseDOMFramesSemanticallyOverlap(
+    CGRect left,
+    CGRect right
+) {
+    if (!IOSUseDOMRectHasArea(left) ||
+        !IOSUseDOMRectHasArea(right)) {
+        return NO;
+    }
+    CGRect intersection = CGRectIntersection(left, right);
+    if (!IOSUseDOMRectHasArea(intersection)) {
+        return NO;
+    }
+    CGFloat intersectionArea =
+        intersection.size.width * intersection.size.height;
+    CGFloat smallerArea = MIN(
+        left.size.width * left.size.height,
+        right.size.width * right.size.height
+    );
+    return smallerArea > 0 &&
+        intersectionArea / smallerArea >= 0.8;
+}
+
+static BOOL IOSUseDOMRawNodeDuplicatesAppKitProxy(
+    IOSUseDOMNode *node,
+    IOSUseDOMAppKitAccessibilityElement *proxy
+) {
+    if (!node.invisible) {
+        CGRect proxyFrame = proxy.accessibilityFrame;
+        if (node.elementType == 58 &&
+            IOSUseDOMRectHasArea(node.rect) &&
+            CGRectContainsPoint(
+                node.rect,
+                CGPointMake(
+                    CGRectGetMidX(proxyFrame),
+                    CGRectGetMidY(proxyFrame)
+                )
+            )) {
+            // WKWebView semantics are owned exclusively by the fixed isolated
+            // Web bridge, including when AppKit mirrors the same descendants.
+            return YES;
+        }
+        NSString *proxyIdentifier =
+            proxy.accessibilityIdentifier ?: @"";
+        NSString *proxyLabel = proxy.accessibilityLabel ?: @"";
+        BOOL compatibleType =
+            node.elementType == IOSUseDOMAppKitElementType(proxy);
+        BOOL overlapping = IOSUseDOMFramesSemanticallyOverlap(
+            node.rect,
+            proxyFrame
+        );
+        BOOL sameIdentifier =
+            proxyIdentifier.length > 0 &&
+            [node.identifier isEqualToString:proxyIdentifier];
+        BOOL sameSemanticText =
+            proxyLabel.length > 0 &&
+            ([node.label isEqualToString:proxyLabel] ||
+             [node.value isEqualToString:proxyLabel]);
+        if (sameIdentifier) {
+            // Matching identity is covered when geometry/type agree. A
+            // conflicting native node still suppresses the lower-priority
+            // AppKit mirror rather than creating an ambiguous duplicate.
+            return YES;
+        }
+        if (compatibleType && overlapping) {
+            // Equal semantics are a mirror. Conflicting non-empty semantics at
+            // the same role/frame are also dropped fail-closed.
+            if (sameSemanticText ||
+                node.label.length > 0 ||
+                node.value.length > 0) {
+                return YES;
+            }
+        }
+        if (IOSUseDOMAppKitElementType(proxy) == 48 &&
+            node.elementType == 9 &&
+            sameSemanticText &&
+            IOSUseDOMFramesSemanticallyOverlap(
+                node.rect,
+                proxyFrame
+            )) {
+            // AppKit often exposes a native button's title as a nested
+            // AXStaticText. The canonical UIKit button already carries it.
+            return YES;
+        }
+    }
+    for (IOSUseDOMNode *child in node.children) {
+        if (IOSUseDOMRawNodeDuplicatesAppKitProxy(child, proxy)) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 static NSArray<NSString *> *IOSUseDOMTraitsForNode(
@@ -1206,11 +2615,11 @@ static NSArray<UIWindow *> *IOSUseDOMActiveWindows(void) {
     }
     [scenes sortUsingComparator:
         ^NSComparisonResult(UIWindowScene *lhs, UIWindowScene *rhs) {
-            if (lhs.activationState < rhs.activationState) {
-                return NSOrderedAscending;
-            }
-            if (lhs.activationState > rhs.activationState) {
-                return NSOrderedDescending;
+            if (lhs.activationState != rhs.activationState) {
+                return lhs.activationState ==
+                        UISceneActivationStateForegroundActive
+                    ? NSOrderedAscending
+                    : NSOrderedDescending;
             }
             NSString *lhsID = lhs.session.persistentIdentifier ?: @"";
             NSString *rhsID = rhs.session.persistentIdentifier ?: @"";
@@ -1225,21 +2634,25 @@ static NSArray<UIWindow *> *IOSUseDOMActiveWindows(void) {
         NSArray<UIWindow *> *sceneWindows =
             [scene.windows sortedArrayUsingComparator:
                 ^NSComparisonResult(UIWindow *lhs, UIWindow *rhs) {
-                    if (lhs.isKeyWindow != rhs.isKeyWindow) {
-                        return lhs.isKeyWindow
-                            ? NSOrderedAscending
-                            : NSOrderedDescending;
-                    }
                     if (lhs.windowLevel > rhs.windowLevel) {
                         return NSOrderedAscending;
                     }
                     if (lhs.windowLevel < rhs.windowLevel) {
                         return NSOrderedDescending;
                     }
+                    if (lhs.isKeyWindow != rhs.isKeyWindow) {
+                        return lhs.isKeyWindow
+                            ? NSOrderedAscending
+                            : NSOrderedDescending;
+                    }
                     return NSOrderedSame;
                 }];
         for (UIWindow *window in sceneWindows) {
-            if (![seen containsObject:window]) {
+            if (!window.hidden &&
+                window.alpha > 0.01 &&
+                window.bounds.size.width > 0 &&
+                window.bounds.size.height > 0 &&
+                ![seen containsObject:window]) {
                 [seen addObject:window];
                 [windows addObject:window];
             }
@@ -1281,12 +2694,56 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
         NSPointerFunctionsObjectPointerPersonality |
         NSPointerFunctionsStrongMemory];
     context.generation = atomic_fetch_add(&IOSUseDOMGeneration, 1) + 1;
+    IOSUseDOMResetWebBridgeRecords(context.generation);
 
     NSMutableArray<IOSUseDOMNode *> *rawRoots =
         [NSMutableArray arrayWithCapacity:windows.count];
     for (UIWindow *window in windows) {
         IOSUseDOMNode *root = IOSUseDOMBuildNode(
             window,
+            0,
+            YES,
+            NO,
+            screenBounds,
+            context
+        );
+        if (context.failureMessage != nil) {
+            if (failureMessage != NULL) {
+                *failureMessage = context.failureMessage;
+            }
+            return nil;
+        }
+        if (root != nil) {
+            [rawRoots addObject:root];
+        }
+    }
+
+    NSArray<IOSUseDOMAppKitAccessibilityElement *> *appKitElements =
+        IOSUseDOMAppKitAccessibilityElements(
+            primaryWindow,
+            context
+        );
+    if (context.failureMessage != nil || appKitElements == nil) {
+        if (failureMessage != NULL) {
+            *failureMessage = context.failureMessage ?:
+                @"AppKit accessibility bridge failed";
+        }
+        return nil;
+    }
+    for (IOSUseDOMAppKitAccessibilityElement *proxy in
+         appKitElements) {
+        BOOL duplicate = NO;
+        for (IOSUseDOMNode *root in rawRoots) {
+            if (IOSUseDOMRawNodeDuplicatesAppKitProxy(root, proxy)) {
+                duplicate = YES;
+                break;
+            }
+        }
+        if (duplicate) {
+            continue;
+        }
+        IOSUseDOMNode *root = IOSUseDOMBuildNode(
+            proxy,
             0,
             YES,
             NO,
@@ -1626,18 +3083,82 @@ static BOOL IOSUseDOMAppendRawNode(
     return YES;
 }
 
+static NSArray<NSString *> *IOSUseDOMAncestorNames(
+    IOSUseCleanNode *node
+);
+
 static NSDictionary<NSString *, id> *IOSUseDOMElementJSON(
     IOSUseCleanNode *node
 ) {
+    IOSUseDOMWebBridgeRecord *webRecord =
+        IOSUseDOMWebBridgeRecords[node.source.nodeID];
+    if (webRecord != nil &&
+        webRecord.generation == node.source.generation) {
+        webRecord.serializedLabel =
+            node.displayLabel ?: webRecord.label;
+    }
+    NSMutableArray<NSString *> *path = [NSMutableArray array];
+    IOSUseCleanNode *cursor = node;
+    while (cursor != nil && path.count <= IOSUseDOMMaximumDepth) {
+        [path addObject:cursor.source.nodeID ?: @""];
+        cursor = cursor.parent;
+    }
+    path = [[[path reverseObjectEnumerator] allObjects] mutableCopy];
+    NSInteger depth = MAX(0, (NSInteger)path.count - 1);
+    NSInteger siblingIndex = 0;
+    if (node.parent != nil) {
+        NSUInteger index = [node.parent.children indexOfObjectIdenticalTo:node];
+        siblingIndex =
+            index == NSNotFound ? 0 : (NSInteger)index;
+    }
+    NSInteger zOrder = 0;
+    NSRange ordinalMarker =
+        [node.source.nodeID rangeOfString:@"-n"
+                                 options:NSBackwardsSearch];
+    if (ordinalMarker.location != NSNotFound) {
+        zOrder = [[node.source.nodeID substringFromIndex:
+            NSMaxRange(ordinalMarker)] integerValue];
+    }
+    CGRect rect = node.source.hasRect
+        ? node.source.rect
+        : CGRectZero;
     NSMutableDictionary<NSString *, id> *element = [@{
-        @"nodeId": node.source.nodeID,
+        @"nodeID": node.source.nodeID ?: @"",
+        @"type": node.source.typeName ?: @"-",
+        @"elementType": @(node.source.elementType),
         @"elemType": @(node.source.elementType),
-        @"traits": node.traits,
-        @"childCount": @(node.children.count),
         @"label": node.displayLabel ?: @"",
         @"value": node.source.value ?: @"",
+        @"identifier": node.source.identifier ?: @"",
+        @"hint": node.source.hint ?: @"",
+        @"class": node.source.className ?: @"NSObject",
+        @"traits": node.traits ?: @[],
+        @"state": @{
+            @"enabled": @((BOOL)!node.source.disabled),
+            @"visible": @((BOOL)!node.source.invisible),
+            @"selected": @(node.source.selected),
+            @"focused": @(node.source.focused),
+            @"opaque": @(node.opaque),
+        },
+        @"hierarchy": @{
+            @"parentID": node.parent == nil
+                ? (id)NSNull.null
+                : node.parent.source.nodeID,
+            @"depth": @(depth),
+            @"index": @(siblingIndex),
+            @"path": path,
+        },
+        @"ancestors": IOSUseDOMAncestorNames(node),
+        @"zOrder": @(zOrder),
+        @"snapshotGeneration": @(node.source.generation),
     } mutableCopy];
     if (node.source.hasRect) {
+        element[@"frame"] = @{
+            @"x": @(rect.origin.x),
+            @"y": @(rect.origin.y),
+            @"width": @(rect.size.width),
+            @"height": @(rect.size.height),
+        };
         element[@"rect"] = IOSUseDOMRectJSON(node.source.rect);
     }
     return element;
@@ -1666,36 +3187,41 @@ static NSDictionary<NSString *, id> *IOSUseDOMElementSummary(
 ) {
     if (node == nil) {
         return @{
+            @"nodeID": @"",
+            @"type": @"-",
+            @"elementType": @0,
             @"elemType": @0,
             @"label": @"",
+            @"value": @"",
+            @"identifier": @"",
+            @"hint": @"",
+            @"class": @"NSObject",
+            @"traits": @[],
+            @"state": @{
+                @"enabled": @NO,
+                @"visible": @NO,
+                @"selected": @NO,
+                @"focused": @NO,
+                @"opaque": @NO,
+            },
+            @"hierarchy": @{
+                @"parentID": NSNull.null,
+                @"depth": @0,
+                @"index": @0,
+                @"path": @[],
+            },
+            @"zOrder": @0,
+            @"snapshotGeneration": @0,
             @"ancestors": @[],
         };
     }
-    NSMutableDictionary<NSString *, id> *element = [@{
-        @"elemType": @(node.source.elementType),
-        @"label": node.displayLabel ?: @"",
-        @"ancestors": IOSUseDOMAncestorNames(node),
-    } mutableCopy];
-    if (node.source.hasRect) {
-        element[@"rect"] = IOSUseDOMRectJSON(node.source.rect);
-    }
-    return element;
+    return IOSUseDOMElementJSON(node);
 }
 
 static NSDictionary<NSString *, id> *IOSUseDOMFindMatchJSON(
     IOSUseCleanNode *node
 ) {
-    NSMutableDictionary<NSString *, id> *element = [@{
-        @"elemType": @(node.source.elementType),
-        @"label": node.displayLabel ?: @"",
-        @"traits": node.traits,
-        @"value": node.source.value ?: @"",
-        @"ancestors": IOSUseDOMAncestorNames(node),
-    } mutableCopy];
-    if (node.source.hasRect) {
-        element[@"rect"] = IOSUseDOMRectJSON(node.source.rect);
-    }
-    return element;
+    return IOSUseDOMElementJSON(node);
 }
 
 static NSArray<NSDictionary<NSString *, id> *> *IOSUseDOMCandidatesJSON(
@@ -1895,6 +3421,61 @@ static BOOL IOSUseDOMDictionaryHasExactlyKeys(
     return [actual isSubsetOfSet:allowed];
 }
 
+static NSArray<NSDictionary<NSString *, id> *> *
+IOSUseDOMSnapshotFingerprint(IOSUseDOMSnapshot *snapshot) {
+    NSMutableArray<NSDictionary<NSString *, id> *> *fingerprint =
+        [NSMutableArray arrayWithCapacity:snapshot.elements.count + 1];
+    [fingerprint addObject:@{
+        @"application": snapshot.application ?: @"",
+        @"windowSize": @[
+            @(snapshot.windowSize.width),
+            @(snapshot.windowSize.height),
+        ],
+    }];
+    for (IOSUseCleanNode *element in snapshot.elements) {
+        IOSUseDOMNode *source = element.source;
+        NSArray<NSString *> *ancestors =
+            IOSUseDOMAncestorNames(element);
+        [fingerprint addObject:@{
+            @"elementType": @(source.elementType),
+            @"type": source.typeName ?: @"",
+            @"label": source.label ?: @"",
+            @"value": source.value ?: @"",
+            @"identifier": source.identifier ?: @"",
+            @"hint": source.hint ?: @"",
+            @"class": source.className ?: @"",
+            @"rect": source.hasRect
+                ? @[
+                    @(source.rect.origin.x),
+                    @(source.rect.origin.y),
+                    @(source.rect.size.width),
+                    @(source.rect.size.height),
+                ]
+                : @[],
+            @"state": @[
+                @(!source.disabled),
+                @(!source.invisible),
+                @(source.selected),
+                @(source.focused),
+                @(element.opaque),
+            ],
+            @"traits": element.traits ?: @[],
+            @"ancestors": ancestors ?: @[],
+        }];
+    }
+    return fingerprint;
+}
+
+static void IOSUseDOMQuiescencePause(void) {
+    const NSTimeInterval interval = 0.05;
+    if (NSThread.isMainThread) {
+        [NSRunLoop.currentRunLoop
+            runUntilDate:[NSDate dateWithTimeIntervalSinceNow:interval]];
+    } else {
+        usleep((useconds_t)(interval * 1000000.0));
+    }
+}
+
 NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
     NSDictionary<NSString *, id> *arguments,
     NSDictionary<NSString *, id> **commandError
@@ -1922,15 +3503,6 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
         return nil;
     }
     BOOL waitQuiescence = [arguments[@"waitQuiescence"] boolValue];
-    if (waitQuiescence) {
-        if (commandError != NULL) {
-            *commandError = IOSUseDOMValidationError(
-                @"dom waitQuiescence is unavailable in the injected runtime",
-                nil
-            );
-        }
-        return nil;
-    }
     // The injected runtime always traverses UIKit afresh, so both values of
     // `fresh` intentionally select the same stronger snapshot behavior.
     BOOL requestedFresh = [arguments[@"fresh"] boolValue];
@@ -1947,6 +3519,57 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeDOMCommand(
             *commandError = snapshotError;
         }
         return nil;
+    }
+    if (waitQuiescence) {
+        CFAbsoluteTime deadline =
+            CFAbsoluteTimeGetCurrent() +
+            IOSUseDOMMainThreadTimeoutSeconds;
+        NSArray<NSDictionary<NSString *, id> *> *previous =
+            IOSUseDOMSnapshotFingerprint(snapshot);
+        BOOL stabilized = NO;
+        while (CFAbsoluteTimeGetCurrent() < deadline) {
+            IOSUseDOMQuiescencePause();
+            NSTimeInterval remaining =
+                deadline - CFAbsoluteTimeGetCurrent();
+            if (remaining <= 0) {
+                break;
+            }
+            NSDictionary<NSString *, id> *nextError = nil;
+            IOSUseDOMSnapshot *next = IOSUseDOMFreshSnapshot(
+                remaining,
+                nil,
+                &nextError
+            );
+            if (next == nil) {
+                if (commandError != NULL) {
+                    *commandError = nextError;
+                }
+                return nil;
+            }
+            NSArray<NSDictionary<NSString *, id> *> *current =
+                IOSUseDOMSnapshotFingerprint(next);
+            snapshot = next;
+            if ([previous isEqualToArray:current]) {
+                stabilized = YES;
+                break;
+            }
+            previous = current;
+        }
+        if (!stabilized) {
+            if (commandError != NULL) {
+                *commandError = IOSUseDOMError(
+                    @"quiescence_timed_out",
+                    @"DOM did not produce two consecutive stable snapshots within 2 seconds",
+                    @"timeout",
+                    @"quiescence",
+                    YES,
+                    nil,
+                    snapshot.elements.count,
+                    IOSUseDOMCandidatesJSON(snapshot.elements, nil)
+                );
+            }
+            return nil;
+        }
     }
     BOOL rawRequested = [arguments[@"raw"] boolValue];
     NSString *rawString = @"";

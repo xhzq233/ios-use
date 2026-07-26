@@ -137,18 +137,100 @@ public struct ForyErrorPayload {
 }
 
 @ForyStruct
+public struct ForyElementState {
+    public var enabled: Bool = false
+    public var visible: Bool = false
+    public var selected: Bool = false
+    public var focused: Bool = false
+    public var opaque: Bool = false
+
+    public init(
+        enabled: Bool = false,
+        visible: Bool = false,
+        selected: Bool = false,
+        focused: Bool = false,
+        opaque: Bool = false
+    ) {
+        self.enabled = enabled
+        self.visible = visible
+        self.selected = selected
+        self.focused = focused
+        self.opaque = opaque
+    }
+}
+
+@ForyStruct
+public struct ForyElementHierarchy {
+    public var parentID: String = ""
+    public var depth: Int32 = 0
+    public var index: Int32 = 0
+    public var path: [String] = []
+
+    public init(
+        parentID: String = "",
+        depth: Int32 = 0,
+        index: Int32 = 0,
+        path: [String] = []
+    ) {
+        self.parentID = parentID
+        self.depth = depth
+        self.index = index
+        self.path = path
+    }
+}
+
+@ForyStruct
 public struct ForyDomElement {
+    public var nodeID: String = ""
+    public var type: String = ""
+    public var elementType: Int32 = 0
     public var traits: [String] = []
     public var childCount: Int32 = 0
     public var label: String = ""
     public var value: String = ""
+    public var identifier: String = ""
+    public var hint: String = ""
+    public var className: String = ""
+    public var state: ForyElementState = ForyElementState()
+    public var hierarchy: ForyElementHierarchy = ForyElementHierarchy()
+    public var ancestors: [String] = []
+    public var zOrder: Int32 = 0
+    public var snapshotGeneration: Int64 = 0
     public var rect: ForyRect? = nil
 
-    public init(traits: [String] = [], childCount: Int32 = 0, label: String = "", value: String = "", rect: ForyRect? = nil) {
+    public init(
+        nodeID: String = "",
+        type: String = "",
+        elementType: Int32 = 0,
+        traits: [String] = [],
+        childCount: Int32 = 0,
+        label: String = "",
+        value: String = "",
+        identifier: String = "",
+        hint: String = "",
+        className: String = "",
+        state: ForyElementState = ForyElementState(),
+        hierarchy: ForyElementHierarchy = ForyElementHierarchy(),
+        ancestors: [String] = [],
+        zOrder: Int32 = 0,
+        snapshotGeneration: Int64 = 0,
+        rect: ForyRect? = nil
+    ) {
+        self.nodeID = nodeID
+        self.type = type
+        self.elementType = elementType
         self.traits = traits
         self.childCount = childCount
         self.label = label
         self.value = value
+        self.identifier = identifier
+        self.hint = hint
+        self.className = className
+        self.state = state
+        self.hierarchy = hierarchy
+        self.ancestors = ancestors
+        self.zOrder = zOrder
+        self.snapshotGeneration = snapshotGeneration
         self.rect = rect
     }
 }
@@ -158,12 +240,20 @@ public struct ForyDomPayload {
     public var app: String = ""
     public var windowSize: ForyPoint = ForyPoint()
     public var raw: String = ""
+    public var snapshotGeneration: Int64 = 0
     public var elements: [ForyDomElement] = []
 
-    public init(app: String = "", windowSize: ForyPoint = ForyPoint(), raw: String = "", elements: [ForyDomElement] = []) {
+    public init(
+        app: String = "",
+        windowSize: ForyPoint = ForyPoint(),
+        raw: String = "",
+        snapshotGeneration: Int64 = 0,
+        elements: [ForyDomElement] = []
+    ) {
         self.app = app
         self.windowSize = windowSize
         self.raw = raw
+        self.snapshotGeneration = snapshotGeneration
         self.elements = elements
     }
 }
@@ -186,16 +276,54 @@ public struct ForyScreenshotPayload {
 
 @ForyStruct
 public struct ForyElementSummary {
+    public var nodeID: String = ""
+    public var type: String = ""
     public var elemType: Int32 = 0
     public var label: String = ""
+    public var value: String = ""
+    public var identifier: String = ""
+    public var hint: String = ""
+    public var className: String = ""
+    public var traits: [String] = []
+    public var state: ForyElementState = ForyElementState()
     public var rect: ForyRect? = nil
+    public var hierarchy: ForyElementHierarchy = ForyElementHierarchy()
     public var ancestors: [String] = []
+    public var zOrder: Int32 = 0
+    public var snapshotGeneration: Int64 = 0
 
-    public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, ancestors: [String] = []) {
+    public init(
+        nodeID: String = "",
+        type: String = "",
+        elemType: Int32 = 0,
+        label: String = "",
+        value: String = "",
+        identifier: String = "",
+        hint: String = "",
+        className: String = "",
+        traits: [String] = [],
+        state: ForyElementState = ForyElementState(),
+        rect: ForyRect? = nil,
+        hierarchy: ForyElementHierarchy = ForyElementHierarchy(),
+        ancestors: [String] = [],
+        zOrder: Int32 = 0,
+        snapshotGeneration: Int64 = 0
+    ) {
+        self.nodeID = nodeID
+        self.type = type
         self.elemType = elemType
         self.label = label
+        self.value = value
+        self.identifier = identifier
+        self.hint = hint
+        self.className = className
+        self.traits = traits
+        self.state = state
         self.rect = rect
+        self.hierarchy = hierarchy
         self.ancestors = ancestors
+        self.zOrder = zOrder
+        self.snapshotGeneration = snapshotGeneration
     }
 }
 
@@ -203,10 +331,16 @@ public struct ForyElementSummary {
 public struct ForyWaitForPayload {
     public var element: ForyElementSummary = ForyElementSummary()
     public var waited: Double = 0
+    public var snapshotGeneration: Int64 = 0
 
-    public init(element: ForyElementSummary = ForyElementSummary(), waited: Double = 0) {
+    public init(
+        element: ForyElementSummary = ForyElementSummary(),
+        waited: Double = 0,
+        snapshotGeneration: Int64 = 0
+    ) {
         self.element = element
         self.waited = waited
+        self.snapshotGeneration = snapshotGeneration
     }
 
     public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, waited: Double = 0) {
@@ -216,11 +350,122 @@ public struct ForyWaitForPayload {
 }
 
 @ForyStruct
+public struct ForyHitView {
+    public var className: String = ""
+    public var rect: ForyRect? = nil
+    public var accessibilityIdentifier: String = ""
+    public var label: String = ""
+
+    public init(
+        className: String = "",
+        rect: ForyRect? = nil,
+        accessibilityIdentifier: String = "",
+        label: String = ""
+    ) {
+        self.className = className
+        self.rect = rect
+        self.accessibilityIdentifier = accessibilityIdentifier
+        self.label = label
+    }
+}
+
+@ForyStruct
+public struct ForyTouchFinalState {
+    public var point: ForyPoint = ForyPoint()
+    public var touchID: Int64 = 0
+    public var phase: String = ""
+    public var firstResponderClass: String = ""
+
+    public init(
+        point: ForyPoint = ForyPoint(),
+        touchID: Int64 = 0,
+        phase: String = "",
+        firstResponderClass: String = ""
+    ) {
+        self.point = point
+        self.touchID = touchID
+        self.phase = phase
+        self.firstResponderClass = firstResponderClass
+    }
+}
+
+@ForyStruct
+public struct ForyPixelPostcondition {
+    public var beforeHash: String = ""
+    public var afterHash: String = ""
+    public var beforeCaptureGeneration: Int64 = 0
+    public var afterCaptureGeneration: Int64 = 0
+    public var logicalX: Double = 0
+    public var logicalY: Double = 0
+    public var logicalWidth: Double = 0
+    public var logicalHeight: Double = 0
+    public var changed: Bool = false
+
+    public init(
+        beforeHash: String = "",
+        afterHash: String = "",
+        beforeCaptureGeneration: Int64 = 0,
+        afterCaptureGeneration: Int64 = 0,
+        logicalX: Double = 0,
+        logicalY: Double = 0,
+        logicalWidth: Double = 0,
+        logicalHeight: Double = 0,
+        changed: Bool = false
+    ) {
+        self.beforeHash = beforeHash
+        self.afterHash = afterHash
+        self.beforeCaptureGeneration =
+            beforeCaptureGeneration
+        self.afterCaptureGeneration =
+            afterCaptureGeneration
+        self.logicalX = logicalX
+        self.logicalY = logicalY
+        self.logicalWidth = logicalWidth
+        self.logicalHeight = logicalHeight
+        self.changed = changed
+    }
+}
+
+@ForyStruct
+public struct ForyActionPostcondition {
+    public var snapshotGeneration: Int64 = 0
+    public var element: ForyElementSummary? = nil
+    public var changed: Bool = false
+    public var domChanged: Bool = false
+    public var pixelEvidence: ForyPixelPostcondition? = nil
+
+    public init(
+        snapshotGeneration: Int64 = 0,
+        element: ForyElementSummary? = nil,
+        changed: Bool = false,
+        domChanged: Bool = false,
+        pixelEvidence: ForyPixelPostcondition? = nil
+    ) {
+        self.snapshotGeneration = snapshotGeneration
+        self.element = element
+        self.changed = changed
+        self.domChanged = domChanged
+        self.pixelEvidence = pixelEvidence
+    }
+}
+
+@ForyStruct
 public struct ForyElementPayload {
     public var element: ForyElementSummary = ForyElementSummary()
+    public var hitView: ForyHitView? = nil
+    public var finalState: ForyTouchFinalState? = nil
+    public var postcondition: ForyActionPostcondition? = nil
 
-    public init(element: ForyElementSummary = ForyElementSummary()) {
+    public init(
+        element: ForyElementSummary,
+        hitView: ForyHitView? = nil,
+        finalState: ForyTouchFinalState? = nil,
+        postcondition: ForyActionPostcondition? = nil
+    ) {
         self.element = element
+        self.hitView = hitView
+        self.finalState = finalState
+        self.postcondition = postcondition
     }
 
     public init(elemType: Int32 = 0, label: String = "", rect: ForyRect? = nil, ancestors: [String] = []) {
@@ -231,11 +476,24 @@ public struct ForyElementPayload {
 @ForyStruct
 public struct ForySwipePayload {
     public var element: ForyElementSummary = ForyElementSummary()
+    public var hitView: ForyHitView? = nil
+    public var finalState: ForyTouchFinalState? = nil
+    public var postcondition: ForyActionPostcondition? = nil
     public var scrolls: Int32 = 0
     public var scrollDirection: String = ""
 
-    public init(element: ForyElementSummary = ForyElementSummary(), scrolls: Int32 = 0, scrollDirection: String = "") {
+    public init(
+        element: ForyElementSummary,
+        hitView: ForyHitView? = nil,
+        finalState: ForyTouchFinalState? = nil,
+        postcondition: ForyActionPostcondition? = nil,
+        scrolls: Int32 = 0,
+        scrollDirection: String = ""
+    ) {
         self.element = element
+        self.hitView = hitView
+        self.finalState = finalState
+        self.postcondition = postcondition
         self.scrolls = scrolls
         self.scrollDirection = scrollDirection
     }
@@ -253,12 +511,26 @@ public struct ForyAlertPayload {
     public var text: String = ""
     public var button: String = ""
     public var reason: String = ""
+    public var hitView: ForyHitView? = nil
+    public var finalState: ForyTouchFinalState? = nil
+    public var postcondition: ForyActionPostcondition? = nil
 
-    public init(dismissed: Bool = false, text: String = "", button: String = "", reason: String = "") {
+    public init(
+        dismissed: Bool = false,
+        text: String = "",
+        button: String = "",
+        reason: String = "",
+        hitView: ForyHitView? = nil,
+        finalState: ForyTouchFinalState? = nil,
+        postcondition: ForyActionPostcondition? = nil
+    ) {
         self.dismissed = dismissed
         self.text = text
         self.button = button
         self.reason = reason
+        self.hitView = hitView
+        self.finalState = finalState
+        self.postcondition = postcondition
     }
 }
 
@@ -335,10 +607,19 @@ public struct ForyWaitForArgs {
 public struct ForyInputArgs {
     public var target: ForyTarget = ForyTarget()
     public var content: String = ""
+    public var deleteCount: Int32 = 0
+    public var enter: Bool = false
 
-    public init(target: ForyTarget = ForyTarget(), content: String = "") {
+    public init(
+        target: ForyTarget = ForyTarget(),
+        content: String = "",
+        deleteCount: Int32 = 0,
+        enter: Bool = false
+    ) {
         self.target = target
         self.content = content
+        self.deleteCount = deleteCount
+        self.enter = enter
     }
 }
 
@@ -462,11 +743,17 @@ public enum ForyRegistry {
         try! fory.register(ForyFindMatch.self, name: "ForyFindMatch")
         try! fory.register(ForyErrorCandidate.self, name: "ForyErrorCandidate")
         try! fory.register(ForyErrorPayload.self, name: "ForyErrorPayload")
+        try! fory.register(ForyElementState.self, name: "ForyElementState")
+        try! fory.register(ForyElementHierarchy.self, name: "ForyElementHierarchy")
         try! fory.register(ForyDomElement.self, name: "ForyDomElement")
         try! fory.register(ForyDomPayload.self, name: "ForyDomPayload")
         try! fory.register(ForyScreenshotPayload.self, name: "ForyScreenshotPayload")
         try! fory.register(ForyElementSummary.self, name: "ForyElementSummary")
         try! fory.register(ForyWaitForPayload.self, name: "ForyWaitForPayload")
+        try! fory.register(ForyHitView.self, name: "ForyHitView")
+        try! fory.register(ForyTouchFinalState.self, name: "ForyTouchFinalState")
+        try! fory.register(ForyPixelPostcondition.self, name: "ForyPixelPostcondition")
+        try! fory.register(ForyActionPostcondition.self, name: "ForyActionPostcondition")
         try! fory.register(ForyElementPayload.self, name: "ForyElementPayload")
         try! fory.register(ForySwipePayload.self, name: "ForySwipePayload")
         try! fory.register(ForyAlertPayload.self, name: "ForyAlertPayload")

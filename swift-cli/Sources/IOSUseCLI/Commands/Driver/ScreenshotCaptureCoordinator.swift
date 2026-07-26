@@ -120,7 +120,10 @@ enum ScreenshotCaptureCoordinator {
             scale: geometry.scale,
             geometrySource: geometry.source,
             warning: warning,
-            performance: performance
+            performance: performance,
+            snapshotGeneration: rawScreenshot.snapshotGeneration,
+            captureGeneration: rawScreenshot.captureGeneration,
+            runtimeEvidence: rawScreenshot.runtimeEvidence
         )
     }
 

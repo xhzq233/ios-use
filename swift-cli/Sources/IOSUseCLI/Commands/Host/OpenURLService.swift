@@ -66,6 +66,7 @@ enum OpenURLService {
         let registeredHandlers: [String]
         let schemeLookupVerified: Bool?
         let readiness: ForyWaitAppForegroundPayload?
+        let playCoverPostcondition: ForyActionPostcondition?
 
         init(
             message: String,
@@ -75,7 +76,8 @@ enum OpenURLService {
             deviceType: String? = nil,
             registeredHandlers: [String] = [],
             schemeLookupVerified: Bool? = nil,
-            readiness: ForyWaitAppForegroundPayload? = nil
+            readiness: ForyWaitAppForegroundPayload? = nil,
+            playCoverPostcondition: ForyActionPostcondition? = nil
         ) {
             self.message = message
             self.dom = dom
@@ -85,6 +87,7 @@ enum OpenURLService {
             self.registeredHandlers = registeredHandlers
             self.schemeLookupVerified = schemeLookupVerified
             self.readiness = readiness
+            self.playCoverPostcondition = playCoverPostcondition
         }
     }
 
@@ -111,6 +114,21 @@ enum OpenURLService {
     static func openHostSideIfAvailable(url: String, session: SessionOptions, paths: IOSUsePaths) throws -> OpenResult? {
         let validated = try validatedURL(url)
         let activeDriver = SessionService.read(paths: paths)
+        if let activeDriver,
+           activeDriver.deviceType
+            == PlayCoverSessionService.deviceType {
+            if let explicit = session.udid,
+               explicit != activeDriver.udid {
+                throw CLIParseError.invalidValue(
+                    "open target \(explicit) does not match active "
+                        + "PlayCover target \(activeDriver.udid)."
+                )
+            }
+            return try openPlayCover(
+                url: validated,
+                session: activeDriver
+            )
+        }
         let targetUdid = try SessionService.resolveTargetUdid(
             explicitUdid: session.udid,
             paths: paths,
@@ -146,6 +164,46 @@ enum OpenURLService {
         )
         guard activeDriver.udid == targetUdid else {
             throw CLIParseError.invalidValue("open --dom target \(targetUdid) does not match active Driver target \(activeDriver.udid). Run `ios-use stop` and `ios-use start \(targetUdid)`.")
+        }
+        if activeDriver.deviceType
+            == PlayCoverSessionService.deviceType {
+            let base: OpenResult
+            do {
+                base = try openPlayCover(
+                    url: try validatedURL(url),
+                    session: activeDriver
+                )
+            } catch {
+                throw error
+            }
+            do {
+                let dom = try DriverCommandExecution.withLockedClient(
+                    paths: paths,
+                    verbose: session.verbose
+                ) {
+                    try $0.dom(
+                        raw: false,
+                        fresh: true,
+                        waitQuiescence: false
+                    )
+                }
+                return OpenResult(
+                    message: base.message,
+                    dom: dom,
+                    url: base.url,
+                    targetUdid: base.targetUdid,
+                    deviceType: base.deviceType,
+                    registeredHandlers: [],
+                    schemeLookupVerified: true,
+                    playCoverPostcondition:
+                        base.playCoverPostcondition
+                )
+            } catch {
+                throw ReadinessError(
+                    hostResult: base,
+                    underlying: error
+                )
+            }
         }
         let base = try openHostSideIfAvailable(url: url, session: session, paths: paths)
         guard let base else {
@@ -267,7 +325,38 @@ enum OpenURLService {
             "schemeLookupVerified": result.schemeLookupVerified.map(MachineValue.boolean) ?? .null,
             "registeredHandlers": .array(result.registeredHandlers.map(MachineValue.string)),
             "readiness": result.readiness.map(AppLifecycleService.machineReadiness) ?? .null,
+            "dom": result.dom.map(machineDom) ?? .null,
+            "playCoverPostcondition": result.playCoverPostcondition.map {
+                .object([
+                    "snapshotGeneration": .integer(
+                        Int($0.snapshotGeneration)
+                    ),
+                    "changed": .boolean($0.changed),
+                ])
+            } ?? .null,
         ])
+    }
+
+    private static func openPlayCover(
+        url: String,
+        session: SessionService.Info
+    ) throws -> OpenResult {
+        let result = try PlayCoverDriverClient(
+            session: session
+        ).openURL(url)
+        guard result.url == url else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("open URL echo")
+        }
+        return OpenResult(
+            message: "Opened URL in active PlayCover App: \(url)",
+            url: url,
+            targetUdid: session.udid,
+            deviceType: PlayCoverSessionService.deviceType,
+            registeredHandlers: session.bundleId.map { [$0] } ?? [],
+            schemeLookupVerified: true,
+            playCoverPostcondition: result.postcondition
+        )
     }
 
     private static func openRealDeviceURL(url: String, udid: String) throws {

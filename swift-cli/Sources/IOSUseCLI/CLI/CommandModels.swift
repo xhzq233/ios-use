@@ -17,7 +17,6 @@ public enum ParsedCommand: Equatable, Sendable {
     case capture(CaptureOptions)
     case nslog(NSLogOptions)
     case proxy(ProxyCommand)
-    case playcover(PlayCoverCommand)
 
     public var commandName: String {
         switch self {
@@ -36,7 +35,6 @@ public enum ParsedCommand: Equatable, Sendable {
         case .capture: return "capture"
         case .nslog: return "nslog"
         case .proxy(let command): return "proxy \(command.subcommand)"
-        case .playcover(let command): return "playcover \(command.subcommand)"
         }
     }
 }
@@ -343,32 +341,6 @@ public enum ProxyCommand: Equatable, Sendable {
         case .read: return "read"
         case .stop: return "stop"
         case .doctor: return "doctor"
-        }
-    }
-}
-
-public struct PlayCoverPrepareOptions: Equatable, Sendable {
-    public var appPath: String
-    public var outputPath: String
-    public var runtimePath: String
-
-    public init(appPath: String, outputPath: String, runtimePath: String) {
-        self.appPath = appPath
-        self.outputPath = outputPath
-        self.runtimePath = runtimePath
-    }
-}
-
-public enum PlayCoverCommand: Equatable, Sendable {
-    case inspect(appPath: String)
-    case prepare(PlayCoverPrepareOptions)
-    case verify(appPath: String)
-
-    public var subcommand: String {
-        switch self {
-        case .inspect: return "inspect"
-        case .prepare: return "prepare"
-        case .verify: return "verify"
         }
     }
 }

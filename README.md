@@ -77,15 +77,27 @@ Driving devices still requires Apple's tooling:
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s --
 ```
 
-The installer downloads the prebuilt Apple Silicon macOS CLI and driver IPAs from the latest GitHub Release, then installs `ios-use` into a user-writable bin directory. To install a specific version:
+The installer verifies `SHA256SUMS`, downloads the prebuilt Apple Silicon macOS
+CLI, driver IPAs, and PlayCover Runtime from the latest GitHub Release, then
+installs `ios-use` into a user-writable bin directory. The Runtime is an
+immutable resource at `<prefix>/share/ios-use/playcover/`, next to the
+installed binary prefix rather than in mutable `IOS_USE_HOME`; this remains the
+fallback for both the default and custom `IOS_USE_HOME` values. The installed
+bundle is treated as a read-only source resource: preparation signs only its
+managed copy, and installed execution is tested not to mutate any source
+bytes. To install a
+specific version:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.3.2
 ```
 
-Intel Macs should compile locally instead:
+Intel Macs are unsupported because the injected PlayCover Runtime and converted
+iPhone App are arm64-only. On Apple Silicon, a source build requires full Xcode,
+Swift, and `xcodegen`:
 
 ```bash
+brew install xcodegen
 curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --build-from-source
 ```
 
@@ -125,7 +137,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | --- | --- |
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
 | `config` | Install or update the on-device driver. |
-| `start` / `stop` | Select or release the current automation target. |
+| `start` / `stop` | Select or release the current automation target; use `start --playcover [--app <App.app>]` for the local PlayCover backend. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID; activation is UI-ready by default. |
 | `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
 | `tap` / `longpress` | Act on a label or coordinate. |
@@ -136,7 +148,6 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `oslog` / `nslog` | Capture system logs or app-side NSLogger output. |
 | `proxy` | Capture HTTP/HTTPS traffic through mitmproxy. |
 | `open` | Open a URL or custom scheme on a device. |
-| `playcover` | Experimentally inspect, prepare, and verify an unencrypted arm64 iPhone App for the PlayCover backend. |
 
 Typical manual loop:
 
@@ -188,48 +199,47 @@ milliseconds.
 
 ### Experimental Headless PlayCover Backend
 
-The source-build-only `playcover` command runs a disposable copy of an
-unencrypted, thin arm64 iPhone App on Apple silicon without the PlayCover GUI.
-Its first immutable profile matches vPhone: 430 x 932 logical points, 3x scale,
-and 1290 x 2796 native pixels.
+The PlayCover backend runs a managed copy of an unencrypted
+arm64 iPhone App on Apple silicon without the PlayCover GUI. Its device
+contract is compiled into the Runtime and host from one header:
+`iPhone16,2`, 430 x 932 logical points, 3x scale, and 1290 x 2796 native
+pixels.
 
 ```bash
 bash scripts/build_swift_cli.sh --debug
 
-./ios-use playcover inspect /path/to/Source.app
 ./ios-use start --playcover --app /path/to/Source.app
 ./ios-use status
+./ios-use dom
+./ios-use tap "A stable label" --dom
 ./ios-use screenshot
 ./ios-use stop
 ```
 
-On Apple silicon with the iPhoneOS SDK available, the local CLI build also
-builds the default injected runtime. `start --playcover --app` accepts either
-an unmodified iPhoneOS App or an already prepared App. A source App is
-automatically prepared into `IOS_USE_HOME/playcover/prepared/`, verified, and
-launched; the same verified generation is reused while its source, runtime,
-profile, and preparation revision are unchanged.
+On Apple Silicon with full Xcode and `xcodegen` available, the local CLI build
+also builds the default injected runtime. `start --playcover --app` accepts either
+an unmodified iPhoneOS App or a managed prepared App. A source App is cloned
+under the current `IOS_USE_HOME`, converted with pinned PlayCover sources,
+injected, signed inside-out, fully verified, and launched. The generation key
+contains only source content, Runtime/build content, and the pinned prepare
+revision. A later bare `start --playcover` reuses the most recent generation
+from that same home after a bounded integrity check; it never creates profile
+or bootstrap files.
 
-The advanced `playcover prepare` toolbox remains available for an explicit
-output/runtime path. It refuses to replace an existing output. It APFS-clones the source,
-validates and converts each supported Mach-O, injects one runtime dependency,
-applies narrow Mac sandbox entitlements, signs each nested binary and the App,
-then verifies the complete generation. `start --playcover` succeeds only after
-the CLI directly authenticates the injected Runtime over its private Unix
-socket and verifies 430 x 932 UIKit geometry, 1290 x 2796 native geometry, and
-an approximately uniform AppKit presentation scale.
+The CLI creates one random session ID and connects straight to the injected
+Runtime's owner-only Unix socket. `driver.lock` keeps PlayCover selected until
+`ios-use stop`, so session commands cannot fall back to XCTest. `status`,
+screenshots, DOM/wait, touch/input, capture, URL delivery, logs, and evidence
+all use that exact PID, executable, session, and prepared generation.
+Lifecycle remains host-owned: `activateApp`, `terminateApp`, `home`, and DDI
+operations are explicitly unsupported while a PlayCover session is active.
 
-An automatically or explicitly prepared output becomes the default for a later
-bare `start --playcover`; pass `--app /path/to/Source-or-Prepared.app` to
-select and launch another App in one invocation.
-`driver.lock` keeps PlayCover selected until normal `ios-use stop`, so
-session-bound commands cannot fall back to an XCTest device. `status` and
-the supported `dom`, `waitFor`, and `screenshot` commands reconnect directly
-to the same injected Runtime identity. Screenshots are captured inside the
-target process from its own window compositor and normalized to 1290 x 2796
-with 430 x 932 @3x metadata; they do not use ScreenCaptureKit or require macOS
-Screen Recording permission. Other UI actions route to the PlayCover backend
-but still return an explicit capability error.
+The Runtime fixes a completely borderless, non-resizable 430 x 932 AppKit
+window and applies the iPhone16,2 safe area without cropping the App root.
+Screenshots capture only the target process's own compositor surfaces,
+including Metal and the pass-through system-chrome overlay, then produce a
+strict 1290 x 2796 frame. The path does not use ScreenCaptureKit or request
+Screen Recording permission.
 See [docs/playcover-backend.md](docs/playcover-backend.md).
 
 ## Performance Snapshot
@@ -279,7 +289,7 @@ See [examples/proxy/README.md](examples/proxy/README.md) for prerequisites and s
 swift-cli/             Swift CLI, command parsing, config, proxy, logs, and host tools
 shared/IOSUseProtocol/ Shared Swift RPC types and Fory frame models
 driver/                Swift XCTest driver
-playcover-runtime/     Minimal injected headless Mac Catalyst runtime
+playcover-runtime/     Injected Mac Catalyst Runtime plus pinned PlayTools sources
 examples/proxy/        Copyable shell recipes for proxy device setup
 scripts/               Install, build, test, and benchmark utilities
 docs/                  Public documentation
@@ -298,9 +308,12 @@ bash scripts/ci_test.sh
 ```
 
 `bash scripts/build_swift_cli.sh` builds the local workspace CLI to repo-root
-`./ios-use`; on supported Apple silicon development hosts it also keeps the
-default PlayCover runtime under `.ios-use/playcover/` up to date. Use that
-binary for development instead of a global `ios-use`.
+`./ios-use`; on Apple Silicon development hosts with full Xcode and `xcodegen`
+it also keeps a local development Runtime under `.ios-use/playcover/` up to
+date. Release installs instead use the checksummed, read-only prefix share
+layout; release CI runs the exact staged archive through `install.sh` and a
+fixture `start/status/stop` before upload. Use that binary for development
+instead of a global `ios-use`.
 `bash scripts/build_driver.sh` defaults to Debug and writes development IPAs
 under `IOS_USE_HOME`, or cwd `.ios-use/` when unset. `scripts/ci_test.sh` is the
 default CI/local Swift-only validation path. Full Simulator command matrix

@@ -19,6 +19,8 @@ PRINT_PATH_ONLY=0
 BUILD_FROM_SOURCE=0
 DIST_DIR=""
 OUTFILE=""
+CHECKSUM_FILE=""
+RUNTIME_ARCHIVE=""
 
 cleanup() {
   if [[ -n "$BOOTSTRAP_DIR" && -d "$BOOTSTRAP_DIR" ]]; then
@@ -33,8 +35,9 @@ Usage: install.sh [--version <tag>] [--build-from-source] [--print-path]
 
 Options:
   --version <tag>      Release tag to install (e.g. v1.2.0). Defaults to latest.
-  --build-from-source  Compile the Swift CLI from the selected source ref instead
-                       of downloading the prebuilt macOS CLI from the GitHub Release.
+  --build-from-source  Compile the Swift CLI and PlayCover Runtime from the
+                       selected source ref instead of downloading their
+                       prebuilt GitHub Release assets.
   --print-path         Print the installed binary path after installation.
 
 Environment:
@@ -43,6 +46,10 @@ Environment:
                         Driver release tag override. Defaults to IOS_USE_VERSION.
   IOS_USE_REF           Source ref used when source files are needed.
   IOS_USE_GITHUB_REPO   GitHub repository. Defaults to xhzq233/ios-use.
+
+Requirements:
+  Apple Silicon macOS. A source build additionally requires full Xcode,
+  Swift, and xcodegen; install xcodegen with `brew install xcodegen`.
 USAGE
 }
 
@@ -78,6 +85,31 @@ done
 
 INSTALL_VERSION="${CLI_VERSION:-${IOS_USE_VERSION:-${IOS_USE_DRIVER_VERSION:-latest}}}"
 DRIVER_VERSION="${IOS_USE_DRIVER_VERSION:-$INSTALL_VERSION}"
+case "$(uname -m)" in
+  arm64|aarch64) ;;
+  x86_64)
+    echo "ios-use releases with the PlayCover Runtime require Apple Silicon; Intel macOS is unsupported." >&2
+    exit 1
+    ;;
+  *)
+    echo "Unsupported macOS architecture: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+if [[ "$BUILD_FROM_SOURCE" -eq 1 ]]; then
+  command -v swift >/dev/null 2>&1 || {
+    echo "Swift is required for --build-from-source." >&2
+    exit 1
+  }
+  command -v xcodegen >/dev/null 2>&1 || {
+    echo "xcodegen is required for --build-from-source; install it with: brew install xcodegen" >&2
+    exit 1
+  }
+  xcrun --sdk iphoneos --show-sdk-path >/dev/null 2>&1 || {
+    echo "Full Xcode with the iPhoneOS SDK is required for --build-from-source." >&2
+    exit 1
+  }
+fi
 if [[ -n "${IOS_USE_REF:-}" ]]; then
   GITHUB_REF="$IOS_USE_REF"
 elif [[ "$INSTALL_VERSION" == "latest" ]]; then
@@ -89,6 +121,8 @@ fi
 refresh_paths() {
   DIST_DIR="$ROOT_DIR/dist"
   OUTFILE="$DIST_DIR/ios-use"
+  CHECKSUM_FILE="$DIST_DIR/SHA256SUMS"
+  RUNTIME_ARCHIVE="$DIST_DIR/ios-use-playcover-runtime.tar.gz"
 }
 
 release_asset_url() {
@@ -102,21 +136,7 @@ release_asset_url() {
 }
 
 mac_cli_asset_name() {
-  local arch
-  arch="$(uname -m)"
-  case "$arch" in
-    arm64|aarch64)
-      printf 'ios-use-darwin-arm64\n'
-      ;;
-    x86_64)
-      echo "Prebuilt x86_64 macOS CLI is not published. Re-run with --build-from-source." >&2
-      exit 1
-      ;;
-    *)
-      echo "Unsupported macOS architecture: $arch" >&2
-      exit 1
-      ;;
-  esac
+  printf 'ios-use-darwin-arm64\n'
 }
 
 bootstrap_remote_repo() {
@@ -156,11 +176,37 @@ build_or_download_cli() {
     return
   fi
 
-  local cli_asset
-  cli_asset="$(mac_cli_asset_name)"
-  echo "Downloading ios-use ${INSTALL_VERSION} (${cli_asset})..."
-  curl -fsSL "$(release_asset_url "$INSTALL_VERSION" "$cli_asset")" -o "$OUTFILE"
-  chmod +x "$OUTFILE"
+  download_release_checksums
+  download_checked_release_asset "$(mac_cli_asset_name)" "$OUTFILE"
+  download_checked_release_asset "ios-use-playcover-runtime.tar.gz" "$RUNTIME_ARCHIVE"
+}
+
+download_release_checksums() {
+  echo "Downloading release checksums ${INSTALL_VERSION}..."
+  curl -fsSL "$(release_asset_url "$INSTALL_VERSION" "SHA256SUMS")" -o "$CHECKSUM_FILE"
+  if [[ ! -s "$CHECKSUM_FILE" ]]; then
+    echo "Release SHA256SUMS is missing or empty." >&2
+    exit 1
+  fi
+}
+
+download_checked_release_asset() {
+  local asset="$1"
+  local destination="$2"
+  local expected actual
+  expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$CHECKSUM_FILE")"
+  if [[ -z "$expected" || "$(printf '%s\n' "$expected" | wc -l | tr -d ' ')" != "1" ]]; then
+    echo "SHA256SUMS does not contain exactly one checksum for $asset." >&2
+    exit 1
+  fi
+
+  echo "Downloading ${asset} ${INSTALL_VERSION}..."
+  curl -fsSL "$(release_asset_url "$INSTALL_VERSION" "$asset")" -o "$destination"
+  actual="$(shasum -a 256 "$destination" | awk '{print $1}')"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Checksum mismatch for $asset." >&2
+    exit 1
+  fi
 }
 
 install_driver_artifact() {
@@ -168,8 +214,32 @@ install_driver_artifact() {
   local destination="$2"
   mkdir -p "$(dirname "$destination")"
 
+  if [[ "$BUILD_FROM_SOURCE" -eq 0 &&
+        "$DRIVER_VERSION" == "$INSTALL_VERSION" ]]; then
+    download_checked_release_asset "$asset" "$destination"
+    return
+  fi
+
+  local driver_checksums expected actual
+  driver_checksums="$DIST_DIR/SHA256SUMS-driver"
+  echo "Downloading driver release checksums ${DRIVER_VERSION}..."
+  curl -fsSL "$(release_asset_url "$DRIVER_VERSION" "SHA256SUMS")" -o "$driver_checksums"
+  if [[ ! -s "$driver_checksums" ]]; then
+    echo "Release SHA256SUMS is missing or empty at $DRIVER_VERSION." >&2
+    exit 1
+  fi
+  expected="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$driver_checksums")"
+  if [[ -z "$expected" || "$(printf '%s\n' "$expected" | wc -l | tr -d ' ')" != "1" ]]; then
+    echo "SHA256SUMS does not contain exactly one checksum for $asset at $DRIVER_VERSION." >&2
+    exit 1
+  fi
   echo "Downloading ${asset} ${DRIVER_VERSION}..."
   curl -fsSL "$(release_asset_url "$DRIVER_VERSION" "$asset")" -o "$destination"
+  actual="$(shasum -a 256 "$destination" | awk '{print $1}')"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Checksum mismatch for ${asset} ${DRIVER_VERSION}." >&2
+    exit 1
+  fi
 }
 
 cleanup_legacy_flow_artifacts() {
@@ -214,20 +284,70 @@ cleanup_legacy_flow_artifacts() {
   fi
 }
 
+runtime_destination_for_prefix() {
+  local prefix="$1"
+  printf '%s\n' "$prefix/share/ios-use/playcover/IOSUsePlayRuntime.framework"
+}
+
+install_playcover_runtime() {
+  local prefix="$1"
+  local destination source staged
+  destination="$(runtime_destination_for_prefix "$prefix")"
+  staged="$DIST_DIR/runtime-stage"
+  rm -rf "$staged"
+  mkdir -p "$staged"
+
+  if [[ "$BUILD_FROM_SOURCE" -eq 1 ]]; then
+    source="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
+    if [[ ! -x "$source/IOSUsePlayRuntime" ]]; then
+      echo "Source build did not produce IOSUsePlayRuntime.framework." >&2
+      exit 1
+    fi
+    cp -R "$source" "$staged/IOSUsePlayRuntime.framework"
+  else
+    local archived_path
+    while IFS= read -r archived_path; do
+      case "$archived_path" in
+        IOSUsePlayRuntime.framework|IOSUsePlayRuntime.framework/*) ;;
+        *)
+          echo "PlayCover Runtime archive contains an unexpected path: $archived_path" >&2
+          exit 1
+          ;;
+      esac
+    done < <(tar -tzf "$RUNTIME_ARCHIVE")
+    tar -xzf "$RUNTIME_ARCHIVE" -C "$staged"
+  fi
+
+  if [[ ! -x "$staged/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" ]]; then
+    echo "PlayCover Runtime archive does not contain IOSUsePlayRuntime.framework." >&2
+    exit 1
+  fi
+  if [[ ! -f "$staged/IOSUsePlayRuntime.framework/Info.plist" ]] &&
+     [[ ! -f "$staged/IOSUsePlayRuntime.framework/Versions/A/Resources/Info.plist" ]]; then
+    echo "PlayCover Runtime archive does not contain an Info.plist." >&2
+    exit 1
+  fi
+  if ! codesign --verify --strict "$staged/IOSUsePlayRuntime.framework" >/dev/null 2>&1; then
+    echo "PlayCover Runtime signature verification failed." >&2
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "$destination")"
+  rm -rf "$destination"
+  mv "$staged/IOSUsePlayRuntime.framework" "$destination"
+  if ! codesign --verify --strict "$destination" >/dev/null 2>&1; then
+    echo "Installed PlayCover Runtime signature verification failed." >&2
+    exit 1
+  fi
+  echo "Installed PlayCover Runtime read-only resource to $destination"
+}
+
 install_binary() {
   local target_dir="$1"
+  local install_prefix="$2"
   mkdir -p "$target_dir" "$HOME/.ios-use/runtime"
   install -m 755 "$OUTFILE" "$target_dir/ios-use"
-
-  local playcover_runtime_src="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
-  local playcover_runtime_dst="$HOME/.ios-use/playcover/IOSUsePlayRuntime.framework"
-  if [[ -d "$playcover_runtime_src" &&
-        -x "$playcover_runtime_src/IOSUsePlayRuntime" ]]; then
-    mkdir -p "$HOME/.ios-use/playcover"
-    rm -rf "$playcover_runtime_dst"
-    cp -R "$playcover_runtime_src" "$playcover_runtime_dst"
-    echo "Installed source-built PlayCover runtime to $playcover_runtime_dst"
-  fi
+  install_playcover_runtime "$install_prefix"
 
   install_driver_artifact "driver.ipa" "$HOME/.ios-use/driver.ipa"
   install_driver_artifact "driver-sim.ipa" "$HOME/.ios-use/driver-sim.ipa"
@@ -286,11 +406,21 @@ resolve_target_dir() {
   printf '%s\n' "$PRIMARY_TARGET_DIR"
 }
 
+resolve_install_prefix() {
+  local target_dir="$1"
+  if [[ -n "${PREFIX:-}" ]]; then
+    printf '%s\n' "$PREFIX"
+    return
+  fi
+  dirname "$target_dir"
+}
+
 bootstrap_remote_repo
 build_or_download_cli
 
 TARGET_DIR="$(resolve_target_dir)"
-install_binary "$TARGET_DIR"
+INSTALL_PREFIX="$(resolve_install_prefix "$TARGET_DIR")"
+install_binary "$TARGET_DIR" "$INSTALL_PREFIX"
 
 TARGET_PATH="$TARGET_DIR/ios-use"
 if [[ "$PRINT_PATH_ONLY" -eq 1 ]]; then
@@ -325,3 +455,4 @@ case ":$PATH:" in
 esac
 
 echo "Verify with: $TARGET_PATH --version"
+echo "PlayCover Runtime: $(runtime_destination_for_prefix "$INSTALL_PREFIX")"

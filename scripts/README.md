@@ -8,7 +8,7 @@ Run scripts from the repository root unless noted otherwise.
 | --- | --- |
 | `scripts/build_swift_cli.sh [--debug]` | Build the Swift CLI, copy it to repo-root `./ios-use`, and keep the local PlayCover runtime current on supported Apple silicon/Xcode hosts. Release is the default. |
 | `scripts/build_driver.sh [--debug\|--release] [--simulator-only]` | Generate the Xcode project and build driver IPA artifacts. Debug is the default and writes `IOS_USE_HOME`, or cwd `.ios-use/` when unset; release writes `driver/build/`. |
-| `scripts/build_playcover_runtime.sh [--output <IOSUsePlayRuntime.framework>] [--replace]` | Build the arm64 iPhoneOS runtime, rewrite it to Mac Catalyst, and ad-hoc sign the framework used by the headless PlayCover backend. |
+| `scripts/build_playcover_runtime.sh [--output <IOSUsePlayRuntime.framework>] [--replace] [--analyze]` | Build and ad-hoc sign the mixed Objective-C/Swift arm64 Mac Catalyst Runtime containing the pinned PlayTools sources; optionally run Clang static analysis. |
 
 Local dev run standard:
 
@@ -16,14 +16,14 @@ Local dev run standard:
 bash scripts/build_swift_cli.sh --debug
 ./ios-use --help
 
-./ios-use playcover --help
 ./ios-use start --help
 ```
 
-`build_playcover_runtime.sh` remains available when an explicit runtime output
+`build_playcover_runtime.sh` remains available when an explicit Runtime output
 is needed for backend development. Normal
-`start --playcover --app <source-or-prepared.app>` discovers the runtime built
-by `build_swift_cli.sh`.
+`start --playcover --app <source-or-managed-prepared.app>` discovers the
+Runtime built by `build_swift_cli.sh`; users do not run a separate PlayCover
+prepare command.
 
 Use `./ios-use`, not global `ios-use`, when validating current workspace changes.
 
@@ -35,6 +35,12 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/ci_full_simulator.sh --driver-ipa <path> [--case CASES]` | Main full Simulator regression entry. Builds the Swift CLI, uses the caller-selected Simulator driver IPA, and runs the Node Simulator command matrix. |
 | `scripts/test_swift_cli.sh` | Run Swift CLI unit tests plus installed-style CLI/nslog smoke checks and static driver log/version-stamp guards. |
 | `scripts/test_driver_unit.sh` | Run Swift driver unit tests with an isolated default `IOS_USE_HOME` under `~/.ios-use/test-homes/driver-unit`. |
+| `scripts/audit_playcover_upstreams.sh [--cache-dir <path>] [--metadata-only]` | Re-clone or reuse pinned PlayCover/PlayTools/inject/Yams checkouts; require script pins, provenance pins, SwiftPM resolutions, licenses, expected vendored file sets, and local-patch sets to agree exactly. `--metadata-only` runs the hermetic closure without cloning. |
+| `scripts/test_playcover_packaging_contract.sh` | Hermetic packaging audit tests, including negative cases for a deleted expected source, a one-sided provenance pin change, and a mismatched Yams resolution. |
+| `scripts/test_playcover_backend.sh --non-live` | Unified Apple-silicon hosted gate: upstream audit, fresh workspace CLI/Runtime build and analysis, fixture build, compositor/PlayChain smoke, vendored Swift tests, and release-installed execution. `--live` adds the public fixture matrix, isolated Runtime protocol/crash stress, and configured generic external-App live gate; missing private runner inputs fail explicitly. |
+| `scripts/test_playcover_runtime_stress_live.sh` | Isolated public-fixture live gate for oversized/malformed Runtime frames, continued listener health, exact Runtime-endpoint loss handling, App crash/stale classification, and safe host-only cleanup. |
+| `scripts/test_playcover_external_app_live.sh` | Generic 20-cycle external-App UI/mouse/lifecycle gate. It reads an operator-private schema-v1 scenario, keeps raw evidence outside the public checkout, and can emit a separate redacted commit-bound attestation. |
+| `scripts/test_playcover_installed_layout.sh [--release-dir <path>]` | Without an argument, package the fresh local CLI/Runtime. With `--release-dir`, consume the exact release-build output. Both paths verify checksums, install a read-only Runtime through `install.sh`, run fixture start/status/stop outside the source tree with a separate `IOS_USE_HOME`, and prove the installed framework is unchanged. |
 | `scripts/test_simulator_commands.mjs` | Node-based Simulator command case runner used by full Simulator validation. |
 | `scripts/ios_use_test_simulator.js` | Shared helper used by driver unit tests and Simulator command tests to create/boot the fixed `IOSUseTest` Simulator. |
 
@@ -51,14 +57,21 @@ bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa
 bash scripts/ci_full_simulator.sh --driver-ipa .ios-use/driver-sim.ipa --case WF-1
 ```
 
-GitHub CI uses `.github/workflows/ci.yml` for the default gate and runs script syntax, Swift CLI tests/smoke checks, and driver unit tests in parallel jobs. The full UI replay lives in `.github/workflows/simulator.yml` and is manual-only.
+GitHub CI uses `.github/workflows/ci.yml` for script syntax/packaging metadata,
+Swift CLI, driver unit, and hosted PlayCover non-live gates in parallel. Changes
+to release workflow paths and release notes trigger that CI. The external-App
+live/stress gate is an explicit dispatch-only schema-v1 entry on an
+operator-provided runner; raw scenario/evidence stay runner-private and CI
+uploads only the redacted attestation. Hosted CI does not assume that private
+runner is reachable. The full Simulator UI replay lives in
+`.github/workflows/simulator.yml` and is manual-only.
 
 ## Install And Benchmark
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/install.sh` | Install the release CLI, driver IPAs, skill, and altsign helper. Use `--build-from-source` to compile locally. |
-| `scripts/release_build.sh` | Build and stage GitHub Release assets under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. See [docs/how-to-release.md](../docs/how-to-release.md). |
+| `scripts/install.sh` | On Apple Silicon, verify checksums and install the release CLI, driver IPAs, and prebuilt PlayCover Runtime under `<prefix>/share/ios-use/playcover/`; the Runtime is signature-verified and used only as an immutable source for managed prepare copies. Also installs the skill and altsign helper. `--build-from-source` additionally requires full Xcode, Swift, and xcodegen. Intel macOS is unsupported. |
+| `scripts/release_build.sh` | From a clean Git tree, audit all pins/licenses, force a fresh Runtime, compare its tracked input digest with the exact corresponding-source archive (including complete pinned Yams source), and stage read-only Runtime, build-manifest, license, provenance, CLI, and driver assets under `release/`; validates `IOS_USE_RELEASE_VERSION` when provided. See [docs/how-to-release.md](../docs/how-to-release.md). |
 | `scripts/benchmark.js --bench ios-use --udid <udid> --driver-ipa <path>` | Measure ios-use on a real device and write JSON only. Screenshot cases pass `--no-ocr` to isolate pixel capture. The script never builds, signs, installs, or runs `config`; the device must already be prepared with a driver whose configured `driverVersion` matches the IPA version. |
 | `scripts/benchmark.js --bench wda --udid <udid> --wda-bundle-id <id>` | Measure Appium/WebDriverAgent on a real device and write JSON only. This is a separate WDA run, not an implicit ios-use comparison. |
 
@@ -88,8 +101,12 @@ The GitHub release workflow builds and uploads:
 
 | Asset | Purpose |
 | --- | --- |
-| `ios-use-darwin-arm64` | Prebuilt Apple Silicon macOS CLI binary. Intel Macs use `scripts/install.sh --build-from-source`. |
+| `ios-use-darwin-arm64` | Prebuilt Apple Silicon macOS CLI binary. The Runtime and complete release install are Apple-Silicon-only; Intel macOS is unsupported. |
 | `driver.ipa` | Real-device XCTest driver IPA. |
 | `driver-sim.ipa` | Simulator XCTest driver IPA. |
+| `ios-use-playcover-runtime.tar.gz` | Read-only, prebuilt Runtime installed at `<prefix>/share/ios-use/playcover/`. |
+| `ios-use-vX.Y.Z-corresponding-source.tar.gz` | Complete corresponding source for the release, including vendored upstreams, the full pinned Yams Git tree, build recipes, source commit, and Runtime-input digest. |
+| `PLAYCOVER-BUILD-MANIFEST-vX.Y.Z.txt` | Exact source commit, Yams commit, Runtime-input digest, Runtime archive digest, and corresponding-source digest. |
+| `LICENSE`, `*-LICENSE-*`, `THIRD-PARTY-LICENSES.md`, `PLAYCOVER-PROVENANCE-vX.Y.Z.md` | ios-use and upstream license/provenance materials, including the Yams MIT license, for the Runtime distribution. |
 | `CHANGELOG-vX.Y.Z.md` | Focused changes and upgrade notes for that release. |
 | `SHA256SUMS` | Checksums for all uploaded content assets. |

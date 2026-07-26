@@ -47,22 +47,17 @@ if [ "$(uname -m)" = "arm64" ]; then
     if [ ! -x "$PLAYCOVER_RUNTIME_EXECUTABLE" ]; then
       PLAYCOVER_RUNTIME_NEEDS_BUILD="true"
     else
-      for source in \
-        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntime.m" \
-        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntime.h" \
-        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeDOM.m" \
-        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeDOM.h" \
-        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
-        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeScreenshot.h" \
-        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeSocket.m" \
-        "$ROOT_DIR/playcover-runtime/IOSUsePlayRuntimeSocket.h" \
-        "$ROOT_DIR/playcover-runtime/Info.plist" \
-        "$ROOT_DIR/scripts/build_playcover_runtime.sh"; do
+      while IFS= read -r source; do
         if [ "$source" -nt "$PLAYCOVER_RUNTIME_EXECUTABLE" ]; then
           PLAYCOVER_RUNTIME_NEEDS_BUILD="true"
           break
         fi
-      done
+      done < <(
+        rg --files \
+          "$ROOT_DIR/playcover-runtime" \
+          "$ROOT_DIR/swift-cli/Sources/IOSUsePlayDevice" \
+          "$ROOT_DIR/scripts/build_playcover_runtime.sh"
+      )
     fi
 
     if [ "$PLAYCOVER_RUNTIME_NEEDS_BUILD" = "true" ]; then

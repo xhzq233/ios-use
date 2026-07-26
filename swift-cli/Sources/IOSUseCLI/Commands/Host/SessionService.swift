@@ -14,11 +14,9 @@ public enum SessionService {
         public let bundleId: String?
         public let controlSocketPath: String?
         public let playCoverAppPath: String?
-        public let profileHash: String?
+        public let playCoverExecutablePath: String?
+        public let playCoverGenerationKey: String?
         public let playCoverRuntimeSocketPath: String?
-        public let playCoverLaunchNonce: String?
-        public let playCoverPreparedGenerationID: String?
-        public let playCoverRuntimeInstanceID: String?
 
         public init(
             udid: String,
@@ -33,11 +31,9 @@ public enum SessionService {
             bundleId: String? = nil,
             controlSocketPath: String? = nil,
             playCoverAppPath: String? = nil,
-            profileHash: String? = nil,
-            playCoverRuntimeSocketPath: String? = nil,
-            playCoverLaunchNonce: String? = nil,
-            playCoverPreparedGenerationID: String? = nil,
-            playCoverRuntimeInstanceID: String? = nil
+            playCoverExecutablePath: String? = nil,
+            playCoverGenerationKey: String? = nil,
+            playCoverRuntimeSocketPath: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
@@ -51,11 +47,9 @@ public enum SessionService {
             self.bundleId = bundleId
             self.controlSocketPath = controlSocketPath
             self.playCoverAppPath = playCoverAppPath
-            self.profileHash = profileHash
+            self.playCoverExecutablePath = playCoverExecutablePath
+            self.playCoverGenerationKey = playCoverGenerationKey
             self.playCoverRuntimeSocketPath = playCoverRuntimeSocketPath
-            self.playCoverLaunchNonce = playCoverLaunchNonce
-            self.playCoverPreparedGenerationID = playCoverPreparedGenerationID
-            self.playCoverRuntimeInstanceID = playCoverRuntimeInstanceID
         }
 
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
@@ -72,11 +66,9 @@ public enum SessionService {
                 bundleId: metadata.bundleId ?? bundleId,
                 controlSocketPath: metadata.controlSocketPath ?? controlSocketPath,
                 playCoverAppPath: playCoverAppPath,
-                profileHash: profileHash,
-                playCoverRuntimeSocketPath: playCoverRuntimeSocketPath,
-                playCoverLaunchNonce: playCoverLaunchNonce,
-                playCoverPreparedGenerationID: playCoverPreparedGenerationID,
-                playCoverRuntimeInstanceID: playCoverRuntimeInstanceID
+                playCoverExecutablePath: playCoverExecutablePath,
+                playCoverGenerationKey: playCoverGenerationKey,
+                playCoverRuntimeSocketPath: playCoverRuntimeSocketPath
             )
         }
     }
@@ -187,7 +179,43 @@ public enum SessionService {
                 info: PlayCoverSessionService.makeSessionInfo(from: result),
                 paths: paths
             )
-            return "PlayCover session started for \(result.bundleIdentifier) (pid \(result.pid))\n"
+            let cacheDisposition = result.reused ? "reused" : "prepared"
+            return """
+            PlayCover session started for \(result.bundleIdentifier) (pid \(result.pid))
+            PlayCover generation \(cacheDisposition): \(result.generationKey)
+            IOS_USE_HOME: \(paths.root)
+
+            """
+        } catch let error as
+                PlayCoverSessionUnterminatedLaunchError {
+            do {
+                try writeDriverLock(
+                    info: PlayCoverSessionService.makeSessionInfo(
+                        from: error.result
+                    ),
+                    paths: paths
+                )
+            } catch let lockError {
+                do {
+                    _ = try PlayCoverSessionService.terminate(
+                        result: error.result
+                    )
+                    clearDriverLock(paths: paths)
+                } catch let finalCleanupError {
+                    throw CLIParseError.invalidValue(
+                        "\(error). Preserving the active session "
+                            + "lock also failed: \(lockError). "
+                            + "Final cleanup failed: "
+                            + "\(finalCleanupError)"
+                    )
+                }
+                throw CLIParseError.invalidValue(
+                    "\(error). The App was stopped because its "
+                        + "active session lock could not be written: "
+                        + "\(lockError)"
+                )
+            }
+            throw error
         } catch {
             if let launch {
                 do {

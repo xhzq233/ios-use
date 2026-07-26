@@ -167,6 +167,137 @@ enum MachineOutput {
                 mutationMayHaveApplied: true
             )
         }
+        if let launchError = error as? PlayCoverUnterminatedLaunchError {
+            return MachineError(
+                message: launchError.description,
+                category: IOSUseErrorCategory.session,
+                code: "playcover_launch_rollback_failed",
+                phase: "playcover_dyld_launch",
+                retryable: false,
+                fatal: true,
+                mutationMayHaveApplied: true
+            )
+        }
+        if let backendError = error as? PlayCoverBackendError {
+            let category: String
+            let code: String
+            let phase: String
+            let retryable: Bool
+            let fatal: Bool
+            switch backendError {
+            case .invalidApp:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_invalid_app"
+                phase = "playcover_inspect"
+                retryable = false
+                fatal = false
+            case .unsupportedMachO:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_unsupported_macho"
+                phase = "playcover_macho"
+                retryable = false
+                fatal = false
+            case .malformedMachO:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_malformed_macho"
+                phase = "playcover_macho"
+                retryable = false
+                fatal = false
+            case .encryptedMachO:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_encrypted_macho"
+                phase = "playcover_macho"
+                retryable = false
+                fatal = false
+            case .duplicateRuntimeLoad:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_duplicate_runtime_load"
+                phase = "playcover_macho"
+                retryable = false
+                fatal = false
+            case .machOTransformFailed:
+                category = IOSUseErrorCategory.internalFailure
+                code = "playcover_macho_transform_failed"
+                phase = "playcover_macho"
+                retryable = false
+                fatal = false
+            case .entitlementFailed:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_entitlement_failed"
+                phase = "playcover_entitlements"
+                retryable = false
+                fatal = false
+            case .codeSigningFailed:
+                category = IOSUseErrorCategory.internalFailure
+                code = "playcover_codesign_failed"
+                phase = "playcover_codesign"
+                retryable = false
+                fatal = false
+            case .outputExists:
+                category = IOSUseErrorCategory.session
+                code = "playcover_output_exists"
+                phase = "playcover_prepare"
+                retryable = false
+                fatal = false
+            case .missingRuntime:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_runtime_missing"
+                phase = "playcover_runtime_source"
+                retryable = false
+                fatal = false
+            case .prepareFailed:
+                category = IOSUseErrorCategory.internalFailure
+                code = "playcover_prepare_failed"
+                phase = "playcover_prepare"
+                retryable = false
+                fatal = false
+            case .verificationFailed:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_verification_failed"
+                phase = "playcover_verify"
+                retryable = false
+                fatal = true
+            case .cacheTampered:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_cache_tampered"
+                phase = "playcover_verify"
+                retryable = false
+                fatal = true
+            case .launchFailed:
+                category = IOSUseErrorCategory.internalFailure
+                code = "playcover_dyld_launch_failed"
+                phase = "playcover_dyld_launch"
+                retryable = false
+                fatal = false
+            case .launchTimedOut:
+                category = IOSUseErrorCategory.timeout
+                code = "playcover_runtime_hello_timed_out"
+                phase = "playcover_runtime_hello"
+                retryable = true
+                fatal = false
+            case .terminateFailed:
+                category = IOSUseErrorCategory.session
+                code = "playcover_terminate_failed"
+                phase = "playcover_stop"
+                retryable = false
+                fatal = false
+            case .capabilityUnavailable:
+                category = IOSUseErrorCategory.validation
+                code = "playcover_capability_unavailable"
+                phase = IOSUseErrorPhase.validation
+                retryable = false
+                fatal = false
+            }
+            return MachineError(
+                message: backendError.description,
+                category: category,
+                code: code,
+                phase: phase,
+                retryable: retryable,
+                fatal: fatal,
+                mutationMayHaveApplied: false
+            )
+        }
         if let parseError = error as? CLIParseError {
             return MachineError(
                 message: parseError.description,

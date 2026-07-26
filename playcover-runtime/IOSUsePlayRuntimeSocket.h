@@ -2,9 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-FOUNDATION_EXPORT void IOSUsePlayRuntimeStartSocket(
-    NSDictionary<NSString *, id> *profile
-);
+FOUNDATION_EXPORT void IOSUsePlayRuntimeStartSocket(void);
 
 FOUNDATION_EXPORT NSDictionary<NSString *, id> *
 IOSUsePlayRuntimeSocketIdentity(void);

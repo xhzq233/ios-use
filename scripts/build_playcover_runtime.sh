@@ -4,6 +4,7 @@ set -euo pipefail
 IOS_USE_REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IOS_USE_RUNTIME_OUTPUT="$IOS_USE_REPO_ROOT/.ios-use/playcover/IOSUsePlayRuntime.framework"
 IOS_USE_RUNTIME_REPLACE="false"
+IOS_USE_RUNTIME_ANALYZE="false"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -17,6 +18,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --replace)
       IOS_USE_RUNTIME_REPLACE="true"
+      shift
+      ;;
+    --analyze)
+      IOS_USE_RUNTIME_ANALYZE="true"
       shift
       ;;
     *)
@@ -53,47 +58,64 @@ cleanup_runtime_build() {
 }
 trap cleanup_runtime_build EXIT
 
-IOS_USE_RUNTIME_SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-IOS_USE_RUNTIME_CLANG="$(xcrun --find clang)"
-IOS_USE_RUNTIME_VTOOL="$(xcrun --find vtool)"
-IOS_USE_RUNTIME_RAW="$IOS_USE_RUNTIME_TEMP/IOSUsePlayRuntime.iphoneos"
-IOS_USE_RUNTIME_FRAMEWORK="$IOS_USE_RUNTIME_TEMP/IOSUsePlayRuntime.framework"
+IOS_USE_RUNTIME_SOURCE_ROOT="$IOS_USE_REPO_ROOT/playcover-runtime"
+IOS_USE_RUNTIME_PROJECT_DIR="$IOS_USE_RUNTIME_TEMP/project"
+IOS_USE_RUNTIME_PROJECT_PATH="$IOS_USE_RUNTIME_PROJECT_DIR/IOSUsePlayRuntime.xcodeproj"
+IOS_USE_RUNTIME_PROJECT_SOURCE_ROOT="source-root/playcover-runtime"
+IOS_USE_RUNTIME_DERIVED_DATA="$IOS_USE_RUNTIME_TEMP/DerivedData"
+IOS_USE_RUNTIME_PRODUCTS="$IOS_USE_RUNTIME_TEMP/products"
+IOS_USE_RUNTIME_FRAMEWORK="$IOS_USE_RUNTIME_PRODUCTS/IOSUsePlayRuntime.framework"
 
-mkdir -p "$IOS_USE_RUNTIME_FRAMEWORK"
+if ! command -v xcodegen >/dev/null 2>&1; then
+  echo "[playcover-runtime] ERROR: xcodegen is required to build the mixed Catalyst Runtime"
+  exit 69
+fi
 
-echo "[playcover-runtime] Building iPhoneOS arm64 dylib..."
-"$IOS_USE_RUNTIME_CLANG" \
-  -dynamiclib \
-  -arch arm64 \
-  -isysroot "$IOS_USE_RUNTIME_SDK" \
-  -miphoneos-version-min=13.0 \
-  -fobjc-arc \
-  -fmodules \
-  -Wall \
-  -Wextra \
-  -Werror \
-  -framework Foundation \
-  -framework UIKit \
-  -install_name "@rpath/IOSUsePlayRuntime.framework/IOSUsePlayRuntime" \
-  -current_version 1.0.0 \
-  -compatibility_version 1.0.0 \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntime.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeDOM.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeSocket.m" \
-  -o "$IOS_USE_RUNTIME_RAW"
+mkdir -p "$IOS_USE_RUNTIME_PRODUCTS" "$IOS_USE_RUNTIME_PROJECT_DIR"
+ln -s "$IOS_USE_REPO_ROOT" "$IOS_USE_RUNTIME_PROJECT_DIR/source-root"
+IOS_USE_RUNTIME_SOURCE_ROOT="$IOS_USE_RUNTIME_PROJECT_SOURCE_ROOT" xcodegen \
+  --quiet \
+  --spec "$IOS_USE_RUNTIME_SOURCE_ROOT/project.yml" \
+  --project "$IOS_USE_RUNTIME_PROJECT_DIR" \
+  --project-root "$IOS_USE_RUNTIME_PROJECT_DIR"
 
-echo "[playcover-runtime] Rewriting platform to Mac Catalyst..."
-"$IOS_USE_RUNTIME_VTOOL" \
-  -set-build-version maccatalyst 11.0 14.0 \
-  -replace \
-  -output "$IOS_USE_RUNTIME_FRAMEWORK/IOSUsePlayRuntime" \
-  "$IOS_USE_RUNTIME_RAW"
+IOS_USE_RUNTIME_XCODE_ARGS=(
+  -quiet
+  -project "$IOS_USE_RUNTIME_PROJECT_PATH"
+  -scheme IOSUsePlayRuntime
+  -configuration Release
+  -destination "generic/platform=macOS,variant=Mac Catalyst"
+  -derivedDataPath "$IOS_USE_RUNTIME_DERIVED_DATA"
+  ARCHS=arm64
+  ONLY_ACTIVE_ARCH=YES
+  CODE_SIGNING_ALLOWED=NO
+  CONFIGURATION_BUILD_DIR="$IOS_USE_RUNTIME_PRODUCTS"
+  IOS_USE_RUNTIME_SOURCE_ROOT="$IOS_USE_RUNTIME_SOURCE_ROOT"
+  GCC_TREAT_WARNINGS_AS_ERRORS=YES
+  SWIFT_TREAT_WARNINGS_AS_ERRORS=YES
+)
 
-cp "$IOS_USE_REPO_ROOT/playcover-runtime/Info.plist" \
-  "$IOS_USE_RUNTIME_FRAMEWORK/Info.plist"
-chmod 755 "$IOS_USE_RUNTIME_FRAMEWORK/IOSUsePlayRuntime"
-plutil -lint "$IOS_USE_RUNTIME_FRAMEWORK/Info.plist" >/dev/null
+echo "[playcover-runtime] Building one mixed Objective-C/Swift Catalyst framework..."
+xcodebuild "${IOS_USE_RUNTIME_XCODE_ARGS[@]}" build
+if [ "$IOS_USE_RUNTIME_ANALYZE" = "true" ]; then
+  echo "[playcover-runtime] Running Clang static analyzer..."
+  xcodebuild "${IOS_USE_RUNTIME_XCODE_ARGS[@]}" analyze
+fi
+
+if [ ! -x "$IOS_USE_RUNTIME_FRAMEWORK/IOSUsePlayRuntime" ]; then
+  echo "[playcover-runtime] ERROR: mixed framework product was not produced"
+  exit 1
+fi
+
+IOS_USE_RUNTIME_INFO_PLIST="$IOS_USE_RUNTIME_FRAMEWORK/Info.plist"
+if [ ! -f "$IOS_USE_RUNTIME_INFO_PLIST" ]; then
+  IOS_USE_RUNTIME_INFO_PLIST="$IOS_USE_RUNTIME_FRAMEWORK/Versions/A/Resources/Info.plist"
+fi
+if [ ! -f "$IOS_USE_RUNTIME_INFO_PLIST" ]; then
+  echo "[playcover-runtime] ERROR: framework Info.plist was not produced"
+  exit 1
+fi
+plutil -lint -- "$IOS_USE_RUNTIME_INFO_PLIST"
 /usr/bin/codesign \
   --force \
   --sign - \

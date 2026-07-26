@@ -51,7 +51,15 @@ protocol DriverCommandClient: AnyObject {
     func screenshotCapture() throws -> ScreenshotCapture
     func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
-    func input(tap: ForyTarget?, content: String) throws
+    func input(tap: ForyTarget?, content: String) throws -> ForyElementPayload
+    func input(
+        tap: ForyTarget?,
+        content: String,
+        deleteCount: Int,
+        enter: Bool,
+        traits: String?,
+        cindex: Int32?
+    ) throws -> ForyElementPayload
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32?) throws -> ForySwipePayload
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
@@ -60,6 +68,7 @@ protocol DriverCommandClient: AnyObject {
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
+    func evidenceSnapshot() throws -> DriverEvidenceSnapshot
 }
 
 struct ScreenshotCapture {
@@ -70,6 +79,9 @@ struct ScreenshotCapture {
     let geometrySource: String?
     let warning: String?
     let performance: ScreenshotCapturePerformance?
+    let snapshotGeneration: Int64?
+    let captureGeneration: Int64?
+    let runtimeEvidence: [String: PlayCoverRuntimeJSONValue]?
 
     init(
         jpeg: Data,
@@ -78,7 +90,11 @@ struct ScreenshotCapture {
         scale: Double? = nil,
         geometrySource: String? = nil,
         warning: String? = nil,
-        performance: ScreenshotCapturePerformance? = nil
+        performance: ScreenshotCapturePerformance? = nil,
+        snapshotGeneration: Int64? = nil,
+        captureGeneration: Int64? = nil,
+        runtimeEvidence:
+            [String: PlayCoverRuntimeJSONValue]? = nil
     ) {
         self.jpeg = jpeg
         self.pixelSize = pixelSize
@@ -87,7 +103,15 @@ struct ScreenshotCapture {
         self.geometrySource = geometrySource
         self.warning = warning
         self.performance = performance
+        self.snapshotGeneration = snapshotGeneration
+        self.captureGeneration = captureGeneration
+        self.runtimeEvidence = runtimeEvidence
     }
+}
+
+struct DriverEvidenceSnapshot {
+    let screenshot: ScreenshotCapture
+    let dom: ForyDomPayload
 }
 
 struct ScreenshotCapturePerformance: Codable, Equatable {
@@ -110,6 +134,35 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func input(
+        tap: ForyTarget?,
+        content: String,
+        deleteCount: Int,
+        enter: Bool,
+        traits: String?,
+        cindex: Int32?
+    ) throws -> ForyElementPayload {
+        _ = traits
+        _ = cindex
+        guard (0...1_048_576).contains(deleteCount) else {
+            throw CLIParseError.invalidValue(
+                "input delete count must be between 0 and 1048576"
+            )
+        }
+        let deletePrefix = String(repeating: "\u{7F}", count: deleteCount)
+        return try input(
+            tap: tap,
+            content: deletePrefix + content + (enter ? "\n" : "")
+        )
+    }
+
+    func evidenceSnapshot() throws -> DriverEvidenceSnapshot {
+        DriverEvidenceSnapshot(
+            screenshot: try screenshotCapture(),
+            dom: try dom(raw: false, fresh: true, waitQuiescence: false)
+        )
+    }
+
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
         throw CLIParseError.invalidValue("waitAppForeground is not supported by this driver client")
     }
@@ -355,8 +408,49 @@ final class DriverClient: DriverCommandClient {
         return try send(LongPressCommand.self, args: ForyLongPressArgs(target: target.withLookup(traits: traits, cindex: cindex), duration: durationSeconds))
     }
 
-    func input(tap: ForyTarget?, content: String) throws {
-        _ = try sendRaw(InputCommand.self, args: ForyInputArgs(target: tap ?? ForyTarget(), content: content))
+    func input(tap: ForyTarget?, content: String) throws -> ForyElementPayload {
+        try input(
+            tap: tap,
+            content: content,
+            deleteCount: 0,
+            enter: false,
+            traits: nil,
+            cindex: nil
+        )
+    }
+
+    func input(
+        tap: ForyTarget?,
+        content: String,
+        deleteCount: Int,
+        enter: Bool,
+        traits: String?,
+        cindex: Int32?
+    ) throws -> ForyElementPayload {
+        guard (0...1_048_576).contains(deleteCount) else {
+            throw CLIParseError.invalidValue(
+                "input delete count must be between 0 and 1048576"
+            )
+        }
+        let payload = try fory.serialize(
+            ForyInputArgs(
+                target: (tap ?? ForyTarget()).withLookup(
+                    traits: traits,
+                    cindex: cindex
+                ),
+                content: content,
+                deleteCount: Int32(deleteCount),
+                enter: enter
+            )
+        )
+        let response = try sendRawPayload(
+            command: InputCommand.command.rawValue,
+            payload: payload
+        )
+        return try fory.deserialize(
+            response,
+            as: ForyElementPayload.self
+        )
     }
 
     func swipe(to: ForyTarget, from: ForyTarget, distance: Double?, dir: String?, traits: String?, cindex: Int32? = nil) throws -> ForySwipePayload {

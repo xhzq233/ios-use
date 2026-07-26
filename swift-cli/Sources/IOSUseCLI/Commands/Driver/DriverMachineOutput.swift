@@ -28,19 +28,37 @@ extension DriverCommandResult {
         case (.screenshot, _):
             return artifact.map(machineArtifact) ?? .object([:])
         case (.tap, .element(let element)):
-            return .object(["element": machineElement(element.element)])
+            return machineAction(element)
         case (.longPress, .element(let element)):
-            return .object(["element": machineElement(element.element)])
-        case (.input(let tap, let content, let delete, let enter, _, _, _), _):
-            return .object([
+            return machineAction(element)
+        case (
+            .input(
+                let tap,
+                let content,
+                let delete,
+                let enter,
+                _,
+                _,
+                _
+            ),
+            .element(let element)
+        ):
+            var value: [String: MachineValue] = [
                 "tapTarget": tap.map(MachineValue.string) ?? .null,
                 "contentLength": .integer(content.count),
                 "deleteCount": .integer(delete),
                 "enter": .boolean(enter),
-            ])
+            ]
+            if case .object(let action) = machineAction(element) {
+                value.merge(action) { _, new in new }
+            }
+            return .object(value)
         case (.swipe, .swipe(let swipe)):
             return .object([
                 "element": machineElement(swipe.element),
+                "hitView": swipe.hitView.map(machineHitView) ?? .null,
+                "finalState": swipe.finalState.map(machineFinalState) ?? .null,
+                "postcondition": swipe.postcondition.map(machinePostcondition) ?? .null,
                 "scrolls": .integer(Int(swipe.scrolls)),
                 "direction": .string(swipe.scrollDirection),
             ])
@@ -56,6 +74,9 @@ extension DriverCommandResult {
                 "text": .string(alert.text),
                 "button": .string(alert.button),
                 "reason": .string(alert.reason),
+                "hitView": alert.hitView.map(machineHitView) ?? .null,
+                "finalState": alert.finalState.map(machineFinalState) ?? .null,
+                "postcondition": alert.postcondition.map(machinePostcondition) ?? .null,
             ])
         default:
             return .object([:])
@@ -68,6 +89,7 @@ func machineDom(_ payload: ForyDomPayload) -> MachineValue {
         "app": .string(payload.app),
         "windowSize": machinePoint(payload.windowSize),
         "raw": payload.raw.isEmpty ? .null : .string(payload.raw),
+        "snapshotGeneration": .integer(Int(payload.snapshotGeneration)),
         "elements": .array(DriverOutput.presentationDomElements(payload.elements).map(machineDomElement)),
     ])
 }
@@ -75,9 +97,20 @@ func machineDom(_ payload: ForyDomPayload) -> MachineValue {
 private func machineDomElement(_ element: ForyDomElement) -> MachineValue {
     .object([
         "traits": .array(element.traits.map(MachineValue.string)),
+        "nodeID": .string(element.nodeID),
+        "semanticType": .string(element.type),
+        "elementType": .integer(Int(element.elementType)),
         "childCount": .integer(Int(element.childCount)),
         "label": .string(element.label),
         "value": .string(element.value),
+        "identifier": .string(element.identifier),
+        "hint": .string(element.hint),
+        "class": .string(element.className),
+        "state": machineState(element.state),
+        "hierarchy": machineHierarchy(element.hierarchy),
+        "ancestors": .array(element.ancestors.map(MachineValue.string)),
+        "zOrder": .integer(Int(element.zOrder)),
+        "snapshotGeneration": .integer(Int(element.snapshotGeneration)),
         "frame": element.rect.map(machineRect) ?? .null,
     ])
 }
@@ -86,9 +119,112 @@ private func machineElement(_ element: ForyElementSummary) -> MachineValue {
     .object([
         "type": .string(DriverOutput.elementTypeName(element.elemType)),
         "typeCode": .integer(Int(element.elemType)),
+        "nodeID": .string(element.nodeID),
+        "semanticType": .string(element.type),
         "label": .string(element.label),
+        "value": .string(element.value),
+        "identifier": .string(element.identifier),
+        "hint": .string(element.hint),
+        "class": .string(element.className),
+        "traits": .array(element.traits.map(MachineValue.string)),
+        "state": machineState(element.state),
         "frame": element.rect.map(machineRect) ?? .null,
+        "hierarchy": machineHierarchy(element.hierarchy),
         "ancestors": .array(element.ancestors.map(MachineValue.string)),
+        "zOrder": .integer(Int(element.zOrder)),
+        "snapshotGeneration": .integer(Int(element.snapshotGeneration)),
+    ])
+}
+
+private func machineAction(
+    _ payload: ForyElementPayload
+) -> MachineValue {
+    .object([
+        "element": machineElement(payload.element),
+        "hitView": payload.hitView.map(machineHitView) ?? .null,
+        "finalState": payload.finalState.map(machineFinalState) ?? .null,
+        "postcondition": payload.postcondition.map(machinePostcondition) ?? .null,
+    ])
+}
+
+private func machineHitView(_ hitView: ForyHitView) -> MachineValue {
+    .object([
+        "class": .string(hitView.className),
+        "frame": hitView.rect.map(machineRect) ?? .null,
+        "accessibilityIdentifier":
+            .string(hitView.accessibilityIdentifier),
+        "label": .string(hitView.label),
+    ])
+}
+
+private func machineFinalState(
+    _ state: ForyTouchFinalState
+) -> MachineValue {
+    .object([
+        "point": machinePoint(state.point),
+        "touchID": .integer(Int(state.touchID)),
+        "phase": .string(state.phase),
+        "firstResponderClass":
+            state.firstResponderClass.isEmpty
+                ? .null
+                : .string(state.firstResponderClass),
+    ])
+}
+
+private func machinePostcondition(
+    _ postcondition: ForyActionPostcondition
+) -> MachineValue {
+    .object([
+        "snapshotGeneration":
+            .integer(Int(postcondition.snapshotGeneration)),
+        "element": postcondition.element.map(machineElement) ?? .null,
+        "changed": .boolean(postcondition.changed),
+        "domChanged": .boolean(postcondition.domChanged),
+        "pixelEvidence": postcondition.pixelEvidence.map {
+            .object([
+                "beforeHash": .string($0.beforeHash),
+                "afterHash": .string($0.afterHash),
+                "beforeCaptureGeneration":
+                    .integer(Int($0.beforeCaptureGeneration)),
+                "afterCaptureGeneration":
+                    .integer(Int($0.afterCaptureGeneration)),
+                "logicalRect": .object([
+                    "x": .double($0.logicalX),
+                    "y": .double($0.logicalY),
+                    "width": .double($0.logicalWidth),
+                    "height": .double($0.logicalHeight),
+                ]),
+                "changed": .boolean($0.changed),
+            ])
+        } ?? .null,
+    ])
+}
+
+private func machineState(
+    _ state: ForyElementState
+) -> MachineValue {
+    .object([
+        "enabled": .boolean(state.enabled),
+        "visible": .boolean(state.visible),
+        "selected": .boolean(state.selected),
+        "focused": .boolean(state.focused),
+        "opaque": .boolean(state.opaque),
+    ])
+}
+
+private func machineHierarchy(
+    _ hierarchy: ForyElementHierarchy
+) -> MachineValue {
+    .object([
+        "parentID":
+            hierarchy.parentID.isEmpty
+                ? .null
+                : .string(hierarchy.parentID),
+        "depth": .integer(Int(hierarchy.depth)),
+        "index": .integer(Int(hierarchy.index)),
+        "path": .array(
+            hierarchy.path.map(MachineValue.string)
+        ),
     ])
 }
 
@@ -100,6 +236,19 @@ private func machineArtifact(_ artifact: ScreenshotArtifactService.Result) -> Ma
         "logicalSize": artifact.logicalSize.map(machinePoint) ?? .null,
         "scale": artifact.scale.map(MachineValue.double) ?? .null,
         "geometrySource": artifact.geometrySource.map(MachineValue.string) ?? .null,
+        "snapshotGeneration": artifact.snapshotGeneration.map {
+            .integer(Int($0))
+        } ?? .null,
+        "captureGeneration": artifact.captureGeneration.map {
+            .integer(Int($0))
+        } ?? .null,
+        "runtimeEvidence": artifact.runtimeEvidence.map {
+            .object(
+                $0.mapValues(
+                    StatusService.playCoverRuntimeJSONMachineValue
+                )
+            )
+        } ?? .null,
     ]
     if let performance = artifact.performance {
         value["performance"] = .object([

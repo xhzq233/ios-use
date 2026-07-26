@@ -28,6 +28,13 @@ enum DriverFailureEvidence {
             let dom: String?
         }
 
+        struct Generations: Codable {
+            let screenshotSnapshot: Int64?
+            let domSnapshot: Int64?
+            let capture: Int64?
+            let consistent: Bool?
+        }
+
         struct Timing: Codable {
             let screenshotElapsedMs: Int?
             let screenshotOffsetMs: Int?
@@ -76,6 +83,7 @@ enum DriverFailureEvidence {
         let error: ErrorInfo
         let timing: Timing
         let artifacts: Artifacts
+        let generations: Generations
         let warnings: [String]
     }
 
@@ -87,6 +95,9 @@ enum DriverFailureEvidence {
         var ocrElapsedMs: Int?
         var ocrOffsetMs: Int?
         var warnings: [String] = []
+        var snapshotGeneration: Int64?
+        var domGeneration: Int64?
+        var captureGeneration: Int64?
     }
 
     private struct DOMEvidence {
@@ -162,43 +173,63 @@ enum DriverFailureEvidence {
         var ocrOffsetMs: Int?
         var domElapsedMs: Int?
         var domOffsetMs: Int?
+        var snapshotGeneration: Int64?
+        var domGeneration: Int64?
+        var captureGeneration: Int64?
 
         if evidenceProfile == .uiSnapshot {
-            let group = DispatchGroup()
-            let resultLock = NSLock()
-            let domSession = LockedDriverClientSession(paths: paths)
             var screenshotEvidence = ScreenshotEvidence()
             var domEvidence = DOMEvidence()
-
-            group.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = collectScreenshotEvidence(
+            let isPlayCover =
+                (try? SessionService.readDriverLockInfo(
+                    paths: paths
+                ))?.deviceType == PlayCoverSessionService.deviceType
+            if isPlayCover {
+                let result = collectPlayCoverEvidence(
                     session: session,
                     paths: paths,
                     directoryURL: directoryURL,
                     collectionStarted: collectionStarted
                 )
-                resultLock.lock()
-                screenshotEvidence = result
-                resultLock.unlock()
-                group.leave()
-            }
-
-            group.enter()
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = collectDOMEvidence(
-                    session: domSession,
-                    directoryURL: directoryURL,
-                    collectionStarted: collectionStarted
+                screenshotEvidence = result.screenshot
+                domEvidence = result.dom
+                snapshotGeneration = result.snapshotGeneration
+                domGeneration = result.domGeneration
+                captureGeneration = result.captureGeneration
+            } else {
+                let group = DispatchGroup()
+                let resultLock = NSLock()
+                let domSession = LockedDriverClientSession(
+                    paths: paths
                 )
-                resultLock.lock()
-                domEvidence = result
-                resultLock.unlock()
-                group.leave()
+                group.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = collectScreenshotEvidence(
+                        session: session,
+                        paths: paths,
+                        directoryURL: directoryURL,
+                        collectionStarted: collectionStarted
+                    )
+                    resultLock.lock()
+                    screenshotEvidence = result
+                    resultLock.unlock()
+                    group.leave()
+                }
+                group.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = collectDOMEvidence(
+                        session: domSession,
+                        directoryURL: directoryURL,
+                        collectionStarted: collectionStarted
+                    )
+                    resultLock.lock()
+                    domEvidence = result
+                    resultLock.unlock()
+                    group.leave()
+                }
+                group.wait()
+                domSession.close()
             }
-
-            group.wait()
-            domSession.close()
 
             screenshotPath = screenshotEvidence.screenshotPath
             ocrPath = screenshotEvidence.ocrPath
@@ -219,7 +250,7 @@ enum DriverFailureEvidence {
         let manifestURL = directoryURL.appendingPathComponent("manifest.json")
         let totalElapsedMs = elapsedMilliseconds(since: collectionStarted)
         let manifest = Manifest(
-            schemaVersion: 2,
+            schemaVersion: 3,
             command: action.name,
             profile: evidenceProfile.rawValue,
             capturedAt: ISO8601DateFormatter().string(from: capturedAt),
@@ -237,6 +268,14 @@ enum DriverFailureEvidence {
                 screenshot: screenshotPath.map { URL(fileURLWithPath: $0).lastPathComponent },
                 ocr: ocrPath.map { URL(fileURLWithPath: $0).lastPathComponent },
                 dom: domPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+            ),
+            generations: Manifest.Generations(
+                screenshotSnapshot: snapshotGeneration,
+                domSnapshot: domGeneration,
+                capture: captureGeneration,
+                consistent: snapshotGeneration.map { generation in
+                    domGeneration == generation
+                }
             ),
             warnings: warnings
         )
@@ -344,6 +383,147 @@ enum DriverFailureEvidence {
         } catch {
             return DOMEvidence(warning: "DOM unavailable: \(error)")
         }
+    }
+
+    private struct PlayCoverEvidence {
+        let screenshot: ScreenshotEvidence
+        let dom: DOMEvidence
+        let snapshotGeneration: Int64?
+        let domGeneration: Int64?
+        let captureGeneration: Int64?
+    }
+
+    private static func collectPlayCoverEvidence(
+        session: LockedDriverClientSession,
+        paths: IOSUsePaths,
+        directoryURL: URL,
+        collectionStarted: CFAbsoluteTime
+    ) -> PlayCoverEvidence {
+        var lastError: Error?
+        for _ in 0..<3 {
+            do {
+                let started = CFAbsoluteTimeGetCurrent()
+                var atomicDOM: ForyDomPayload?
+                let capture = try session.run { client in
+                    try ScreenshotCaptureCoordinator.capture(
+                        paths: paths
+                    ) {
+                        let snapshot =
+                            try client.evidenceSnapshot()
+                        atomicDOM = snapshot.dom
+                        return snapshot.screenshot
+                    }
+                }
+                guard let dom = atomicDOM,
+                      let screenshotGeneration =
+                        capture.snapshotGeneration,
+                      screenshotGeneration > 0,
+                      let captureGeneration =
+                        capture.captureGeneration,
+                      captureGeneration > 0,
+                      dom.snapshotGeneration
+                        == screenshotGeneration else {
+                    throw PlayCoverDriverClientError
+                        .malformedRuntimePayload(
+                            "evidence screenshot/DOM generation"
+                        )
+                }
+
+                var screenshot = ScreenshotEvidence()
+                let imageURL = directoryURL
+                    .appendingPathComponent("screenshot.jpg")
+                try capture.jpeg.write(
+                    to: imageURL,
+                    options: .atomic
+                )
+                screenshot.screenshotPath = imageURL.path
+                screenshot.screenshotElapsedMs =
+                    elapsedMilliseconds(since: started)
+                screenshot.screenshotOffsetMs =
+                    elapsedMilliseconds(since: collectionStarted)
+                if let warning = capture.warning {
+                    screenshot.warnings.append(warning)
+                }
+                let ocrStarted = CFAbsoluteTimeGetCurrent()
+                do {
+                    let logicalSize = capture.logicalSize.map {
+                        CGSize(width: $0.x, height: $0.y)
+                    }
+                    let result = try recognizeOCR(
+                        data: capture.jpeg,
+                        logicalSize: logicalSize,
+                        scale: capture.scale,
+                        recognitionLevel: .fast
+                    )
+                    let elapsed = elapsedMilliseconds(
+                        since: ocrStarted
+                    )
+                    screenshot.ocrPath =
+                        try OCRService.writeSidecar(
+                            result: result,
+                            imagePath: imageURL.path,
+                            elapsedMs: elapsed
+                        )
+                    screenshot.ocrElapsedMs = elapsed
+                    screenshot.ocrOffsetMs =
+                        elapsedMilliseconds(
+                            since: collectionStarted
+                        )
+                } catch {
+                    screenshot.ocrElapsedMs =
+                        elapsedMilliseconds(since: ocrStarted)
+                    screenshot.ocrOffsetMs =
+                        elapsedMilliseconds(
+                            since: collectionStarted
+                        )
+                    screenshot.warnings.append(
+                        "OCR unavailable: \(error)"
+                    )
+                }
+
+                let domStarted = CFAbsoluteTimeGetCurrent()
+                let domURL = directoryURL
+                    .appendingPathComponent("dom.txt")
+                try DriverOutput.formatDom(dom).write(
+                    to: domURL,
+                    atomically: true,
+                    encoding: .utf8
+                )
+                let domEvidence = DOMEvidence(
+                    path: domURL.path,
+                    elapsedMs: elapsedMilliseconds(
+                        since: domStarted
+                    ),
+                    offsetMs: elapsedMilliseconds(
+                        since: collectionStarted
+                    ),
+                    warning: nil
+                )
+                return PlayCoverEvidence(
+                    screenshot: screenshot,
+                    dom: domEvidence,
+                    snapshotGeneration:
+                        screenshotGeneration,
+                    domGeneration: dom.snapshotGeneration,
+                    captureGeneration: captureGeneration
+                )
+            } catch {
+                lastError = error
+            }
+        }
+        let warning =
+            "atomic PlayCover evidence unavailable after 3 attempts: "
+            + String(describing: lastError ?? CLIParseError
+                .invalidValue("unknown generation mismatch"))
+        return PlayCoverEvidence(
+            screenshot: ScreenshotEvidence(
+                warnings: [warning]
+            ),
+            dom: DOMEvidence(warning: warning),
+            snapshotGeneration: nil,
+            domGeneration: nil,
+            captureGeneration: nil
+        )
     }
 
     private static func failure(from error: Error) -> Failure? {

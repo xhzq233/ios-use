@@ -1,0 +1,31 @@
+//
+//  BaseApp.swift
+//  PlayCover
+//
+
+import Foundation
+
+public class BaseApp {
+    /// All mach-o binaries within the app, including the executable itself.
+    /// Call resolveValidMachOs to ensure a non-nil value.
+    public var validMachOs: [URL]?
+
+    public let info: AppInfo
+    public var url: URL
+
+    public var executable: URL {
+        url.appendingEscapedPathComponent(info.executableName)
+    }
+
+    public var entitlements: URL {
+        Entitlements.playCoverEntitlementsDir
+            .appendingPathComponent(info.bundleIdentifier)
+            .appendingPathExtension("plist")
+    }
+
+    public init(appUrl: URL) {
+        url = appUrl
+        info = AppInfo(contentsOf: url.appendingPathComponent("Info")
+                                      .appendingPathExtension("plist"))
+    }
+}

@@ -25,6 +25,8 @@ enum CaptureService {
             let displayInfoElapsedMs: Int?
             let displayInfoServiceElapsedMs: Int?
             let captureElapsedMs: Int?
+            let snapshotGeneration: Int64?
+            let captureGeneration: Int64?
             let path: String?
 
             func applying(diff: ImageDiffService.Result, diffError: String?, path: String?) -> Frame {
@@ -49,6 +51,8 @@ enum CaptureService {
                     displayInfoElapsedMs: displayInfoElapsedMs,
                     displayInfoServiceElapsedMs: displayInfoServiceElapsedMs,
                     captureElapsedMs: captureElapsedMs,
+                    snapshotGeneration: snapshotGeneration,
+                    captureGeneration: captureGeneration,
                     path: path
                 )
             }
@@ -94,6 +98,12 @@ enum CaptureService {
         let deadline = monotonicStartedAt + options.duration
         var nextSample = monotonicStartedAt
         let diffMethod = "logical-tile-mae-v1"
+        let isPlayCover =
+            (try? SessionService.readDriverLockInfo(
+                paths: paths
+            ))?.deviceType == PlayCoverSessionService.deviceType
+        var lastPlayCoverCaptureGeneration: Int64?
+        var lastPlayCoverSnapshotGeneration: Int64?
 
         var captureError: Error?
         var interruption: CLIExitSignal?
@@ -123,6 +133,39 @@ enum CaptureService {
                     let capture = try ScreenshotCaptureCoordinator.capture(paths: paths) {
                         try client.screenshotCapture()
                     }
+                    if isPlayCover {
+                        guard let captureGeneration =
+                                capture.captureGeneration,
+                              captureGeneration > 0,
+                              let snapshotGeneration =
+                                capture.snapshotGeneration,
+                              snapshotGeneration > 0 else {
+                            throw CLIParseError.invalidValue(
+                                "PlayCover capture frame is missing "
+                                    + "Runtime generation identity"
+                            )
+                        }
+                        if let previous =
+                                lastPlayCoverCaptureGeneration,
+                           captureGeneration <= previous {
+                            throw CLIParseError.invalidValue(
+                                "PlayCover captureGeneration did not "
+                                    + "advance monotonically"
+                            )
+                        }
+                        if let previous =
+                                lastPlayCoverSnapshotGeneration,
+                           snapshotGeneration < previous {
+                            throw CLIParseError.invalidValue(
+                                "PlayCover snapshotGeneration moved "
+                                    + "backwards"
+                            )
+                        }
+                        lastPlayCoverCaptureGeneration =
+                            captureGeneration
+                        lastPlayCoverSnapshotGeneration =
+                            snapshotGeneration
+                    }
                     let image = capture.jpeg
                     try interruptMonitor.throwIfInterrupted()
                     let index = frames.count + 1
@@ -151,6 +194,10 @@ enum CaptureService {
                         displayInfoElapsedMs: capture.performance?.displayInfoElapsedMs,
                         displayInfoServiceElapsedMs: capture.performance?.displayInfoServiceElapsedMs,
                         captureElapsedMs: capture.performance?.totalElapsedMs,
+                        snapshotGeneration:
+                            capture.snapshotGeneration,
+                        captureGeneration:
+                            capture.captureGeneration,
                         path: path.path
                     ))
                     nextSample = nextScheduledSample(

@@ -1,188 +1,211 @@
 # Headless PlayCover Backend
 
-## Status
+## Scope
 
-This backend is experimental and source-build-only. Its current slice provides
-deterministic profile, prepare, verify, launch, direct Runtime diagnostics,
-window screenshot, capture reuse, and terminate operations for unencrypted
-thin arm64 iPhone Apps on Apple silicon.
+The source-build-only PlayCover backend runs a managed, unencrypted arm64
+iPhone App on Apple silicon without the PlayCover GUI. It directly ports the
+non-GUI preparation graph from pinned PlayCover sources and injects one
+Mac Catalyst Runtime containing the pinned PlayTools compatibility and touch
+code.
 
-The current slice does not yet expose DOM, wait, touch, or input commands. The
-injected runtime is deliberately bounded to device/profile compatibility,
-UIKit/AppKit geometry, and a versioned local Unix-socket protocol.
-
-## Fixed Device Profile
-
-The initial profile matches the current vPhone default:
-
-| Field | Value |
-| --- | --- |
-| Product type | `iPhone16,2` |
-| Logical portrait size | 430 x 932 points |
-| Native portrait size | 1290 x 2796 pixels |
-| Scale | 3x |
-| PPI | 460 |
-
-The profile is immutable for one prepared generation. The host writes its
-stable SHA-256 hash into the App, and `launch` rejects runtime evidence whose
-hash or dimensions do not match.
-
-UIKit stays in a 430 x 932 logical coordinate space. macOS may uniformly scale
-the physical AppKit presentation down to fit the available display; that
-presentation size is not a second logical coordinate system. Screenshots are
-normalized back to 1290 x 2796 and carry 430 x 932 @3x metadata.
-
-## Architecture
-
-The GUI-free preparation path is:
-
-```text
-ios-use start --playcover --app <App.app>
-  -> PlayCoverManagedAppService
-     -> prepared marker verification, or iPhoneOS source classification
-     -> default runtime discovery
-     -> deterministic managed generation selection
-  -> PlayCoverService
-     -> bounded Mach-O inspection/conversion
-     -> APFS clone + runtime embedding
-     -> per-Mach-O and top-level ad-hoc signing
-     -> NSWorkspace launch with an exact PID
-        and credential-minimized environment
-  -> IOSUsePlayRuntime.framework
-     -> iPhone model/platform interposition
-     -> UIScreen/FBS/scene fixed geometry
-     -> key UIKit window to AppKit window bridge
-     -> private runtime.sock listener
-  -> PlayCoverRuntimeClient
-     -> direct AF_UNIX hello/ping/diagnostics
-     -> peer UID + launch nonce + generation/instance validation
-```
-
-There is no PlayCover backend server or helper process. The wire format is
-versioned JSON with a four-byte big-endian length, a 64 KiB frame limit, and
-one request per Unix-socket connection. It has no TCP fallback.
-
-Lifecycle uses the normal active-session surface:
-
-```text
-ios-use start --playcover [--app <source-or-prepared.app>]
-  -> explicit source prepare/reuse, explicit prepared verification,
-     or last-prepared.json
-  -> private bootstrap + verify + launch + direct runtime hello
-  -> driver.lock { app, pid, profile/generation, socket, nonce, runtime instance }
-  -> all session-bound commands resolve PlayCover until ios-use stop
-```
-
-The host never edits the source App. `prepare` requires a destination that does
-not exist, preflights the source before copying, and removes only a partial
-destination created by the failing transaction. It refuses encrypted,
-fat/byte-swapped, non-arm64, malformed, or unsupported-platform Mach-Os.
-
-Mach-O rewriting is bounded to the header and load-command area. Expansion is
-allowed only when every consumed padding byte is zero and the first section
-offset provides enough capacity. The main executable receives exactly one
-`LC_LOAD_DYLIB` for:
-
-```text
-@executable_path/Frameworks/IOSUsePlayRuntime.framework/IOSUsePlayRuntime
-```
-
-## Build and Use
+The public lifecycle is intentionally small:
 
 ```bash
-bash scripts/build_swift_cli.sh --debug
-
-./ios-use playcover inspect /path/to/Source.app --json
 ./ios-use start --playcover --app /path/to/Source.app
 ./ios-use status
-./ios-use screenshot
+# normal ios-use UI, screenshot, capture, URL, and log commands
 ./ios-use stop
 ```
 
-`screenshot` is a direct Runtime command over the private Unix socket. The
-injected Runtime captures the target process's own window compositor, removes
-the AppKit frame/title area, normalizes the result, and returns a bounded JPEG
-payload. The CLI verifies the active Runtime identity, fixed 430 x 932 @3x
-profile, JPEG format, and exact 1290 x 2796 raster before writing the normal
-ios-use artifact. This path does not use ScreenCaptureKit and does not require
-macOS Screen Recording permission. Runtime compositor fallbacks are reported
-in screenshot metadata instead of silently switching to host screen capture.
+`start --playcover` without `--app` reuses the most recent verified generation
+from the current `IOS_USE_HOME`. There are no public `playcover inspect`,
+`prepare`, or `verify` commands; those are internal start steps and test
+entry points.
 
-`dom` and `waitFor` are also direct Runtime commands. They use the injected
-process's UIKit accessibility tree and return the same semantic payloads used
-by the other ios-use backends. App lifecycle remains owned by
-`start --playcover` and `stop`; mutation commands not yet implemented by the
-PlayCover Runtime fail explicitly rather than falling back to another backend.
+## Fixed Device Contract
 
-The local Swift CLI build keeps
-`.ios-use/playcover/IOSUsePlayRuntime.framework` up to date when running on
-Apple silicon with the iPhoneOS SDK. A source-built install copies that runtime
-to `IOS_USE_HOME/playcover/`. The normal start command discovers it
-automatically; callers do not pass a runtime path.
+`swift-cli/Sources/IOSUsePlayDevice/include/IOSUsePlayDevice.h` is the single
+compile-time authority used by the Swift host, Objective-C Runtime, PlayTools
+adapter, AppKit bridge, and tests:
 
-For explicit output control or backend debugging, the lower-level toolbox is
-still available:
+| Field | Fixed value |
+| --- | --- |
+| Product type | `iPhone16,2` |
+| Portrait logical screen | 430 x 932 points |
+| Scale | 3x |
+| Virtual native raster | 1290 x 2796 pixels |
+| Safe area | top 59, left 0, bottom 34, right 0 points |
 
-```bash
-./ios-use playcover prepare /path/to/Source.app \
-  --output /path/to/Prepared.app \
-  --runtime .ios-use/playcover/IOSUsePlayRuntime.framework \
-  --json
+The Runtime does not read a device profile or bootstrap file. Fixed geometry
+is not persisted in the session or cache key. A header change alters the
+Runtime build hash and therefore selects a new prepared generation naturally.
 
-./ios-use playcover verify /path/to/Prepared.app --json
+The AppKit window is borderless and non-resizable. Its frame,
+`contentLayoutRect`, and content-view bounds must all be exactly 430 x 932
+points with an identity AppKit-to-UIKit logical transform. A display that
+cannot fit that window causes start to fail; the backend does not introduce a
+second scaled coordinate system.
+
+The full device frame includes the Dynamic Island, status glyphs, and Home
+Indicator. The fallback system chrome is an independent pass-through UIKit
+window. Safe-area insets are layout guides inside the full 430 x 932 root;
+they are not crop bounds and the overlay cannot consume App touch events.
+
+## Architecture and Session
+
+```text
+ios-use start --playcover [--app <source-or-managed-prepared.app>]
+  -> PlayCoverManagedAppService
+     -> source classification or bounded managed-generation verification
+     -> deterministic generation selection under this IOS_USE_HOME
+  -> PlayCoverService
+     -> pinned PlayCover prepare graph and full verification
+     -> NSWorkspace launch with exact environment and PID
+  -> IOSUsePlayRuntime.framework
+     -> pinned PlayTools platform/geometry/keychain hooks
+     -> fixed AppKit window and system chrome
+     -> DOM, wait, touch/input, compositor, URL, and diagnostics
+     -> owner-only AF_UNIX listener
+  -> PlayCoverRuntimeClient
+     -> direct authenticated request; no intermediate server
 ```
 
-`start --playcover --app` first detects complete preparation markers. A marked
-App must verify successfully and is never silently treated as source after a
-verification failure. An unmodified iPhoneOS App is prepared under
-`IOS_USE_HOME/playcover/prepared/`; a deterministic key covers source tree
-metadata, source executable and Info.plist contents, runtime tree metadata and
-executable contents, the fixed profile hash, and the preparation revision.
-Existing keyed output is reused only after full verification. Preparation
-never overwrites a keyed output.
+The only runtime identity is one random `sessionID`. Start passes the session
+ID and derived socket path through the launch environment. The Runtime binds
+that socket and never reads a sidecar configuration file.
 
-Successful automatic or explicit preparation records
-`IOS_USE_HOME/playcover/last-prepared.json`, so bare `ios-use start
---playcover` remains available. The active backend, exact App path, PID, bundle,
-profile/generation, Runtime socket/instance, and launch nonce are stored in the
-owner-only ordinary `driver.lock`; normal `ios-use stop` validates the signed
-generation and the complete live Runtime identity, then checks the PID and
-exact executable path before terminating only that App process and clearing
-matching state. Lifecycle is host-owned: the Runtime does not implement
-shutdown, activateApp, or terminateApp RPCs.
+Each connection carries one four-byte big-endian length-prefixed JSON request:
 
-This backend has not been released yet. Its manifest, `last-prepared.json`, and
-PlayCover `driver.lock` readers accept only the current complete schema; there
-is no migration path for local development intermediates.
+```json
+{
+  "schemaVersion": 2,
+  "requestId": "unique-request-id",
+  "sessionID": "active-session-id",
+  "command": "dom",
+  "arguments": {}
+}
+```
 
-All session-bound commands consult this lock. Driver commands therefore route to
-PlayCover and cannot silently use XCTest. Screenshot/capture use the PlayCover
-window capture path; DOM/actions currently return an explicit
-unsupported-capability error.
+The response echoes the schema, request ID, and session ID and contains either
+a typed payload or structured error. Request and response sizes, absolute
+deadlines, and one-request-per-connection behavior are bounded. The CLI checks
+the peer UID and PID, live process executable, bundle, prepared generation,
+and Runtime response identity before accepting data. A mutation whose bytes
+may have reached the Runtime is never replayed automatically.
 
-Mutable backend state, managed generations, the installed runtime, private
-bootstrap/socket, and rollback identity record resolve through `IOSUsePaths`
-under `IOS_USE_HOME/playcover/`. A local
-workspace runtime next to the repo-root CLI and a conventional
-`../share/ios-use/playcover/` installed layout are fallback discovery
-locations. The App is signed with a narrow Mac sandbox profile;
-restricted iOS application/team/keychain entitlements are not preserved.
-Launch forwards only a small allowlist of ordinary locale/home variables, so
-unrelated caller credentials are not inherited by the App.
+All applicable commands keep routing to this Runtime until `ios-use stop`.
+`stop` does not call a lifecycle RPC: the host revalidates the exact
+generation, PID, and executable, sends termination only to that process, and
+clears only matching session state. `activateApp`, `terminateApp`, `home`, and
+DDI operations fail as unsupported before touching another backend.
+
+## Prepare, Signing, and Cache
+
+The source App is always read-only. Preparation takes place in a new staging
+directory under `IOS_USE_HOME/playcover/` and becomes visible only after the
+complete transaction verifies.
+
+The headless dependency graph retains the pinned Installer order:
+
+1. inspect the source tree, signatures, entitlements, provisioning, and every
+   code object;
+2. reject encryption and unsupported or malformed Mach-O objects;
+3. APFS-clone the source into managed staging;
+4. convert each arm64 thin, fat, or fat64 Mach-O with the pinned PlayCover
+   converter, including its dependency and rpath rewrites;
+5. embed the Runtime and inject exactly one load command into the main
+   executable with the pinned `inject` implementation;
+6. update only required Info.plist compatibility keys, remove the copied
+   mobile provision, and compose entitlements through pinned PlayCover,
+   KeyCover, and PlayChain paths;
+7. sign nested binaries and bundles from the inside out, preserving each
+   nested code object's source entitlements, then sign the outer App;
+8. remove quarantine and verify every Mach-O, dependency, load command,
+   entitlement, nested signature, and outer seal.
+
+Failures remove only transaction-owned staging. Existing generations and the
+source are not overwritten.
+
+The immutable generation key contains:
+
+- the complete source content hash;
+- the Runtime/build content hash;
+- the pinned prepare implementation revision.
+
+Initial preparation performs full verification. Reuse checks the immutable
+marker, key executable and Runtime hashes, signature validity, and managed
+path identity without enumerating or re-preparing the entire App. Different
+`IOS_USE_HOME` values never share prepared state.
+
+## Runtime Distribution
+
+The Runtime is a release-built, ad-hoc-signed framework, not an artifact built
+inside a user's mutable state directory. A release contains the framework
+archive, SHA-256 manifest, applicable licenses, upstream provenance, and an
+exact corresponding-source archive. `scripts/install.sh` verifies the manifest
+before placing the framework under
+`<prefix>/share/ios-use/playcover/IOSUsePlayRuntime.framework`, re-verifies the
+signature, and never copies executable Runtime content into `IOS_USE_HOME`.
+The framework is a read-only source in the behavioral contract: prepare signs
+only the managed App copy. Installed-layout acceptance hashes the complete
+source framework before and after fixture execution.
+
+Runtime resolution first honors a valid framework explicitly managed by the
+current `IOS_USE_HOME`, then the adjacent development layout, and finally this
+stable prefix share location. Therefore changing `IOS_USE_HOME` isolates only
+prepared Apps and sessions for a release install; it does not require a second
+Runtime installation or allow the installer to put mutable executable code in
+that home.
+
+## Runtime Commands
+
+DOM snapshots enumerate foreground scenes, z-ordered windows, UIView
+hierarchy, and accessibility-container elements. They expose stable
+label/value/identifier/hint/traits/state/class/hierarchy/frame fields and one
+snapshot generation. Selectors follow the existing ios-use clean, merge,
+match, ambiguity, traits, and `cindex` rules. SwiftUI and WKWebView use their
+accessibility bridges; custom Metal/Unity content is reported as opaque when
+it has no semantic nodes.
+
+Tap, long press, and swipe use the directly ported PlayTools fake-touch
+backend with begin/move/end/cancel phases and monotonic timing. The Runtime
+resolves selectors against one fresh snapshot, performs a UIKit hit test in
+430 x 932 logical coordinates, and validates a fresh post-action snapshot or
+pixel condition. Text input first verifies the supported first responder;
+secure, custom, or unsupported input returns a structured error.
+
+Screenshot and capture read only the target process's WindowServer backing
+surfaces, including Metal and the system-chrome overlay. They do not use
+ScreenCaptureKit or request Screen Recording permission. A frame is accepted
+only when source surfaces are live, complete, nontransparent, geometrically
+consistent, and produce the strict 1290 x 2796 output. UIKit-only rendering is
+diagnostic and cannot silently replace the compositor.
+
+`status` performs a fresh Runtime ping and reports the actual observed
+UIScreen, scene, safe-area, AppKit-window, backing-scale, mouse-transform, and
+capture geometry. `open` delivers only to the exact active target. Unified
+logs are constrained to the exact PID/executable, and failure evidence keeps
+screenshot and DOM generations coherent.
 
 ## Upstream Provenance
 
-The implementation is a GUI-free derivative informed by:
+The vendored source and license records are under `ThirdParty/` and
+`playcover-runtime/PlayTools/`:
 
-- PlayCover commit
-  `7190cc9ce57c8dee0e222918468f2579acc95e1b`, particularly
-  `PlayCover/Utils/Macho.swift`, installer conversion, and signing order
-  (GPL-3.0).
-- PlayTools commit
-  `d688f695e83bf080be9ad4b7346e914c7c343d96`, particularly `PlayLoader`,
-  `PlayScreen`, the UIKit/FBS swizzles, and the AppKit plugin bridge
-  (AGPL-3.0).
+- PlayCover `7190cc9ce57c8dee0e222918468f2579acc95e1b`
+  (GPL-3.0);
+- PlayTools `d688f695e83bf080be9ad4b7346e914c7c343d96`
+  (AGPL-3.0);
+- `inject` `e6d3aa4abe106f90fd8c5a1ca04db15c19d324eb`
+  (GPL-3.0);
+- Yams `3036ba9d69cf1fd04d433527bc339dc0dc75433d`, version `5.1.3`
+  (MIT).
 
-ios-use is distributed under AGPL-3.0. Source files that directly derive these
-approaches carry focused provenance comments; the repository's
-[LICENSE](../LICENSE) applies to the combined work.
+Each provenance file records the upstream URL, pinned revision, imported
+files, and local headless patches. The audit requires the script-owned expected
+file sets, provenance manifests, and actual vendored trees to match, then runs
+the Git diff. It also requires the Yams manifest and both resolved-package pins
+to agree and compares every distributed license byte-for-byte with its pinned
+checkout. `ThirdParty/LICENSES.md` is the release license index. Release
+corresponding source includes the complete Yams tree and a Runtime-input digest
+matching the forced fresh build.

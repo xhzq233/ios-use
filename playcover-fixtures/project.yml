@@ -1,0 +1,45 @@
+name: IOSUsePlayFixture
+options:
+  bundleIdPrefix: com.iosuse
+  deploymentTarget:
+    iOS: "15.0"
+  xcodeVersion: "15.0"
+
+targets:
+  IOSUsePlayFixture:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    info:
+      path: Info.plist
+      properties:
+        CFBundleURLTypes:
+          - CFBundleURLName: com.iosuse.playfixture
+            CFBundleURLSchemes:
+              - iosusefixture
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.iosuse.playfixture
+        PRODUCT_NAME: IOSUsePlayFixture
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: YES
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""
+
+schemes:
+  IOSUsePlayFixture:
+    build:
+      targets:
+        IOSUsePlayFixture: all

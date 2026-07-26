@@ -42,8 +42,6 @@ public enum CLIParser {
             parsed = .nslog(try parseNSLog(&parser))
         case "proxy":
             parsed = .proxy(try parseProxy(&parser))
-        case "playcover":
-            parsed = .playcover(try parsePlayCover(&parser))
         case "tap":
             parsed = .driver(try parseTap(&parser))
         case "longpress":
@@ -77,7 +75,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .status, .install, .apps, .open, .appLifecycle, .driver, .playcover:
+            case .status, .install, .apps, .open, .appLifecycle, .driver:
                 break
             default:
                 throw CLIParseError.unknownOption("--json")
@@ -141,60 +139,6 @@ public enum CLIParser {
             }
         }
         return options
-    }
-
-    private static func parsePlayCover(_ parser: inout ArgumentParser) throws -> PlayCoverCommand {
-        guard let subcommand = parser.consume() else {
-            throw CLIParseError.missingRequiredArgument("playcover command")
-        }
-        switch subcommand {
-        case "inspect":
-            let appPath = try parser.requiredPositional("app")
-            try parser.requireEnd()
-            return .inspect(appPath: appPath)
-        case "prepare":
-            let appPath = try parser.requiredPositional("app")
-            var outputPath: String?
-            var runtimePath: String?
-            while let argument = parser.consume() {
-                switch argument {
-                case "--output":
-                    guard outputPath == nil else {
-                        throw CLIParseError.invalidValue("--output may only be specified once")
-                    }
-                    outputPath = try parser.value(for: argument)
-                case "--runtime":
-                    guard runtimePath == nil else {
-                        throw CLIParseError.invalidValue("--runtime may only be specified once")
-                    }
-                    runtimePath = try parser.value(for: argument)
-                default:
-                    if argument.hasPrefix("-") {
-                        throw CLIParseError.unknownOption(argument)
-                    }
-                    throw CLIParseError.unexpectedArgument(argument)
-                }
-            }
-            guard let outputPath else {
-                throw CLIParseError.missingRequiredOption("--output")
-            }
-            guard let runtimePath else {
-                throw CLIParseError.missingRequiredOption("--runtime")
-            }
-            return .prepare(
-                PlayCoverPrepareOptions(
-                    appPath: appPath,
-                    outputPath: outputPath,
-                    runtimePath: runtimePath
-                )
-            )
-        case "verify":
-            let appPath = try parser.requiredPositional("app")
-            try parser.requireEnd()
-            return .verify(appPath: appPath)
-        default:
-            throw CLIParseError.unknownCommand("playcover \(subcommand)")
-        }
     }
 
     private static func parseStart(_ parser: inout ArgumentParser) throws -> StartOptions {
@@ -471,7 +415,16 @@ public enum CLIParser {
             case "--tap": tap = try parser.value(for: arg)
             case "--label": throw CLIParseError.invalidValue("input --label was replaced by --tap <target>")
             case "--content": content = try parser.valueAllowingLeadingDash(for: arg)
-            case "--delete": delete = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--delete":
+                delete = try parseNonNegativeIntStrict(
+                    parser.valueAllowingLeadingDash(for: arg),
+                    label: arg
+                )
+                guard delete <= 1_048_576 else {
+                    throw CLIParseError.invalidValue(
+                        "\(arg) must not exceed 1048576"
+                    )
+                }
             case "--enter": enter = true
             case "--traits": traits = try parser.value(for: arg)
             case "--cindex": cindex = try parseInt32Strict(parser.valueAllowingLeadingDash(for: arg), label: arg)

@@ -99,56 +99,42 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
-    func testParsesPlayCoverCommands() throws {
+    func testParsesPlayCoverStartAsOnlyPublicBackendEntry()
+        throws
+    {
         XCTAssertEqual(
-            try CLIParser.parse(["playcover", "inspect", "/fixtures/Demo.app"]),
-            .playcover(.inspect(appPath: "/fixtures/Demo.app"))
-        )
-        XCTAssertEqual(
-            try CLIParser.parse([
-                "playcover", "prepare", "/fixtures/Demo.app",
-                "--output", "/work/Demo.app",
-                "--runtime", "/build/IOSUsePlayRuntime.framework",
-            ]),
-            .playcover(
-                .prepare(
-                    PlayCoverPrepareOptions(
-                        appPath: "/fixtures/Demo.app",
-                        outputPath: "/work/Demo.app",
-                        runtimePath: "/build/IOSUsePlayRuntime.framework"
-                    )
-                )
+            try CLIParser.parse(["start", "--playcover"]),
+            .start(
+                StartOptions(playCover: true)
             )
         )
         XCTAssertEqual(
-            try CLIParser.parse(["playcover", "verify", "/work/Demo.app"]),
-            .playcover(.verify(appPath: "/work/Demo.app"))
-        )
-        XCTAssertEqual(
-            try CLIParser.parseInvocation(["--json", "playcover", "inspect", "/fixtures/Demo.app"]),
-            ParsedInvocation(
-                command: .playcover(.inspect(appPath: "/fixtures/Demo.app")),
-                json: true
+            try CLIParser.parse([
+                "start",
+                "--playcover",
+                "--app",
+                "/fixtures/Demo.app",
+                "--timeout",
+                "800ms",
+            ]),
+            .start(
+                StartOptions(
+                    playCover: true,
+                    appPath: "/fixtures/Demo.app",
+                    timeout: 0.8
+                )
             )
         )
     }
 
     func testRejectsInvalidPlayCoverArguments() {
-        XCTAssertThrowsError(try CLIParser.parse(["playcover"])) { error in
-            XCTAssertEqual(error as? CLIParseError, .missingRequiredArgument("playcover command"))
-        }
         XCTAssertThrowsError(
-            try CLIParser.parse(["playcover", "prepare", "/fixtures/Demo.app"])
+            try CLIParser.parse(["playcover"])
         ) { error in
-            XCTAssertEqual(error as? CLIParseError, .missingRequiredOption("--output"))
-        }
-        XCTAssertThrowsError(
-            try CLIParser.parse([
-                "playcover", "prepare", "/fixtures/Demo.app",
-                "--output", "/work/Demo.app",
-            ])
-        ) { error in
-            XCTAssertEqual(error as? CLIParseError, .missingRequiredOption("--runtime"))
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .unknownCommand("playcover")
+            )
         }
         XCTAssertThrowsError(
             try CLIParser.parse(["start", "--playcover", "--timeout", "61s"])
@@ -172,14 +158,6 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(
                 error as? CLIParseError,
                 .invalidValue("--app and --timeout require --playcover")
-            )
-        }
-        XCTAssertThrowsError(
-            try CLIParser.parse(["playcover", "launch", "/work/Demo.app"])
-        ) { error in
-            XCTAssertEqual(
-                error as? CLIParseError,
-                .unknownCommand("playcover launch")
             )
         }
     }
@@ -334,9 +312,32 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
+            try CLIParser.parse(["dismissAlert"]),
+            .driver(.dismissAlert(index: nil))
+        )
+
+        XCTAssertEqual(
             try CLIParser.parse(["swipe", "--dir", "forth", "--distance", "200", "--dom", "--traits", "Cell"]),
             .driver(.swipe(to: nil, from: nil, dir: "forth", distance: 200, traits: "Cell", cindex: nil, postDom: .afterQuiescence))
         )
+    }
+
+    func testInputDeleteRejectsValuesOutsideWireRange() {
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "input",
+                "--content",
+                "x",
+                "--delete",
+                "1048577",
+            ])
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "--delete must not exceed 1048576"
+                )
+            )
+        }
     }
 
     func testParsesAppAndUtilityDriverCommands() throws {

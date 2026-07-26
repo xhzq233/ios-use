@@ -4,6 +4,82 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE_DIR="$ROOT_DIR/release"
 RELEASE_STARTED_AT="$(date +%s)"
+RELEASE_TEMP="$(mktemp -d "${TMPDIR:-/tmp}/ios-use-release-build.XXXXXX")"
+UPSTREAM_CACHE="${IOS_USE_PLAYCOVER_UPSTREAM_CACHE:-${TMPDIR:-/tmp}/ios-use-playcover-upstream-audit}"
+
+cleanup() {
+  if [[ -d "$RELEASE_TEMP" ]]; then
+    chmod -R u+w "$RELEASE_TEMP"
+  fi
+  rm -rf "$RELEASE_TEMP"
+}
+trap cleanup EXIT
+
+require_clean_source_tree() {
+  local phase="$1"
+  local dirty
+  if ! git -C "$ROOT_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+    echo "[release-build] ERROR: release assets must be produced from a Git checkout" >&2
+    exit 1
+  fi
+  dirty="$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=all)"
+  if [[ -n "$dirty" ]]; then
+    echo "[release-build] ERROR: source tree is dirty $phase; refusing binaries whose corresponding-source archive would differ." >&2
+    printf '%s\n' "$dirty" >&2
+    exit 1
+  fi
+}
+
+runtime_source_manifest() {
+  local source_root="$1"
+  local output="$2"
+  local relative
+  : > "$output"
+  while IFS= read -r relative; do
+    if [[ ! -f "$source_root/$relative" ]]; then
+      echo "[release-build] ERROR: Runtime build input is missing from source: $relative" >&2
+      exit 1
+    fi
+    printf '%s  %s\n' \
+      "$(shasum -a 256 "$source_root/$relative" | awk '{print $1}')" \
+      "$relative" >> "$output"
+  done < <(
+    git -C "$ROOT_DIR" ls-files -- \
+      playcover-runtime \
+      swift-cli/Sources/IOSUsePlayDevice \
+      scripts/build_playcover_runtime.sh |
+      LC_ALL=C sort
+  )
+  if [[ ! -s "$output" ]]; then
+    echo "[release-build] ERROR: Runtime source manifest is empty" >&2
+    exit 1
+  fi
+}
+
+verify_file_set() {
+  local description="$1"
+  local expected="$2"
+  local actual="$3"
+  if ! cmp -s "$expected" "$actual"; then
+    echo "[release-build] ERROR: $description file set differs from its audited source" >&2
+    diff -u --label "$description expected" --label "$description actual" \
+      "$expected" "$actual" >&2 || true
+    exit 1
+  fi
+}
+
+require_clean_source_tree "before the build"
+
+echo "[release-build] Auditing pinned PlayCover upstreams..."
+bash "$ROOT_DIR/scripts/audit_playcover_upstreams.sh" --cache-dir "$UPSTREAM_CACHE"
+
+RUNTIME_INPUTS_BEFORE="$RELEASE_TEMP/runtime-inputs.before"
+RUNTIME_INPUTS_AFTER="$RELEASE_TEMP/runtime-inputs.after"
+runtime_source_manifest "$ROOT_DIR" "$RUNTIME_INPUTS_BEFORE"
+RUNTIME_SOURCE_SHA256="$(shasum -a 256 "$RUNTIME_INPUTS_BEFORE" | awk '{print $1}')"
+
+echo "[release-build] Building PlayCover Runtime from a fresh derived-data directory..."
+bash "$ROOT_DIR/scripts/build_playcover_runtime.sh" --replace
 
 echo "[release-build] Building Swift CLI..."
 STEP_STARTED_AT="$(date +%s)"
@@ -38,6 +114,161 @@ cp "$ROOT_DIR/ios-use" "$RELEASE_DIR/ios-use-darwin-arm64"
 chmod +x "$RELEASE_DIR/ios-use-darwin-arm64"
 cp "$ROOT_DIR/driver/build/driver.ipa" "$RELEASE_DIR/driver.ipa"
 cp "$ROOT_DIR/driver/build/driver-sim.ipa" "$RELEASE_DIR/driver-sim.ipa"
+RUNTIME_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
+if [ ! -x "$RUNTIME_SOURCE/IOSUsePlayRuntime" ]; then
+  echo "[release-build] ERROR: missing prebuilt PlayCover Runtime: $RUNTIME_SOURCE" >&2
+  exit 1
+fi
+if [ ! -f "$RUNTIME_SOURCE/Info.plist" ] &&
+   [ ! -f "$RUNTIME_SOURCE/Versions/A/Resources/Info.plist" ]; then
+  echo "[release-build] ERROR: PlayCover Runtime is missing Info.plist" >&2
+  exit 1
+fi
+/usr/bin/codesign --verify --strict "$RUNTIME_SOURCE"
+runtime_source_manifest "$ROOT_DIR" "$RUNTIME_INPUTS_AFTER"
+if ! cmp -s "$RUNTIME_INPUTS_BEFORE" "$RUNTIME_INPUTS_AFTER"; then
+  echo "[release-build] ERROR: Runtime build inputs changed while release binaries were being built" >&2
+  diff -u --label "Runtime inputs before build" --label "Runtime inputs after build" \
+    "$RUNTIME_INPUTS_BEFORE" "$RUNTIME_INPUTS_AFTER" >&2 || true
+  exit 1
+fi
+
+RUNTIME_STAGE_PARENT="$RELEASE_TEMP/runtime-asset"
+RUNTIME_STAGE="$RUNTIME_STAGE_PARENT/IOSUsePlayRuntime.framework"
+mkdir -p "$RUNTIME_STAGE_PARENT"
+cp -R "$RUNTIME_SOURCE" "$RUNTIME_STAGE"
+/usr/bin/codesign --verify --strict "$RUNTIME_STAGE"
+(
+  cd "$RUNTIME_STAGE_PARENT"
+  COPYFILE_DISABLE=1 tar -czf "$RELEASE_DIR/ios-use-playcover-runtime.tar.gz" \
+    "$(basename "$RUNTIME_STAGE")"
+)
+RUNTIME_ARCHIVE_SHA256="$(
+  shasum -a 256 "$RELEASE_DIR/ios-use-playcover-runtime.tar.gz" |
+    awk '{print $1}'
+)"
+
+SOURCE_ARCHIVE="ios-use-v$ACTUAL_VERSION-corresponding-source.tar.gz"
+SOURCE_PREFIX="ios-use-v$ACTUAL_VERSION/"
+SOURCE_TAR="$RELEASE_DIR/.corresponding-source.tar"
+SOURCE_EXPECTED="$RELEASE_DIR/.corresponding-source.expected"
+SOURCE_ACTUAL="$RELEASE_DIR/.corresponding-source.actual"
+SOURCE_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+require_clean_source_tree "after the build"
+
+SOURCE_STAGE_PARENT="$RELEASE_TEMP/source-asset"
+SOURCE_STAGE="$SOURCE_STAGE_PARENT/${SOURCE_PREFIX%/}"
+mkdir -p "$SOURCE_STAGE_PARENT"
+git -C "$ROOT_DIR" archive --format=tar \
+  --prefix="$SOURCE_PREFIX" HEAD |
+  tar -xf - -C "$SOURCE_STAGE_PARENT"
+
+git -C "$ROOT_DIR" ls-tree -r --name-only HEAD |
+  LC_ALL=C sort > "$RELEASE_TEMP/project-source.expected"
+(
+  cd "$SOURCE_STAGE"
+  find . \( -type f -o -type l \) -print |
+    sed 's#^\./##' |
+    LC_ALL=C sort
+) > "$RELEASE_TEMP/project-source.actual"
+verify_file_set "Git HEAD source" \
+  "$RELEASE_TEMP/project-source.expected" "$RELEASE_TEMP/project-source.actual"
+
+YAMS_COMMIT="$(
+  sed -n 's/^- Pinned commit: `\([0-9a-f][0-9a-f]*\)`$/\1/p' \
+    "$ROOT_DIR/ThirdParty/Yams/PROVENANCE.md"
+)"
+if [[ ! "$YAMS_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "[release-build] ERROR: audited Yams provenance has no unique full commit" >&2
+  exit 1
+fi
+YAMS_CHECKOUT="$UPSTREAM_CACHE/Yams"
+if [[ ! -d "$YAMS_CHECKOUT/.git" ||
+      "$(git -C "$YAMS_CHECKOUT" rev-parse HEAD)" != "$YAMS_COMMIT" ]]; then
+  echo "[release-build] ERROR: audited pinned Yams checkout is unavailable" >&2
+  exit 1
+fi
+YAMS_SOURCE="$SOURCE_STAGE/ThirdParty/Yams/upstream-source"
+mkdir -p "$YAMS_SOURCE"
+git -C "$YAMS_CHECKOUT" archive --format=tar "$YAMS_COMMIT" |
+  tar -xf - -C "$YAMS_SOURCE"
+git -C "$YAMS_CHECKOUT" ls-tree -r --name-only "$YAMS_COMMIT" |
+  LC_ALL=C sort > "$RELEASE_TEMP/yams-source.expected"
+(
+  cd "$YAMS_SOURCE"
+  find . \( -type f -o -type l \) -print |
+    sed 's#^\./##' |
+    LC_ALL=C sort
+) > "$RELEASE_TEMP/yams-source.actual"
+verify_file_set "Yams $YAMS_COMMIT source" \
+  "$RELEASE_TEMP/yams-source.expected" "$RELEASE_TEMP/yams-source.actual"
+
+runtime_source_manifest "$SOURCE_STAGE" "$RELEASE_TEMP/runtime-inputs.archived"
+if ! cmp -s "$RUNTIME_INPUTS_BEFORE" "$RELEASE_TEMP/runtime-inputs.archived"; then
+  echo "[release-build] ERROR: archived Runtime sources do not match the freshly built Runtime inputs" >&2
+  diff -u --label "fresh Runtime inputs" --label "archived Runtime inputs" \
+    "$RUNTIME_INPUTS_BEFORE" "$RELEASE_TEMP/runtime-inputs.archived" >&2 || true
+  exit 1
+fi
+
+printf '%s\n' \
+  "ios-use source commit: $SOURCE_COMMIT" \
+  "Yams source commit: $YAMS_COMMIT" \
+  "PlayCover Runtime input manifest SHA-256: $RUNTIME_SOURCE_SHA256" \
+  > "$SOURCE_STAGE/CORRESPONDING-SOURCE-MANIFEST.txt"
+
+(
+  cd "$SOURCE_STAGE_PARENT"
+  COPYFILE_DISABLE=1 tar -cf "$SOURCE_TAR" "${SOURCE_PREFIX%/}"
+)
+{
+  git -C "$ROOT_DIR" ls-tree -r --name-only HEAD |
+    sed "s#^#$SOURCE_PREFIX#"
+  git -C "$YAMS_CHECKOUT" ls-tree -r --name-only "$YAMS_COMMIT" |
+    sed "s#^#${SOURCE_PREFIX}ThirdParty/Yams/upstream-source/#"
+  printf '%sCORRESPONDING-SOURCE-MANIFEST.txt\n' "$SOURCE_PREFIX"
+} |
+  LC_ALL=C sort > "$SOURCE_EXPECTED"
+tar -tf "$SOURCE_TAR" |
+  sed '/\/$/d' |
+  LC_ALL=C sort > "$SOURCE_ACTUAL"
+verify_file_set "corresponding-source archive" "$SOURCE_EXPECTED" "$SOURCE_ACTUAL"
+gzip -n < "$SOURCE_TAR" > "$RELEASE_DIR/$SOURCE_ARCHIVE"
+rm -f "$SOURCE_TAR" "$SOURCE_EXPECTED" "$SOURCE_ACTUAL"
+SOURCE_ARCHIVE_SHA256="$(
+  shasum -a 256 "$RELEASE_DIR/$SOURCE_ARCHIVE" |
+    awk '{print $1}'
+)"
+
+cp "$ROOT_DIR/LICENSE" "$RELEASE_DIR/LICENSE"
+cp "$ROOT_DIR/ThirdParty/PlayCover/LICENSE" "$RELEASE_DIR/PLAYCOVER-LICENSE-GPL-3.0"
+cp "$ROOT_DIR/playcover-runtime/PlayTools/LICENSE" "$RELEASE_DIR/PLAYTOOLS-LICENSE-AGPL-3.0"
+cp "$ROOT_DIR/ThirdParty/inject/LICENSE" "$RELEASE_DIR/INJECT-LICENSE-GPL-3.0"
+cp "$ROOT_DIR/ThirdParty/Yams/LICENSE" "$RELEASE_DIR/YAMS-LICENSE-MIT"
+cp "$ROOT_DIR/ThirdParty/LICENSES.md" "$RELEASE_DIR/THIRD-PARTY-LICENSES.md"
+BUILD_MANIFEST_ASSET="PLAYCOVER-BUILD-MANIFEST-v$ACTUAL_VERSION.txt"
+{
+  printf 'ios-use source commit: %s\n' "$SOURCE_COMMIT"
+  printf 'Yams source commit: %s\n' "$YAMS_COMMIT"
+  printf 'PlayCover Runtime input manifest SHA-256: %s\n' "$RUNTIME_SOURCE_SHA256"
+  printf 'PlayCover Runtime archive SHA-256: %s\n' "$RUNTIME_ARCHIVE_SHA256"
+  printf 'Corresponding-source archive SHA-256: %s\n' "$SOURCE_ARCHIVE_SHA256"
+} > "$RELEASE_DIR/$BUILD_MANIFEST_ASSET"
+PROVENANCE_ASSET="PLAYCOVER-PROVENANCE-v$ACTUAL_VERSION.md"
+{
+  printf '# PlayCover release provenance\n\n'
+  printf 'This release packages `IOSUsePlayRuntime.framework` as a read-only resource under `share/ios-use/playcover/`.\n\n'
+  printf 'The complete corresponding source for this exact release is `%s`; it includes the complete pinned Yams tree.\n\n' "$SOURCE_ARCHIVE"
+  printf 'Fresh Runtime/source/archive digests are recorded in `%s`.\n\n' "$BUILD_MANIFEST_ASSET"
+  for provenance in \
+    "$ROOT_DIR/ThirdParty/PlayCover/PROVENANCE.md" \
+    "$ROOT_DIR/playcover-runtime/PlayTools/PROVENANCE.md" \
+    "$ROOT_DIR/ThirdParty/inject/PROVENANCE.md" \
+    "$ROOT_DIR/ThirdParty/Yams/PROVENANCE.md"; do
+    printf '\n---\n\n'
+    sed -n '1,$p' "$provenance"
+  done
+} > "$RELEASE_DIR/$PROVENANCE_ASSET"
 CHANGELOG_ASSET="CHANGELOG-v$ACTUAL_VERSION.md"
 CHANGELOG_SOURCE="$ROOT_DIR/release-notes/$CHANGELOG_ASSET"
 if [ ! -s "$CHANGELOG_SOURCE" ]; then
@@ -46,14 +277,45 @@ if [ ! -s "$CHANGELOG_SOURCE" ]; then
 fi
 cp "$CHANGELOG_SOURCE" "$RELEASE_DIR/$CHANGELOG_ASSET"
 
-for asset in ios-use-darwin-arm64 driver.ipa driver-sim.ipa "$CHANGELOG_ASSET"; do
+for asset in \
+  ios-use-darwin-arm64 \
+  driver.ipa \
+  driver-sim.ipa \
+  ios-use-playcover-runtime.tar.gz \
+  "$SOURCE_ARCHIVE" \
+  LICENSE \
+  PLAYCOVER-LICENSE-GPL-3.0 \
+  PLAYTOOLS-LICENSE-AGPL-3.0 \
+  INJECT-LICENSE-GPL-3.0 \
+  YAMS-LICENSE-MIT \
+  THIRD-PARTY-LICENSES.md \
+  "$BUILD_MANIFEST_ASSET" \
+  "$PROVENANCE_ASSET" \
+  "$CHANGELOG_ASSET"; do
   if [ ! -s "$RELEASE_DIR/$asset" ]; then
     echo "[release-build] ERROR: missing or empty release asset: $asset" >&2
     exit 1
   fi
 done
 
-(cd "$RELEASE_DIR" && shasum -a 256 ios-use-darwin-arm64 driver.ipa driver-sim.ipa "$CHANGELOG_ASSET" > SHA256SUMS)
+(
+  cd "$RELEASE_DIR"
+  shasum -a 256 \
+    ios-use-darwin-arm64 \
+    driver.ipa \
+    driver-sim.ipa \
+    ios-use-playcover-runtime.tar.gz \
+    "$SOURCE_ARCHIVE" \
+    LICENSE \
+    PLAYCOVER-LICENSE-GPL-3.0 \
+    PLAYTOOLS-LICENSE-AGPL-3.0 \
+    INJECT-LICENSE-GPL-3.0 \
+    YAMS-LICENSE-MIT \
+    THIRD-PARTY-LICENSES.md \
+    "$BUILD_MANIFEST_ASSET" \
+    "$PROVENANCE_ASSET" \
+    "$CHANGELOG_ASSET" > SHA256SUMS
+)
 
 STEP_ELAPSED=$(($(date +%s) - STEP_STARTED_AT))
 printf '[release-build] Asset staging completed in %dm%02ds\n' "$((STEP_ELAPSED / 60))" "$((STEP_ELAPSED % 60))"

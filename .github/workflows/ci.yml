@@ -6,17 +6,45 @@ on:
       - "swift-cli/**"
       - "shared/**"
       - "driver/**"
+      - "playcover-runtime/**"
+      - "playcover-fixtures/**"
+      - "ThirdParty/**"
       - "scripts/**"
+      - "README.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "release-notes/**"
   push:
     branches: [main]
     paths:
       - "swift-cli/**"
       - "shared/**"
       - "driver/**"
+      - "playcover-runtime/**"
+      - "playcover-fixtures/**"
+      - "ThirdParty/**"
       - "scripts/**"
+      - "README.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/release.yml"
+      - "release-notes/**"
   workflow_dispatch:
+    inputs:
+      run_playcover_live:
+        description: "Run the required generic external-App live/stress gate on its dedicated self-hosted runner."
+        required: false
+        default: false
+        type: boolean
+      live_evidence_id:
+        description: "Operator-owned evidence identifier (required when run_playcover_live is true)."
+        required: false
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,6 +69,7 @@ jobs:
             bash -n "$script"
           done
           bash scripts/test_install.sh
+          bash scripts/test_playcover_packaging_contract.sh
           node --check scripts/benchmark.js
           node --check scripts/ios_use_test_simulator.js
           node --check scripts/test_simulator_commands.mjs
@@ -85,3 +114,84 @@ jobs:
 
       - name: Run Swift driver unit tests
         run: bash scripts/test_driver_unit.sh
+
+  playcover-non-live:
+    name: PlayCover non-live build and installed-layout gate
+    runs-on: macos-26
+    env:
+      IOS_USE_PLAYCOVER_UPSTREAM_CACHE: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Cache pinned upstream audit checkouts
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ios-use-playcover-upstream-audit
+          key: ${{ runner.os }}-${{ runner.arch }}-playcover-upstreams-7190cc9-d688f6-e6d3aa-yams3036ba
+
+      - name: Audit pinned upstream sources and local patches
+        run: bash scripts/audit_playcover_upstreams.sh --cache-dir "$IOS_USE_PLAYCOVER_UPSTREAM_CACHE"
+
+      - name: Build, analyze, fixture, compositor, vendored Swift, and installed-layout checks
+        run: bash scripts/test_playcover_backend.sh --non-live
+
+  playcover-live-and-stress:
+    name: Required external-App live/stress gate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_playcover_live }}
+    runs-on: [self-hosted, macOS, arm64, playcover-live]
+    env:
+      IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR: ${{ github.workspace }}/playcover-live-attestation
+      IOS_USE_PLAYCOVER_LIVE_EVIDENCE_SCHEMA: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate versioned live evidence request
+        env:
+          LIVE_EVIDENCE_ID: ${{ inputs.live_evidence_id }}
+        run: |
+          if [ -z "$LIVE_EVIDENCE_ID" ]; then
+            echo "live_evidence_id is required for a live run." >&2
+            exit 64
+          fi
+          mkdir -p "$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR"
+          {
+            echo "schema=$IOS_USE_PLAYCOVER_LIVE_EVIDENCE_SCHEMA"
+            echo "evidence_id=$LIVE_EVIDENCE_ID"
+            echo "commit=$GITHUB_SHA"
+            echo "workflow_run_id=$GITHUB_RUN_ID"
+          } > "$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR/run-metadata.txt"
+
+      - name: Run configured external-App live evidence entry
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/test_playcover_backend.sh --live 2>&1 |
+            tee "$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR/run.log"
+
+      - name: Require same-commit redacted attestation
+        run: |
+          attestation="$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR/external-app-live-v1.json"
+          jq -e \
+            --arg commit "$GITHUB_SHA" '
+              .schemaVersion == 1 and
+              .backend == "playcover" and
+              .gate == "external-app-live" and
+              .result == "pass" and
+              .leafCommit == $commit and
+              .treeClean == true and
+              .cycleCount == 20 and
+              .uniqueSessionCount == 20 and
+              .sourceExecutableUnchanged == true
+            ' "$attestation" >/dev/null
+
+      - name: Upload immutable redacted live attestation
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playcover-live-attestation-v1-${{ github.sha }}-${{ github.run_id }}
+          path: playcover-live-attestation/
+          if-no-files-found: error
+          retention-days: 30

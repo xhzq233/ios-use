@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 public struct IOSUsePaths: Equatable, Sendable {
     public let root: String
@@ -13,12 +16,62 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let artifacts: String
     public let playcover: String
     public let playcoverRun: String
-    public let playcoverRuntimeBootstrap: String
-    public let playcoverRuntimeSocket: String
-    public let playcoverHello: String
     public let playcoverLastPrepared: String
     public let playcoverPrepared: String
     public let playcoverRuntime: String
+
+    public func playCoverRuntimeSocketPath(
+        sessionID: String
+    ) throws -> String {
+        let token = sessionID
+            .unicodeScalars
+            .filter { CharacterSet.alphanumerics.contains($0) }
+            .map(String.init)
+            .joined()
+        guard !token.isEmpty else {
+            throw CLIParseError.invalidValue(
+                "PlayCover sessionID cannot produce a runtime socket name."
+            )
+        }
+        // `/tmp` is a root-owned symlink to `/private/tmp` on macOS.  The
+        // injected App is sandboxed, so its socket path must use the same
+        // canonical spelling as the SBPL entitlement generated at prepare
+        // time.  `launch` creates `playcoverRun` before calling this method;
+        // resolving an otherwise non-existing prefix remains a no-op for
+        // parser/unit-test paths.
+        let canonicalRun = URL(
+            fileURLWithPath: playcoverRun,
+            isDirectory: true
+        ).standardizedFileURL.path
+        let resolvedRun = canonicalExistingPath(canonicalRun)
+        let socket =
+            "\(resolvedRun)/s-\(token.prefix(32)).sock"
+        let maximumUTF8Bytes = 103
+        guard socket.utf8.count <= maximumUTF8Bytes else {
+            throw CLIParseError.invalidValue(
+                "IOS_USE_HOME is too long for a PlayCover Unix socket "
+                    + "(\(socket.utf8.count) UTF-8 bytes; maximum "
+                    + "\(maximumUTF8Bytes))."
+            )
+        }
+        return socket
+    }
+
+    private func canonicalExistingPath(_ path: String) -> String {
+        #if canImport(Darwin)
+        var buffer = [CChar](
+            repeating: 0,
+            count: Int(PATH_MAX)
+        )
+        let result = path.withCString {
+            Darwin.realpath($0, &buffer)
+        }
+        if result != nil {
+            return String(cString: buffer)
+        }
+        #endif
+        return path
+    }
 
     public static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> IOSUsePaths {
         let configured = configuredRoot(environment: environment)
@@ -35,9 +88,6 @@ public struct IOSUsePaths: Equatable, Sendable {
             artifacts: "\(configured.root)/artifacts",
             playcover: "\(configured.root)/playcover",
             playcoverRun: "\(configured.root)/playcover/run",
-            playcoverRuntimeBootstrap: "\(configured.root)/playcover/run/bootstrap.json",
-            playcoverRuntimeSocket: "\(configured.root)/playcover/run/runtime.sock",
-            playcoverHello: "\(configured.root)/playcover/run/hello.json",
             playcoverLastPrepared: "\(configured.root)/playcover/last-prepared.json",
             playcoverPrepared: "\(configured.root)/playcover/prepared",
             playcoverRuntime: "\(configured.root)/playcover/IOSUsePlayRuntime.framework"

@@ -8,6 +8,13 @@ final class OSLogServiceTests: XCTestCase {
         super.tearDown()
     }
 
+    func testPlayCoverLogUsesSupportedBoundedLastWindow() {
+        XCTAssertEqual(OSLogService.playCoverLogLastArgument(0.1), "1m")
+        XCTAssertEqual(OSLogService.playCoverLogLastArgument(1), "1m")
+        XCTAssertEqual(OSLogService.playCoverLogLastArgument(60), "1m")
+        XCTAssertEqual(OSLogService.playCoverLogLastArgument(60.1), "2m")
+    }
+
     func testOslogClearIsRejected() {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("ios-use-oslog-\(UUID().uuidString)").path
         let result = IOSUseCLI(environment: ["IOS_USE_HOME": home]).run(arguments: ["oslog", "--clear"])

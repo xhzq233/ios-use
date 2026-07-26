@@ -1,9 +1,15 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import IOSUsePlayDevice
 import IOSUseProtocol
 
-enum PlayCoverDriverClientError: Error, Equatable, CustomStringConvertible, Sendable {
+enum PlayCoverDriverClientError:
+    Error,
+    Equatable,
+    CustomStringConvertible,
+    Sendable
+{
     case incompleteSessionIdentity(String)
     case runtimeIdentityMismatch(String)
     case runtimeCapabilityUnavailable(String)
@@ -17,15 +23,15 @@ enum PlayCoverDriverClientError: Error, Equatable, CustomStringConvertible, Send
         case .incompleteSessionIdentity(let field):
             return "active PlayCover session is missing \(field)"
         case .runtimeIdentityMismatch(let field):
-            return "PlayCover Runtime diagnostics do not match active-session \(field)"
+            return "PlayCover Runtime identity does not match active-session \(field)"
         case .runtimeCapabilityUnavailable(let capability):
             return "PlayCover Runtime does not advertise required capability `\(capability)`"
         case .runtimeGeometryMismatch(let field):
-            return "PlayCover Runtime geometry does not match the fixed profile: \(field)"
+            return "PlayCover Runtime geometry does not match the fixed device contract: \(field)"
         case .malformedRuntimePayload(let field):
             return "PlayCover Runtime returned a malformed \(field) payload"
         case .capabilityUnavailable(let command):
-            return "PlayCover Runtime capability `\(command)` is not implemented yet"
+            return "PlayCover Runtime capability `\(command)` is unavailable"
         case .lifecycleCommandUnsupported(let command):
             return "PlayCover does not support Driver `\(command)`; use `ios-use start --playcover` and `ios-use stop` for App lifecycle"
         }
@@ -33,71 +39,45 @@ enum PlayCoverDriverClientError: Error, Equatable, CustomStringConvertible, Send
 }
 
 final class PlayCoverDriverClient: DriverCommandClient {
-    static let logicalSize = CGSize(width: 430, height: 932)
-    static let nativePixelSize = CGSize(width: 1_290, height: 2_796)
-    static let profileScale = 3.0
+    typealias RuntimeRequester = (
+        PlayCoverRuntimeCommand,
+        PlayCoverRuntimeRequestArguments,
+        TimeInterval
+    ) throws -> PlayCoverRuntimeResponsePayload
+
+    static let logicalSize = CGSize(
+        width: Int(IOSUsePlayDeviceLogicalWidth),
+        height: Int(IOSUsePlayDeviceLogicalHeight)
+    )
+    static let nativePixelSize = CGSize(
+        width: Int(IOSUsePlayDeviceNativeWidth),
+        height: Int(IOSUsePlayDeviceNativeHeight)
+    )
+    static let deviceScale = Double(IOSUsePlayDeviceScale)
     static let maximumRuntimeJPEGBytes = 11 * 1024 * 1024
     static let maximumRuntimeBase64Bytes = 15 * 1024 * 1024
 
     private let session: SessionService.Info
-    private let runtimeScreenshotRequester:
-        () throws -> PlayCoverRuntimeResponsePayload
-    private let runtimeDOMRequester:
-        (PlayCoverRuntimeDOMArguments) throws
-            -> PlayCoverRuntimeResponsePayload
-    private let runtimeWaitForRequester:
-        (PlayCoverRuntimeWaitForArguments, TimeInterval) throws
-            -> PlayCoverRuntimeResponsePayload
+    private let runtimeRequester: RuntimeRequester
 
     convenience init(session: SessionService.Info) {
         self.init(
             session: session,
-            runtimeScreenshotRequester: {
+            runtimeRequester: { command, arguments, timeout in
                 try Self.runtimeClient(
                     for: session,
-                    timeoutSeconds:
-                        PlayCoverRuntimeClient.screenshotTimeoutSeconds
-                ).screenshot()
-            },
-            runtimeDOMRequester: { arguments in
-                try Self.runtimeClient(
-                    for: session,
-                    timeoutSeconds:
-                        PlayCoverRuntimeClient.defaultTimeoutSeconds
-                ).dom(arguments)
-            },
-            runtimeWaitForRequester: { arguments, timeoutSeconds in
-                try Self.runtimeClient(
-                    for: session,
-                    timeoutSeconds: timeoutSeconds
-                ).waitFor(arguments)
+                    timeoutSeconds: timeout
+                ).request(command, arguments: arguments)
             }
         )
     }
 
     init(
         session: SessionService.Info,
-        runtimeScreenshotRequester:
-            @escaping () throws -> PlayCoverRuntimeResponsePayload,
-        runtimeDOMRequester:
-            @escaping (PlayCoverRuntimeDOMArguments) throws
-                -> PlayCoverRuntimeResponsePayload = { _ in
-                    throw PlayCoverDriverClientError
-                        .capabilityUnavailable("dom")
-                },
-        runtimeWaitForRequester:
-            @escaping (
-                PlayCoverRuntimeWaitForArguments,
-                TimeInterval
-            ) throws -> PlayCoverRuntimeResponsePayload = { _, _ in
-                throw PlayCoverDriverClientError
-                    .capabilityUnavailable("waitFor")
-            }
+        runtimeRequester: @escaping RuntimeRequester
     ) {
         self.session = session
-        self.runtimeScreenshotRequester = runtimeScreenshotRequester
-        self.runtimeDOMRequester = runtimeDOMRequester
-        self.runtimeWaitForRequester = runtimeWaitForRequester
+        self.runtimeRequester = runtimeRequester
     }
 
     func close() {}
@@ -107,37 +87,38 @@ final class PlayCoverDriverClient: DriverCommandClient {
     }
 
     func screenshotCapture() throws -> ScreenshotCapture {
-        let expected = try ExpectedRuntimeIdentity(session: session)
-        let payload = try runtimeScreenshotRequester()
-        try validateRuntime(
-            payload,
-            expected: expected,
-            requiredCapability:
-                PlayCoverRuntimeCommand.screenshot.rawValue
+        let response = try request(
+            .screenshot,
+            arguments: .empty(),
+            timeout: PlayCoverRuntimeClient.screenshotTimeoutSeconds
         )
-        try validateFixedProfile(payload)
-        guard let screenshot = payload.screenshot else {
+        return try mapScreenshot(response)
+    }
+
+    func evidenceSnapshot() throws -> DriverEvidenceSnapshot {
+        let response = try request(
+            .screenshot,
+            arguments: .empty(),
+            timeout: PlayCoverRuntimeClient.screenshotTimeoutSeconds
+        )
+        let screenshot = try mapScreenshot(response)
+        guard let runtimeScreenshot = response.screenshot,
+              let runtimeDOM = runtimeScreenshot.dom ?? response.dom else {
             throw PlayCoverDriverClientError
-                .malformedRuntimePayload("screenshot")
+                .malformedRuntimePayload("atomic screenshot DOM")
         }
-        let jpeg = try decodeRuntimeJPEG(screenshot)
-        let warning = screenshot.complete
-            ? nil
-            : "PlayCover Runtime reported an incomplete \(screenshot.source) screenshot"
-        return ScreenshotCapture(
-            jpeg: jpeg,
-            pixelSize: ForyPoint(
-                x: Double(screenshot.pixelWidth),
-                y: Double(screenshot.pixelHeight)
-            ),
-            logicalSize: ForyPoint(
-                x: screenshot.logicalWidth,
-                y: screenshot.logicalHeight
-            ),
-            scale: screenshot.scale,
-            geometrySource:
-                "playcover-runtime-\(screenshot.source)",
-            warning: warning
+        guard runtimeScreenshot.snapshotGeneration
+                == runtimeDOM.snapshotGeneration,
+              screenshot.snapshotGeneration
+                == runtimeDOM.snapshotGeneration else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload(
+                    "atomic screenshot/DOM generation"
+                )
+        }
+        return DriverEvidenceSnapshot(
+            screenshot: screenshot,
+            dom: try mapDOM(runtimeDOM)
         )
     }
 
@@ -146,19 +127,15 @@ final class PlayCoverDriverClient: DriverCommandClient {
         fresh: Bool,
         waitQuiescence: Bool
     ) throws -> ForyDomPayload {
-        let expected = try ExpectedRuntimeIdentity(session: session)
-        let arguments = PlayCoverRuntimeDOMArguments(
-            raw: raw,
-            fresh: fresh,
-            waitQuiescence: waitQuiescence
-        )
-        let response = try translateRuntimeError {
-            try runtimeDOMRequester(arguments)
-        }
-        try validateRuntime(
-            response,
-            expected: expected,
-            requiredCapability: PlayCoverRuntimeCommand.dom.rawValue
+        let response = try request(
+            .dom,
+            arguments: .dom(
+                PlayCoverRuntimeDOMArguments(
+                    raw: raw,
+                    fresh: fresh,
+                    waitQuiescence: waitQuiescence
+                )
+            )
         )
         guard let payload = response.dom else {
             throw PlayCoverDriverClientError
@@ -207,45 +184,35 @@ final class PlayCoverDriverClient: DriverCommandClient {
         gone: Bool,
         matchMode: IOSUseWaitForMatchMode
     ) throws -> ForyWaitForPayload {
-        let expected = try ExpectedRuntimeIdentity(session: session)
         let requestedTimeout = timeout ?? 0
-        let arguments = PlayCoverRuntimeWaitForArguments(
-            target: PlayCoverRuntimeWaitTarget(
-                label: label,
-                traits: traits ?? "",
-                cindex: cindex
+        let response = try request(
+            .waitFor,
+            arguments: .waitFor(
+                PlayCoverRuntimeWaitForArguments(
+                    target: PlayCoverRuntimeTarget(
+                        label: label,
+                        traits: traits ?? "",
+                        cindex: cindex
+                    ),
+                    timeout: requestedTimeout,
+                    gone: gone,
+                    matchMode: matchMode.rawValue
+                )
             ),
-            timeout: requestedTimeout,
-            gone: gone,
-            matchMode: matchMode.rawValue
-        )
-        let response = try translateRuntimeError {
-            try runtimeWaitForRequester(
-                arguments,
-                TimeInterval(
-                    IOSUseProtocol.waitForSocketReadTimeoutSeconds(
-                        requestedTimeout
-                    )
+            timeout: TimeInterval(
+                IOSUseProtocol.waitForSocketReadTimeoutSeconds(
+                    requestedTimeout
                 )
             )
-        }
-        try validateRuntime(
-            response,
-            expected: expected,
-            requiredCapability: PlayCoverRuntimeCommand.waitFor.rawValue
         )
         guard let payload = response.waitFor else {
             throw PlayCoverDriverClientError
                 .malformedRuntimePayload("waitFor")
         }
         return ForyWaitForPayload(
-            element: ForyElementSummary(
-                elemType: payload.element.elemType,
-                label: payload.element.label,
-                rect: try mapRect(payload.element.rect),
-                ancestors: payload.element.ancestors
-            ),
-            waited: payload.waited
+            element: try mapSummary(payload.element),
+            waited: payload.waited,
+            snapshotGeneration: payload.snapshotGeneration
         )
     }
 
@@ -256,7 +223,25 @@ final class PlayCoverDriverClient: DriverCommandClient {
         offset: ForyPoint?,
         ratio: ForyPoint
     ) throws -> ForyElementPayload {
-        try unavailable("tap")
+        let response = try request(
+            .tap,
+            arguments: .tap(
+                PlayCoverRuntimeTapArguments(
+                    target: mapTarget(
+                        target,
+                        traits: traits,
+                        cindex: cindex
+                    ),
+                    offset: offset.map(mapPoint),
+                    ratio: mapPoint(ratio)
+                )
+            )
+        )
+        guard let payload = response.tap else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("tap")
+        }
+        return try mapAction(payload)
     }
 
     func longPress(
@@ -265,11 +250,75 @@ final class PlayCoverDriverClient: DriverCommandClient {
         traits: String?,
         cindex: Int32?
     ) throws -> ForyElementPayload {
-        try unavailable("longPress")
+        let response = try request(
+            .longPress,
+            arguments: .longPress(
+                PlayCoverRuntimeLongPressArguments(
+                    target: mapTarget(
+                        target,
+                        traits: traits,
+                        cindex: cindex
+                    ),
+                    durationMs: durationMs ?? 0
+                )
+            )
+        )
+        guard let payload = response.longPress else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("longPress")
+        }
+        return try mapAction(payload)
     }
 
-    func input(tap: ForyTarget?, content: String) throws {
-        throw PlayCoverDriverClientError.capabilityUnavailable("input")
+    func input(
+        tap: ForyTarget?,
+        content: String
+    ) throws -> ForyElementPayload {
+        try input(
+            tap: tap,
+            content: content,
+            deleteCount: 0,
+            enter: false,
+            traits: nil,
+            cindex: nil
+        )
+    }
+
+    func input(
+        tap: ForyTarget?,
+        content: String,
+        deleteCount: Int,
+        enter: Bool,
+        traits: String?,
+        cindex: Int32?
+    ) throws -> ForyElementPayload {
+        guard (0...1_048_576).contains(deleteCount) else {
+            throw CLIParseError.invalidValue(
+                "input delete count must be between 0 and 1048576"
+            )
+        }
+        let response = try request(
+            .input,
+            arguments: .input(
+                PlayCoverRuntimeInputArguments(
+                    target: tap.map {
+                        mapTarget(
+                            $0,
+                            traits: traits,
+                            cindex: cindex
+                        )
+                    },
+                    content: content,
+                    deleteCount: deleteCount,
+                    enter: enter
+                )
+            )
+        )
+        guard let payload = response.input else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("input")
+        }
+        return try mapAction(payload)
     }
 
     func swipe(
@@ -280,7 +329,133 @@ final class PlayCoverDriverClient: DriverCommandClient {
         traits: String?,
         cindex: Int32?
     ) throws -> ForySwipePayload {
-        try unavailable("swipe")
+        let direction: Int32
+        switch dir {
+        case "forth":
+            direction = IOSUseProtocol.XCConstants.swipeDirectionForth
+        case "back":
+            direction = IOSUseProtocol.XCConstants.swipeDirectionBack
+        default:
+            direction =
+                IOSUseProtocol.XCConstants.swipeDirectionUnspecified
+        }
+        let response = try request(
+            .swipe,
+            arguments: .swipe(
+                PlayCoverRuntimeSwipeArguments(
+                    toTarget: isEmptyTarget(to)
+                        ? nil
+                        : mapTarget(
+                            to,
+                            traits: traits,
+                            cindex: cindex
+                        ),
+                    fromTarget: isEmptyTarget(from)
+                        ? PlayCoverRuntimeTarget(
+                            label: "",
+                            point: PlayCoverRuntimePoint(
+                                x: Double(
+                                    IOSUsePlayDeviceLogicalWidth
+                                ) / 2,
+                                y: Double(
+                                    IOSUsePlayDeviceLogicalHeight
+                                ) / 2
+                            )
+                        )
+                        : mapTarget(
+                            from,
+                            traits: nil,
+                            cindex: nil
+                        ),
+                    distance: distance ?? 0,
+                    direction: direction,
+                    durationMs: nil
+                )
+            ),
+            timeout: TimeInterval(
+                IOSUseProtocol.swipeSocketReadTimeoutSeconds(
+                    ForySwipeArgs(
+                        toTarget: to,
+                        fromTarget: from,
+                        distance: distance ?? 0,
+                        dir: direction
+                    )
+                )
+            )
+        )
+        guard let payload = response.swipe else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("swipe")
+        }
+        return ForySwipePayload(
+            element: try mapSummary(payload.element),
+            hitView: try mapHitView(payload.hitView),
+            finalState: mapFinalState(payload.finalState),
+            postcondition: try mapPostcondition(
+                payload.postcondition,
+                originalElement: payload.element
+            ),
+            scrolls: payload.scrolls,
+            scrollDirection: payload.direction
+        )
+    }
+
+    private func isEmptyTarget(_ target: ForyTarget) -> Bool {
+        target.point == nil && target.label.isEmpty
+    }
+
+    func dismissAlert(index: Int?) throws -> ForyAlertPayload {
+        let response = try request(
+            .dismissAlert,
+            arguments: .dismissAlert(
+                PlayCoverRuntimeDismissAlertArguments(index: index)
+            )
+        )
+        guard let payload = response.dismissAlert else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("dismissAlert")
+        }
+        return ForyAlertPayload(
+            dismissed: payload.dismissed,
+            text: payload.text,
+            button: payload.button,
+            reason: payload.reason,
+            hitView: try payload.hitView.map(mapHitView),
+            finalState: payload.finalState.map(mapFinalState),
+            postcondition: try mapPostcondition(payload.postcondition)
+        )
+    }
+
+    struct OpenResult {
+        let delivered: Bool
+        let url: String
+        let postcondition: ForyActionPostcondition
+    }
+
+    func openURL(_ url: String) throws -> OpenResult {
+        let response = try request(
+            .open,
+            arguments: .open(
+                PlayCoverRuntimeOpenArguments(url: url)
+            )
+        )
+        guard let payload = response.open else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("open")
+        }
+        guard payload.delivered else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload(
+                    "open delivery acknowledgement"
+                )
+        }
+        return OpenResult(
+            delivered: payload.delivered,
+            url: payload.url,
+            postcondition: try mapPostcondition(
+                payload.postcondition
+            )
+        )
     }
 
     func activateApp(bundleId: String) throws {
@@ -296,15 +471,13 @@ final class PlayCoverDriverClient: DriverCommandClient {
     }
 
     func home() throws {
-        throw PlayCoverDriverClientError.lifecycleCommandUnsupported("home")
-    }
-
-    func dismissAlert(index: Int?) throws -> ForyAlertPayload {
-        try unavailable("dismissAlert")
+        throw PlayCoverDriverClientError
+            .lifecycleCommandUnsupported("home")
     }
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
-        try unavailable("proxyCAPush")
+        throw PlayCoverDriverClientError
+            .capabilityUnavailable("proxyCAPush")
     }
 
     func waitAppForeground(
@@ -312,7 +485,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
         timeout: Double,
         returnDom: Bool
     ) throws -> ForyWaitAppForegroundPayload {
-        try unavailable("waitAppForeground")
+        throw PlayCoverDriverClientError
+            .lifecycleCommandUnsupported("waitAppForeground")
     }
 
     func waitAppForeground(
@@ -320,67 +494,85 @@ final class PlayCoverDriverClient: DriverCommandClient {
         timeout: Double,
         returnDom: Bool
     ) throws -> ForyWaitAppForegroundPayload {
-        try unavailable("waitAppForeground")
+        throw PlayCoverDriverClientError
+            .lifecycleCommandUnsupported("waitAppForeground")
     }
 
-    private func unavailable<T>(_ command: String) throws -> T {
-        throw PlayCoverDriverClientError.capabilityUnavailable(command)
+    private func request(
+        _ command: PlayCoverRuntimeCommand,
+        arguments: PlayCoverRuntimeRequestArguments,
+        timeout: TimeInterval =
+            PlayCoverRuntimeClient.defaultTimeoutSeconds
+    ) throws -> PlayCoverRuntimeResponsePayload {
+        let expected = try ExpectedRuntimeIdentity(session: session)
+        let response = try translateRuntimeError {
+            try runtimeRequester(command, arguments, timeout)
+        }
+        try validateRuntime(
+            response,
+            expected: expected,
+            requiredCapability: command.rawValue
+        )
+        return response
     }
 
     private func validateRuntime(
         _ payload: PlayCoverRuntimeResponsePayload,
         expected: ExpectedRuntimeIdentity,
-        requiredCapability: String =
-            PlayCoverRuntimeCommand.diagnostics.rawValue
+        requiredCapability: String
     ) throws {
         let checks: [(Bool, String)] = [
+            (payload.pid == expected.pid, "PID"),
             (
-                payload.protocolVersion == PlayCoverRuntimeClient.schemaVersion,
-                "protocol version"
+                payload.bundleIdentifier == expected.bundleIdentifier,
+                "bundle ID"
             ),
-            (payload.pid == expected.pid, "pid"),
-            (payload.bundleIdentifier == expected.bundleIdentifier, "bundle ID"),
-            (payload.profileHash == expected.profileHash, "profile hash"),
             (
-                payload.preparedGenerationID == expected.preparedGenerationID,
-                "prepared generation"
+                PlayCoverRuntimeClient.canonicalPath(
+                    payload.executablePath
+                ) == PlayCoverRuntimeClient.canonicalPath(
+                    expected.executablePath
+                ),
+                "executable"
             ),
-            (payload.runtimeSocketPath == expected.socketPath, "socket path"),
-            (
-                payload.runtimeInstanceID == expected.runtimeInstanceID,
-                "runtime instance"
-            ),
-            (payload.launchNonce == expected.launchNonce, "launch nonce"),
         ]
         if let mismatch = checks.first(where: { !$0.0 }) {
-            throw PlayCoverDriverClientError.runtimeIdentityMismatch(mismatch.1)
+            throw PlayCoverDriverClientError
+                .runtimeIdentityMismatch(mismatch.1)
         }
         guard payload.capabilities.contains(requiredCapability) else {
-            throw PlayCoverDriverClientError.runtimeCapabilityUnavailable(
-                requiredCapability
-            )
+            throw PlayCoverDriverClientError
+                .runtimeCapabilityUnavailable(requiredCapability)
         }
+        try Self.validateFixedDevice(
+            payload.geometry,
+            stage: payload.stage
+        )
     }
 
-    private static func runtimeClient(
+    static func runtimeClient(
         for session: SessionService.Info,
         timeoutSeconds: TimeInterval
     ) throws -> PlayCoverRuntimeClient {
+        let expected = try ExpectedRuntimeIdentity(session: session)
         guard let socketPath = session.playCoverRuntimeSocketPath,
               !socketPath.isEmpty else {
             throw PlayCoverDriverClientError.incompleteSessionIdentity(
                 "runtime socket path"
             )
         }
-        guard let launchNonce = session.playCoverLaunchNonce,
-              !launchNonce.isEmpty else {
+        guard let sessionID = session.sessionIdentifier,
+              !sessionID.isEmpty else {
             throw PlayCoverDriverClientError.incompleteSessionIdentity(
-                "launch nonce"
+                "sessionID"
             )
         }
         return PlayCoverRuntimeClient(
             socketPath: socketPath,
-            launchNonce: launchNonce,
+            sessionID: sessionID,
+            expectedPID: expected.pid,
+            expectedBundleIdentifier: expected.bundleIdentifier,
+            expectedExecutablePath: expected.executablePath,
             timeoutSeconds: timeoutSeconds
         )
     }
@@ -401,6 +593,9 @@ final class PlayCoverDriverClient: DriverCommandClient {
             let target = details.target.map {
                 ForyTarget(
                     label: $0.label,
+                    point: $0.point.map {
+                        ForyPoint(x: $0.x, y: $0.y)
+                    },
                     traits: $0.traits,
                     cindex: $0.cindex
                 )
@@ -410,7 +605,9 @@ final class PlayCoverDriverClient: DriverCommandClient {
                     element: ForyFindMatch(
                         elemType: candidate.element.elemType,
                         label: candidate.element.label,
-                        rect: try mapRect(candidate.element.rect),
+                        rect: try mapRect(
+                            candidate.element.effectiveRect
+                        ),
                         traits: candidate.element.traits,
                         value: candidate.element.value,
                         ancestors: candidate.element.ancestors
@@ -435,26 +632,327 @@ final class PlayCoverDriverClient: DriverCommandClient {
         }
     }
 
+    private func mapScreenshot(
+        _ response: PlayCoverRuntimeResponsePayload
+    ) throws -> ScreenshotCapture {
+        guard let screenshot = response.screenshot else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("screenshot")
+        }
+        guard screenshot.complete else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload(
+                    "incomplete \(screenshot.source) screenshot"
+                )
+        }
+        guard screenshot.snapshotGeneration > 0,
+              screenshot.captureGeneration > 0 else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("screenshot generation")
+        }
+        let jpeg = try decodeRuntimeJPEG(screenshot)
+        var runtimeEvidence:
+            [String: PlayCoverRuntimeJSONValue] = [
+                "source": .string(screenshot.source),
+                "complete": .bool(screenshot.complete),
+                "snapshotGeneration":
+                    .number(Double(screenshot.snapshotGeneration)),
+                "captureGeneration":
+                    .number(Double(screenshot.captureGeneration)),
+            ]
+        if let windowNumbers =
+            screenshot.compositorWindowNumbers {
+            runtimeEvidence["compositorWindowNumbers"] =
+                .array(
+                    windowNumbers.map {
+                        .number(Double($0))
+                    }
+                )
+        }
+        if let backingSizes = screenshot.sourceBackingSizes {
+            runtimeEvidence["sourceBackingSizes"] =
+                .array(backingSizes)
+        }
+        if let appKit = screenshot.appKitWindowEvidence {
+            runtimeEvidence["appKitWindowEvidence"] = appKit
+        }
+        if let chrome = screenshot.systemChromeEvidence {
+            runtimeEvidence["systemChromeEvidence"] = chrome
+        }
+        if let compositor = screenshot.compositor {
+            runtimeEvidence["compositor"] = compositor
+        }
+        return ScreenshotCapture(
+            jpeg: jpeg,
+            pixelSize: ForyPoint(
+                x: Double(screenshot.pixelWidth),
+                y: Double(screenshot.pixelHeight)
+            ),
+            logicalSize: ForyPoint(
+                x: screenshot.logicalWidth,
+                y: screenshot.logicalHeight
+            ),
+            scale: screenshot.scale,
+            geometrySource:
+                "playcover-runtime-\(screenshot.source)",
+            warning: nil,
+            snapshotGeneration: screenshot.snapshotGeneration,
+            captureGeneration: screenshot.captureGeneration,
+            runtimeEvidence: runtimeEvidence
+        )
+    }
+
     private func mapDOM(
         _ payload: PlayCoverRuntimeDOMPayload
     ) throws -> ForyDomPayload {
-        ForyDomPayload(
+        let childCounts = Dictionary(
+            grouping: payload.elements.compactMap {
+                $0.hierarchy.parentID
+            },
+            by: { $0 }
+        ).mapValues(\.count)
+        return ForyDomPayload(
             app: payload.app,
             windowSize: ForyPoint(
                 x: payload.windowSize.x,
                 y: payload.windowSize.y
             ),
             raw: payload.raw,
+            snapshotGeneration: payload.snapshotGeneration,
             elements: try payload.elements.map {
                 ForyDomElement(
+                    nodeID: $0.nodeID,
+                    type: $0.type,
+                    elementType: $0.elementType,
                     traits: $0.traits,
-                    childCount: $0.childCount,
+                    childCount: Int32(
+                        childCounts[$0.nodeID] ?? 0
+                    ),
                     label: $0.label,
                     value: $0.value,
-                    rect: try mapRect($0.rect)
+                    identifier: $0.identifier,
+                    hint: $0.hint,
+                    className: $0.class,
+                    state: mapState($0.state),
+                    hierarchy: mapHierarchy($0.hierarchy),
+                    ancestors: $0.ancestors,
+                    zOrder: $0.zOrder,
+                    snapshotGeneration: $0.snapshotGeneration,
+                    rect: try mapRect($0.effectiveRect)
                 )
             }
         )
+    }
+
+    private func mapSummary(
+        _ element: PlayCoverRuntimeElementSummary
+    ) throws -> ForyElementSummary {
+        ForyElementSummary(
+            nodeID: element.nodeID,
+            type: element.type,
+            elemType: element.elemType,
+            label: element.label,
+            value: element.value,
+            identifier: element.identifier,
+            hint: element.hint,
+            className: element.class,
+            traits: element.traits,
+            state: mapState(element.state),
+            rect: try mapRect(element.effectiveRect),
+            hierarchy: mapHierarchy(element.hierarchy),
+            ancestors: element.ancestors,
+            zOrder: element.zOrder,
+            snapshotGeneration: element.snapshotGeneration
+        )
+    }
+
+    private func mapState(
+        _ state: PlayCoverRuntimeDOMState
+    ) -> ForyElementState {
+        ForyElementState(
+            enabled: state.enabled,
+            visible: state.visible,
+            selected: state.selected,
+            focused: state.focused,
+            opaque: state.opaque
+        )
+    }
+
+    private func mapHierarchy(
+        _ hierarchy: PlayCoverRuntimeDOMHierarchy
+    ) -> ForyElementHierarchy {
+        ForyElementHierarchy(
+            parentID: hierarchy.parentID ?? "",
+            depth: hierarchy.depth,
+            index: hierarchy.index,
+            path: hierarchy.path
+        )
+    }
+
+    private func mapHitView(
+        _ view: PlayCoverRuntimeHitView
+    ) throws -> ForyHitView {
+        ForyHitView(
+            className: view.class,
+            rect: try mapRect(view.frame?.rect),
+            accessibilityIdentifier: view.accessibilityIdentifier,
+            label: view.label
+        )
+    }
+
+    private func mapFinalState(
+        _ state: PlayCoverRuntimeFinalState
+    ) -> ForyTouchFinalState {
+        ForyTouchFinalState(
+            point: ForyPoint(
+                x: state.point.x,
+                y: state.point.y
+            ),
+            touchID: state.touchID,
+            phase: state.phase,
+            firstResponderClass:
+                state.firstResponderClass ?? ""
+        )
+    }
+
+    private func validPixelHash(_ value: String) -> Bool {
+        value.utf8.count == 64
+            && value.unicodeScalars.allSatisfy {
+                (48...57).contains($0.value)
+                    || (97...102).contains($0.value)
+            }
+    }
+
+    private func validPixelEvidence(
+        _ evidence: PlayCoverRuntimePixelEvidence
+    ) -> Bool {
+        let before = evidence.before
+        let after = evidence.after
+        return before.algorithm
+                == "sha256-bgra8-premultiplied"
+            && after.algorithm == before.algorithm
+            && validPixelHash(before.hash)
+            && validPixelHash(after.hash)
+            && before.logicalRect == after.logicalRect
+            && before.nativePixelRect == after.nativePixelRect
+            && before.pixelWidth > 0
+            && before.pixelHeight > 0
+            && after.pixelWidth == before.pixelWidth
+            && after.pixelHeight == before.pixelHeight
+            && before.captureGeneration
+                < after.captureGeneration
+            && before.source == "window-compositor"
+            && after.source == before.source
+            && before.complete
+            && after.complete
+            && evidence.changed
+                == (before.hash != after.hash)
+    }
+
+    private func mapPostcondition(
+        _ postcondition: PlayCoverRuntimePostcondition,
+        originalElement:
+            PlayCoverRuntimeElementSummary? = nil
+    ) throws -> ForyActionPostcondition {
+        let evidence = postcondition.stateEvidence
+        guard evidence.beforeSnapshotGeneration
+                < evidence.afterSnapshotGeneration,
+              evidence.afterSnapshotGeneration
+                == postcondition.snapshotGeneration,
+              evidence.beforeElementCount >= 0,
+              evidence.afterElementCount >= 0,
+              evidence.changedElementCount >= 0,
+              (
+                evidence.changedElementCount
+                    <= evidence.beforeElementCount
+                    || evidence.changedElementCount
+                        - evidence.beforeElementCount
+                        <= evidence.afterElementCount
+              ),
+              evidence.changes.count
+                <= min(16, evidence.changedElementCount),
+              postcondition.changed
+                == (
+                    evidence.changedElementCount > 0
+                        || postcondition.pixelEvidence?.changed == true
+                ),
+              postcondition.pixelEvidence.map(validPixelEvidence)
+                ?? true else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload(
+                    "mutation full-DOM state evidence"
+                )
+        }
+        if let originalElement {
+            guard postcondition.snapshotGeneration
+                    > originalElement.snapshotGeneration,
+                  evidence.beforeSnapshotGeneration
+                    == originalElement.snapshotGeneration else {
+                throw PlayCoverDriverClientError
+                    .malformedRuntimePayload(
+                        "mutation postcondition is not a fresh snapshot"
+                    )
+            }
+        }
+        let mappedPixelEvidence: ForyPixelPostcondition?
+        if let pixel = postcondition.pixelEvidence {
+            mappedPixelEvidence = ForyPixelPostcondition(
+                beforeHash: pixel.before.hash,
+                afterHash: pixel.after.hash,
+                beforeCaptureGeneration:
+                    pixel.before.captureGeneration,
+                afterCaptureGeneration:
+                    pixel.after.captureGeneration,
+                logicalX: pixel.before.logicalRect.x,
+                logicalY: pixel.before.logicalRect.y,
+                logicalWidth: pixel.before.logicalRect.width,
+                logicalHeight: pixel.before.logicalRect.height,
+                changed: pixel.changed
+            )
+        } else {
+            mappedPixelEvidence = nil
+        }
+        return ForyActionPostcondition(
+            snapshotGeneration:
+                postcondition.snapshotGeneration,
+            element: try postcondition.element.map(mapSummary),
+            changed: postcondition.changed,
+            domChanged: evidence.changedElementCount > 0,
+            pixelEvidence: mappedPixelEvidence
+        )
+    }
+
+    private func mapAction(
+        _ payload: PlayCoverRuntimeActionPayload
+    ) throws -> ForyElementPayload {
+        ForyElementPayload(
+            element: try mapSummary(payload.element),
+            hitView: try mapHitView(payload.hitView),
+            finalState: mapFinalState(payload.finalState),
+            postcondition: try mapPostcondition(
+                payload.postcondition,
+                originalElement: payload.element
+            )
+        )
+    }
+
+    private func mapTarget(
+        _ target: ForyTarget,
+        traits: String?,
+        cindex: Int32?
+    ) -> PlayCoverRuntimeTarget {
+        PlayCoverRuntimeTarget(
+            label: target.label,
+            point: target.point.map(mapPoint),
+            traits: traits ?? target.traits,
+            cindex: cindex ?? target.cindex
+        )
+    }
+
+    private func mapPoint(
+        _ point: ForyPoint
+    ) -> PlayCoverRuntimePoint {
+        PlayCoverRuntimePoint(x: point.x, y: point.y)
     }
 
     private func mapRect(
@@ -485,48 +983,97 @@ final class PlayCoverDriverClient: DriverCommandClient {
         )
     }
 
-    private func validateFixedProfile(
-        _ payload: PlayCoverRuntimeResponsePayload
+    static func validateFixedDevice(
+        _ geometry: PlayCoverRuntimeGeometry,
+        stage: String
     ) throws {
         let checks: [(Bool, String)] = [
             (
                 approximatelyEqual(
-                    payload.logicalWidth,
+                    geometry.logical.width,
                     Self.logicalSize.width
                 ),
                 "logical width"
             ),
             (
                 approximatelyEqual(
-                    payload.logicalHeight,
+                    geometry.logical.height,
                     Self.logicalSize.height
                 ),
                 "logical height"
             ),
             (
                 approximatelyEqual(
-                    payload.nativeWidth,
+                    geometry.native.width,
                     Self.nativePixelSize.width
                 ),
                 "native width"
             ),
             (
                 approximatelyEqual(
-                    payload.nativeHeight,
+                    geometry.native.height,
                     Self.nativePixelSize.height
                 ),
                 "native height"
             ),
             (
-                approximatelyEqual(payload.scale, Self.profileScale),
+                approximatelyEqual(
+                    geometry.scale,
+                    Self.deviceScale
+                ),
                 "scale"
             ),
-            (payload.stage == "window-configured", "runtime stage"),
+            (
+                approximatelyEqual(
+                    geometry.window.width,
+                    Self.logicalSize.width
+                ),
+                "window width"
+            ),
+            (
+                approximatelyEqual(
+                    geometry.window.height,
+                    Self.logicalSize.height
+                ),
+                "window height"
+            ),
+            (
+                approximatelyEqual(
+                    geometry.safeArea.top,
+                    Double(IOSUsePlayDeviceSafeAreaTop)
+                ),
+                "safe-area top"
+            ),
+            (
+                approximatelyEqual(
+                    geometry.safeArea.left,
+                    Double(IOSUsePlayDeviceSafeAreaLeft)
+                ),
+                "safe-area left"
+            ),
+            (
+                approximatelyEqual(
+                    geometry.safeArea.bottom,
+                    Double(IOSUsePlayDeviceSafeAreaBottom)
+                ),
+                "safe-area bottom"
+            ),
+            (
+                approximatelyEqual(
+                    geometry.safeArea.right,
+                    Double(IOSUsePlayDeviceSafeAreaRight)
+                ),
+                "safe-area right"
+            ),
+            (
+                stage == "window-configured"
+                    || stage == "ready",
+                "runtime stage"
+            ),
         ]
         if let mismatch = checks.first(where: { !$0.0 }) {
-            throw PlayCoverDriverClientError.runtimeGeometryMismatch(
-                mismatch.1
-            )
+            throw PlayCoverDriverClientError
+                .runtimeGeometryMismatch(mismatch.1)
         }
     }
 
@@ -537,32 +1084,26 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 == Int(Self.nativePixelSize.width),
               screenshot.pixelHeight
                 == Int(Self.nativePixelSize.height),
-              approximatelyEqual(
+              Self.approximatelyEqual(
                   screenshot.logicalWidth,
                   Self.logicalSize.width
               ),
-              approximatelyEqual(
+              Self.approximatelyEqual(
                   screenshot.logicalHeight,
                   Self.logicalSize.height
               ),
-              approximatelyEqual(
+              Self.approximatelyEqual(
                   screenshot.scale,
-                  Self.profileScale
+                  Self.deviceScale
               ) else {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch("screenshot geometry")
         }
-        let allowedSources: Set<String> = [
-            "cgwindow-self",
-            "_UICreateScreenUIImage",
-            "UICreateScreenImage",
-            "draw-view-hierarchy",
-        ]
-        guard allowedSources.contains(screenshot.source) else {
+        guard screenshot.source == "window-compositor" else {
             throw PlayCoverDriverClientError
                 .malformedRuntimePayload("screenshot source")
         }
-        guard screenshot.jpegBase64.utf8.count > 0,
+        guard !screenshot.jpegBase64.isEmpty,
               screenshot.jpegBase64.utf8.count
                 <= Self.maximumRuntimeBase64Bytes,
               let jpeg = Data(
@@ -606,7 +1147,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
         return jpeg
     }
 
-    private func approximatelyEqual(
+    private static func approximatelyEqual(
         _ lhs: Double,
         _ rhs: Double
     ) -> Bool {
@@ -617,84 +1158,28 @@ final class PlayCoverDriverClient: DriverCommandClient {
 private struct ExpectedRuntimeIdentity {
     let pid: Int32
     let bundleIdentifier: String
-    let profileHash: String
-    let preparedGenerationID: String
-    let socketPath: String
-    let runtimeInstanceID: String
-    let launchNonce: String
+    let executablePath: String
 
     init(session: SessionService.Info) throws {
         guard let runnerPID = session.runnerPid,
               runnerPID > 0,
               runnerPID <= Int(Int32.max) else {
-            throw PlayCoverDriverClientError.incompleteSessionIdentity("pid")
+            throw PlayCoverDriverClientError
+                .incompleteSessionIdentity("PID")
         }
         guard let bundleIdentifier = session.bundleId,
               !bundleIdentifier.isEmpty else {
-            throw PlayCoverDriverClientError.incompleteSessionIdentity(
-                "bundle ID"
-            )
+            throw PlayCoverDriverClientError
+                .incompleteSessionIdentity("bundle ID")
         }
-        guard let profileHash = session.profileHash,
-              !profileHash.isEmpty else {
-            throw PlayCoverDriverClientError.incompleteSessionIdentity(
-                "profile hash"
-            )
-        }
-        guard let preparedGenerationID =
-                session.playCoverPreparedGenerationID,
-              !preparedGenerationID.isEmpty else {
-            throw PlayCoverDriverClientError.incompleteSessionIdentity(
-                "prepared generation"
-            )
-        }
-        guard let socketPath = session.playCoverRuntimeSocketPath,
-              !socketPath.isEmpty else {
-            throw PlayCoverDriverClientError.incompleteSessionIdentity(
-                "runtime socket path"
-            )
-        }
-        guard let runtimeInstanceID = session.playCoverRuntimeInstanceID,
-              !runtimeInstanceID.isEmpty else {
-            throw PlayCoverDriverClientError.incompleteSessionIdentity(
-                "runtime instance"
-            )
-        }
-        guard let launchNonce = session.playCoverLaunchNonce,
-              !launchNonce.isEmpty else {
-            throw PlayCoverDriverClientError.incompleteSessionIdentity(
-                "launch nonce"
-            )
+        guard let executablePath =
+                session.playCoverExecutablePath,
+              !executablePath.isEmpty else {
+            throw PlayCoverDriverClientError
+                .incompleteSessionIdentity("executable path")
         }
         pid = Int32(runnerPID)
         self.bundleIdentifier = bundleIdentifier
-        self.profileHash = profileHash
-        self.preparedGenerationID = preparedGenerationID
-        self.socketPath = socketPath
-        self.runtimeInstanceID = runtimeInstanceID
-        self.launchNonce = launchNonce
-    }
-}
-
-private extension PlayCoverRuntimeJSONValue {
-    var objectValue: [String: PlayCoverRuntimeJSONValue]? {
-        guard case .object(let value) = self else {
-            return nil
-        }
-        return value
-    }
-
-    var numberValue: Double? {
-        guard case .number(let value) = self else {
-            return nil
-        }
-        return value
-    }
-
-    var boolValue: Bool? {
-        guard case .bool(let value) = self else {
-            return nil
-        }
-        return value
+        self.executablePath = executablePath
     }
 }

@@ -1,6 +1,10 @@
 import Foundation
 
 public enum StatusService {
+    static var playCoverDiagnosticsForTesting:
+        ((SessionService.Info) throws
+            -> PlayCoverRuntimeResponsePayload)?
+
     static func machineSnapshot(paths: IOSUsePaths) -> (data: MachineValue, warnings: [String]) {
         let configured = DeviceService.configuredDevices(paths: paths)
         var warnings: [String] = []
@@ -52,23 +56,39 @@ public enum StatusService {
                     "sessionIdentifier": info.sessionIdentifier.map(MachineValue.string) ?? .null,
                     "bundleId": info.bundleId.map(MachineValue.string) ?? .null,
                     "playcoverAppPath": info.playCoverAppPath.map(MachineValue.string) ?? .null,
-                    "profileHash": info.profileHash.map(MachineValue.string) ?? .null,
+                    "playcoverExecutablePath": info.playCoverExecutablePath.map(MachineValue.string) ?? .null,
+                    "playcoverGenerationKey": info.playCoverGenerationKey.map(MachineValue.string) ?? .null,
+                    "playcoverRuntimeSocketPath": info.playCoverRuntimeSocketPath.map(MachineValue.string) ?? .null,
                     "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
                     "versionMatchesCli": info.deviceType == PlayCoverSessionService.deviceType
                         ? .null
                         : .boolean(config?.driverVersion == IOSUseCLI.version),
                 ]
                 if info.deviceType == PlayCoverSessionService.deviceType {
-                    switch playCoverRuntimeHealth(info: info, diagnostics: true) {
-                    case .success(let payload):
+                    switch playCoverRuntimeHealth(info: info) {
+                    case .healthy(let payload):
+                        fields["status"] = .string("healthy")
                         fields["runtime"] = playCoverRuntimeMachineValue(payload)
-                    case .failure(let error):
+                    case .unhealthy(
+                        let error,
+                        let identityVerified
+                    ):
+                        fields["status"] = .string("unhealthy")
                         fields["runtime"] = .object([
-                            "status": .string("unreachable"),
-                            "identityVerified": .boolean(false),
-                            "error": .string(String(describing: error)),
+                            "status": .string("unhealthy"),
+                            "identityVerified":
+                                .boolean(identityVerified),
+                            "error": .string(error),
                         ])
                         warnings.append("PlayCover runtime health check failed: \(error)")
+                    case .stale(let error):
+                        fields["status"] = .string("stale")
+                        fields["runtime"] = .object([
+                            "status": .string("stale"),
+                            "identityVerified": .boolean(false),
+                            "error": .string(error),
+                        ])
+                        warnings.append("PlayCover session is stale: \(error)")
                     }
                 }
                 driver = .object(fields)
@@ -174,33 +194,39 @@ public enum StatusService {
             if let appPath = info.playCoverAppPath, !appPath.isEmpty {
                 parts.append("app: \(appPath)")
             }
-            if let profileHash = info.profileHash, !profileHash.isEmpty {
-                parts.append("profile: \(profileHash)")
+            if let generation = info.playCoverGenerationKey,
+               !generation.isEmpty {
+                parts.append("generation: \(generation)")
             }
             if info.deviceType == PlayCoverSessionService.deviceType {
-                switch playCoverRuntimeHealth(
-                    info: info,
-                    diagnostics: verbose
-                ) {
-                case .success(let payload):
-                    parts.append("runtime: reachable")
-                    parts.append("runtime instance: \(payload.runtimeInstanceID)")
+                switch playCoverRuntimeHealth(info: info) {
+                case .healthy(let payload):
+                    parts[0] = "healthy"
+                    parts.append("runtime: healthy")
                     if let socketPath = info.playCoverRuntimeSocketPath {
                         parts.append("socket: \(socketPath)")
                     }
-                    if verbose {
-                        parts.append(
-                            "geometry: \(formatRuntimeNumber(payload.logicalWidth))"
-                                + "x\(formatRuntimeNumber(payload.logicalHeight))"
-                                + " @\(formatRuntimeNumber(payload.scale))x"
-                        )
-                        parts.append("runtime stage: \(payload.stage)")
-                        parts.append(
-                            "capabilities: \(payload.capabilities.joined(separator: ","))"
-                        )
-                    }
-                case .failure(let error):
-                    parts.append("runtime: unreachable (\(error))")
+                    parts.append(
+                        "geometry: \(formatRuntimeNumber(payload.geometry.logical.width))"
+                            + "x\(formatRuntimeNumber(payload.geometry.logical.height))"
+                            + " @\(formatRuntimeNumber(payload.geometry.scale))x"
+                    )
+                    parts.append(
+                        "safe area: \(formatRuntimeNumber(payload.geometry.safeArea.top)),"
+                            + "\(formatRuntimeNumber(payload.geometry.safeArea.left)),"
+                            + "\(formatRuntimeNumber(payload.geometry.safeArea.bottom)),"
+                            + "\(formatRuntimeNumber(payload.geometry.safeArea.right))"
+                    )
+                    parts.append("runtime stage: \(payload.stage)")
+                    parts.append(
+                        "capabilities: \(payload.capabilities.joined(separator: ","))"
+                    )
+                case .unhealthy(let error, _):
+                    parts[0] = "unhealthy"
+                    parts.append("runtime: unhealthy (\(error))")
+                case .stale(let error):
+                    parts[0] = "stale"
+                    parts.append("runtime: stale (\(error))")
                 }
             }
             return ["  - \(parts.joined(separator: " | "))"]
@@ -209,33 +235,87 @@ public enum StatusService {
         }
     }
 
+    private enum PlayCoverRuntimeHealth {
+        case healthy(PlayCoverRuntimeResponsePayload)
+        case unhealthy(
+            String,
+            identityVerified: Bool
+        )
+        case stale(String)
+    }
+
     private static func playCoverRuntimeHealth(
-        info: SessionService.Info,
-        diagnostics: Bool
-    ) -> Result<PlayCoverRuntimeResponsePayload, Error> {
-        guard let socketPath = info.playCoverRuntimeSocketPath,
-              !socketPath.isEmpty,
-              let launchNonce = info.playCoverLaunchNonce,
-              !launchNonce.isEmpty else {
-            return .failure(
-                CLIParseError.invalidValue(
-                    "Invalid driver.lock: PlayCover runtime socket identity is incomplete."
-                )
+        info: SessionService.Info
+    ) -> PlayCoverRuntimeHealth {
+        guard let pidValue = info.runnerPid,
+              pidValue > 0,
+              pidValue <= Int(Int32.max),
+              let expectedExecutable =
+                info.playCoverExecutablePath,
+              !expectedExecutable.isEmpty else {
+            return .stale(
+                "driver.lock has incomplete PID/executable identity"
+            )
+        }
+        let pid = Int32(pidValue)
+        let actualExecutable: String
+        switch PlayCoverSessionService.processState(pid) {
+        case .running(let executablePath):
+            actualExecutable = executablePath
+        case .missing:
+            return .stale("recorded App process is not running")
+        case .unverifiable(let errorNumber):
+            return .unhealthy(
+                "cannot verify recorded App process identity: "
+                    + "errno \(errorNumber)",
+                identityVerified: false
+            )
+        }
+        guard PlayCoverRuntimeClient.canonicalPath(actualExecutable)
+                == PlayCoverRuntimeClient.canonicalPath(
+                    expectedExecutable
+                ) else {
+            return .stale(
+                "recorded PID belongs to a different executable"
+            )
+        }
+        let payload: PlayCoverRuntimeResponsePayload
+        do {
+            if let override = playCoverDiagnosticsForTesting {
+                payload = try override(info)
+            } else {
+                let client =
+                    try PlayCoverDriverClient.runtimeClient(
+                        for: info,
+                        timeoutSeconds: 0.75
+                    )
+                payload = try client.diagnostics()
+            }
+        } catch {
+            return .unhealthy(
+                String(describing: error),
+                identityVerified: false
             )
         }
         do {
-            let client = PlayCoverRuntimeClient(
-                socketPath: socketPath,
-                launchNonce: launchNonce,
-                timeoutSeconds: 0.75
-            )
-            let payload = diagnostics
-                ? try client.diagnostics()
-                : try client.ping()
             try validatePlayCoverRuntimeIdentity(payload, info: info)
-            return .success(payload)
         } catch {
-            return .failure(error)
+            return .unhealthy(
+                String(describing: error),
+                identityVerified: false
+            )
+        }
+        do {
+            try PlayCoverDriverClient.validateFixedDevice(
+                payload.geometry,
+                stage: payload.stage
+            )
+            return .healthy(payload)
+        } catch {
+            return .unhealthy(
+                String(describing: error),
+                identityVerified: true
+            )
         }
     }
 
@@ -243,40 +323,44 @@ public enum StatusService {
         _ payload: PlayCoverRuntimeResponsePayload,
         info: SessionService.Info
     ) throws {
-        guard payload.protocolVersion == PlayCoverRuntimeClient.schemaVersion,
-              Int(payload.pid) == info.runnerPid,
+        guard Int(payload.pid) == info.runnerPid,
               payload.bundleIdentifier == info.bundleId,
-              payload.profileHash == info.profileHash,
-              payload.preparedGenerationID == info.playCoverPreparedGenerationID,
-              payload.runtimeSocketPath == info.playCoverRuntimeSocketPath,
-              payload.runtimeInstanceID == info.playCoverRuntimeInstanceID else {
+              let executable = info.playCoverExecutablePath,
+              PlayCoverRuntimeClient.canonicalPath(
+                  payload.executablePath
+              ) == PlayCoverRuntimeClient.canonicalPath(
+                  executable
+              ) else {
             throw CLIParseError.invalidValue(
                 "PlayCover runtime identity no longer matches the active session."
             )
         }
     }
 
-    private static func playCoverRuntimeMachineValue(
+    static func playCoverRuntimeMachineValue(
         _ payload: PlayCoverRuntimeResponsePayload
     ) -> MachineValue {
         var fields: [String: MachineValue] = [
-            "status": .string("reachable"),
+            "status": .string("healthy"),
             "identityVerified": .boolean(true),
-            "protocolVersion": .integer(payload.protocolVersion),
+            "protocolVersion": .integer(
+                PlayCoverRuntimeClient.schemaVersion
+            ),
             "pid": .integer(Int(payload.pid)),
             "bundleIdentifier": .string(payload.bundleIdentifier),
-            "profileHash": .string(payload.profileHash),
-            "preparedGenerationID": .string(payload.preparedGenerationID),
-            "runtimeSocketPath": .string(payload.runtimeSocketPath),
-            "runtimeInstanceID": .string(payload.runtimeInstanceID),
+            "executablePath": .string(payload.executablePath),
             "capabilities": .array(payload.capabilities.map(MachineValue.string)),
-            "logicalWidth": .double(payload.logicalWidth),
-            "logicalHeight": .double(payload.logicalHeight),
-            "nativeWidth": .double(payload.nativeWidth),
-            "nativeHeight": .double(payload.nativeHeight),
-            "scale": .double(payload.scale),
-            "windowWidth": payload.windowWidth.map(MachineValue.double) ?? .null,
-            "windowHeight": payload.windowHeight.map(MachineValue.double) ?? .null,
+            "logicalWidth": .double(payload.geometry.logical.width),
+            "logicalHeight": .double(payload.geometry.logical.height),
+            "nativeWidth": .double(payload.geometry.native.width),
+            "nativeHeight": .double(payload.geometry.native.height),
+            "scale": .double(payload.geometry.scale),
+            "windowWidth": .double(payload.geometry.window.width),
+            "windowHeight": .double(payload.geometry.window.height),
+            "safeAreaTop": .double(payload.geometry.safeArea.top),
+            "safeAreaLeft": .double(payload.geometry.safeArea.left),
+            "safeAreaBottom": .double(payload.geometry.safeArea.bottom),
+            "safeAreaRight": .double(payload.geometry.safeArea.right),
             "stage": .string(payload.stage),
         ]
         if let observed = payload.observed {
@@ -284,10 +368,17 @@ public enum StatusService {
                 observed.mapValues(playCoverRuntimeJSONMachineValue)
             )
         }
+        if let diagnostics = payload.diagnostics {
+            fields["diagnostics"] = .object(
+                diagnostics.mapValues(
+                    playCoverRuntimeJSONMachineValue
+                )
+            )
+        }
         return .object(fields)
     }
 
-    private static func playCoverRuntimeJSONMachineValue(
+    static func playCoverRuntimeJSONMachineValue(
         _ value: PlayCoverRuntimeJSONValue
     ) -> MachineValue {
         switch value {

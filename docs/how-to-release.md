@@ -13,6 +13,10 @@ The release tag must match the binary version exactly, for example:
 
 ## 2. Build Release Assets Locally
 
+Use Apple-silicon macOS with full Xcode and `xcodegen` installed. Start from a
+clean Git tree: the script fails before building when tracked or untracked
+source differs from `HEAD`, and checks again after the build.
+
 Run the release build script with the intended tag:
 
 ```bash
@@ -21,18 +25,36 @@ IOS_USE_RELEASE_VERSION=v1.2.0 bash scripts/release_build.sh
 
 This script:
 
-1. Builds the Swift CLI.
-2. Verifies `./ios-use --version` matches `IOS_USE_RELEASE_VERSION` when provided.
-3. Builds the real-device and simulator driver IPAs.
-4. Stages release assets under `release/`.
-5. Stages the matching versioned changelog.
-6. Writes `release/SHA256SUMS` for every staged content asset.
+1. Refuses a dirty source tree and audits pinned PlayCover, PlayTools, `inject`,
+   and Yams remotes, commits, licenses, expected vendored files, local patch
+   sets, and SwiftPM resolutions.
+2. Hashes the complete tracked Runtime build-input set, then forces a fresh
+   Runtime build from a new derived-data directory.
+3. Builds the Swift CLI and verifies `./ios-use --version` matches
+   `IOS_USE_RELEASE_VERSION` when provided.
+4. Builds the real-device and simulator driver IPAs.
+5. Refuses any source-input change during the build and stages the Runtime as
+   a read-only source resource under `release/`; preparation may sign only a
+   managed copy.
+6. Builds corresponding source from the exact current `HEAD`, adds the complete
+   pinned Yams Git tree, and proves its Runtime inputs have the same digest as
+   the fresh binary build.
+7. Stages the versioned build digest manifest, licenses, upstream provenance,
+   and changelog.
+8. Verifies every source/archive file set and writes `release/SHA256SUMS` for
+   every content asset.
 
 Expected assets:
 
 - `release/ios-use-darwin-arm64`
 - `release/driver.ipa`
 - `release/driver-sim.ipa`
+- `release/ios-use-playcover-runtime.tar.gz`
+- `release/ios-use-v1.2.0-corresponding-source.tar.gz`
+- `release/LICENSE`, `release/*-LICENSE-*` (including Yams MIT), and
+  `release/THIRD-PARTY-LICENSES.md`
+- `release/PLAYCOVER-BUILD-MANIFEST-v1.2.0.txt`
+- `release/PLAYCOVER-PROVENANCE-v1.2.0.md`
 - `release/CHANGELOG-v1.2.0.md`
 - `release/SHA256SUMS`
 
@@ -47,6 +69,10 @@ git diff --check
 ```
 
 `./ios-use --version` must print the same version as the tag you will publish.
+The tag workflow builds the fixture and runs the exact files under `release/`
+through checksum/build-manifest/source-manifest validation, `install.sh`, and
+installed `start/status/stop` before any upload. The normal non-live CI gate
+also exercises the same installed path with freshly built local assets.
 
 ## 4. Commit And Tag
 
@@ -84,6 +110,9 @@ The release workflow runs on tag pushes that match `v*` and uploads:
 - `ios-use-darwin-arm64`
 - `driver.ipa`
 - `driver-sim.ipa`
+- `ios-use-playcover-runtime.tar.gz`
+- `ios-use-vX.Y.Z-corresponding-source.tar.gz`
+- license, PlayCover provenance, and versioned Runtime/source digest assets
 - `CHANGELOG-vX.Y.Z.md`
 - `SHA256SUMS`
 
@@ -91,14 +120,30 @@ To watch it:
 
 1. Open the GitHub Actions run for the `Build & Release` workflow.
 2. Confirm `scripts/release_build.sh` passes its version check.
-3. Confirm the upload step publishes all five assets.
+3. Confirm the exact-release installed-layout step passes before upload.
 4. Open the GitHub Release page for the tag and verify the assets are attached.
 
 ## 7. Release Checklist
 
 - `IOSUseCLI.version` matches the release tag.
+- The checkout is clean before and after release builds.
+- `xcodegen` and full Xcode are present on Apple Silicon.
 - `scripts/release_build.sh` succeeds with `IOS_USE_RELEASE_VERSION=vX.Y.Z`.
+- `scripts/test_playcover_installed_layout.sh --release-dir release` succeeds
+  for those exact assets.
 - `release/` contains all expected assets.
 - `git diff --check` passes.
 - The tag is pushed to origin.
-- The GitHub Release has all five uploaded assets.
+- The GitHub Release has the Runtime archive, corresponding source, license,
+  provenance, build manifest, changelog, and checksums in addition to the CLI
+  and driver IPAs.
+
+The external-App live/stress gate is a separate `workflow_dispatch` entry
+because hosted jobs cannot access an operator's App or interactive runner. A
+release still requires a passing attestation for the exact release commit.
+The runner supplies `IOS_USE_PLAYCOVER_LIVE_SCENARIO` and
+`IOS_USE_PLAYCOVER_PRIVATE_EVIDENCE_DIR`; raw screenshots, DOM, logs, and
+session state remain outside the public checkout. CI receives and uploads only
+the schema-v1 redacted attestation containing the commit, generic case IDs,
+result, and evidence digests. A queued or unavailable private runner is an
+infrastructure gap, never passing evidence.
