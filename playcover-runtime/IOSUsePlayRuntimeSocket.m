@@ -36,15 +36,15 @@ static BOOL IOSUseIsNonemptyString(id value) {
         [(NSString *)value length] > 0;
 }
 
-static BOOL IOSUseIsSchemaVersionTwo(id value) {
+static BOOL IOSUseIsSchemaVersionThree(id value) {
     if (![value isKindOfClass:NSNumber.class] ||
         CFGetTypeID((__bridge CFTypeRef)value) ==
             CFBooleanGetTypeID()) {
         return NO;
     }
     NSNumber *number = value;
-    return number.longLongValue == 2 &&
-        number.doubleValue == 2.0;
+    return number.longLongValue == 3 &&
+        number.doubleValue == 3.0;
 }
 
 static NSDictionary<NSString *, id> *IOSUseErrorObject(
@@ -74,7 +74,7 @@ static NSDictionary<NSString *, id> *IOSUseErrorEnvelope(
     NSDictionary<NSString *, id> *error
 ) {
     return @{
-        @"schemaVersion": @2,
+        @"schemaVersion": @3,
         @"requestId": requestID ?: @"",
         @"sessionID": IOSUseRuntimeSessionID ?: @"",
         @"ok": @NO,
@@ -413,12 +413,7 @@ static NSDictionary<NSString *, id> *IOSUseHostGeometry(
         @"inverseDisplayScale": IOSUseSocketStableFiniteNumber(
             window[@"inverseDisplayScale"]
         ),
-        @"transparentSpacer": IOSUseSocketStableFiniteNumber(
-            window[@"transparentSpacer"]
-        ),
-        @"transparent": IOSUseSocketStableBool(
-            window[@"transparentHost"]
-        ),
+        @"opaque": IOSUseSocketStableBool(window[@"opaque"]),
         @"publicTitleBar": IOSUseSocketStableBool(
             window[@"publicTitleBar"]
         ),
@@ -496,7 +491,6 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
     CGFloat displayScale = [host[@"displayScale"] doubleValue];
     CGFloat inverseDisplayScale =
         [host[@"inverseDisplayScale"] doubleValue];
-    CGFloat spacer = [host[@"transparentSpacer"] doubleValue];
     NSString *title = [host[@"title"] isKindOfClass:NSString.class]
         ? host[@"title"]
         : @"";
@@ -509,7 +503,6 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
             ? capture[@"hostWindowNumber"]
             : nil;
     BOOL captureErrorIsNull = capture[@"error"] == NSNull.null;
-    BOOL transparent = [host[@"transparent"] boolValue];
     BOOL commonReady =
         [host[@"status"] isEqualToString:@"configured"] &&
         [host[@"hostPolicy"] boolValue] &&
@@ -535,8 +528,7 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         CGRectGetMinY(canvasRect) - CGRectGetMinY(contentBounds);
     CGFloat topMargin =
         CGRectGetMaxY(contentBounds) - CGRectGetMaxY(canvasRect);
-    return !transparent &&
-        fabs(spacer) <= 0.01 &&
+    return [host[@"opaque"] boolValue] &&
         isfinite(displayScale) && displayScale > 0 &&
         isfinite(inverseDisplayScale) &&
         fabs(displayScale * inverseDisplayScale - 1.0) <= 0.01 &&
@@ -596,7 +588,7 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
             IOSUsePlayDeviceLogicalHeight) <= 0.01;
 }
 
-static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
+static NSMutableDictionary<NSString *, id> *IOSUseIdentityPayload(void) {
     __block NSDictionary<NSString *, id> *geometry;
     __block NSString *stage;
     void (^capture)(void) = ^{
@@ -690,7 +682,6 @@ static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
             NSBundle.mainBundle.executablePath ?: @"",
         @"capabilities": IOSUseCapabilities(),
         @"geometry": geometry ?: @{},
-        @"playChain": playChain ?: @{},
         @"stage": stage ?: @"geometry-mismatch",
     } mutableCopy];
 }
@@ -765,7 +756,7 @@ static NSDictionary<NSString *, id> *IOSUseSuccessEnvelope(
     NSDictionary<NSString *, id> *payload
 ) {
     return @{
-        @"schemaVersion": @2,
+        @"schemaVersion": @3,
         @"requestId": requestID,
         @"sessionID": IOSUseRuntimeSessionID,
         @"ok": @YES,
@@ -830,12 +821,13 @@ static NSDictionary<NSString *, id> *IOSUseHandleScreenshot(
     NSMutableDictionary<NSString *, id> *typed =
         [screenshot mutableCopy];
     typed[@"snapshotGeneration"] = dom[@"snapshotGeneration"];
-    typed[@"dom"] = dom;
-    NSMutableDictionary<NSString *, id> *payload =
-        IOSUseBasePayload();
-    payload[@"screenshot"] = typed;
-    payload[@"dom"] = dom;
-    return IOSUseSuccessEnvelope(requestID, payload);
+    return IOSUseSuccessEnvelope(
+        requestID,
+        @{
+            @"screenshot": typed,
+            @"dom": dom,
+        }
+    );
 }
 
 static NSDictionary<NSString *, id> *IOSUseHandleRequest(
@@ -866,7 +858,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     if (request.count != expectedKeys.count ||
         ![[NSSet setWithArray:request.allKeys]
             isEqualToSet:expectedKeys] ||
-        !IOSUseIsSchemaVersionTwo(request[@"schemaVersion"]) ||
+        !IOSUseIsSchemaVersionThree(request[@"schemaVersion"]) ||
         requestID.length == 0 ||
         requestID.length > 256 ||
         !IOSUseIsNonemptyString(request[@"sessionID"]) ||
@@ -875,7 +867,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
         return IOSUseBasicErrorEnvelope(
             requestID,
             @"invalid_request",
-            @"request does not match Runtime schema version 2",
+            @"request does not match Runtime schema version 3",
             @"protocol",
             @"validation",
             NO
@@ -895,20 +887,32 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     NSString *command = request[@"command"];
     NSDictionary<NSString *, id> *arguments = request[@"arguments"];
     NSMutableDictionary<NSString *, id> *payload =
-        IOSUseBasePayload();
-    if ([command isEqualToString:@"hello"] ||
-        [command isEqualToString:@"ping"]) {
+        [NSMutableDictionary dictionary];
+    if ([command isEqualToString:@"hello"]) {
         if (arguments.count != 0) {
             return IOSUseBasicErrorEnvelope(
                 requestID,
                 @"invalid_arguments",
-                @"hello and ping require an empty arguments object",
+                @"hello requires an empty arguments object",
                 @"validation",
                 @"validation",
                 NO
             );
         }
+        payload = IOSUseIdentityPayload();
         payload[@"observed"] = IOSUseObserved();
+    } else if ([command isEqualToString:@"ping"]) {
+        if (arguments.count != 0) {
+            return IOSUseBasicErrorEnvelope(
+                requestID,
+                @"invalid_arguments",
+                @"ping requires an empty arguments object",
+                @"validation",
+                @"validation",
+                NO
+            );
+        }
+        payload[@"pong"] = @YES;
     } else if ([command isEqualToString:@"diagnostics"]) {
         if (arguments.count != 0) {
             return IOSUseBasicErrorEnvelope(
@@ -920,6 +924,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
                 NO
             );
         }
+        payload = IOSUseIdentityPayload();
         payload[@"diagnostics"] = @{
             @"runtime": IOSUsePlayRuntimeHookDiagnostics(),
             @"socket": IOSUsePlayRuntimeSocketIdentity(),
@@ -1285,7 +1290,7 @@ void IOSUsePlayRuntimeStartSocket(void) {
         );
         dispatch_async(acceptQueue, ^{
             NSLog(
-                @"[ios-use-play] Runtime v2 socket listening"
+                @"[ios-use-play] Runtime v3 socket listening"
             );
             for (;;) {
                 @autoreleasepool {
@@ -1329,7 +1334,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeSocketIdentity(void) {
     NSMutableDictionary<NSString *, id> *identity = [@{
         @"status": status ?: @"unknown",
         @"transport": @"unix-domain-socket",
-        @"protocolSchemaVersion": @2,
+        @"protocolSchemaVersion": @3,
         @"fifo": @YES,
     } mutableCopy];
     if (failureStage.length > 0) {

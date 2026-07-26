@@ -72,8 +72,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
                         element: self.makeSummary(generation: 14),
                         hitView: self.makeHitView(),
                         finalState: self.makeFinalState(),
-                        postcondition:
-                            self.makePostcondition(generation: 15),
                         scrolls: 3,
                         direction: "forth"
                     )
@@ -92,9 +90,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                         button: "Allow",
                         reason: "button",
                         hitView: self.makeHitView(),
-                        finalState: self.makeFinalState(),
-                        postcondition:
-                            self.makePostcondition(generation: 16)
+                        finalState: self.makeFinalState()
                     )
                 )
             case .open:
@@ -102,9 +98,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                     capability: command,
                     open: .init(
                         delivered: true,
-                        url: "demo://route",
-                        postcondition:
-                            self.makePostcondition(generation: 17)
+                        url: "demo://route"
                     )
                 )
             default:
@@ -169,22 +163,18 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertEqual(wait.element.identifier, "continue")
         XCTAssertEqual(tap.hitView?.className, "UIButton")
         XCTAssertEqual(tap.finalState?.touchID, 77)
-        XCTAssertEqual(
-            tap.postcondition?.snapshotGeneration,
-            13
-        )
-        XCTAssertEqual(
-            longPress.postcondition?.snapshotGeneration,
-            14
-        )
+        XCTAssertNil(tap.postcondition)
+        XCTAssertNil(longPress.postcondition)
         XCTAssertEqual(swipe.scrolls, 3)
         XCTAssertEqual(swipe.scrollDirection, "forth")
+        XCTAssertNil(swipe.postcondition)
         XCTAssertEqual(input.element.snapshotGeneration, 15)
+        XCTAssertNil(input.postcondition)
         XCTAssertTrue(alert.dismissed)
         XCTAssertEqual(alert.button, "Allow")
+        XCTAssertNil(alert.postcondition)
         XCTAssertTrue(open.delivered)
         XCTAssertEqual(open.url, "demo://route")
-        XCTAssertEqual(open.postcondition.snapshotGeneration, 17)
 
         XCTAssertEqual(
             requests.map(\.0),
@@ -279,8 +269,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
                     element: self.makeSummary(generation: 20),
                     hitView: self.makeHitView(),
                     finalState: self.makeFinalState(),
-                    postcondition:
-                        self.makePostcondition(generation: 21),
                     scrolls: 1,
                     direction: "forth"
                 )
@@ -435,14 +423,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
             (
                 makePayload(
                     capability: .screenshot,
-                    geometry: makeGeometry(logicalWidth: 431),
-                    screenshot: valid
-                ),
-                .runtimeGeometryMismatch("logical width")
-            ),
-            (
-                makePayload(
-                    capability: .screenshot,
                     screenshot: makeScreenshot(
                         jpeg: jpeg,
                         syntheticChrome: true
@@ -509,13 +489,13 @@ final class PlayCoverDriverClientTests: XCTestCase {
         let matching = makeScreenshot(
             jpeg: jpeg,
             snapshotGeneration: 31,
-            captureGeneration: 4,
-            dom: matchingDOM
+            captureGeneration: 4
         )
         let snapshot = try makeClient(
             response: makePayload(
                 capability: .screenshot,
-                screenshot: matching
+                screenshot: matching,
+                dom: matchingDOM
             )
         ).evidenceSnapshot()
 
@@ -525,14 +505,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
         let mismatched = makeScreenshot(
             jpeg: jpeg,
             snapshotGeneration: 31,
-            captureGeneration: 5,
-            dom: makeDOM(generation: 32)
+            captureGeneration: 5
         )
         XCTAssertThrowsError(
             try makeClient(
                 response: makePayload(
                     capability: .screenshot,
-                    screenshot: mismatched
+                    screenshot: mismatched,
+                    dom: makeDOM(generation: 32)
                 )
             ).evidenceSnapshot()
         ) {
@@ -545,235 +525,66 @@ final class PlayCoverDriverClientTests: XCTestCase {
         }
     }
 
-    func testRuntimeIdentityCapabilityAndGeometryAreValidated()
+    func testDOMUsesOnlyCommandPayloadAndValidatesItsOwnWindowSize()
         throws
     {
-        let variants: [(
-            PlayCoverRuntimeResponsePayload,
-            PlayCoverDriverClientError
-        )] = [
-            (
-                makePayload(capability: .dom, pid: 999),
-                .runtimeIdentityMismatch("PID")
+        let valid = makeClient(
+            response: .dom(makeDOM(generation: 1))
+        )
+        XCTAssertNoThrow(
+            try valid.dom(
+                raw: false,
+                fresh: true,
+                waitQuiescence: false
+            )
+        )
+
+        let badDOM = PlayCoverRuntimeDOMPayload(
+            app: "Demo",
+            windowSize: .init(
+                x: Double(IOSUsePlayDeviceLogicalWidth) + 1,
+                y: Double(IOSUsePlayDeviceLogicalHeight)
             ),
-            (
-                makePayload(
-                    capability: .dom,
-                    bundleIdentifier: "other.bundle"
-                ),
-                .runtimeIdentityMismatch("bundle ID")
-            ),
-            (
-                makePayload(
-                    capability: .dom,
-                    executablePath: "/tmp/other"
-                ),
-                .runtimeIdentityMismatch("executable")
-            ),
-            (
-                makePayload(
-                    capability: .hello,
-                    dom: makeDOM(generation: 1)
-                ),
-                .runtimeCapabilityUnavailable("dom")
-            ),
-            (
-                makePayload(
-                    capability: .dom,
-                    stage: "booting",
-                    dom: makeDOM(generation: 1)
-                ),
-                .runtimeGeometryMismatch("runtime stage")
-            ),
-        ]
-        for (payload, expected) in variants {
-            let client = makeClient(response: payload)
-            XCTAssertThrowsError(
-                try client.dom(
-                    raw: false,
-                    fresh: true,
-                    waitQuiescence: false
-                )
-            ) {
-                XCTAssertEqual(
-                    $0 as? PlayCoverDriverClientError,
-                    expected
-                )
-            }
-        }
-    }
-
-    func testMutationAllowsWholeDOMChangeWithStableTargetSummary()
-        throws
-    {
-        let original = makeSummary(generation: 40)
-        let siblingChanged = PlayCoverRuntimeActionPayload(
-            element: original,
-            hitView: makeHitView(),
-            finalState: makeFinalState(),
-            postcondition: .init(
-                snapshotGeneration: 41,
-                element: makeSummary(generation: 41),
-                changed: true,
-                stateEvidence: makeStateEvidence(
-                    beforeGeneration: 40,
-                    afterGeneration: 41,
-                    changedElementCount: 1,
-                    targetChanged: false
-                )
-            )
+            raw: "Application, Demo",
+            snapshotGeneration: 1,
+            elements: [makeElement(generation: 1)]
         )
-        let client = makeClient(
-            response: makePayload(
-                capability: .tap,
-                tap: siblingChanged
-            )
-        )
-
-        let result = try client.tap(
-            target: ForyTarget(label: "Continue"),
-            traits: nil,
-            cindex: nil,
-            offset: nil,
-            ratio: ForyPoint(x: 0.5, y: 0.5)
-        )
-
-        XCTAssertEqual(result.postcondition?.changed, true)
-        XCTAssertEqual(
-            result.postcondition?.snapshotGeneration,
-            41
-        )
-    }
-
-    func testMutationAllowsFullSceneReplacementSymmetricDifference()
-        throws
-    {
-        let original = makeSummary(generation: 42)
-        let replaced = PlayCoverRuntimeActionPayload(
-            element: original,
-            hitView: makeHitView(),
-            finalState: makeFinalState(),
-            postcondition: .init(
-                snapshotGeneration: 43,
-                element: nil,
-                changed: true,
-                stateEvidence: .init(
-                    beforeSnapshotGeneration: 42,
-                    afterSnapshotGeneration: 43,
-                    beforeElementCount: 1,
-                    afterElementCount: 1,
-                    changedElementCount: 2,
-                    changes: [
-                        .object(["beforeCount": .number(1)]),
-                        .object(["afterCount": .number(1)]),
-                    ],
-                    targetChanged: true
-                )
-            )
-        )
-        let client = makeClient(
-            response: makePayload(
-                capability: .tap,
-                tap: replaced
-            )
-        )
-
-        let result = try client.tap(
-            target: ForyTarget(label: "Continue"),
-            traits: nil,
-            cindex: nil,
-            offset: nil,
-            ratio: ForyPoint(x: 0.5, y: 0.5)
-        )
-
-        XCTAssertEqual(result.postcondition?.changed, true)
-        XCTAssertNil(result.postcondition?.element)
-    }
-
-    func testMutationAllowsPixelChangeWithStableDOM() throws {
-        let original = makeSummary(generation: 45)
-        var postcondition = PlayCoverRuntimePostcondition(
-            snapshotGeneration: 46,
-            element: makeSummary(generation: 46),
-            changed: true,
-            stateEvidence: makeStateEvidence(
-                beforeGeneration: 45,
-                afterGeneration: 46,
-                changedElementCount: 0,
-                targetChanged: false
-            )
-        )
-        postcondition.pixelEvidence = makePixelEvidence(
-            beforeHash: String(repeating: "a", count: 64),
-            afterHash: String(repeating: "b", count: 64)
-        )
-        let payload = PlayCoverRuntimeActionPayload(
-            element: original,
-            hitView: makeHitView(),
-            finalState: makeFinalState(),
-            postcondition: postcondition
-        )
-        let client = makeClient(
-            response: makePayload(
-                capability: .tap,
-                tap: payload
-            )
-        )
-
-        let result = try client.tap(
-            target: ForyTarget(label: "Continue"),
-            traits: nil,
-            cindex: nil,
-            offset: nil,
-            ratio: ForyPoint(x: 0.5, y: 0.5)
-        )
-
-        XCTAssertEqual(result.postcondition?.changed, true)
-    }
-
-    func testMutationRejectsChangedFlagWithoutFullDOMDiff()
-        throws
-    {
-        let original = makeSummary(generation: 50)
-        let malformed = PlayCoverRuntimeActionPayload(
-            element: original,
-            hitView: makeHitView(),
-            finalState: makeFinalState(),
-            postcondition: .init(
-                snapshotGeneration: 51,
-                element: makeSummary(generation: 51),
-                changed: true,
-                stateEvidence: makeStateEvidence(
-                    beforeGeneration: 50,
-                    afterGeneration: 51,
-                    changedElementCount: 0,
-                    targetChanged: false
-                )
-            )
-        )
-        let client = makeClient(
-            response: makePayload(
-                capability: .tap,
-                tap: malformed
-            )
-        )
-
+        let invalid = makeClient(response: .dom(badDOM))
         XCTAssertThrowsError(
-            try client.tap(
-                target: ForyTarget(label: "Continue"),
-                traits: nil,
-                cindex: nil,
-                offset: nil,
-                ratio: ForyPoint(x: 0.5, y: 0.5)
+            try invalid.dom(
+                raw: false,
+                fresh: true,
+                waitQuiescence: false
             )
         ) {
             XCTAssertEqual(
                 $0 as? PlayCoverDriverClientError,
-                .malformedRuntimePayload(
-                    "mutation full-DOM state evidence"
-                )
+                .runtimeGeometryMismatch("DOM window size")
             )
         }
+    }
+
+    func testActionSucceedsWithoutGenericVisualPostcondition()
+        throws
+    {
+        let action = PlayCoverRuntimeActionPayload(
+            element: makeSummary(generation: 40),
+            hitView: makeHitView(),
+            finalState: makeFinalState()
+        )
+        let client = makeClient(response: .tap(action))
+
+        let result = try client.tap(
+            target: ForyTarget(label: "Continue"),
+            traits: nil,
+            cindex: nil,
+            offset: nil,
+            ratio: ForyPoint(x: 0.5, y: 0.5)
+        )
+
+        XCTAssertEqual(result.element.snapshotGeneration, 40)
+        XCTAssertEqual(result.finalState?.phase, "ended")
+        XCTAssertNil(result.postcondition)
     }
 
     func testRemoteTypedErrorTranslatesWithoutLosingEvidence()
@@ -879,14 +690,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
             deviceType: PlayCoverSessionService.deviceType,
             runnerPid: 4_242,
             startMode: PlayCoverSessionService.deviceType,
-            sessionIdentifier: "session-v2",
+            sessionIdentifier: "session-v3",
             bundleId: "com.example.runtime",
             playCoverAppPath:
                 "/tmp/prepared/generation/com.example.runtime.app",
             playCoverExecutablePath:
                 "/tmp/prepared/generation/com.example.runtime.app/Demo",
             playCoverGenerationKey: "generation",
-            playCoverRuntimeSocketPath: "/tmp/run/s-sessionv2.sock"
+            playCoverRuntimeSocketPath: "/tmp/run/s-sessionv3.sock"
         )
     }
 
@@ -899,8 +710,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         captureError: String? = nil,
         displayScale: Double = 0.75,
         inverseDisplayScale: Double? = nil,
-        transparentSpacer: Double = 0,
-        transparent: Bool = false,
+        opaque: Bool = true,
         hostFrameWidth: Double? = nil,
         canvasWidth: Double? = nil,
         canvasCGX: Double = 40,
@@ -936,8 +746,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
             displayScale: displayScale,
             inverseDisplayScale: resolvedInverseDisplayScale,
-            transparentSpacer: transparentSpacer,
-            transparent: transparent,
+            opaque: opaque,
             publicTitleBar: true,
             titleVisible: true,
             resizable: true,
@@ -1209,17 +1018,17 @@ final class PlayCoverDriverClientTests: XCTestCase {
             )
         }
 
-        let transparentHost = PlayCoverRuntimeGeometry(
+        let nonOpaqueHost = PlayCoverRuntimeGeometry(
             logical: missingHost.logical,
             native: missingHost.native,
             scale: missingHost.scale,
             window: missingHost.window,
             safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(transparent: true)
+            host: makeSimulatorScaleHostGeometry(opaque: false)
         )
         XCTAssertThrowsError(
             try PlayCoverDriverClient.validateFixedDevice(
-                transparentHost,
+                nonOpaqueHost,
                 stage: "ready"
             )
         ) { error in
@@ -1227,30 +1036,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 error as? PlayCoverDriverClientError,
                 .runtimeGeometryMismatch(
                     "simulator-scale host presentation"
-                )
-            )
-        }
-
-        let spacerHost = PlayCoverRuntimeGeometry(
-            logical: missingHost.logical,
-            native: missingHost.native,
-            scale: missingHost.scale,
-            window: missingHost.window,
-            safeArea: missingHost.safeArea,
-            host: makeSimulatorScaleHostGeometry(
-                transparentSpacer: 8
-            )
-        )
-        XCTAssertThrowsError(
-            try PlayCoverDriverClient.validateFixedDevice(
-                spacerHost,
-                stage: "ready"
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch(
-                    "simulator-scale host spacer"
                 )
             )
         }
@@ -1296,7 +1081,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
                 "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
-                "transparentSpacer":0,"transparent":false,
+                "opaque":true,
                 "publicTitleBar":true,"titleVisible":true,"resizable":true,
                 "title":"Fixture","titleExpected":"Fixture",
                 "capture":{
@@ -1314,6 +1099,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             from: json
         )
         XCTAssertEqual(geometry.host?.status, "configured")
+        XCTAssertEqual(geometry.host?.opaque, true)
         XCTAssertEqual(geometry.host?.capture.ready, true)
         XCTAssertEqual(geometry.host?.capture.hostWindowNumber, 17)
     }
@@ -1340,7 +1126,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
                 "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
-                "transparentSpacer":0,"transparent":false,
+                "opaque":true,
                 "publicTitleBar":true,"titleVisible":true,"resizable":true,
                 "title":"Fixture","titleExpected":"Fixture",
                 "capture":{
@@ -1382,12 +1168,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
 
     private func makePayload(
         capability: PlayCoverRuntimeCommand,
-        pid: Int32 = 4_242,
-        bundleIdentifier: String = "com.example.runtime",
-        executablePath: String =
-            "/tmp/prepared/generation/com.example.runtime.app/Demo",
-        geometry: PlayCoverRuntimeGeometry? = nil,
-        stage: String = "ready",
         screenshot: PlayCoverRuntimeScreenshotPayload? = nil,
         dom: PlayCoverRuntimeDOMPayload? = nil,
         waitFor: PlayCoverRuntimeWaitForPayload? = nil,
@@ -1398,23 +1178,91 @@ final class PlayCoverDriverClientTests: XCTestCase {
         dismissAlert: PlayCoverRuntimeAlertPayload? = nil,
         open: PlayCoverRuntimeOpenPayload? = nil
     ) -> PlayCoverRuntimeResponsePayload {
-        PlayCoverRuntimeResponsePayload(
-            pid: pid,
-            bundleIdentifier: bundleIdentifier,
-            executablePath: executablePath,
-            capabilities: [capability.rawValue],
-            geometry: geometry ?? makeGeometry(),
-            stage: stage,
-            screenshot: screenshot,
-            dom: dom,
-            waitFor: waitFor,
-            tap: tap,
-            longPress: longPress,
-            swipe: swipe,
-            input: input,
-            dismissAlert: dismissAlert,
-            open: open
-        )
+        switch capability {
+        case .hello:
+            return .hello(
+                .init(
+                    pid: 4_242,
+                    bundleIdentifier: "com.example.runtime",
+                    executablePath:
+                        "/tmp/prepared/generation/com.example.runtime.app/Demo",
+                    capabilities: ["hello"],
+                    geometry: makeGeometry(),
+                    stage: "ready",
+                    observed: [:]
+                )
+            )
+        case .ping:
+            return .ping(.init(pong: true))
+        case .diagnostics:
+            return .diagnostics(
+                .init(
+                    pid: 4_242,
+                    bundleIdentifier: "com.example.runtime",
+                    executablePath:
+                        "/tmp/prepared/generation/com.example.runtime.app/Demo",
+                    capabilities: ["diagnostics"],
+                    geometry: makeGeometry(),
+                    stage: "ready",
+                    diagnostics: [:]
+                )
+            )
+        case .screenshot:
+            guard let screenshot else {
+                preconditionFailure("missing screenshot test payload")
+            }
+            return .screenshot(
+                .init(
+                    screenshot: screenshot,
+                    dom: dom ?? makeDOM(
+                        generation:
+                            screenshot.snapshotGeneration
+                    )
+                )
+            )
+        case .dom:
+            guard let dom else {
+                preconditionFailure("missing DOM test payload")
+            }
+            return .dom(dom)
+        case .waitFor:
+            guard let waitFor else {
+                preconditionFailure("missing waitFor test payload")
+            }
+            return .waitFor(waitFor)
+        case .tap:
+            guard let tap else {
+                preconditionFailure("missing tap test payload")
+            }
+            return .tap(tap)
+        case .longPress:
+            guard let longPress else {
+                preconditionFailure("missing longPress test payload")
+            }
+            return .longPress(longPress)
+        case .swipe:
+            guard let swipe else {
+                preconditionFailure("missing swipe test payload")
+            }
+            return .swipe(swipe)
+        case .input:
+            guard let input else {
+                preconditionFailure("missing input test payload")
+            }
+            return .input(input)
+        case .dismissAlert:
+            guard let dismissAlert else {
+                preconditionFailure(
+                    "missing dismissAlert test payload"
+                )
+            }
+            return .dismissAlert(dismissAlert)
+        case .open:
+            guard let open else {
+                preconditionFailure("missing open test payload")
+            }
+            return .open(open)
+        }
     }
 
     private func makeState() -> PlayCoverRuntimeDOMState {
@@ -1533,100 +1381,13 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
     }
 
-    private func makePostcondition(
-        generation: Int64
-    ) -> PlayCoverRuntimePostcondition {
-        .init(
-            snapshotGeneration: generation,
-            element: makeSummary(
-                generation: generation,
-                value: "Updated"
-            ),
-            changed: true,
-            stateEvidence: makeStateEvidence(
-                beforeGeneration: generation - 1,
-                afterGeneration: generation,
-                changedElementCount: 1,
-                targetChanged: true
-            )
-        )
-    }
-
-    private func makeStateEvidence(
-        beforeGeneration: Int64,
-        afterGeneration: Int64,
-        changedElementCount: Int,
-        targetChanged: Bool
-    ) -> PlayCoverRuntimeStateEvidence {
-        .init(
-            beforeSnapshotGeneration: beforeGeneration,
-            afterSnapshotGeneration: afterGeneration,
-            beforeElementCount: 1,
-            afterElementCount: 1,
-            changedElementCount: changedElementCount,
-            changes: changedElementCount == 0
-                ? []
-                : [.object(["index": .number(0)])],
-            targetChanged: targetChanged
-        )
-    }
-
-    private func makePixelEvidence(
-        beforeHash: String,
-        afterHash: String
-    ) -> PlayCoverRuntimePixelEvidence {
-        let logicalRect = PlayCoverRuntimeFrame(
-            x: 20,
-            y: 100,
-            width: 121,
-            height: 44
-        )
-        let nativeRect = PlayCoverRuntimeFrame(
-            x: 60,
-            y: 300,
-            width: 363,
-            height: 132
-        )
-        func fingerprint(
-            hash: String,
-            generation: Int64
-        ) -> PlayCoverRuntimePixelFingerprint {
-            PlayCoverRuntimePixelFingerprint(
-                algorithm: "sha256-bgra8-premultiplied",
-                hash: hash,
-                logicalRect: logicalRect,
-                nativePixelRect: nativeRect,
-                pixelWidth: 363,
-                pixelHeight: 132,
-                captureGeneration: generation,
-                source: "window-compositor",
-                complete: true,
-                compositor: .object([:])
-            )
-        }
-        return PlayCoverRuntimePixelEvidence(
-            before: fingerprint(
-                hash: beforeHash,
-                generation: 10
-            ),
-            after: fingerprint(
-                hash: afterHash,
-                generation: 11
-            ),
-            changed: beforeHash != afterHash
-        )
-    }
-
     private func makeAction(
         generation: Int64
     ) -> PlayCoverRuntimeActionPayload {
         .init(
             element: makeSummary(generation: generation),
             hitView: makeHitView(),
-            finalState: makeFinalState(),
-            postcondition: makePostcondition(
-                generation: generation + 1
-            )
+            finalState: makeFinalState()
         )
     }
 
@@ -1640,8 +1401,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         captureGeneration: Int64 = 8,
         source: String = "window-compositor",
         logicalWidth: Double =
-            Double(IOSUsePlayDeviceLogicalWidth),
-        dom: PlayCoverRuntimeDOMPayload? = nil
+            Double(IOSUsePlayDeviceLogicalWidth)
     ) -> PlayCoverRuntimeScreenshotPayload {
         let resolvedFullFrame = fullFrame ?? makeFullFrame()
         return .init(
@@ -1658,7 +1418,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
             fullFrame: resolvedFullFrame,
             snapshotGeneration: snapshotGeneration,
             captureGeneration: captureGeneration,
-            dom: dom,
             compositorWindowNumbers: [71, 42],
             sourceBackingSizes: [
                 .object([

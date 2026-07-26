@@ -2,114 +2,43 @@
 set -euo pipefail
 
 IOS_USE_POPUP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IOS_USE_POPUP_SOURCE="$IOS_USE_POPUP_ROOT/playcover-fixtures/Sources/FixtureTabBarController.swift"
-IOS_USE_POPUP_MODE="source"
 
 usage() {
   cat <<'USAGE'
-Usage: playcover-fixtures/test_uikit_popup_contract.sh [--static|--source|--live]
+Usage: playcover-fixtures/test_uikit_popup_contract.sh --live
 
---static  Alias for --source. This mode never launches an App or posts input.
---source  Verify the deterministic in-window popup source contract (default).
---live    Also exercise an already-active, isolated PlayCover fixture session:
+--live    Exercise an already-active, isolated PlayCover fixture session:
           Runtime touch and a real global AppKit mouse event must activate the
           same popup confirmation button. IOS_USE_HOME must identify that
           session. IOS_USE_POPUP_CLI may override the workspace ./ios-use.
 USAGE
 }
 
-if [[ $# -gt 1 ]]; then
+if [[ $# -ne 1 ]]; then
   usage >&2
   exit 64
 fi
-if [[ $# -eq 1 ]]; then
-  case "$1" in
-    --static) IOS_USE_POPUP_MODE="source" ;;
-    --source) IOS_USE_POPUP_MODE="source" ;;
-    --live) IOS_USE_POPUP_MODE="live" ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    *)
-      usage >&2
-      exit 64
-      ;;
-  esac
-fi
+case "$1" in
+  --live) ;;
+  --help|-h)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
+esac
 
 fail_contract() {
   echo "[uikit-popup-contract] FAIL: $*" >&2
   exit 1
 }
 
-require_source() {
-  local expected="$1"
-  rg -Fq -- "$expected" "$IOS_USE_POPUP_SOURCE" ||
-    fail_contract "source lacks: $expected"
-}
-
-require_identifier_once() {
-  local identifier="$1"
-  local count
-  count="$(
-    (rg -Fo -- "\"$identifier\"" "$IOS_USE_POPUP_SOURCE" || true) |
-      wc -l |
-      tr -d '[:space:]'
-  )"
-  [[ "$count" == "1" ]] ||
-    fail_contract \
-      "identifier $identifier must have one source-of-truth declaration; found $count"
-}
-
-[[ -f "$IOS_USE_POPUP_SOURCE" ]] ||
-  fail_contract "missing fixture source: $IOS_USE_POPUP_SOURCE"
-command -v rg >/dev/null 2>&1 ||
-  fail_contract "rg is required"
-
-for identifier in \
-  fixture.uikit.popup.open \
-  fixture.uikit.popup \
-  fixture.uikit.popup.confirm \
-  fixture.uikit.popup.result; do
-  require_identifier_once "$identifier"
-done
-
-for semantic_label in \
-  "Open UIKit Popup" \
-  "UIKit In-Window Popup" \
-  "Confirm and Close" \
-  "UIKit Popup Result"; do
-  require_source "$semantic_label"
-done
-
-require_source "private var popupOverlay: UIControl?"
-require_source "let hostWindow = view.window"
-require_source "hostWindow.addSubview(overlay)"
-require_source "overlay.accessibilityViewIsModal = true"
-require_source "greaterThanOrEqualTo: overlay.topAnchor"
-require_source "lessThanOrEqualTo: overlay.bottomAnchor"
-require_source "UIColor.black.withAlphaComponent(0.58)"
-require_source "#selector(confirmFixturePopup)"
-require_source '"confirmed \(popupConfirmationCount)"'
-require_source "UIColor.systemGreen.withAlphaComponent(0.34)"
-require_source "overrideUserInterfaceStyle = .light"
-
-# The native UIAlertController remains an independent Catalyst/AppKit gate.
-require_source 'showAlert.accessibilityIdentifier = "fixture.uikit.alert"'
-require_source "let alert = UIAlertController("
-require_source "present(alert, animated: false)"
-
-echo "[uikit-popup-contract] source contract passed"
-
-if [[ "$IOS_USE_POPUP_MODE" != "live" ]]; then
-  exit 0
-fi
-
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   fail_contract "live mode requires Apple-silicon macOS"
 fi
-for command_name in jq xcrun shasum; do
+for command_name in jq rg xcrun shasum; do
   command -v "$command_name" >/dev/null 2>&1 ||
     fail_contract "$command_name is required for live mode"
 done
@@ -174,14 +103,14 @@ jq -e '
   $runtime.nativeWidth == 1290 and
   $runtime.nativeHeight == 2796 and
   $runtime.scale == 3 and
+  $runtime.host.opaque == true and
   $window.status == "configured" and
-  $window.transparentHost == false and
+  $window.opaque == true and
   $window.publicTitleBar == true and
   $window.resizable == true and
   $window.hostPolicy == true and
   $window.title == "IOSUsePlayFixture" and
   $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-  $window.transparentSpacer == 0 and
   ($window.displayScale | type) == "number" and
   $window.displayScale > 0 and
   ($window.inverseDisplayScale | type) == "number" and
@@ -232,18 +161,14 @@ jq -e --slurpfile status "$IOS_USE_POPUP_TEMP/status.json" '
     ($frame[0] >= 0) and
     ($frame[1] >= 0) and
     (($frame[0] + $frame[2]) <= $runtime.logicalWidth) and
-    (($frame[1] + $frame[3]) <= $runtime.logicalHeight)) and
-  .data.postcondition.changed == true and
-  .data.postcondition.pixelEvidence.changed == true
+    (($frame[1] + $frame[3]) <= $runtime.logicalHeight))
 ' "$IOS_USE_POPUP_TEMP/runtime-open.json" >/dev/null ||
-  fail_contract "Runtime open lacks popup DOM, full-frame, or pixel evidence"
+  fail_contract "Runtime open did not expose the expected popup DOM"
 
 run_cli runtime-confirm \
   tap "Confirm and Close" --dom --json
 jq -e '
   .data.element.identifier == "fixture.uikit.popup.confirm" and
-  .data.postcondition.changed == true and
-  .data.postcondition.pixelEvidence.changed == true and
   ([.data.postDom.elements[] |
     select(.identifier == "fixture.uikit.popup.result" and
       (.value | test("^confirmed [0-9]+$")))] |
@@ -273,8 +198,7 @@ jq -e '
   ([.data.postDom.elements[] |
     select(.identifier == "fixture.uikit.popup.confirm" and
       .state.visible == true)] |
-    length) == 1 and
-  .data.postcondition.pixelEvidence.changed == true
+    length) == 1
 ' "$IOS_USE_POPUP_TEMP/global-open.json" >/dev/null ||
   fail_contract "second popup open is not visible"
 

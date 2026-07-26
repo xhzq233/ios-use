@@ -1401,7 +1401,7 @@ final class PlayCoverSessionTests: XCTestCase {
             Double(IOSUsePlayDeviceLogicalWidth),
         hostPolicy: Bool = true,
         hostCaptureError: String? = nil
-    ) -> PlayCoverRuntimeResponsePayload {
+    ) -> PlayCoverRuntimeDiagnosticsPayload {
         .init(
             pid: 4_242,
             bundleIdentifier: manifest.bundleIdentifier,
@@ -1442,7 +1442,12 @@ final class PlayCoverSessionTests: XCTestCase {
                     hostPolicy: hostPolicy
                 )
             ),
-            stage: "ready"
+            stage: "ready",
+            diagnostics: [
+                "runtime": .object([
+                    "stage": .string("ready"),
+                ]),
+            ]
         )
     }
 
@@ -1460,8 +1465,7 @@ final class PlayCoverSessionTests: XCTestCase {
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
             displayScale: 0.75,
             inverseDisplayScale: 4.0 / 3.0,
-            transparentSpacer: 0,
-            transparent: false,
+            opaque: true,
             publicTitleBar: true,
             titleVisible: true,
             resizable: true,
@@ -1509,8 +1513,7 @@ final class PlayCoverSessionTests: XCTestCase {
             canvasBounds: host.canvasBounds,
             displayScale: host.displayScale,
             inverseDisplayScale: host.inverseDisplayScale,
-            transparentSpacer: host.transparentSpacer,
-            transparent: host.transparent,
+            opaque: host.opaque,
             publicTitleBar: host.publicTitleBar,
             titleVisible: host.titleVisible,
             resizable: host.resizable,

@@ -5,10 +5,12 @@ import XCTest
 @testable import IOSUseCLI
 
 final class PlayCoverRuntimeClientTests: XCTestCase {
-    private let sessionID = "session-v2"
+    private let sessionID = "session-v3"
     private let bundleIdentifier = "com.example.runtime"
 
-    func testEveryCommandUsesExactV2SingleSessionEnvelope() throws {
+    func testEveryCommandUsesExactV3SingleSessionEnvelopeAndTypedPayload()
+        throws
+    {
         let cases: [(
             PlayCoverRuntimeCommand,
             PlayCoverRuntimeRequestArguments,
@@ -174,7 +176,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                         "arguments",
                     ])
                 )
-                XCTAssertEqual(request["schemaVersion"] as? Int, 2)
+                XCTAssertEqual(request["schemaVersion"] as? Int, 3)
                 XCTAssertEqual(
                     request["sessionID"] as? String,
                     self.sessionID
@@ -191,9 +193,26 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     request["arguments"] as? [String: Any]
                 )
                 try validate(body)
+                let payload = self.payload(for: command)
+                if ![.hello, .diagnostics].contains(command) {
+                    XCTAssertTrue(
+                        Set(payload.keys).isDisjoint(
+                            with: [
+                                "pid",
+                                "bundleIdentifier",
+                                "executablePath",
+                                "capabilities",
+                                "geometry",
+                                "stage",
+                                "observed",
+                            ]
+                        ),
+                        "\(command.rawValue) returned session-wide evidence"
+                    )
+                }
                 return .body(try self.successResponse(
                     requestID: requestID,
-                    payload: self.basePayload()
+                    payload: payload
                 ))
             }
 
@@ -204,7 +223,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         }
     }
 
-    func testDecodesCompleteScreenshotDOMAndActionPayloads() throws {
+    func testDecodesCommandSpecificScreenshotAndDOMPayload() throws {
         let fixture = try RuntimeClientFixture()
         defer { fixture.remove() }
         let jpeg = Data([0xFF, 0xD8, 0xFF, 0xD9])
@@ -214,10 +233,8 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             let requestID = try XCTUnwrap(
                 request["requestId"] as? String
             )
-            var payload = self.basePayload()
             let dom = self.domPayload(generation: 41)
-            payload["dom"] = dom
-            payload["screenshot"] = [
+            let screenshot: [String: Any] = [
                 "jpegBase64": jpeg.base64EncodedString(),
                 "pixelWidth": Int(
                     IOSUsePlayDeviceNativeWidth
@@ -238,16 +255,17 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 "fullFrame": self.fullFramePayload(),
                 "snapshotGeneration": 41,
                 "captureGeneration": 9,
-                "dom": dom,
                 "compositor": [
                     "syntheticChrome": false,
                     "fullFrame": self.fullFramePayload(),
                 ],
             ]
-            payload["tap"] = self.actionPayload(generation: 42)
             return .body(try self.successResponse(
                 requestID: requestID,
-                payload: payload
+                payload: [
+                    "screenshot": screenshot,
+                    "dom": dom,
+                ]
             ), chunkSize: 1)
         }
 
@@ -257,11 +275,11 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         ).screenshot()
         try server.wait()
 
-        XCTAssertEqual(result.screenshot?.snapshotGeneration, 41)
-        XCTAssertEqual(result.screenshot?.captureGeneration, 9)
-        XCTAssertEqual(result.screenshot?.syntheticChrome, false)
+        XCTAssertEqual(result.screenshot.snapshotGeneration, 41)
+        XCTAssertEqual(result.screenshot.captureGeneration, 9)
+        XCTAssertEqual(result.screenshot.syntheticChrome, false)
         XCTAssertEqual(
-            result.screenshot?.fullFrame.logicalRect,
+            result.screenshot.fullFrame.logicalRect,
             .init(
                 x: 0,
                 y: 0,
@@ -269,8 +287,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 height: Double(IOSUsePlayDeviceLogicalHeight)
             )
         )
-        XCTAssertEqual(result.screenshot?.dom?.snapshotGeneration, 41)
-        let element = try XCTUnwrap(result.dom?.elements.first)
+        let element = try XCTUnwrap(result.dom.elements.first)
         XCTAssertEqual(element.nodeID, "n-41")
         XCTAssertEqual(element.type, "Button")
         XCTAssertEqual(element.elementType, 1)
@@ -279,21 +296,38 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         XCTAssertEqual(element.frame?.width, 120)
         XCTAssertEqual(element.hierarchy.depth, 1)
         XCTAssertEqual(element.state.visible, true)
-        XCTAssertEqual(result.tap?.hitView.class, "UIButton")
-        XCTAssertEqual(result.tap?.finalState.touchID, 77)
-        XCTAssertEqual(
-            result.tap?.postcondition.snapshotGeneration,
-            42
+    }
+
+    func testActionPayloadContainsOnlyDeliveryEvidence() throws {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            let requestID = try XCTUnwrap(
+                request["requestId"] as? String
+            )
+            return .body(try self.successResponse(
+                requestID: requestID,
+                payload: [
+                    "tap": self.actionPayload(generation: 42),
+                ]
+            ))
+        }
+
+        let result = try makeClient(
+            socketPath: fixture.socketPath
+        ).tap(
+            .init(
+                target: .init(label: "Continue"),
+                offset: nil,
+                ratio: .init(x: 0.5, y: 0.5)
+            )
         )
-        XCTAssertEqual(
-            result.tap?.postcondition.pixelEvidence?.changed,
-            true
-        )
-        XCTAssertEqual(
-            result.tap?.postcondition.pixelEvidence?.before
-                .captureGeneration,
-            7
-        )
+        try server.wait()
+
+        XCTAssertEqual(result.hitView.class, "UIButton")
+        XCTAssertEqual(result.finalState.touchID, 77)
     }
 
     func testRejectsSessionRequestAndRuntimeIdentityMismatches() throws {
@@ -319,7 +353,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 let requestID = try XCTUnwrap(
                     request["requestId"] as? String
                 )
-                var payload = self.basePayload()
+                var payload = self.helloPayload()
                 if case .pid = mutation {
                     payload["pid"] = Int(getpid()) + 1
                 }
@@ -330,7 +364,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     payload["executablePath"] = "/bin/false"
                 }
                 var envelope: [String: Any] = [
-                    "schemaVersion": 2,
+                    "schemaVersion": 3,
                     "requestId": mutation == .request
                         ? UUID().uuidString
                         : requestID,
@@ -385,6 +419,56 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         }
     }
 
+    func testDiagnosticsValidatesFreshRuntimeIdentity() throws {
+        let cases: [(String, PlayCoverRuntimeClientError)] = [
+            ("pid", .responseIdentityMismatch("PID")),
+            (
+                "bundle",
+                .responseIdentityMismatch("bundle identifier")
+            ),
+            (
+                "executable",
+                .responseIdentityMismatch("executable")
+            ),
+        ]
+        for (mutation, expected) in cases {
+            let fixture = try RuntimeClientFixture()
+            defer { fixture.remove() }
+            let server = try FakeUnixRuntimeServer(
+                socketPath: fixture.socketPath
+            ) { request in
+                let requestID = try XCTUnwrap(
+                    request["requestId"] as? String
+                )
+                var payload = self.payload(for: .diagnostics)
+                switch mutation {
+                case "pid":
+                    payload["pid"] = Int(getpid()) + 1
+                case "bundle":
+                    payload["bundleIdentifier"] = "other.bundle"
+                default:
+                    payload["executablePath"] = "/bin/false"
+                }
+                return .body(try self.successResponse(
+                    requestID: requestID,
+                    payload: payload
+                ))
+            }
+
+            XCTAssertThrowsError(
+                try makeClient(
+                    socketPath: fixture.socketPath
+                ).diagnostics()
+            ) {
+                XCTAssertEqual(
+                    $0 as? PlayCoverRuntimeClientError,
+                    expected
+                )
+            }
+            try server.wait()
+        }
+    }
+
     func testRemoteErrorPreservesTypedDetailsAndRedactsSession() throws {
         let fixture = try RuntimeClientFixture()
         defer { fixture.remove() }
@@ -396,7 +480,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             )
             return .body(
                 try JSONSerialization.data(withJSONObject: [
-                    "schemaVersion": 2,
+                    "schemaVersion": 3,
                     "requestId": requestID,
                     "sessionID": self.sessionID,
                     "ok": false,
@@ -458,7 +542,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 )
                 return .body(try self.successResponse(
                     requestID: requestID,
-                    payload: self.basePayload()
+                    payload: self.helloPayload()
                 ))
             }
             let executable = try XCTUnwrap(
@@ -507,7 +591,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         let server = try FakeUnixRuntimeServer(
             socketPath: fixture.socketPath
         ) { _ in
-            .body(Data(#"{"schemaVersion":2"#.utf8))
+            .body(Data(#"{"schemaVersion":3"#.utf8))
         }
 
         XCTAssertThrowsError(
@@ -665,6 +749,77 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         )
     }
 
+    private func payload(
+        for command: PlayCoverRuntimeCommand
+    ) -> [String: Any] {
+        switch command {
+        case .hello:
+            return helloPayload()
+        case .ping:
+            return ["pong": true]
+        case .diagnostics:
+            var payload = basePayload()
+            payload["diagnostics"] = [
+                "runtime": ["stage": "ready"],
+            ]
+            return payload
+        case .screenshot:
+            let dom = domPayload(generation: 1)
+            return [
+                "screenshot": screenshotPayload(
+                    generation: 1,
+                    captureGeneration: 1
+                ),
+                "dom": dom,
+            ]
+        case .dom:
+            return ["dom": domPayload(generation: 1)]
+        case .waitFor:
+            return [
+                "waitFor": [
+                    "element": elementPayload(generation: 1),
+                    "waited": 0.1,
+                    "snapshotGeneration": 1,
+                ],
+            ]
+        case .tap:
+            return ["tap": actionPayload(generation: 2)]
+        case .longPress:
+            return ["longPress": actionPayload(generation: 2)]
+        case .swipe:
+            var swipe = actionPayload(generation: 2)
+            swipe["scrolls"] = 1
+            swipe["direction"] = "forth"
+            return ["swipe": swipe]
+        case .input:
+            return ["input": actionPayload(generation: 2)]
+        case .dismissAlert:
+            return [
+                "dismissAlert": [
+                    "dismissed": true,
+                    "text": "Notice",
+                    "button": "OK",
+                    "reason": "button",
+                ],
+            ]
+        case .open:
+            return [
+                "open": [
+                    "delivered": true,
+                    "url": "demo://route",
+                ],
+            ]
+        }
+    }
+
+    private func helloPayload() -> [String: Any] {
+        var payload = basePayload()
+        payload["observed"] = [
+            "screenScale": Int(IOSUsePlayDeviceScale),
+        ]
+        return payload
+    }
+
     private func basePayload() -> [String: Any] {
         [
             "pid": Int(getpid()),
@@ -697,6 +852,32 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 ],
             ],
             "stage": "ready",
+        ]
+    }
+
+    private func screenshotPayload(
+        generation: Int,
+        captureGeneration: Int
+    ) -> [String: Any] {
+        [
+            "jpegBase64": Data([
+                0xFF, 0xD8, 0xFF, 0xD9,
+            ]).base64EncodedString(),
+            "pixelWidth": Int(IOSUsePlayDeviceNativeWidth),
+            "pixelHeight": Int(IOSUsePlayDeviceNativeHeight),
+            "logicalWidth": Int(IOSUsePlayDeviceLogicalWidth),
+            "logicalHeight": Int(IOSUsePlayDeviceLogicalHeight),
+            "scale": Int(IOSUsePlayDeviceScale),
+            "source": "window-compositor",
+            "complete": true,
+            "syntheticChrome": false,
+            "fullFrame": fullFramePayload(),
+            "snapshotGeneration": generation,
+            "captureGeneration": captureGeneration,
+            "compositor": [
+                "syntheticChrome": false,
+                "fullFrame": fullFramePayload(),
+            ],
         ]
     }
 
@@ -771,65 +952,6 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 "phase": "ended",
                 "firstResponderClass": "UIButton",
             ],
-            "postcondition": [
-                "snapshotGeneration": generation,
-                "element": elementPayload(generation: generation),
-                "changed": true,
-                "stateEvidence": [
-                    "beforeSnapshotGeneration": generation - 1,
-                    "afterSnapshotGeneration": generation,
-                    "beforeElementCount": 1,
-                    "afterElementCount": 1,
-                    "changedElementCount": 1,
-                    "changes": [
-                        [
-                            "index": 0,
-                            "before": NSNull(),
-                            "after": ["label": "Continue"],
-                        ],
-                    ],
-                    "targetChanged": true,
-                ],
-                "pixelEvidence": [
-                    "before": pixelFingerprint(
-                        hash: String(repeating: "a", count: 64),
-                        generation: 7
-                    ),
-                    "after": pixelFingerprint(
-                        hash: String(repeating: "b", count: 64),
-                        generation: 8
-                    ),
-                    "changed": true,
-                ],
-            ],
-        ]
-    }
-
-    private func pixelFingerprint(
-        hash: String,
-        generation: Int
-    ) -> [String: Any] {
-        [
-            "algorithm": "sha256-bgra8-premultiplied",
-            "hash": hash,
-            "logicalRect": [
-                "x": 20,
-                "y": 100,
-                "width": 121,
-                "height": 44,
-            ],
-            "nativePixelRect": [
-                "x": 60,
-                "y": 300,
-                "width": 363,
-                "height": 132,
-            ],
-            "pixelWidth": 363,
-            "pixelHeight": 132,
-            "captureGeneration": generation,
-            "source": "window-compositor",
-            "complete": true,
-            "compositor": [:],
         ]
     }
 
@@ -855,7 +977,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         payload: [String: Any]
     ) throws -> Data {
         try JSONSerialization.data(withJSONObject: [
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "requestId": requestID,
             "sessionID": sessionID,
             "ok": true,

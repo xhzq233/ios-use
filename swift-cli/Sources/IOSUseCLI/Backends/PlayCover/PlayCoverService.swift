@@ -727,7 +727,7 @@ public enum PlayCoverService {
     }
 
     private static func validateHello(
-        _ payload: PlayCoverRuntimeResponsePayload,
+        _ payload: PlayCoverRuntimeHelloPayload,
         sessionID: String,
         manifest: PlayCoverPrepareManifest,
         pid: Int32

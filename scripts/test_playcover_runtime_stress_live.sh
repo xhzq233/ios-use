@@ -136,7 +136,8 @@ assert_healthy_status() {
       .data.driver.runtime.logicalHeight == 932 and
       .data.driver.runtime.nativeWidth == 1290 and
       .data.driver.runtime.nativeHeight == 2796 and
-      .data.driver.runtime.scale == 3
+      .data.driver.runtime.scale == 3 and
+      .data.driver.runtime.host.opaque == true
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name did not prove an exact healthy fixture session"
   fi

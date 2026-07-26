@@ -104,10 +104,13 @@ do {
     else {
         throw ProbeFailure.targetApplication(targetPID)
     }
-    let activationRequested = targetApplication.activate(
-        options: [.activateAllWindows]
-    )
-    Thread.sleep(forTimeInterval: 0.05)
+    let targetWasActive = targetApplication.isActive
+    let activationRequested = targetWasActive
+        ? false
+        : targetApplication.activate(options: [.activateAllWindows])
+    if activationRequested {
+        Thread.sleep(forTimeInterval: 0.05)
+    }
     let startPoint = CGPoint(x: startX, y: startY)
     let endPoint = CGPoint(x: endX, y: endY)
     guard
@@ -234,6 +237,7 @@ do {
         "sourcePID": ProcessInfo.processInfo.processIdentifier,
         "targetPID": targetPID,
         "targetWindowNumber": targetWindowNumber,
+        "targetWasActive": targetWasActive,
         "activationRequested": activationRequested,
         "targetActiveBeforePost": targetApplication.isActive,
         "globalPoint": ["x": endX, "y": endY],

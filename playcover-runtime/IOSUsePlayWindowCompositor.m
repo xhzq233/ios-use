@@ -1,7 +1,6 @@
 #import "IOSUsePlayWindowCompositor.h"
 #import "IOSUsePlayDevice.h"
 
-#import <CommonCrypto/CommonDigest.h>
 #import <objc/message.h>
 
 #import <math.h>
@@ -10,7 +9,6 @@ typedef id (*IOSUseCompositorSendID)(id, SEL);
 
 static const CGFloat IOSUseCompositorGeometryTolerance = 0.01;
 
-CGFloat const IOSUsePlayHostCanvasSpacerPoints = 0.0;
 CGFloat const IOSUsePlayHostCanvasMinimumDisplayScale = 0.5;
 
 static NSDictionary<NSString *, NSNumber *> *IOSUseCompositorRectJSON(
@@ -129,9 +127,9 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
     CGFloat minimumWidth =
         IOSUsePlayDeviceLogicalWidth *
         IOSUsePlayHostCanvasMinimumDisplayScale;
-    CGFloat minimumHeight = IOSUsePlayHostCanvasSpacerPoints +
+    CGFloat minimumHeight =
         IOSUsePlayDeviceLogicalHeight *
-            IOSUsePlayHostCanvasMinimumDisplayScale;
+        IOSUsePlayHostCanvasMinimumDisplayScale;
     if (hostContentBounds.size.width +
             IOSUseCompositorGeometryTolerance < minimumWidth ||
         hostContentBounds.size.height +
@@ -148,17 +146,9 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         }
         return NO;
     }
-    CGFloat drawableHeight = hostContentBounds.size.height -
-        IOSUsePlayHostCanvasSpacerPoints;
-    if (drawableHeight <= 0) {
-        if (failure != NULL) {
-            *failure = @"host content has no drawable canvas area";
-        }
-        return NO;
-    }
     CGFloat displayScale = MIN(
         hostContentBounds.size.width / IOSUsePlayDeviceLogicalWidth,
-        drawableHeight / IOSUsePlayDeviceLogicalHeight
+        hostContentBounds.size.height / IOSUsePlayDeviceLogicalHeight
     );
     if (!isfinite(displayScale) ||
         displayScale < IOSUsePlayHostCanvasMinimumDisplayScale -
@@ -176,7 +166,7 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         hostContentBounds.origin.x +
             (hostContentBounds.size.width - canvasSize.width) / 2.0,
         hostContentBounds.origin.y +
-            (drawableHeight - canvasSize.height) / 2.0,
+            (hostContentBounds.size.height - canvasSize.height) / 2.0,
         canvasSize.width,
         canvasSize.height
     );
@@ -187,8 +177,7 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         ) ||
         !IOSUseCompositorApproximatelyEqual(
             CGRectGetMidY(canvasRect),
-            CGRectGetMidY(hostContentBounds) -
-                IOSUsePlayHostCanvasSpacerPoints / 2.0
+            CGRectGetMidY(hostContentBounds)
         )) {
         if (failure != NULL) {
             *failure = @"resolved canvas is not centered in the host content";
@@ -201,7 +190,6 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
             .canvasRect = canvasRect,
             .displayScale = displayScale,
             .inverseDisplayScale = 1.0 / displayScale,
-            .transparentSpacer = IOSUsePlayHostCanvasSpacerPoints,
         };
     }
     return YES;
@@ -1450,139 +1438,4 @@ CGImageRef IOSUsePlayCompositeWindowCaptures(
         *sourceEvidence = evidence;
     }
     return result;
-}
-
-NSDictionary<NSString *, id> *IOSUsePlayFingerprintCompositorImage(
-    CGImageRef image,
-    CGRect logicalRect,
-    NSString **failure
-) {
-    CGRect logicalDevice = CGRectMake(
-        0,
-        0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
-    );
-    if (image == NULL ||
-        CGImageGetWidth(image) != IOSUsePlayDeviceNativeWidth ||
-        CGImageGetHeight(image) != IOSUsePlayDeviceNativeHeight) {
-        if (failure != NULL) {
-            *failure =
-                @"fingerprint image is not the complete native device";
-        }
-        return nil;
-    }
-    if (!IOSUseCompositorFiniteRect(logicalRect) ||
-        !IOSUseCompositorContainsRect(logicalDevice, logicalRect)) {
-        if (failure != NULL) {
-            *failure =
-                @"fingerprint rect must be finite, non-empty, and "
-                @"completely inside the logical device";
-        }
-        return nil;
-    }
-    CGFloat scale = IOSUsePlayDeviceScale;
-    NSInteger minimumX = (NSInteger)floor(
-        CGRectGetMinX(logicalRect) * scale
-    );
-    NSInteger minimumY = (NSInteger)floor(
-        CGRectGetMinY(logicalRect) * scale
-    );
-    NSInteger maximumX = (NSInteger)ceil(
-        CGRectGetMaxX(logicalRect) * scale
-    );
-    NSInteger maximumY = (NSInteger)ceil(
-        CGRectGetMaxY(logicalRect) * scale
-    );
-    CGRect pixelRect = CGRectMake(
-        minimumX,
-        minimumY,
-        maximumX - minimumX,
-        maximumY - minimumY
-    );
-    if (minimumX < 0 ||
-        minimumY < 0 ||
-        maximumX > (NSInteger)IOSUsePlayDeviceNativeWidth ||
-        maximumY > (NSInteger)IOSUsePlayDeviceNativeHeight ||
-        pixelRect.size.width <= 0 ||
-        pixelRect.size.height <= 0) {
-        if (failure != NULL) {
-            *failure =
-                @"fingerprint rect does not resolve to valid native pixels";
-        }
-        return nil;
-    }
-    CGImageRef cropped = CGImageCreateWithImageInRect(
-        image,
-        pixelRect
-    );
-    if (cropped == NULL) {
-        if (failure != NULL) {
-            *failure =
-                @"could not crop compositor pixels for fingerprinting";
-        }
-        return nil;
-    }
-    size_t pixelWidth = CGImageGetWidth(cropped);
-    size_t pixelHeight = CGImageGetHeight(cropped);
-    size_t rowBytes = pixelWidth * 4;
-    NSMutableData *pixels = [NSMutableData
-        dataWithLength:rowBytes * pixelHeight];
-    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    if (colorSpace == NULL) {
-        CGImageRelease(cropped);
-        if (failure != NULL) {
-            *failure =
-                @"could not create canonical fingerprint color space";
-        }
-        return nil;
-    }
-    CGContextRef context = CGBitmapContextCreate(
-        pixels.mutableBytes,
-        pixelWidth,
-        pixelHeight,
-        8,
-        rowBytes,
-        colorSpace,
-        kCGBitmapByteOrder32Little |
-            kCGImageAlphaPremultipliedFirst
-    );
-    CGColorSpaceRelease(colorSpace);
-    if (context == NULL) {
-        CGImageRelease(cropped);
-        if (failure != NULL) {
-            *failure =
-                @"could not create canonical fingerprint pixel storage";
-        }
-        return nil;
-    }
-    CGContextSetBlendMode(context, kCGBlendModeCopy);
-    CGContextDrawImage(
-        context,
-        CGRectMake(0, 0, pixelWidth, pixelHeight),
-        cropped
-    );
-    CGContextRelease(context);
-    CGImageRelease(cropped);
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(
-        pixels.bytes,
-        (CC_LONG)pixels.length,
-        digest
-    );
-    NSMutableString *hex = [NSMutableString
-        stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
-    for (NSUInteger index = 0;
-         index < CC_SHA256_DIGEST_LENGTH;
-         index += 1) {
-        [hex appendFormat:@"%02x", digest[index]];
-    }
-    return @{
-        @"algorithm": @"sha256-bgra8-premultiplied",
-        @"hash": hex,
-        @"logicalRect": IOSUseCompositorRectJSON(logicalRect),
-        @"nativePixelRect": IOSUseCompositorRectJSON(pixelRect),
-        @"pixelWidth": @(pixelWidth),
-        @"pixelHeight": @(pixelHeight),
-    };
 }

@@ -304,13 +304,12 @@ public enum OSLogService {
             timeoutSeconds: 0.75
         )
         let response = try client.diagnostics()
-        guard let diagnostics = response.diagnostics,
-              !diagnostics.isEmpty else {
+        guard !response.diagnostics.isEmpty else {
             return nil
         }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(diagnostics)
+        let data = try encoder.encode(response.diagnostics)
         let bounded = data.prefix(64 * 1024)
         return "[ios-use-runtime] "
             + String(decoding: bounded, as: UTF8.self)

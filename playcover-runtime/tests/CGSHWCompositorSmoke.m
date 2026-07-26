@@ -833,47 +833,6 @@ static BOOL RunOriginAndZOrderFixture(
         fabs([logicalRect[@"y"] doubleValue] - 372) < 0.01 &&
         fabs([logicalRect[@"width"] doubleValue] - 260) < 0.01 &&
         fabs([logicalRect[@"height"] doubleValue] - 219) < 0.01;
-    NSString *fingerprintFailure;
-    NSDictionary *greenFingerprint =
-        IOSUsePlayFingerprintCompositorImage(
-            composite,
-            CGRectMake(100, 580, 1, 1),
-            &fingerprintFailure
-        );
-    NSDictionary *greenFingerprintAgain =
-        IOSUsePlayFingerprintCompositorImage(
-            composite,
-            CGRectMake(100, 580, 1, 1),
-            &fingerprintFailure
-        );
-    NSDictionary *blueFingerprint =
-        IOSUsePlayFingerprintCompositorImage(
-            composite,
-            CGRectMake(20, 20, 1, 1),
-            &fingerprintFailure
-        );
-    NSDictionary *invalidFingerprint =
-        IOSUsePlayFingerprintCompositorImage(
-            composite,
-            CGRectMake(-1, 20, 1, 1),
-            &fingerprintFailure
-        );
-    BOOL fingerprintReady =
-        greenFingerprint != nil &&
-        greenFingerprintAgain != nil &&
-        blueFingerprint != nil &&
-        [greenFingerprint[@"hash"]
-            isEqual:greenFingerprintAgain[@"hash"]] &&
-        ![greenFingerprint[@"hash"]
-            isEqual:blueFingerprint[@"hash"]] &&
-        [greenFingerprint[@"pixelWidth"]
-            unsignedIntegerValue] == 3 &&
-        [greenFingerprint[@"pixelHeight"]
-            unsignedIntegerValue] == 3 &&
-        invalidFingerprint == nil &&
-        [fingerprintFailure containsString:
-            @"completely inside"];
-
     IOSUsePlayWindowCapture offDevice[2] = {
         sources[0],
         sources[1],
@@ -907,13 +866,12 @@ static BOOL RunOriginAndZOrderFixture(
         sourceIdentityReady &&
         placementReady &&
         evidenceReady &&
-        fingerprintReady &&
         offDeviceFails;
     fprintf(
         stderr,
         "[cgshw-smoke] origin/z-order base=(%.0f,%.0f) "
         "orders=%ld/%ld batch-count=%ld relative-origin=%d sources=%d "
-        "placement=%d evidence=%d fingerprint=%d "
+        "placement=%d evidence=%d "
         "off-device=%d frontBGRA=[%u,%u,%u,%u] "
         "topBGRA=[%u,%u,%u,%u] bottomBGRA=[%u,%u,%u,%u] "
         "pass=%d%s%s\n",
@@ -926,7 +884,6 @@ static BOOL RunOriginAndZOrderFixture(
         sourceIdentityReady,
         placementReady,
         evidenceReady,
-        fingerprintReady,
         offDeviceFails,
         frontCenter[0],
         frontCenter[1],
@@ -1247,7 +1204,6 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
         CGImageGetHeight(normalized) == IOSUsePlayDeviceNativeHeight &&
         SampleCenter(normalized, center) && PixelIsGreen(center) &&
         cropExcludesHost && singleScaleReady && centeredRoundingReady &&
-        IOSUsePlayHostCanvasSpacerPoints == 0 &&
         window.opaque && !window.titlebarAppearsTransparent &&
         window.hasShadow &&
         window.titleVisibility == NSWindowTitleVisible &&

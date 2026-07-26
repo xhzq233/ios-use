@@ -1,7 +1,6 @@
 #import "IOSUsePlayRuntimeAutomation.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayRuntimeDOM.h"
-#import "IOSUsePlayRuntimeScreenshot.h"
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlaySwiftBridge.h"
 #import "PTFakeMetaTouch.h"
@@ -959,155 +958,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationHitViewJSON(
     };
 }
 
-static NSDictionary<NSString *, id> *IOSUseAutomationStableElement(
-    NSDictionary<NSString *, id> *element
-) {
-    if (![element isKindOfClass:NSDictionary.class]) {
-        return @{};
-    }
-    NSMutableDictionary<NSString *, id> *stable =
-        [element mutableCopy];
-    [stable removeObjectForKey:@"snapshotGeneration"];
-    [stable removeObjectForKey:@"zOrder"];
-    // Runtime node IDs intentionally include the snapshot generation. They
-    // prove freshness to clients but are not semantic UI state and therefore
-    // must not make every no-op mutation look changed. Web proxy ordinals can
-    // also move when an unrelated sibling is inserted, so z-order and sibling
-    // indexes are delivery metadata rather than a postcondition.
-    [stable removeObjectForKey:@"nodeID"];
-    NSDictionary<NSString *, id> *hierarchy = stable[@"hierarchy"];
-    if ([hierarchy isKindOfClass:NSDictionary.class]) {
-        NSMutableDictionary<NSString *, id> *stableHierarchy =
-            [hierarchy mutableCopy];
-        [stableHierarchy removeObjectForKey:@"parentID"];
-        [stableHierarchy removeObjectForKey:@"path"];
-        [stableHierarchy removeObjectForKey:@"index"];
-        stable[@"hierarchy"] = stableHierarchy;
-    }
-    NSDictionary<NSString *, id> *state = stable[@"state"];
-    if ([state isKindOfClass:NSDictionary.class]) {
-        NSMutableDictionary<NSString *, id> *stableState =
-            [state mutableCopy];
-        // Focus transfer is delivery evidence and may have no visible effect.
-        // A Web button that merely becomes active must not make a no-op click
-        // pass; visible focus rings are still covered by stable pixels.
-        [stableState removeObjectForKey:@"focused"];
-        stable[@"state"] = stableState;
-    }
-    return stable;
-}
-
-static NSArray<NSDictionary<NSString *, id> *> *
-IOSUseAutomationStableDOM(NSDictionary<NSString *, id> *dom) {
-    NSMutableArray<NSDictionary<NSString *, id> *> *result =
-        [NSMutableArray array];
-    for (NSDictionary<NSString *, id> *element in dom[@"elements"]) {
-        // A DOM postcondition must describe a visible UI change. Filtering
-        // both sides still records appearance and disappearance, while a
-        // hidden script-only mutation cannot make an action succeed.
-        if (![element[@"state"][@"visible"] boolValue]) {
-            continue;
-        }
-        [result addObject:IOSUseAutomationStableElement(element)];
-    }
-    return result;
-}
-
-static NSDictionary<NSString *, id> *IOSUseAutomationStateEvidence(
-    NSDictionary<NSString *, id> *preDOM,
-    NSDictionary<NSString *, id> *postDOM,
-    NSDictionary<NSString *, id> * _Nullable preTarget,
-    NSDictionary<NSString *, id> * _Nullable postTarget
-) {
-    NSArray<NSDictionary<NSString *, id> *> *before =
-        IOSUseAutomationStableDOM(preDOM);
-    NSArray<NSDictionary<NSString *, id> *> *after =
-        IOSUseAutomationStableDOM(postDOM);
-    NSUInteger changedCount = 0;
-    NSMutableArray<NSDictionary<NSString *, id> *> *changes =
-        [NSMutableArray array];
-    NSCountedSet<NSDictionary<NSString *, id> *> *beforeSet =
-        [NSCountedSet setWithArray:before];
-    NSCountedSet<NSDictionary<NSString *, id> *> *afterSet =
-        [NSCountedSet setWithArray:after];
-    NSMutableArray<NSDictionary<NSString *, id> *> *ordered =
-        [before mutableCopy];
-    [ordered addObjectsFromArray:after];
-    NSMutableSet<NSDictionary<NSString *, id> *> *seen =
-        [NSMutableSet set];
-    for (NSDictionary<NSString *, id> *stableElement in ordered) {
-        if ([seen containsObject:stableElement]) {
-            continue;
-        }
-        [seen addObject:stableElement];
-        NSUInteger beforeCount =
-            [beforeSet countForObject:stableElement];
-        NSUInteger afterCount =
-            [afterSet countForObject:stableElement];
-        if (beforeCount == afterCount) {
-            continue;
-        }
-        changedCount += beforeCount > afterCount
-            ? beforeCount - afterCount
-            : afterCount - beforeCount;
-        if (changes.count < 16) {
-            [changes addObject:@{
-                @"index": @(-1),
-                @"before": beforeCount > 0
-                    ? stableElement
-                    : (id)NSNull.null,
-                @"after": afterCount > 0
-                    ? stableElement
-                    : (id)NSNull.null,
-                @"beforeCount": @(beforeCount),
-                @"afterCount": @(afterCount),
-            }];
-        }
-    }
-    NSDictionary<NSString *, id> *stablePreTarget =
-        preTarget == nil
-            ? nil
-            : IOSUseAutomationStableElement(preTarget);
-    NSDictionary<NSString *, id> *stablePostTarget =
-        postTarget == nil
-            ? nil
-            : IOSUseAutomationStableElement(postTarget);
-    BOOL targetChanged = NO;
-    if ((stablePreTarget == nil) != (stablePostTarget == nil)) {
-        targetChanged = YES;
-    } else if (stablePreTarget != nil &&
-               stablePostTarget != nil) {
-        targetChanged = ![
-            stablePreTarget
-            isEqualToDictionary:stablePostTarget
-        ];
-    }
-    return @{
-        @"beforeSnapshotGeneration":
-            preDOM[@"snapshotGeneration"] ?: @0,
-        @"afterSnapshotGeneration":
-            postDOM[@"snapshotGeneration"] ?: @0,
-        @"beforeElementCount": @(before.count),
-        @"afterElementCount": @(after.count),
-        @"changedElementCount": @(changedCount),
-        @"changes": changes,
-        @"targetChanged": @(targetChanged),
-    };
-}
-
-static NSDictionary<NSString *, id> *IOSUseAutomationPostElement(
-    NSDictionary<NSString *, id> *dom,
-    NSDictionary<NSString *, id> *target
-) {
-    if (![target isKindOfClass:NSDictionary.class] ||
-        target[@"point"] != nil) {
-        return nil;
-    }
-    NSArray<NSDictionary<NSString *, id> *> *matches =
-        IOSUseAutomationSelectElements(dom, target, NULL);
-    return matches.count == 1 ? matches.firstObject : nil;
-}
-
 static BOOL IOSUseAutomationHitTestPoint(
     CGPoint point,
     UIWindow **window,
@@ -1234,323 +1084,15 @@ static BOOL IOSUseAutomationDOMHasVisibleUIKitAlertMirror(
     return NO;
 }
 
-static CGRect IOSUseAutomationFingerprintRect(
-    CGPoint start,
-    CGPoint end,
-    CGRect targetFrame
-) {
-    CGRect device = CGRectMake(
-        0,
-        0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
-    );
-    CGRect aroundStart = CGRectMake(
-        start.x - 96,
-        start.y - 96,
-        192,
-        192
-    );
-    CGRect aroundEnd = CGRectMake(
-        end.x - 96,
-        end.y - 96,
-        192,
-        192
-    );
-    CGRect region = CGRectUnion(aroundStart, aroundEnd);
-    if (!CGRectIsNull(targetFrame) &&
-        !CGRectIsInfinite(targetFrame) &&
-        isfinite(targetFrame.origin.x) &&
-        isfinite(targetFrame.origin.y) &&
-        isfinite(targetFrame.size.width) &&
-        isfinite(targetFrame.size.height) &&
-        targetFrame.size.width > 0 &&
-        targetFrame.size.height > 0) {
-        region = CGRectUnion(
-            region,
-            CGRectInset(targetFrame, -32, -32)
-        );
-    }
-    region = CGRectIntersection(region, device);
-    CGFloat minimumX = floor(CGRectGetMinX(region));
-    CGFloat minimumY = floor(CGRectGetMinY(region));
-    CGFloat maximumX = ceil(CGRectGetMaxX(region));
-    CGFloat maximumY = ceil(CGRectGetMaxY(region));
-    return CGRectMake(
-        minimumX,
-        minimumY,
-        maximumX - minimumX,
-        maximumY - minimumY
-    );
-}
-
-static NSDictionary<NSString *, id> *
-IOSUseAutomationPreFingerprint(
-    CGRect logicalRect,
-    NSDictionary<NSString *, id> *target,
-    NSDictionary<NSString *, id> **commandError
-) {
-    NSString *failureCode = nil;
-    NSString *failureMessage = nil;
-    NSDictionary<NSString *, id> *fingerprint =
-        IOSUsePlayRuntimeScreenshotFingerprint(
-            logicalRect,
-            &failureCode,
-            &failureMessage
-        );
-    if (fingerprint != nil) {
-        return fingerprint;
-    }
-    if (commandError != NULL) {
-        NSMutableDictionary<NSString *, id> *error = [
-            IOSUseAutomationError(
-                @"postcondition_capture_failed",
-                failureMessage ?:
-                    @"could not capture the pre-action pixel fingerprint",
-                @"capture",
-                @"precondition",
-                YES,
-                target,
-                @[]
-            )
-            mutableCopy
-        ];
-        NSMutableDictionary<NSString *, id> *details =
-            [error[@"details"] mutableCopy];
-        details[@"captureCode"] =
-            failureCode ?: @"fingerprint_unavailable";
-        error[@"details"] = details;
-        *commandError = error;
-    }
-    return nil;
-}
-
-static NSDictionary<NSString *, id> *IOSUseAutomationActionResult(
+static NSDictionary<NSString *, id> *IOSUseAutomationDeliveryResult(
     IOSUseAutomationCandidate *candidate,
-    NSDictionary<NSString *, id> *target,
-    NSDictionary<NSString *, id> *preDOM,
-    NSDictionary<NSString *, id> * _Nullable preFingerprint,
-    CGRect fingerprintRect,
-    BOOL requireChangedPostcondition,
     UIView *hitView,
     CGPoint point,
     NSInteger touchID,
     NSString *phase,
     NSString * _Nullable firstResponderClass,
-    NSDictionary<NSString *, id> * _Nullable extra,
-    NSDictionary<NSString *, id> **commandError
+    NSDictionary<NSString *, id> * _Nullable extra
 ) {
-    NSDictionary<NSString *, id> *snapshotError = nil;
-    NSDictionary<NSString *, id> *postDOM =
-        IOSUseAutomationFreshDOM(&snapshotError);
-    for (NSNumber *delay in @[@0.1, @0.25]) {
-        if (postDOM != nil) {
-            break;
-        }
-        IOSUseAutomationPump(delay.doubleValue);
-        snapshotError = nil;
-        postDOM = IOSUseAutomationFreshDOM(&snapshotError);
-    }
-    if (postDOM == nil) {
-        if (commandError != NULL) {
-            *commandError = snapshotError ?:
-                IOSUseAutomationError(
-                    @"postcondition_failed",
-                    @"fresh post-action DOM snapshot failed",
-                    @"lookup",
-                    @"postcondition",
-                    YES,
-                    target,
-                    @[]
-                );
-        }
-        return nil;
-    }
-    NSDictionary<NSString *, id> *postElement =
-        IOSUseAutomationPostElement(postDOM, target);
-    NSDictionary<NSString *, id> *preElement =
-        IOSUseAutomationElementJSON(candidate);
-    NSDictionary<NSString *, id> *stateEvidence =
-        IOSUseAutomationStateEvidence(
-            preDOM,
-            postDOM,
-            preElement,
-            postElement
-        );
-    BOOL domChanged =
-        [stateEvidence[@"changedElementCount"]
-            unsignedIntegerValue] > 0;
-    NSDictionary<NSString *, id> *pixelEvidence = nil;
-    BOOL pixelChanged = NO;
-    if (preFingerprint != nil) {
-        NSString *failureCode = nil;
-        NSString *failureMessage = nil;
-        NSDictionary<NSString *, id> *initialPostFingerprint =
-            IOSUsePlayRuntimeScreenshotFingerprint(
-                fingerprintRect,
-                &failureCode,
-                &failureMessage
-            );
-        if (initialPostFingerprint == nil) {
-            // A control directly beneath transparent system chrome can
-            // transiently make a status glyph pixel-indistinguishable while
-            // its pressed highlight is live. Retry only after the UIKit
-            // highlight window; the compositor verifier remains strict for
-            // the stable sample.
-            IOSUseAutomationPump(0.2);
-            initialPostFingerprint =
-                IOSUsePlayRuntimeScreenshotFingerprint(
-                    fingerprintRect,
-                    &failureCode,
-                    &failureMessage
-                );
-        }
-        if (initialPostFingerprint == nil) {
-            if (commandError != NULL) {
-                NSMutableDictionary<NSString *, id> *error = [
-                    IOSUseAutomationError(
-                        @"postcondition_capture_failed",
-                        failureMessage ?:
-                            @"could not capture the post-action pixel fingerprint",
-                        @"capture",
-                        @"postcondition",
-                        YES,
-                        target,
-                        @[]
-                    )
-                    mutableCopy
-                ];
-                NSMutableDictionary<NSString *, id> *details =
-                    [error[@"details"] mutableCopy];
-                details[@"captureCode"] =
-                    failureCode ?: @"fingerprint_unavailable";
-                details[@"preFingerprint"] = preFingerprint;
-                error[@"details"] = details;
-                *commandError = error;
-            }
-            return nil;
-        }
-        NSDictionary<NSString *, id> *postFingerprint =
-            initialPostFingerprint;
-        if (!domChanged) {
-            // A UIButton highlight or scroll deceleration is delivery
-            // evidence, not an action postcondition. Sample once more after
-            // the transient window. Re-read the DOM as well: UIControl target
-            // actions can be queued behind the touch event on Catalyst, so
-            // the first fresh snapshot is delivery evidence but is not
-            // necessarily the settled postcondition.
-            IOSUseAutomationPump(0.15);
-            snapshotError = nil;
-            NSDictionary<NSString *, id> *settledDOM =
-                IOSUseAutomationFreshDOM(&snapshotError);
-            if (settledDOM == nil) {
-                IOSUseAutomationPump(0.2);
-                snapshotError = nil;
-                settledDOM =
-                    IOSUseAutomationFreshDOM(&snapshotError);
-            }
-            if (settledDOM == nil) {
-                if (commandError != NULL) {
-                    *commandError = snapshotError ?:
-                        IOSUseAutomationError(
-                            @"postcondition_failed",
-                            @"settled post-action DOM snapshot failed",
-                            @"lookup",
-                            @"postcondition",
-                            YES,
-                            target,
-                            @[]
-                        );
-                }
-                return nil;
-            }
-            postDOM = settledDOM;
-            postElement =
-                IOSUseAutomationPostElement(postDOM, target);
-            stateEvidence = IOSUseAutomationStateEvidence(
-                preDOM,
-                postDOM,
-                preElement,
-                postElement
-            );
-            domChanged =
-                [stateEvidence[@"changedElementCount"]
-                    unsignedIntegerValue] > 0;
-            NSDictionary<NSString *, id> *verifiedFingerprint =
-                IOSUsePlayRuntimeScreenshotFingerprint(
-                    fingerprintRect,
-                    &failureCode,
-                    &failureMessage
-                );
-            if (verifiedFingerprint == nil) {
-                if (commandError != NULL) {
-                    *commandError = IOSUseAutomationError(
-                        @"postcondition_capture_failed",
-                        failureMessage ?:
-                            @"could not verify the stable post-action pixel fingerprint",
-                        @"capture",
-                        @"postcondition",
-                        YES,
-                        target,
-                        @[]
-                    );
-                }
-                return nil;
-            }
-            postFingerprint = verifiedFingerprint;
-        }
-        NSString *beforeHash = preFingerprint[@"hash"];
-        NSString *initialAfterHash =
-            initialPostFingerprint[@"hash"];
-        NSString *afterHash = postFingerprint[@"hash"];
-        BOOL stablePixelSample =
-            domChanged ||
-            [initialAfterHash isEqualToString:afterHash] ||
-            [initialAfterHash isEqualToString:beforeHash];
-        pixelChanged =
-            [beforeHash isKindOfClass:NSString.class] &&
-            [afterHash isKindOfClass:NSString.class] &&
-            ![beforeHash isEqualToString:afterHash] &&
-            stablePixelSample;
-        pixelEvidence = @{
-            @"before": preFingerprint,
-            @"after": postFingerprint,
-            @"initialAfter": initialPostFingerprint,
-            @"stable": @(stablePixelSample),
-            @"changed": @(pixelChanged),
-        };
-    }
-    BOOL changed = domChanged || pixelChanged;
-    NSDictionary<NSString *, id> *postcondition = @{
-        @"snapshotGeneration":
-            postDOM[@"snapshotGeneration"],
-        @"element": postElement ?: (id)NSNull.null,
-        @"changed": @(changed),
-        @"stateEvidence": stateEvidence,
-        @"pixelEvidence": pixelEvidence ?: (id)NSNull.null,
-    };
-    if (requireChangedPostcondition && !changed) {
-        if (commandError != NULL) {
-            NSMutableDictionary<NSString *, id> *error = [
-                IOSUseAutomationError(
-                    @"postcondition_failed",
-                    @"the action backend reported delivery but neither visible live DOM state nor stable compositor pixels changed",
-                    @"interaction",
-                    @"postcondition",
-                    YES,
-                    target,
-                    @[]
-                )
-                mutableCopy
-            ];
-            NSMutableDictionary<NSString *, id> *details =
-                [error[@"details"] mutableCopy];
-            details[@"postcondition"] = postcondition;
-            error[@"details"] = details;
-            *commandError = error;
-        }
-        return nil;
-    }
     NSMutableDictionary<NSString *, id> *finalState = [@{
         @"point": @{
             @"x": @(point.x),
@@ -1566,7 +1108,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationActionResult(
         @"element": IOSUseAutomationElementJSON(candidate),
         @"hitView": IOSUseAutomationHitViewJSON(hitView),
         @"finalState": finalState,
-        @"postcondition": postcondition,
     } mutableCopy];
     [result addEntriesFromDictionary:extra ?: @{}];
     return result;
@@ -1775,21 +1316,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             return nil;
         }
         point = adjustedPoint;
-        CGRect fingerprintRect =
-            IOSUseAutomationFingerprintRect(
-                point,
-                point,
-                candidate.frame
-            );
-        NSDictionary<NSString *, id> *preFingerprint =
-            IOSUseAutomationPreFingerprint(
-                fingerprintRect,
-                target,
-                commandError
-            );
-        if (preFingerprint == nil) {
-            return nil;
-        }
         NSDictionary<NSString *, id> *nativeAlertAction =
             IOSUseAutomationNativeAlertAction(
                 candidate.label,
@@ -1858,20 +1384,14 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                         }
                         return nil;
                     }
-                    return IOSUseAutomationActionResult(
+                    return IOSUseAutomationDeliveryResult(
                         candidate,
-                        target,
-                        preDOM,
-                        preFingerprint,
-                        fingerprintRect,
-                        YES,
                         hitView,
                         point,
                         -1,
                         @"native-ended",
                         nil,
-                        @{@"nativeAlertDelivery": nativeDelivery},
-                        deferredError
+                        @{@"nativeAlertDelivery": nativeDelivery}
                     );
                 };
             NSMutableDictionary<NSString *, id> *deferred = [@{
@@ -1918,13 +1438,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                 return nil;
             }
             IOSUseAutomationPump(0.03);
-            return IOSUseAutomationActionResult(
+            return IOSUseAutomationDeliveryResult(
                 candidate,
-                target,
-                preDOM,
-                preFingerprint,
-                fingerprintRect,
-                YES,
                 hitView,
                 point,
                 -1,
@@ -1932,8 +1447,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                 nil,
                 @{
                     @"actionEvidence": webEvidence,
-                },
-                commandError
+                }
             );
         }
         unsigned long long deliveryBefore =
@@ -1969,13 +1483,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             }
             return nil;
         }
-        return IOSUseAutomationActionResult(
+        return IOSUseAutomationDeliveryResult(
             candidate,
-            target,
-            preDOM,
-            preFingerprint,
-            fingerprintRect,
-            YES,
             hitView,
             point,
             touchID,
@@ -1986,8 +1495,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                 : @{
                     @"preTouchFocusTransition":
                         focusTransition,
-                },
-            commandError
+                }
         );
     }
     if ([command isEqualToString:@"longPress"]) {
@@ -2006,21 +1514,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                     @[]
                 );
             }
-            return nil;
-        }
-        CGRect fingerprintRect =
-            IOSUseAutomationFingerprintRect(
-                point,
-                point,
-                candidate.frame
-            );
-        NSDictionary<NSString *, id> *preFingerprint =
-            IOSUseAutomationPreFingerprint(
-                fingerprintRect,
-                target,
-                commandError
-            );
-        if (preFingerprint == nil) {
             return nil;
         }
         unsigned long long deliveryBefore =
@@ -2060,20 +1553,14 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             }
             return nil;
         }
-        return IOSUseAutomationActionResult(
+        return IOSUseAutomationDeliveryResult(
             candidate,
-            target,
-            preDOM,
-            preFingerprint,
-            fingerprintRect,
-            YES,
             hitView,
             point,
             touchID,
             @"ended",
             nil,
-            nil,
-            commandError
+            nil
         );
     }
     NSDictionary *toTarget = arguments[@"toTarget"];
@@ -2179,21 +1666,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         }
         return nil;
     }
-    CGRect fingerprintRect =
-        IOSUseAutomationFingerprintRect(
-            point,
-            endPoint,
-            candidate.frame
-        );
-    NSDictionary<NSString *, id> *preFingerprint =
-        IOSUseAutomationPreFingerprint(
-            fingerprintRect,
-            target,
-            commandError
-        );
-    if (preFingerprint == nil) {
-        return nil;
-    }
     unsigned long long deliveryBefore =
         PTFakeMetaTouch.deliveryGeneration;
     NSInteger touchID = IOSUseAutomationSendTouch(
@@ -2204,23 +1676,36 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         deliveryView
     );
     IOSUseAutomationPump(0.015);
+    unsigned long long deliveryAfterBegan =
+        PTFakeMetaTouch.deliveryGeneration;
+    BOOL beganDelivered = touchID >= 0 &&
+        deliveryAfterBegan >= deliveryBefore + 1;
     const NSUInteger steps = 12;
+    BOOL movesAccepted = YES;
     for (NSUInteger step = 1; step <= steps; step += 1) {
         CGFloat progress = (CGFloat)step / (CGFloat)steps;
         CGPoint current = CGPointMake(
             point.x + (endPoint.x - point.x) * progress,
             point.y + (endPoint.y - point.y) * progress
         );
-        IOSUseAutomationSendTouch(
+        NSInteger movedTouchID = IOSUseAutomationSendTouch(
             current,
             UITouchPhaseMoved,
             touchID,
             window,
             deliveryView
         );
+        movesAccepted = movesAccepted &&
+            movedTouchID == touchID;
         IOSUseAutomationPump(duration / steps);
     }
-    IOSUseAutomationSendTouch(
+    unsigned long long deliveryAfterMoves =
+        PTFakeMetaTouch.deliveryGeneration;
+    BOOL movesDelivered = movesAccepted &&
+        deliveryAfterMoves >= deliveryAfterBegan + steps;
+    unsigned long long deliveryBeforeEnd =
+        PTFakeMetaTouch.deliveryGeneration;
+    NSInteger endedTouchID = IOSUseAutomationSendTouch(
         endPoint,
         UITouchPhaseEnded,
         touchID,
@@ -2228,12 +1713,13 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         deliveryView
     );
     IOSUseAutomationPump(0.03);
-    if (PTFakeMetaTouch.deliveryGeneration <
-        deliveryBefore + 3) {
+    BOOL endDelivered = endedTouchID == -1 &&
+        PTFakeMetaTouch.deliveryGeneration >= deliveryBeforeEnd + 1;
+    if (!beganDelivered || !movesDelivered || !endDelivered) {
         if (commandError != NULL) {
             *commandError = IOSUseAutomationError(
                 @"touch_delivery_failed",
-                @"swipe phases were not delivered to UIApplication",
+                @"swipe began, moved, and ended phases were not all delivered to UIApplication",
                 @"interaction",
                 @"delivery",
                 YES,
@@ -2243,13 +1729,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         }
         return nil;
     }
-    return IOSUseAutomationActionResult(
+    return IOSUseAutomationDeliveryResult(
         candidate,
-        target,
-        preDOM,
-        preFingerprint,
-        fingerprintRect,
-        YES,
         hitView,
         endPoint,
         touchID,
@@ -2264,10 +1745,9 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                         [arguments[@"direction"] integerValue] == 1
                             ? @"back"
                             : @"unspecified"
-                    ),
+            ),
             @"toElement": IOSUseAutomationElementJSON(toCandidate),
-        },
-        commandError
+        }
     );
 }
 
@@ -3170,13 +2650,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
             CGRectGetMidY(candidate.frame)
         );
     }
-    return IOSUseAutomationActionResult(
+    return IOSUseAutomationDeliveryResult(
         candidate,
-        target,
-        preDOM,
-        nil,
-        CGRectNull,
-        NO,
         hitView,
         point,
         -1,
@@ -3214,8 +2689,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
                     ? @"WKContentView.insertText"
                     : @"UIKeyInput.insertText",
             },
-        },
-        commandError
+        }
     );
 }
 
@@ -3272,15 +2746,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                     nil,
                     @[]
                 );
-            }
-            return nil;
-        }
-        NSDictionary<NSString *, id> *snapshotError = nil;
-        NSDictionary<NSString *, id> *preDOM =
-            IOSUseAutomationFreshDOM(&snapshotError);
-        if (preDOM == nil) {
-            if (commandError != NULL) {
-                *commandError = snapshotError;
             }
             return nil;
         }
@@ -3353,13 +2818,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                     }
                     return nil;
                 }
-                NSDictionary<NSString *, id> *stateEvidence =
-                    IOSUseAutomationStateEvidence(
-                        preDOM,
-                        postDOM,
-                        nil,
-                        nil
-                    );
                 return @{
                     @"dismissed": @YES,
                     @"text": nativeAlertText,
@@ -3375,15 +2833,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                         },
                         @"touchID": @(-1),
                         @"phase": @"native-ended",
-                    },
-                    @"postcondition": @{
-                        @"snapshotGeneration":
-                            postDOM[@"snapshotGeneration"],
-                        @"changed": @((BOOL)(
-                            [stateEvidence[@"changedElementCount"]
-                                unsignedIntegerValue] > 0
-                        )),
-                        @"stateEvidence": stateEvidence,
                     },
                 };
             };
@@ -3493,15 +2942,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
         }
         return nil;
     }
-    NSDictionary<NSString *, id> *snapshotError = nil;
-    NSDictionary<NSString *, id> *preDOM =
-        IOSUseAutomationFreshDOM(&snapshotError);
-    if (preDOM == nil) {
-        if (commandError != NULL) {
-            *commandError = snapshotError;
-        }
-        return nil;
-    }
     unsigned long long deliveryBefore =
         PTFakeMetaTouch.deliveryGeneration;
     NSInteger touchID = IOSUseAutomationSendTouch(
@@ -3537,21 +2977,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
         }
         return nil;
     }
-    NSDictionary<NSString *, id> *postDOM =
-        IOSUseAutomationFreshDOM(&snapshotError);
-    if (postDOM == nil) {
-        if (commandError != NULL) {
-            *commandError = snapshotError;
-        }
-        return nil;
-    }
-    NSDictionary<NSString *, id> *stateEvidence =
-        IOSUseAutomationStateEvidence(
-            preDOM,
-            postDOM,
-            nil,
-            nil
-        );
     return @{
         @"dismissed": @YES,
         @"text": alert.message ?: alert.title ?: @"",
@@ -3567,15 +2992,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
             },
             @"touchID": @(touchID),
             @"phase": @"ended",
-        },
-        @"postcondition": @{
-            @"snapshotGeneration":
-                postDOM[@"snapshotGeneration"],
-            @"changed": @((BOOL)(
-                [stateEvidence[@"changedElementCount"]
-                    unsignedIntegerValue] > 0
-            )),
-            @"stateEvidence": stateEvidence,
         },
     };
 }
@@ -3622,15 +3038,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationOpen(
                 nil,
                 @[]
             );
-        }
-        return nil;
-    }
-    NSDictionary<NSString *, id> *snapshotError = nil;
-    NSDictionary<NSString *, id> *preDOM =
-        IOSUseAutomationFreshDOM(&snapshotError);
-    if (preDOM == nil) {
-        if (commandError != NULL) {
-            *commandError = snapshotError;
         }
         return nil;
     }
@@ -3695,35 +3102,10 @@ static NSDictionary<NSString *, id> *IOSUseAutomationOpen(
         }
         return nil;
     }
-    IOSUseAutomationPump(0.05);
-    NSDictionary<NSString *, id> *postDOM =
-        IOSUseAutomationFreshDOM(&snapshotError);
-    if (postDOM == nil) {
-        if (commandError != NULL) {
-            *commandError = snapshotError;
-        }
-        return nil;
-    }
-    NSDictionary<NSString *, id> *stateEvidence =
-        IOSUseAutomationStateEvidence(
-            preDOM,
-            postDOM,
-            nil,
-            nil
-        );
     return @{
         @"delivered": @YES,
         @"url": url.absoluteString,
         @"deliveryBackend": deliveryBackend,
-        @"postcondition": @{
-            @"snapshotGeneration":
-                postDOM[@"snapshotGeneration"],
-            @"changed": @((BOOL)(
-                [stateEvidence[@"changedElementCount"]
-                    unsignedIntegerValue] > 0
-            )),
-            @"stateEvidence": stateEvidence,
-        },
     };
 }
 

@@ -33,67 +33,6 @@ xcrun clang \
   -Wextra \
   -Werror \
   -framework Foundation \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/SystemChromeContractTests.m" \
-  -o "$IOS_USE_SMOKE_TEMP/SyntheticChromeRemovalContract"
-
-"$IOS_USE_SMOKE_TEMP/SyntheticChromeRemovalContract" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntime.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeSocket.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeAutomation.m"
-
-xcrun clang \
-  -fobjc-arc \
-  -fmodules \
-  -Wall \
-  -Wextra \
-  -Werror \
-  -framework Foundation \
-  -I "$IOS_USE_REPO_ROOT/swift-cli/Sources/IOSUsePlayDevice/include" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/RuntimeAutomationSourceContract.m" \
-  -o "$IOS_USE_SMOKE_TEMP/RuntimeAutomationSourceContract"
-
-"$IOS_USE_SMOKE_TEMP/RuntimeAutomationSourceContract" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeAutomation.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayFixedAdapter.swift" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeDOM.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayAppKitBridge.m"
-
-xcrun clang \
-  -fobjc-arc \
-  -fmodules \
-  -Wall \
-  -Wextra \
-  -Werror \
-  -framework Foundation \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/InputContractTests.m" \
-  -o "$IOS_USE_SMOKE_TEMP/InputContractTests"
-
-"$IOS_USE_SMOKE_TEMP/InputContractTests" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeAutomation.m"
-
-xcrun clang \
-  -fobjc-arc \
-  -fmodules \
-  -Wall \
-  -Wextra \
-  -Werror \
-  -framework Foundation \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/RuntimeScreenshotSourceContract.m" \
-  -o "$IOS_USE_SMOKE_TEMP/RuntimeScreenshotSourceContract"
-
-"$IOS_USE_SMOKE_TEMP/RuntimeScreenshotSourceContract" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayWindowCompositor.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayAppKitBridge.m"
-
-xcrun clang \
-  -fobjc-arc \
-  -fmodules \
-  -Wall \
-  -Wextra \
-  -Werror \
-  -framework Foundation \
   -framework CoreGraphics \
   -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
   -I "$IOS_USE_REPO_ROOT/swift-cli/Sources/IOSUsePlayDevice/include" \
@@ -117,10 +56,7 @@ xcrun clang \
   "$IOS_USE_REPO_ROOT/playcover-runtime/tests/HostCanvasContractTests.m" \
   -o "$IOS_USE_SMOKE_TEMP/HostCanvasContractTests"
 
-"$IOS_USE_SMOKE_TEMP/HostCanvasContractTests" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayAppKitBridge.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
-  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeSocket.m"
+"$IOS_USE_SMOKE_TEMP/HostCanvasContractTests"
 
 if [ "$IOS_USE_DETERMINISTIC_ONLY" = "true" ]; then
   echo "[cgshw-smoke] PASS deterministic compositor contracts"

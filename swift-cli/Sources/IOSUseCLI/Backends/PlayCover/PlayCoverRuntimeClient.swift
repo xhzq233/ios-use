@@ -14,15 +14,6 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case input
     case dismissAlert
     case open
-
-    var mutatesUI: Bool {
-        switch self {
-        case .tap, .longPress, .swipe, .input, .dismissAlert, .open:
-            return true
-        case .hello, .ping, .diagnostics, .screenshot, .dom, .waitFor:
-            return false
-        }
-    }
 }
 
 indirect enum PlayCoverRuntimeJSONValue: Codable, Equatable, Sendable {
@@ -132,8 +123,7 @@ struct PlayCoverRuntimeHostGeometry: Codable, Equatable, Sendable {
     let canvasBounds: PlayCoverRuntimeFrame
     let displayScale: Double
     let inverseDisplayScale: Double
-    let transparentSpacer: Double
-    let transparent: Bool
+    let opaque: Bool
     let publicTitleBar: Bool
     let titleVisible: Bool
     let resizable: Bool
@@ -360,67 +350,16 @@ struct PlayCoverRuntimeFinalState: Codable, Equatable, Sendable {
     let firstResponderClass: String?
 }
 
-struct PlayCoverRuntimeStateEvidence:
-    Codable,
-    Equatable,
-    Sendable
-{
-    let beforeSnapshotGeneration: Int64
-    let afterSnapshotGeneration: Int64
-    let beforeElementCount: Int
-    let afterElementCount: Int
-    let changedElementCount: Int
-    let changes: [PlayCoverRuntimeJSONValue]
-    let targetChanged: Bool
-}
-
-struct PlayCoverRuntimePixelFingerprint:
-    Codable,
-    Equatable,
-    Sendable
-{
-    let algorithm: String
-    let hash: String
-    let logicalRect: PlayCoverRuntimeFrame
-    let nativePixelRect: PlayCoverRuntimeFrame
-    let pixelWidth: Int
-    let pixelHeight: Int
-    let captureGeneration: Int64
-    let source: String
-    let complete: Bool
-    let compositor: PlayCoverRuntimeJSONValue
-}
-
-struct PlayCoverRuntimePixelEvidence:
-    Codable,
-    Equatable,
-    Sendable
-{
-    let before: PlayCoverRuntimePixelFingerprint
-    let after: PlayCoverRuntimePixelFingerprint
-    let changed: Bool
-}
-
-struct PlayCoverRuntimePostcondition: Codable, Equatable, Sendable {
-    let snapshotGeneration: Int64
-    let element: PlayCoverRuntimeElementSummary?
-    let changed: Bool
-    let stateEvidence: PlayCoverRuntimeStateEvidence
-    var pixelEvidence: PlayCoverRuntimePixelEvidence? = nil
-}
-
 struct PlayCoverRuntimeActionPayload: Codable, Equatable, Sendable {
     let element: PlayCoverRuntimeElementSummary
     let hitView: PlayCoverRuntimeHitView
     let finalState: PlayCoverRuntimeFinalState
-    let postcondition: PlayCoverRuntimePostcondition
 }
 
 struct PlayCoverRuntimeSwipePayload: Codable, Equatable, Sendable {
     let element: PlayCoverRuntimeElementSummary
     let hitView: PlayCoverRuntimeHitView
     let finalState: PlayCoverRuntimeFinalState
-    let postcondition: PlayCoverRuntimePostcondition
     let scrolls: Int32
     let direction: String
 }
@@ -432,13 +371,11 @@ struct PlayCoverRuntimeAlertPayload: Codable, Equatable, Sendable {
     let reason: String
     let hitView: PlayCoverRuntimeHitView?
     let finalState: PlayCoverRuntimeFinalState?
-    let postcondition: PlayCoverRuntimePostcondition
 }
 
 struct PlayCoverRuntimeOpenPayload: Codable, Equatable, Sendable {
     let delivered: Bool
     let url: String
-    let postcondition: PlayCoverRuntimePostcondition
 }
 
 struct PlayCoverRuntimeFullFrame: Codable, Equatable, Sendable {
@@ -464,7 +401,6 @@ struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
     let fullFrame: PlayCoverRuntimeFullFrame
     let snapshotGeneration: Int64
     let captureGeneration: Int64
-    let dom: PlayCoverRuntimeDOMPayload?
     let compositorWindowNumbers: [Int]?
     let sourceBackingSizes: [PlayCoverRuntimeJSONValue]?
     let appKitWindowEvidence: PlayCoverRuntimeJSONValue?
@@ -483,7 +419,6 @@ struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
         fullFrame: PlayCoverRuntimeFullFrame,
         snapshotGeneration: Int64,
         captureGeneration: Int64,
-        dom: PlayCoverRuntimeDOMPayload?,
         compositorWindowNumbers: [Int]? = nil,
         sourceBackingSizes:
             [PlayCoverRuntimeJSONValue]? = nil,
@@ -503,7 +438,6 @@ struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
         self.fullFrame = fullFrame
         self.snapshotGeneration = snapshotGeneration
         self.captureGeneration = captureGeneration
-        self.dom = dom
         self.compositorWindowNumbers = compositorWindowNumbers
         self.sourceBackingSizes = sourceBackingSizes
         self.appKitWindowEvidence = appKitWindowEvidence
@@ -511,62 +445,100 @@ struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
     }
 }
 
-struct PlayCoverRuntimeResponsePayload: Codable, Equatable, Sendable {
+protocol PlayCoverRuntimeIdentifiedPayload {
+    var pid: Int32 { get }
+    var bundleIdentifier: String { get }
+    var executablePath: String { get }
+}
+
+struct PlayCoverRuntimeHelloPayload:
+    Codable,
+    Equatable,
+    Sendable,
+    PlayCoverRuntimeIdentifiedPayload
+{
     let pid: Int32
     let bundleIdentifier: String
     let executablePath: String
     let capabilities: [String]
     let geometry: PlayCoverRuntimeGeometry
     let stage: String
-    let observed: [String: PlayCoverRuntimeJSONValue]?
-    let diagnostics: [String: PlayCoverRuntimeJSONValue]?
-    let screenshot: PlayCoverRuntimeScreenshotPayload?
-    let dom: PlayCoverRuntimeDOMPayload?
-    let waitFor: PlayCoverRuntimeWaitForPayload?
-    let tap: PlayCoverRuntimeActionPayload?
-    let longPress: PlayCoverRuntimeActionPayload?
-    let swipe: PlayCoverRuntimeSwipePayload?
-    let input: PlayCoverRuntimeActionPayload?
-    let dismissAlert: PlayCoverRuntimeAlertPayload?
-    let open: PlayCoverRuntimeOpenPayload?
+    let observed: [String: PlayCoverRuntimeJSONValue]
+}
 
-    init(
-        pid: Int32,
-        bundleIdentifier: String,
-        executablePath: String,
-        capabilities: [String],
-        geometry: PlayCoverRuntimeGeometry,
-        stage: String,
-        observed: [String: PlayCoverRuntimeJSONValue]? = nil,
-        diagnostics: [String: PlayCoverRuntimeJSONValue]? = nil,
-        screenshot: PlayCoverRuntimeScreenshotPayload? = nil,
-        dom: PlayCoverRuntimeDOMPayload? = nil,
-        waitFor: PlayCoverRuntimeWaitForPayload? = nil,
-        tap: PlayCoverRuntimeActionPayload? = nil,
-        longPress: PlayCoverRuntimeActionPayload? = nil,
-        swipe: PlayCoverRuntimeSwipePayload? = nil,
-        input: PlayCoverRuntimeActionPayload? = nil,
-        dismissAlert: PlayCoverRuntimeAlertPayload? = nil,
-        open: PlayCoverRuntimeOpenPayload? = nil
-    ) {
-        self.pid = pid
-        self.bundleIdentifier = bundleIdentifier
-        self.executablePath = executablePath
-        self.capabilities = capabilities
-        self.geometry = geometry
-        self.stage = stage
-        self.observed = observed
-        self.diagnostics = diagnostics
-        self.screenshot = screenshot
-        self.dom = dom
-        self.waitFor = waitFor
-        self.tap = tap
-        self.longPress = longPress
-        self.swipe = swipe
-        self.input = input
-        self.dismissAlert = dismissAlert
-        self.open = open
-    }
+struct PlayCoverRuntimeDiagnosticsPayload:
+    Codable,
+    Equatable,
+    Sendable,
+    PlayCoverRuntimeIdentifiedPayload
+{
+    let pid: Int32
+    let bundleIdentifier: String
+    let executablePath: String
+    let capabilities: [String]
+    let geometry: PlayCoverRuntimeGeometry
+    let stage: String
+    let diagnostics: [String: PlayCoverRuntimeJSONValue]
+}
+
+struct PlayCoverRuntimePingPayload: Codable, Equatable, Sendable {
+    let pong: Bool
+}
+
+struct PlayCoverRuntimeScreenshotResult:
+    Codable,
+    Equatable,
+    Sendable
+{
+    let screenshot: PlayCoverRuntimeScreenshotPayload
+    let dom: PlayCoverRuntimeDOMPayload
+}
+
+private struct PlayCoverRuntimeDOMResult: Codable {
+    let dom: PlayCoverRuntimeDOMPayload
+}
+
+private struct PlayCoverRuntimeWaitForResult: Codable {
+    let waitFor: PlayCoverRuntimeWaitForPayload
+}
+
+private struct PlayCoverRuntimeTapResult: Codable {
+    let tap: PlayCoverRuntimeActionPayload
+}
+
+private struct PlayCoverRuntimeLongPressResult: Codable {
+    let longPress: PlayCoverRuntimeActionPayload
+}
+
+private struct PlayCoverRuntimeInputResult: Codable {
+    let input: PlayCoverRuntimeActionPayload
+}
+
+private struct PlayCoverRuntimeSwipeResult: Codable {
+    let swipe: PlayCoverRuntimeSwipePayload
+}
+
+private struct PlayCoverRuntimeAlertResult: Codable {
+    let dismissAlert: PlayCoverRuntimeAlertPayload
+}
+
+private struct PlayCoverRuntimeOpenResult: Codable {
+    let open: PlayCoverRuntimeOpenPayload
+}
+
+enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
+    case hello(PlayCoverRuntimeHelloPayload)
+    case ping(PlayCoverRuntimePingPayload)
+    case diagnostics(PlayCoverRuntimeDiagnosticsPayload)
+    case screenshot(PlayCoverRuntimeScreenshotResult)
+    case dom(PlayCoverRuntimeDOMPayload)
+    case waitFor(PlayCoverRuntimeWaitForPayload)
+    case tap(PlayCoverRuntimeActionPayload)
+    case longPress(PlayCoverRuntimeActionPayload)
+    case swipe(PlayCoverRuntimeSwipePayload)
+    case input(PlayCoverRuntimeActionPayload)
+    case dismissAlert(PlayCoverRuntimeAlertPayload)
+    case open(PlayCoverRuntimeOpenPayload)
 }
 
 typealias PlayCoverRuntimeErrorElement = PlayCoverRuntimeElementSummary
@@ -696,7 +668,7 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
 /// fresh AF_UNIX/SOCK_STREAM connection, authenticates the peer UID, exchanges
 /// exactly one bounded JSON frame, and closes the connection.
 final class PlayCoverRuntimeClient {
-    static let schemaVersion = 2
+    static let schemaVersion = 3
     static let maximumRequestBodyBytes = 64 * 1024
     static let maximumResponseBodyBytes = 16 * 1024 * 1024
     static let defaultTimeoutSeconds: TimeInterval = 5
@@ -726,68 +698,147 @@ final class PlayCoverRuntimeClient {
         self.timeoutSeconds = timeoutSeconds
     }
 
-    func hello() throws -> PlayCoverRuntimeResponsePayload {
-        try request(.hello)
+    func hello() throws -> PlayCoverRuntimeHelloPayload {
+        guard case .hello(let payload) = try request(.hello) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "hello response type mismatch"
+            )
+        }
+        return payload
     }
 
-    func ping() throws -> PlayCoverRuntimeResponsePayload {
-        try request(.ping)
+    func ping() throws -> PlayCoverRuntimePingPayload {
+        guard case .ping(let payload) = try request(.ping) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "ping response type mismatch"
+            )
+        }
+        return payload
     }
 
-    func diagnostics() throws -> PlayCoverRuntimeResponsePayload {
-        try request(.diagnostics)
+    func diagnostics() throws -> PlayCoverRuntimeDiagnosticsPayload {
+        guard case .diagnostics(let payload) =
+                try request(.diagnostics) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "diagnostics response type mismatch"
+            )
+        }
+        return payload
     }
 
-    func screenshot() throws -> PlayCoverRuntimeResponsePayload {
-        try request(.screenshot)
+    func screenshot() throws -> PlayCoverRuntimeScreenshotResult {
+        guard case .screenshot(let payload) =
+                try request(.screenshot) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "screenshot response type mismatch"
+            )
+        }
+        return payload
     }
 
     func dom(
         _ arguments: PlayCoverRuntimeDOMArguments
-    ) throws -> PlayCoverRuntimeResponsePayload {
-        try request(.dom, arguments: .dom(arguments))
+    ) throws -> PlayCoverRuntimeDOMPayload {
+        guard case .dom(let payload) =
+                try request(.dom, arguments: .dom(arguments)) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "dom response type mismatch"
+            )
+        }
+        return payload
     }
 
     func waitFor(
         _ arguments: PlayCoverRuntimeWaitForArguments
-    ) throws -> PlayCoverRuntimeResponsePayload {
-        try request(.waitFor, arguments: .waitFor(arguments))
+    ) throws -> PlayCoverRuntimeWaitForPayload {
+        guard case .waitFor(let payload) =
+                try request(
+                    .waitFor,
+                    arguments: .waitFor(arguments)
+                ) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "waitFor response type mismatch"
+            )
+        }
+        return payload
     }
 
     func tap(
         _ arguments: PlayCoverRuntimeTapArguments
-    ) throws -> PlayCoverRuntimeResponsePayload {
-        try request(.tap, arguments: .tap(arguments))
+    ) throws -> PlayCoverRuntimeActionPayload {
+        guard case .tap(let payload) =
+                try request(.tap, arguments: .tap(arguments)) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "tap response type mismatch"
+            )
+        }
+        return payload
     }
 
     func longPress(
         _ arguments: PlayCoverRuntimeLongPressArguments
-    ) throws -> PlayCoverRuntimeResponsePayload {
-        try request(.longPress, arguments: .longPress(arguments))
+    ) throws -> PlayCoverRuntimeActionPayload {
+        guard case .longPress(let payload) =
+                try request(
+                    .longPress,
+                    arguments: .longPress(arguments)
+                ) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "longPress response type mismatch"
+            )
+        }
+        return payload
     }
 
     func swipe(
         _ arguments: PlayCoverRuntimeSwipeArguments
-    ) throws -> PlayCoverRuntimeResponsePayload {
-        try request(.swipe, arguments: .swipe(arguments))
+    ) throws -> PlayCoverRuntimeSwipePayload {
+        guard case .swipe(let payload) =
+                try request(.swipe, arguments: .swipe(arguments)) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "swipe response type mismatch"
+            )
+        }
+        return payload
     }
 
     func input(
         _ arguments: PlayCoverRuntimeInputArguments
-    ) throws -> PlayCoverRuntimeResponsePayload {
-        try request(.input, arguments: .input(arguments))
+    ) throws -> PlayCoverRuntimeActionPayload {
+        guard case .input(let payload) =
+                try request(.input, arguments: .input(arguments)) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "input response type mismatch"
+            )
+        }
+        return payload
     }
 
     func dismissAlert(
         _ arguments: PlayCoverRuntimeDismissAlertArguments
-    ) throws -> PlayCoverRuntimeResponsePayload {
-        try request(.dismissAlert, arguments: .dismissAlert(arguments))
+    ) throws -> PlayCoverRuntimeAlertPayload {
+        guard case .dismissAlert(let payload) =
+                try request(
+                    .dismissAlert,
+                    arguments: .dismissAlert(arguments)
+                ) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "dismissAlert response type mismatch"
+            )
+        }
+        return payload
     }
 
     func open(
         _ arguments: PlayCoverRuntimeOpenArguments
-    ) throws -> PlayCoverRuntimeResponsePayload {
-        try request(.open, arguments: .open(arguments))
+    ) throws -> PlayCoverRuntimeOpenPayload {
+        guard case .open(let payload) =
+                try request(.open, arguments: .open(arguments)) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "open response type mismatch"
+            )
+        }
+        return payload
     }
 
     func request(_ command: PlayCoverRuntimeCommand) throws -> PlayCoverRuntimeResponsePayload {
@@ -798,6 +849,69 @@ final class PlayCoverRuntimeClient {
         _ command: PlayCoverRuntimeCommand,
         arguments: PlayCoverRuntimeRequestArguments
     ) throws -> PlayCoverRuntimeResponsePayload {
+        switch command {
+        case .hello:
+            let payload: PlayCoverRuntimeHelloPayload =
+                try performRequest(command, arguments: arguments)
+            try validateIdentity(payload)
+            return .hello(payload)
+        case .ping:
+            let payload: PlayCoverRuntimePingPayload =
+                try performRequest(command, arguments: arguments)
+            guard payload.pong else {
+                throw PlayCoverRuntimeClientError.malformedResponse(
+                    "ping acknowledgement is false"
+                )
+            }
+            return .ping(payload)
+        case .diagnostics:
+            let payload: PlayCoverRuntimeDiagnosticsPayload =
+                try performRequest(command, arguments: arguments)
+            try validateIdentity(payload)
+            return .diagnostics(payload)
+        case .screenshot:
+            let payload: PlayCoverRuntimeScreenshotResult =
+                try performRequest(command, arguments: arguments)
+            return .screenshot(payload)
+        case .dom:
+            let payload: PlayCoverRuntimeDOMResult =
+                try performRequest(command, arguments: arguments)
+            return .dom(payload.dom)
+        case .waitFor:
+            let payload: PlayCoverRuntimeWaitForResult =
+                try performRequest(command, arguments: arguments)
+            return .waitFor(payload.waitFor)
+        case .tap:
+            let payload: PlayCoverRuntimeTapResult =
+                try performRequest(command, arguments: arguments)
+            return .tap(payload.tap)
+        case .longPress:
+            let payload: PlayCoverRuntimeLongPressResult =
+                try performRequest(command, arguments: arguments)
+            return .longPress(payload.longPress)
+        case .swipe:
+            let payload: PlayCoverRuntimeSwipeResult =
+                try performRequest(command, arguments: arguments)
+            return .swipe(payload.swipe)
+        case .input:
+            let payload: PlayCoverRuntimeInputResult =
+                try performRequest(command, arguments: arguments)
+            return .input(payload.input)
+        case .dismissAlert:
+            let payload: PlayCoverRuntimeAlertResult =
+                try performRequest(command, arguments: arguments)
+            return .dismissAlert(payload.dismissAlert)
+        case .open:
+            let payload: PlayCoverRuntimeOpenResult =
+                try performRequest(command, arguments: arguments)
+            return .open(payload.open)
+        }
+    }
+
+    private func performRequest<Payload: Decodable>(
+        _ command: PlayCoverRuntimeCommand,
+        arguments: PlayCoverRuntimeRequestArguments
+    ) throws -> Payload {
         guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
             throw PlayCoverRuntimeClientError.invalidTimeout
         }
@@ -843,7 +957,10 @@ final class PlayCoverRuntimeClient {
             from: descriptor,
             deadline: deadline
         )
-        return try decodeResponse(responseBody, expectedRequestID: requestID)
+        return try decodeResponse(
+            responseBody,
+            expectedRequestID: requestID
+        )
     }
 
     private func makeAddress() throws -> sockaddr_un {
@@ -1304,17 +1421,17 @@ final class PlayCoverRuntimeClient {
         }
     }
 
-    private func decodeResponse(
+    private func decodeResponse<Payload: Decodable>(
         _ body: Data,
         expectedRequestID: String
-    ) throws -> PlayCoverRuntimeResponsePayload {
+    ) throws -> Payload {
         guard let text = String(data: body, encoding: .utf8) else {
             throw PlayCoverRuntimeClientError.responseIsNotUTF8
         }
-        let envelope: ResponseEnvelope
+        let envelope: ResponseEnvelope<Payload>
         do {
             envelope = try JSONDecoder().decode(
-                ResponseEnvelope.self,
+                ResponseEnvelope<Payload>.self,
                 from: Data(text.utf8)
             )
         } catch {
@@ -1343,20 +1460,6 @@ final class PlayCoverRuntimeClient {
                     "ok response is missing payload"
                 )
             }
-            guard payload.pid == expectedPID else {
-                throw PlayCoverRuntimeClientError
-                    .responseIdentityMismatch("PID")
-            }
-            guard payload.bundleIdentifier
-                    == expectedBundleIdentifier else {
-                throw PlayCoverRuntimeClientError
-                    .responseIdentityMismatch("bundle identifier")
-            }
-            guard Self.canonicalPath(payload.executablePath)
-                    == Self.canonicalPath(expectedExecutablePath) else {
-                throw PlayCoverRuntimeClientError
-                    .responseIdentityMismatch("executable")
-            }
             return payload
         }
 
@@ -1375,6 +1478,24 @@ final class PlayCoverRuntimeClient {
             message: redact(remote.message),
             details: remote.details
         )
+    }
+
+    private func validateIdentity(
+        _ payload: some PlayCoverRuntimeIdentifiedPayload
+    ) throws {
+        guard payload.pid == expectedPID else {
+            throw PlayCoverRuntimeClientError
+                .responseIdentityMismatch("PID")
+        }
+        guard payload.bundleIdentifier == expectedBundleIdentifier else {
+            throw PlayCoverRuntimeClientError
+                .responseIdentityMismatch("bundle identifier")
+        }
+        guard Self.canonicalPath(payload.executablePath)
+                == Self.canonicalPath(expectedExecutablePath) else {
+            throw PlayCoverRuntimeClientError
+                .responseIdentityMismatch("executable")
+        }
     }
 
     private func redact(_ value: String) -> String {
@@ -1397,12 +1518,12 @@ private extension PlayCoverRuntimeClient {
         let arguments: PlayCoverRuntimeRequestArguments
     }
 
-    struct ResponseEnvelope: Codable {
+    struct ResponseEnvelope<Payload: Decodable>: Decodable {
         let schemaVersion: Int
         let requestId: String
         let sessionID: String
         let ok: Bool
-        let payload: PlayCoverRuntimeResponsePayload?
+        let payload: Payload?
         let error: RemoteError?
     }
 

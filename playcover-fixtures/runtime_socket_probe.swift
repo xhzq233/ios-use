@@ -166,7 +166,7 @@ func run() throws {
     )
     guard let object = try JSONSerialization.jsonObject(with: body)
             as? [String: Any],
-          (object["schemaVersion"] as? NSNumber)?.intValue == 2,
+          (object["schemaVersion"] as? NSNumber)?.intValue == 3,
           (object["ok"] as? NSNumber)?.boolValue == false,
           let error = object["error"] as? [String: Any],
           error["code"] as? String == expectedCode,

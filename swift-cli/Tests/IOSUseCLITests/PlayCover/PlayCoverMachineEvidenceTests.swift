@@ -32,6 +32,19 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
             machineDOM["snapshotGeneration"],
             .integer(41)
         )
+        XCTAssertEqual(
+            Set(root.keys),
+            Set([
+                "url",
+                "deviceUdid",
+                "deviceType",
+                "mutationDispatched",
+                "schemeLookupVerified",
+                "registeredHandlers",
+                "readiness",
+                "dom",
+            ])
+        )
     }
 
     func testScreenshotMachineOutputKeepsFullFrameRuntimeEvidence() {
@@ -130,7 +143,7 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
     }
 
     func testStatusMachineValueIncludesRuntimeDiagnostics() {
-        let payload = PlayCoverRuntimeResponsePayload(
+        let payload = PlayCoverRuntimeDiagnosticsPayload(
             pid: 42,
             bundleIdentifier: "com.iosuse.playfixture",
             executablePath: "/tmp/Fixture",

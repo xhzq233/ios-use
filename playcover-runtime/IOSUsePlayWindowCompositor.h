@@ -27,10 +27,8 @@ typedef struct {
     CGRect canvasRect;
     CGFloat displayScale;
     CGFloat inverseDisplayScale;
-    CGFloat transparentSpacer;
 } IOSUsePlayHostCanvasLayout;
 
-FOUNDATION_EXPORT CGFloat const IOSUsePlayHostCanvasSpacerPoints;
 FOUNDATION_EXPORT CGFloat const IOSUsePlayHostCanvasMinimumDisplayScale;
 
 /// Calculates the one display-only transform for a resizable AppKit host.
@@ -211,15 +209,6 @@ FOUNDATION_EXPORT BOOL IOSUsePlayWindowCapturePlansEqual(
     const IOSUsePlayWindowPlanEntry *after,
     NSUInteger afterCount,
     uint32_t afterBaseWindowNumber,
-    NSString * _Nullable * _Nullable failure
-);
-
-/// Hashes a top-left logical subrect of an already complete native compositor
-/// image. The canonical digest input is premultiplied BGRA8, not JPEG bytes.
-FOUNDATION_EXPORT NSDictionary<NSString *, id> * _Nullable
-IOSUsePlayFingerprintCompositorImage(
-    CGImageRef image,
-    CGRect logicalRect,
     NSString * _Nullable * _Nullable failure
 );
 

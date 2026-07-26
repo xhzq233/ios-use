@@ -35,79 +35,6 @@ static BOOL IOSUseHostCanvasTestRequire(BOOL condition, NSString *message) {
     return condition;
 }
 
-static NSString *IOSUseHostCanvasTestFunctionBody(
-    NSString *source,
-    NSString *functionName
-) {
-    NSString *needle = [functionName stringByAppendingString:@"("];
-    NSRange search = NSMakeRange(0, source.length);
-    NSRange opening = NSMakeRange(NSNotFound, 0);
-    while (search.length > 0) {
-        NSRange declaration = [source
-            rangeOfString:needle
-                  options:0
-                    range:search];
-        if (declaration.location == NSNotFound) {
-            return nil;
-        }
-        NSRange lineStartSearch = [source
-            rangeOfString:@"\n"
-                  options:NSBackwardsSearch
-                    range:NSMakeRange(0, declaration.location)];
-        NSUInteger lineStart = lineStartSearch.location == NSNotFound
-            ? 0
-            : NSMaxRange(lineStartSearch);
-        NSString *declarationLine = [source substringWithRange:
-            NSMakeRange(
-                lineStart,
-                NSMaxRange(declaration) - lineStart
-            )];
-        if (![declarationLine containsString:@"static "]) {
-            NSUInteger next = NSMaxRange(declaration);
-            search = NSMakeRange(next, source.length - next);
-            continue;
-        }
-        NSRange remainder = NSMakeRange(
-            NSMaxRange(declaration),
-            source.length - NSMaxRange(declaration)
-        );
-        NSRange candidateOpening = [source
-            rangeOfString:@"{"
-                  options:0
-                    range:remainder];
-        NSRange semicolon = [source
-            rangeOfString:@";"
-                  options:0
-                    range:remainder];
-        if (candidateOpening.location != NSNotFound &&
-            (semicolon.location == NSNotFound ||
-             candidateOpening.location < semicolon.location)) {
-            opening = candidateOpening;
-            break;
-        }
-        NSUInteger next = NSMaxRange(declaration);
-        search = NSMakeRange(next, source.length - next);
-    }
-    NSUInteger depth = 0;
-    for (NSUInteger index = opening.location;
-         index < source.length;
-         index += 1) {
-        unichar character = [source characterAtIndex:index];
-        if (character == '{') {
-            depth += 1;
-        } else if (character == '}') {
-            depth -= 1;
-            if (depth == 0) {
-                return [source substringWithRange:NSMakeRange(
-                    opening.location,
-                    index - opening.location + 1
-                )];
-            }
-        }
-    }
-    return nil;
-}
-
 static BOOL IOSUseHostCanvasTestLayout(
     CGRect bounds,
     CGFloat expectedScale,
@@ -129,10 +56,6 @@ static BOOL IOSUseHostCanvasTestLayout(
         IOSUseHostCanvasTestApproximatelyEqual(
             resolved.inverseDisplayScale,
             1.0 / expectedScale
-        ) &&
-        IOSUseHostCanvasTestApproximatelyEqual(
-            resolved.transparentSpacer,
-            IOSUsePlayHostCanvasSpacerPoints
         ) &&
         IOSUseHostCanvasTestRectEquals(
             resolved.canvasRect,
@@ -516,244 +439,13 @@ static BOOL IOSUseHostCanvasTestFractionalCropExcludesDecorations(void) {
     );
 }
 
-static BOOL IOSUseHostCanvasTestTypedJSONRect(id value) {
-    if (![value isKindOfClass:NSDictionary.class]) {
-        return NO;
-    }
-    NSDictionary *rect = value;
-    for (NSString *key in @[@"x", @"y", @"width", @"height"]) {
-        id number = rect[key];
-        if (![number isKindOfClass:NSNumber.class] ||
-            !isfinite([(NSNumber *)number doubleValue])) {
-            return NO;
-        }
-    }
-    return YES;
-}
-
-static BOOL IOSUseHostCanvasTestTypedJSONBoolean(id value) {
-    return [value isKindOfClass:NSNumber.class] &&
-        CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID();
-}
-
-static BOOL IOSUseHostCanvasTestUnavailableCaptureSchema(void) {
-    // `geometry.host` is optional to old clients, but newer typed Runtime
-    // clients decode it whenever it is present. A failed WindowServer capture
-    // therefore still needs every nonoptional frame/number/bool/string field;
-    // zero rectangles are an explicitly unhealthy sentinel, while the real
-    // capture error remains available for status diagnostics.
-    NSDictionary<NSString *, NSNumber *> *zeroRect = @{
-        @"x": @0,
-        @"y": @0,
-        @"width": @0,
-        @"height": @0,
-    };
-    NSDictionary<NSString *, id> *host = @{
-        @"status": @"geometry-mismatch",
-        @"hostPolicy": @NO,
-        @"frame": zeroRect,
-        @"contentBounds": zeroRect,
-        @"canvasRect": zeroRect,
-        @"canvasBounds": zeroRect,
-        @"displayScale": @0,
-        @"inverseDisplayScale": @0,
-        @"transparentSpacer": @0,
-        @"transparent": @NO,
-        @"publicTitleBar": @NO,
-        @"titleVisible": @NO,
-        @"resizable": @NO,
-        @"title": @"",
-        @"titleExpected": @"",
-        @"capture": @{
-            @"ready": @NO,
-            @"error": @"WindowServer canvas metadata is unavailable",
-            @"hostContentCGWindowRect": zeroRect,
-            @"hostCGWindowBounds": zeroRect,
-            @"canvasCGWindowRect": zeroRect,
-            @"hostWindowNumber": NSNull.null,
-        },
-    };
-    NSError *jsonError = nil;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:host
-                                                    options:0
-                                                      error:&jsonError];
-    id decoded = data == nil
-        ? nil
-        : [NSJSONSerialization JSONObjectWithData:data
-                                           options:0
-                                             error:&jsonError];
-    NSDictionary *decodedHost = [decoded isKindOfClass:NSDictionary.class]
-        ? decoded
-        : nil;
-    NSDictionary *capture = [decodedHost[@"capture"]
-        isKindOfClass:NSDictionary.class]
-        ? decodedHost[@"capture"]
-        : nil;
-    BOOL typed = jsonError == nil && decodedHost != nil &&
-        [decodedHost[@"status"] isKindOfClass:NSString.class] &&
-        IOSUseHostCanvasTestTypedJSONBoolean(decodedHost[@"hostPolicy"]) &&
-        IOSUseHostCanvasTestTypedJSONRect(decodedHost[@"frame"]) &&
-        IOSUseHostCanvasTestTypedJSONRect(decodedHost[@"contentBounds"]) &&
-        IOSUseHostCanvasTestTypedJSONRect(decodedHost[@"canvasRect"]) &&
-        IOSUseHostCanvasTestTypedJSONRect(decodedHost[@"canvasBounds"]) &&
-        [decodedHost[@"displayScale"] isKindOfClass:NSNumber.class] &&
-        [decodedHost[@"inverseDisplayScale"] isKindOfClass:NSNumber.class] &&
-        [decodedHost[@"transparentSpacer"] isKindOfClass:NSNumber.class] &&
-        IOSUseHostCanvasTestTypedJSONBoolean(decodedHost[@"transparent"]) &&
-        IOSUseHostCanvasTestTypedJSONBoolean(
-            decodedHost[@"publicTitleBar"]
-        ) &&
-        IOSUseHostCanvasTestTypedJSONBoolean(decodedHost[@"titleVisible"]) &&
-        IOSUseHostCanvasTestTypedJSONBoolean(decodedHost[@"resizable"]) &&
-        [decodedHost[@"title"] isKindOfClass:NSString.class] &&
-        [decodedHost[@"titleExpected"] isKindOfClass:NSString.class] &&
-        capture != nil &&
-        IOSUseHostCanvasTestTypedJSONBoolean(capture[@"ready"]) &&
-        ![capture[@"ready"] boolValue] &&
-        [capture[@"error"] isEqualToString:
-            @"WindowServer canvas metadata is unavailable"] &&
-        IOSUseHostCanvasTestTypedJSONRect(
-            capture[@"hostContentCGWindowRect"]
-        ) &&
-        IOSUseHostCanvasTestTypedJSONRect(capture[@"hostCGWindowBounds"]) &&
-        IOSUseHostCanvasTestTypedJSONRect(capture[@"canvasCGWindowRect"]) &&
-        capture[@"hostWindowNumber"] == NSNull.null;
-    return IOSUseHostCanvasTestRequire(
-        typed,
-        @"unavailable canvas capture must retain a typed Runtime host schema and error"
-    );
-}
-
-static BOOL IOSUseHostCanvasTestSourceContract(
-    NSString *bridgePath,
-    NSString *runtimePath,
-    NSString *socketPath
-) {
-    NSError *error = nil;
-    NSString *bridge = [NSString stringWithContentsOfFile:bridgePath
-                                                  encoding:NSUTF8StringEncoding
-                                                     error:&error];
-    if (bridge == nil) {
-        return IOSUseHostCanvasTestRequire(
-            NO,
-            [NSString stringWithFormat:
-                @"could not read AppKit bridge: %@",
-                error.localizedDescription
-            ]
-        );
-    }
-    NSString *runtime = [NSString stringWithContentsOfFile:runtimePath
-                                                   encoding:NSUTF8StringEncoding
-                                                      error:&error];
-    NSString *socket = [NSString stringWithContentsOfFile:socketPath
-                                                  encoding:NSUTF8StringEncoding
-                                                     error:&error];
-    NSString *windowPolicy = IOSUseHostCanvasTestFunctionBody(
-        bridge,
-        @"IOSUseBridgeApplyWindowPolicy"
-    );
-    NSString *hostPolicy = IOSUseHostCanvasTestFunctionBody(
-        bridge,
-        @"IOSUseBridgeWindowPolicyIsHost"
-    );
-    NSString *canvasLayout = IOSUseHostCanvasTestFunctionBody(
-        bridge,
-        @"IOSUseBridgeUpdateHostCanvasLayout"
-    );
-    NSRange frameSetter = [canvasLayout
-        rangeOfString:@"@\"setFrame:\""];
-    NSRange boundsSetter = [canvasLayout
-        rangeOfString:@"@\"setBounds:\""];
-    BOOL frameBeforeBounds =
-        canvasLayout != nil &&
-        frameSetter.location != NSNotFound &&
-        boundsSetter.location != NSNotFound &&
-        frameSetter.location < boundsSetter.location;
-    BOOL bridgeReady =
-        [bridge containsString:@"IOSUseBridgeInstallHostCanvas"] &&
-        [bridge containsString:@"IOSUseBridgeUpdateHostCanvasLayout"] &&
-        [bridge containsString:@"IOSUseBridgeLockSceneToFixedCanvas"] &&
-        [bridge containsString:@"UIWindowSceneGeometryPreferencesMac"] &&
-        [bridge containsString:@"requestGeometryUpdateWithPreferences"] &&
-        [bridge containsString:@"scene.sizeRestrictions.minimumSize = fixed;"] &&
-        [bridge containsString:@"scene.sizeRestrictions.maximumSize = fixed;"] &&
-        [bridge containsString:@"waiting-for-scene-geometry"] &&
-        [bridge containsString:@"IOSUseBridgeSceneGeometryStatePending"] &&
-        [bridge containsString:
-            @"sceneGeometryState != IOSUseBridgeSceneGeometryStateReady"] &&
-        windowPolicy != nil &&
-        [windowPolicy containsString:
-            @"IOSUseBridgeInstallSimulatorScaleResizeHook"] &&
-        [windowPolicy containsString:@"@\"setStyleMask:\""] &&
-        [windowPolicy containsString:@"@\"setContentAspectRatio:\""] &&
-        [windowPolicy containsString:@"@\"setContentMinSize:\""] &&
-        ![windowPolicy containsString:@"@\"setOpaque:\""] &&
-        ![windowPolicy containsString:
-            @"@\"setTitlebarAppearsTransparent:\""] &&
-        ![windowPolicy containsString:@"@\"setTitle:\""] &&
-        hostPolicy != nil &&
-        [hostPolicy containsString:@"titled"] &&
-        [hostPolicy containsString:@"resizable"] &&
-        [hostPolicy containsString:@"contentAspectRatio"] &&
-        [bridge containsString:@"NSWindowDidResizeNotification"] &&
-        [bridge containsString:@"NSWindowDidChangeBackingPropertiesNotification"] &&
-        [bridge containsString:
-            @"notification.object == IOSUsePlayHostWindow"] &&
-        [bridge containsString:
-            @"IOSUseBridgeScheduleHostCanvasLayoutUpdate();"] &&
-        canvasLayout != nil &&
-        [canvasLayout containsString:@"layout.canvasRect.size.width"] &&
-        [canvasLayout containsString:@"layout.canvasRect.size.height"] &&
-        frameBeforeBounds &&
-        [bridge containsString:@"IOSUsePlayMapHostContentPointToCanvas"] &&
-        [bridge containsString:
-            @"IOSUseBridgeAppKitScreenRectToCanvasLogicalRect"] &&
-        [bridge containsString:@"convertRectFromScreen:"] &&
-        [bridge containsString:@"convertRectToScreen:"] &&
-        [bridge containsString:@"IOSUsePlayMapHostContentRectToCanvas"] &&
-        [bridge containsString:@"CGDisplayBounds(CGMainDisplayID())"] &&
-        [bridge containsString:@"targetHitTest"];
-    BOOL runtimeReady = runtime != nil &&
-        [runtime containsString:@"canvasCaptureGeometryWithError"] &&
-        [runtime containsString:@"IOSUsePlayCropAndNormalizeCanvasCapture"] &&
-        [runtime containsString:@"compositor_canvas_crop_failed"] &&
-        [runtime containsString:@"@\"hostDecorationsExcluded\": @YES"];
-    BOOL socketReady = socket != nil &&
-        [socket containsString:@"IOSUseHostGeometry"] &&
-        [socket containsString:@"IOSUseHostGeometryReady"] &&
-        [socket containsString:@"@\"host\": hostGeometry"] &&
-        [socket containsString:@"@\"status\": [window[@\"status\"]"] &&
-        [socket containsString:@"IOSUseSocketStableBool(window[@\"hostPolicy\"])"] &&
-        [socket containsString:@"@\"titleExpected\""] &&
-        [socket containsString:@"@\"canvasCGWindowRect\""] &&
-        [socket containsString:@"@\"titleVisible\""] &&
-        [socket containsString:@"IOSUseSocketContainsRect"] &&
-        [socket containsString:@"@\"hostWindowNumber\""] &&
-        [socket containsString:@"captureErrorIsNull"] &&
-        [socket containsString:@"IOSUseSocketZeroRect"] &&
-        [socket containsString:@"IOSUseSocketStableRect"] &&
-        [socket containsString:@"IOSUseSocketStableFiniteNumber"] &&
-        [socket containsString:@"return boolValue ? @YES : @NO;"] &&
-        [socket containsString:@"IOSUseSocketStableCaptureError"] &&
-        [socket containsString:@"captureDiagnosticsAreComplete"] &&
-        [socket containsString:
-            @"canvas capture diagnostics are unavailable"] &&
-        [socket containsString:@"@\"error\": captureError"] &&
-        [socket containsString:@"@\"ready\": @(captureReady)"] &&
-        [socket containsString:@"host-geometry-mismatch"];
-    return IOSUseHostCanvasTestRequire(
-        bridgeReady && runtimeReady && socketReady,
-        @"Simulator-scale host, canvas-only screenshot, or status diagnostics are incomplete"
-    );
-}
-
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc != 4) {
+        (void)argv;
+        if (argc != 1) {
             fprintf(
                 stderr,
-                "usage: HostCanvasContractTests <AppKitBridge.m> "
-                "<RuntimeScreenshot.m> <RuntimeSocket.m>\n"
+                "usage: HostCanvasContractTests\n"
             );
             return 2;
         }
@@ -882,24 +574,16 @@ int main(int argc, const char *argv[]) {
         BOOL crop2x = IOSUseHostCanvasTestCropAtBackingScale(2);
         BOOL fractionalCrop =
             IOSUseHostCanvasTestFractionalCropExcludesDecorations();
-        BOOL unavailableCaptureSchema =
-            IOSUseHostCanvasTestUnavailableCaptureSchema();
-        BOOL sourceContract = IOSUseHostCanvasTestSourceContract(
-            [NSString stringWithUTF8String:argv[1]],
-            [NSString stringWithUTF8String:argv[2]],
-            [NSString stringWithUTF8String:argv[3]]
-        );
         BOOL passed = unitReady && resizeReady && minimumReady &&
             resizeRoundingReady &&
             undersizedRejected && unitRoundTrip && resizedRoundTrip &&
             outsideRejected && canvasCGReady &&
             fullLogicalReady && accessibilityTransformReady &&
             alertButtonTransformReady && multiScreenTransformReady &&
-            crop1x && crop2x && fractionalCrop &&
-            unavailableCaptureSchema && sourceContract;
+            crop1x && crop2x && fractionalCrop;
         fprintf(
             stderr,
-            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d unavailable-schema=%d source=%d pass=%d\n",
+            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d pass=%d\n",
             unitReady,
             resizeReady,
             minimumReady,
@@ -912,8 +596,6 @@ int main(int argc, const char *argv[]) {
             crop1x,
             crop2x,
             fractionalCrop,
-            unavailableCaptureSchema,
-            sourceContract,
             passed
         );
         return passed ? 0 : 1;

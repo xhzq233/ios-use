@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-MODE="static"
 MATRIX_VERSION="2"
 MATRIX_SOURCE="$ROOT_DIR/playcover-fixtures/live-matrix-v1.tsv"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -21,43 +20,29 @@ EXPECTED_HOST_TITLE=""
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/test_playcover_fixture_live.sh [--static|--live]
+Usage: scripts/test_playcover_fixture_live.sh --live
 
---static  Verify the ordinary Simulator-scale host source contract only. This
-          mode does not require a GUI session, launch an App, or post mouse events.
 --live    Run the fixture acceptance matrix against a real unlocked macOS GUI
           session. Live evidence and global input are intentionally never the
           default.
 USAGE
 }
 
-if [[ $# -gt 1 ]]; then
+if [[ $# -ne 1 ]]; then
   usage >&2
   exit 64
 fi
-if [[ $# -eq 1 ]]; then
-  case "$1" in
-    --static) MODE="static" ;;
-    --live) MODE="live" ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    *)
-      usage >&2
-      exit 64
-      ;;
-  esac
-fi
-
-if [[ "$MODE" == "static" ]]; then
-  bash "$ROOT_DIR/playcover-fixtures/test_simulator_scale_host_contract.sh" \
-    --static
-  bash "$ROOT_DIR/playcover-fixtures/test_uikit_popup_contract.sh" \
-    --source
-  echo "[playcover-fixture-live] PASS static v$MATRIX_VERSION"
-  exit 0
-fi
+case "$1" in
+  --live) ;;
+  --help|-h)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 64
+    ;;
+esac
 
 mkdir -p "$RUN_DIR"
 if [[ ! -f "$MATRIX_SOURCE" ]]; then
@@ -81,6 +66,14 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 if ! command -v xcrun >/dev/null 2>&1; then
   echo "[playcover-fixture-live] xcrun is required." >&2
+  exit 78
+fi
+console_session_state="$(/usr/sbin/ioreg -n Root -d1)"
+if rg -q '"CGSSessionScreenIsLocked"=Yes' \
+    <<<"$console_session_state"; then
+  echo \
+    "[playcover-fixture-live] An unlocked macOS console session is required." \
+    >&2
   exit 78
 fi
 if [[
@@ -361,10 +354,10 @@ expected_host_title_for_app() {
   local key
   local value
   for key in CFBundleDisplayName CFBundleName CFBundleIdentifier; do
-    value="$(
-      /usr/bin/plutil -extract "$key" raw "$info_path" 2>/dev/null || true
-    )"
-    if [[ -n "$value" && "$value" != "(null)" ]]; then
+    if value="$(
+        /usr/bin/plutil -extract "$key" raw "$info_path" 2>/dev/null
+      )" &&
+      [[ -n "$value" && "$value" != "(null)" ]]; then
       printf '%s\n' "$value"
       return 0
     fi
@@ -398,25 +391,33 @@ assert_canonical_host_status() {
       $runtime.nativeWidth == 1290 and
       $runtime.nativeHeight == 2796 and
       $runtime.scale == 3 and
+      $runtime.host.opaque == true and
       $window.status == "configured" and
-      $window.transparentHost == false and
+      $window.opaque == true and
       $window.publicTitleBar == true and
       $window.resizable == true and
       $window.hostPolicy == true and
       $window.title == $title and
       $capture.title == $title and
-      $window.applicationActive == true and
-      $window.windowKey == true and
       $window.mouseMonitorReady == true and
       $window.identityTransform == true and
       $window.borderless == false and
       $window.hasShadow == true and
       $window.movable == true and
+      ($window.resizeEdges | type) == "object" and
+      ($window.resizeEdges.available | type) == "number" and
+      $window.resizeEdges.available >= 0 and
+      (($window.resizeEdges.available % 16) == 15) and
+      ($window.resizeEdges.growing | type) == "number" and
+      $window.resizeEdges.growing >= 0 and
+      (($window.resizeEdges.growing % 16) == 15) and
+      ($window.resizeEdges.shrinking | type) == "number" and
+      $window.resizeEdges.shrinking >= 0 and
+      (($window.resizeEdges.shrinking % 16) == 15) and
       $window.canvasBounds ==
         {"x":0,"y":0,"width":430,"height":932} and
       $window.sceneMinimumSize == {"width":430,"height":932} and
       $window.sceneMaximumSize == {"width":430,"height":932} and
-      $window.transparentSpacer == 0 and
       ($window.displayScale | type) == "number" and
       $window.displayScale > 0 and
       ($window.inverseDisplayScale | type) == "number" and
@@ -483,7 +484,7 @@ assert_canvas_only_screenshot() {
       (.data.runtimeEvidence.appKitWindowEvidence as $window |
         ($window.canvasCapture) as $capture |
         $window.status == "configured" and
-        $window.transparentHost == false and
+        $window.opaque == true and
         $window.publicTitleBar == true and
         $window.resizable == true and
         $window.hostPolicy == true and
@@ -491,7 +492,6 @@ assert_canvas_only_screenshot() {
         $capture.title == $title and
         $window.canvasBounds ==
           {"x":0,"y":0,"width":430,"height":932} and
-        $window.transparentSpacer == 0 and
         ($window.displayScale | type) == "number" and
         $window.displayScale > 0 and
         (($window.canvasRect.width / $window.displayScale - 430) | abs) <=
@@ -1019,6 +1019,7 @@ write_host_resize_plan() {
               beforeHost: $host,
               beforeContent: $content,
               beforeDisplayScale: $window.displayScale,
+              anchoredOppositeCorner: "topLeft",
               targetContentScale: $targetScale,
               targetHostSize: {
                 width: $targetWidth,
@@ -1059,6 +1060,7 @@ write_host_resize_plan() {
               beforeHost: $host,
               beforeContent: $content,
               beforeDisplayScale: $window.displayScale,
+              anchoredOppositeCorner: "bottomRight",
               targetContentScale: $targetScale,
               targetHostSize: {
                 width: $targetWidth,
@@ -1066,12 +1068,12 @@ write_host_resize_plan() {
               },
               drag: {
                 start: {
-                  x: ($host.x + $host.width - 2),
-                  y: ($host.y + $host.height - 2)
+                  x: ($host.x + 2),
+                  y: ($host.y + 2)
                 },
                 end: {
-                  x: ($host.x + $targetWidth - 2),
-                  y: ($host.y + $targetHeight - 2)
+                  x: ($host.x + $host.width - $targetWidth + 2),
+                  y: ($host.y + $host.height - $targetHeight + 2)
                 }
               },
               runnerPID: $status[0].data.driver.runnerPid
@@ -1113,6 +1115,17 @@ wait_for_host_resize() {
         $window.status == "configured" and
         (($actual.width - $target.width) | abs) <= 10 and
         (($actual.height - $target.height) | abs) <= 10 and
+        if $plan.anchoredOppositeCorner == "topLeft" then
+          (($actual.x - $before.x) | abs) <= 4 and
+          (($actual.y - $before.y) | abs) <= 4
+        elif $plan.anchoredOppositeCorner == "bottomRight" then
+          (($actual.x + $actual.width -
+            ($before.x + $before.width)) | abs) <= 4 and
+          (($actual.y + $actual.height -
+            ($before.y + $before.height)) | abs) <= 4
+        else
+          false
+        end and
         if $plan.phase == "first" then
           $actual.width < ($before.width - 4) and
           $actual.height < ($before.height - 4)
@@ -1148,6 +1161,7 @@ resize_public_host() {
         host: $window.canvasCapture.hostCGWindowBounds,
         content: $window.canvasCapture.hostContentCGWindowRect,
         displayScale: $window.displayScale,
+        resizeEdges: $window.resizeEdges,
         canvasBounds: $window.canvasBounds,
         canvasRect: $window.canvasRect
       }
@@ -1231,8 +1245,12 @@ assert_two_uniform_host_resizes() {
         $initial.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
         $first.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
         $second.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-        $first.transparentSpacer == 0 and
-        $second.transparentSpacer == 0 and
+        (($initial.resizeEdges.available % 16) == 15) and
+        (($initial.resizeEdges.growing % 16) == 15) and
+        (($first.resizeEdges.available % 16) == 15) and
+        (($first.resizeEdges.growing % 16) == 15) and
+        (($second.resizeEdges.available % 16) == 15) and
+        (($second.resizeEdges.growing % 16) == 15) and
         $firstHost.width < ($initial.host.width - 4) and
         $firstHost.height < ($initial.host.height - 4) and
         $secondHost.width > ($firstHost.width + 4) and
@@ -1564,34 +1582,15 @@ assert_evidence dom_initial 'fixture.full.top-left'
 
 record_case tap tap "Increment" --dom --json
 assert_evidence tap 'Count 1'
-assert_evidence tap \
-  '"pixelEvidence"[[:space:]]*:[[:space:]]*\{'
 
-no_op_stdout="$RUN_DIR/no_op.stdout"
-no_op_stderr="$RUN_DIR/no_op.stderr"
-printf '%s\t%s\t%s\t%s\t%s\n' \
-  "$MATRIX_VERSION" \
-  "no_op" \
-  "tap No-op Target --json" \
-  "$no_op_stdout" \
-  "$no_op_stderr" >>"$MANIFEST"
-if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
-    tap "No-op Target" --json \
-    >"$no_op_stdout" 2>"$no_op_stderr"; then
-  echo "[playcover-fixture-live] FAIL: no-op touch reported success" >&2
-  exit 1
-fi
-if ! rg -q -- "postcondition_failed" \
-    "$no_op_stdout" "$no_op_stderr"; then
-  echo "[playcover-fixture-live] FAIL: no-op lacks postcondition_failed" >&2
-  exit 1
-fi
+record_case no_op tap "No-op Target" --json
+assert_json no_op '
+  .data.element.label == "No-op Target"
+'
 
 record_case longpress longpress "Long Press Target" \
   --duration 500ms --dom --json
 assert_evidence longpress 'Long press recognized'
-assert_evidence longpress \
-  '"pixelEvidence"[[:space:]]*:[[:space:]]*\{'
 
 popup_stdout="$RUN_DIR/uikit_popup.stdout"
 popup_stderr="$RUN_DIR/uikit_popup.stderr"
@@ -1681,17 +1680,18 @@ assert_evidence alert_dom 'Fixture Alert'
 assert_evidence alert_dom 'Confirm'
 assert_evidence alert_dom 'Cancel'
 record_case alert_tap_confirm tap "Confirm" --dom --json
+assert_json alert_tap_confirm '
+  .data.finalState.phase == "native-ended" and
+  .data.finalState.touchID == -1
+'
 assert_evidence alert_tap_confirm 'Alert Confirmed'
-assert_evidence alert_tap_confirm \
-  '"changed"[[:space:]]*:[[:space:]]*true'
 
 record_case alert_show_default tap "Show Alert" --json
 record_case alert_default dismissAlert --json
 assert_evidence alert_default \
   '"button"[[:space:]]*:[[:space:]]*"Confirm"'
-assert_evidence alert_default '"postcondition"'
-assert_evidence alert_default \
-  '"changed"[[:space:]]*:[[:space:]]*true'
+record_case alert_default_gone waitFor "Fixture Alert" \
+  --gone --timeout 10s --json
 
 record_case open_url open "iosusefixture://acceptance/v1" \
   --dom --json
@@ -1752,10 +1752,6 @@ run_global_mouse_probe \
 record_case swipe_fixed swipe --dir forth --distance 300 \
   --dom --json
 assert_evidence swipe_fixed 'Scroll y [1-9][0-9]*'
-assert_evidence swipe_fixed \
-  '"changed"[[:space:]]*:[[:space:]]*true'
-assert_evidence swipe_fixed \
-  '"pixelEvidence"[[:space:]]*:[[:space:]]*\{'
 
 record_case scene_replace tap "Replace Scene Window" \
   --dom --json

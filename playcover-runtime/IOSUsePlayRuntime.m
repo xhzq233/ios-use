@@ -131,7 +131,7 @@ static void IOSUsePlayRuntimeInitialize(void) {
         }
         IOSUseScheduleRuntimeSurfaceProbe(0);
         NSLog(
-            @"[ios-use-play] Runtime v2 loaded device=%s logical=%dx%d@%dx",
+            @"[ios-use-play] Runtime v3 loaded device=%s logical=%dx%d@%dx",
             IOSUsePlayDeviceProductType(),
             IOSUsePlayDeviceLogicalWidth,
             IOSUsePlayDeviceLogicalHeight,

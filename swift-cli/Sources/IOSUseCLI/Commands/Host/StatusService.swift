@@ -3,7 +3,7 @@ import Foundation
 public enum StatusService {
     static var playCoverDiagnosticsForTesting:
         ((SessionService.Info) throws
-            -> PlayCoverRuntimeResponsePayload)?
+            -> PlayCoverRuntimeDiagnosticsPayload)?
 
     static func machineSnapshot(paths: IOSUsePaths) -> (data: MachineValue, warnings: [String]) {
         let configured = DeviceService.configuredDevices(paths: paths)
@@ -92,13 +92,11 @@ public enum StatusService {
                                 runtime["host"] =
                                     playCoverRuntimeHostMachineValue(host)
                             }
-                            if let diagnostics = payload.diagnostics {
-                                runtime["diagnostics"] = .object(
-                                    diagnostics.mapValues(
-                                        playCoverRuntimeJSONMachineValue
-                                    )
+                            runtime["diagnostics"] = .object(
+                                payload.diagnostics.mapValues(
+                                    playCoverRuntimeJSONMachineValue
                                 )
-                            }
+                            )
                         }
                         fields["runtime"] = .object(runtime)
                         warnings.append("PlayCover runtime health check failed: \(error)")
@@ -261,11 +259,11 @@ public enum StatusService {
     }
 
     private enum PlayCoverRuntimeHealth {
-        case healthy(PlayCoverRuntimeResponsePayload)
+        case healthy(PlayCoverRuntimeDiagnosticsPayload)
         case unhealthy(
             String,
             identityVerified: Bool,
-            payload: PlayCoverRuntimeResponsePayload?
+            payload: PlayCoverRuntimeDiagnosticsPayload?
         )
         case stale(String)
     }
@@ -306,7 +304,7 @@ public enum StatusService {
                 "recorded PID belongs to a different executable"
             )
         }
-        let payload: PlayCoverRuntimeResponsePayload
+        let payload: PlayCoverRuntimeDiagnosticsPayload
         do {
             if let override = playCoverDiagnosticsForTesting {
                 payload = try override(info)
@@ -350,7 +348,7 @@ public enum StatusService {
     }
 
     private static func validatePlayCoverRuntimeIdentity(
-        _ payload: PlayCoverRuntimeResponsePayload,
+        _ payload: PlayCoverRuntimeDiagnosticsPayload,
         info: SessionService.Info
     ) throws {
         guard Int(payload.pid) == info.runnerPid,
@@ -368,7 +366,7 @@ public enum StatusService {
     }
 
     static func playCoverRuntimeMachineValue(
-        _ payload: PlayCoverRuntimeResponsePayload
+        _ payload: PlayCoverRuntimeDiagnosticsPayload
     ) -> MachineValue {
         var fields: [String: MachineValue] = [
             "status": .string("healthy"),
@@ -393,21 +391,14 @@ public enum StatusService {
             "safeAreaRight": .double(payload.geometry.safeArea.right),
             "stage": .string(payload.stage),
         ]
-        if let observed = payload.observed {
-            fields["observed"] = .object(
-                observed.mapValues(playCoverRuntimeJSONMachineValue)
-            )
-        }
         if let host = payload.geometry.host {
             fields["host"] = playCoverRuntimeHostMachineValue(host)
         }
-        if let diagnostics = payload.diagnostics {
-            fields["diagnostics"] = .object(
-                diagnostics.mapValues(
-                    playCoverRuntimeJSONMachineValue
-                )
+        fields["diagnostics"] = .object(
+            payload.diagnostics.mapValues(
+                playCoverRuntimeJSONMachineValue
             )
-        }
+        )
         return .object(fields)
     }
 
@@ -431,8 +422,7 @@ public enum StatusService {
             "canvasBounds": frame(host.canvasBounds),
             "displayScale": .double(host.displayScale),
             "inverseDisplayScale": .double(host.inverseDisplayScale),
-            "transparentSpacer": .double(host.transparentSpacer),
-            "transparent": .boolean(host.transparent),
+            "opaque": .boolean(host.opaque),
             "publicTitleBar": .boolean(host.publicTitleBar),
             "titleVisible": .boolean(host.titleVisible),
             "resizable": .boolean(host.resizable),

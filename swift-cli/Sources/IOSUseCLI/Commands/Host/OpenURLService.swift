@@ -66,7 +66,6 @@ enum OpenURLService {
         let registeredHandlers: [String]
         let schemeLookupVerified: Bool?
         let readiness: ForyWaitAppForegroundPayload?
-        let playCoverPostcondition: ForyActionPostcondition?
 
         init(
             message: String,
@@ -76,8 +75,7 @@ enum OpenURLService {
             deviceType: String? = nil,
             registeredHandlers: [String] = [],
             schemeLookupVerified: Bool? = nil,
-            readiness: ForyWaitAppForegroundPayload? = nil,
-            playCoverPostcondition: ForyActionPostcondition? = nil
+            readiness: ForyWaitAppForegroundPayload? = nil
         ) {
             self.message = message
             self.dom = dom
@@ -87,7 +85,6 @@ enum OpenURLService {
             self.registeredHandlers = registeredHandlers
             self.schemeLookupVerified = schemeLookupVerified
             self.readiness = readiness
-            self.playCoverPostcondition = playCoverPostcondition
         }
     }
 
@@ -194,9 +191,7 @@ enum OpenURLService {
                     targetUdid: base.targetUdid,
                     deviceType: base.deviceType,
                     registeredHandlers: [],
-                    schemeLookupVerified: true,
-                    playCoverPostcondition:
-                        base.playCoverPostcondition
+                    schemeLookupVerified: true
                 )
             } catch {
                 throw ReadinessError(
@@ -326,14 +321,6 @@ enum OpenURLService {
             "registeredHandlers": .array(result.registeredHandlers.map(MachineValue.string)),
             "readiness": result.readiness.map(AppLifecycleService.machineReadiness) ?? .null,
             "dom": result.dom.map(machineDom) ?? .null,
-            "playCoverPostcondition": result.playCoverPostcondition.map {
-                .object([
-                    "snapshotGeneration": .integer(
-                        Int($0.snapshotGeneration)
-                    ),
-                    "changed": .boolean($0.changed),
-                ])
-            } ?? .null,
         ])
     }
 
@@ -354,8 +341,7 @@ enum OpenURLService {
             targetUdid: session.udid,
             deviceType: PlayCoverSessionService.deviceType,
             registeredHandlers: session.bundleId.map { [$0] } ?? [],
-            schemeLookupVerified: true,
-            playCoverPostcondition: result.postcondition
+            schemeLookupVerified: true
         )
     }
 

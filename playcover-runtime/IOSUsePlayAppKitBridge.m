@@ -27,6 +27,12 @@ typedef CGSize (*IOSUseBridgeSendProposedSize)(
     CGSize,
     NSUInteger
 );
+typedef NSUInteger (*IOSUseBridgeSendResizableEdges)(
+    id,
+    SEL,
+    NSUInteger *,
+    NSUInteger *
+);
 typedef SEL (*IOSUseBridgeSendSelector)(id, SEL);
 typedef CGEventRef _Nullable (*IOSUseBridgeSendCGEvent)(id, SEL);
 typedef id (*IOSUseBridgeSendIDRect)(id, SEL, CGRect);
@@ -559,9 +565,8 @@ static CGSize IOSUseBridgeHostMinimumContentSize(void) {
     return CGSizeMake(
         IOSUsePlayDeviceLogicalWidth *
             IOSUsePlayHostCanvasMinimumDisplayScale,
-        IOSUsePlayHostCanvasSpacerPoints +
-            IOSUsePlayDeviceLogicalHeight *
-                IOSUsePlayHostCanvasMinimumDisplayScale
+        IOSUsePlayDeviceLogicalHeight *
+            IOSUsePlayHostCanvasMinimumDisplayScale
     );
 }
 
@@ -587,13 +592,71 @@ static NSString *IOSUseBridgeHostTitle(void) {
     return IOSUsePlayHostTitle;
 }
 
+static BOOL IOSUseBridgeResizableEdgesMethodMatches(Method method) {
+    if (method == NULL || method_getNumberOfArguments(method) != 4) {
+        return NO;
+    }
+    char *returnType = method_copyReturnType(method);
+    char *growingType = method_copyArgumentType(method, 2);
+    char *shrinkingType = method_copyArgumentType(method, 3);
+    BOOL matches =
+        returnType != NULL &&
+            strcmp(returnType, @encode(NSUInteger)) == 0 &&
+        growingType != NULL &&
+            strcmp(growingType, @encode(NSUInteger *)) == 0 &&
+        shrinkingType != NULL &&
+            strcmp(shrinkingType, @encode(NSUInteger *)) == 0;
+    free(returnType);
+    free(growingType);
+    free(shrinkingType);
+    return matches;
+}
+
+static NSUInteger IOSUseBridgeResizableEdges(
+    id window,
+    NSUInteger *growing,
+    NSUInteger *shrinking
+) {
+    if (growing != NULL) {
+        *growing = 0;
+    }
+    if (shrinking != NULL) {
+        *shrinking = 0;
+    }
+    SEL selector = NSSelectorFromString(
+        @"_resizableEdgesForGrowing:shrinking:"
+    );
+    Method method = class_getInstanceMethod([window class], selector);
+    if (!IOSUseBridgeResizableEdgesMethodMatches(method)) {
+        return 0;
+    }
+    return ((IOSUseBridgeSendResizableEdges)objc_msgSend)(
+        window,
+        selector,
+        growing,
+        shrinking
+    );
+}
+
 static BOOL IOSUseBridgeWindowPolicyIsHost(id window) {
     const NSInteger titled = 1 << 0;
     const NSInteger resizable = 1 << 3;
+    const NSUInteger allEdges = 0x0f;
     NSInteger styleMask = IOSUseBridgeInteger(window, @"styleMask");
     CGSize aspect = IOSUseBridgeSize(window, @"contentAspectRatio");
+    NSUInteger growing = 0;
+    NSUInteger shrinking = 0;
+    NSUInteger resizeEdges = IOSUseBridgeResizableEdges(
+        window,
+        &growing,
+        &shrinking
+    );
     return (styleMask & titled) != 0 &&
         (styleMask & resizable) != 0 &&
+        (resizeEdges & allEdges) == allEdges &&
+        (growing & allEdges) == allEdges &&
+        (shrinking & allEdges) == allEdges &&
+        IOSUseBridgeBool(window, @"isOpaque") &&
         IOSUseBridgeBool(window, @"isMovable") &&
         !IOSUseBridgeBool(window, @"ignoresMouseEvents") &&
         isfinite(aspect.width) && isfinite(aspect.height) &&
@@ -1818,6 +1881,63 @@ static CGSize IOSUseBridgeAcceptProposedWindowSize(
         );
 }
 
+static NSUInteger IOSUseBridgeEnableAllResizableEdges(
+    __unused id window,
+    __unused SEL selector,
+    NSUInteger *growing,
+    NSUInteger *shrinking
+) {
+    const NSUInteger allEdges = 0x0f;
+    if (growing != NULL) {
+        *growing = allEdges;
+    }
+    if (shrinking != NULL) {
+        *shrinking = allEdges;
+    }
+    return allEdges;
+}
+
+static BOOL IOSUseBridgeInstallAllResizableEdgesHook(
+    id window,
+    Class fullScreenWindowClass
+) {
+    Class windowClass = [window class];
+    SEL selector = NSSelectorFromString(
+        @"_resizableEdgesForGrowing:shrinking:"
+    );
+    Class standardWindowClass =
+        class_getSuperclass(fullScreenWindowClass);
+    Method windowMethod =
+        class_getInstanceMethod(windowClass, selector);
+    Method standardMethod =
+        class_getInstanceMethod(standardWindowClass, selector);
+    const char *windowTypes = windowMethod == NULL
+        ? NULL
+        : method_getTypeEncoding(windowMethod);
+    const char *standardTypes = standardMethod == NULL
+        ? NULL
+        : method_getTypeEncoding(standardMethod);
+    if (!IOSUseBridgeResizableEdgesMethodMatches(windowMethod) ||
+        !IOSUseBridgeResizableEdgesMethodMatches(standardMethod) ||
+        windowTypes == NULL || standardTypes == NULL ||
+        strcmp(windowTypes, standardTypes) != 0) {
+        return NO;
+    }
+
+    if (class_getMethodImplementation(windowClass, selector) ==
+        (IMP)IOSUseBridgeEnableAllResizableEdges) {
+        return YES;
+    }
+    class_replaceMethod(
+        windowClass,
+        selector,
+        (IMP)IOSUseBridgeEnableAllResizableEdges,
+        windowTypes
+    );
+    return class_getMethodImplementation(windowClass, selector) ==
+        (IMP)IOSUseBridgeEnableAllResizableEdges;
+}
+
 static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
     Class windowClass = [window class];
     Class fullScreenWindowClass =
@@ -1828,9 +1948,19 @@ static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
     if (![window isKindOfClass:fullScreenWindowClass]) {
         return YES;
     }
+    if (!IOSUseBridgeInstallAllResizableEdgesHook(
+            window,
+            fullScreenWindowClass
+        )) {
+        return NO;
+    }
     if (IOSUsePlayResizeHookClass == windowClass &&
         IOSUsePlayOriginalProposedSize != NULL) {
         return YES;
+    }
+    if (IOSUsePlayResizeHookClass != Nil &&
+        IOSUsePlayResizeHookClass != windowClass) {
+        return NO;
     }
     SEL selector = NSSelectorFromString(
         @"_sizeForProposedSize:resizeEdges:"
@@ -1854,20 +1984,31 @@ static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
     if (!signatureMatches) {
         return NO;
     }
-    IMP current = method_getImplementation(method);
-    if (current == (IMP)IOSUseBridgeAcceptProposedWindowSize) {
-        return IOSUsePlayOriginalProposedSize != NULL;
+    const char *methodTypes = method_getTypeEncoding(method);
+    IMP current = class_getMethodImplementation(windowClass, selector);
+    if (methodTypes == NULL || current == NULL) {
+        return NO;
     }
-    IMP original = method_setImplementation(
-        method,
-        (IMP)IOSUseBridgeAcceptProposedWindowSize
+    if (current == (IMP)IOSUseBridgeAcceptProposedWindowSize) {
+        return IOSUsePlayResizeHookClass == windowClass &&
+            IOSUsePlayOriginalProposedSize != NULL;
+    }
+    // class_getInstanceMethod can return a Method owned by a superclass.
+    // Install the compatibility override on this exact UIKit host class so a
+    // scene replacement cannot mutate NSWindow or another AppKit subclass.
+    class_replaceMethod(
+        windowClass,
+        selector,
+        (IMP)IOSUseBridgeAcceptProposedWindowSize,
+        methodTypes
     );
-    if (original == NULL) {
+    if (class_getMethodImplementation(windowClass, selector) !=
+        (IMP)IOSUseBridgeAcceptProposedWindowSize) {
         return NO;
     }
     IOSUsePlayResizeHookClass = windowClass;
     IOSUsePlayOriginalProposedSize =
-        (IOSUseBridgeSendProposedSize)original;
+        (IOSUseBridgeSendProposedSize)current;
     return YES;
 }
 
@@ -1946,8 +2087,7 @@ static BOOL IOSUseBridgeInstallHostCanvas(id window) {
             0,
             0,
             IOSUsePlayDeviceLogicalWidth,
-            IOSUsePlayDeviceLogicalHeight +
-                IOSUsePlayHostCanvasSpacerPoints
+            IOSUsePlayDeviceLogicalHeight
         );
     }
     id hostContent = IOSUseBridgeNewViewWithFrame(contentBounds);
@@ -2661,9 +2801,6 @@ IOSUseBridgeHostCanvasCaptureGeometry(
         @"inverseDisplayScale": @(
             IOSUsePlayCurrentHostCanvasLayout.inverseDisplayScale
         ),
-        @"transparentSpacer": @(
-            IOSUsePlayCurrentHostCanvasLayout.transparentSpacer
-        ),
         @"hostWindowNumber": @(
             IOSUseBridgeInteger(window, @"windowNumber")
         ),
@@ -2696,10 +2833,19 @@ static CGRect IOSUseBridgeWindowLogicalFrame(
         canvasGeometry[@"canvasCGWindowRect"];
     CGRect canvasCGWindowRect = CGRectNull;
     if (![rawCanvas isKindOfClass:NSDictionary.class] ||
-        !CGRectMakeWithDictionaryRepresentation(
-            (__bridge CFDictionaryRef)rawCanvas,
-            &canvasCGWindowRect
-        )) {
+        ![rawCanvas[@"x"] isKindOfClass:NSNumber.class] ||
+        ![rawCanvas[@"y"] isKindOfClass:NSNumber.class] ||
+        ![rawCanvas[@"width"] isKindOfClass:NSNumber.class] ||
+        ![rawCanvas[@"height"] isKindOfClass:NSNumber.class]) {
+        return CGRectNull;
+    }
+    canvasCGWindowRect = CGRectMake(
+        [rawCanvas[@"x"] doubleValue],
+        [rawCanvas[@"y"] doubleValue],
+        [rawCanvas[@"width"] doubleValue],
+        [rawCanvas[@"height"] doubleValue]
+    );
+    if (!IOSUseBridgeAccessibilityFiniteRect(canvasCGWindowRect)) {
         return CGRectNull;
     }
     CGRect logicalRect = CGRectNull;
@@ -2861,23 +3007,8 @@ static BOOL IOSUseBridgeInstallMouseLocalMonitor(void) {
 }
 
 static NSArray<NSDictionary<NSString *, id> *> *
-IOSUseBridgeNativeAlertActionInventory(
-    id alertWindow,
-    NSDictionary<
-        NSNumber *,
-        NSDictionary<NSString *, id> *
-    > *cgMetadata
-) {
+IOSUseBridgeNativeAlertActionInventory(id alertWindow) {
     if (alertWindow == nil) {
-        return @[];
-    }
-    CGRect alertLogicalRect =
-        IOSUseBridgeWindowLogicalFrame(
-            alertWindow,
-            cgMetadata
-        );
-    if (CGRectIsNull(alertLogicalRect) ||
-        CGRectIsEmpty(alertLogicalRect)) {
         return @[];
     }
     id contentView = [alertWindow respondsToSelector:
@@ -2960,23 +3091,8 @@ IOSUseBridgeNativeAlertActionInventory(
     return result;
 }
 
-static NSString *IOSUseBridgeNativeAlertText(
-    id alertWindow,
-    NSDictionary<
-        NSNumber *,
-        NSDictionary<NSString *, id> *
-    > *cgMetadata
-) {
+static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     if (alertWindow == nil) {
-        return @"";
-    }
-    CGRect alertLogicalRect =
-        IOSUseBridgeWindowLogicalFrame(
-            alertWindow,
-            cgMetadata
-        );
-    if (CGRectIsNull(alertLogicalRect) ||
-        CGRectIsEmpty(alertLogicalRect)) {
         return @"";
     }
     id contentView = [alertWindow respondsToSelector:
@@ -3667,10 +3783,7 @@ static NSString *IOSUseBridgeNativeAlertText(
     NSParameterAssert(NSThread.isMainThread);
     NSDictionary<NSString *, id> *selection =
         IOSUseBridgeVisibleNativeAlertSelection();
-    return IOSUseBridgeNativeAlertText(
-        selection[@"window"],
-        selection[@"cgMetadata"]
-    );
+    return IOSUseBridgeNativeAlertText(selection[@"window"]);
 }
 
 + (NSArray<NSDictionary<NSString *, id> *> *)nativeAlertActions {
@@ -3678,10 +3791,7 @@ static NSString *IOSUseBridgeNativeAlertText(
     NSDictionary<NSString *, id> *selection =
         IOSUseBridgeVisibleNativeAlertSelection();
     NSArray<NSDictionary<NSString *, id> *> *inventory =
-        IOSUseBridgeNativeAlertActionInventory(
-            selection[@"window"],
-            selection[@"cgMetadata"]
-        );
+        IOSUseBridgeNativeAlertActionInventory(selection[@"window"]);
     NSMutableArray<NSDictionary<NSString *, id> *> *publicInventory =
         [NSMutableArray arrayWithCapacity:inventory.count];
     for (NSDictionary<NSString *, id> *entry in inventory) {
@@ -3702,10 +3812,7 @@ static NSString *IOSUseBridgeNativeAlertText(
         IOSUseBridgeVisibleNativeAlertSelection();
     id alertWindow = selection[@"window"];
     NSArray<NSDictionary<NSString *, id> *> *inventory =
-        IOSUseBridgeNativeAlertActionInventory(
-            alertWindow,
-            selection[@"cgMetadata"]
-        );
+        IOSUseBridgeNativeAlertActionInventory(alertWindow);
     NSMutableArray<NSDictionary<NSString *, id> *> *matches =
         [NSMutableArray array];
     for (NSDictionary<NSString *, id> *entry in inventory) {
@@ -3850,15 +3957,19 @@ static NSString *IOSUseBridgeNativeAlertText(
     }
     CGRect bounds = IOSUseBridgeRect(contentView, @"bounds");
     CGRect contentViewFrame = IOSUseBridgeRect(contentView, @"frame");
-    CGRect canvasBounds = CGRectMake(
-        0,
-        0,
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight
-    );
+    UIWindow *uiWindow = IOSUseBridgeKeyUIKitWindow();
+    // This is the observed UIKit logical canvas. Do not synthesize the fixed
+    // contract here: Runtime readiness must fail if a host drag causes
+    // UIKitMacHelper to relayout the scene.
+    CGRect canvasBounds =
+        uiWindow == nil ? CGRectZero : uiWindow.bounds;
     CGRect canvasFrame = IOSUseBridgeRect(
         IOSUsePlayCanvasView,
         @"frame"
+    );
+    CGRect renderViewBounds = IOSUseBridgeRect(
+        IOSUsePlayCanvasView,
+        @"bounds"
     );
     id windowScreen = [window respondsToSelector:
         NSSelectorFromString(@"screen")]
@@ -3867,7 +3978,6 @@ static NSString *IOSUseBridgeNativeAlertText(
             NSSelectorFromString(@"screen")
         )
         : nil;
-    UIWindow *uiWindow = IOSUseBridgeKeyUIKitWindow();
     UISceneSizeRestrictions *restrictions =
         uiWindow.windowScene.sizeRestrictions;
     CGFloat backingScale = [window respondsToSelector:
@@ -3883,11 +3993,19 @@ static NSString *IOSUseBridgeNativeAlertText(
         &expectedCGWindowBounds
     );
     CGRect nativeAlertFrame = [self nativeAlertFrame];
+    BOOL nativeAlertVisible = [self hasVisibleNativeAlert];
     NSString *nativeAlertText = [self nativeAlertText];
     NSArray<NSDictionary<NSString *, id> *> *nativeAlertActions =
         [self nativeAlertActions];
     NSDictionary<NSString *, id> *bootstrapNativeAlert =
         IOSUseBridgeBootstrapNativeAlertDiagnostics();
+    NSUInteger growingResizeEdges = 0;
+    NSUInteger shrinkingResizeEdges = 0;
+    NSUInteger resizeEdges = IOSUseBridgeResizableEdges(
+        window,
+        &growingResizeEdges,
+        &shrinkingResizeEdges
+    );
     NSError *canvasError = nil;
     NSDictionary<NSString *, id> *canvasCapture =
         IOSUseBridgeHostCanvasCaptureGeometry(
@@ -3914,14 +4032,12 @@ static NSString *IOSUseBridgeNativeAlertText(
         @"hostContentBounds": IOSUseBridgeRectJSON(bounds),
         @"canvasRect": IOSUseBridgeRectJSON(canvasFrame),
         @"canvasBounds": IOSUseBridgeRectJSON(canvasBounds),
+        @"renderViewBounds": IOSUseBridgeRectJSON(renderViewBounds),
         @"displayScale": IOSUsePlayHostCanvasLayoutReady
             ? @(IOSUsePlayCurrentHostCanvasLayout.displayScale)
             : (id)NSNull.null,
         @"inverseDisplayScale": IOSUsePlayHostCanvasLayoutReady
             ? @(IOSUsePlayCurrentHostCanvasLayout.inverseDisplayScale)
-            : (id)NSNull.null,
-        @"transparentSpacer": IOSUsePlayHostCanvasLayoutReady
-            ? @(IOSUsePlayCurrentHostCanvasLayout.transparentSpacer)
             : (id)NSNull.null,
         @"canvasCapture": canvasCapture ?: (id)@{
             @"error": canvasError.localizedDescription ?: @"unavailable",
@@ -4008,7 +4124,7 @@ static NSString *IOSUseBridgeNativeAlertText(
         },
         @"allWindows": IOSUseBridgeWindowInventory(),
         @"nativeAlert": @{
-            @"visible": @(!CGRectIsNull(nativeAlertFrame)),
+            @"visible": @(nativeAlertVisible),
             @"frame": CGRectIsNull(nativeAlertFrame)
                 ? (id)NSNull.null
                 : IOSUseBridgeRectJSON(nativeAlertFrame),
@@ -4018,9 +4134,7 @@ static NSString *IOSUseBridgeNativeAlertText(
         @"bootstrapNativeAlert": bootstrapNativeAlert,
         @"backingScaleFactor": @(backingScale),
         @"borderless": @NO,
-        @"transparentHost": @(
-            !IOSUseBridgeBool(window, @"isOpaque")
-        ),
+        @"opaque": @(IOSUseBridgeBool(window, @"isOpaque")),
         @"publicTitleBar": @(
             (BOOL)((IOSUseBridgeInteger(window, @"styleMask") & 1) != 0)
         ),
@@ -4033,6 +4147,11 @@ static NSString *IOSUseBridgeNativeAlertText(
             (BOOL)((IOSUseBridgeInteger(window, @"styleMask") &
                 ((NSInteger)1 << 3)) != 0)
         ),
+        @"resizeEdges": @{
+            @"available": @(resizeEdges),
+            @"growing": @(growingResizeEdges),
+            @"shrinking": @(shrinkingResizeEdges),
+        },
         @"styleMask": @(
             IOSUseBridgeInteger(window, @"styleMask")
         ),

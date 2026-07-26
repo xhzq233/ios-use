@@ -41,14 +41,8 @@ complete App canvas, and exposes stable identifier/label pairs:
 the visible dimmed/card surface and advances the result's accessibility
 value to `confirmed N`.
 
-Run the hermetic popup source contract with:
-
-```bash
-bash playcover-fixtures/test_uikit_popup_contract.sh
-```
-
-A freshly active fixture session can additionally prove that Runtime touch
-and a real global AppKit mouse event activate the same confirmation button:
+A freshly active fixture session proves that Runtime touch and a real global
+AppKit mouse event activate the same confirmation button:
 
 ```bash
 IOS_USE_HOME=/path/to/isolated-fixture-home \
@@ -64,17 +58,17 @@ never maps target coordinates from the outer host window. Set
 path when the JSON responses and mouse-event record must be retained instead
 of using an automatically removed temporary directory.
 
-The ordinary Simulator-scale host has a static contract that does not need a
-GUI session or a built fixture App:
+The production-linked compositor behavior gate does not need a GUI session or
+a built fixture App:
 
 ```bash
-bash playcover-fixtures/test_simulator_scale_host_contract.sh --static
-bash scripts/test_playcover_fixture_live.sh --static
+bash scripts/test_playcover_cgshw_compositor.sh --deterministic-only
 ```
 
 The fixture matrix is deliberately opt-in. In an unlocked GUI session it
-verifies the ordinary opaque system title-bar window, two proportional host
-resizes with a single uniform display scale, a fixed 430x932 UIKit canvas that
+verifies the ordinary opaque system title-bar window, real proportional drags
+from opposite host corners with a single uniform display scale, a fixed
+430x932 UIKit canvas that
 fills the content area, fixed canvas-only screenshot/capture output, and a
 title-bar click that does not change the App DOM:
 
