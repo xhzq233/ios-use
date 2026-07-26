@@ -1,4 +1,5 @@
 import Foundation
+import PlayCoverUpstream
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -11,19 +12,18 @@ import Darwin
 enum PlayCoverManagedAppService {
     static let preparationRevision =
         PlayCoverService.prepareImplementationRevision
+    private static let preparationProcessLock = NSLock()
 
     static var inspectOverrideForTesting:
-        ((String) throws -> PlayCoverAppInspection)?
+        ((String) throws -> PlayCoverPreparationSource)?
     static var verifyOverrideForTesting:
         ((String) throws -> PlayCoverVerification)?
-    static var fastVerifyOverrideForTesting:
+    static var readManifestOverrideForTesting:
         ((String) throws -> PlayCoverPrepareManifest)?
     static var prepareOverrideForTesting: ((
-        String,
-        String,
+        PlayCoverPreparationPlan,
         String,
         IOSUsePaths,
-        String,
         String
     ) throws -> PlayCoverPrepareManifest)?
     static var runtimePathOverrideForTesting:
@@ -31,18 +31,36 @@ enum PlayCoverManagedAppService {
     static var executablePathOverrideForTesting: (() throws -> String)?
     static var generationKeyOverrideForTesting: ((
         PlayCoverAppInspection,
+        String,
         String
     ) throws -> String)?
+    static var afterManagedDirectoryOpenForTesting: (() throws -> Void)?
+    static var afterStagingPathResolvedForTesting:
+        ((URL) throws -> Void)?
 
     struct Resolution: Equatable, Sendable {
         let manifest: PlayCoverPrepareManifest
         let reused: Bool
+        let timing: PlayCoverStartTiming
+    }
+
+    struct ManagedDirectories: Equatable, Sendable {
+        let playcover: URL
+        let prepared: URL
+    }
+
+    struct ManagedDirectoryAccess {
+        let playcover: URL
+        let prepared: URL
+        let playcoverDescriptor: Int32
+        let preparedDescriptor: Int32
     }
 
     static func resolveExplicitApp(
         _ appPath: String,
         paths: IOSUsePaths
     ) throws -> Resolution {
+        let inspectStarted = PlayCoverMonotonicClock.now()
         let lexical = lexicalStandardizedPath(appPath)
         let isManagedCandidate = isLexicallyInsideManagedPrepared(
             lexical,
@@ -64,18 +82,22 @@ enum PlayCoverManagedAppService {
                         + "different IOS_USE_HOME"
                 )
             }
-            let manifest = try fastVerifyApp(at: canonical)
-            try PlayCoverSessionService.recordPrepared(
-                manifest,
-                paths: paths
-            )
+            let manifest = try readPreparedManifest(at: canonical)
             return Resolution(
                 manifest: manifest,
-                reused: true
+                reused: true,
+                timing: makeTiming(
+                    inspectNanoseconds:
+                        PlayCoverMonotonicClock.elapsed(
+                            since: inspectStarted
+                        ),
+                    prepare: nil
+                )
             )
         }
 
-        let source = try inspectApp(at: canonical)
+        let preparationSource = try inspectApp(at: canonical)
+        let source = preparationSource.inspection
         for macho in source.machOs {
             if macho.encrypted {
                 throw PlayCoverBackendError.encryptedMachO(macho.path)
@@ -94,149 +116,289 @@ enum PlayCoverManagedAppService {
         }
 
         let runtime = try resolveDefaultRuntime(paths: paths)
-        let generationKey: String
-        if let generationKeyOverrideForTesting {
-            generationKey = try generationKeyOverrideForTesting(
-                source,
-                runtime
-            )
-        } else {
-            generationKey = PlayCoverService.makeGenerationKey(
-                sourceContentHash: source.sourceContentHash,
-                runtimeBuildHash: try PlayCoverService.runtimeBuildHash(
-                    frameworkPath: runtime
-                )
-            )
-        }
+        let plan = try PlayCoverService.makePreparationPlan(
+            source: preparationSource,
+            runtimeFrameworkPath: runtime,
+            generationKeyOverride: generationKeyOverrideForTesting
+        )
+        let generationKey = plan.generationKey
         guard generationKey.count == 64,
               generationKey.allSatisfy({ $0.isHexDigit }) else {
             throw PlayCoverBackendError.prepareFailed(
                 "content generation key must be a 64-character SHA-256"
             )
         }
-
-        let layout = generationLayout(
-            source: source,
-            generationKey: generationKey,
-            paths: paths
+        let inspectNanoseconds = PlayCoverMonotonicClock.elapsed(
+            since: inspectStarted
         )
-        if FileManager.default.fileExists(atPath: layout.directory.path) {
-            guard hasCompletePreparedSidecars(at: layout.app.path) else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "generation directory exists without immutable "
-                        + "manifest/completed marker"
-                )
-            }
-            let manifest = try fastVerifyApp(at: layout.app.path)
-            try validateManagedManifest(
-                manifest,
+
+        preparationProcessLock.lock()
+        defer { preparationProcessLock.unlock() }
+        return try withSecureManagedDirectories(paths: paths) { access in
+            let layout = generationLayout(
                 source: source,
                 generationKey: generationKey,
-                outputPath: layout.app.path
-            )
-            try PlayCoverSessionService.recordPrepared(
-                manifest,
                 paths: paths
             )
-            return Resolution(
-                manifest: manifest,
-                reused: true
+            #if canImport(Darwin)
+            let generationExists = try ownedDirectoryExists(
+                parentDescriptor: access.preparedDescriptor,
+                name: generationKey,
+                label: "managed generation \(generationKey)"
             )
-        }
-
-        try ensureManagedPreparedRoot(paths: paths)
-        let stagingDirectory = URL(
-            fileURLWithPath: paths.playcoverPrepared,
-            isDirectory: true
-        ).appendingPathComponent(
-            ".staging-\(generationKey)-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        let stagingApp = stagingDirectory.appendingPathComponent(
-            layout.app.lastPathComponent,
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(
-            at: stagingDirectory,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: 0o700]
-        )
-        var removeStaging = true
-        defer {
-            if removeStaging {
-                try? FileManager.default.removeItem(at: stagingDirectory)
-            }
-        }
-
-        let manifest: PlayCoverPrepareManifest
-        if let prepareOverrideForTesting {
-            manifest = try prepareOverrideForTesting(
-                source.appPath,
-                stagingApp.path,
-                runtime,
-                paths,
-                generationKey,
-                layout.app.path
+            #else
+            let generationExists = FileManager.default.fileExists(
+                atPath: layout.directory.path
             )
-        } else {
-            manifest = try PlayCoverService.prepare(
-                sourceAppPath: source.appPath,
-                outputAppPath: stagingApp.path,
-                runtimeFrameworkPath: runtime,
-                paths: paths,
-                generationKey: generationKey,
-                publishedAppPath: layout.app.path
-            )
-        }
-        try validateManagedManifest(
-            manifest,
-            source: source,
-            generationKey: generationKey,
-            outputPath: layout.app.path
-        )
-        do {
-            try FileManager.default.moveItem(
-                at: stagingDirectory,
-                to: layout.directory
-            )
-            removeStaging = false
-            try syncDirectory(
-                URL(
-                    fileURLWithPath: paths.playcoverPrepared,
-                    isDirectory: true
-                )
-            )
-        } catch {
-            if hasCompletePreparedSidecars(at: layout.app.path) {
-                let winner = try fastVerifyApp(at: layout.app.path)
-                try validateManagedManifest(
-                    winner,
-                    source: source,
-                    generationKey: generationKey,
-                    outputPath: layout.app.path
-                )
-                try PlayCoverSessionService.recordPrepared(
-                    winner,
+            #endif
+            if generationExists {
+                _ = try validatedManagedPreparedAppPath(
+                    layout.app.path,
                     paths: paths
                 )
-                return Resolution(manifest: winner, reused: true)
+                guard hasCompletePreparedSidecars(at: layout.app.path) else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "generation directory exists without immutable "
+                            + "manifest/completed marker"
+                    )
+                }
+                let manifest = try readPreparedManifest(
+                    at: layout.app.path
+                )
+                try validateManagedManifest(
+                    manifest,
+                    plan: plan,
+                    outputPath: layout.app.path
+                )
+                return Resolution(
+                    manifest: manifest,
+                    reused: true,
+                    timing: makeTiming(
+                        inspectNanoseconds: inspectNanoseconds,
+                        prepare: nil
+                    )
+                )
             }
-            throw PlayCoverBackendError.prepareFailed(
-                "atomic generation publish failed: \(error)"
-            )
-        }
 
-        let publishedManifest = try fastVerifyApp(at: layout.app.path)
-        guard publishedManifest == manifest else {
-            throw PlayCoverBackendError.cacheTampered(
-                "published generation identity changed after atomic rename"
+            let stagingName =
+                ".staging-\(generationKey)-\(UUID().uuidString)"
+            let stagingIdentityDirectory =
+                access.prepared.appendingPathComponent(
+                    stagingName,
+                    isDirectory: true
+                )
+            #if canImport(Darwin)
+            guard Darwin.mkdirat(
+                    access.preparedDescriptor,
+                    stagingName,
+                    0o700
+                  ) == 0 else {
+                throw PlayCoverBackendError.prepareFailed(
+                    "cannot create anchored staging generation: errno "
+                        + "\(errno)"
+                )
+            }
+            let stagingDescriptor: Int32
+            do {
+                stagingDescriptor = try openOwnedDirectory(
+                    parentDescriptor: access.preparedDescriptor,
+                    name: stagingName,
+                    label: "staging generation"
+                )
+            } catch {
+                _ = Darwin.unlinkat(
+                    access.preparedDescriptor,
+                    stagingName,
+                    AT_REMOVEDIR
+                )
+                throw error
+            }
+            #else
+            try FileManager.default.createDirectory(
+                at: stagingIdentityDirectory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+            #endif
+            var removeStaging = true
+            defer {
+                if removeStaging {
+                    #if canImport(Darwin)
+                    try? removeAnchoredDirectoryTree(
+                        parentDescriptor: access.preparedDescriptor,
+                        name: stagingName,
+                        label: "staging generation"
+                    )
+                    #else
+                    try? FileManager.default.removeItem(
+                        at: stagingIdentityDirectory
+                    )
+                    #endif
+                }
+            }
+            #if canImport(Darwin)
+            defer { Darwin.close(stagingDescriptor) }
+            #endif
+
+            let prepareAtPaths: (String, String) throws
+                -> PlayCoverPreparedArtifact = {
+                    stagingIdentityAppPath,
+                    stagingIOAppPath in
+                    if let prepareOverrideForTesting {
+                        return PlayCoverPreparedArtifact(
+                            manifest: try prepareOverrideForTesting(
+                                plan,
+                                stagingIOAppPath,
+                                paths,
+                                layout.app.path
+                            ),
+                            phaseTimings: nil
+                        )
+                    }
+                    return try PlayCoverService.prepareMeasured(
+                        plan: plan,
+                        outputAppPath: stagingIdentityAppPath,
+                        stagingIOAppPath: stagingIOAppPath,
+                        paths: paths,
+                        publishedAppPath: layout.app.path
+                    )
+                }
+            let preparedArtifact: PlayCoverPreparedArtifact
+            #if canImport(Darwin)
+            let stagingIODirectory =
+                try ownedDirectoryDescriptorPath(
+                    stagingDescriptor,
+                    label: "staging generation"
+                )
+            preparedArtifact =
+                try PlayCoverPrepareNamespaceGuard.withProtection(
+                    directories: [
+                        .init(
+                            descriptor: access.playcoverDescriptor,
+                            label: "managed playcover directory"
+                        ),
+                        .init(
+                            descriptor: access.preparedDescriptor,
+                            label: "managed prepared root"
+                        ),
+                    ],
+                    links: [
+                        .init(
+                            parentDescriptor: access.playcoverDescriptor,
+                            childName: access.prepared.lastPathComponent,
+                            childDescriptor: access.preparedDescriptor,
+                            label: "managed prepared root"
+                        ),
+                        .init(
+                            parentDescriptor: access.preparedDescriptor,
+                            childName: stagingName,
+                            childDescriptor: stagingDescriptor,
+                            label: "staging generation"
+                        ),
+                    ]
+                ) {
+                    try afterStagingPathResolvedForTesting?(
+                        stagingIODirectory
+                    )
+                    return try prepareAtPaths(
+                        stagingIdentityDirectory.appendingPathComponent(
+                            layout.app.lastPathComponent,
+                            isDirectory: true
+                        ).path,
+                        stagingIODirectory.appendingPathComponent(
+                            layout.app.lastPathComponent,
+                            isDirectory: true
+                        ).path
+                    )
+                }
+            #else
+            let stagingAppPath =
+                stagingIdentityDirectory.appendingPathComponent(
+                    layout.app.lastPathComponent,
+                    isDirectory: true
+                ).path
+            preparedArtifact = try prepareAtPaths(
+                stagingAppPath,
+                stagingAppPath
+            )
+            #endif
+            let manifest = preparedArtifact.manifest
+            try validateManagedManifest(
+                manifest,
+                plan: plan,
+                outputPath: layout.app.path
+            )
+            do {
+                #if canImport(Darwin)
+                guard Darwin.renameatx_np(
+                        access.preparedDescriptor,
+                        stagingName,
+                        access.preparedDescriptor,
+                        generationKey,
+                        UInt32(RENAME_EXCL)
+                      ) == 0 else {
+                    throw PlayCoverBackendError.prepareFailed(
+                        "anchored generation rename failed: errno \(errno)"
+                    )
+                }
+                removeStaging = false
+                try syncDirectoryDescriptor(
+                    access.preparedDescriptor,
+                    label: "managed prepared root"
+                )
+                #else
+                try FileManager.default.moveItem(
+                    at: stagingIdentityDirectory,
+                    to: layout.directory
+                )
+                removeStaging = false
+                try syncDirectory(access.prepared)
+                #endif
+            } catch {
+                if hasCompletePreparedSidecars(at: layout.app.path) {
+                    let winner = try readPreparedManifest(
+                        at: layout.app.path
+                    )
+                    try validateManagedManifest(
+                        winner,
+                        plan: plan,
+                        outputPath: layout.app.path
+                    )
+                    return Resolution(
+                        manifest: winner,
+                        reused: true,
+                        timing: makeTiming(
+                            inspectNanoseconds: inspectNanoseconds,
+                            prepare: preparedArtifact.phaseTimings
+                        )
+                    )
+                }
+                throw PlayCoverBackendError.prepareFailed(
+                    "atomic generation publish failed: \(error)"
+                )
+            }
+
+            _ = try validatedManagedPreparedAppPath(
+                layout.app.path,
+                paths: paths
+            )
+            let publishedManifest = try readPreparedManifest(
+                at: layout.app.path
+            )
+            guard publishedManifest == manifest else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "published generation identity changed after atomic rename"
+                )
+            }
+            return Resolution(
+                manifest: manifest,
+                reused: false,
+                timing: makeTiming(
+                    inspectNanoseconds: inspectNanoseconds,
+                    prepare: preparedArtifact.phaseTimings
+                )
             )
         }
-        try PlayCoverSessionService.recordPrepared(
-            manifest,
-            paths: paths
-        )
-        return Resolution(manifest: manifest, reused: false)
     }
 
     static func runtimeCandidates(
@@ -323,11 +485,13 @@ enum PlayCoverManagedAppService {
 
     private static func inspectApp(
         at path: String
-    ) throws -> PlayCoverAppInspection {
+    ) throws -> PlayCoverPreparationSource {
         if let inspectOverrideForTesting {
             return try inspectOverrideForTesting(path)
         }
-        return try PlayCoverService.inspect(appPath: path)
+        return try PlayCoverService.inspectPreparationSource(
+            appPath: path
+        )
     }
 
     private static func verifyApp(
@@ -339,21 +503,38 @@ enum PlayCoverManagedAppService {
         return try PlayCoverService.verify(appPath: path)
     }
 
-    private static func fastVerifyApp(
+    private static func readPreparedManifest(
         at path: String
     ) throws -> PlayCoverPrepareManifest {
-        if let fastVerifyOverrideForTesting {
-            return try fastVerifyOverrideForTesting(path)
+        if let readManifestOverrideForTesting {
+            return try readManifestOverrideForTesting(path)
         }
-        return try PlayCoverService.fastVerify(appPath: path)
+        return try PlayCoverService.readPreparedManifest(
+            appPath: path
+        )
+    }
+
+    private static func makeTiming(
+        inspectNanoseconds: UInt64,
+        prepare: PlayCoverUpstreamPreparePhaseTimings?
+    ) -> PlayCoverStartTiming {
+        PlayCoverStartTiming(
+            inspectNanoseconds: inspectNanoseconds,
+            cloneNanoseconds: prepare?.cloneNanoseconds,
+            convertNanoseconds: prepare?.convertNanoseconds,
+            signNanoseconds: prepare?.signNanoseconds,
+            verifyNanoseconds: prepare?.verifyNanoseconds ?? 0,
+            launchNanoseconds: 0,
+            totalNanoseconds: 0
+        )
     }
 
     private static func validateManagedManifest(
         _ manifest: PlayCoverPrepareManifest,
-        source: PlayCoverAppInspection,
-        generationKey: String,
+        plan: PlayCoverPreparationPlan,
         outputPath: String
     ) throws {
+        let source = plan.source.inspection
         guard manifest.schemaVersion == 3,
               manifest.backend == "playcover-headless",
               standardizedPath(manifest.preparedAppPath)
@@ -362,8 +543,10 @@ enum PlayCoverManagedAppService {
               manifest.sourceContentHash == source.sourceContentHash,
               manifest.sourceHashAfterPreparation
                 == source.sourceContentHash,
-              manifest.generationKey == generationKey,
-              manifest.prepareRevision == preparationRevision else {
+              manifest.runtimeBuildHash == plan.runtimeBuildHash,
+              manifest.generationKey == plan.generationKey,
+              manifest.prepareRevision == plan.prepareRevision,
+              plan.prepareRevision == preparationRevision else {
             throw PlayCoverBackendError.verificationFailed(
                 "managed generation does not match source/content/runtime"
             )
@@ -419,6 +602,14 @@ enum PlayCoverManagedAppService {
         let lexicalRoot = lexicalStandardizedPath(
             paths.playcoverPrepared
         )
+        do {
+            try rejectUserOwnedSymlinkComponents(lexicalRoot)
+        } catch {
+            throw PlayCoverBackendError.cacheTampered(
+                "managed prepared root/App contains a "
+                    + "symbolic-link escape: \(error)"
+            )
+        }
         let canonicalRoot = standardizedPath(
             paths.playcoverPrepared
         )
@@ -438,6 +629,52 @@ enum PlayCoverManagedAppService {
             descendant: canonicalApp
         )
         return canonicalApp
+    }
+
+    static func secureManagedDirectories(
+        paths: IOSUsePaths
+    ) throws -> ManagedDirectories {
+        try withSecureManagedDirectories(paths: paths) {
+            ManagedDirectories(
+                playcover: $0.playcover,
+                prepared: $0.prepared
+            )
+        }
+    }
+
+    static func withSecureManagedDirectories<T>(
+        paths: IOSUsePaths,
+        _ operation: (ManagedDirectoryAccess) throws -> T
+    ) throws -> T {
+        #if canImport(Darwin)
+        let access = try openSecureManagedDirectories(paths: paths)
+        defer {
+            Darwin.close(access.preparedDescriptor)
+            Darwin.close(access.playcoverDescriptor)
+        }
+        try afterManagedDirectoryOpenForTesting?()
+        return try operation(access)
+        #else
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverPrepared,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let prepared = URL(
+            fileURLWithPath:
+                lexicalStandardizedPath(paths.playcoverPrepared),
+            isDirectory: true
+        )
+        try afterManagedDirectoryOpenForTesting?()
+        return try operation(
+            ManagedDirectoryAccess(
+                playcover: prepared.deletingLastPathComponent(),
+                prepared: prepared,
+                playcoverDescriptor: -1,
+                preparedDescriptor: -1
+            )
+        )
+        #endif
     }
 
     private static func isLexicallyInsideManagedPrepared(
@@ -511,10 +748,334 @@ enum PlayCoverManagedAppService {
         #endif
     }
 
+    #if canImport(Darwin)
+    static func ownedDirectoryDescriptorPath(
+        _ descriptor: Int32,
+        label: String
+    ) throws -> URL {
+        var expected = stat()
+        guard fstat(descriptor, &expected) == 0,
+              expected.st_mode & S_IFMT == S_IFDIR,
+              expected.st_uid == geteuid() else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot inspect anchored \(label)"
+            )
+        }
+        let stableURL = URL(
+            fileURLWithPath:
+                "/.vol/\(expected.st_dev)/\(expected.st_ino)",
+            isDirectory: true
+        )
+        let verificationDescriptor = Darwin.open(
+            stableURL.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard verificationDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot resolve stable vnode path for anchored \(label): "
+                    + "errno \(errno)"
+            )
+        }
+        defer { Darwin.close(verificationDescriptor) }
+        var actual = stat()
+        guard fstat(verificationDescriptor, &actual) == 0,
+              actual.st_dev == expected.st_dev,
+              actual.st_ino == expected.st_ino else {
+            throw PlayCoverBackendError.cacheTampered(
+                "stable vnode path changed identity for anchored \(label)"
+            )
+        }
+        return stableURL
+    }
+
+    static func openOwnedDirectory(
+        parentDescriptor: Int32,
+        name: String,
+        label: String
+    ) throws -> Int32 {
+        try openAnchoredDirectory(
+            parentDescriptor: parentDescriptor,
+            name: name,
+            label: label,
+            requireOwnerOnlyMode: true
+        )
+    }
+
+    private static func openAnchoredDirectory(
+        parentDescriptor: Int32,
+        name: String,
+        label: String,
+        requireOwnerOnlyMode: Bool
+    ) throws -> Int32 {
+        guard isSafeRelativeName(name) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "\(label) has an unsafe directory name"
+            )
+        }
+        let descriptor = Darwin.openat(
+            parentDescriptor,
+            name,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot open anchored \(label): errno \(errno)"
+            )
+        }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              status.st_mode & S_IFMT == S_IFDIR,
+              status.st_uid == geteuid(),
+              !requireOwnerOnlyMode
+                || status.st_mode & 0o077 == 0 else {
+            Darwin.close(descriptor)
+            throw PlayCoverBackendError.cacheTampered(
+                "\(label) is not an owner-only directory"
+            )
+        }
+        return descriptor
+    }
+
+    static func ownedDirectoryExists(
+        parentDescriptor: Int32,
+        name: String,
+        label: String
+    ) throws -> Bool {
+        guard isSafeRelativeName(name) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "\(label) has an unsafe directory name"
+            )
+        }
+        var status = stat()
+        if fstatat(
+            parentDescriptor,
+            name,
+            &status,
+            AT_SYMLINK_NOFOLLOW
+        ) != 0 {
+            if errno == ENOENT {
+                return false
+            }
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot inspect anchored \(label): errno \(errno)"
+            )
+        }
+        guard status.st_mode & S_IFMT == S_IFDIR,
+              status.st_uid == geteuid(),
+              status.st_mode & 0o077 == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "\(label) is not an owner-only directory"
+            )
+        }
+        return true
+    }
+
+    static func readOwnedRegularFile(
+        parentDescriptor: Int32,
+        name: String,
+        maximumBytes: Int = 1_048_576
+    ) throws -> Data {
+        guard isSafeRelativeName(name) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "generation metadata has an unsafe name"
+            )
+        }
+        let descriptor = Darwin.openat(
+            parentDescriptor,
+            name,
+            O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot open anchored generation metadata: errno \(errno)"
+            )
+        }
+        defer { Darwin.close(descriptor) }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == geteuid(),
+              status.st_nlink == 1,
+              status.st_size >= 0,
+              status.st_size <= Int64(maximumBytes) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "generation metadata is not a bounded owned regular file"
+            )
+        }
+        var data = Data(count: Int(status.st_size))
+        try data.withUnsafeMutableBytes { buffer in
+            guard let base = buffer.baseAddress else {
+                return
+            }
+            var offset = 0
+            while offset < buffer.count {
+                let count = Darwin.read(
+                    descriptor,
+                    base.advanced(by: offset),
+                    buffer.count - offset
+                )
+                if count > 0 {
+                    offset += count
+                    continue
+                }
+                if count < 0, errno == EINTR {
+                    continue
+                }
+                throw PlayCoverBackendError.cacheTampered(
+                    "generation metadata could not be read completely"
+                )
+            }
+        }
+        return data
+    }
+
+    static func anchoredDirectoryNames(
+        descriptor: Int32,
+        label: String
+    ) throws -> [String] {
+        let path = try ownedDirectoryDescriptorPath(
+            descriptor,
+            label: label
+        )
+        return try FileManager.default.contentsOfDirectory(
+            atPath: path.path
+        )
+    }
+
+    static func removeAnchoredDirectoryTree(
+        parentDescriptor: Int32,
+        name: String,
+        label: String
+    ) throws {
+        var parentStatus = stat()
+        guard fstat(parentDescriptor, &parentStatus) == 0,
+              parentStatus.st_mode & S_IFMT == S_IFDIR else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot inspect anchored \(label) parent"
+            )
+        }
+        try removeAnchoredDirectoryTree(
+            parentDescriptor: parentDescriptor,
+            name: name,
+            label: label,
+            requireOwnerOnlyMode: true,
+            allowedDevice: parentStatus.st_dev
+        )
+    }
+
+    private static func removeAnchoredDirectoryTree(
+        parentDescriptor: Int32,
+        name: String,
+        label: String,
+        requireOwnerOnlyMode: Bool,
+        allowedDevice: dev_t
+    ) throws {
+        let descriptor = try openAnchoredDirectory(
+            parentDescriptor: parentDescriptor,
+            name: name,
+            label: label,
+            requireOwnerOnlyMode: requireOwnerOnlyMode
+        )
+        defer { Darwin.close(descriptor) }
+        var directoryStatus = stat()
+        guard fstat(descriptor, &directoryStatus) == 0,
+              directoryStatus.st_dev == allowedDevice else {
+            throw PlayCoverBackendError.cacheTampered(
+                "\(label) crosses a mounted filesystem boundary"
+            )
+        }
+        let children = try anchoredDirectoryNames(
+            descriptor: descriptor,
+            label: label
+        )
+        for child in children {
+            guard isSafeRelativeName(child) else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "\(label) contains an unsafe entry name"
+                )
+            }
+            var status = stat()
+            guard fstatat(
+                    descriptor,
+                    child,
+                    &status,
+                    AT_SYMLINK_NOFOLLOW
+                  ) == 0 else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "cannot inspect anchored \(label) entry \(child)"
+                )
+            }
+            guard status.st_dev == allowedDevice else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "\(label)/\(child) crosses a mounted filesystem boundary"
+                )
+            }
+            if status.st_mode & S_IFMT == S_IFDIR {
+                try removeAnchoredDirectoryTree(
+                    parentDescriptor: descriptor,
+                    name: child,
+                    label: "\(label)/\(child)",
+                    requireOwnerOnlyMode: false,
+                    allowedDevice: allowedDevice
+                )
+            } else {
+                guard Darwin.unlinkat(descriptor, child, 0) == 0 else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "cannot unlink anchored \(label) entry \(child): "
+                            + "errno \(errno)"
+                    )
+                }
+            }
+        }
+        guard Darwin.unlinkat(
+                parentDescriptor,
+                name,
+                AT_REMOVEDIR
+              ) == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot remove anchored \(label): errno \(errno)"
+            )
+        }
+    }
+
+    static func syncDirectoryDescriptor(
+        _ descriptor: Int32,
+        label: String
+    ) throws {
+        guard Darwin.fsync(descriptor) == 0 else {
+            throw PlayCoverBackendError.prepareFailed(
+                "cannot fsync \(label): errno \(errno)"
+            )
+        }
+    }
+
+    private static func isSafeRelativeName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name != "."
+            && name != ".."
+            && !name.contains("/")
+            && !name.utf8.contains(0)
+    }
+    #endif
+
     private static func ensureManagedPreparedRoot(
         paths: IOSUsePaths
     ) throws {
         #if canImport(Darwin)
+        try withSecureManagedDirectories(paths: paths) { _ in () }
+        #else
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverPrepared,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        #endif
+    }
+
+    #if canImport(Darwin)
+    private static func openSecureManagedDirectories(
+        paths: IOSUsePaths
+    ) throws -> ManagedDirectoryAccess {
         let lexicalPath = lexicalStandardizedPath(paths.playcoverPrepared)
         let lexicalOwnedRoot = lexicalStandardizedPath(paths.root)
         try rejectUserOwnedSymlinkComponents(
@@ -547,7 +1108,16 @@ enum PlayCoverManagedAppService {
                 "cannot open filesystem root for managed containment"
             )
         }
-        defer { Darwin.close(descriptor) }
+        var playcoverDescriptor: Int32 = -1
+        var succeeded = false
+        defer {
+            if !succeeded {
+                Darwin.close(descriptor)
+                if playcoverDescriptor >= 0 {
+                    Darwin.close(playcoverDescriptor)
+                }
+            }
+        }
         for (index, component) in components.enumerated() {
             var created = false
             var child = Darwin.openat(
@@ -579,26 +1149,61 @@ enum PlayCoverManagedAppService {
             if created || index >= ownedStartIndex {
                 var status = stat()
                 guard fstat(child, &status) == 0,
-                      status.st_uid == geteuid(),
-                      fchmod(child, 0o700) == 0 else {
+                      status.st_uid == geteuid() else {
                     Darwin.close(child)
                     throw PlayCoverBackendError.prepareFailed(
                         "managed directory is not owner-controlled: "
                             + component
                     )
                 }
+                if status.st_mode & 0o777 != 0o700,
+                   fchmod(child, 0o700) != 0 {
+                    Darwin.close(child)
+                    throw PlayCoverBackendError.prepareFailed(
+                        "managed directory permissions cannot be repaired: "
+                            + component
+                    )
+                }
+            }
+            if index == components.count - 2 {
+                playcoverDescriptor = Darwin.dup(child)
+                guard playcoverDescriptor >= 0,
+                      Darwin.fcntl(
+                        playcoverDescriptor,
+                        F_SETFD,
+                        FD_CLOEXEC
+                      ) == 0 else {
+                    if playcoverDescriptor >= 0 {
+                        Darwin.close(playcoverDescriptor)
+                        playcoverDescriptor = -1
+                    }
+                    Darwin.close(child)
+                    throw PlayCoverBackendError.prepareFailed(
+                        "cannot retain managed playcover directory"
+                    )
+                }
             }
             Darwin.close(descriptor)
             descriptor = child
         }
-        #else
-        try FileManager.default.createDirectory(
-            atPath: paths.playcoverPrepared,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
+        guard playcoverDescriptor >= 0 else {
+            throw PlayCoverBackendError.prepareFailed(
+                "managed playcover directory was not opened"
+            )
+        }
+        let prepared = URL(
+            fileURLWithPath: lexicalPath,
+            isDirectory: true
         )
-        #endif
+        succeeded = true
+        return ManagedDirectoryAccess(
+            playcover: prepared.deletingLastPathComponent(),
+            prepared: prepared,
+            playcoverDescriptor: playcoverDescriptor,
+            preparedDescriptor: descriptor
+        )
     }
+    #endif
 
     private static func rejectUserOwnedSymlinkComponents(
         _ path: String

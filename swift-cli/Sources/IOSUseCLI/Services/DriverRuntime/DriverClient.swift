@@ -261,22 +261,57 @@ final class LockedDriverClientSession {
 
     private func relaunchDriver(for lock: SessionService.Info) throws -> SessionService.Info {
         closeClient()
-        let holderResult = DriverLifecycleService.terminateFullXCTestHolderIfNeeded(info: lock, paths: paths)
-        if holderResult != .notApplicable {
-            CLILogService.append(paths: paths, ["[cli-lifecycle] XCTest holder cleanup before relaunch: \(holderResult)"])
+        return try SessionOperationLock.withExclusiveLock(paths: paths) {
+            guard let current = try SessionService.readDriverLockInfo(
+                paths: paths
+            ),
+                  current == lock else {
+                throw CLIParseError.invalidValue(
+                    "Driver lifecycle changed before connection recovery; "
+                        + "refusing to relaunch a stale session."
+                )
+            }
+
+            let holderResult =
+                DriverLifecycleService
+                    .terminateFullXCTestHolderIfNeeded(
+                        info: current,
+                        paths: paths
+                    )
+            if holderResult != .notApplicable {
+                CLILogService.append(
+                    paths: paths,
+                    [
+                        "[cli-lifecycle] XCTest holder cleanup before "
+                            + "relaunch: \(holderResult)",
+                    ]
+                )
+            }
+            if let failure =
+                    DriverLifecycleService
+                        .holderTerminationFailureMessage(
+                            result: holderResult,
+                            info: current
+                        ) {
+                throw CLIParseError.invalidValue(failure)
+            }
+            let recoveredLock: SessionService.Info
+            if let metadata = try SessionService.launchDriver(
+                for: current,
+                paths: paths,
+                verbose: verbose
+            ) {
+                recoveredLock = current.applying(metadata)
+                try SessionService.writeDriverLock(
+                    info: recoveredLock,
+                    paths: paths
+                )
+            } else {
+                recoveredLock = current
+            }
+            info = recoveredLock
+            return recoveredLock
         }
-        if let failure = DriverLifecycleService.holderTerminationFailureMessage(result: holderResult, info: lock) {
-            throw CLIParseError.invalidValue(failure)
-        }
-        let recoveredLock: SessionService.Info
-        if let metadata = try SessionService.launchDriver(for: lock, paths: paths, verbose: verbose) {
-            recoveredLock = lock.applying(metadata)
-            try SessionService.writeDriverLock(info: recoveredLock, paths: paths)
-        } else {
-            recoveredLock = lock
-        }
-        info = recoveredLock
-        return recoveredLock
     }
 
     private func closeClient() {

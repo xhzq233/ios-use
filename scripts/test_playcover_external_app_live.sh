@@ -30,15 +30,18 @@ GATE_PASSED=0
 MOUSE_SEQUENCE=0
 RETAINED_SCREENSHOT=""
 EXPECTED_HOST_TITLE=""
+UNIQUE_RUNNER_PID_COUNT=0
+PID_REUSE_OBSERVED=false
 
 usage() {
   cat <<'USAGE'
 Usage: scripts/test_playcover_external_app_live.sh --live
 
---live    Run the generic external-App PlayCover live/stress gate. This
-          requires the private runner inputs below.
+--live    Run the generic external-App PlayCover live gate, including real
+          host-edge resize, resized UI/mouse checks, and 20 clean lifecycle
+          cycles. This requires the private runner inputs below.
 
-Run the generic external-App PlayCover live/stress gate. Required private
+Run the generic external-App PlayCover live gate. Required private
 runner inputs:
 
   IOS_USE_PLAYCOVER_LIVE_SCENARIO
@@ -50,6 +53,8 @@ labels. Raw screenshots, DOM, logs, and session state are retained only below
 the private evidence directory, which must be outside this public checkout.
 IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR may select a separate directory for one
 redacted pass attestation. Missing prerequisites exit with EX_CONFIG (78).
+Crash/stale Runtime behavior is covered by the Runtime stress gate, and
+synthetic PID-reuse identity handling is covered by focused unit tests.
 USAGE
 }
 
@@ -159,6 +164,14 @@ mkdir -p "$RUN_DIR/images"
 printf 'schema\tcase\tcommand\tstdout\tstderr\n' >"$MANIFEST"
 printf 'case\tsource\tretained\tsha256\n' >"$ARTIFACT_INDEX"
 printf 'cycle\tsessionIdentifier\trunnerPid\tgeneration\n' >"$CYCLE_INDEX"
+cat >"$RUN_DIR/lifecycle-scope.txt" <<'SCOPE'
+This external-App gate exercises only clean start/status/screenshot/stop
+lifecycles against the real App process. Runtime endpoint loss, App crash/stale
+classification, and synthetic PID-reuse identities remain owned by
+test_playcover_runtime_stress_live.sh and
+PlayCoverSessionTests.testTerminateRefusesPIDWhoseExecutableChanged; this gate
+does not forge locks, kill the App, or substitute fake process identities.
+SCOPE
 printf '%s\n' "$EVIDENCE_SCHEMA" >"$RUN_DIR/schema-version"
 printf '%s\n' "$SCENARIO_DIGEST" >"$RUN_DIR/scenario-sha256"
 printf '%s\n' "$LIVE_APP" >"$RUN_DIR/source-app-path"
@@ -348,8 +361,11 @@ assert_status() {
       .data.driver.status == "healthy" and
       .data.driver.bundleId == $bundleIdentifier and
       .data.driver.playcoverGenerationKey == $generation and
+      (.data.driver.sessionIdentifier | type) == "string" and
+      (.data.driver.sessionIdentifier |
+        test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")) and
       (.data.driver.runnerPid | type) == "number" and
-      .data.driver.runnerPid > 0 and
+      .data.driver.runnerPid > 1 and
       $runtime.status == "healthy" and
       $runtime.identityVerified == true and
       $runtime.logicalWidth == 430 and
@@ -383,6 +399,16 @@ assert_status() {
       $window.borderless == false and
       $window.hasShadow == true and
       $window.movable == true and
+      ($window.resizeEdges | type) == "object" and
+      ($window.resizeEdges.available | type) == "number" and
+      $window.resizeEdges.available >= 0 and
+      (($window.resizeEdges.available % 16) == 15) and
+      ($window.resizeEdges.growing | type) == "number" and
+      $window.resizeEdges.growing >= 0 and
+      (($window.resizeEdges.growing % 16) == 15) and
+      ($window.resizeEdges.shrinking | type) == "number" and
+      $window.resizeEdges.shrinking >= 0 and
+      (($window.resizeEdges.shrinking % 16) == 15) and
       $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
       $window.sceneMinimumSize == {"width":430,"height":932} and
       $window.sceneMaximumSize == {"width":430,"height":932} and
@@ -415,6 +441,77 @@ assert_status() {
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name does not prove the exact healthy external App/AppKit session"
   fi
+}
+
+assert_cycle_identity() {
+  local case_name="$1"
+  local cycle="$2"
+  local status_file="$RUN_DIR/${case_name}.stdout"
+  local lock_file="$SESSION_HOME/state/driver.lock"
+  if [[ ! -f "$lock_file" || -L "$lock_file" ]]; then
+    fail_gate "$case_name has no private regular driver.lock"
+  fi
+  if [[ "$(stat -f '%Lp' "$lock_file")" != "600" ]]; then
+    fail_gate "$case_name driver.lock is not owner-only"
+  fi
+  if ! jq -e \
+      --argjson cycle "$cycle" \
+      --arg generation "$GENERATION_KEY" \
+      --slurpfile status "$status_file" '
+        ($status[0].data.driver) as $driver |
+        .deviceType == "playcover" and
+        .startMode == "playcover" and
+        .bundleId == $driver.bundleId and
+        .runnerPid == $driver.runnerPid and
+        .runnerPid > 1 and
+        .sessionIdentifier == $driver.sessionIdentifier and
+        (.sessionIdentifier |
+          test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")) and
+        .playcoverGenerationKey == $generation and
+        .playcoverGenerationKey == $driver.playcoverGenerationKey and
+        .playcoverAppPath == $driver.playcoverAppPath and
+        .playcoverExecutablePath == $driver.playcoverExecutablePath and
+        .playcoverRuntimeSocketPath ==
+          $driver.playcoverRuntimeSocketPath and
+        ($cycle | type) == "number" and
+        $cycle >= 1
+      ' "$lock_file" >/dev/null; then
+    fail_gate \
+      "$case_name driver.lock does not match runner PID/session/generation"
+  fi
+  local runner_pid
+  runner_pid="$(jq -er '.data.driver.runnerPid' "$status_file")"
+  if ! /bin/kill -0 "$runner_pid" 2>/dev/null; then
+    fail_gate "$case_name runner PID is not a live process"
+  fi
+  local runtime_socket
+  runtime_socket="$(
+    jq -er '.data.driver.playcoverRuntimeSocketPath' "$status_file"
+  )"
+  if [[ ! -S "$runtime_socket" || -L "$runtime_socket" ]]; then
+    fail_gate "$case_name Runtime socket is not the live session endpoint"
+  fi
+}
+
+assert_clean_cycle_stopped() {
+  local case_name="$1"
+  local runner_pid="$2"
+  if ! jq -e \
+      '.data.driver.status == "notRunning"' \
+      "$RUN_DIR/${case_name}.stdout" >/dev/null; then
+    fail_gate "$case_name stop left an active driver session"
+  fi
+  if [[ -e "$SESSION_HOME/state/driver.lock" ]]; then
+    fail_gate "$case_name stop left the exact driver.lock behind"
+  fi
+  local attempt
+  for attempt in $(seq 1 50); do
+    if ! /bin/kill -0 "$runner_pid" 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  fail_gate "$case_name stop left runner PID $runner_pid alive"
 }
 
 assert_screenshot() {
@@ -563,33 +660,44 @@ runtime_select_tab() {
 
 derive_mouse_coordinates() {
   local case_name="$1"
-  local tab_label="$2"
+  local element_label="$2"
+  local element_role="${3:-bottom-tab}"
   local dom_case="${case_name}_fresh_dom"
   local status_case="${case_name}_fresh_status"
   run_cli "$dom_case" dom --json
   run_cli "$status_case" status --json
   assert_status "$status_case"
   if ! jq -e \
-      --arg tab "$tab_label" \
+      --arg label "$element_label" \
+      --arg role "$element_role" \
       --slurpfile status "$RUN_DIR/${status_case}.stdout" '
         ($status[0].data.driver.runtime) as $runtime |
         ($runtime.diagnostics.runtime.window) as $window |
         ($window.canvasCapture.canvasCGWindowRect) as $canvas |
         [.data.elements[] |
           select(
-            .label == $tab and
+            .label == $label and
             .state.visible == true and
             .state.enabled == true and
             (.frame | type) == "array" and
             (.frame | length) == 4 and
             .frame[2] > 0 and
             .frame[3] > 0 and
-            (.frame[1] + (.frame[3] / 2)) >
-              ($runtime.logicalHeight * 0.75)
+            (
+              $role == "dialog-action" or
+              (
+                $role == "bottom-tab" and
+                (.frame[1] + (.frame[3] / 2)) >
+                  ($runtime.logicalHeight * 0.75)
+              )
+            )
           )
         ] as $matches |
         if ($matches | length) != 1 then
-          error("fresh DOM does not contain one bottom tab named " + $tab)
+          error(
+            "fresh DOM does not contain one visible enabled " +
+            $role + " named " + $label
+          )
         elif (
           $window.canvasBounds !=
             {"x":0,"y":0,"width":430,"height":932} or
@@ -618,7 +726,8 @@ derive_mouse_coordinates() {
             error("canonical canvas inverse transform exceeds 0.5pt")
           else
             {
-              label: $tab,
+              label: $label,
+              role: $role,
               snapshotGeneration: $matches[0].snapshotGeneration,
               frame: $frame,
               logicalPoint: {
@@ -646,6 +755,7 @@ derive_mouse_coordinates() {
 
 run_mouse_helper() {
   local case_name="$1"
+  local postcondition="${2:-tab-selected}"
   local coordinates_file="$RUN_DIR/${case_name}_coordinates.json"
   local logical_x
   local logical_y
@@ -710,15 +820,24 @@ run_mouse_helper() {
     fail_gate "$case_name mouse helper output is not bound to the target PID/token"
   fi
 
-  poll_tab_selected "${case_name}_selected" "$(
-    jq -r '.label' "$coordinates_file"
-  )"
+  case "$postcondition" in
+    tab-selected)
+      poll_tab_selected "${case_name}_selected" "$(
+        jq -r '.label' "$coordinates_file"
+      )"
+      ;;
+    delivery-only) ;;
+    *)
+      fail_gate "$case_name has unknown mouse postcondition: $postcondition"
+      ;;
+  esac
   run_cli "${case_name}_delivery_status" status --json
   assert_status "${case_name}_delivery_status"
   if ! jq -e \
       --argjson token "$event_token" \
       --argjson pid "$runner_pid" \
-      --slurpfile coordinates "$coordinates_file" '
+      --slurpfile coordinates "$coordinates_file" \
+      --slurpfile mouse "$stdout_file" '
         ($coordinates[0].logicalPoint) as $point |
         (.data.driver.runtime.diagnostics.runtime.window) as $appKit |
         ($appKit.lastMouseDownDelivery) as $down |
@@ -727,6 +846,10 @@ run_mouse_helper() {
         $up.token == $token and
         $down.targetPID == $pid and
         $up.targetPID == $pid and
+        $down.windowNumber == $mouse[0].targetWindowNumber and
+        $up.windowNumber == $mouse[0].targetWindowNumber and
+        $down.sourcePID == $mouse[0].sourcePID and
+        $up.sourcePID == $mouse[0].sourcePID and
         $down.phase == "down" and
         $up.phase == "up" and
         $down.geometryReady == true and
@@ -735,6 +858,7 @@ run_mouse_helper() {
         $up.targetHitTest == true and
         $down.sequence > $coordinates[0].mouseDeliveryCountBefore and
         $up.sequence > $down.sequence and
+        $appKit.mouseDeliveryCount >= $up.sequence and
         $down.logicalPoint.x >= ($point.x - 0.5) and
         $down.logicalPoint.x <= ($point.x + 0.5) and
         $down.logicalPoint.y >= ($point.y - 0.5) and
@@ -784,8 +908,8 @@ global_select_tab() {
   # The helper coordinates are deliberately derived after the pre-click
   # screenshot so the DOM frame and AppKit window bounds are the last
   # observations before the physical event is posted.
-  derive_mouse_coordinates "$case_name" "$tab_label"
-  run_mouse_helper "$case_name"
+  derive_mouse_coordinates "$case_name" "$tab_label" bottom-tab
+  run_mouse_helper "$case_name" tab-selected
 
   run_cli \
     "${case_name}_after" \
@@ -800,6 +924,481 @@ global_select_tab() {
   )"
   if [[ "$before_hash" == "$after_hash" ]]; then
     fail_gate "$case_name global mouse produced no visible screenshot change"
+  fi
+}
+
+global_dismiss_recovery_dialog() {
+  local case_name="restore_global_cancel"
+  run_cli \
+    "${case_name}_before" \
+    screenshot --name "${case_name}-before" --json
+  assert_screenshot "${case_name}_before"
+  retain_screenshot "${case_name}_before"
+  local before_image="$RETAINED_SCREENSHOT"
+  local before_hash
+  before_hash="$(
+    /usr/bin/shasum -a 256 "$before_image" |
+      /usr/bin/awk '{print $1}'
+  )"
+
+  derive_mouse_coordinates \
+    "$case_name" \
+    "$RESTORE_CANCEL" \
+    dialog-action
+  run_mouse_helper "$case_name" delivery-only
+  run_cli \
+    restore_wait_gone \
+    waitFor "$RESTORE_DIALOG" --gone --timeout 10s --json
+
+  run_cli \
+    "${case_name}_after" \
+    screenshot --name "${case_name}-after" --json
+  assert_screenshot "${case_name}_after"
+  retain_screenshot "${case_name}_after"
+  local after_image="$RETAINED_SCREENSHOT"
+  local after_hash
+  after_hash="$(
+    /usr/bin/shasum -a 256 "$after_image" |
+      /usr/bin/awk '{print $1}'
+  )"
+  if [[ "$before_hash" == "$after_hash" ]]; then
+    fail_gate \
+      "global recovery-dialog mouse action produced no visible screenshot change"
+  fi
+}
+
+derive_canvas_corner_coordinates() {
+  local case_name="$1"
+  local corner="$2"
+  local status_case="${case_name}_fresh_status"
+  run_cli "$status_case" status --json
+  assert_status "$status_case"
+  if ! jq -e -n \
+      --arg corner "$corner" \
+      --slurpfile status "$RUN_DIR/${status_case}.stdout" '
+        ($status[0].data.driver.runtime) as $runtime |
+        ($runtime.diagnostics.runtime.window) as $window |
+        ($window.canvasCapture.canvasCGWindowRect) as $canvas |
+        12 as $inset |
+        (
+          if $corner == "top-left" then
+            {x: $inset, y: $inset}
+          elif $corner == "top-right" then
+            {x: ($runtime.logicalWidth - $inset), y: $inset}
+          elif $corner == "bottom-left" then
+            {x: $inset, y: ($runtime.logicalHeight - $inset)}
+          elif $corner == "bottom-right" then
+            {
+              x: ($runtime.logicalWidth - $inset),
+              y: ($runtime.logicalHeight - $inset)
+            }
+          else
+            error("unknown canvas corner " + $corner)
+          end
+        ) as $logical |
+        ($canvas.x + ($logical.x * $window.displayScale)) as $globalX |
+        ($canvas.y + ($logical.y * $window.displayScale)) as $globalY |
+        (($globalX - $canvas.x) * $window.inverseDisplayScale) as $inverseX |
+        (($globalY - $canvas.y) * $window.inverseDisplayScale) as $inverseY |
+        if (
+          (($inverseX - $logical.x) | abs) > 0.5 or
+          (($inverseY - $logical.y) | abs) > 0.5
+        ) then
+          error("canvas corner inverse transform exceeds 0.5pt")
+        else
+          {
+            label: $corner,
+            role: "canvas-corner",
+            logicalPoint: $logical,
+            globalPoint: {x: $globalX, y: $globalY},
+            displayScale: $window.displayScale,
+            inverseDisplayScale: $window.inverseDisplayScale,
+            canvasCGWindowRect: $canvas,
+            runnerPID: $status[0].data.driver.runnerPid,
+            mouseDeliveryCountBefore: $window.mouseDeliveryCount
+          }
+        end
+      ' >"$RUN_DIR/${case_name}_coordinates.json"; then
+    fail_gate \
+      "could not derive $corner delivery coordinates from resized canvas"
+  fi
+}
+
+deliver_canvas_corner() {
+  local case_name="$1"
+  local corner="$2"
+  derive_canvas_corner_coordinates "$case_name" "$corner"
+  run_mouse_helper "$case_name" delivery-only
+}
+
+write_host_resize_plan() {
+  local case_name="$1"
+  local phase="$2"
+  local status_case="$3"
+  local plan_file="$RUN_DIR/${case_name}_plan.json"
+  local initial_arg=(--argjson initial '[]')
+  if [[ "$phase" == "second" ]]; then
+    initial_arg=(--slurpfile initial "$RUN_DIR/host_resize_initial.json")
+  fi
+  if ! jq -e -n \
+      --arg phase "$phase" \
+      --slurpfile status "$RUN_DIR/${status_case}.stdout" \
+      "${initial_arg[@]}" '
+        ($status[0].data.driver) as $driver |
+        ($driver.runtime.diagnostics.runtime.window) as $window |
+        ($window.canvasCapture.hostCGWindowBounds) as $host |
+        ($window.canvasCapture.hostContentCGWindowRect) as $content |
+        ($host.width - $content.width) as $decorationWidth |
+        ($host.height - $content.height) as $decorationHeight |
+        if (
+          ($host | type) != "object" or
+          ($content | type) != "object" or
+          ($window.minSize.width | type) != "number" or
+          ($window.minSize.height | type) != "number" or
+          $decorationWidth < -0.5 or
+          $decorationHeight < -0.5
+        ) then
+          error("host resize diagnostics are incomplete")
+        elif $phase == "first" then
+          ([
+            0.72,
+            (($window.minSize.width + 12 - $decorationWidth) /
+              $content.width),
+            (($window.minSize.height + 12 - $decorationHeight) /
+              $content.height)
+          ] | max) as $targetScale |
+          ($content.width * $targetScale + $decorationWidth) as $targetWidth |
+          ($content.height * $targetScale + $decorationHeight) as $targetHeight |
+          if (
+            $targetScale >= 0.94 or
+            $targetWidth >= ($host.width - 8) or
+            $targetHeight >= ($host.height - 8)
+          ) then
+            error("host cannot be reduced to a distinct first resize")
+          else
+            {
+              phase: $phase,
+              beforeHost: $host,
+              beforeContent: $content,
+              beforeDisplayScale: $window.displayScale,
+              anchoredOppositeCorner: "topLeft",
+              targetContentScale: $targetScale,
+              targetHostSize: {
+                width: $targetWidth,
+                height: $targetHeight
+              },
+              drag: {
+                start: {
+                  x: ($host.x + $host.width - 2),
+                  y: ($host.y + $host.height - 2)
+                },
+                end: {
+                  x: ($host.x + $targetWidth - 2),
+                  y: ($host.y + $targetHeight - 2)
+                }
+              },
+              runnerPID: $driver.runnerPid,
+              sessionIdentifier: $driver.sessionIdentifier,
+              generation: $driver.playcoverGenerationKey
+            }
+          end
+        elif $phase == "second" then
+          ($initial[0].host) as $initialHost |
+          ($initial[0].content) as $initialContent |
+          ($content.width / $initialContent.width) as $currentScale |
+          ((1 + $currentScale) / 2) as $targetScale |
+          ($initialContent.width * $targetScale +
+            $decorationWidth) as $targetWidth |
+          ($initialContent.height * $targetScale +
+            $decorationHeight) as $targetHeight |
+          if (
+            $targetWidth <= ($host.width + 8) or
+            $targetHeight <= ($host.height + 8) or
+            $targetWidth > ($initialHost.width + 0.5) or
+            $targetHeight > ($initialHost.height + 0.5)
+          ) then
+            error("host cannot be increased to a distinct second resize")
+          else
+            {
+              phase: $phase,
+              beforeHost: $host,
+              beforeContent: $content,
+              beforeDisplayScale: $window.displayScale,
+              anchoredOppositeCorner: "bottomRight",
+              targetContentScale: $targetScale,
+              targetHostSize: {
+                width: $targetWidth,
+                height: $targetHeight
+              },
+              drag: {
+                start: {
+                  x: ($host.x + 2),
+                  y: ($host.y + 2)
+                },
+                end: {
+                  x: ($host.x + $host.width - $targetWidth + 2),
+                  y: ($host.y + $host.height - $targetHeight + 2)
+                }
+              },
+              runnerPID: $driver.runnerPid,
+              sessionIdentifier: $driver.sessionIdentifier,
+              generation: $driver.playcoverGenerationKey
+            }
+          end
+        else
+          error("unknown resize phase")
+        end
+      ' >"$plan_file"; then
+    fail_gate "could not plan $phase external App host resize"
+  fi
+}
+
+wait_for_host_resize() {
+  local case_name="$1"
+  local plan_file="$RUN_DIR/${case_name}_plan.json"
+  local status_case="${case_name}_after_status"
+  local stdout_file="$RUN_DIR/${status_case}.stdout"
+  local stderr_file="$RUN_DIR/${status_case}.stderr"
+  record_command \
+    "$status_case" \
+    "$stdout_file" \
+    "$stderr_file" \
+    "$CLI" status --json
+  local observed=0
+  local attempt
+  for ((attempt = 1; attempt <= 30; attempt += 1)); do
+    if IOS_USE_HOME="$SESSION_HOME" "$CLI" status --json \
+        >"$stdout_file" 2>"$stderr_file" &&
+      jq -e --slurpfile plan "$plan_file" '
+        ($plan[0]) as $plan |
+        (.data.driver) as $driver |
+        ($driver.runtime.diagnostics.runtime.window) as $window |
+        ($window.canvasCapture.hostCGWindowBounds) as $actual |
+        ($plan.beforeHost) as $before |
+        ($plan.targetHostSize) as $target |
+        $driver.runnerPid == $plan.runnerPID and
+        $driver.sessionIdentifier == $plan.sessionIdentifier and
+        $driver.playcoverGenerationKey == $plan.generation and
+        $window.status == "configured" and
+        (($actual.width - $target.width) | abs) <= 10 and
+        (($actual.height - $target.height) | abs) <= 10 and
+        if $plan.anchoredOppositeCorner == "topLeft" then
+          (($actual.x - $before.x) | abs) <= 4 and
+          (($actual.y - $before.y) | abs) <= 4
+        elif $plan.anchoredOppositeCorner == "bottomRight" then
+          (($actual.x + $actual.width -
+            ($before.x + $before.width)) | abs) <= 4 and
+          (($actual.y + $actual.height -
+            ($before.y + $before.height)) | abs) <= 4
+        else
+          false
+        end and
+        if $plan.phase == "first" then
+          $actual.width < ($before.width - 4) and
+          $actual.height < ($before.height - 4)
+        else
+          $actual.width > ($before.width + 4) and
+          $actual.height > ($before.height + 4)
+        end
+      ' "$stdout_file" >/dev/null; then
+      observed=1
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "$observed" != "1" ]]; then
+    fail_gate "$case_name did not reach its requested public host size"
+  fi
+  assert_status "$status_case"
+}
+
+resize_public_host() {
+  local case_name="$1"
+  local phase="$2"
+  local before_status_case="${case_name}_before_status"
+  run_cli "$before_status_case" status --json
+  assert_status "$before_status_case"
+  if [[ "$phase" == "first" ]]; then
+    jq -e '
+      .data.driver as $driver |
+      $driver.runtime.diagnostics.runtime.window as $window |
+      {
+        host: $window.canvasCapture.hostCGWindowBounds,
+        content: $window.canvasCapture.hostContentCGWindowRect,
+        displayScale: $window.displayScale,
+        resizeEdges: $window.resizeEdges,
+        canvasBounds: $window.canvasBounds,
+        canvasRect: $window.canvasRect,
+        runnerPID: $driver.runnerPid,
+        sessionIdentifier: $driver.sessionIdentifier,
+        generation: $driver.playcoverGenerationKey
+      }
+    ' "$RUN_DIR/${before_status_case}.stdout" \
+      >"$RUN_DIR/host_resize_initial.json"
+  fi
+  write_host_resize_plan "$case_name" "$phase" "$before_status_case"
+
+  local drag_start_x
+  local drag_start_y
+  local drag_end_x
+  local drag_end_y
+  local runner_pid
+  read -r drag_start_x drag_start_y drag_end_x drag_end_y runner_pid < <(
+    jq -r '
+      [
+        .drag.start.x,
+        .drag.start.y,
+        .drag.end.x,
+        .drag.end.y,
+        .runnerPID
+      ] | @tsv
+    ' "$RUN_DIR/${case_name}_plan.json"
+  )
+  MOUSE_SEQUENCE="$((MOUSE_SEQUENCE + 1))"
+  local event_token
+  event_token="$(
+    printf '%s%04d%02d' \
+      "$(date +%s)" \
+      "$(( $$ % 10000 ))" \
+      "$MOUSE_SEQUENCE"
+  )"
+  local stdout_file="$RUN_DIR/${case_name}_drag.stdout"
+  local stderr_file="$RUN_DIR/${case_name}_drag.stderr"
+  record_command \
+    "${case_name}_drag" \
+    "$stdout_file" \
+    "$stderr_file" \
+    xcrun swift \
+    "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
+    --drag \
+    "$drag_start_x" \
+    "$drag_start_y" \
+    "$drag_end_x" \
+    "$drag_end_y" \
+    "$event_token" \
+    "$runner_pid"
+  if ! xcrun swift \
+      "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
+      --drag \
+      "$drag_start_x" \
+      "$drag_start_y" \
+      "$drag_end_x" \
+      "$drag_end_y" \
+      "$event_token" \
+      "$runner_pid" \
+      >"$stdout_file" 2>"$stderr_file"; then
+    if rg -q -- \
+        'console session is locked|PostEvent access is not granted' \
+        "$stderr_file"; then
+      config_fail \
+        "host resize requires an unlocked console with PostEvent permission"
+    fi
+    fail_gate "$case_name real host-edge drag"
+  fi
+  if ! jq -e \
+      --argjson token "$event_token" \
+      --argjson pid "$runner_pid" \
+      --slurpfile plan "$RUN_DIR/${case_name}_plan.json" '
+        ($plan[0].drag.start) as $start |
+        ($plan[0].drag.end) as $end |
+        .operation == "drag" and
+        .token == $token and
+        .targetPID == $pid and
+        .targetWindowNumber > 0 and
+        .postEventAccess == true and
+        .startPoint.x >= ($start.x - 0.5) and
+        .startPoint.x <= ($start.x + 0.5) and
+        .startPoint.y >= ($start.y - 0.5) and
+        .startPoint.y <= ($start.y + 0.5) and
+        .endPoint.x >= ($end.x - 0.5) and
+        .endPoint.x <= ($end.x + 0.5) and
+        .endPoint.y >= ($end.y - 0.5) and
+        .endPoint.y <= ($end.y + 0.5)
+      ' "$stdout_file" >/dev/null; then
+    fail_gate "$case_name drag helper evidence is not target-bound"
+  fi
+  wait_for_host_resize "$case_name"
+}
+
+assert_two_uniform_host_resizes() {
+  if ! jq -e -n \
+      --slurpfile initial "$RUN_DIR/host_resize_initial.json" \
+      --slurpfile first "$RUN_DIR/host_resize_first_after_status.stdout" \
+      --slurpfile second "$RUN_DIR/host_resize_second_after_status.stdout" '
+        ($initial[0]) as $initial |
+        ($first[0].data.driver) as $firstDriver |
+        ($second[0].data.driver) as $secondDriver |
+        ($firstDriver.runtime.diagnostics.runtime.window) as $first |
+        ($secondDriver.runtime.diagnostics.runtime.window) as $second |
+        ($first.canvasCapture.hostCGWindowBounds) as $firstHost |
+        ($second.canvasCapture.hostCGWindowBounds) as $secondHost |
+        ($first.canvasCapture.hostContentCGWindowRect) as $firstContent |
+        ($second.canvasCapture.hostContentCGWindowRect) as $secondContent |
+        ($firstContent.width / $initial.content.width) as $firstScale |
+        ($secondContent.width / $initial.content.width) as $secondScale |
+        $firstDriver.runnerPid == $initial.runnerPID and
+        $secondDriver.runnerPid == $initial.runnerPID and
+        $firstDriver.sessionIdentifier == $initial.sessionIdentifier and
+        $secondDriver.sessionIdentifier == $initial.sessionIdentifier and
+        $firstDriver.playcoverGenerationKey == $initial.generation and
+        $secondDriver.playcoverGenerationKey == $initial.generation and
+        $initial.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
+        $first.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
+        $second.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
+        (($initial.resizeEdges.available % 16) == 15) and
+        (($initial.resizeEdges.growing % 16) == 15) and
+        (($initial.resizeEdges.shrinking % 16) == 15) and
+        (($first.resizeEdges.available % 16) == 15) and
+        (($first.resizeEdges.growing % 16) == 15) and
+        (($first.resizeEdges.shrinking % 16) == 15) and
+        (($second.resizeEdges.available % 16) == 15) and
+        (($second.resizeEdges.growing % 16) == 15) and
+        (($second.resizeEdges.shrinking % 16) == 15) and
+        $firstHost.width < ($initial.host.width - 4) and
+        $firstHost.height < ($initial.host.height - 4) and
+        $secondHost.width > ($firstHost.width + 4) and
+        $secondHost.height > ($firstHost.height + 4) and
+        (($first.displayScale - $initial.displayScale) | abs) > 0.01 and
+        (($second.displayScale - $first.displayScale) | abs) > 0.01 and
+        (($firstContent.height / $initial.content.height -
+          $firstScale) | abs) <= 0.002 and
+        (($secondContent.height / $initial.content.height -
+          $secondScale) | abs) <= 0.002 and
+        (($first.displayScale / $initial.displayScale -
+          $firstScale) | abs) <= 0.002 and
+        (($second.displayScale / $initial.displayScale -
+          $secondScale) | abs) <= 0.002 and
+        (($firstHost.height - $firstContent.height -
+          ($initial.host.height - $initial.content.height)) | abs) <= 1 and
+        (($secondHost.height - $secondContent.height -
+          ($initial.host.height - $initial.content.height)) | abs) <= 1 and
+        (($first.canvasRect.width / $first.displayScale - 430) | abs) <=
+          0.5 and
+        (($first.canvasRect.height / $first.displayScale - 932) | abs) <=
+          0.5 and
+        (($second.canvasRect.width / $second.displayScale - 430) | abs) <=
+          0.5 and
+        (($second.canvasRect.height / $second.displayScale - 932) | abs) <=
+          0.5 and
+        (($first.canvasRect.x -
+          $first.hostContentBounds.x) | abs) <= 0.5 and
+        (($first.canvasRect.y -
+          $first.hostContentBounds.y) | abs) <= 0.5 and
+        (($first.canvasRect.width -
+          $first.hostContentBounds.width) | abs) <= 0.5 and
+        (($first.canvasRect.height -
+          $first.hostContentBounds.height) | abs) <= 0.5 and
+        (($second.canvasRect.x -
+          $second.hostContentBounds.x) | abs) <= 0.5 and
+        (($second.canvasRect.y -
+          $second.hostContentBounds.y) | abs) <= 0.5 and
+        (($second.canvasRect.width -
+          $second.hostContentBounds.width) | abs) <= 0.5 and
+        (($second.canvasRect.height -
+          $second.hostContentBounds.height) | abs) <= 0.5
+      ' /dev/null >/dev/null; then
+    fail_gate \
+      "two real host resizes did not preserve one fixed UIKit canvas and proportional display scale"
   fi
 }
 
@@ -822,17 +1421,29 @@ run_external_app_ui_workflow() {
     fail_gate "fresh external App DOM lacks the seeded recovery dialog/actions"
   fi
 
+  resize_public_host host_resize_first first
   run_cli \
-    restore_tap_cancel \
-    tap "$RESTORE_CANCEL" --dom --json
-  if ! jq -e --arg cancel "$RESTORE_CANCEL" '
-      .data.element.label == $cancel
-    ' "$RUN_DIR/restore_tap_cancel.stdout" >/dev/null; then
-    fail_gate "Runtime tap targeted a different recovery action"
+    resize_first_screenshot \
+    screenshot --name external-app-resize-first --json
+  assert_screenshot resize_first_screenshot
+  retain_screenshot resize_first_screenshot
+  run_cli resize_first_dom dom --json
+  if ! jq -e \
+      --arg dialog "$RESTORE_DIALOG" \
+      --arg cancel "$RESTORE_CANCEL" \
+      --arg continue "$RESTORE_CONTINUE" '
+        any(.data.elements[];
+          .label == $dialog and .state.visible == true) and
+        any(.data.elements[];
+          .label == $cancel and .state.visible == true) and
+        any(.data.elements[];
+          .label == $continue and .state.visible == true)
+      ' "$RUN_DIR/resize_first_dom.stdout" >/dev/null; then
+    fail_gate \
+      "resized external App DOM lost the seeded recovery dialog/actions"
   fi
-  run_cli \
-    restore_wait_gone \
-    waitFor "$RESTORE_DIALOG" --gone --timeout 10s --json
+
+  global_dismiss_recovery_dialog
   run_cli \
     home_wait \
     waitFor "$HOME_ANCHOR" --timeout 15s --json
@@ -857,6 +1468,35 @@ run_external_app_ui_workflow() {
   runtime_select_tab runtime_tab_profile "${TAB_LABELS[2]}"
   runtime_select_tab runtime_tab_home "${TAB_LABELS[0]}"
 
+  deliver_canvas_corner resize_first_top_left top-left
+  deliver_canvas_corner resize_first_bottom_right bottom-right
+  runtime_select_tab resize_first_corner_return_home "${TAB_LABELS[0]}"
+
+  resize_public_host host_resize_second second
+  assert_two_uniform_host_resizes
+  run_cli \
+    resize_second_screenshot \
+    screenshot --name external-app-resize-second --json
+  assert_screenshot resize_second_screenshot
+  retain_screenshot resize_second_screenshot
+  run_cli resize_second_dom dom --json
+  if ! jq -e \
+      --arg anchor "$HOME_ANCHOR" \
+      --arg first "${TAB_LABELS[0]}" \
+      --arg second "${TAB_LABELS[1]}" \
+      --arg third "${TAB_LABELS[2]}" '
+        . as $root |
+        any(.data.elements[];
+          .label == $anchor and .state.visible == true) and
+        all([$first, $second, $third][];
+          . as $tab |
+          any($root.data.elements[];
+            .label == $tab and .state.visible == true))
+      ' "$RUN_DIR/resize_second_dom.stdout" >/dev/null; then
+    fail_gate "second resized DOM lost the stable home/tab contract"
+  fi
+  runtime_select_tab runtime_resized_tab "${TAB_LABELS[1]}"
+
   local index
   for index in 0 1 2; do
     local target="${TAB_LABELS[$index]}"
@@ -865,6 +1505,8 @@ run_external_app_ui_workflow() {
     global_select_tab "mouse_${index}_${target}" "$target"
   done
   runtime_select_tab runtime_return_home "${TAB_LABELS[0]}"
+  deliver_canvas_corner resize_second_top_right top-right
+  deliver_canvas_corner resize_second_bottom_left bottom-left
 
   run_cli workflow_status status --json
   assert_status workflow_status
@@ -981,6 +1623,11 @@ write_redacted_attestation() {
     /usr/bin/shasum -a 256 "$CYCLE_INDEX" |
       /usr/bin/awk '{print $1}'
   )"
+  local lifecycle_scope_digest
+  lifecycle_scope_digest="$(
+    /usr/bin/shasum -a 256 "$RUN_DIR/lifecycle-scope.txt" |
+      /usr/bin/awk '{print $1}'
+  )"
   local attestation_path="$ATTESTATION_ROOT/external-app-live-v1.json"
   if [[ -e "$attestation_path" ]]; then
     config_fail "the redacted attestation output already exists"
@@ -993,8 +1640,11 @@ write_redacted_attestation() {
     --arg manifestDigest "$manifest_digest" \
     --arg artifactIndexDigest "$artifact_index_digest" \
     --arg cycleIndexDigest "$cycle_index_digest" \
+    --arg lifecycleScopeDigest "$lifecycle_scope_digest" \
     --argjson treeClean "$tree_clean" \
-    --argjson cycleCount "$CYCLE_COUNT" '
+    --argjson cycleCount "$CYCLE_COUNT" \
+    --argjson uniqueRunnerPIDCount "$UNIQUE_RUNNER_PID_COUNT" \
+    --argjson pidReuseObserved "$PID_REUSE_OBSERVED" '
       {
         schemaVersion: 1,
         backend: "playcover",
@@ -1007,12 +1657,25 @@ write_redacted_attestation() {
         generationDigest: $generationDigest,
         cycleCount: $cycleCount,
         uniqueSessionCount: $cycleCount,
+        uniqueRunnerPIDCount: $uniqueRunnerPIDCount,
+        pidReuseObserved: $pidReuseObserved,
         sourceExecutableUnchanged: true,
+        faultCoverageOwners: {
+          runtimeCrashAndStale:
+            "test_playcover_runtime_stress_live.sh",
+          syntheticPIDReuse:
+            "PlayCoverSessionTests.testTerminateRefusesPIDWhoseExecutableChanged"
+        },
         caseIDs: [
-          "lifecycle-20",
+          "clean-lifecycle-20",
+          "host-edge-resize",
+          "proportional-display-scale",
+          "resized-screenshot-dom",
           "recovery-dialog",
           "runtime-tabs",
+          "global-mouse-dialog",
           "global-mouse-tabs",
+          "resized-canvas-corners",
           "complete-screenshot",
           "complete-capture",
           "pid-scoped-oslog",
@@ -1021,7 +1684,8 @@ write_redacted_attestation() {
         privateEvidenceDigests: {
           manifest: $manifestDigest,
           artifactIndex: $artifactIndexDigest,
-          cycleIndex: $cycleIndexDigest
+          cycleIndex: $cycleIndexDigest,
+          lifecycleScope: $lifecycleScopeDigest
         }
       }
     ' >"$attestation_path"
@@ -1177,6 +1841,27 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
 
   run_cli "${cycle_name}_status" status --json
   assert_status "${cycle_name}_status"
+  assert_cycle_identity "${cycle_name}_status" "$cycle"
+  cycle_session_identifier="$(
+    jq -er '.data.driver.sessionIdentifier' \
+      "$RUN_DIR/${cycle_name}_status.stdout"
+  )"
+  cycle_runner_pid="$(
+    jq -er '.data.driver.runnerPid' \
+      "$RUN_DIR/${cycle_name}_status.stdout"
+  )"
+  if /usr/bin/awk -F '\t' \
+      -v session="$cycle_session_identifier" '
+        NR > 1 && $2 == session {
+          found = 1
+        }
+        END {
+          exit !found
+        }
+  ' "$CYCLE_INDEX"; then
+    fail_gate \
+      "$cycle_name reused an earlier session identifier"
+  fi
   jq -er --argjson cycle "$cycle" '
       [
         $cycle,
@@ -1199,37 +1884,66 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
 
   run_cli "${cycle_name}_stop" stop
   run_cli "${cycle_name}_stopped_status" status --json
-  if ! jq -e \
-      '.data.driver.status == "notRunning"' \
-      "$RUN_DIR/${cycle_name}_stopped_status.stdout" >/dev/null; then
-    fail_gate "$cycle_name stop left an active driver session"
-  fi
+  assert_clean_cycle_stopped \
+    "${cycle_name}_stopped_status" \
+    "$cycle_runner_pid"
 done
 
-if ! /usr/bin/awk -F '\t' -v expected="$CYCLE_COUNT" '
+if ! cycle_pid_summary="$(
+  /usr/bin/awk -F '\t' \
+    -v expected="$CYCLE_COUNT" \
+    -v expectedGeneration="$GENERATION_KEY" '
     NR == 1 { next }
     {
+      if (
+        $1 != rows + 1 ||
+        length($2) != 36 ||
+        $3 !~ /^[0-9]+$/ ||
+        $3 <= 1 ||
+        $4 != expectedGeneration
+      ) {
+        invalid = 1
+      }
       rows += 1
       sessions[$2] = 1
+      runners[$3] = 1
       generations[$4] = 1
     }
     END {
-      if (rows != expected) {
+      if (invalid || rows != expected) {
         exit 1
       }
       sessionCount = 0
       for (session in sessions) {
         sessionCount += 1
       }
+      runnerCount = 0
+      for (runner in runners) {
+        runnerCount += 1
+      }
       generationCount = 0
       for (generation in generations) {
         generationCount += 1
       }
-      exit !(sessionCount == expected && generationCount == 1)
+      if (sessionCount != expected || generationCount != 1) {
+        exit 1
+      }
+      printf "%d\t%s\n", runnerCount,
+        (runnerCount < expected ? "true" : "false")
     }
-  ' "$CYCLE_INDEX"; then
+  ' "$CYCLE_INDEX"
+)"; then
   fail_gate \
-    "the 20 cycles did not use 20 fresh sessions and one reused generation"
+    "the 20 cycles did not bind 20 unique sessions to one exact reused generation"
+fi
+IFS=$'\t' read -r UNIQUE_RUNNER_PID_COUNT PID_REUSE_OBSERVED \
+  <<<"$cycle_pid_summary"
+if [[
+  ! "$UNIQUE_RUNNER_PID_COUNT" =~ ^[1-9][0-9]*$ ||
+  "$UNIQUE_RUNNER_PID_COUNT" -gt "$CYCLE_COUNT" ||
+  ("$PID_REUSE_OBSERVED" != "true" && "$PID_REUSE_OBSERVED" != "false")
+]]; then
+  fail_gate "could not summarize observed runner PID reuse"
 fi
 
 if ! SOURCE_HASH_AFTER="$(source_executable_hash)"; then
@@ -1244,5 +1958,5 @@ fi
 write_redacted_attestation
 GATE_PASSED=1
 echo \
-  "[playcover-external-live] PASS: external App UI, global mouse, evidence, reuse, and $CYCLE_COUNT cycles" \
+  "[playcover-external-live] PASS: external App resize/UI/global mouse, evidence, exact reuse, and $CYCLE_COUNT clean cycles" \
   >&2

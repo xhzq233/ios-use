@@ -121,6 +121,20 @@ public enum SessionService {
     }
 
     public static func start(udid requestedUdid: String?, paths: IOSUsePaths, verbose: Bool) throws -> String {
+        try SessionOperationLock.withExclusiveLock(paths: paths) {
+            try startLocked(
+                udid: requestedUdid,
+                paths: paths,
+                verbose: verbose
+            )
+        }
+    }
+
+    private static func startLocked(
+        udid requestedUdid: String?,
+        paths: IOSUsePaths,
+        verbose: Bool
+    ) throws -> String {
         try prepareForStart(paths: paths)
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         let info = try resolveDriverInfo(udid: udid, paths: paths)
@@ -166,6 +180,23 @@ public enum SessionService {
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
+        let started = PlayCoverMonotonicClock.now()
+        return try SessionOperationLock.withExclusiveLock(paths: paths) {
+            try startPlayCoverLocked(
+                appPath: appPath,
+                timeout: timeout,
+                paths: paths,
+                started: started
+            )
+        }
+    }
+
+    private static func startPlayCoverLocked(
+        appPath: String?,
+        timeout: Double,
+        paths: IOSUsePaths,
+        started: UInt64
+    ) throws -> String {
         try prepareForStart(paths: paths)
         var launch: PlayCoverSessionService.LaunchResult?
         do {
@@ -180,12 +211,29 @@ public enum SessionService {
                 paths: paths
             )
             let cacheDisposition = result.reused ? "reused" : "prepared"
-            return """
+            let pruning =
+                PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                    paths: paths,
+                    currentGenerationKey: result.generationKey
+                )
+            var output = """
             PlayCover session started for \(result.bundleIdentifier) (pid \(result.pid))
             PlayCover generation \(cacheDisposition): \(result.generationKey)
             IOS_USE_HOME: \(paths.root)
 
             """
+            if !pruning.removedGenerationKeys.isEmpty {
+                output += "PlayCover cache pruned: "
+                    + "\(pruning.removedGenerationKeys.count) generation(s)\n"
+            }
+            for warning in pruning.warnings {
+                output += "Warning: \(warning)\n"
+            }
+            var timing = result.timing
+            timing.totalNanoseconds =
+                PlayCoverMonotonicClock.elapsed(since: started)
+            output += "PlayCover timing: \(timing.outputLine)\n"
+            return output
         } catch let error as
                 PlayCoverSessionUnterminatedLaunchError {
             do {
@@ -273,17 +321,27 @@ public enum SessionService {
     }
 
     public static func stop(paths: IOSUsePaths) throws -> String {
+        try SessionOperationLock.withExclusiveLock(paths: paths) {
+            try stopLocked(paths: paths)
+        }
+    }
+
+    private static func stopLocked(paths: IOSUsePaths) throws -> String {
         let current = try requireDriverLock(paths: paths)
         if current.deviceType == PlayCoverSessionService.deviceType {
-            let pid = try PlayCoverSessionService.terminate(session: current)
+            let pid = try PlayCoverSessionService.terminate(
+                session: current
+            )
             do {
                 try DriverSessionStore.removeDriverLock(paths: paths)
             } catch {
                 throw CLIParseError.invalidValue(
-                    "PlayCover App stopped, but failed to remove \(paths.driverLock): \(error)"
+                    "PlayCover App stopped, but failed to remove "
+                        + "\(paths.driverLock): \(error)"
                 )
             }
-            return "PlayCover App stopped (pid \(pid))\nPlayCover session stopped\n"
+            return "PlayCover App stopped (pid \(pid))\n"
+                + "PlayCover session stopped\n"
         }
         var output = try DriverLifecycleService.terminateDriver(
             for: current,

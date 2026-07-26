@@ -9,6 +9,7 @@
 
 import CryptoKit
 import Darwin
+import Dispatch
 import Foundation
 
 public enum PlayCoverUpstreamError: Error, Equatable, CustomStringConvertible, Sendable {
@@ -554,28 +555,34 @@ public struct PlayCoverUpstreamEntitlementDiff: Codable, Equatable, Sendable {
 public struct PlayCoverUpstreamPrepareOptions: Sendable {
     public let sourceApp: URL
     public let stagingApp: URL
+    public let managedStagingApp: URL?
     public let runtimeFramework: URL
     public let managedHome: URL
     public let runtimeSocketPath: String
     public let runtimeLoadPath: String
     public let playSignActive: Bool
+    public let expectedRuntimeBuildHash: String?
 
     public init(
         sourceApp: URL,
         stagingApp: URL,
+        managedStagingApp: URL? = nil,
         runtimeFramework: URL,
         managedHome: URL,
         runtimeSocketPath: String,
         runtimeLoadPath: String,
-        playSignActive: Bool = false
+        playSignActive: Bool = false,
+        expectedRuntimeBuildHash: String? = nil
     ) {
         self.sourceApp = sourceApp
         self.stagingApp = stagingApp
+        self.managedStagingApp = managedStagingApp
         self.runtimeFramework = runtimeFramework
         self.managedHome = managedHome
         self.runtimeSocketPath = runtimeSocketPath
         self.runtimeLoadPath = runtimeLoadPath
         self.playSignActive = playSignActive
+        self.expectedRuntimeBuildHash = expectedRuntimeBuildHash
     }
 }
 
@@ -586,6 +593,7 @@ public struct PlayCoverUpstreamPrepareResult: Codable, Equatable, Sendable {
     public let convertedMachOs: [String]
     public let signingOrder: [String]
     public let entitlementDiff: PlayCoverUpstreamEntitlementDiff
+    public let phaseTimings: PlayCoverUpstreamPreparePhaseTimings?
 
     public init(
         sourceBefore: PlayCoverUpstreamAppInspection,
@@ -593,7 +601,8 @@ public struct PlayCoverUpstreamPrepareResult: Codable, Equatable, Sendable {
         prepared: PlayCoverUpstreamAppInspection,
         convertedMachOs: [String],
         signingOrder: [String],
-        entitlementDiff: PlayCoverUpstreamEntitlementDiff
+        entitlementDiff: PlayCoverUpstreamEntitlementDiff,
+        phaseTimings: PlayCoverUpstreamPreparePhaseTimings? = nil
     ) {
         self.sourceBefore = sourceBefore
         self.sourceHashAfterPrepare = sourceHashAfterPrepare
@@ -601,6 +610,28 @@ public struct PlayCoverUpstreamPrepareResult: Codable, Equatable, Sendable {
         self.convertedMachOs = convertedMachOs
         self.signingOrder = signingOrder
         self.entitlementDiff = entitlementDiff
+        self.phaseTimings = phaseTimings
+    }
+}
+
+public struct PlayCoverUpstreamPreparePhaseTimings:
+    Codable, Equatable, Sendable
+{
+    public let cloneNanoseconds: UInt64
+    public let convertNanoseconds: UInt64
+    public let signNanoseconds: UInt64
+    public let verifyNanoseconds: UInt64
+
+    public init(
+        cloneNanoseconds: UInt64,
+        convertNanoseconds: UInt64,
+        signNanoseconds: UInt64,
+        verifyNanoseconds: UInt64
+    ) {
+        self.cloneNanoseconds = cloneNanoseconds
+        self.convertNanoseconds = convertNanoseconds
+        self.signNanoseconds = signNanoseconds
+        self.verifyNanoseconds = verifyNanoseconds
     }
 }
 
@@ -636,7 +667,15 @@ public enum PlayCoverUpstreamEngine {
         )
 
         let infoURL = app.appendingPathComponent("Info.plist")
-        guard let info = NSDictionary(contentsOf: infoURL),
+        guard let infoData = try? Data(
+                  contentsOf: infoURL,
+                  options: .mappedIfSafe
+              ),
+              let info = try? PropertyListSerialization.propertyList(
+                  from: infoData,
+                  options: [],
+                  format: nil
+              ) as? [String: Any],
               let bundleIdentifier = info["CFBundleIdentifier"] as? String,
               !bundleIdentifier.isEmpty,
               let executableName = info["CFBundleExecutable"] as? String,
@@ -652,22 +691,17 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
-        let inventory = try inventory(appURL: app)
-        var machOs: [PlayCoverUpstreamMachOInspection] = []
-        for entry in inventory where entry.kind == .regularFile {
-            let candidate = app.appendingPathComponent(entry.relativePath)
-            guard try isMachO(candidate) else {
-                continue
-            }
-            machOs.append(
-                try inspectMachO(
-                    at: candidate,
-                    relativePath: entry.relativePath
-                )
-            )
-        }
-        let mainRelative = relativePath(executable, in: app)
-        guard machOs.contains(where: { $0.relativePath == mainRelative }) else {
+        let snapshot = try treeSnapshot(
+            appURL: app,
+            preloadedRegularFileData: ["Info.plist": infoData],
+            inspectMachOs: true
+        )
+        let inventory = snapshot.inventory
+        let machOs = snapshot.machOs
+        let mainRelative = try relativePath(executable, in: app)
+        guard let mainMachO = machOs.first(where: {
+            $0.relativePath == mainRelative
+        }) else {
             throw PlayCoverUpstreamError.invalidApp(
                 "main executable is not a supported arm64 Mach-O"
             )
@@ -680,17 +714,22 @@ public enum PlayCoverUpstreamEngine {
         let provisioning = PlayCoverUpstreamProvisioningEvidence(
             present: provisionAttributes != nil,
             size: (provisionAttributes?[.size] as? NSNumber)?.uint64Value,
-            sha256: provisionAttributes == nil ? nil : try fileSHA256(provisionURL)
+            sha256: try provisioningSHA256(
+                attributes: provisionAttributes,
+                relativePath: "embedded.mobileprovision",
+                url: provisionURL,
+                snapshot: snapshot
+            )
         )
         return PlayCoverUpstreamAppInspection(
             appPath: app.path,
-            sourceContentHash: try contentHash(appURL: app, inventory: inventory),
-            infoPlistSHA256: try fileSHA256(infoURL),
+            sourceContentHash: snapshot.contentHash,
+            infoPlistSHA256: hex(SHA256.hash(data: infoData)),
             bundleIdentifier: bundleIdentifier,
             executableName: executableName,
             executablePath: executable.path,
             mainExecutableRelativePath: mainRelative,
-            signature: try signatureEvidence(executable),
+            signature: mainMachO.signature,
             provisioning: provisioning,
             inventory: inventory,
             machOs: machOs
@@ -742,6 +781,26 @@ public enum PlayCoverUpstreamEngine {
         _ options: PlayCoverUpstreamPrepareOptions
     ) throws -> PlayCoverUpstreamPrepareResult {
         let source = try inspect(appURL: options.sourceApp)
+        return try prepare(options, sourceInspection: source)
+    }
+
+    public static func prepare(
+        _ options: PlayCoverUpstreamPrepareOptions,
+        sourceInspection source: PlayCoverUpstreamAppInspection
+    ) throws -> PlayCoverUpstreamPrepareResult {
+        let optionsSourcePath = options.sourceApp.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        let inspectedSourcePath = URL(
+            fileURLWithPath: source.appPath,
+            isDirectory: true
+        ).standardizedFileURL.resolvingSymlinksInPath().path
+        guard optionsSourcePath == inspectedSourcePath else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "source inspection path \(source.appPath) does not match "
+                    + options.sourceApp.standardizedFileURL.path
+            )
+        }
+        var phaseTimings = PrepareTimingAccumulator()
         try validateManagedStaging(options, source: source)
 
         try validateRuntimeFramework(options.runtimeFramework)
@@ -757,8 +816,8 @@ public enum PlayCoverUpstreamEngine {
                 ($0.relativePath, $0)
             }
         )
-        let installerRelativePaths = installerMachOs.map {
-            relativePath($0, in: options.sourceApp)
+        let installerRelativePaths = try installerMachOs.map {
+            try relativePath($0, in: options.sourceApp)
         }
         guard Set(installerRelativePaths) == Set(sourceByPath.keys) else {
             throw PlayCoverUpstreamError.verificationFailed(
@@ -800,6 +859,7 @@ public enum PlayCoverUpstreamEngine {
                     : nil
             )
         }
+        let cloneStarted = monotonicTimestamp()
         try cloneSource(options.sourceApp, to: options.stagingApp)
         var rollback = true
         defer {
@@ -828,6 +888,19 @@ public enum PlayCoverUpstreamEngine {
             at: options.runtimeFramework,
             to: embeddedRuntime
         )
+        if let expected = options.expectedRuntimeBuildHash {
+            let actual = try runtimeBuildHash(frameworkURL: embeddedRuntime)
+            guard actual == expected else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "Runtime framework changed while staging: expected "
+                        + "\(expected), got \(actual)"
+                )
+            }
+        }
+        accumulateMonotonicDuration(
+            &phaseTimings.cloneNanoseconds,
+            since: cloneStarted
+        )
 
         var converted: [String] = []
         for relative in installerRelativePaths {
@@ -839,6 +912,7 @@ public enum PlayCoverUpstreamEngine {
             let target = options.stagingApp
                 .appendingPathComponent(relative)
             if sourceMacho.platform != platformMacCatalyst {
+                let convertStarted = monotonicTimestamp()
                 do {
                     try Macho.convertMacho(target)
                 } catch {
@@ -846,8 +920,13 @@ public enum PlayCoverUpstreamEngine {
                         "\(relative): \(error)"
                     )
                 }
+                accumulateMonotonicDuration(
+                    &phaseTimings.convertNanoseconds,
+                    since: convertStarted
+                )
                 converted.append(relative)
             }
+            let signStarted = monotonicTimestamp()
             do {
                 try Shell.signMacho(target)
             } catch {
@@ -855,6 +934,10 @@ public enum PlayCoverUpstreamEngine {
                     "\(relative): \(error)"
                 )
             }
+            accumulateMonotonicDuration(
+                &phaseTimings.signNanoseconds,
+                since: signStarted
+            )
         }
 
         let mainExecutable = options.stagingApp
@@ -867,9 +950,14 @@ public enum PlayCoverUpstreamEngine {
             in: preInjection,
             runtimeLoadPath: options.runtimeLoadPath
         )
+        let injectionStarted = monotonicTimestamp()
         try PlayTools.injectRuntime(
             mainExecutable,
             loadPath: options.runtimeLoadPath
+        )
+        accumulateMonotonicDuration(
+            &phaseTimings.convertNanoseconds,
+            since: injectionStarted
         )
         let postInjection = try inspectMachO(
             at: mainExecutable,
@@ -901,10 +989,15 @@ public enum PlayCoverUpstreamEngine {
             managedHome: options.managedHome,
             playSignActive: options.playSignActive
         )
+        let signingStarted = monotonicTimestamp()
         let signing = try signInsideOut(
             appURL: options.stagingApp,
             source: source,
             finalEntitlements: composition.finalPlist
+        )
+        accumulateMonotonicDuration(
+            &phaseTimings.signNanoseconds,
+            since: signingStarted
         )
         do {
             _ = try Shell.run(
@@ -920,17 +1013,22 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
+        let verifyStarted = monotonicTimestamp()
         let prepared = try verify(
             appURL: options.stagingApp,
             runtimeLoadPath: options.runtimeLoadPath
         )
-        let sourceAfter = try inspect(appURL: options.sourceApp).sourceContentHash
+        let sourceAfter = try contentHash(appURL: options.sourceApp)
         guard sourceAfter == source.sourceContentHash else {
             throw PlayCoverUpstreamError.sourceMutated(
                 expected: source.sourceContentHash,
                 actual: sourceAfter
             )
         }
+        accumulateMonotonicDuration(
+            &phaseTimings.verifyNanoseconds,
+            since: verifyStarted
+        )
         rollback = false
         return PlayCoverUpstreamPrepareResult(
             sourceBefore: source,
@@ -938,7 +1036,8 @@ public enum PlayCoverUpstreamEngine {
             prepared: prepared,
             convertedMachOs: converted,
             signingOrder: signing,
-            entitlementDiff: composition.diff
+            entitlementDiff: composition.diff,
+            phaseTimings: phaseTimings.evidence
         )
     }
 
@@ -995,11 +1094,107 @@ public enum PlayCoverUpstreamEngine {
     }
 
     public static func contentHash(appURL: URL) throws -> String {
-        let entries = try inventory(appURL: appURL.standardizedFileURL)
-        return try contentHash(
-            appURL: appURL.standardizedFileURL,
-            inventory: entries
+        let app = appURL.standardizedFileURL
+        try validateTreeContainment(
+            root: app,
+            label: "App content hash",
+            rejectRootSymlink: true
         )
+        return try treeSnapshot(
+            appURL: app,
+            preloadedRegularFileData: [:],
+            inspectMachOs: false
+        ).contentHash
+    }
+
+    public static func runtimeBuildHash(frameworkURL: URL) throws -> String {
+        // FileManager may enumerate `/tmp` and `/var` through their canonical
+        // `/private/...` aliases. Anchor enumeration and relative paths to the
+        // canonical framework root so an unchanged copy has the same build
+        // identity regardless of which lexical alias the caller supplied.
+        let root = frameworkURL.standardizedFileURL
+            .resolvingSymlinksInPath()
+        var directory: ObjCBool = false
+        guard FileManager.default.fileExists(
+                  atPath: root.path,
+                  isDirectory: &directory
+              ),
+              directory.boolValue else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "Runtime is not a framework directory: \(root.path)"
+            )
+        }
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+        ]
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: Array(keys),
+            options: []
+        ) else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "cannot enumerate Runtime framework \(root.path)"
+            )
+        }
+        var entries: [(String, URL, String, UInt16, UInt64)] = []
+        for case let url as URL in enumerator {
+            let values = try url.resourceValues(forKeys: keys)
+            let kind: String
+            if values.isSymbolicLink == true {
+                kind = "symlink"
+            } else if values.isDirectory == true {
+                kind = "directory"
+            } else if values.isRegularFile == true {
+                kind = "file"
+            } else {
+                kind = "other"
+            }
+            entries.append(
+                (
+                    try relativePath(url, in: root),
+                    url,
+                    kind,
+                    UInt16(
+                        truncating: (
+                            try FileManager.default.attributesOfItem(
+                                atPath: url.path
+                            )[.posixPermissions] as? NSNumber
+                        ) ?? 0
+                    ),
+                    UInt64(values.fileSize ?? 0)
+                )
+            )
+        }
+
+        var hasher = SHA256()
+        for (relative, url, kind, permissions, size) in entries.sorted(by: {
+            $0.0.utf8.lexicographicallyPrecedes($1.0.utf8)
+        }) {
+            update(&hasher, relative)
+            update(&hasher, kind)
+            update(&hasher, String(permissions))
+            update(&hasher, String(size))
+            if kind == "file" {
+                updateLength(&hasher, size)
+                let handle = try FileHandle(forReadingFrom: url)
+                defer { try? handle.close() }
+                while let data = try handle.read(upToCount: 1_048_576),
+                      !data.isEmpty {
+                    hasher.update(data: data)
+                }
+            } else if kind == "symlink" {
+                update(
+                    &hasher,
+                    try FileManager.default.destinationOfSymbolicLink(
+                        atPath: url.path
+                    )
+                )
+            }
+        }
+        return hex(hasher.finalize())
     }
 
     private struct Slice {
@@ -1012,6 +1207,43 @@ public enum PlayCoverUpstreamEngine {
         let size: UInt64
         let alignment: UInt32?
         let byteSwapped: Bool
+    }
+
+    private struct InventoryMetadata {
+        let url: URL
+        let relativePath: String
+        let kind: PlayCoverUpstreamFileKind
+        let size: UInt64?
+        let posixPermissions: UInt16?
+        let symbolicLinkDestination: String?
+    }
+
+    private struct RegularFileSnapshot {
+        let sha256: String
+        let isMachO: Bool
+        let retainedData: Data?
+    }
+
+    private struct TreeSnapshot {
+        let contentHash: String
+        let inventory: [PlayCoverUpstreamInventoryEntry]
+        let machOs: [PlayCoverUpstreamMachOInspection]
+    }
+
+    private struct PrepareTimingAccumulator {
+        var cloneNanoseconds: UInt64 = 0
+        var convertNanoseconds: UInt64 = 0
+        var signNanoseconds: UInt64 = 0
+        var verifyNanoseconds: UInt64 = 0
+
+        var evidence: PlayCoverUpstreamPreparePhaseTimings {
+            PlayCoverUpstreamPreparePhaseTimings(
+                cloneNanoseconds: cloneNanoseconds,
+                convertNanoseconds: convertNanoseconds,
+                signNanoseconds: signNanoseconds,
+                verifyNanoseconds: verifyNanoseconds
+            )
+        }
     }
 
     private struct EmbeddedSignatureEvidence {
@@ -1031,7 +1263,21 @@ public enum PlayCoverUpstreamEngine {
         at url: URL,
         relativePath: String
     ) throws -> PlayCoverUpstreamMachOInspection {
-        let fullData = try Data(contentsOf: url, options: .mappedIfSafe)
+        let fullData = try Data(contentsOf: url, options: .alwaysMapped)
+        return try inspectMachO(
+            fullData,
+            fileSHA256: hex(SHA256.hash(data: fullData)),
+            at: url,
+            relativePath: relativePath
+        )
+    }
+
+    private static func inspectMachO(
+        _ fullData: Data,
+        fileSHA256: String,
+        at url: URL,
+        relativePath: String
+    ) throws -> PlayCoverUpstreamMachOInspection {
         let rawSlices = try machoSlices(fullData, path: relativePath)
         guard let slice = rawSlices.first(where: {
             $0.cpuType == cpuTypeArm64
@@ -1250,9 +1496,10 @@ public enum PlayCoverUpstreamEngine {
                         "\(relativePath) has a short LC_UUID"
                     )
                 }
-                semanticValue = "uuid=" + data[
+                semanticValue = "uuid=" + relativeData(
+                    data,
                     (cursor + 8)..<(cursor + 24)
-                ].map { String(format: "%02x", $0) }.joined()
+                ).map { String(format: "%02x", $0) }.joined()
             case 0x1d:
                 guard commandSize >= 16 else {
                     throw PlayCoverUpstreamError.malformedMachO(
@@ -1267,7 +1514,10 @@ public enum PlayCoverUpstreamEngine {
             default:
                 break
             }
-            let commandData = data[cursor..<(cursor + commandSize)]
+            let commandData = relativeData(
+                data,
+                cursor..<(cursor + commandSize)
+            )
             loadCommands.append(
                 PlayCoverUpstreamLoadCommandInspection(
                     index: UInt32(index),
@@ -1286,7 +1536,7 @@ public enum PlayCoverUpstreamEngine {
         }
         return PlayCoverUpstreamMachOInspection(
             relativePath: relativePath,
-            fileSHA256: try fileSHA256(url),
+            fileSHA256: fileSHA256,
             container: slice.container,
             fatHeaderBigEndian: slice.container == .thin
                 ? nil
@@ -1442,7 +1692,11 @@ public enum PlayCoverUpstreamEngine {
             occupiedRanges.append(range)
             let start = Int(offset)
             let end = start + Int(size)
-            let sliceData = data.subdata(in: start..<end)
+            // `Data` slicing shares the file-backed storage and keeps the
+            // original indices. Do not use `subdata(in:)` here: that eagerly
+            // copies every fat slice and makes inspection proportional to the
+            // sum of all slice sizes in heap memory.
+            let sliceData = data[start..<end]
             let sliceMagic = Array(sliceData.prefix(4))
             guard sliceMagic == [0xcf, 0xfa, 0xed, 0xfe]
                     || sliceMagic == [0xfe, 0xed, 0xfa, 0xcf] else {
@@ -1490,18 +1744,20 @@ public enum PlayCoverUpstreamEngine {
         }
         var previousEnd = UInt64(tableEnd)
         for range in sortedRanges {
-            guard data[
+            guard relativeData(
+                data,
                 Int(previousEnd)..<Int(range.lowerBound)
-            ].allSatisfy({ $0 == 0 }) else {
+            ).allSatisfy({ $0 == 0 }) else {
                 throw PlayCoverUpstreamError.malformedMachO(
                     "\(path) has nonzero fat-container padding"
                 )
             }
             previousEnd = range.upperBound
         }
-        guard data[Int(previousEnd)..<data.count].allSatisfy({
-            $0 == 0
-        }) else {
+        guard relativeData(
+            data,
+            Int(previousEnd)..<data.count
+        ).allSatisfy({ $0 == 0 }) else {
             throw PlayCoverUpstreamError.malformedMachO(
                 "\(path) has nonzero fat-container trailing data"
             )
@@ -1737,9 +1993,10 @@ public enum PlayCoverUpstreamEngine {
                         "\(path) has a short LC_UUID"
                     )
                 }
-                semanticValue = "uuid=" + data[
+                semanticValue = "uuid=" + relativeData(
+                    data,
                     (cursor + 8)..<(cursor + 24)
-                ].map { String(format: "%02x", $0) }.joined()
+                ).map { String(format: "%02x", $0) }.joined()
             case 0x1d:
                 guard commandSize >= 16 else {
                     throw PlayCoverUpstreamError.malformedMachO(
@@ -1775,7 +2032,10 @@ public enum PlayCoverUpstreamEngine {
             default:
                 break
             }
-            let commandData = data[cursor..<(cursor + commandSize)]
+            let commandData = relativeData(
+                data,
+                cursor..<(cursor + commandSize)
+            )
             commands.append(
                 PlayCoverUpstreamLoadCommandInspection(
                     index: UInt32(index),
@@ -1805,7 +2065,10 @@ public enum PlayCoverUpstreamEngine {
                     + "are invalid"
             )
         }
-        let headerPadding = data[cursor..<Int(immutableStart)]
+        let headerPadding = relativeData(
+            data,
+            cursor..<Int(immutableStart)
+        )
         guard headerPadding.allSatisfy({ $0 == 0 }) else {
             throw PlayCoverUpstreamError.malformedMachO(
                 "\(path) slice \(slice.fatIndex) has nonzero bytes between "
@@ -1821,9 +2084,10 @@ public enum PlayCoverUpstreamEngine {
                 )
             }
         }
-        let immutableContent = data[
+        let immutableContent = relativeData(
+            data,
             Int(immutableStart)..<Int(immutableEnd)
-        ]
+        )
         return PlayCoverUpstreamMachOSliceInspection(
             fatIndex: slice.fatIndex,
             cpuType: cpu,
@@ -1883,7 +2147,7 @@ public enum PlayCoverUpstreamEngine {
         }
         let start = Int(codeSignatureOffset)
         let end = start + Int(codeSignatureSize)
-        let signatureData = Data(data[start..<end])
+        let signatureData = relativeData(data, start..<end)
         guard signatureData.count >= 12,
               try u32(signatureData, 0, bigEndian: true)
                 == 0xfade_0cc0 else {
@@ -1956,7 +2220,7 @@ public enum PlayCoverUpstreamEngine {
                 )
             }
             occupiedRanges.append(range)
-            let blob = Data(signatureData[range])
+            let blob = Data(relativeData(signatureData, range))
             let codeDirectory = magic == 0xfade_0c02
                 ? try codeDirectoryEvidence(
                     blob,
@@ -2021,16 +2285,19 @@ public enum PlayCoverUpstreamEngine {
                 )
             }
         }
-        var structure = Data(signatureData[0..<declaredEnd])
+        var structure = Data(
+            relativeData(signatureData, 0..<declaredEnd)
+        )
         for range in occupiedRanges {
             structure.replaceSubrange(
                 range,
                 with: repeatElement(UInt8(0), count: range.count)
             )
         }
-        let padding = Data(
-            signatureData[declaredEnd..<signatureData.count]
-        )
+        let padding = Data(relativeData(
+            signatureData,
+            declaredEnd..<signatureData.count
+        ))
         return EmbeddedSignatureEvidence(
             superBlobLength: declaredLength,
             paddingSize: UInt32(signatureData.count - declaredEnd),
@@ -2155,9 +2422,11 @@ public enum PlayCoverUpstreamEngine {
         )
     }
 
-    private static func inventory(
-        appURL: URL
-    ) throws -> [PlayCoverUpstreamInventoryEntry] {
+    private static func treeSnapshot(
+        appURL: URL,
+        preloadedRegularFileData: [String: Data],
+        inspectMachOs: Bool
+    ) throws -> TreeSnapshot {
         let keys: [URLResourceKey] = [
             .isDirectoryKey,
             .isRegularFileKey,
@@ -2173,7 +2442,7 @@ public enum PlayCoverUpstreamEngine {
                 "cannot enumerate \(appURL.path)"
             )
         }
-        var result: [PlayCoverUpstreamInventoryEntry] = []
+        var metadata: [InventoryMetadata] = []
         for case let url as URL in enumerator {
             let values = try url.resourceValues(forKeys: Set(keys))
             let kind: PlayCoverUpstreamFileKind
@@ -2191,70 +2460,152 @@ public enum PlayCoverUpstreamEngine {
             )
             let permissions = (attrs?[.posixPermissions] as? NSNumber)
                 .map { UInt16(truncating: $0) }
-            let relative = relativePath(url, in: appURL)
-            let codeKind: String?
-            if kind == .directory {
-                codeKind = codeObjectKind(forDirectory: relative)
-            } else if kind == .regularFile, try isMachO(url) {
-                codeKind = codeObjectKind(forMachO: relative, appURL: appURL)
-            } else {
-                codeKind = nil
-            }
-            result.append(
-                PlayCoverUpstreamInventoryEntry(
+            let relative = try relativePath(url, in: appURL)
+            metadata.append(
+                InventoryMetadata(
+                    url: url,
                     relativePath: relative,
                     kind: kind,
                     size: values.fileSize.map { UInt64($0) },
                     posixPermissions: permissions,
-                    sha256: kind == .regularFile
-                        ? try fileSHA256(url)
-                        : nil,
                     symbolicLinkDestination: kind == .symbolicLink
                         ? try FileManager.default.destinationOfSymbolicLink(
                             atPath: url.path
                         )
-                        : nil,
-                    codeObjectKind: codeKind
+                        : nil
                 )
             )
         }
-        return result
-    }
 
-    private static func contentHash(
-        appURL: URL,
-        inventory: [PlayCoverUpstreamInventoryEntry]
-    ) throws -> String {
         var hasher = SHA256()
-        for entry in inventory.sorted(by: {
-            $0.relativePath.utf8.lexicographicallyPrecedes(
-                $1.relativePath.utf8
+        var inventory = Array<PlayCoverUpstreamInventoryEntry?>(
+            repeating: nil,
+            count: metadata.count
+        )
+        var machOs = Array<PlayCoverUpstreamMachOInspection?>(
+            repeating: nil,
+            count: metadata.count
+        )
+        let sortedIndices = metadata.indices.sorted {
+            metadata[$0].relativePath.utf8.lexicographicallyPrecedes(
+                metadata[$1].relativePath.utf8
             )
-        }) {
+        }
+        for index in sortedIndices {
+            let entry = metadata[index]
             update(&hasher, entry.relativePath)
             update(&hasher, entry.kind.rawValue)
             update(&hasher, entry.posixPermissions.map(String.init) ?? "-")
             update(&hasher, entry.size.map(String.init) ?? "-")
+            let fileSHA256: String?
+            let codeKind: String?
             switch entry.kind {
             case .regularFile:
                 updateLength(&hasher, entry.size ?? 0)
-                let handle = try FileHandle(
-                    forReadingFrom: appURL.appendingPathComponent(
-                        entry.relativePath
-                    )
+                let file = try readRegularFile(
+                    entry.url,
+                    preloadedData:
+                        preloadedRegularFileData[entry.relativePath],
+                    retainMachOData: inspectMachOs,
+                    contentHasher: &hasher
                 )
-                defer { try? handle.close() }
-                while let chunk = try handle.read(upToCount: 1_048_576),
-                      !chunk.isEmpty {
-                    hasher.update(data: chunk)
+                fileSHA256 = file.sha256
+                codeKind = file.isMachO
+                    ? codeObjectKind(
+                        forMachO: entry.relativePath,
+                        appURL: appURL
+                    )
+                    : nil
+                if inspectMachOs, file.isMachO {
+                    guard let data = file.retainedData else {
+                        preconditionFailure(
+                            "Mach-O bytes were not retained for inspection"
+                        )
+                    }
+                    machOs[index] = try inspectMachO(
+                        data,
+                        fileSHA256: file.sha256,
+                        at: entry.url,
+                        relativePath: entry.relativePath
+                    )
                 }
             case .symbolicLink:
                 update(&hasher, entry.symbolicLinkDestination ?? "")
+                fileSHA256 = nil
+                codeKind = nil
             case .directory, .other:
-                break
+                fileSHA256 = nil
+                codeKind = entry.kind == .directory
+                    ? codeObjectKind(forDirectory: entry.relativePath)
+                    : nil
             }
+            inventory[index] = PlayCoverUpstreamInventoryEntry(
+                relativePath: entry.relativePath,
+                kind: entry.kind,
+                size: entry.size,
+                posixPermissions: entry.posixPermissions,
+                sha256: fileSHA256,
+                symbolicLinkDestination: entry.symbolicLinkDestination,
+                codeObjectKind: codeKind
+            )
         }
-        return hex(hasher.finalize())
+        return TreeSnapshot(
+            contentHash: hex(hasher.finalize()),
+            inventory: inventory.map {
+                guard let entry = $0 else {
+                    preconditionFailure("inventory entry was not materialized")
+                }
+                return entry
+            },
+            machOs: machOs.compactMap { $0 }
+        )
+    }
+
+    private static func readRegularFile(
+        _ url: URL,
+        preloadedData: Data?,
+        retainMachOData: Bool,
+        contentHasher: inout SHA256
+    ) throws -> RegularFileSnapshot {
+        if let data = preloadedData {
+            let macho = isMachO(data)
+            contentHasher.update(data: data)
+            return RegularFileSnapshot(
+                sha256: hex(SHA256.hash(data: data)),
+                isMachO: macho,
+                retainedData: retainMachOData && macho ? data : nil
+            )
+        }
+
+        // Hash and inspect through one file-backed mapping. Only the current
+        // file is mapped, and Mach-O slices below share this storage instead
+        // of accumulating a second heap copy.
+        let data = try Data(contentsOf: url, options: .alwaysMapped)
+        let macho = isMachO(data)
+        let fileSHA256 = hex(SHA256.hash(data: data))
+        contentHasher.update(data: data)
+        return RegularFileSnapshot(
+            sha256: fileSHA256,
+            isMachO: macho,
+            retainedData: retainMachOData && macho ? data : nil
+        )
+    }
+
+    private static func provisioningSHA256(
+        attributes: [FileAttributeKey: Any]?,
+        relativePath: String,
+        url: URL,
+        snapshot: TreeSnapshot
+    ) throws -> String? {
+        guard attributes != nil else {
+            return nil
+        }
+        if let sha256 = snapshot.inventory.first(where: {
+            $0.relativePath == relativePath && $0.kind == .regularFile
+        })?.sha256 {
+            return sha256
+        }
+        return try fileSHA256(url)
     }
 
     static func composeEntitlements(
@@ -2808,10 +3159,15 @@ public enum PlayCoverUpstreamEngine {
         let sourcePath = URL(fileURLWithPath: source.appPath)
             .standardizedFileURL.path
         let home = options.managedHome.standardizedFileURL.path
-        let staging = options.stagingApp.standardizedFileURL.path
-        guard options.stagingApp.pathExtension == "app" else {
+        let managedStaging =
+            options.managedStagingApp ?? options.stagingApp
+        let staging = managedStaging.standardizedFileURL.path
+        guard options.stagingApp.pathExtension == "app",
+              managedStaging.pathExtension == "app",
+              options.stagingApp.lastPathComponent
+                == managedStaging.lastPathComponent else {
             throw PlayCoverUpstreamError.invalidApp(
-                "staging output must end in .app"
+                "staging output identity must use one matching .app name"
             )
         }
         try requireNoSymlinkComponents(
@@ -2820,10 +3176,17 @@ public enum PlayCoverUpstreamEngine {
             allowMissingLeaf: false
         )
         try requireNoSymlinkComponents(
-            options.stagingApp.deletingLastPathComponent(),
+            managedStaging.deletingLastPathComponent(),
             label: "staging parent",
             allowMissingLeaf: false
         )
+        if options.managedStagingApp != nil {
+            try requireSameDirectoryIdentity(
+                options.stagingApp.deletingLastPathComponent(),
+                managedStaging.deletingLastPathComponent(),
+                label: "staging I/O vnode"
+            )
+        }
         guard staging != sourcePath,
               !staging.hasPrefix(sourcePath + "/") else {
             throw PlayCoverUpstreamError.invalidApp(
@@ -2892,6 +3255,25 @@ public enum PlayCoverUpstreamEngine {
               !inspection.encrypted else {
             throw PlayCoverUpstreamError.invalidApp(
                 "Runtime must be an unencrypted arm64 Mac Catalyst binary"
+            )
+        }
+    }
+
+    private static func requireSameDirectoryIdentity(
+        _ first: URL,
+        _ second: URL,
+        label: String
+    ) throws {
+        var firstStatus = stat()
+        var secondStatus = stat()
+        guard lstat(first.path, &firstStatus) == 0,
+              lstat(second.path, &secondStatus) == 0,
+              firstStatus.st_mode & S_IFMT == S_IFDIR,
+              secondStatus.st_mode & S_IFMT == S_IFDIR,
+              firstStatus.st_dev == secondStatus.st_dev,
+              firstStatus.st_ino == secondStatus.st_ino else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "\(label) no longer matches its managed lexical path"
             )
         }
     }
@@ -3195,14 +3577,11 @@ public enum PlayCoverUpstreamEngine {
         return "machO"
     }
 
-    private static func isMachO(_ url: URL) throws -> Bool {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        guard let prefix = try handle.read(upToCount: 4),
-              prefix.count == 4 else {
+    private static func isMachO(_ data: Data) -> Bool {
+        guard data.count >= 4 else {
             return false
         }
-        let magic = Array(prefix)
+        let magic = Array(data.prefix(4))
         return [
             [0xcf, 0xfa, 0xed, 0xfe],
             [0xfe, 0xed, 0xfa, 0xcf],
@@ -3234,15 +3613,15 @@ public enum PlayCoverUpstreamEngine {
                 "\(label) has an invalid load-command string offset"
             )
         }
-        let start = commandOffset + relative
-        let end = commandOffset + commandSize
+        let start = data.startIndex + commandOffset + relative
+        let end = data.startIndex + commandOffset + commandSize
         guard let terminator = data[start..<end].firstIndex(of: 0) else {
             throw PlayCoverUpstreamError.malformedMachO(
                 "\(label) load-command string is not NUL terminated"
             )
         }
         guard data[
-            (commandOffset + minimumStringOffset)..<start
+            (data.startIndex + commandOffset + minimumStringOffset)..<start
         ].allSatisfy({ $0 == 0 }),
         data[data.index(after: terminator)..<end].allSatisfy({ $0 == 0 }) else {
             throw PlayCoverUpstreamError.malformedMachO(
@@ -3268,7 +3647,8 @@ public enum PlayCoverUpstreamEngine {
         guard offset >= 0, length >= 0, offset + length <= data.count else {
             return ""
         }
-        let field = data[offset..<(offset + length)]
+        let start = data.startIndex + offset
+        let field = data[start..<(start + length)]
         let bytes = field.prefix { $0 != 0 }
         return String(decoding: bytes, as: UTF8.self)
     }
@@ -3283,7 +3663,8 @@ public enum PlayCoverUpstreamEngine {
                 "32-bit read is out of bounds"
             )
         }
-        let bytes = Array(data[offset..<(offset + 4)])
+        let start = data.startIndex + offset
+        let bytes = Array(data[start..<(start + 4)])
         if bigEndian {
             return UInt32(bytes[0]) << 24
                 | UInt32(bytes[1]) << 16
@@ -3307,16 +3688,34 @@ public enum PlayCoverUpstreamEngine {
             )
         }
         var value: UInt64 = 0
+        let start = data.startIndex + offset
         if bigEndian {
-            for byte in data[offset..<(offset + 8)] {
+            for byte in data[start..<(start + 8)] {
                 value = value << 8 | UInt64(byte)
             }
         } else {
             for index in 0..<8 {
-                value |= UInt64(data[offset + index]) << UInt64(index * 8)
+                value |= UInt64(data[start + index]) << UInt64(index * 8)
             }
         }
         return value
+    }
+
+    /// Returns a zero-copy view addressed relative to the beginning of
+    /// `data`. Foundation `Data` slices preserve their original indices, so
+    /// all Mach-O offsets must be translated through `startIndex`.
+    private static func relativeData(
+        _ data: Data,
+        _ range: Range<Int>
+    ) -> Data {
+        precondition(
+            range.lowerBound >= 0
+                && range.upperBound >= range.lowerBound
+                && range.upperBound <= data.count
+        )
+        let start = data.startIndex + range.lowerBound
+        let end = data.startIndex + range.upperBound
+        return data[start..<end]
     }
 
     private static func fileSHA256(_ url: URL) throws -> String {
@@ -3330,13 +3729,67 @@ public enum PlayCoverUpstreamEngine {
         return hex(hasher.finalize())
     }
 
-    private static func relativePath(_ url: URL, in root: URL) -> String {
+    private static func relativePath(
+        _ url: URL,
+        in root: URL
+    ) throws -> String {
         let rootPath = root.standardizedFileURL.path
         let path = url.standardizedFileURL.path
+        if let relative = relativePath(
+            path: path,
+            rootPath: rootPath
+        ) {
+            return relative
+        }
+        let resolvedRoot = root.resolvingSymlinksInPath()
+            .standardizedFileURL.path
+        var status = stat()
+        let resolvedURL: URL
+        if lstat(path, &status) == 0,
+           status.st_mode & S_IFMT == S_IFLNK {
+            resolvedURL = url.deletingLastPathComponent()
+                .resolvingSymlinksInPath()
+                .appendingPathComponent(url.lastPathComponent)
+        } else {
+            resolvedURL = url.resolvingSymlinksInPath()
+        }
+        if let relative = relativePath(
+            path: resolvedURL.standardizedFileURL.path,
+            rootPath: resolvedRoot
+        ) {
+            return relative
+        }
+        throw PlayCoverUpstreamError.invalidApp(
+            "enumerated path escaped its root: \(path) outside \(rootPath)"
+        )
+    }
+
+    private static func relativePath(
+        path: String,
+        rootPath: String
+    ) -> String? {
         if path == rootPath {
             return "."
         }
+        guard path.hasPrefix(rootPath + "/") else {
+            return nil
+        }
         return String(path.dropFirst(rootPath.count + 1))
+    }
+
+    private static func monotonicTimestamp() -> UInt64 {
+        DispatchTime.now().uptimeNanoseconds
+    }
+
+    private static func accumulateMonotonicDuration(
+        _ total: inout UInt64,
+        since start: UInt64
+    ) {
+        let end = monotonicTimestamp()
+        let elapsed = end >= start ? end - start : 0
+        total = total > UInt64.max - elapsed
+            ? UInt64.max
+            : total + elapsed
     }
 
     private static func update(

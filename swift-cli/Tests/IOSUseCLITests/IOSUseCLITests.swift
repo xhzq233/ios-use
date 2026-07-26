@@ -1452,6 +1452,252 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(clientSessions.map(\.holderPid), [333, 555])
     }
 
+    func testDriverRecoveryRejectsChangedLifecycleIdentity() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-stale-recovery-identity-\(UUID().uuidString)"
+            )
+            .path
+        try FileManager.default.createDirectory(
+            atPath: root,
+            withIntermediateDirectories: true
+        )
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root]
+        )
+        try """
+        {"devices":{"REAL-STALE-RECOVERY":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(
+            toFile: "\(root)/config.json",
+            atomically: true,
+            encoding: .utf8
+        )
+        let original = SessionService.Info(
+            udid: "REAL-STALE-RECOVERY",
+            deviceName: "Phone",
+            deviceVersion: "26.0",
+            deviceType: "real",
+            startedAt: 1,
+            holderPid: 101,
+            runnerPid: 102,
+            startMode: "full-xctest",
+            sessionIdentifier: "ORIGINAL",
+            bundleId: "com.example.driver",
+            controlSocketPath: "\(root)/state/original.sock"
+        )
+        let replacement = SessionService.Info(
+            udid: original.udid,
+            deviceName: original.deviceName,
+            deviceVersion: original.deviceVersion,
+            deviceType: original.deviceType,
+            startedAt: 2,
+            holderPid: 201,
+            runnerPid: 202,
+            startMode: nil,
+            sessionIdentifier: "REPLACEMENT",
+            bundleId: original.bundleId,
+            controlSocketPath: "\(root)/state/replacement.sock"
+        )
+        try SessionService.writeDriverLock(
+            info: original,
+            paths: paths
+        )
+        DriverLifecycleService.holderTerminatorForTesting = { _, _ in
+            XCTFail("stale recovery must not terminate any holder")
+            return .failed
+        }
+        DriverLifecycleService.holderLauncherForTesting = {
+            _, _, _, _ in
+            XCTFail("stale recovery must not launch a holder")
+            throw CLIParseError.invalidValue("unexpected launch")
+        }
+        var attempts = 0
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            attempts += 1
+            return FakeDriverCommandClient(
+                domHandler: { _, _, _ in
+                    try SessionService.writeDriverLock(
+                        info: replacement,
+                        paths: paths
+                    )
+                    throw DriverClientError.connectFailed(61)
+                }
+            )
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root]
+        ).run(arguments: ["dom"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(
+            result.stderr.contains(
+                "Driver lifecycle changed before connection recovery"
+            ),
+            result.stderr
+        )
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(
+            try SessionService.readDriverLockInfo(paths: paths),
+            replacement
+        )
+    }
+
+    func testDriverRecoveryAndStopShareLifecycleLock() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-recovery-stop-lock-\(UUID().uuidString)"
+            )
+            .path
+        try FileManager.default.createDirectory(
+            atPath: root,
+            withIntermediateDirectories: true
+        )
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root]
+        )
+        try """
+        {"devices":{"REAL-RECOVERY-STOP":{"bundleId":"com.example.driver","driverVersion":"\(IOSUseCLI.version)"}}}
+        """.write(
+            toFile: "\(root)/config.json",
+            atomically: true,
+            encoding: .utf8
+        )
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "REAL-RECOVERY-STOP",
+                deviceName: "Phone",
+                deviceVersion: "26.0",
+                deviceType: "real",
+                startedAt: 1,
+                holderPid: 301,
+                runnerPid: 302,
+                startMode: "full-xctest",
+                sessionIdentifier: "BEFORE-RECOVERY",
+                bundleId: "com.example.driver",
+                controlSocketPath: "\(root)/state/before.sock"
+            ),
+            paths: paths
+        )
+
+        let firstOldTermination = DispatchSemaphore(value: 1)
+        defer { firstOldTermination.signal() }
+        let recoveryEnteredTermination = DispatchSemaphore(value: 0)
+        let concurrentStopEnteredOldTermination =
+            DispatchSemaphore(value: 0)
+        let releaseRecoveryTermination = DispatchSemaphore(value: 0)
+        let stopTerminatedRecoveredIdentity =
+            DispatchSemaphore(value: 0)
+        DriverLifecycleService.holderTerminatorForTesting = {
+            info, _ in
+            if info.sessionIdentifier == "BEFORE-RECOVERY" {
+                if firstOldTermination.wait(timeout: .now())
+                    == .success {
+                    recoveryEnteredTermination.signal()
+                } else {
+                    concurrentStopEnteredOldTermination.signal()
+                }
+                _ = releaseRecoveryTermination.wait(
+                    timeout: .now() + 5
+                )
+                return .terminated
+            }
+            XCTAssertEqual(
+                info.sessionIdentifier,
+                "AFTER-RECOVERY"
+            )
+            stopTerminatedRecoveredIdentity.signal()
+            return .terminated
+        }
+        DriverLifecycleService.holderLauncherForTesting = {
+            udid, bundleID, _, _ in
+            XCTAssertEqual(udid, "REAL-RECOVERY-STOP")
+            return DriverLifecycleService.LaunchMetadata(
+                holderPid: 401,
+                runnerPid: 402,
+                sessionIdentifier: "AFTER-RECOVERY",
+                bundleId: bundleID,
+                controlSocketPath: "\(root)/state/after.sock"
+            )
+        }
+        var attempts = 0
+        IOSUseCLI.driverClientFactoryForTesting = { _ in
+            attempts += 1
+            if attempts == 1 {
+                return FakeDriverCommandClient(
+                    domHandler: { _, _, _ in
+                        throw DriverClientError.connectFailed(61)
+                    }
+                )
+            }
+            return FakeDriverCommandClient(
+                domHandler: { _, _, _ in
+                    ForyDomPayload(
+                        app: "com.example.app",
+                        windowSize: ForyPoint(x: 100, y: 200)
+                    )
+                }
+            )
+        }
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let recoveryFinished = expectation(
+            description: "driver recovery finished"
+        )
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = IOSUseCLI(
+                environment: ["IOS_USE_HOME": root]
+            ).run(arguments: ["dom"])
+            XCTAssertEqual(result.exitCode, 0, result.stderr)
+            recoveryFinished.fulfill()
+        }
+        XCTAssertEqual(
+            recoveryEnteredTermination.wait(timeout: .now() + 5),
+            .success
+        )
+
+        let stopFinished = expectation(
+            description: "stop finished after recovery"
+        )
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                _ = try SessionService.stop(paths: paths)
+            } catch {
+                XCTFail("stop failed: \(error)")
+            }
+            stopFinished.fulfill()
+        }
+        XCTAssertEqual(
+            concurrentStopEnteredOldTermination.wait(
+                timeout: .now() + 0.2
+            ),
+            .timedOut,
+            "stop entered stale-holder termination while recovery "
+                + "owned the lifecycle lock"
+        )
+
+        releaseRecoveryTermination.signal()
+        releaseRecoveryTermination.signal()
+        wait(
+            for: [recoveryFinished, stopFinished],
+            timeout: 5
+        )
+        XCTAssertEqual(
+            stopTerminatedRecoveredIdentity.wait(timeout: .now()),
+            .success
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: paths.driverLock
+            )
+        )
+    }
+
     func testDriverCommandDoesNotRelaunchWhenStaleHolderCannotBeStopped() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-use-stuck-xctest-recover-\(UUID().uuidString)")

@@ -93,7 +93,9 @@ enum CLIHelp {
             PlayCover automatically prepares an unmodified iPhoneOS App into
             managed IOS_USE_HOME state, or verifies and directly launches an
             already prepared App. When --app is omitted, it uses the most recent
-            successful prepared generation.
+            successful prepared generation without rechecking the original
+            source; pass --app again after rebuilding. Successful PlayCover
+            starts print inspect/clone/convert/sign/verify/launch timings.
 
             Options:
               --verbose                    Enable verbose XCTest output

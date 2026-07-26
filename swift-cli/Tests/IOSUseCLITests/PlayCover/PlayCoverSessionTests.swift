@@ -19,7 +19,7 @@ final class PlayCoverSessionTests: XCTestCase {
         PlayCoverSessionService.fastVerifyOverrideForTesting = nil
         PlayCoverManagedAppService.inspectOverrideForTesting = nil
         PlayCoverManagedAppService.verifyOverrideForTesting = nil
-        PlayCoverManagedAppService.fastVerifyOverrideForTesting = nil
+        PlayCoverManagedAppService.readManifestOverrideForTesting = nil
         PlayCoverManagedAppService.prepareOverrideForTesting = nil
         PlayCoverManagedAppService.runtimePathOverrideForTesting = nil
         PlayCoverManagedAppService.executablePathOverrideForTesting = nil
@@ -86,6 +86,25 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertTrue(start.stdout.contains("generation reused:"))
         XCTAssertTrue(start.stdout.contains(manifest.generationKey))
         XCTAssertTrue(start.stdout.contains("IOS_USE_HOME: \(fixture.root)"))
+        XCTAssertTrue(
+            start.stdout.contains(
+                "PlayCover timing: inspect="
+            )
+        )
+        for phase in [
+            "clone=skipped",
+            "convert=skipped",
+            "sign=skipped",
+            "verify=",
+            "launch=",
+            "total=",
+        ] {
+            XCTAssertTrue(start.stdout.contains(phase), phase)
+        }
+        XCTAssertEqual(
+            fastVerificationPaths,
+            [manifest.preparedAppPath]
+        )
         XCTAssertEqual(launchInputs.count, 1)
         XCTAssertEqual(
             launchInputs.first?.app,
@@ -226,13 +245,114 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(
             result.stderr.contains(
-                "does not match the verified generation"
+                "selected generation identity changed before launch"
             )
         )
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: fixture.paths.driverLock
             )
+        )
+    }
+
+    func testBareStartNeverRefreshesDeletedSourceApp() throws {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try fixture.createManagedApp(manifest: manifest)
+        try PlayCoverSessionService.recordPrepared(
+            manifest,
+            paths: fixture.paths
+        )
+        PlayCoverManagedAppService.inspectOverrideForTesting = {
+            _ in
+            XCTFail("bare start must not inspect the source App")
+            throw PlayCoverBackendError.invalidApp("unexpected inspect")
+        }
+        PlayCoverManagedAppService.prepareOverrideForTesting = {
+            _, _, _, _ in
+            XCTFail("bare start must not prepare a generation")
+            throw PlayCoverBackendError.prepareFailed(
+                "unexpected prepare"
+            )
+        }
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in manifest
+        }
+        PlayCoverSessionService.launchOverrideForTesting = {
+            _, sessionID, socketPath, _ in
+            self.makeLaunchResult(
+                manifest: manifest,
+                sessionID: sessionID,
+                socketPath: socketPath,
+                reused: true
+            )
+        }
+
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": fixture.root]
+        ).run(arguments: ["start", "--playcover"])
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertTrue(result.stdout.contains("generation reused:"))
+    }
+
+    func testFailedExplicitSelectionDoesNotReplaceGoodReference()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let good = try makeManifest(fixture: fixture)
+        let selected = try makeManifest(
+            fixture: fixture,
+            generationKey: String(repeating: "b", count: 64)
+        )
+        try fixture.createManagedApp(manifest: good)
+        try fixture.createManagedApp(manifest: selected)
+        try fixture.createPreparedSidecars(manifest: selected)
+        try PlayCoverSessionService.recordPrepared(
+            good,
+            paths: fixture.paths
+        )
+        PlayCoverManagedAppService.readManifestOverrideForTesting = {
+            _ in selected
+        }
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in
+            throw PlayCoverBackendError.cacheTampered(
+                "selected generation is corrupt"
+            )
+        }
+        PlayCoverSessionService.launchOverrideForTesting = {
+            _, _, _, _ in
+            XCTFail("corrupt selection must not launch")
+            throw PlayCoverBackendError.launchFailed(
+                "unexpected launch"
+            )
+        }
+
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": fixture.root]
+        ).run(
+            arguments: [
+                "start",
+                "--playcover",
+                "--app",
+                selected.preparedAppPath,
+            ]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(
+            result.stderr.contains(
+                "selected generation is corrupt"
+            )
+        )
+        XCTAssertEqual(
+            try PlayCoverSessionService.readPreparedReference(
+                paths: fixture.paths
+            )?.generationKey,
+            good.generationKey
         )
     }
 
@@ -1726,6 +1846,23 @@ private struct SessionFixture {
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
+    }
+
+    func createPreparedSidecars(
+        manifest: PlayCoverPrepareManifest
+    ) throws {
+        let generation = URL(
+            fileURLWithPath: manifest.preparedAppPath,
+            isDirectory: true
+        ).deletingLastPathComponent()
+        for filename in [
+            PlayCoverService.manifestFilename,
+            PlayCoverService.completedFilename,
+        ] {
+            try Data("{}".utf8).write(
+                to: generation.appendingPathComponent(filename)
+            )
+        }
     }
 
     func remove() {

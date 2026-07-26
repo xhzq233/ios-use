@@ -34,6 +34,31 @@ enum PlayCoverSessionService {
         let pid: Int32
         let runtimeSocketPath: String
         let reused: Bool
+        let timing: PlayCoverStartTiming
+
+        init(
+            sessionID: String,
+            appPath: String,
+            bundleIdentifier: String,
+            executablePath: String,
+            generationKey: String,
+            productType: String,
+            pid: Int32,
+            runtimeSocketPath: String,
+            reused: Bool,
+            timing: PlayCoverStartTiming = .empty
+        ) {
+            self.sessionID = sessionID
+            self.appPath = appPath
+            self.bundleIdentifier = bundleIdentifier
+            self.executablePath = executablePath
+            self.generationKey = generationKey
+            self.productType = productType
+            self.pid = pid
+            self.runtimeSocketPath = runtimeSocketPath
+            self.reused = reused
+            self.timing = timing
+        }
     }
 
     typealias LaunchOverride = (
@@ -82,7 +107,12 @@ enum PlayCoverSessionService {
 
     private struct ResolvedApp {
         let appPath: String
+        let bundleIdentifier: String
+        let executablePath: String
+        let generationKey: String
+        let expectedManifest: PlayCoverPrepareManifest?
         let reused: Bool
+        let timing: PlayCoverStartTiming
     }
 
     private static func resolveApp(
@@ -94,13 +124,20 @@ enum PlayCoverSessionService {
                 try PlayCoverManagedAppService.resolveExplicitApp(
                     explicitAppPath,
                     paths: paths
-                )
-            try recordPrepared(resolution.manifest, paths: paths)
+            )
             return ResolvedApp(
                 appPath: resolution.manifest.preparedAppPath,
-                reused: resolution.reused
+                bundleIdentifier:
+                    resolution.manifest.bundleIdentifier,
+                executablePath:
+                    resolution.manifest.executablePath,
+                generationKey: resolution.manifest.generationKey,
+                expectedManifest: resolution.manifest,
+                reused: resolution.reused,
+                timing: resolution.timing
             )
         }
+        let inspectStarted = PlayCoverMonotonicClock.now()
         guard let reference = try readPreparedReference(
             paths: paths
         ) else {
@@ -115,21 +152,25 @@ enum PlayCoverSessionService {
             generationKey: reference.generationKey,
             paths: paths
         )
-        let manifest = try fastVerify(appPath: reference.appPath)
-        guard manifest.bundleIdentifier
-                == reference.bundleIdentifier,
-              manifest.executablePath
-                == reference.executablePath,
-              manifest.generationKey
-                == reference.generationKey else {
-            throw PlayCoverBackendError.launchFailed(
-                "last prepared App record does not match the "
-                    + "verified generation"
-            )
-        }
         return ResolvedApp(
-            appPath: manifest.preparedAppPath,
-            reused: true
+            appPath: reference.appPath,
+            bundleIdentifier: reference.bundleIdentifier,
+            executablePath: reference.executablePath,
+            generationKey: reference.generationKey,
+            expectedManifest: nil,
+            reused: true,
+            timing: PlayCoverStartTiming(
+                inspectNanoseconds:
+                    PlayCoverMonotonicClock.elapsed(
+                        since: inspectStarted
+                    ),
+                cloneNanoseconds: nil,
+                convertNanoseconds: nil,
+                signNanoseconds: nil,
+                verifyNanoseconds: 0,
+                launchNanoseconds: 0,
+                totalNanoseconds: 0
+            )
         )
     }
 
@@ -147,10 +188,36 @@ enum PlayCoverSessionService {
         let socketPath = try paths.playCoverRuntimeSocketPath(
             sessionID: sessionID
         )
-        let result: LaunchResult
+        var timing = resolved.timing
+        let verificationStarted = PlayCoverMonotonicClock.now()
+        let verifiedManifest = try fastVerify(
+            appPath: resolved.appPath
+        )
+        timing.addVerify(
+            PlayCoverMonotonicClock.elapsed(
+                since: verificationStarted
+            )
+        )
+        guard verifiedManifest.preparedAppPath == resolved.appPath,
+              verifiedManifest.bundleIdentifier
+                == resolved.bundleIdentifier,
+              verifiedManifest.executablePath
+                == resolved.executablePath,
+              verifiedManifest.generationKey == resolved.generationKey,
+              resolved.expectedManifest.map({
+                $0 == verifiedManifest
+              }) ?? true else {
+            throw PlayCoverBackendError.cacheTampered(
+                "selected generation identity changed before launch"
+            )
+        }
+        try recordPrepared(verifiedManifest, paths: paths)
+
+        let launchStarted = PlayCoverMonotonicClock.now()
+        let rawResult: LaunchResult
         if let launchOverrideForTesting {
-            result = try launchOverrideForTesting(
-                resolved.appPath,
+            rawResult = try launchOverrideForTesting(
+                verifiedManifest.preparedAppPath,
                 sessionID,
                 socketPath,
                 timeout
@@ -158,13 +225,17 @@ enum PlayCoverSessionService {
         } else {
             let identity: PlayCoverLaunchIdentity
             do {
-                identity = try PlayCoverService.launch(
-                    appPath: resolved.appPath,
+                identity = try PlayCoverService.launchVerified(
+                    manifest: verifiedManifest,
                     sessionID: sessionID,
                     runtimeSocketPath: socketPath,
                     timeout: timeout
                 )
             } catch let error as PlayCoverUnterminatedLaunchError {
+                timing.launchNanoseconds =
+                    PlayCoverMonotonicClock.elapsed(
+                        since: launchStarted
+                    )
                 throw PlayCoverSessionUnterminatedLaunchError(
                     result: LaunchResult(
                         sessionID: error.sessionID,
@@ -180,12 +251,13 @@ enum PlayCoverSessionService {
                         pid: error.pid,
                         runtimeSocketPath:
                             error.runtimeSocketPath,
-                        reused: resolved.reused
+                        reused: resolved.reused,
+                        timing: timing
                     ),
                     underlying: error
                 )
             }
-            result = LaunchResult(
+            rawResult = LaunchResult(
                 sessionID: identity.sessionID,
                 appPath: identity.appPath,
                 bundleIdentifier: identity.bundleIdentifier,
@@ -199,12 +271,29 @@ enum PlayCoverSessionService {
                 reused: resolved.reused
             )
         }
+        timing.launchNanoseconds =
+            PlayCoverMonotonicClock.elapsed(since: launchStarted)
+        let result = LaunchResult(
+            sessionID: rawResult.sessionID,
+            appPath: rawResult.appPath,
+            bundleIdentifier: rawResult.bundleIdentifier,
+            executablePath: rawResult.executablePath,
+            generationKey: rawResult.generationKey,
+            productType: rawResult.productType,
+            pid: rawResult.pid,
+            runtimeSocketPath: rawResult.runtimeSocketPath,
+            reused: resolved.reused,
+            timing: timing
+        )
         guard result.sessionID == sessionID,
-              result.appPath == resolved.appPath,
+              result.appPath == verifiedManifest.preparedAppPath,
               result.pid > 0,
-              !result.bundleIdentifier.isEmpty,
-              !result.executablePath.isEmpty,
-              !result.generationKey.isEmpty,
+              result.bundleIdentifier
+                == verifiedManifest.bundleIdentifier,
+              result.executablePath
+                == verifiedManifest.executablePath,
+              result.generationKey
+                == verifiedManifest.generationKey,
               result.runtimeSocketPath == socketPath else {
             throw PlayCoverBackendError.launchFailed(
                 "Runtime hello returned incomplete or mismatched "

@@ -20,7 +20,9 @@ The public lifecycle is intentionally small:
 `start --playcover` without `--app` reuses the most recent verified generation
 from the current `IOS_USE_HOME`. There are no public `playcover inspect`,
 `prepare`, or `verify` commands; those are internal start steps and test
-entry points.
+entry points. After rebuilding a source App, pass `--app` again; bare start
+deliberately does not inspect, hash, or otherwise depend on the original source
+path.
 
 ## Fixed Device Contract
 
@@ -67,10 +69,11 @@ constant; they never crop the output or consume App touch events.
 ```text
 ios-use start --playcover [--app <source-or-managed-prepared.app>]
   -> PlayCoverManagedAppService
-     -> source classification or bounded managed-generation verification
+     -> source classification or managed-generation selection
      -> deterministic generation selection under this IOS_USE_HOME
   -> PlayCoverService
      -> pinned PlayCover prepare graph and full verification
+     -> one bounded integrity verification immediately before launch
      -> NSWorkspace launch with exact environment and PID
   -> IOSUsePlayRuntime.framework
      -> pinned PlayTools platform/geometry/keychain hooks
@@ -141,6 +144,23 @@ The headless dependency graph retains the pinned Installer order:
 Failures remove only transaction-owned staging. Existing generations and the
 source are not overwritten.
 
+On macOS, prepare opens staging relative to retained managed-directory FDs and
+performs writes through its stable `/.vol/<device>/<inode>` vnode path. While
+prepare is running, the ios-use-owned `playcover` and `prepared` directories
+also carry a temporary `UF_APPEND` namespace guard. Descendants remain
+writable, but staging and its retained parents cannot be renamed or unlinked.
+The guard validates the anchored FD links before and after prepare and restores
+the original flags on success or failure; a flag left by a killed process is
+recovered under the next exclusive operation lock. The opened `IOS_USE_HOME`
+root vnode is the capability boundary, not a same-UID privilege boundary.
+
+The ordinary `IOS_USE_HOME` path remains the cache identity and is checked
+against the retained vnode before preparation and publication. Clone,
+conversion, signing, rollback, and directory enumeration stay attached to the
+original staging directory. Subprocesses such as `codesign` inherit the stable
+vnode as their working directory and receive relative staging arguments; no
+optimized-build `fcntl(F_GETPATH)` bridge is used.
+
 The immutable generation key contains:
 
 - the complete source content hash;
@@ -151,6 +171,31 @@ Initial preparation performs full verification. Reuse checks the immutable
 marker, key executable and Runtime hashes, signature validity, and managed
 path identity without enumerating or re-preparing the entire App. Different
 `IOS_USE_HOME` values never share prepared state.
+
+The explicit-source path creates one immutable preparation plan containing the
+source inspection, Runtime hash, prepare revision, and generation key. Managed
+selection, prepare, and the pinned upstream engine consume that same evidence;
+the copied Runtime is checked against the recorded hash before signing. Source
+inventory, per-file SHA-256, framed tree hash, and Mach-O identification share
+one content pass. A second source content pass remains only at the end of cold
+prepare to reject a concurrently changed build.
+
+Each successful start prints a single `PlayCover timing:` line covering
+`inspect`, `clone`, `convert`, `sign`, `verify`, `launch`, and `total`.
+Cache-hit phases that did not run are shown as `skipped`.
+
+One owner-only cross-process operation lock serializes every backend's start
+and stop mutation within an `IOS_USE_HOME`, including PlayCover prepare
+publication, session commit, and cache collection. After a successful start,
+cache collection preserves the current generation, active-session generation,
+last-prepared generation, and three most recent inactive complete generations.
+It removes only exact transaction-owned `.staging-<hash>-<UUID>` and
+`.gc-<hash>-<UUID>` leftovers plus eligible complete generations after an
+anchored tombstone rename. Recursive deletion is no-follow, owner checked, and
+confined to the prepared filesystem device. Foreign, incomplete, malformed,
+mounted, or symbolic-link entries fail closed; generation metadata must also
+be a single-link regular file. Malformed session/reference state skips
+deletion.
 
 ## Runtime Distribution
 

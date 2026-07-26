@@ -224,7 +224,11 @@ injected, signed inside-out, fully verified, and launched. The generation key
 contains only source content, Runtime/build content, and the pinned prepare
 revision. A later bare `start --playcover` reuses the most recent generation
 from that same home after a bounded integrity check; it never creates profile
-or bootstrap files.
+or bootstrap files. After rebuilding the source App, pass `--app` again so
+the new iPhoneOS Mach-O content selects or prepares its generation; bare start
+deliberately does not inspect the source build. Successful start output includes
+one timing line for inspect, clone, convert, sign, verify, launch, and total
+latency. Skipped cache-hit phases are reported explicitly.
 
 The CLI creates one random session ID and connects straight to the injected
 Runtime's owner-only Unix socket. `driver.lock` keeps PlayCover selected until

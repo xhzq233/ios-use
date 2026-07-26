@@ -159,6 +159,29 @@ public struct PlayCoverAppInspection: Codable, Equatable, Sendable {
     }
 }
 
+struct PlayCoverPreparationSource: Equatable, Sendable {
+    let inspection: PlayCoverAppInspection
+    let upstreamInspection: PlayCoverUpstreamAppInspection
+
+    init(_ upstreamInspection: PlayCoverUpstreamAppInspection) {
+        self.upstreamInspection = upstreamInspection
+        inspection = PlayCoverAppInspection(upstreamInspection)
+    }
+}
+
+/// Immutable evidence and content identity for one prepare attempt.
+///
+/// The original upstream inspection is retained alongside the public facade so
+/// the managed cache resolver, service facade, and upstream prepare engine all
+/// consume the same source snapshot without reconstructing or re-inspecting it.
+struct PlayCoverPreparationPlan: Equatable, Sendable {
+    let source: PlayCoverPreparationSource
+    let runtimeFrameworkPath: String
+    let runtimeBuildHash: String
+    let prepareRevision: String
+    let generationKey: String
+}
+
 public struct PlayCoverEntitlementDiff: Codable, Equatable, Sendable {
     public let original: [String: String]
     public let playCoverBaseline: [String: String]

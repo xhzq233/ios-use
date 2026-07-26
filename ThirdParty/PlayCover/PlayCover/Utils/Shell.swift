@@ -11,9 +11,11 @@ public enum Shell {
     public static func run(print: Bool = true, _ binary: String, _ args: String...) throws -> String {
         let process = Process()
         let pipe = Pipe()
+        let invocation = anchoredInvocation(arguments: args)
 
         process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = args
+        process.arguments = invocation.arguments
+        process.currentDirectoryURL = invocation.currentDirectory
         process.standardOutput = pipe
         process.standardError = pipe
 
@@ -30,6 +32,48 @@ public enum Shell {
             throw String(data: output, encoding: .utf8) ?? "Shell error occured"
         }
         return String(data: output, encoding: .utf8) ?? "Shell error occured"
+    }
+
+    private static func anchoredInvocation(
+        arguments: [String]
+    ) -> (arguments: [String], currentDirectory: URL?) {
+        guard let root = arguments.lazy.compactMap({
+            stableVolumeRoot(containing: $0)
+        }).first else {
+            return (arguments, nil)
+        }
+        let rewritten = arguments.map { argument -> String in
+            if argument == root {
+                return "."
+            }
+            guard argument.hasPrefix(root + "/") else {
+                return argument
+            }
+            return String(argument.dropFirst(root.count + 1))
+        }
+        return (
+            rewritten,
+            URL(fileURLWithPath: root, isDirectory: true)
+        )
+    }
+
+    private static func stableVolumeRoot(
+        containing argument: String
+    ) -> String? {
+        guard argument.hasPrefix("/.vol/") else {
+            return nil
+        }
+        let components = argument.split(
+            separator: "/",
+            omittingEmptySubsequences: true
+        )
+        guard components.count >= 3,
+              components[0] == ".vol",
+              components[1].allSatisfy(\.isNumber),
+              components[2].allSatisfy(\.isNumber) else {
+            return nil
+        }
+        return "/.vol/\(components[1])/\(components[2])"
     }
 
     public static func runSu(_ args: [String], _ argc: String) -> Bool {
