@@ -1295,7 +1295,9 @@ final class PlayCoverSessionTests: XCTestCase {
         let hostMismatchText = try StatusService.status(paths: fixture.paths)
         XCTAssertTrue(hostMismatchText.contains("runtime: unhealthy"))
         XCTAssertTrue(
-            hostMismatchText.contains("transparent host policy")
+            hostMismatchText.contains(
+                "simulator-scale host policy"
+            )
         )
 
         StatusService.playCoverDiagnosticsForTesting = { _ in
@@ -1432,17 +1434,19 @@ final class PlayCoverSessionTests: XCTestCase {
                     right: 4
                 ),
                 host: hostCaptureError.map {
-                    makeUnavailableTransparentHostGeometry(
+                    makeUnavailableSimulatorScaleHostGeometry(
                         hostPolicy: hostPolicy,
                         error: $0
                     )
-                } ?? makeTransparentHostGeometry(hostPolicy: hostPolicy)
+                } ?? makeSimulatorScaleHostGeometry(
+                    hostPolicy: hostPolicy
+                )
             ),
             stage: "ready"
         )
     }
 
-    private func makeTransparentHostGeometry(
+    private func makeSimulatorScaleHostGeometry(
         hostPolicy: Bool = true
     )
         -> PlayCoverRuntimeHostGeometry
@@ -1450,14 +1454,14 @@ final class PlayCoverSessionTests: XCTestCase {
         .init(
             status: "configured",
             hostPolicy: hostPolicy,
-            frame: .init(x: 40, y: 30, width: 430, height: 980),
-            contentBounds: .init(x: 0, y: 0, width: 430, height: 940),
-            canvasRect: .init(x: 0, y: 0, width: 430, height: 932),
+            frame: .init(x: 40, y: 30, width: 322.5, height: 727),
+            contentBounds: .init(x: 0, y: 0, width: 322.5, height: 699),
+            canvasRect: .init(x: 0, y: 0, width: 322.5, height: 699),
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
-            displayScale: 1,
-            inverseDisplayScale: 1,
-            transparentSpacer: 8,
-            transparent: true,
+            displayScale: 0.75,
+            inverseDisplayScale: 4.0 / 3.0,
+            transparentSpacer: 0,
+            transparent: false,
             publicTitleBar: true,
             titleVisible: true,
             resizable: true,
@@ -1468,32 +1472,34 @@ final class PlayCoverSessionTests: XCTestCase {
                 error: nil,
                 hostContentCGWindowRect: .init(
                     x: 40,
-                    y: 30,
-                    width: 430,
-                    height: 940
+                    y: 38,
+                    width: 322.5,
+                    height: 699
                 ),
                 hostCGWindowBounds: .init(
                     x: 40,
                     y: 10,
-                    width: 430,
-                    height: 980
+                    width: 322.5,
+                    height: 727
                 ),
                 canvasCGWindowRect: .init(
                     x: 40,
                     y: 38,
-                    width: 430,
-                    height: 932
+                    width: 322.5,
+                    height: 699
                 ),
                 hostWindowNumber: 17
             )
         )
     }
 
-    private func makeUnavailableTransparentHostGeometry(
+    private func makeUnavailableSimulatorScaleHostGeometry(
         hostPolicy: Bool,
         error: String
     ) -> PlayCoverRuntimeHostGeometry {
-        let host = makeTransparentHostGeometry(hostPolicy: hostPolicy)
+        let host = makeSimulatorScaleHostGeometry(
+            hostPolicy: hostPolicy
+        )
         return .init(
             status: host.status,
             hostPolicy: host.hostPolicy,

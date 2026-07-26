@@ -1056,7 +1056,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch(mismatch.1)
         }
-        try validateTransparentHost(geometry.host)
+        try validateSimulatorScaleHost(geometry.host)
     }
 
     private static func validNaturalSafeArea(
@@ -1081,43 +1081,56 @@ final class PlayCoverDriverClient: DriverCommandClient {
             && safeArea.left + safeArea.right <= logicalSize.width
     }
 
-    private static func validateTransparentHost(
+    private static func validateSimulatorScaleHost(
         _ host: PlayCoverRuntimeHostGeometry?
     ) throws {
         guard let host else {
             throw PlayCoverDriverClientError
-                .runtimeGeometryMismatch("transparent host diagnostics")
+                .runtimeGeometryMismatch(
+                    "simulator-scale host diagnostics"
+                )
         }
         let expectedCanvasWidth =
             Self.logicalSize.width * host.displayScale
         let expectedCanvasHeight =
             Self.logicalSize.height * host.displayScale
+        let leftMargin =
+            host.canvasRect.x - host.contentBounds.x
+        let rightMargin =
+            host.contentBounds.x + host.contentBounds.width -
+                host.canvasRect.x - host.canvasRect.width
+        let bottomMargin =
+            host.canvasRect.y - host.contentBounds.y
+        let topMargin =
+            host.contentBounds.y + host.contentBounds.height -
+                host.canvasRect.y - host.canvasRect.height
         let checks: [(Bool, String)] = [
             (
                 host.status == "configured" && host.hostPolicy,
-                "transparent host policy"
+                "simulator-scale host policy"
             ),
             (
-                host.transparent && host.publicTitleBar &&
+                !host.transparent && host.publicTitleBar &&
                     host.titleVisible && host.resizable,
-                "transparent host presentation"
+                "simulator-scale host presentation"
             ),
             (
                 !host.title.isEmpty && host.title == host.titleExpected,
-                "transparent host title"
+                "simulator-scale host title"
             ),
             (
-                host.displayScale.isFinite && host.displayScale >= 0.5 &&
+                host.displayScale.isFinite && host.displayScale > 0 &&
                     host.inverseDisplayScale.isFinite &&
+                    host.inverseDisplayScale > 0 &&
                     approximatelyEqual(
-                        host.inverseDisplayScale,
-                        1 / host.displayScale
+                        host.displayScale * host.inverseDisplayScale,
+                        1
                     ),
-                "transparent host display scale"
+                "simulator-scale host display scale"
             ),
             (
-                approximatelyEqual(host.transparentSpacer, 8),
-                "transparent host spacer"
+                approximatelyEqual(host.transparentSpacer, 0),
+                "simulator-scale host spacer"
             ),
             (
                 validHostFrame(host.canvasBounds) &&
@@ -1131,7 +1144,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                         host.canvasBounds.height,
                         Self.logicalSize.height
                     ),
-                "fixed canvas bounds"
+                "simulator-scale fixed canvas bounds"
             ),
             (
                 validHostFrame(host.frame) &&
@@ -1149,12 +1162,15 @@ final class PlayCoverDriverClient: DriverCommandClient {
                         host.contentBounds,
                         host.canvasRect
                     ) &&
-                    approximatelyEqual(
-                        host.canvasRect.y + host.canvasRect.height +
-                            host.transparentSpacer,
-                        host.contentBounds.y + host.contentBounds.height
-                    ),
-                "transparent host canvas layout"
+                    leftMargin >= -0.01 &&
+                    rightMargin >= -0.01 &&
+                    bottomMargin >= -0.01 &&
+                    topMargin >= -0.01 &&
+                    leftMargin + rightMargin <= 1.01 &&
+                    bottomMargin + topMargin <= 1.01 &&
+                    approximatelyEqual(leftMargin, rightMargin) &&
+                    approximatelyEqual(bottomMargin, topMargin),
+                "simulator-scale host canvas layout"
             ),
             (
                 host.capture.ready && host.capture.error == nil &&
@@ -1186,6 +1202,16 @@ final class PlayCoverDriverClient: DriverCommandClient {
                         host.capture.canvasCGWindowRect.height,
                         host.canvasRect.height
                     ) &&
+                    approximatelyEqual(
+                        host.capture.canvasCGWindowRect.width /
+                            host.displayScale,
+                        Self.logicalSize.width
+                    ) &&
+                    approximatelyEqual(
+                        host.capture.canvasCGWindowRect.height /
+                            host.displayScale,
+                        Self.logicalSize.height
+                    ) &&
                     hostFrameContains(
                         host.capture.hostCGWindowBounds,
                         host.capture.hostContentCGWindowRect
@@ -1207,7 +1233,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                                 host.canvasRect.y -
                                 host.canvasRect.height)
                     ),
-                "transparent host canvas capture"
+                "simulator-scale host canvas capture"
             ),
         ]
         if let mismatch = checks.first(where: { !$0.0 }) {

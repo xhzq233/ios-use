@@ -65,7 +65,7 @@ run_non_live() {
   bash "$ROOT_DIR/scripts/build_swift_cli.sh"
   echo "[playcover-gate] Building the UIKit/SwiftUI/WKWebView/Metal fixture..."
   bash "$ROOT_DIR/playcover-fixtures/build.sh"
-  echo "[playcover-gate] Verifying non-GUI transparent-host contracts..."
+  echo "[playcover-gate] Verifying non-GUI Simulator-scale host contracts..."
   bash "$ROOT_DIR/scripts/test_playcover_fixture_live.sh" --static
   bash "$ROOT_DIR/scripts/test_playcover_external_app_live.sh" --static
   echo "[playcover-gate] Running compositor and PlayChain harnesses..."

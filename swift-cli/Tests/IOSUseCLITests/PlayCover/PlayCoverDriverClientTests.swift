@@ -890,28 +890,54 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
     }
 
-    private func makeTransparentHostGeometry(
+    private func makeSimulatorScaleHostGeometry(
         status: String = "configured",
         hostPolicy: Bool = true,
         title: String = "Fixture",
         titleExpected: String = "Fixture",
         captureReady: Bool = true,
         captureError: String? = nil,
-        hostFrameWidth: Double = 430,
+        displayScale: Double = 0.75,
+        inverseDisplayScale: Double? = nil,
+        transparentSpacer: Double = 0,
+        transparent: Bool = false,
+        hostFrameWidth: Double? = nil,
+        canvasWidth: Double? = nil,
         canvasCGX: Double = 40,
         canvasCGY: Double = 38
     ) -> PlayCoverRuntimeHostGeometry {
-        .init(
+        let contentWidth = 430 * displayScale
+        let contentHeight = 932 * displayScale
+        let resolvedHostFrameWidth = hostFrameWidth ?? contentWidth
+        let resolvedCanvasWidth = canvasWidth ?? contentWidth
+        let resolvedInverseDisplayScale =
+            inverseDisplayScale ?? 1 / displayScale
+        return .init(
             status: status,
             hostPolicy: hostPolicy,
-            frame: .init(x: 40, y: 30, width: hostFrameWidth, height: 980),
-            contentBounds: .init(x: 0, y: 0, width: 430, height: 940),
-            canvasRect: .init(x: 0, y: 0, width: 430, height: 932),
+            frame: .init(
+                x: 40,
+                y: 30,
+                width: resolvedHostFrameWidth,
+                height: contentHeight + 28
+            ),
+            contentBounds: .init(
+                x: 0,
+                y: 0,
+                width: contentWidth,
+                height: contentHeight
+            ),
+            canvasRect: .init(
+                x: 0,
+                y: 0,
+                width: resolvedCanvasWidth,
+                height: contentHeight
+            ),
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
-            displayScale: 1,
-            inverseDisplayScale: 1,
-            transparentSpacer: 8,
-            transparent: true,
+            displayScale: displayScale,
+            inverseDisplayScale: resolvedInverseDisplayScale,
+            transparentSpacer: transparentSpacer,
+            transparent: transparent,
             publicTitleBar: true,
             titleVisible: true,
             resizable: true,
@@ -922,21 +948,21 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 error: captureError,
                 hostContentCGWindowRect: .init(
                     x: 40,
-                    y: 30,
-                    width: 430,
-                    height: 940
+                    y: 38,
+                    width: contentWidth,
+                    height: contentHeight
                 ),
                 hostCGWindowBounds: .init(
                     x: 40,
                     y: 10,
-                    width: 430,
-                    height: 980
+                    width: resolvedHostFrameWidth,
+                    height: contentHeight + 28
                 ),
                 canvasCGWindowRect: .init(
                     x: canvasCGX,
                     y: canvasCGY,
-                    width: 430,
-                    height: 932
+                    width: resolvedCanvasWidth,
+                    height: contentHeight
                 ),
                 hostWindowNumber: 17
             )
@@ -968,7 +994,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 height: Double(IOSUsePlayDeviceLogicalHeight)
             ),
             safeArea: safeArea,
-            host: makeTransparentHostGeometry()
+            host: makeSimulatorScaleHostGeometry()
         )
     }
 
@@ -1010,7 +1036,41 @@ final class PlayCoverDriverClientTests: XCTestCase {
         }
     }
 
-    func testFixedDeviceRejectsMissingOrInvalidTransparentHost()
+    func testFixedDeviceAcceptsSimulatorHundredPercentScale()
+        throws
+    {
+        let geometry = makeGeometry()
+        let hundredPercentGeometry = PlayCoverRuntimeGeometry(
+            logical: geometry.logical,
+            native: geometry.native,
+            scale: geometry.scale,
+            window: geometry.window,
+            safeArea: geometry.safeArea,
+            host: makeSimulatorScaleHostGeometry(
+                displayScale: 1,
+                inverseDisplayScale: 1
+            )
+        )
+
+        XCTAssertNoThrow(
+            try PlayCoverDriverClient.validateFixedDevice(
+                hundredPercentGeometry,
+                stage: "ready"
+            )
+        )
+        XCTAssertEqual(
+            hundredPercentGeometry.host?.contentBounds,
+            .init(x: 0, y: 0, width: 430, height: 932)
+        )
+        XCTAssertEqual(
+            hundredPercentGeometry.host?.canvasRect,
+            .init(x: 0, y: 0, width: 430, height: 932)
+        )
+        XCTAssertEqual(hundredPercentGeometry.host?.frame.width, 430)
+        XCTAssertEqual(hundredPercentGeometry.host?.frame.height, 960)
+    }
+
+    func testFixedDeviceRejectsMissingOrInvalidSimulatorScaleHost()
         throws
     {
         var missingHost = makeGeometry()
@@ -1030,7 +1090,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch("transparent host diagnostics")
+                .runtimeGeometryMismatch(
+                    "simulator-scale host diagnostics"
+                )
             )
         }
 
@@ -1040,7 +1102,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             scale: missingHost.scale,
             window: missingHost.window,
             safeArea: missingHost.safeArea,
-            host: makeTransparentHostGeometry(hostPolicy: false)
+            host: makeSimulatorScaleHostGeometry(hostPolicy: false)
         )
         XCTAssertThrowsError(
             try PlayCoverDriverClient.validateFixedDevice(
@@ -1050,7 +1112,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch("transparent host policy")
+                .runtimeGeometryMismatch(
+                    "simulator-scale host policy"
+                )
             )
         }
 
@@ -1060,7 +1124,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             scale: missingHost.scale,
             window: missingHost.window,
             safeArea: missingHost.safeArea,
-            host: makeTransparentHostGeometry(
+            host: makeSimulatorScaleHostGeometry(
                 captureReady: false,
                 captureError: "canvas unavailable"
             )
@@ -1073,7 +1137,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch("transparent host canvas capture")
+                .runtimeGeometryMismatch(
+                    "simulator-scale host canvas capture"
+                )
             )
         }
 
@@ -1083,7 +1149,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             scale: missingHost.scale,
             window: missingHost.window,
             safeArea: missingHost.safeArea,
-            host: makeTransparentHostGeometry(title: "Wrong")
+            host: makeSimulatorScaleHostGeometry(title: "Wrong")
         )
         XCTAssertThrowsError(
             try PlayCoverDriverClient.validateFixedDevice(
@@ -1093,7 +1159,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch("transparent host title")
+                .runtimeGeometryMismatch(
+                    "simulator-scale host title"
+                )
             )
         }
 
@@ -1103,7 +1171,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             scale: missingHost.scale,
             window: missingHost.window,
             safeArea: missingHost.safeArea,
-            host: makeTransparentHostGeometry(canvasCGX: 41)
+            host: makeSimulatorScaleHostGeometry(canvasCGX: 41)
         )
         XCTAssertThrowsError(
             try PlayCoverDriverClient.validateFixedDevice(
@@ -1113,7 +1181,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch("transparent host canvas capture")
+                .runtimeGeometryMismatch(
+                    "simulator-scale host canvas capture"
+                )
             )
         }
 
@@ -1123,7 +1193,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             scale: missingHost.scale,
             window: missingHost.window,
             safeArea: missingHost.safeArea,
-            host: makeTransparentHostGeometry(hostFrameWidth: 429)
+            host: makeSimulatorScaleHostGeometry(hostFrameWidth: 321.5)
         )
         XCTAssertThrowsError(
             try PlayCoverDriverClient.validateFixedDevice(
@@ -1133,12 +1203,82 @@ final class PlayCoverDriverClientTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch("transparent host canvas capture")
+                .runtimeGeometryMismatch(
+                    "simulator-scale host canvas capture"
+                )
+            )
+        }
+
+        let transparentHost = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeSimulatorScaleHostGeometry(transparent: true)
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                transparentHost,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale host presentation"
+                )
+            )
+        }
+
+        let spacerHost = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeSimulatorScaleHostGeometry(
+                transparentSpacer: 8
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                spacerHost,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale host spacer"
+                )
+            )
+        }
+
+        let insetCanvasHost = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeSimulatorScaleHostGeometry(canvasWidth: 320)
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                insetCanvasHost,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale host canvas layout"
+                )
             )
         }
     }
 
-    func testRuntimeGeometryDecodesTransparentHostFromJSON()
+    func testRuntimeGeometryDecodesSimulatorScaleHostFromJSON()
         throws
     {
         let json = Data(
@@ -1151,19 +1291,19 @@ final class PlayCoverDriverClientTests: XCTestCase {
               "safeArea":{"top":0,"left":0,"bottom":0,"right":0},
               "host":{
                 "status":"configured","hostPolicy":true,
-                "frame":{"x":40,"y":30,"width":430,"height":980},
-                "contentBounds":{"x":0,"y":0,"width":430,"height":940},
-                "canvasRect":{"x":0,"y":0,"width":430,"height":932},
+                "frame":{"x":40,"y":30,"width":322.5,"height":727},
+                "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
+                "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
-                "displayScale":1,"inverseDisplayScale":1,
-                "transparentSpacer":8,"transparent":true,
+                "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
+                "transparentSpacer":0,"transparent":false,
                 "publicTitleBar":true,"titleVisible":true,"resizable":true,
                 "title":"Fixture","titleExpected":"Fixture",
                 "capture":{
                   "ready":true,"error":null,"hostWindowNumber":17,
-                  "hostContentCGWindowRect":{"x":40,"y":30,"width":430,"height":940},
-                  "hostCGWindowBounds":{"x":40,"y":10,"width":430,"height":980},
-                  "canvasCGWindowRect":{"x":40,"y":38,"width":430,"height":932}
+                  "hostContentCGWindowRect":{"x":40,"y":38,"width":322.5,"height":699},
+                  "hostCGWindowBounds":{"x":40,"y":10,"width":322.5,"height":727},
+                  "canvasCGWindowRect":{"x":40,"y":38,"width":322.5,"height":699}
                 }
               }
             }
@@ -1195,12 +1335,12 @@ final class PlayCoverDriverClientTests: XCTestCase {
               "safeArea":{"top":0,"left":0,"bottom":0,"right":0},
               "host":{
                 "status":"configured","hostPolicy":true,
-                "frame":{"x":40,"y":30,"width":430,"height":980},
-                "contentBounds":{"x":0,"y":0,"width":430,"height":940},
-                "canvasRect":{"x":0,"y":0,"width":430,"height":932},
+                "frame":{"x":40,"y":30,"width":322.5,"height":727},
+                "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
+                "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
-                "displayScale":1,"inverseDisplayScale":1,
-                "transparentSpacer":8,"transparent":true,
+                "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
+                "transparentSpacer":0,"transparent":false,
                 "publicTitleBar":true,"titleVisible":true,"resizable":true,
                 "title":"Fixture","titleExpected":"Fixture",
                 "capture":{
@@ -1233,7 +1373,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
-                .runtimeGeometryMismatch("transparent host canvas capture")
+                .runtimeGeometryMismatch(
+                    "simulator-scale host canvas capture"
+                )
             )
         }
     }

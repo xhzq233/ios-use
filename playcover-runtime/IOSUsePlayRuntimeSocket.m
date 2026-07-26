@@ -320,8 +320,13 @@ static NSNumber *IOSUseSocketStableFiniteNumber(id value) {
 }
 
 static NSNumber *IOSUseSocketStableBool(id value) {
-    return @([value isKindOfClass:NSNumber.class] &&
-        [(NSNumber *)value boolValue]);
+    // `&&` promotes the expression to C `int`; boxing that directly produces
+    // JSON `0`/`1`, which Swift's `Bool` decoder correctly rejects.  Return a
+    // canonical CFBoolean so every typed Runtime host field remains a JSON
+    // boolean even on its unavailable/error path.
+    BOOL boolValue = [value isKindOfClass:NSNumber.class] &&
+        [(NSNumber *)value boolValue];
+    return boolValue ? @YES : @NO;
 }
 
 static NSString *IOSUseSocketStableString(id value) {
@@ -504,31 +509,48 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
             ? capture[@"hostWindowNumber"]
             : nil;
     BOOL captureErrorIsNull = capture[@"error"] == NSNull.null;
-    return [host[@"status"] isEqualToString:@"configured"] &&
+    BOOL transparent = [host[@"transparent"] boolValue];
+    BOOL commonReady =
+        [host[@"status"] isEqualToString:@"configured"] &&
         [host[@"hostPolicy"] boolValue] &&
-        [host[@"transparent"] boolValue] &&
         [host[@"publicTitleBar"] boolValue] &&
         [host[@"titleVisible"] boolValue] &&
         [host[@"resizable"] boolValue] &&
         title.length > 0 && [title isEqualToString:expectedTitle] &&
-        isfinite(displayScale) && displayScale > 0 &&
-        isfinite(inverseDisplayScale) &&
-        fabs(displayScale * inverseDisplayScale - 1.0) <= 0.01 &&
-        fabs(spacer - 8.0) <= 0.01 &&
         IOSUseSocketRectFromJSON(host[@"frame"], &frame) &&
         IOSUseSocketRectFromJSON(
             host[@"contentBounds"],
             &contentBounds
         ) &&
         IOSUseSocketRectFromJSON(host[@"canvasBounds"], &canvasBounds) &&
+        IOSUseSocketRectFromJSON(host[@"canvasRect"], &canvasRect);
+    if (!commonReady) {
+        return NO;
+    }
+    CGFloat leftMargin =
+        CGRectGetMinX(canvasRect) - CGRectGetMinX(contentBounds);
+    CGFloat rightMargin =
+        CGRectGetMaxX(contentBounds) - CGRectGetMaxX(canvasRect);
+    CGFloat bottomMargin =
+        CGRectGetMinY(canvasRect) - CGRectGetMinY(contentBounds);
+    CGFloat topMargin =
+        CGRectGetMaxY(contentBounds) - CGRectGetMaxY(canvasRect);
+    return !transparent &&
+        fabs(spacer) <= 0.01 &&
+        isfinite(displayScale) && displayScale > 0 &&
+        isfinite(inverseDisplayScale) &&
+        fabs(displayScale * inverseDisplayScale - 1.0) <= 0.01 &&
         fabs(canvasBounds.origin.x) <= 0.01 &&
         fabs(canvasBounds.origin.y) <= 0.01 &&
         fabs(canvasBounds.size.width - IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
         fabs(canvasBounds.size.height - IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
-        IOSUseSocketRectFromJSON(host[@"canvasRect"], &canvasRect) &&
         IOSUseSocketContainsRect(contentBounds, canvasRect) &&
-        fabs(CGRectGetMaxY(canvasRect) + spacer -
-            CGRectGetMaxY(contentBounds)) <= 0.01 &&
+        leftMargin >= -0.01 && rightMargin >= -0.01 &&
+        bottomMargin >= -0.01 && topMargin >= -0.01 &&
+        leftMargin + rightMargin <= 1.01 &&
+        bottomMargin + topMargin <= 1.01 &&
+        fabs(leftMargin - rightMargin) <= 0.01 &&
+        fabs(bottomMargin - topMargin) <= 0.01 &&
         fabs(canvasRect.size.width / displayScale -
             IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
         fabs(canvasRect.size.height / displayScale -
@@ -553,6 +575,10 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
             hostContentCGWindowRect
         ) &&
         IOSUseSocketContainsRect(hostCGWindowBounds, canvasCGWindowRect) &&
+        fabs(hostContentCGWindowRect.size.width -
+            contentBounds.size.width) <= 0.01 &&
+        fabs(hostContentCGWindowRect.size.height -
+            contentBounds.size.height) <= 0.01 &&
         fabs(
             canvasCGWindowRect.origin.x -
                 (hostContentCGWindowRect.origin.x +
@@ -609,7 +635,7 @@ static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
             },
             @"scale": @(screen.scale),
             // This is intentionally UIKit's fixed logical canvas, not the
-            // independently resizable transparent AppKit host.
+            // independently resizable simulator-scale AppKit host.
             @"window": @{
                 @"width": @(windowBounds.size.width),
                 @"height": @(windowBounds.size.height),

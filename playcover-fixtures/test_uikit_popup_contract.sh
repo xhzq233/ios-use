@@ -175,13 +175,13 @@ jq -e '
   $runtime.nativeHeight == 2796 and
   $runtime.scale == 3 and
   $window.status == "configured" and
-  $window.transparentHost == true and
+  $window.transparentHost == false and
   $window.publicTitleBar == true and
   $window.resizable == true and
   $window.hostPolicy == true and
   $window.title == "IOSUsePlayFixture" and
   $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-  $window.transparentSpacer == 8 and
+  $window.transparentSpacer == 0 and
   ($window.displayScale | type) == "number" and
   $window.displayScale > 0 and
   ($window.inverseDisplayScale | type) == "number" and

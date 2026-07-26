@@ -349,24 +349,37 @@ int main(int argc, const char *argv[]) {
             bridgeFocusableWindow == nil &&
                 bridgeWindowPolicy != nil &&
                 [bridgeWindowPolicy containsString:
-                    @"publicHostStyleMask"] &&
+                    @"IOSUseBridgeInstallSimulatorScaleResizeHook"] &&
                 [bridgeWindowPolicy containsString:
                     @"@\"setStyleMask:\""] &&
                 [bridgeWindowPolicy containsString:
-                    @"@\"setOpaque:\", NO"] &&
-                [bridgeWindowPolicy containsString:
-                    @"@\"setTitlebarAppearsTransparent:\", YES"] &&
-                [bridgeWindowPolicy containsString:
-                    @"IOSUseBridgeHostTitle()"] &&
+                    @"@\"setContentAspectRatio:\""] &&
                 [bridgeWindowPolicy containsString:
                     @"@\"setContentMinSize:\""] &&
+                ![bridgeWindowPolicy containsString:
+                    @"@\"setOpaque:\""] &&
                 [bridgeWindowPolicy containsString:
-                    @"@\"setIgnoresMouseEvents:\", NO"] &&
+                    @"IOSUseBridgeWindowPolicyIsHost"] &&
+                ![bridgeWindowPolicy containsString:
+                    @"@\"setTitlebarAppearsTransparent:\""] &&
+                ![bridgeWindowPolicy containsString:
+                    @"@\"setBackgroundColor:\""] &&
+                ![bridgeWindowPolicy containsString:
+                    @"@\"setTitleVisibility:\""] &&
+                ![bridgeWindowPolicy containsString:
+                    @"@\"setTitle:\""] &&
+                ![bridgeWindowPolicy containsString:
+                    @"@\"setFrame:\""] &&
+                ![bridgeWindowPolicy containsString:
+                    @"@\"setContentSize:\""] &&
+                [compositor containsString:
+                    @"IOSUsePlayHostCanvasSpacerPoints = 0.0"] &&
                 [bridgeWindowPolicy containsString:
-                    @"@\"setAcceptsMouseMovedEvents:\", YES"],
-            @"the visible Catalyst window must remain a public, transparent, "
-            @"mouse-interactive Simulator-style host rather than a private "
-            @"borderless device window"
+                    @"IOSUsePlayDeviceLogicalWidth"] &&
+                [bridgeWindowPolicy containsString:
+                    @"IOSUsePlayDeviceLogicalHeight"],
+            @"the visible Catalyst window must remain an ordinary opaque, "
+             "mouse-interactive, proportional Simulator-scale NSWindow"
         );
         passed &= Require(
             bridgeMouseMonitor != nil &&
@@ -391,7 +404,7 @@ int main(int argc, const char *argv[]) {
                     @"IOSUseBridgeInstallMouseLocalMonitor"],
             @"AppKit mouse evidence must retain tagged down/up identity, "
             @"inverse-map host content through the fixed canvas, and reject "
-            @"title-bar/gap/outside points as non-target hit tests"
+            @"title-bar/outside points as non-target hit tests"
         );
         passed &= Require(
             ![runtime containsString:@"CGRequestScreenCaptureAccess"] &&

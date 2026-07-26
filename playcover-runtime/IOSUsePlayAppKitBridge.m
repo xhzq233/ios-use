@@ -21,6 +21,12 @@ typedef CGRect (*IOSUseBridgeSendRect)(id, SEL);
 typedef CGRect (*IOSUseBridgeSendRectRect)(id, SEL, CGRect);
 typedef CGRect (*IOSUseBridgeSendRectRectID)(id, SEL, CGRect, id);
 typedef CGSize (*IOSUseBridgeSendSize)(id, SEL);
+typedef CGSize (*IOSUseBridgeSendProposedSize)(
+    id,
+    SEL,
+    CGSize,
+    NSUInteger
+);
 typedef SEL (*IOSUseBridgeSendSelector)(id, SEL);
 typedef CGEventRef _Nullable (*IOSUseBridgeSendCGEvent)(id, SEL);
 typedef id (*IOSUseBridgeSendIDRect)(id, SEL, CGRect);
@@ -40,10 +46,8 @@ typedef void (*IOSUseBridgeSendUnsignedIntegerArgument)(
     SEL,
     NSUInteger
 );
-typedef void (*IOSUseBridgeSendPointArgument)(id, SEL, CGPoint);
 typedef void (*IOSUseBridgeSendRectArgument)(id, SEL, CGRect);
 typedef void (*IOSUseBridgeSendSizeArgument)(id, SEL, CGSize);
-typedef void (*IOSUseBridgeSendPointerArgument)(id, SEL, const void *);
 typedef id (*IOSUseBridgeSendIDUnsignedIntegerID)(
     id,
     SEL,
@@ -105,7 +109,9 @@ static id IOSUsePlayHostContentView;
 static id IOSUsePlayCanvasView;
 static IOSUsePlayHostCanvasLayout IOSUsePlayCurrentHostCanvasLayout;
 static BOOL IOSUsePlayHostCanvasLayoutReady;
-static BOOL IOSUsePlayHostInitialFrameConfigured;
+static BOOL IOSUsePlayHostCanvasLayoutUpdateScheduled;
+static Class IOSUsePlayResizeHookClass;
+static IOSUseBridgeSendProposedSize IOSUsePlayOriginalProposedSize;
 static NSString *IOSUsePlayHostTitle;
 typedef NS_ENUM(NSUInteger, IOSUseBridgeSceneGeometryState) {
     IOSUseBridgeSceneGeometryStateNotRequested,
@@ -304,23 +310,6 @@ static BOOL IOSUseBridgeSetUnsignedInteger(
         return NO;
     }
     ((IOSUseBridgeSendUnsignedIntegerArgument)objc_msgSend)(
-        object,
-        selector,
-        value
-    );
-    return YES;
-}
-
-static BOOL IOSUseBridgeSetPoint(
-    id object,
-    NSString *selectorName,
-    CGPoint value
-) {
-    SEL selector = NSSelectorFromString(selectorName);
-    if (![object respondsToSelector:selector]) {
-        return NO;
-    }
-    ((IOSUseBridgeSendPointArgument)objc_msgSend)(
         object,
         selector,
         value
@@ -553,6 +542,19 @@ static BOOL IOSUseBridgeApproximatelyEqual(CGFloat lhs, CGFloat rhs) {
     return fabs(lhs - rhs) <= 0.01;
 }
 
+static BOOL IOSUseBridgeRectApproximatelyEqual(CGRect lhs, CGRect rhs) {
+    return IOSUseBridgeApproximatelyEqual(lhs.origin.x, rhs.origin.x) &&
+        IOSUseBridgeApproximatelyEqual(lhs.origin.y, rhs.origin.y) &&
+        IOSUseBridgeApproximatelyEqual(
+            lhs.size.width,
+            rhs.size.width
+        ) &&
+        IOSUseBridgeApproximatelyEqual(
+            lhs.size.height,
+            rhs.size.height
+        );
+}
+
 static CGSize IOSUseBridgeHostMinimumContentSize(void) {
     return CGSizeMake(
         IOSUsePlayDeviceLogicalWidth *
@@ -589,27 +591,18 @@ static BOOL IOSUseBridgeWindowPolicyIsHost(id window) {
     const NSInteger titled = 1 << 0;
     const NSInteger resizable = 1 << 3;
     NSInteger styleMask = IOSUseBridgeInteger(window, @"styleMask");
-    CGSize minimum = IOSUseBridgeHostMinimumContentSize();
-    CGSize contentMinimum = IOSUseBridgeSize(window, @"contentMinSize");
-    id rawTitle = [window respondsToSelector:NSSelectorFromString(@"title")]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(
-            window,
-            NSSelectorFromString(@"title")
-        )
-        : nil;
-    BOOL titleMatches = [rawTitle isKindOfClass:NSString.class] &&
-        [(NSString *)rawTitle isEqualToString:IOSUseBridgeHostTitle()];
+    CGSize aspect = IOSUseBridgeSize(window, @"contentAspectRatio");
     return (styleMask & titled) != 0 &&
         (styleMask & resizable) != 0 &&
-        !IOSUseBridgeBool(window, @"isOpaque") &&
         IOSUseBridgeBool(window, @"isMovable") &&
-        IOSUseBridgeBool(window, @"titlebarAppearsTransparent") &&
-        IOSUseBridgeInteger(window, @"titleVisibility") == 0 &&
-        titleMatches &&
-        contentMinimum.width + 0.01 >=
-            minimum.width &&
-        contentMinimum.height + 0.01 >=
-            minimum.height;
+        !IOSUseBridgeBool(window, @"ignoresMouseEvents") &&
+        isfinite(aspect.width) && isfinite(aspect.height) &&
+        aspect.width > 0 && aspect.height > 0 &&
+        IOSUseBridgeApproximatelyEqual(
+            aspect.width / aspect.height,
+            (CGFloat)IOSUsePlayDeviceLogicalWidth /
+                (CGFloat)IOSUsePlayDeviceLogicalHeight
+        );
 }
 
 static NSDictionary<NSString *, NSNumber *> *IOSUseBridgeRectJSON(
@@ -1124,7 +1117,7 @@ static BOOL IOSUseBridgeAppKitScreenRectToCGWindowRect(
 }
 
 /// Single inverse-transform route for AppKit AX and native-alert controls.
-/// It starts from an AppKit global screen rect, enters the transparent host's
+/// It starts from an AppKit global screen rect, enters the fixed-canvas host's
 /// content coordinate system, clips to the visible fixed canvas, then maps
 /// to the device's fixed top-left logical coordinates using the current
 /// display scale.
@@ -1138,7 +1131,7 @@ static CGRect IOSUseBridgeAppKitScreenRectToCanvasLogicalRect(
         if (error != NULL) {
             *error = IOSUseBridgeAccessibilityError(
                 13,
-                @"transparent AppKit host is unavailable for geometry conversion"
+                @"AppKit host is unavailable for geometry conversion"
             );
         }
         return CGRectNull;
@@ -1148,7 +1141,7 @@ static CGRect IOSUseBridgeAppKitScreenRectToCanvasLogicalRect(
         if (error != NULL) {
             *error = IOSUseBridgeAccessibilityError(
                 13,
-                layoutFailure ?: @"transparent host canvas layout is unavailable"
+                layoutFailure ?: @"fixed host canvas layout is unavailable"
             );
         }
         return CGRectNull;
@@ -1246,22 +1239,17 @@ IOSUseBridgeCollectAccessibilityElements(
         if (error != NULL) {
             *error = IOSUseBridgeAccessibilityError(
                 6,
-                layoutFailure ?: @"transparent host does not have a fixed "
+                layoutFailure ?: @"host does not have a fixed "
                  "logical canvas"
             );
         }
         return nil;
     }
-    CGRect canvasBounds = IOSUseBridgeRect(
-        IOSUsePlayCanvasView,
-        @"bounds"
-    );
-    if (!IOSUseBridgeRectIsDeviceScreen(canvasBounds) ||
-        !IOSUseBridgeWindowPolicyIsHost(window)) {
+    if (!IOSUseBridgeWindowPolicyIsHost(window)) {
         if (error != NULL) {
             *error = IOSUseBridgeAccessibilityError(
                 6,
-                @"transparent host does not have a fixed logical canvas"
+                @"host does not have a fixed logical canvas"
             );
         }
         return nil;
@@ -1607,14 +1595,6 @@ static BOOL IOSUseBridgeScreenCanFit(id window) {
         visibleFrame.size.height >= minimumFrame.size.height;
 }
 
-static CGRect IOSUseBridgeVisibleFrame(id window) {
-    SEL screenSelector = NSSelectorFromString(@"screen");
-    id screen = [window respondsToSelector:screenSelector]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(window, screenSelector)
-        : nil;
-    return IOSUseBridgeRect(screen, @"visibleFrame");
-}
-
 static CGRect IOSUseBridgeVisibleFrameInCGCoordinates(id window) {
     SEL screenSelector = NSSelectorFromString(@"screen");
     id screen = [window respondsToSelector:screenSelector]
@@ -1731,8 +1711,8 @@ IOSUseBridgeLockSceneToFixedCanvas(UIWindow *uiWindow) {
         return IOSUsePlaySceneGeometryState;
     }
     CGSize fixed = IOSUseBridgeFixedSceneCanvasSize();
-    // The AppKit host may resize, but UIKit's scene remains the fixed device
-    // canvas and is only display-scaled by the host wrapper.
+    // The AppKit wrapper may resize, but UIKit's scene remains the fixed
+    // device canvas and is only display-scaled inside that wrapper.
     scene.sizeRestrictions.minimumSize = fixed;
     scene.sizeRestrictions.maximumSize = fixed;
     if (scene != IOSUsePlaySceneGeometryScene) {
@@ -1818,156 +1798,129 @@ static id IOSUseBridgeNewViewWithFrame(CGRect frame) {
         );
 }
 
-static void IOSUseBridgeMakeViewTransparent(id view) {
-    IOSUseBridgeSetBool(view, @"setWantsLayer:", YES);
-    id layer = [view respondsToSelector:NSSelectorFromString(@"layer")]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(
-            view,
-            NSSelectorFromString(@"layer")
-        )
-        : nil;
-    Class colorClass = NSClassFromString(@"NSColor");
-    id clearColor = colorClass != Nil &&
-        [(id)colorClass respondsToSelector:NSSelectorFromString(@"clearColor")]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(
-            (id)colorClass,
-            NSSelectorFromString(@"clearColor")
-        )
-        : nil;
-    id cgColor = [clearColor respondsToSelector:NSSelectorFromString(@"CGColor")]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(
-            clearColor,
-            NSSelectorFromString(@"CGColor")
-        )
-        : nil;
-    SEL backgroundSelector = NSSelectorFromString(@"setBackgroundColor:");
-    if (layer != nil && [layer respondsToSelector:backgroundSelector]) {
-        ((IOSUseBridgeSendPointerArgument)objc_msgSend)(
-            layer,
-            backgroundSelector,
-            (__bridge const void *)cgColor
-        );
+static CGSize IOSUseBridgeAcceptProposedWindowSize(
+    id window,
+    SEL selector,
+    CGSize proposed,
+    NSUInteger resizeEdges
+) {
+    if (isfinite(proposed.width) && isfinite(proposed.height) &&
+        proposed.width > 0 && proposed.height > 0) {
+        return proposed;
     }
-    IOSUseBridgeSetBool(view, @"setOpaque:", NO);
+    return IOSUsePlayOriginalProposedSize == NULL
+        ? proposed
+        : IOSUsePlayOriginalProposedSize(
+            window,
+            selector,
+            proposed,
+            resizeEdges
+        );
 }
 
-static void IOSUseBridgeApplyWindowPolicy(id window) {
-    const NSInteger publicHostStyleMask = (1 << 0) | (1 << 1) |
-        (1 << 2) | (1 << 3);
+static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
+    Class windowClass = [window class];
+    Class fullScreenWindowClass =
+        NSClassFromString(@"UINSFullScreenWindow");
+    if (fullScreenWindowClass == Nil) {
+        return NO;
+    }
+    if (![window isKindOfClass:fullScreenWindowClass]) {
+        return YES;
+    }
+    if (IOSUsePlayResizeHookClass == windowClass &&
+        IOSUsePlayOriginalProposedSize != NULL) {
+        return YES;
+    }
+    SEL selector = NSSelectorFromString(
+        @"_sizeForProposedSize:resizeEdges:"
+    );
+    Method method = class_getInstanceMethod(windowClass, selector);
+    if (method == NULL ||
+        method_getNumberOfArguments(method) != 4) {
+        return NO;
+    }
+    char *returnType = method_copyReturnType(method);
+    char *sizeType = method_copyArgumentType(method, 2);
+    char *edgesType = method_copyArgumentType(method, 3);
+    BOOL signatureMatches =
+        returnType != NULL && strcmp(returnType, @encode(CGSize)) == 0 &&
+        sizeType != NULL && strcmp(sizeType, @encode(CGSize)) == 0 &&
+        edgesType != NULL &&
+            strcmp(edgesType, @encode(NSUInteger)) == 0;
+    free(returnType);
+    free(sizeType);
+    free(edgesType);
+    if (!signatureMatches) {
+        return NO;
+    }
+    IMP current = method_getImplementation(method);
+    if (current == (IMP)IOSUseBridgeAcceptProposedWindowSize) {
+        return IOSUsePlayOriginalProposedSize != NULL;
+    }
+    IMP original = method_setImplementation(
+        method,
+        (IMP)IOSUseBridgeAcceptProposedWindowSize
+    );
+    if (original == NULL) {
+        return NO;
+    }
+    IOSUsePlayResizeHookClass = windowClass;
+    IOSUsePlayOriginalProposedSize =
+        (IOSUseBridgeSendProposedSize)original;
+    return YES;
+}
+
+static BOOL IOSUseBridgeApplyWindowPolicy(id window) {
+    // Preserve UIKitMacHelper's ordinary titled window. The host owns only
+    // public resize policy; UIKit keeps its fixed 430 x 932 logical scene.
+    const NSInteger resizable = 1 << 3;
+    if (!IOSUseBridgeInstallSimulatorScaleResizeHook(window)) {
+        return NO;
+    }
+    NSInteger styleMask = IOSUseBridgeInteger(window, @"styleMask");
+    if ((styleMask & resizable) == 0) {
+        IOSUseBridgeSetInteger(
+            window,
+            @"setStyleMask:",
+            styleMask | resizable
+        );
+    }
+    CGSize fixedAspect = CGSizeMake(
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight
+    );
+    CGSize currentAspect = IOSUseBridgeSize(
+        window,
+        @"contentAspectRatio"
+    );
+    if (!IOSUseBridgeApproximatelyEqual(
+            currentAspect.width / currentAspect.height,
+            fixedAspect.width / fixedAspect.height
+        )) {
+        IOSUseBridgeSetSize(
+            window,
+            @"setContentAspectRatio:",
+            fixedAspect
+        );
+    }
     CGSize minimumContent = IOSUseBridgeHostMinimumContentSize();
-    Class windowClass = NSClassFromString(@"NSWindow");
-    IOSUseBridgeSetBool(
-        (id)windowClass,
-        @"setAllowsAutomaticWindowTabbing:",
-        NO
-    );
-    IOSUseBridgeSetInteger(
-        window,
-        @"setStyleMask:",
-        publicHostStyleMask
-    );
-    IOSUseBridgeSetInteger(window, @"setCollectionBehavior:", 0);
-    IOSUseBridgeSetInteger(window, @"setTabbingMode:", 2);
-    IOSUseBridgeSetBool(window, @"setHasShadow:", NO);
-    IOSUseBridgeSetBool(window, @"setMovable:", YES);
-    IOSUseBridgeSetBool(window, @"setMovableByWindowBackground:", YES);
-    IOSUseBridgeSetBool(window, @"setIgnoresMouseEvents:", NO);
-    IOSUseBridgeSetBool(window, @"setAcceptsMouseMovedEvents:", YES);
-    IOSUseBridgeSetBool(window, @"setRestorable:", NO);
-    IOSUseBridgeSetBool(window, @"setReleasedWhenClosed:", NO);
-    IOSUseBridgeSetBool(window, @"setOpaque:", NO);
-    IOSUseBridgeSetBool(window, @"setTitlebarAppearsTransparent:", YES);
-    IOSUseBridgeSetInteger(window, @"setTitleVisibility:", 0);
-    SEL titleSelector = NSSelectorFromString(@"setTitle:");
-    if ([window respondsToSelector:titleSelector]) {
-        ((IOSUseBridgeSendIDArgument)objc_msgSend)(
+    CGSize currentMinimum = IOSUseBridgeSize(window, @"contentMinSize");
+    if (!IOSUseBridgeApproximatelyEqual(
+            currentMinimum.width,
+            minimumContent.width
+        ) ||
+        !IOSUseBridgeApproximatelyEqual(
+            currentMinimum.height,
+            minimumContent.height
+        )) {
+        IOSUseBridgeSetSize(
             window,
-            titleSelector,
-            IOSUseBridgeHostTitle()
+            @"setContentMinSize:",
+            minimumContent
         );
     }
-    Class colorClass = NSClassFromString(@"NSColor");
-    SEL clearColorSelector = NSSelectorFromString(@"clearColor");
-    id clearColor = colorClass != Nil &&
-        [(id)colorClass respondsToSelector:clearColorSelector]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(
-            (id)colorClass,
-            clearColorSelector
-        )
-        : nil;
-    SEL backgroundSelector = NSSelectorFromString(@"setBackgroundColor:");
-    if ([window respondsToSelector:backgroundSelector]) {
-        ((IOSUseBridgeSendIDArgument)objc_msgSend)(
-            window,
-            backgroundSelector,
-            clearColor
-        );
-    }
-    SEL toolbarSelector = NSSelectorFromString(@"setToolbar:");
-    if ([window respondsToSelector:toolbarSelector]) {
-        ((IOSUseBridgeSendIDArgument)objc_msgSend)(
-            window,
-            toolbarSelector,
-            nil
-        );
-    }
-    // No aspect constraint: host width and height may change independently;
-    // only the inner canvas uses a uniform fit scale.
-    IOSUseBridgeSetSize(window, @"setContentAspectRatio:", CGSizeZero);
-    IOSUseBridgeSetSize(window, @"setContentMinSize:", minimumContent);
-    IOSUseBridgeSetSize(
-        window,
-        @"setContentMaxSize:",
-        CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)
-    );
-    CGRect minimumFrame = [window respondsToSelector:
-        NSSelectorFromString(@"frameRectForContentRect:")]
-        ? ((IOSUseBridgeSendRectRect)objc_msgSend)(
-            window,
-            NSSelectorFromString(@"frameRectForContentRect:"),
-            CGRectMake(0, 0, minimumContent.width, minimumContent.height)
-        )
-        : CGRectMake(0, 0, minimumContent.width, minimumContent.height);
-    IOSUseBridgeSetSize(window, @"setMinSize:", minimumFrame.size);
-    IOSUseBridgeSetSize(
-        window,
-        @"setMaxSize:",
-        CGSizeMake(CGFLOAT_MAX, CGFLOAT_MAX)
-    );
-    if (window != IOSUsePlayHostWindow ||
-        !IOSUsePlayHostInitialFrameConfigured) {
-        CGRect visible = IOSUseBridgeVisibleFrame(window);
-        CGSize decoration = CGSizeMake(
-            MAX(0, minimumFrame.size.width - minimumContent.width),
-            MAX(0, minimumFrame.size.height - minimumContent.height)
-        );
-        CGSize initialContent = CGSizeZero;
-        if (!IOSUsePlayResolveHostInitialContentSize(
-                visible.size,
-                decoration,
-                &initialContent,
-                NULL
-            )) {
-            return;
-        }
-        IOSUseBridgeSetSize(window, @"setContentSize:", initialContent);
-        CGRect frame = IOSUseBridgeRect(window, @"frame");
-        if (frame.size.width <= visible.size.width &&
-            frame.size.height <= visible.size.height) {
-            CGPoint origin = CGPointMake(
-                MIN(
-                    MAX(frame.origin.x, CGRectGetMinX(visible)),
-                    CGRectGetMaxX(visible) - frame.size.width
-                ),
-                MIN(
-                    MAX(frame.origin.y, CGRectGetMinY(visible)),
-                    CGRectGetMaxY(visible) - frame.size.height
-                )
-            );
-            IOSUseBridgeSetPoint(window, @"setFrameOrigin:", origin);
-            IOSUsePlayHostInitialFrameConfigured = YES;
-        }
-    }
+    return IOSUseBridgeWindowPolicyIsHost(window);
 }
 
 static BOOL IOSUseBridgeInstallHostCanvas(id window) {
@@ -2005,7 +1958,6 @@ static BOOL IOSUseBridgeInstallHostCanvas(id window) {
         ![hostContent respondsToSelector:addSubviewSelector]) {
         return NO;
     }
-    IOSUseBridgeMakeViewTransparent(hostContent);
     IOSUseBridgeSetUnsignedInteger(
         currentContent,
         @"setAutoresizingMask:",
@@ -2060,30 +2012,88 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
         }
         return NO;
     }
-    if (!IOSUseBridgeSetRect(
-            IOSUsePlayCanvasView,
-            @"setBounds:",
-            CGRectMake(
-                0,
-                0,
-                IOSUsePlayDeviceLogicalWidth,
-                IOSUsePlayDeviceLogicalHeight
-            )
+    CGRect requiredBounds = CGRectMake(
+        0,
+        0,
+        layout.canvasRect.size.width,
+        layout.canvasRect.size.height
+    );
+    CGRect currentFrame = IOSUseBridgeRect(
+        IOSUsePlayCanvasView,
+        @"frame"
+    );
+    BOOL frameReady =
+        IOSUseBridgeRectApproximatelyEqual(
+            currentFrame,
+            layout.canvasRect
         ) ||
-        !IOSUseBridgeSetRect(
+        IOSUseBridgeSetRect(
             IOSUsePlayCanvasView,
             @"setFrame:",
             layout.canvasRect
+        );
+    // NSView preserves its existing frame-to-bounds transform when its frame
+    // changes. Set the physical frame first, then normalize the bounds to the
+    // same size so UIKitMacHelper's already-scaled UINSSceneView is displayed
+    // exactly once.
+    CGRect currentBounds = IOSUseBridgeRect(
+        IOSUsePlayCanvasView,
+        @"bounds"
+    );
+    BOOL boundsReady =
+        IOSUseBridgeRectApproximatelyEqual(
+            currentBounds,
+            requiredBounds
+        ) ||
+        IOSUseBridgeSetRect(
+            IOSUsePlayCanvasView,
+            @"setBounds:",
+            requiredBounds
+        );
+    CGRect resolvedFrame = IOSUseBridgeRect(
+        IOSUsePlayCanvasView,
+        @"frame"
+    );
+    CGRect resolvedBounds = IOSUseBridgeRect(
+        IOSUsePlayCanvasView,
+        @"bounds"
+    );
+    if (!boundsReady || !frameReady ||
+        !IOSUseBridgeRectApproximatelyEqual(
+            resolvedFrame,
+            layout.canvasRect
+        ) ||
+        !IOSUseBridgeRectApproximatelyEqual(
+            resolvedBounds,
+            requiredBounds
         )) {
         IOSUsePlayHostCanvasLayoutReady = NO;
         if (failure != NULL) {
-            *failure = @"AppKit canvas does not support fixed frame/bounds updates";
+            *failure =
+                @"AppKit render view does not support host frame/bounds updates";
         }
         return NO;
     }
     IOSUsePlayCurrentHostCanvasLayout = layout;
     IOSUsePlayHostCanvasLayoutReady = YES;
     return YES;
+}
+
+static void IOSUseBridgeScheduleHostCanvasLayoutUpdate(void) {
+    NSCAssert(NSThread.isMainThread, @"host layout scheduling must be main-thread");
+    if (IOSUsePlayHostCanvasLayoutUpdateScheduled) {
+        return;
+    }
+    IOSUsePlayHostCanvasLayoutUpdateScheduled = YES;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        IOSUsePlayHostCanvasLayoutUpdateScheduled = NO;
+        if (IOSUsePlayHostWindow != nil) {
+            IOSUseBridgeUpdateHostCanvasLayout(
+                IOSUsePlayHostWindow,
+                NULL
+            );
+        }
+    });
 }
 
 static NSArray<NSDictionary<NSString *, id> *> *
@@ -2256,6 +2266,70 @@ IOSUseBridgeVisibleNativeAlertSelection(void) {
     return candidates.firstObject;
 }
 
+/// A launch-time system panel can legitimately appear before UIKit has
+/// connected its first scene.  It cannot participate in target automation:
+/// there is neither a fixed canvas nor an exact CGWindow/canvas mapping yet.
+/// Keep it separate from IOSUseBridgeVisibleNativeAlertSelection, whose
+/// strict identity policy protects normal in-canvas native-alert routing.
+static NSDictionary<NSString *, id> *
+IOSUseBridgeBootstrapNativeAlertSelection(void) {
+    if (IOSUsePlayHostWindow != nil ||
+        IOSUseBridgeKeyUIKitWindow() != nil) {
+        return nil;
+    }
+    id application = IOSUseBridgeApplication();
+    id windows = [application respondsToSelector:
+        NSSelectorFromString(@"windows")]
+        ? ((IOSUseBridgeSendID)objc_msgSend)(
+            application,
+            NSSelectorFromString(@"windows")
+        )
+        : nil;
+    if (![windows isKindOfClass:NSArray.class]) {
+        return nil;
+    }
+    NSMutableArray<NSDictionary<NSString *, id> *> *candidates =
+        [NSMutableArray array];
+    for (id window in (NSArray *)windows) {
+        if (!IOSUseBridgeBool(window, @"isVisible") ||
+            !IOSUseBridgeBool(window, @"isKeyWindow")) {
+            continue;
+        }
+        NSInteger rawWindowNumber = IOSUseBridgeInteger(
+            window,
+            @"windowNumber"
+        );
+        if (rawWindowNumber <= 0 ||
+            (uint64_t)rawWindowNumber > UINT32_MAX) {
+            continue;
+        }
+        id contentView = [window respondsToSelector:
+            NSSelectorFromString(@"contentView")]
+            ? ((IOSUseBridgeSendID)objc_msgSend)(
+                window,
+                NSSelectorFromString(@"contentView")
+            )
+            : nil;
+        NSString *windowClass =
+            NSStringFromClass([window class]) ?: @"";
+        NSString *contentClass =
+            NSStringFromClass([contentView class]) ?: @"";
+        if (![windowClass containsString:@"AlertPanel"] ||
+            ![contentClass containsString:@"AlertContent"]) {
+            continue;
+        }
+        [candidates addObject:@{
+            @"window": window,
+            @"contentView": contentView,
+            @"windowNumber": @((uint32_t)rawWindowNumber),
+            @"class": windowClass,
+            @"contentClass": contentClass,
+        }];
+    }
+    // Never guess between more than one launch-time panel.
+    return candidates.count == 1 ? candidates.firstObject : nil;
+}
+
 static void IOSUseBridgeCollectAlertButtons(
     id view,
     NSMutableArray *buttons,
@@ -2333,6 +2407,100 @@ static void IOSUseBridgeCollectAlertTextFields(
             visited
         );
     }
+}
+
+/// This is deliberately text-only evidence for the pre-scene launch panel.
+/// It does not assign canvas coordinates or expose an action delivery path.
+static NSString *IOSUseBridgeBootstrapNativeAlertText(id contentView) {
+    NSMutableArray *textFields = [NSMutableArray array];
+    NSUInteger visited = 0;
+    IOSUseBridgeCollectAlertTextFields(
+        contentView,
+        textFields,
+        &visited
+    );
+    NSMutableOrderedSet<NSString *> *lines =
+        [NSMutableOrderedSet orderedSet];
+    for (id textField in textFields) {
+        id value = [textField respondsToSelector:
+            NSSelectorFromString(@"stringValue")]
+            ? ((IOSUseBridgeSendID)objc_msgSend)(
+                textField,
+                NSSelectorFromString(@"stringValue")
+            )
+            : nil;
+        if (![value isKindOfClass:NSString.class]) {
+            continue;
+        }
+        NSString *line = [(NSString *)value
+            stringByTrimmingCharactersInSet:
+                NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (line.length > 0 && line.length <= 4096) {
+            [lines addObject:line];
+        }
+    }
+    return [[lines array] componentsJoinedByString:@"\n"];
+}
+
+static NSArray<NSString *> *IOSUseBridgeBootstrapNativeAlertActions(
+    id contentView
+) {
+    NSMutableArray *buttons = [NSMutableArray array];
+    NSUInteger visited = 0;
+    IOSUseBridgeCollectAlertButtons(contentView, buttons, &visited);
+    NSMutableOrderedSet<NSString *> *labels =
+        [NSMutableOrderedSet orderedSet];
+    for (id button in buttons) {
+        id title = [button respondsToSelector:
+            NSSelectorFromString(@"title")]
+            ? ((IOSUseBridgeSendID)objc_msgSend)(
+                button,
+                NSSelectorFromString(@"title")
+            )
+            : nil;
+        if (![title isKindOfClass:NSString.class]) {
+            continue;
+        }
+        NSString *label = [(NSString *)title
+            stringByTrimmingCharactersInSet:
+                NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (label.length > 0 && label.length <= 4096) {
+            [labels addObject:label];
+        }
+    }
+    return [labels array];
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseBridgeBootstrapNativeAlertDiagnostics(void) {
+    NSDictionary<NSString *, id> *selection =
+        IOSUseBridgeBootstrapNativeAlertSelection();
+    if (selection == nil) {
+        return @{
+            @"visible": @NO,
+            @"preSceneOwnProcess": @NO,
+            @"geometryAvailable": @NO,
+            @"windowNumber": @0,
+            @"class": NSNull.null,
+            @"contentClass": NSNull.null,
+            @"text": @"",
+            @"actions": @[],
+        };
+    }
+    return @{
+        @"visible": @YES,
+        @"preSceneOwnProcess": @YES,
+        @"geometryAvailable": @NO,
+        @"windowNumber": selection[@"windowNumber"],
+        @"class": selection[@"class"],
+        @"contentClass": selection[@"contentClass"],
+        @"text": IOSUseBridgeBootstrapNativeAlertText(
+            selection[@"contentView"]
+        ),
+        @"actions": IOSUseBridgeBootstrapNativeAlertActions(
+            selection[@"contentView"]
+        ),
+    };
 }
 
 static CGRect IOSUseBridgeAlertButtonLogicalFrame(
@@ -3014,10 +3182,6 @@ static NSString *IOSUseBridgeNativeAlertText(
             NSNotificationCenter.defaultCenter;
         for (NSString *name in @[
             @"NSWindowDidBecomeKeyNotification",
-            @"NSWindowDidResizeNotification",
-            @"NSWindowDidMoveNotification",
-            @"NSWindowDidChangeBackingPropertiesNotification",
-            @"NSWindowDidChangeScreenNotification",
             UIApplicationDidBecomeActiveNotification,
             UISceneDidActivateNotification,
         ]) {
@@ -3028,6 +3192,27 @@ static NSString *IOSUseBridgeNativeAlertText(
                                __unused NSNotification *notification
                            ) {
                 [self configureFixedWindow:NULL];
+            }];
+        }
+        for (NSString *name in @[
+            @"NSWindowDidResizeNotification",
+            @"NSWindowDidMoveNotification",
+            @"NSWindowDidChangeBackingPropertiesNotification",
+            @"NSWindowDidChangeScreenNotification",
+        ]) {
+            [center addObserverForName:name
+                               object:nil
+                                queue:NSOperationQueue.mainQueue
+                           usingBlock:^(
+                               NSNotification *notification
+                           ) {
+                // Once installed, outer-window notifications must not reapply
+                // style/titlebar/size policy while AppKit is consuming the
+                // same frame transition. Only the fixed inner canvas needs
+                // reconciliation.
+                if (notification.object == IOSUsePlayHostWindow) {
+                    IOSUseBridgeScheduleHostCanvasLayoutUpdate();
+                }
             }];
         }
     });
@@ -3089,11 +3274,23 @@ static NSString *IOSUseBridgeNativeAlertText(
         }
         return NO;
     }
-    IOSUseBridgeApplyWindowPolicy(window);
+    if (!IOSUseBridgeApplyWindowPolicy(window)) {
+        IOSUsePlayWindowStatus = @"failed";
+        IOSUsePlayWindowFailure =
+            @"could not install the simulator-scale NSWindow policy";
+        if (error != NULL) {
+            *error = [NSError errorWithDomain:IOSUsePlayWindowErrorDomain
+                                         code:10
+                                     userInfo:@{
+                NSLocalizedDescriptionKey: IOSUsePlayWindowFailure,
+            }];
+        }
+        return NO;
+    }
     if (!IOSUseBridgeScreenCanFit(window)) {
         IOSUsePlayWindowStatus = @"failed";
         IOSUsePlayWindowFailure = [NSString stringWithFormat:
-            @"Mac display cannot fit the minimum transparent host %.0f x %.0f",
+            @"Mac display cannot fit the minimum host %.0f x %.0f",
             IOSUseBridgeHostMinimumContentSize().width,
             IOSUseBridgeHostMinimumContentSize().height];
         if (error != NULL) {
@@ -3108,7 +3305,7 @@ static NSString *IOSUseBridgeNativeAlertText(
     if (!IOSUseBridgeInstallHostCanvas(window)) {
         IOSUsePlayWindowStatus = @"failed";
         IOSUsePlayWindowFailure =
-            @"could not install the transparent fixed-canvas AppKit host";
+            @"could not install the fixed-canvas AppKit host";
         if (error != NULL) {
             *error = [NSError errorWithDomain:IOSUsePlayWindowErrorDomain
                                          code:5
@@ -3122,7 +3319,7 @@ static NSString *IOSUseBridgeNativeAlertText(
     if (!IOSUseBridgeUpdateHostCanvasLayout(window, &layoutFailure)) {
         IOSUsePlayWindowStatus = @"geometry-mismatch";
         IOSUsePlayWindowFailure = layoutFailure ?:
-            @"could not resolve the transparent host canvas layout";
+            @"could not resolve the fixed host canvas layout";
         if (error != NULL) {
             *error = [NSError errorWithDomain:IOSUsePlayWindowErrorDomain
                                          code:6
@@ -3151,51 +3348,14 @@ static NSString *IOSUseBridgeNativeAlertText(
                 activateSelector
             );
         }
-        SEL makeKeySelector =
-            NSSelectorFromString(@"makeKeyAndOrderFront:");
-        if ([window respondsToSelector:makeKeySelector]) {
-            ((IOSUseBridgeSendIDArgument)objc_msgSend)(
-                window,
-                makeKeySelector,
-                nil
-            );
-        }
+        // The mapped NSWindow is owned by UIKitMacHelper.  NSWorkspace launch
+        // activation and UIKit scene activation decide when it becomes key;
+        // ordering it directly while the zoom controller is reconciling the
+        // scene frame re-enters AppKit and terminates with SIGTRAP.
     }
     BOOL mouseMonitorReady =
         IOSUseBridgeInstallMouseLocalMonitor();
-    NSError *canvasCaptureError = nil;
-    NSDictionary<NSString *, id> *canvasCapture =
-        IOSUseBridgeHostCanvasCaptureGeometry(
-            window,
-            IOSUseBridgeOwnOnscreenCGWindowMetadata(),
-            &canvasCaptureError
-        );
-    CGRect canvasCGWindowRect = CGRectNull;
-    CGFloat captureDisplayScale =
-        [canvasCapture[@"displayScale"] doubleValue];
-    BOOL canvasCaptureFixed =
-        canvasCapture != nil && canvasCaptureError == nil &&
-        [canvasCapture[@"canvasCGWindowRect"]
-            isKindOfClass:NSDictionary.class] &&
-        CGRectMakeWithDictionaryRepresentation(
-            (__bridge CFDictionaryRef)
-                canvasCapture[@"canvasCGWindowRect"],
-            &canvasCGWindowRect
-        ) &&
-        isfinite(captureDisplayScale) && captureDisplayScale > 0 &&
-        IOSUseBridgeApproximatelyEqual(
-            canvasCGWindowRect.size.width / captureDisplayScale,
-            IOSUsePlayDeviceLogicalWidth
-        ) &&
-        IOSUseBridgeApproximatelyEqual(
-            canvasCGWindowRect.size.height / captureDisplayScale,
-            IOSUsePlayDeviceLogicalHeight
-        );
 
-    CGRect canvasBounds = IOSUseBridgeRect(
-        IOSUsePlayCanvasView,
-        @"bounds"
-    );
     CGRect canvasFrame = IOSUseBridgeRect(
         IOSUsePlayCanvasView,
         @"frame"
@@ -3230,29 +3390,18 @@ static NSString *IOSUseBridgeNativeAlertText(
         IOSUsePlaySceneGeometryState ==
             IOSUseBridgeSceneGeometryStateReady &&
         IOSUsePlaySceneGeometryScene == uiWindow.windowScene;
-    BOOL exact = IOSUseBridgeRectIsDeviceScreen(uiWindow.bounds) &&
-        IOSUseBridgeRectIsDeviceScreen(canvasBounds) &&
-        IOSUseBridgeApproximatelyEqual(
-            canvasFrame.origin.x,
-            IOSUsePlayCurrentHostCanvasLayout.canvasRect.origin.x
-        ) &&
-        IOSUseBridgeApproximatelyEqual(
-            canvasFrame.origin.y,
-            IOSUsePlayCurrentHostCanvasLayout.canvasRect.origin.y
-        ) &&
-        IOSUseBridgeApproximatelyEqual(
-            canvasFrame.size.width,
-            IOSUsePlayCurrentHostCanvasLayout.canvasRect.size.width
-        ) &&
-        IOSUseBridgeApproximatelyEqual(
-            canvasFrame.size.height,
-            IOSUsePlayCurrentHostCanvasLayout.canvasRect.size.height
-        ) &&
-        IOSUseBridgeWindowPolicyIsHost(window) &&
+    BOOL canvasMatchesLayout =
+        IOSUseBridgeRectApproximatelyEqual(
+            canvasFrame,
+            IOSUsePlayCurrentHostCanvasLayout.canvasRect
+        );
+    BOOL exact = IOSUseBridgeWindowPolicyIsHost(window) &&
         sceneFixed &&
         sceneGeometryBootstrapped &&
-        canvasCaptureFixed &&
-        mouseMonitorReady;
+        IOSUsePlayHostCanvasLayoutReady &&
+        canvasMatchesLayout &&
+        mouseMonitorReady &&
+        IOSUseBridgeRectIsDeviceScreen(uiWindow.bounds);
     if (exact && usedBackgroundActivationFallback) {
         IOSUsePlayWindowStatus =
             @"waiting-for-foreground-activation";
@@ -3692,11 +3841,20 @@ static NSString *IOSUseBridgeNativeAlertText(
     CGRect frame = IOSUseBridgeRect(window, @"frame");
     CGRect content = IOSUseBridgeRect(window, @"contentLayoutRect");
     id contentView = IOSUsePlayHostContentView;
+    if (contentView == nil && [window respondsToSelector:
+        NSSelectorFromString(@"contentView")]) {
+        contentView = ((IOSUseBridgeSendID)objc_msgSend)(
+            window,
+            NSSelectorFromString(@"contentView")
+        );
+    }
     CGRect bounds = IOSUseBridgeRect(contentView, @"bounds");
     CGRect contentViewFrame = IOSUseBridgeRect(contentView, @"frame");
-    CGRect canvasBounds = IOSUseBridgeRect(
-        IOSUsePlayCanvasView,
-        @"bounds"
+    CGRect canvasBounds = CGRectMake(
+        0,
+        0,
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight
     );
     CGRect canvasFrame = IOSUseBridgeRect(
         IOSUsePlayCanvasView,
@@ -3728,6 +3886,8 @@ static NSString *IOSUseBridgeNativeAlertText(
     NSString *nativeAlertText = [self nativeAlertText];
     NSArray<NSDictionary<NSString *, id> *> *nativeAlertActions =
         [self nativeAlertActions];
+    NSDictionary<NSString *, id> *bootstrapNativeAlert =
+        IOSUseBridgeBootstrapNativeAlertDiagnostics();
     NSError *canvasError = nil;
     NSDictionary<NSString *, id> *canvasCapture =
         IOSUseBridgeHostCanvasCaptureGeometry(
@@ -3855,6 +4015,7 @@ static NSString *IOSUseBridgeNativeAlertText(
             @"text": nativeAlertText,
             @"actions": nativeAlertActions,
         },
+        @"bootstrapNativeAlert": bootstrapNativeAlert,
         @"backingScaleFactor": @(backingScale),
         @"borderless": @NO,
         @"transparentHost": @(
@@ -3902,7 +4063,6 @@ static NSString *IOSUseBridgeNativeAlertText(
                 @(IOSUsePlayObservedDownscale),
         },
         @"identityTransform": @(
-            IOSUseBridgeRectIsDeviceScreen(canvasBounds) &&
             IOSUsePlayHostCanvasLayoutReady
         ),
         @"mouseMonitorReady":

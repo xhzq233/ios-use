@@ -806,11 +806,10 @@ IOSUseScreenshotCollectNativeWindows(
         );
         return nil;
     }
-    // The visible NSWindow is a Simulator-style host, not the device. Its
-    // title bar, transparent spacer, margins, and resize scale must never
-    // leak into target geometry. The bridge supplies the exact fixed canvas
-    // in global CGWindow coordinates, which is authoritative for every
-    // native window below.
+    // The visible NSWindow is a Simulator-scale host, not the device. Its
+    // system title bar and resize scale must never leak into target geometry.
+    // The bridge supplies the exact fixed canvas in global CGWindow
+    // coordinates, which is authoritative for every native window below.
     NSError *canvasGeometryError = nil;
     NSDictionary<NSString *, id> *canvasGeometry =
         [IOSUsePlayAppKitBridge
@@ -828,7 +827,7 @@ IOSUseScreenshotCollectNativeWindows(
         IOSUseScreenshotSetFailure(
             @"compositor_canvas_geometry_unavailable",
             canvasGeometryError.localizedDescription ?:
-                @"transparent host did not expose exact canvas geometry",
+                @"Simulator-scale host did not expose exact canvas geometry",
             failureCode,
             failureMessage
         );
@@ -855,7 +854,7 @@ IOSUseScreenshotCollectNativeWindows(
         IOSUseScreenshotSetFailure(
             @"compositor_canvas_geometry_invalid",
             canvasResolveFailure ?:
-                @"transparent host canvas is not the fixed logical device",
+                @"Simulator-scale host canvas is not the fixed logical device",
             failureCode,
             failureMessage
         );
@@ -1467,9 +1466,8 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
         return NULL;
     }
 
-    // CGSHW returns the whole native NSWindow. For the Simulator-style host
-    // that includes title bar/chrome and the transparent spacer, so turn
-    // every raw capture into an explicitly canvas-only fixed @3x source
+    // CGSHW returns the whole native NSWindow, including its system title bar.
+    // Turn every raw capture into an explicitly canvas-only fixed @3x source
     // before the compositor sees it.
     for (NSUInteger index = 0; index < windows.count; index += 1) {
         IOSUseScreenshotNativeWindow *window = windows[index];

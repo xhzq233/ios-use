@@ -555,16 +555,12 @@ int main(int argc, const char *argv[]) {
                     configureFixedWindow,
                     @"@\"activateIgnoringOtherApps:\""
                 ) &&
-                Position(
-                    configureFixedWindow,
-                    @"@\"activateIgnoringOtherApps:\""
-                ) < Position(
-                    configureFixedWindow,
-                    @"@\"makeKeyAndOrderFront:\""
-                ),
+                ![configureFixedWindow containsString:
+                    @"@\"makeKeyAndOrderFront:\""],
             @"configureFixedWindow must exactly map the deterministic "
              "background UIKit candidate without an AppKit key-window "
-             "fallback before activating and ordering that window"
+             "fallback before activating it, and must leave NSWindow "
+             "ordering to UIKitMacHelper"
         );
         Require(
             [configureFixedWindow containsString:
@@ -576,8 +572,6 @@ int main(int argc, const char *argv[]) {
                 [configureFixedWindow containsString:
                     @"IOSUseBridgeRectIsDeviceScreen(uiWindow.bounds)"] &&
                 [configureFixedWindow containsString:
-                    @"IOSUseBridgeRectIsDeviceScreen(canvasBounds)"] &&
-                [configureFixedWindow containsString:
                     @"IOSUseBridgeWindowPolicyIsHost(window)"] &&
                 [configureFixedWindow containsString:
                     @"IOSUseBridgeLockSceneToFixedCanvas"] &&
@@ -586,6 +580,14 @@ int main(int argc, const char *argv[]) {
                 [configureFixedWindow containsString:
                     @"IOSUseBridgeUpdateHostCanvasLayout"] &&
                 [configureFixedWindow containsString:
+                    @"IOSUsePlayHostCanvasLayoutReady"] &&
+                [configureFixedWindow containsString:
+                    @"canvasMatchesLayout"] &&
+                [configureFixedWindow containsString:
+                    @"restrictions.minimumSize"] &&
+                [configureFixedWindow containsString:
+                    @"restrictions.maximumSize"] &&
+                [configureFixedWindow containsString:
                     @"if (exact && usedBackgroundActivationFallback)"] &&
                 [configureFixedWindow containsString:
                     @"@\"waiting-for-foreground-activation\""] &&
@@ -593,7 +595,7 @@ int main(int argc, const char *argv[]) {
                     @"strict foreground key-window selection"] &&
                 Position(
                     configureFixedWindow,
-                    @"@\"makeKeyAndOrderFront:\""
+                    @"@\"activateIgnoringOtherApps:\""
                 ) < Position(
                     configureFixedWindow,
                     @"if (exact && usedBackgroundActivationFallback)"
@@ -613,7 +615,7 @@ int main(int argc, const char *argv[]) {
                     @"IOSUsePlayWindowStatus = exact "
                 ),
             @"a background activation pass must retain fixed UIKit/canvas "
-             "geometry and transparent-host checks, then return transiently "
+             "geometry and Simulator-scale host checks, then return transiently "
              "so screenshot settling retries through strict foreground "
              "selection"
         );
@@ -710,8 +712,8 @@ int main(int argc, const char *argv[]) {
                     @"CGRectIntersection"] &&
                 [appKitScreenToCanvas containsString:
                     @"IOSUsePlayMapHostContentRectToCanvas"],
-            @"AppKit screen frames must enter the transparent host, clip to "
-             "its canvas, and use the shared fixed logical inverse transform"
+            @"AppKit screen frames must enter the Simulator-scale host, clip "
+             "to its canvas, and use the shared fixed logical inverse transform"
         );
         Require(
             [dom containsString:

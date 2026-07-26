@@ -10,7 +10,7 @@ typedef id (*IOSUseCompositorSendID)(id, SEL);
 
 static const CGFloat IOSUseCompositorGeometryTolerance = 0.01;
 
-CGFloat const IOSUsePlayHostCanvasSpacerPoints = 8.0;
+CGFloat const IOSUsePlayHostCanvasSpacerPoints = 0.0;
 CGFloat const IOSUsePlayHostCanvasMinimumDisplayScale = 0.5;
 
 static NSDictionary<NSString *, NSNumber *> *IOSUseCompositorRectJSON(
@@ -112,83 +112,6 @@ static CGFloat IOSUseCompositorClampNear(
     return value;
 }
 
-BOOL IOSUsePlayResolveHostInitialContentSize(
-    CGSize visibleFrameSize,
-    CGSize frameDecorationSize,
-    CGSize *contentSize,
-    NSString **failure
-) {
-    if (contentSize != NULL) {
-        *contentSize = CGSizeZero;
-    }
-    if (failure != NULL) {
-        *failure = nil;
-    }
-    if (!isfinite(visibleFrameSize.width) ||
-        !isfinite(visibleFrameSize.height) ||
-        !isfinite(frameDecorationSize.width) ||
-        !isfinite(frameDecorationSize.height) ||
-        visibleFrameSize.width <= 0 || visibleFrameSize.height <= 0 ||
-        frameDecorationSize.width < 0 || frameDecorationSize.height < 0) {
-        if (failure != NULL) {
-            *failure = @"visible host frame or frame decoration is invalid";
-        }
-        return NO;
-    }
-    CGSize minimumContent = CGSizeMake(
-        IOSUsePlayDeviceLogicalWidth *
-            IOSUsePlayHostCanvasMinimumDisplayScale,
-        IOSUsePlayHostCanvasSpacerPoints +
-            IOSUsePlayDeviceLogicalHeight *
-                IOSUsePlayHostCanvasMinimumDisplayScale
-    );
-    CGSize minimumFrame = CGSizeMake(
-        minimumContent.width + frameDecorationSize.width,
-        minimumContent.height + frameDecorationSize.height
-    );
-    if (visibleFrameSize.width + IOSUseCompositorGeometryTolerance <
-            minimumFrame.width ||
-        visibleFrameSize.height + IOSUseCompositorGeometryTolerance <
-            minimumFrame.height) {
-        if (failure != NULL) {
-            *failure = [NSString stringWithFormat:
-                @"visible host frame %.3fx%.3f cannot contain minimum "
-                 "titled host frame %.3fx%.3f",
-                visibleFrameSize.width,
-                visibleFrameSize.height,
-                minimumFrame.width,
-                minimumFrame.height
-            ];
-        }
-        return NO;
-    }
-    CGSize largestContent = CGSizeMake(
-        visibleFrameSize.width - frameDecorationSize.width,
-        visibleFrameSize.height - frameDecorationSize.height
-    );
-    CGSize preferredContent = CGSizeMake(
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight + IOSUsePlayHostCanvasSpacerPoints
-    );
-    CGSize resolved = CGSizeMake(
-        MIN(preferredContent.width, largestContent.width),
-        MIN(preferredContent.height, largestContent.height)
-    );
-    if (resolved.width + IOSUseCompositorGeometryTolerance <
-            minimumContent.width ||
-        resolved.height + IOSUseCompositorGeometryTolerance <
-            minimumContent.height) {
-        if (failure != NULL) {
-            *failure = @"resolved host content would clip the fixed canvas";
-        }
-        return NO;
-    }
-    if (contentSize != NULL) {
-        *contentSize = resolved;
-    }
-    return YES;
-}
-
 BOOL IOSUsePlayResolveHostCanvasLayout(
     CGRect hostContentBounds,
     IOSUsePlayHostCanvasLayout *layout,
@@ -229,7 +152,7 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         IOSUsePlayHostCanvasSpacerPoints;
     if (drawableHeight <= 0) {
         if (failure != NULL) {
-            *failure = @"host content has no area below the transparent spacer";
+            *failure = @"host content has no drawable canvas area";
         }
         return NO;
     }
@@ -252,19 +175,23 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
     CGRect canvasRect = CGRectMake(
         hostContentBounds.origin.x +
             (hostContentBounds.size.width - canvasSize.width) / 2.0,
-        CGRectGetMaxY(hostContentBounds) -
-            IOSUsePlayHostCanvasSpacerPoints - canvasSize.height,
+        hostContentBounds.origin.y +
+            (drawableHeight - canvasSize.height) / 2.0,
         canvasSize.width,
         canvasSize.height
     );
     if (!IOSUseCompositorContainsRect(hostContentBounds, canvasRect) ||
         !IOSUseCompositorApproximatelyEqual(
-            CGRectGetMaxY(canvasRect) +
-                IOSUsePlayHostCanvasSpacerPoints,
-            CGRectGetMaxY(hostContentBounds)
+            CGRectGetMidX(canvasRect),
+            CGRectGetMidX(hostContentBounds)
+        ) ||
+        !IOSUseCompositorApproximatelyEqual(
+            CGRectGetMidY(canvasRect),
+            CGRectGetMidY(hostContentBounds) -
+                IOSUsePlayHostCanvasSpacerPoints / 2.0
         )) {
         if (failure != NULL) {
-            *failure = @"resolved canvas is not fully below the transparent spacer";
+            *failure = @"resolved canvas is not centered in the host content";
         }
         return NO;
     }
@@ -702,8 +629,9 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
     CGFloat sourcePixelsPerPointY =
         (CGFloat)sourceHeight / sourceCGWindowBounds.size.height;
     // Crop inward at fractional source-pixel boundaries. Flooring/ceiling
-    // outward would admit a one-pixel strip of title bar, transparent gap,
-    // desktop, or host decoration while claiming canvas-only evidence.
+    // outward would admit a one-pixel strip of title bar, content-area
+    // rounding margin, desktop, or host decoration while claiming
+    // canvas-only evidence.
     NSInteger minimumX = (NSInteger)ceil(
         (intersection.origin.x - sourceCGWindowBounds.origin.x) *
             sourcePixelsPerPointX

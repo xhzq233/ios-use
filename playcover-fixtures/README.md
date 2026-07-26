@@ -64,19 +64,19 @@ never maps target coordinates from the outer host window. Set
 path when the JSON responses and mouse-event record must be retained instead
 of using an automatically removed temporary directory.
 
-The transparent Simulator-style host has a static contract that does not need
-a GUI session or a built fixture App:
+The ordinary Simulator-scale host has a static contract that does not need a
+GUI session or a built fixture App:
 
 ```bash
-bash playcover-fixtures/test_transparent_host_contract.sh --static
+bash playcover-fixtures/test_simulator_scale_host_contract.sh --static
 bash scripts/test_playcover_fixture_live.sh --static
 ```
 
 The fixture matrix is deliberately opt-in. In an unlocked GUI session it
-verifies the public App title bar, the 8pt transparent spacer below it, two host
-resizes with a uniform display scale, fixed canvas-only screenshot/capture
-output, and titlebar/spacer/canvas-exterior clicks that do not change the App
-DOM:
+verifies the ordinary opaque system title-bar window, two proportional host
+resizes with a single uniform display scale, a fixed 430x932 UIKit canvas that
+fills the content area, fixed canvas-only screenshot/capture output, and a
+title-bar click that does not change the App DOM:
 
 ```bash
 bash scripts/test_playcover_fixture_live.sh --live

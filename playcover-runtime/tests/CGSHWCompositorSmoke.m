@@ -1084,19 +1084,22 @@ static BOOL HostContentCGWindowRect(
     return YES;
 }
 
-static BOOL RunTransparentHostCanvasSmoke(
+static BOOL RunSimulatorScaleHostCanvasSmoke(
     CGSHWCaptureWindowListFunction capture,
     CGSMainConnectionIDFunction mainConnection
 ) {
     NSScreen *screen = NSScreen.mainScreen;
+    CGFloat requestedDisplayScale = 0.75;
     CGSize contentSize = CGSizeMake(
-        IOSUsePlayDeviceLogicalWidth,
-        IOSUsePlayDeviceLogicalHeight +
-            IOSUsePlayHostCanvasSpacerPoints
+        IOSUsePlayDeviceLogicalWidth * requestedDisplayScale,
+        IOSUsePlayDeviceLogicalHeight * requestedDisplayScale
     );
     if (screen == nil || screen.visibleFrame.size.width < contentSize.width ||
         screen.visibleFrame.size.height < contentSize.height) {
-        fprintf(stderr, "[cgshw-smoke] screen cannot fit transparent host\n");
+        fprintf(
+            stderr,
+            "[cgshw-smoke] screen cannot fit Simulator-scale host\n"
+        );
         return NO;
     }
     NSRect contentRect = NSMakeRect(
@@ -1114,17 +1117,20 @@ static BOOL RunTransparentHostCanvasSmoke(
                   styleMask:style
                     backing:NSBackingStoreBuffered
                       defer:NO];
-    window.title = @"Transparent Host Smoke";
-    window.titlebarAppearsTransparent = YES;
-    window.titleVisibility = NSWindowTitleVisible;
-    window.opaque = NO;
-    window.backgroundColor = NSColor.clearColor;
-    window.hasShadow = NO;
+    window.title = @"Simulator Scale Host Smoke";
+    window.contentAspectRatio = NSMakeSize(
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight
+    );
+    window.contentMinSize = NSMakeSize(
+        IOSUsePlayDeviceLogicalWidth *
+            IOSUsePlayHostCanvasMinimumDisplayScale,
+        IOSUsePlayDeviceLogicalHeight *
+            IOSUsePlayHostCanvasMinimumDisplayScale
+    );
     window.movable = YES;
     NSView *hostContent = [[NSView alloc]
         initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)];
-    hostContent.wantsLayer = YES;
-    hostContent.layer.backgroundColor = NSColor.clearColor.CGColor;
     window.contentView = hostContent;
     [window setContentSize:contentSize];
     [window orderFront:nil];
@@ -1197,17 +1203,35 @@ static BOOL RunTransparentHostCanvasSmoke(
     BOOL cropExcludesHost = [cropEvidence[@"canvasOnly"] boolValue] &&
         [cropEvidence[@"hostDecorationsExcluded"] boolValue] &&
         [sourceCrop[@"y"] doubleValue] > 0;
-    BOOL canvasBoundsFixed =
+    BOOL singleScaleReady =
         fabs(canvas.bounds.size.width - IOSUsePlayDeviceLogicalWidth) < 0.01 &&
         fabs(canvas.bounds.size.height - IOSUsePlayDeviceLogicalHeight) < 0.01 &&
         fabs(canvas.frame.origin.x - layout.canvasRect.origin.x) < 0.01 &&
         fabs(canvas.frame.origin.y - layout.canvasRect.origin.y) < 0.01 &&
         fabs(canvas.frame.size.width - layout.canvasRect.size.width) < 0.01 &&
-        fabs(canvas.frame.size.height - layout.canvasRect.size.height) < 0.01;
-    BOOL spacerReady = fabs(
-        NSMaxY(canvas.frame) + IOSUsePlayHostCanvasSpacerPoints -
-            NSMaxY(hostContent.bounds)
-    ) < 0.01;
+        fabs(canvas.frame.size.height - layout.canvasRect.size.height) < 0.01 &&
+        fabs(layout.displayScale - requestedDisplayScale) < 0.01;
+    CGFloat leftMargin =
+        NSMinX(canvas.frame) - NSMinX(hostContent.bounds);
+    CGFloat rightMargin =
+        NSMaxX(hostContent.bounds) - NSMaxX(canvas.frame);
+    CGFloat bottomMargin =
+        NSMinY(canvas.frame) - NSMinY(hostContent.bounds);
+    CGFloat topMargin =
+        NSMaxY(hostContent.bounds) - NSMaxY(canvas.frame);
+    BOOL centeredRoundingReady =
+        leftMargin >= -0.01 && rightMargin >= -0.01 &&
+        bottomMargin >= -0.01 && topMargin >= -0.01 &&
+        fabs(leftMargin - rightMargin) < 0.01 &&
+        fabs(bottomMargin - topMargin) < 0.01 &&
+        leftMargin + rightMargin < 1 &&
+        bottomMargin + topMargin < 1;
+    CGFloat contentAspect =
+        window.contentAspectRatio.width /
+        window.contentAspectRatio.height;
+    CGFloat deviceAspect =
+        (CGFloat)IOSUsePlayDeviceLogicalWidth /
+        (CGFloat)IOSUsePlayDeviceLogicalHeight;
     BOOL passed = layoutReady && metadataReady && contentReady &&
         canvasReady && raw != NULL && normalized != NULL &&
         CGRectEqualToRect(
@@ -1222,15 +1246,18 @@ static BOOL RunTransparentHostCanvasSmoke(
         CGImageGetWidth(normalized) == IOSUsePlayDeviceNativeWidth &&
         CGImageGetHeight(normalized) == IOSUsePlayDeviceNativeHeight &&
         SampleCenter(normalized, center) && PixelIsGreen(center) &&
-        cropExcludesHost && canvasBoundsFixed && spacerReady && !window.opaque &&
-        window.titlebarAppearsTransparent &&
+        cropExcludesHost && singleScaleReady && centeredRoundingReady &&
+        IOSUsePlayHostCanvasSpacerPoints == 0 &&
+        window.opaque && !window.titlebarAppearsTransparent &&
+        window.hasShadow &&
         window.titleVisibility == NSWindowTitleVisible &&
+        fabs(contentAspect - deviceAspect) < 0.0001 &&
         (window.styleMask & NSWindowStyleMaskTitled) != 0 &&
         (window.styleMask & NSWindowStyleMaskResizable) != 0;
     fprintf(
         stderr,
-        "[cgshw-smoke] transparent-host raw=%zux%zu normalized=%zux%zu "
-        "scale=%.3f crop-y=%.1f canvas=%d spacer=%d title=%d title-visible=%d resizable=%d "
+        "[cgshw-smoke] simulator-scale-host raw=%zux%zu normalized=%zux%zu "
+        "scale=%.3f crop-y=%.1f single-scale=%d centered-rounding=%d opaque=%d title=%d title-visible=%d resizable=%d "
         "host=(%.1f,%.1f,%.1f,%.1f) content=(%.1f,%.1f,%.1f,%.1f) "
         "canvas-cg=(%.1f,%.1f,%.1f,%.1f) logical=(%.1f,%.1f,%.1f,%.1f) pass=%d%s%s\n",
         raw == NULL ? 0 : CGImageGetWidth(raw),
@@ -1239,8 +1266,9 @@ static BOOL RunTransparentHostCanvasSmoke(
         normalized == NULL ? 0 : CGImageGetHeight(normalized),
         layout.displayScale,
         [sourceCrop[@"y"] doubleValue],
-        canvasBoundsFixed,
-        spacerReady,
+        singleScaleReady,
+        centeredRoundingReady,
+        window.opaque,
         (window.styleMask & NSWindowStyleMaskTitled) != 0,
         window.titleVisibility == NSWindowTitleVisible,
         (window.styleMask & NSWindowStyleMaskResizable) != 0,
@@ -1337,7 +1365,7 @@ int main(void) {
             mainConnection
         );
         BOOL metal = RunMetalSmoke(capture, mainConnection);
-        BOOL transparentHost = RunTransparentHostCanvasSmoke(
+        BOOL simulatorScaleHost = RunSimulatorScaleHostCanvasSmoke(
             capture,
             mainConnection
         );
@@ -1354,7 +1382,7 @@ int main(void) {
             !layer ||
             !originAndZOrder ||
             !metal ||
-            !transparentHost ||
+            !simulatorScaleHost ||
             !permissionStayedDenied) {
             return 1;
         }

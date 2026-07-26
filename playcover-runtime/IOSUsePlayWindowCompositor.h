@@ -18,11 +18,10 @@ typedef struct {
     CGFloat backingScale;
 } IOSUsePlayWindowPlanEntry;
 
-/// The AppKit host is deliberately not the device.  It owns a public title
-/// bar and a transparent 8pt strip; only this fixed logical canvas belongs to
-/// UIKit, automation coordinates, and screenshots.  `canvasRect` uses the
-/// host content view's bottom-left coordinate system, while logical points
-/// use the device's usual top-left coordinate system.
+/// The ordinary AppKit window is deliberately not the device. Only this fixed
+/// logical canvas belongs to UIKit, automation coordinates, and screenshots.
+/// `canvasRect` uses the host content view's bottom-left coordinate system,
+/// while logical points use the device's usual top-left coordinate system.
 typedef struct {
     CGRect hostContentBounds;
     CGRect canvasRect;
@@ -34,21 +33,9 @@ typedef struct {
 FOUNDATION_EXPORT CGFloat const IOSUsePlayHostCanvasSpacerPoints;
 FOUNDATION_EXPORT CGFloat const IOSUsePlayHostCanvasMinimumDisplayScale;
 
-/// Chooses the first public-host content size that fits a visible AppKit
-/// frame after title-bar/other frame decoration is accounted for. The canvas
-/// remains fixed internally; this only establishes the outer host's initial
-/// display scale. A visible frame smaller than the explicit half-scale host
-/// minimum is rejected rather than clipped.
-FOUNDATION_EXPORT BOOL IOSUsePlayResolveHostInitialContentSize(
-    CGSize visibleFrameSize,
-    CGSize frameDecorationSize,
-    CGSize * _Nullable contentSize,
-    NSString * _Nullable * _Nullable failure
-);
-
 /// Calculates the one display-only transform for a resizable AppKit host.
-/// The canvas is top-anchored directly below the transparent spacer; host
-/// resize never changes its 430x932 local logical bounds.
+/// The canvas is centered in the content rectangle; host resize never changes
+/// its 430x932 local logical bounds.
 FOUNDATION_EXPORT BOOL IOSUsePlayResolveHostCanvasLayout(
     CGRect hostContentBounds,
     IOSUsePlayHostCanvasLayout * _Nullable layout,
@@ -56,8 +43,8 @@ FOUNDATION_EXPORT BOOL IOSUsePlayResolveHostCanvasLayout(
 );
 
 /// Converts between AppKit host-content coordinates (bottom-left) and the
-/// fixed target logical coordinates (top-left). Points outside the canvas,
-/// including the title-bar-adjacent spacer, are not target hit tests.
+/// fixed target logical coordinates (top-left). Points outside the canvas are
+/// not target hit tests.
 FOUNDATION_EXPORT BOOL IOSUsePlayMapHostContentPointToCanvas(
     IOSUsePlayHostCanvasLayout layout,
     CGPoint hostContentPoint,
@@ -83,8 +70,8 @@ FOUNDATION_EXPORT BOOL IOSUsePlayMapHostContentRectToCanvas(
 );
 
 /// Resolves the fixed canvas in global CoreGraphics top-left coordinates from
-/// the host content rect. This keeps title bar and transparent spacer outside
-/// every capture crop even when AppKit and CGWindow origins differ.
+/// the host content rect. This keeps the title bar outside every capture crop
+/// even when AppKit and CGWindow origins differ.
 FOUNDATION_EXPORT BOOL IOSUsePlayResolveCanvasCGWindowRect(
     CGRect hostContentCGWindowRect,
     IOSUsePlayHostCanvasLayout layout,
@@ -117,8 +104,9 @@ FOUNDATION_EXPORT BOOL IOSUsePlayResolveCGWindowRectInCanvas(
 /// Crops an own-process native window to its intersection with the render
 /// canvas and normalizes that crop to the fixed @3x device coordinate space.
 /// This is intentionally the only route from a host CGSHW image to a target
-/// compositor source, so title bars, traffic lights, transparent gaps,
-/// desktop pixels, and host shadows cannot enter screenshots or captures.
+/// compositor source, so title bars, traffic lights, content-area rounding
+/// margins, desktop pixels, and host shadows cannot enter screenshots or
+/// captures.
 FOUNDATION_EXPORT CGImageRef _Nullable
 IOSUsePlayCropAndNormalizeCanvasCapture(
     CGImageRef source,

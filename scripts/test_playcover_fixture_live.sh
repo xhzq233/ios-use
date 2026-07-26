@@ -23,8 +23,8 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/test_playcover_fixture_live.sh [--static|--live]
 
---static  Verify the transparent-host source contract only. This mode does not
-          require a GUI session, launch an App, or post mouse events.
+--static  Verify the ordinary Simulator-scale host source contract only. This
+          mode does not require a GUI session, launch an App, or post mouse events.
 --live    Run the fixture acceptance matrix against a real unlocked macOS GUI
           session. Live evidence and global input are intentionally never the
           default.
@@ -51,7 +51,7 @@ if [[ $# -eq 1 ]]; then
 fi
 
 if [[ "$MODE" == "static" ]]; then
-  bash "$ROOT_DIR/playcover-fixtures/test_transparent_host_contract.sh" \
+  bash "$ROOT_DIR/playcover-fixtures/test_simulator_scale_host_contract.sh" \
     --static
   bash "$ROOT_DIR/playcover-fixtures/test_uikit_popup_contract.sh" \
     --source
@@ -273,10 +273,13 @@ restore_original_frontmost_application() {
 }
 
 cleanup() {
+  # Cleanup failures are retained as evidence, but cannot mask the live gate.
+  local original_exit_status=$?
   IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" stop \
     >"$RUN_DIR/cleanup.stdout" 2>"$RUN_DIR/cleanup.stderr" || true
   archive_session_home || true
   restore_original_frontmost_application || true
+  exit "$original_exit_status"
 }
 trap cleanup EXIT
 on_error() {
@@ -396,7 +399,7 @@ assert_canonical_host_status() {
       $runtime.nativeHeight == 2796 and
       $runtime.scale == 3 and
       $window.status == "configured" and
-      $window.transparentHost == true and
+      $window.transparentHost == false and
       $window.publicTitleBar == true and
       $window.resizable == true and
       $window.hostPolicy == true and
@@ -407,13 +410,13 @@ assert_canonical_host_status() {
       $window.mouseMonitorReady == true and
       $window.identityTransform == true and
       $window.borderless == false and
-      $window.hasShadow == false and
+      $window.hasShadow == true and
       $window.movable == true and
       $window.canvasBounds ==
         {"x":0,"y":0,"width":430,"height":932} and
       $window.sceneMinimumSize == {"width":430,"height":932} and
       $window.sceneMaximumSize == {"width":430,"height":932} and
-      $window.transparentSpacer == 8 and
+      $window.transparentSpacer == 0 and
       ($window.displayScale | type) == "number" and
       $window.displayScale > 0 and
       ($window.inverseDisplayScale | type) == "number" and
@@ -429,28 +432,22 @@ assert_canonical_host_status() {
       (($canvasCG.height / $window.displayScale - 932) | abs) <= 0.5 and
       (($canvasCG.width - $canvas.width) | abs) <= 0.5 and
       (($canvasCG.height - $canvas.height) | abs) <= 0.5 and
-      $canvas.x >= ($host.x - 0.5) and
-      $canvas.y >= ($host.y - 0.5) and
-      ($canvas.x + $canvas.width) <= ($host.x + $host.width + 0.5) and
-      ($canvas.y + $canvas.height) <= ($host.y + $host.height + 0.5) and
-      (($canvas.y + $canvas.height + $window.transparentSpacer -
-        ($host.y + $host.height)) | abs) <= 0.5 and
+      (($canvas.x - $host.x) | abs) <= 0.5 and
+      (($canvas.y - $host.y) | abs) <= 0.5 and
+      (($canvas.width - $host.width) | abs) <= 0.5 and
+      (($canvas.height - $host.height) | abs) <= 0.5 and
       (($canvasCG.x -
         ($hostCG.x + $canvas.x - $host.x)) | abs) <= 0.5 and
       (($canvasCG.y -
         ($hostCG.y + $host.y + $host.height -
           $canvas.y - $canvas.height)) | abs) <= 0.5 and
-      $canvasCG.x >= ($hostCG.x - 0.5) and
-      $canvasCG.y >= ($hostCG.y - 0.5) and
-      ($canvasCG.x + $canvasCG.width) <=
-        ($hostCG.x + $hostCG.width + 0.5) and
-      ($canvasCG.y + $canvasCG.height) <=
-        ($hostCG.y + $hostCG.height + 0.5) and
-      (($canvasCG.y - $hostCG.y - $window.transparentSpacer) | abs) <=
-        0.5
+      (($canvasCG.x - $hostCG.x) | abs) <= 0.5 and
+      (($canvasCG.y - $hostCG.y) | abs) <= 0.5 and
+      (($canvasCG.width - $hostCG.width) | abs) <= 0.5 and
+      (($canvasCG.height - $hostCG.height) | abs) <= 0.5
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     echo \
-      "[playcover-fixture-live] FAIL: $case_name does not prove the canonical transparent host/canvas contract" \
+      "[playcover-fixture-live] FAIL: $case_name does not prove the canonical Simulator-scale host/canvas contract" \
       >&2
     return 1
   fi
@@ -486,7 +483,7 @@ assert_canvas_only_screenshot() {
       (.data.runtimeEvidence.appKitWindowEvidence as $window |
         ($window.canvasCapture) as $capture |
         $window.status == "configured" and
-        $window.transparentHost == true and
+        $window.transparentHost == false and
         $window.publicTitleBar == true and
         $window.resizable == true and
         $window.hostPolicy == true and
@@ -494,7 +491,7 @@ assert_canvas_only_screenshot() {
         $capture.title == $title and
         $window.canvasBounds ==
           {"x":0,"y":0,"width":430,"height":932} and
-        $window.transparentSpacer == 8 and
+        $window.transparentSpacer == 0 and
         ($window.displayScale | type) == "number" and
         $window.displayScale > 0 and
         (($window.canvasRect.width / $window.displayScale - 430) | abs) <=
@@ -505,9 +502,14 @@ assert_canvas_only_screenshot() {
           $window.displayScale - 430) | abs) <= 0.5 and
         (($capture.canvasCGWindowRect.height /
           $window.displayScale - 932) | abs) <= 0.5 and
+        (($capture.canvasCGWindowRect.x -
+          $capture.hostContentCGWindowRect.x) | abs) <= 0.5 and
         (($capture.canvasCGWindowRect.y -
-          $capture.hostContentCGWindowRect.y -
-          $window.transparentSpacer) | abs) <= 0.5)
+          $capture.hostContentCGWindowRect.y) | abs) <= 0.5 and
+        (($capture.canvasCGWindowRect.width -
+          $capture.hostContentCGWindowRect.width) | abs) <= 0.5 and
+        (($capture.canvasCGWindowRect.height -
+          $capture.hostContentCGWindowRect.height) | abs) <= 0.5)
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     echo \
       "[playcover-fixture-live] FAIL: $case_name is not a complete canvas-only 1290x2796 capture" \
@@ -983,16 +985,30 @@ write_host_resize_plan() {
       "${initial_arg[@]}" '
         ($status[0].data.driver.runtime.diagnostics.runtime.window) as $window |
         ($window.canvasCapture.hostCGWindowBounds) as $host |
+        ($window.canvasCapture.hostContentCGWindowRect) as $content |
+        ($host.width - $content.width) as $decorationWidth |
+        ($host.height - $content.height) as $decorationHeight |
         if (
           ($host | type) != "object" or
+          ($content | type) != "object" or
           ($window.minSize.width | type) != "number" or
-          ($window.minSize.height | type) != "number"
+          ($window.minSize.height | type) != "number" or
+          $decorationWidth < -0.5 or
+          $decorationHeight < -0.5
         ) then
           error("host resize diagnostics are incomplete")
         elif $phase == "first" then
-          ([($window.minSize.width + 24), ($host.width * 0.66)] | max) as $targetWidth |
-          ([($window.minSize.height + 24), ($host.height * 0.76)] | max) as $targetHeight |
+          ([
+            0.72,
+            (($window.minSize.width + 12 - $decorationWidth) /
+              $content.width),
+            (($window.minSize.height + 12 - $decorationHeight) /
+              $content.height)
+          ] | max) as $targetScale |
+          ($content.width * $targetScale + $decorationWidth) as $targetWidth |
+          ($content.height * $targetScale + $decorationHeight) as $targetHeight |
           if (
+            $targetScale >= 0.94 or
             $targetWidth >= ($host.width - 8) or
             $targetHeight >= ($host.height - 8)
           ) then
@@ -1001,7 +1017,9 @@ write_host_resize_plan() {
             {
               phase: $phase,
               beforeHost: $host,
+              beforeContent: $content,
               beforeDisplayScale: $window.displayScale,
+              targetContentScale: $targetScale,
               targetHostSize: {
                 width: $targetWidth,
                 height: $targetHeight
@@ -1021,8 +1039,13 @@ write_host_resize_plan() {
           end
         elif $phase == "second" then
           ($initial[0].host) as $initialHost |
-          (($initialHost.width + $host.width) / 2) as $targetWidth |
-          (($initialHost.height + $host.height) / 2) as $targetHeight |
+          ($initial[0].content) as $initialContent |
+          ($content.width / $initialContent.width) as $currentScale |
+          ((1 + $currentScale) / 2) as $targetScale |
+          ($initialContent.width * $targetScale +
+            $decorationWidth) as $targetWidth |
+          ($initialContent.height * $targetScale +
+            $decorationHeight) as $targetHeight |
           if (
             $targetWidth <= ($host.width + 8) or
             $targetHeight <= ($host.height + 8) or
@@ -1034,7 +1057,9 @@ write_host_resize_plan() {
             {
               phase: $phase,
               beforeHost: $host,
+              beforeContent: $content,
               beforeDisplayScale: $window.displayScale,
+              targetContentScale: $targetScale,
               targetHostSize: {
                 width: $targetWidth,
                 height: $targetHeight
@@ -1121,8 +1146,10 @@ resize_public_host() {
       .data.driver.runtime.diagnostics.runtime.window as $window |
       {
         host: $window.canvasCapture.hostCGWindowBounds,
+        content: $window.canvasCapture.hostContentCGWindowRect,
         displayScale: $window.displayScale,
-        canvasBounds: $window.canvasBounds
+        canvasBounds: $window.canvasBounds,
+        canvasRect: $window.canvasRect
       }
     ' "$RUN_DIR/${before_status_case}.stdout" \
       >"$RUN_DIR/host_resize_initial.json"
@@ -1187,7 +1214,7 @@ resize_public_host() {
   wait_for_host_resize "$case_name"
 }
 
-assert_two_public_host_resizes() {
+assert_two_uniform_host_resizes() {
   if ! jq -e -n \
       --slurpfile initial "$RUN_DIR/host_resize_initial.json" \
       --slurpfile first "$RUN_DIR/host_resize_first_after_status.stdout" \
@@ -1197,24 +1224,56 @@ assert_two_public_host_resizes() {
         ($second[0].data.driver.runtime.diagnostics.runtime.window) as $second |
         ($first.canvasCapture.hostCGWindowBounds) as $firstHost |
         ($second.canvasCapture.hostCGWindowBounds) as $secondHost |
+        ($first.canvasCapture.hostContentCGWindowRect) as $firstContent |
+        ($second.canvasCapture.hostContentCGWindowRect) as $secondContent |
+        ($firstContent.width / $initial.content.width) as $firstScale |
+        ($secondContent.width / $initial.content.width) as $secondScale |
         $initial.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
         $first.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
         $second.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-        $first.transparentSpacer == 8 and
-        $second.transparentSpacer == 8 and
+        $first.transparentSpacer == 0 and
+        $second.transparentSpacer == 0 and
         $firstHost.width < ($initial.host.width - 4) and
         $firstHost.height < ($initial.host.height - 4) and
         $secondHost.width > ($firstHost.width + 4) and
         $secondHost.height > ($firstHost.height + 4) and
         (($first.displayScale - $initial.displayScale) | abs) > 0.01 and
         (($second.displayScale - $first.displayScale) | abs) > 0.01 and
+        (($firstContent.height / $initial.content.height -
+          $firstScale) | abs) <= 0.002 and
+        (($secondContent.height / $initial.content.height -
+          $secondScale) | abs) <= 0.002 and
+        (($first.displayScale / $initial.displayScale -
+          $firstScale) | abs) <= 0.002 and
+        (($second.displayScale / $initial.displayScale -
+          $secondScale) | abs) <= 0.002 and
+        (($firstHost.height - $firstContent.height -
+          ($initial.host.height - $initial.content.height)) | abs) <= 1 and
+        (($secondHost.height - $secondContent.height -
+          ($initial.host.height - $initial.content.height)) | abs) <= 1 and
         (($first.canvasRect.width / $first.displayScale - 430) | abs) <= 0.5 and
         (($first.canvasRect.height / $first.displayScale - 932) | abs) <= 0.5 and
         (($second.canvasRect.width / $second.displayScale - 430) | abs) <= 0.5 and
-        (($second.canvasRect.height / $second.displayScale - 932) | abs) <= 0.5
+        (($second.canvasRect.height / $second.displayScale - 932) | abs) <= 0.5 and
+        (($first.canvasRect.x -
+          $first.hostContentBounds.x) | abs) <= 0.5 and
+        (($first.canvasRect.y -
+          $first.hostContentBounds.y) | abs) <= 0.5 and
+        (($first.canvasRect.width -
+          $first.hostContentBounds.width) | abs) <= 0.5 and
+        (($first.canvasRect.height -
+          $first.hostContentBounds.height) | abs) <= 0.5 and
+        (($second.canvasRect.x -
+          $second.hostContentBounds.x) | abs) <= 0.5 and
+        (($second.canvasRect.y -
+          $second.hostContentBounds.y) | abs) <= 0.5 and
+        (($second.canvasRect.width -
+          $second.hostContentBounds.width) | abs) <= 0.5 and
+        (($second.canvasRect.height -
+          $second.hostContentBounds.height) | abs) <= 0.5
       ' /dev/null >/dev/null; then
     echo \
-      "[playcover-fixture-live] FAIL: two public host resizes did not preserve one uniform fixed canvas" \
+      "[playcover-fixture-live] FAIL: two proportional host resizes did not preserve one fixed UIKit canvas and one display scale" \
       >&2
     return 1
   fi
@@ -1243,15 +1302,14 @@ assert_dom_unchanged() {
         stableElements($before[0]) == stableElements($after[0])
       ' >/dev/null; then
     echo \
-      "[playcover-fixture-live] FAIL: host decoration/outside click changed the App DOM" \
+      "[playcover-fixture-live] FAIL: system title-bar click changed the App DOM" \
       >&2
     return 1
   fi
 }
 
-click_non_target_host_surface() {
-  local surface="$1"
-  local case_name="non_target_${surface}"
+click_titlebar_and_assert_app_unchanged() {
+  local case_name="non_target_titlebar"
   local before_dom_case="${case_name}_before_dom"
   local before_status_case="${case_name}_before_status"
   local coordinates_file="$RUN_DIR/${case_name}_coordinates.json"
@@ -1259,7 +1317,6 @@ click_non_target_host_surface() {
   record_case "$before_status_case" status --json
   assert_canonical_host_status "$before_status_case"
   if ! jq -e \
-      --arg surface "$surface" \
       --slurpfile status "$RUN_DIR/${before_status_case}.stdout" '
         ($status[0].data.driver.runtime.diagnostics.runtime.window) as $window |
         ($window.canvasCapture) as $capture |
@@ -1274,60 +1331,16 @@ click_non_target_host_surface() {
           $window.displayScale <= 0
         ) then
           error("host/canvas global geometry is unavailable")
+        elif $content.y <= ($outer.y + 2) then
+          error("system title bar has no measurable global region")
         else
-          if $surface == "titlebar" then
-            if $content.y <= ($outer.y + 2) then
-              error("public titlebar has no measurable global region")
-            else
-              {
-                surface: $surface,
-                globalPoint: {
-                  x: ($outer.x + ($outer.width * 0.70)),
-                  y: ($outer.y + (($content.y - $outer.y) / 2))
-                }
-              }
-            end
-          elif $surface == "transparent_gap" then
-            ($window.transparentSpacer * $window.displayScale) as $gapHeight |
-            if $gapHeight <= 0 or $canvas.y < ($content.y + $gapHeight - 0.5) then
-              error("transparent gap is not immediately above the canvas")
-            else
-              {
-                surface: $surface,
-                globalPoint: {
-                  x: ($canvas.x + ($canvas.width / 2)),
-                  y: ($canvas.y - ($gapHeight / 2))
-                }
-              }
-            end
-          elif $surface == "canvas_outside" then
-            [
-              {
-                x: ($content.x + 1),
-                y: ($canvas.y + ($canvas.height / 2))
-              } | select(($canvas.x - $content.x) > 2),
-              {
-                x: ($canvas.x + $canvas.width + 1),
-                y: ($canvas.y + ($canvas.height / 2))
-              } | select((($content.x + $content.width) -
-                ($canvas.x + $canvas.width)) > 2),
-              {
-                x: ($canvas.x + ($canvas.width / 2)),
-                y: ($canvas.y + $canvas.height + 1)
-              } | select((($content.y + $content.height) -
-                ($canvas.y + $canvas.height)) > 2)
-            ] as $candidates |
-            if ($candidates | length) == 0 then
-              error("resized host has no canvas-exterior content point")
-            else
-              {
-                surface: $surface,
-                globalPoint: $candidates[0]
-              }
-            end
-          else
-            error("unknown non-target surface")
-          end
+          {
+            surface: "titlebar",
+            globalPoint: {
+              x: ($outer.x + ($outer.width * 0.70)),
+              y: ($outer.y + (($content.y - $outer.y) / 2))
+            }
+          }
         end |
         . as $result |
         ($result.globalPoint) as $point |
@@ -1346,7 +1359,7 @@ click_non_target_host_surface() {
         end
       ' >"$coordinates_file"; then
     echo \
-      "[playcover-fixture-live] FAIL: could not derive $surface click point" \
+      "[playcover-fixture-live] FAIL: could not derive system title-bar click point" \
       >&2
     return 1
   fi
@@ -1405,7 +1418,7 @@ click_non_target_host_surface() {
         $up.sequence > $down.sequence
       ' "$RUN_DIR/${after_status_case}.stdout" >/dev/null; then
     echo \
-      "[playcover-fixture-live] FAIL: $surface click was routed into the target canvas" \
+      "[playcover-fixture-live] FAIL: system title-bar click was routed into the target canvas" \
       >&2
     return 1
   fi
@@ -1702,9 +1715,7 @@ for probe in \
 done
 
 resize_public_host host_resize_first first
-click_non_target_host_surface titlebar
-click_non_target_host_surface transparent_gap
-click_non_target_host_surface canvas_outside
+click_titlebar_and_assert_app_unchanged
 run_global_mouse_probe \
   resize_first_top_left \
   "Full TL" \
@@ -1715,7 +1726,7 @@ run_global_mouse_probe \
   "fixture.full.bottom-right"
 
 resize_public_host host_resize_second second
-assert_two_public_host_resizes
+assert_two_uniform_host_resizes
 record_case capture_after_resize capture --duration 500ms --fps 4 \
   --name fixture-live-resized
 capture_after_resize_manifest="$(

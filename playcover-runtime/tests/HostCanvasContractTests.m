@@ -35,6 +35,79 @@ static BOOL IOSUseHostCanvasTestRequire(BOOL condition, NSString *message) {
     return condition;
 }
 
+static NSString *IOSUseHostCanvasTestFunctionBody(
+    NSString *source,
+    NSString *functionName
+) {
+    NSString *needle = [functionName stringByAppendingString:@"("];
+    NSRange search = NSMakeRange(0, source.length);
+    NSRange opening = NSMakeRange(NSNotFound, 0);
+    while (search.length > 0) {
+        NSRange declaration = [source
+            rangeOfString:needle
+                  options:0
+                    range:search];
+        if (declaration.location == NSNotFound) {
+            return nil;
+        }
+        NSRange lineStartSearch = [source
+            rangeOfString:@"\n"
+                  options:NSBackwardsSearch
+                    range:NSMakeRange(0, declaration.location)];
+        NSUInteger lineStart = lineStartSearch.location == NSNotFound
+            ? 0
+            : NSMaxRange(lineStartSearch);
+        NSString *declarationLine = [source substringWithRange:
+            NSMakeRange(
+                lineStart,
+                NSMaxRange(declaration) - lineStart
+            )];
+        if (![declarationLine containsString:@"static "]) {
+            NSUInteger next = NSMaxRange(declaration);
+            search = NSMakeRange(next, source.length - next);
+            continue;
+        }
+        NSRange remainder = NSMakeRange(
+            NSMaxRange(declaration),
+            source.length - NSMaxRange(declaration)
+        );
+        NSRange candidateOpening = [source
+            rangeOfString:@"{"
+                  options:0
+                    range:remainder];
+        NSRange semicolon = [source
+            rangeOfString:@";"
+                  options:0
+                    range:remainder];
+        if (candidateOpening.location != NSNotFound &&
+            (semicolon.location == NSNotFound ||
+             candidateOpening.location < semicolon.location)) {
+            opening = candidateOpening;
+            break;
+        }
+        NSUInteger next = NSMaxRange(declaration);
+        search = NSMakeRange(next, source.length - next);
+    }
+    NSUInteger depth = 0;
+    for (NSUInteger index = opening.location;
+         index < source.length;
+         index += 1) {
+        unichar character = [source characterAtIndex:index];
+        if (character == '{') {
+            depth += 1;
+        } else if (character == '}') {
+            depth -= 1;
+            if (depth == 0) {
+                return [source substringWithRange:NSMakeRange(
+                    opening.location,
+                    index - opening.location + 1
+                )];
+            }
+        }
+    }
+    return nil;
+}
+
 static BOOL IOSUseHostCanvasTestLayout(
     CGRect bounds,
     CGFloat expectedScale,
@@ -42,7 +115,7 @@ static BOOL IOSUseHostCanvasTestLayout(
     IOSUsePlayHostCanvasLayout *layout
 ) {
     NSString *failure = nil;
-    IOSUsePlayHostCanvasLayout resolved;
+    IOSUsePlayHostCanvasLayout resolved = {0};
     BOOL ready = IOSUsePlayResolveHostCanvasLayout(
         bounds,
         &resolved,
@@ -66,9 +139,12 @@ static BOOL IOSUseHostCanvasTestLayout(
             expectedCanvas
         ) &&
         IOSUseHostCanvasTestApproximatelyEqual(
-            CGRectGetMaxY(resolved.canvasRect) +
-                IOSUsePlayHostCanvasSpacerPoints,
-            CGRectGetMaxY(bounds)
+            CGRectGetMidX(resolved.canvasRect),
+            CGRectGetMidX(bounds)
+        ) &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            CGRectGetMidY(resolved.canvasRect),
+            CGRectGetMidY(bounds)
         );
     if (layout != NULL) {
         *layout = resolved;
@@ -84,51 +160,42 @@ static BOOL IOSUseHostCanvasTestLayout(
     );
 }
 
-static BOOL IOSUseHostCanvasTestInitialHostFit(void) {
-    // Model a titled host whose AppKit frame decoration is 28pt tall. The
-    // smallest visible frame that can fit the title bar plus a half-scale
-    // canvas must resolve to the explicit 215 x 474pt content minimum.
-    CGSize decoration = CGSizeMake(0, 28);
-    CGSize visibleMinimumFrame = CGSizeMake(215, 502);
-    CGSize resolvedContent = CGSizeZero;
+static BOOL IOSUseHostCanvasTestResizeRounding(void) {
+    IOSUsePlayHostCanvasLayout layout = {0};
     NSString *failure = nil;
-    BOOL minimumReady = IOSUsePlayResolveHostInitialContentSize(
-        visibleMinimumFrame,
-        decoration,
-        &resolvedContent,
+    BOOL ready = IOSUsePlayResolveHostCanvasLayout(
+        CGRectMake(0, 0, 400, 867),
+        &layout,
         &failure
     );
-    CGSize resultingFrame = CGSizeMake(
-        resolvedContent.width + decoration.width,
-        resolvedContent.height + decoration.height
-    );
-    NSString *tooSmallFailure = nil;
-    BOOL tooSmallRejected = !IOSUsePlayResolveHostInitialContentSize(
-        CGSizeMake(214.9, 502),
-        decoration,
-        NULL,
-        &tooSmallFailure
-    ) && tooSmallFailure != nil;
-    CGSize preferredContent = CGSizeZero;
-    BOOL preferredReady = IOSUsePlayResolveHostInitialContentSize(
-        CGSizeMake(1200, 1200),
-        decoration,
-        &preferredContent,
-        NULL
-    );
-    BOOL passed = minimumReady && failure == nil &&
-        IOSUseHostCanvasTestApproximatelyEqual(resolvedContent.width, 215) &&
-        IOSUseHostCanvasTestApproximatelyEqual(resolvedContent.height, 474) &&
-        resultingFrame.width <= visibleMinimumFrame.width +
+    CGFloat expectedHeight =
+        400.0 * IOSUsePlayDeviceLogicalHeight /
+        IOSUsePlayDeviceLogicalWidth;
+    CGFloat bottomMargin = CGRectGetMinY(layout.canvasRect);
+    CGFloat topMargin = 867.0 - CGRectGetMaxY(layout.canvasRect);
+    BOOL passed = ready && failure == nil &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            layout.displayScale,
+            400.0 / IOSUsePlayDeviceLogicalWidth
+        ) &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            layout.canvasRect.size.width,
+            400
+        ) &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            layout.canvasRect.size.height,
+            expectedHeight
+        ) &&
+        fabs(bottomMargin - topMargin) <=
             IOSUseHostCanvasTestTolerance &&
-        resultingFrame.height <= visibleMinimumFrame.height +
-            IOSUseHostCanvasTestTolerance &&
-        tooSmallRejected && preferredReady &&
-        IOSUseHostCanvasTestApproximatelyEqual(preferredContent.width, 430) &&
-        IOSUseHostCanvasTestApproximatelyEqual(preferredContent.height, 940);
+        bottomMargin >= 0 && topMargin >= 0 &&
+        bottomMargin + topMargin < 1;
     return IOSUseHostCanvasTestRequire(
         passed,
-        @"initial titled host fit does not preserve the half-scale canvas minimum"
+        [NSString stringWithFormat:
+            @"400x867 resize rounding was not centered below 1pt: %@",
+            failure ?: @"unexpected geometry"
+        ]
     );
 }
 
@@ -177,8 +244,8 @@ static CGImageRef IOSUseHostCanvasTestCreateRawCapture(
     if (pixels == NULL) {
         return NULL;
     }
-    // Native source starts red everywhere: title bar, transparent 8pt gap,
-    // and any other host decoration must be excluded by the crop.
+    // Native source starts red everywhere: the system title bar and any other
+    // host decoration must be excluded by the crop.
     for (size_t y = 0; y < sourceHeight; y += 1) {
         for (size_t x = 0; x < sourceWidth; x += 1) {
             uint8_t *pixel = pixels + y * rowBytes + x * 4;
@@ -464,6 +531,11 @@ static BOOL IOSUseHostCanvasTestTypedJSONRect(id value) {
     return YES;
 }
 
+static BOOL IOSUseHostCanvasTestTypedJSONBoolean(id value) {
+    return [value isKindOfClass:NSNumber.class] &&
+        CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID();
+}
+
 static BOOL IOSUseHostCanvasTestUnavailableCaptureSchema(void) {
     // `geometry.host` is optional to old clients, but newer typed Runtime
     // clients decode it whenever it is present. A failed WindowServer capture
@@ -519,7 +591,7 @@ static BOOL IOSUseHostCanvasTestUnavailableCaptureSchema(void) {
         : nil;
     BOOL typed = jsonError == nil && decodedHost != nil &&
         [decodedHost[@"status"] isKindOfClass:NSString.class] &&
-        [decodedHost[@"hostPolicy"] isKindOfClass:NSNumber.class] &&
+        IOSUseHostCanvasTestTypedJSONBoolean(decodedHost[@"hostPolicy"]) &&
         IOSUseHostCanvasTestTypedJSONRect(decodedHost[@"frame"]) &&
         IOSUseHostCanvasTestTypedJSONRect(decodedHost[@"contentBounds"]) &&
         IOSUseHostCanvasTestTypedJSONRect(decodedHost[@"canvasRect"]) &&
@@ -527,13 +599,17 @@ static BOOL IOSUseHostCanvasTestUnavailableCaptureSchema(void) {
         [decodedHost[@"displayScale"] isKindOfClass:NSNumber.class] &&
         [decodedHost[@"inverseDisplayScale"] isKindOfClass:NSNumber.class] &&
         [decodedHost[@"transparentSpacer"] isKindOfClass:NSNumber.class] &&
-        [decodedHost[@"transparent"] isKindOfClass:NSNumber.class] &&
-        [decodedHost[@"publicTitleBar"] isKindOfClass:NSNumber.class] &&
-        [decodedHost[@"titleVisible"] isKindOfClass:NSNumber.class] &&
-        [decodedHost[@"resizable"] isKindOfClass:NSNumber.class] &&
+        IOSUseHostCanvasTestTypedJSONBoolean(decodedHost[@"transparent"]) &&
+        IOSUseHostCanvasTestTypedJSONBoolean(
+            decodedHost[@"publicTitleBar"]
+        ) &&
+        IOSUseHostCanvasTestTypedJSONBoolean(decodedHost[@"titleVisible"]) &&
+        IOSUseHostCanvasTestTypedJSONBoolean(decodedHost[@"resizable"]) &&
         [decodedHost[@"title"] isKindOfClass:NSString.class] &&
         [decodedHost[@"titleExpected"] isKindOfClass:NSString.class] &&
-        capture != nil && ![capture[@"ready"] boolValue] &&
+        capture != nil &&
+        IOSUseHostCanvasTestTypedJSONBoolean(capture[@"ready"]) &&
+        ![capture[@"ready"] boolValue] &&
         [capture[@"error"] isEqualToString:
             @"WindowServer canvas metadata is unavailable"] &&
         IOSUseHostCanvasTestTypedJSONRect(
@@ -572,6 +648,27 @@ static BOOL IOSUseHostCanvasTestSourceContract(
     NSString *socket = [NSString stringWithContentsOfFile:socketPath
                                                   encoding:NSUTF8StringEncoding
                                                      error:&error];
+    NSString *windowPolicy = IOSUseHostCanvasTestFunctionBody(
+        bridge,
+        @"IOSUseBridgeApplyWindowPolicy"
+    );
+    NSString *hostPolicy = IOSUseHostCanvasTestFunctionBody(
+        bridge,
+        @"IOSUseBridgeWindowPolicyIsHost"
+    );
+    NSString *canvasLayout = IOSUseHostCanvasTestFunctionBody(
+        bridge,
+        @"IOSUseBridgeUpdateHostCanvasLayout"
+    );
+    NSRange frameSetter = [canvasLayout
+        rangeOfString:@"@\"setFrame:\""];
+    NSRange boundsSetter = [canvasLayout
+        rangeOfString:@"@\"setBounds:\""];
+    BOOL frameBeforeBounds =
+        canvasLayout != nil &&
+        frameSetter.location != NSNotFound &&
+        boundsSetter.location != NSNotFound &&
+        frameSetter.location < boundsSetter.location;
     BOOL bridgeReady =
         [bridge containsString:@"IOSUseBridgeInstallHostCanvas"] &&
         [bridge containsString:@"IOSUseBridgeUpdateHostCanvasLayout"] &&
@@ -584,14 +681,30 @@ static BOOL IOSUseHostCanvasTestSourceContract(
         [bridge containsString:@"IOSUseBridgeSceneGeometryStatePending"] &&
         [bridge containsString:
             @"sceneGeometryState != IOSUseBridgeSceneGeometryStateReady"] &&
-        [bridge containsString:@"IOSUseBridgeHostTitle"] &&
-        [bridge containsString:@"CFBundleDisplayName"] &&
-        [bridge containsString:@"CFBundleName"] &&
-        [bridge containsString:@"@\"setOpaque:\", NO"] &&
-        [bridge containsString:@"@\"setTitlebarAppearsTransparent:\", YES"] &&
+        windowPolicy != nil &&
+        [windowPolicy containsString:
+            @"IOSUseBridgeInstallSimulatorScaleResizeHook"] &&
+        [windowPolicy containsString:@"@\"setStyleMask:\""] &&
+        [windowPolicy containsString:@"@\"setContentAspectRatio:\""] &&
+        [windowPolicy containsString:@"@\"setContentMinSize:\""] &&
+        ![windowPolicy containsString:@"@\"setOpaque:\""] &&
+        ![windowPolicy containsString:
+            @"@\"setTitlebarAppearsTransparent:\""] &&
+        ![windowPolicy containsString:@"@\"setTitle:\""] &&
+        hostPolicy != nil &&
+        [hostPolicy containsString:@"titled"] &&
+        [hostPolicy containsString:@"resizable"] &&
+        [hostPolicy containsString:@"contentAspectRatio"] &&
         [bridge containsString:@"NSWindowDidResizeNotification"] &&
         [bridge containsString:@"NSWindowDidChangeBackingPropertiesNotification"] &&
-        [bridge containsString:@"IOSUsePlayResolveHostInitialContentSize"] &&
+        [bridge containsString:
+            @"notification.object == IOSUsePlayHostWindow"] &&
+        [bridge containsString:
+            @"IOSUseBridgeScheduleHostCanvasLayoutUpdate();"] &&
+        canvasLayout != nil &&
+        [canvasLayout containsString:@"layout.canvasRect.size.width"] &&
+        [canvasLayout containsString:@"layout.canvasRect.size.height"] &&
+        frameBeforeBounds &&
         [bridge containsString:@"IOSUsePlayMapHostContentPointToCanvas"] &&
         [bridge containsString:
             @"IOSUseBridgeAppKitScreenRectToCanvasLogicalRect"] &&
@@ -620,6 +733,7 @@ static BOOL IOSUseHostCanvasTestSourceContract(
         [socket containsString:@"IOSUseSocketZeroRect"] &&
         [socket containsString:@"IOSUseSocketStableRect"] &&
         [socket containsString:@"IOSUseSocketStableFiniteNumber"] &&
+        [socket containsString:@"return boolValue ? @YES : @NO;"] &&
         [socket containsString:@"IOSUseSocketStableCaptureError"] &&
         [socket containsString:@"captureDiagnosticsAreComplete"] &&
         [socket containsString:
@@ -629,7 +743,7 @@ static BOOL IOSUseHostCanvasTestSourceContract(
         [socket containsString:@"host-geometry-mismatch"];
     return IOSUseHostCanvasTestRequire(
         bridgeReady && runtimeReady && socketReady,
-        @"transparent host, canvas-only screenshot, or status diagnostics are incomplete"
+        @"Simulator-scale host, canvas-only screenshot, or status diagnostics are incomplete"
     );
 }
 
@@ -647,27 +761,28 @@ int main(int argc, const char *argv[]) {
         IOSUsePlayHostCanvasLayout resizedLayout;
         IOSUsePlayHostCanvasLayout minimumLayout;
         BOOL unitReady = IOSUseHostCanvasTestLayout(
-            CGRectMake(0, 0, 430, 940),
+            CGRectMake(0, 0, 430, 932),
             1,
             CGRectMake(0, 0, 430, 932),
             &unitLayout
         );
         BOOL resizeReady = IOSUseHostCanvasTestLayout(
-            CGRectMake(0, 0, 1075, 1406),
+            CGRectMake(0, 0, 645, 1398),
             1.5,
-            CGRectMake(215, 0, 645, 1398),
+            CGRectMake(0, 0, 645, 1398),
             &resizedLayout
         );
         BOOL minimumReady = IOSUseHostCanvasTestLayout(
-            CGRectMake(0, 0, 215, 474),
+            CGRectMake(0, 0, 215, 466),
             0.5,
             CGRectMake(0, 0, 215, 466),
             &minimumLayout
         );
-        BOOL initialFitReady = IOSUseHostCanvasTestInitialHostFit();
+        BOOL resizeRoundingReady =
+            IOSUseHostCanvasTestResizeRounding();
         NSString *undersizedFailure = nil;
         BOOL undersizedRejected = !IOSUsePlayResolveHostCanvasLayout(
-            CGRectMake(0, 0, 214.9, 474),
+            CGRectMake(0, 0, 214.9, 466),
             NULL,
             &undersizedFailure
         ) && undersizedFailure != nil;
@@ -680,33 +795,26 @@ int main(int argc, const char *argv[]) {
             CGPointMake(13.5, 901.25)
         );
         CGPoint ignoredPoint = CGPointZero;
-        NSString *gapFailure = nil;
-        NSString *marginFailure = nil;
-        BOOL gapRejected = !IOSUsePlayMapHostContentPointToCanvas(
+        NSString *outsideFailure = nil;
+        BOOL outsideRejected = !IOSUsePlayMapHostContentPointToCanvas(
             resizedLayout,
             CGPointMake(
-                CGRectGetMidX(resizedLayout.canvasRect),
-                CGRectGetMaxY(resizedLayout.hostContentBounds) - 4
+                CGRectGetMaxX(resizedLayout.hostContentBounds) + 1,
+                CGRectGetMidY(resizedLayout.hostContentBounds)
             ),
             &ignoredPoint,
-            &gapFailure
-        ) && gapFailure != nil;
-        BOOL marginRejected = !IOSUsePlayMapHostContentPointToCanvas(
-            resizedLayout,
-            CGPointMake(10, CGRectGetMidY(resizedLayout.canvasRect)),
-            &ignoredPoint,
-            &marginFailure
-        ) && marginFailure != nil;
+            &outsideFailure
+        ) && outsideFailure != nil;
         CGRect resizedCanvasCG = CGRectNull;
         NSString *canvasCGFailure = nil;
         BOOL canvasCGReady = IOSUsePlayResolveCanvasCGWindowRect(
-            CGRectMake(50, 100, 1075, 1406),
+            CGRectMake(50, 100, 645, 1398),
             resizedLayout,
             &resizedCanvasCG,
             &canvasCGFailure
         ) && IOSUseHostCanvasTestRectEquals(
             resizedCanvasCG,
-            CGRectMake(265, 108, 645, 1398)
+            CGRectMake(50, 100, 645, 1398)
         );
         CGRect fullLogical = CGRectNull;
         NSString *fullLogicalFailure = nil;
@@ -720,9 +828,9 @@ int main(int argc, const char *argv[]) {
             ) && IOSUseHostCanvasTestRectEquals(
                 fullLogical,
                 CGRectMake(0, 0, 430, 932)
-            );
+        );
         CGRect accessibilityHostRect = CGRectMake(
-            245,
+            30,
             1173,
             150,
             75
@@ -738,9 +846,9 @@ int main(int argc, const char *argv[]) {
             ) && IOSUseHostCanvasTestRectEquals(
                 accessibilityLogicalRect,
                 CGRectMake(20, 100, 100, 50)
-            );
+        );
         CGRect alertButtonHostRect = CGRectMake(
-            365,
+            150,
             1008,
             90,
             45
@@ -782,22 +890,21 @@ int main(int argc, const char *argv[]) {
             [NSString stringWithUTF8String:argv[3]]
         );
         BOOL passed = unitReady && resizeReady && minimumReady &&
-            initialFitReady &&
+            resizeRoundingReady &&
             undersizedRejected && unitRoundTrip && resizedRoundTrip &&
-            gapRejected && marginRejected && canvasCGReady &&
+            outsideRejected && canvasCGReady &&
             fullLogicalReady && accessibilityTransformReady &&
             alertButtonTransformReady && multiScreenTransformReady &&
             crop1x && crop2x && fractionalCrop &&
             unavailableCaptureSchema && sourceContract;
         fprintf(
             stderr,
-            "[host-canvas-contract] scale1=%d resize=%d min=%d initial-fit=%d gap=%d margin=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d unavailable-schema=%d source=%d pass=%d\n",
+            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d unavailable-schema=%d source=%d pass=%d\n",
             unitReady,
             resizeReady,
             minimumReady,
-            initialFitReady,
-            gapRejected,
-            marginRejected,
+            resizeRoundingReady,
+            outsideRejected,
             canvasCGReady && fullLogicalReady,
             accessibilityTransformReady,
             alertButtonTransformReady,

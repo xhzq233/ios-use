@@ -36,8 +36,8 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/test_playcover_external_app_live.sh [--static|--live]
 
---static  Verify the transparent-host source contract only. It does not need a
-          GUI session, private scenario, or PostEvent permission.
+--static  Verify the ordinary Simulator-scale host source contract only. It
+          does not need a GUI session, private scenario, or PostEvent permission.
 --live    Run the generic external-App PlayCover live/stress gate. This
           requires the private runner inputs below.
 
@@ -87,9 +87,9 @@ config_fail() {
 }
 
 if [[ "$MODE" == "static" ]]; then
-  bash "$ROOT_DIR/playcover-fixtures/test_transparent_host_contract.sh" \
+  bash "$ROOT_DIR/playcover-fixtures/test_simulator_scale_host_contract.sh" \
     --static
-  echo "[playcover-external-live] PASS static transparent-host contract"
+  echo "[playcover-external-live] PASS static Simulator-scale host contract"
   exit 0
 fi
 
@@ -382,7 +382,7 @@ assert_status() {
           .safeAreaCropped == false and
           .identityMapping == true)) and
       $window.status == "configured" and
-      $window.transparentHost == true and
+      $window.transparentHost == false and
       $window.publicTitleBar == true and
       $window.resizable == true and
       $window.hostPolicy == true and
@@ -393,12 +393,12 @@ assert_status() {
       $window.mouseMonitorReady == true and
       $window.identityTransform == true and
       $window.borderless == false and
-      $window.hasShadow == false and
+      $window.hasShadow == true and
       $window.movable == true and
       $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
       $window.sceneMinimumSize == {"width":430,"height":932} and
       $window.sceneMaximumSize == {"width":430,"height":932} and
-      $window.transparentSpacer == 8 and
+      $window.transparentSpacer == 0 and
       ($window.displayScale | type) == "number" and
       $window.displayScale > 0 and
       ($window.inverseDisplayScale | type) == "number" and
@@ -414,16 +414,17 @@ assert_status() {
       (($canvasCG.height / $window.displayScale - 932) | abs) <= 0.5 and
       (($canvasCG.width - $canvas.width) | abs) <= 0.5 and
       (($canvasCG.height - $canvas.height) | abs) <= 0.5 and
-      $canvas.x >= ($host.x - 0.5) and
-      $canvas.y >= ($host.y - 0.5) and
-      ($canvas.x + $canvas.width) <= ($host.x + $host.width + 0.5) and
-      ($canvas.y + $canvas.height) <= ($host.y + $host.height + 0.5) and
-      (($canvas.y + $canvas.height + $window.transparentSpacer -
-        ($host.y + $host.height)) | abs) <= 0.5 and
+      (($canvas.x - $host.x) | abs) <= 0.5 and
+      (($canvas.y - $host.y) | abs) <= 0.5 and
+      (($canvas.width - $host.width) | abs) <= 0.5 and
+      (($canvas.height - $host.height) | abs) <= 0.5 and
       (($canvasCG.x - ($hostCG.x + $canvas.x - $host.x)) | abs) <= 0.5 and
       (($canvasCG.y - ($hostCG.y + $host.y + $host.height -
         $canvas.y - $canvas.height)) | abs) <= 0.5 and
-      (($canvasCG.y - $hostCG.y - $window.transparentSpacer) | abs) <= 0.5
+      (($canvasCG.x - $hostCG.x) | abs) <= 0.5 and
+      (($canvasCG.y - $hostCG.y) | abs) <= 0.5 and
+      (($canvasCG.width - $hostCG.width) | abs) <= 0.5 and
+      (($canvasCG.height - $hostCG.height) | abs) <= 0.5
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name does not prove the exact healthy external App/AppKit session"
   fi
@@ -459,7 +460,7 @@ assert_screenshot() {
       (.data.runtimeEvidence.appKitWindowEvidence as $window |
         ($window.canvasCapture) as $capture |
         $window.status == "configured" and
-        $window.transparentHost == true and
+        $window.transparentHost == false and
         $window.publicTitleBar == true and
         $window.resizable == true and
         $window.hostPolicy == true and
@@ -467,7 +468,7 @@ assert_screenshot() {
         $capture.title == $title and
         $window.canvasBounds ==
           {"x":0,"y":0,"width":430,"height":932} and
-        $window.transparentSpacer == 8 and
+        $window.transparentSpacer == 0 and
         ($window.displayScale | type) == "number" and
         $window.displayScale > 0 and
         (($window.canvasRect.width / $window.displayScale - 430) | abs) <=
@@ -478,9 +479,14 @@ assert_screenshot() {
           $window.displayScale - 430) | abs) <= 0.5 and
         (($capture.canvasCGWindowRect.height /
           $window.displayScale - 932) | abs) <= 0.5 and
+        (($capture.canvasCGWindowRect.x -
+          $capture.hostContentCGWindowRect.x) | abs) <= 0.5 and
         (($capture.canvasCGWindowRect.y -
-          $capture.hostContentCGWindowRect.y -
-          $window.transparentSpacer) | abs) <= 0.5)
+          $capture.hostContentCGWindowRect.y) | abs) <= 0.5 and
+        (($capture.canvasCGWindowRect.width -
+          $capture.hostContentCGWindowRect.width) | abs) <= 0.5 and
+        (($capture.canvasCGWindowRect.height -
+          $capture.hostContentCGWindowRect.height) | abs) <= 0.5)
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name is not a complete 1290x2796 device screenshot"
   fi
