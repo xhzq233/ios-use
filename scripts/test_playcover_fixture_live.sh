@@ -757,10 +757,6 @@ assert_json status '
   $runtime.nativeWidth == 1290 and
   $runtime.nativeHeight == 2796 and
   $runtime.scale == 3 and
-  $runtime.safeAreaTop == 59 and
-  $runtime.safeAreaLeft == 0 and
-  $runtime.safeAreaBottom == 34 and
-  $runtime.safeAreaRight == 0 and
   $runtime.diagnostics.socket.transport == "unix-domain-socket" and
   $runtime.diagnostics.socket.status == "listening" and
   ($runtime.diagnostics.observed.appKit |
@@ -773,13 +769,17 @@ assert_json status '
     .maxSize == {"width":430,"height":932} and
     .contentMinSize == {"width":430,"height":932} and
     .contentMaxSize == {"width":430,"height":932}) and
-  ($runtime.diagnostics.runtime.systemChrome |
-    .stage == "installed" and
-    .windowAttached == 1 and
-    .chromeWindowCount == 1 and
-    .dynamicIslandSurface == true and
-    .statusSurface == true and
-    .homeIndicatorSurface == true)
+  ($runtime.diagnostics.runtime.rendering |
+    .syntheticChrome == false and
+    .safeAreaOverride == false and
+    (.fullFrame |
+      .logicalRect == {"x":0,"y":0,"width":430,"height":932} and
+      .pixelWidth == 1290 and
+      .pixelHeight == 2796 and
+      .scale == 3 and
+      .uncropped == true and
+      .safeAreaCropped == false and
+      .identityMapping == true))
 '
 
 runner_pid="$(jq -er '.data.driver.runnerPid' "$RUN_DIR/status.stdout")"
@@ -819,7 +819,8 @@ record_case screenshot_initial screenshot \
 assert_evidence screenshot_initial '"snapshotGeneration"'
 assert_evidence screenshot_initial '"captureGeneration"'
 assert_evidence screenshot_initial '"runtimeEvidence"'
-assert_evidence screenshot_initial '"systemChromeEvidence"'
+assert_evidence screenshot_initial '"syntheticChrome"'
+assert_evidence screenshot_initial '"fullFrame"'
 assert_evidence screenshot_initial '"appKitWindowEvidence"'
 assert_evidence screenshot_initial '"compositor"'
 assert_json screenshot_initial '
@@ -827,13 +828,25 @@ assert_json screenshot_initial '
   .data.logicalSize == [430,932] and
   .data.runtimeEvidence.complete == true and
   .data.runtimeEvidence.captureGeneration > 0 and
+  .data.runtimeEvidence.syntheticChrome == false and
+  (.data.runtimeEvidence.fullFrame as $fullFrame |
+    $fullFrame == {
+      "logicalRect":{"x":0,"y":0,"width":430,"height":932},
+      "pixelWidth":1290,
+      "pixelHeight":2796,
+      "scale":3,
+      "uncropped":true,
+      "safeAreaCropped":false,
+      "identityMapping":true
+    } and
+    .data.runtimeEvidence.compositor.syntheticChrome == false and
+    .data.runtimeEvidence.compositor.fullFrame == $fullFrame) and
   (.data.runtimeEvidence.compositor.completeness |
     .allVisibleNativeWindowsOrdered == true and
     .allVisibleUIKitWindowsMapped == true and
     .allWindowGeometryInsideDevice == true and
     .baseWindowCoversDevice == true and
     .requestedCapturedCountMatch == true and
-    .systemChromeMapped == true and
     .windowSetStableDuringCapture == true) and
   (.data.runtimeEvidence.appKitWindowEvidence as $appKit |
     $appKit.status == "configured" and
@@ -866,12 +879,7 @@ assert_json screenshot_initial '
         .hidden == false and
         .frame == {"x":0,"y":0,"width":430,"height":932}
       )
-    )) and
-  (.data.runtimeEvidence.systemChromeEvidence |
-    .lastImageEvidence.ready == true and
-    .surfaceEvidence.dynamicIsland.ready == true and
-    .surfaceEvidence.status.ready == true and
-    .surfaceEvidence.homeIndicator.ready == true)
+    ))
 '
 
 record_frontmost_snapshot focus_target_after_screenshot
@@ -958,10 +966,7 @@ fi
 
 record_case dom_initial dom --json
 assert_evidence dom_initial 'fixture.uikit.increment'
-assert_evidence dom_initial 'fixture.safe.top-left'
 assert_evidence dom_initial 'fixture.full.top-left'
-assert_evidence dom_initial 'fixture.island.left'
-assert_evidence dom_initial 'fixture.home.above'
 
 record_case tap tap "Increment" --dom --json
 assert_evidence tap 'Count 1'
@@ -1070,10 +1075,9 @@ assert_json alert_screenshot '
   ([$windows[] | select(.class == "_NSAlertPanel")][0] |
     .deviceLogicalRect ==
       {"x":85,"y":356,"width":260,"height":219}) and
-  (.data.runtimeEvidence.systemChromeEvidence.lastImageEvidence |
-    .ready == true and
-    .nativeAlertVisible == true and
-    .modalDimmedSignatures == true)
+  .data.runtimeEvidence.syntheticChrome == false and
+  .data.runtimeEvidence.fullFrame.uncropped == true and
+  .data.runtimeEvidence.fullFrame.safeAreaCropped == false
 '
 assert_ocr_evidence alert_screenshot \
   "Fixture Alert" "Confirm" "Cancel"
@@ -1100,9 +1104,7 @@ assert_evidence open_url '"dom"'
 assert_evidence open_url 'iosusefixture://acceptance/v1'
 
 for probe in \
-  "Full TL" "Full TR" "Full BL" "Full BR" \
-  "Safe Top Left" "Safe Top Right" \
-  "Safe Bottom Left" "Safe Bottom Right"; do
+  "Full TL" "Full TR" "Full BL" "Full BR"; do
   probe_case="$(
     printf '%s' "$probe" |
       tr '[:upper:] ' '[:lower:]-'
@@ -1112,24 +1114,10 @@ for probe in \
     "Full TR") probe_identifier="fixture.full.top-right" ;;
     "Full BL") probe_identifier="fixture.full.bottom-left" ;;
     "Full BR") probe_identifier="fixture.full.bottom-right" ;;
-    "Safe Top Left") probe_identifier="fixture.safe.top-left" ;;
-    "Safe Top Right") probe_identifier="fixture.safe.top-right" ;;
-    "Safe Bottom Left")
-      probe_identifier="fixture.safe.bottom-left"
-      ;;
-    "Safe Bottom Right")
-      probe_identifier="fixture.safe.bottom-right"
-      ;;
   esac
   record_case "probe_${probe_case}" tap "$probe" --dom --json
   assert_evidence "probe_${probe_case}" "$probe_identifier"
 done
-record_case island_probe tap "Island Left" --dom --json
-assert_evidence island_probe 'fixture.island.left'
-record_case island_probe_right tap "Island Right" --dom --json
-assert_evidence island_probe_right 'fixture.island.right'
-record_case home_probe tap "Above Home" --dom --json
-assert_evidence home_probe 'fixture.home.above'
 
 while IFS='|' read -r mouse_probe_case mouse_probe_label mouse_probe_identifier; do
   run_global_mouse_probe \
@@ -1141,13 +1129,6 @@ full_top_left|Full TL|fixture.full.top-left
 full_top_right|Full TR|fixture.full.top-right
 full_bottom_left|Full BL|fixture.full.bottom-left
 full_bottom_right|Full BR|fixture.full.bottom-right
-safe_top_left|Safe Top Left|fixture.safe.top-left
-safe_top_right|Safe Top Right|fixture.safe.top-right
-safe_bottom_left|Safe Bottom Left|fixture.safe.bottom-left
-safe_bottom_right|Safe Bottom Right|fixture.safe.bottom-right
-island_left|Island Left|fixture.island.left
-island_right|Island Right|fixture.island.right
-home_above|Above Home|fixture.home.above
 MOUSE_PROBES
 
 record_case swipe_fixed swipe --dir forth --distance 300 \

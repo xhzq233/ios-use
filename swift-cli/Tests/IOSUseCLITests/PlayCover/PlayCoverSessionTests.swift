@@ -1371,14 +1371,10 @@ final class PlayCoverSessionTests: XCTestCase {
                     )
                 ),
                 safeArea: .init(
-                    top: Double(IOSUsePlayDeviceSafeAreaTop),
-                    left: Double(IOSUsePlayDeviceSafeAreaLeft),
-                    bottom: Double(
-                        IOSUsePlayDeviceSafeAreaBottom
-                    ),
-                    right: Double(
-                        IOSUsePlayDeviceSafeAreaRight
-                    )
+                    top: 17,
+                    left: 3,
+                    bottom: 29,
+                    right: 4
                 )
             ),
             stage: "ready"

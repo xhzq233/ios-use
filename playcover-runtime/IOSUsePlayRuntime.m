@@ -9,7 +9,6 @@
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayRuntimeSocket.h"
-#import "IOSUsePlaySystemChrome.h"
 #import "IOSUsePlayDevice.h"
 
 #import <UIKit/UIKit.h>
@@ -19,6 +18,23 @@ static NSString *IOSUseRuntimeConfigurationStage = @"loaded";
 static NSString *IOSUseRuntimeConfigurationFailure;
 
 static void IOSUseConfigureRuntimeSurface(void);
+
+static NSDictionary<NSString *, id> *IOSUseRuntimeFullFrameEvidence(void) {
+    return @{
+        @"logicalRect": @{
+            @"x": @0,
+            @"y": @0,
+            @"width": @(IOSUsePlayDeviceLogicalWidth),
+            @"height": @(IOSUsePlayDeviceLogicalHeight),
+        },
+        @"pixelWidth": @(IOSUsePlayDeviceNativeWidth),
+        @"pixelHeight": @(IOSUsePlayDeviceNativeHeight),
+        @"scale": @(IOSUsePlayDeviceScale),
+        @"uncropped": @YES,
+        @"safeAreaCropped": @NO,
+        @"identityMapping": @YES,
+    };
+}
 
 static void IOSUseScheduleRuntimeSurfaceProbe(NSTimeInterval delay) {
     dispatch_after(
@@ -39,27 +55,14 @@ static void IOSUseConfigureRuntimeSurface(void) {
     NSError *error = nil;
     BOOL windowReady =
         [IOSUsePlayAppKitBridge configureFixedWindow:&error];
-    IOSUsePlaySystemChromeInstall();
-    NSDictionary<NSString *, id> *chrome =
-        IOSUsePlaySystemChromeDiagnostics();
-    BOOL chromeReady =
-        [chrome[@"windowAttached"] boolValue] &&
-        [chrome[@"passthrough"] boolValue] &&
-        [chrome[@"geometryReady"] boolValue] &&
-        [chrome[@"safeAreaReady"] boolValue] &&
-        [chrome[@"dynamicIslandSurface"] boolValue] &&
-        [chrome[@"statusSurface"] boolValue] &&
-        [chrome[@"homeIndicatorSurface"] boolValue];
-    if (windowReady && chromeReady) {
+    if (windowReady) {
         IOSUseRuntimeConfigurationStage = @"window-configured";
         IOSUseRuntimeConfigurationFailure = nil;
         return;
     }
-    IOSUseRuntimeConfigurationStage =
-        windowReady ? @"waiting-for-system-chrome" : @"waiting-for-window";
+    IOSUseRuntimeConfigurationStage = @"waiting-for-window";
     IOSUseRuntimeConfigurationFailure =
         error.localizedDescription ?:
-        chrome[@"failure"] ?:
         @"fixed iPhone surface is not ready";
     // Keep reconciling scene/window replacement, but do not pretend readiness.
     NSTimeInterval delay =
@@ -94,7 +97,11 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(void) {
             @"scale": @(IOSUsePlayDeviceScale),
         },
         @"window": [IOSUsePlayAppKitBridge diagnostics],
-        @"systemChrome": IOSUsePlaySystemChromeDiagnostics(),
+        @"rendering": @{
+            @"syntheticChrome": @NO,
+            @"safeAreaOverride": @NO,
+            @"fullFrame": IOSUseRuntimeFullFrameEvidence(),
+        },
     };
 }
 

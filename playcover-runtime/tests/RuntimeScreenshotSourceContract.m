@@ -161,6 +161,10 @@ int main(int argc, const char *argv[]) {
             runtime,
             @"IOSUsePlayRuntimeScreenshotFingerprint"
         );
+        NSString *fullFrame = FunctionBody(
+            runtime,
+            @"IOSUseScreenshotFullFrameEvidence"
+        );
         NSString *composite = FunctionBody(
             compositor,
             @"IOSUsePlayCompositeWindowCaptures"
@@ -193,23 +197,6 @@ int main(int argc, const char *argv[]) {
             bridge,
             @"configureFixedWindow:"
         );
-        NSRange verification = [capture
-            rangeOfString:@"IOSUsePlaySystemChromeVerifyImage"];
-        NSRange refreshedDiagnostics = NSMakeRange(
-            NSNotFound,
-            0
-        );
-        if (verification.location != NSNotFound) {
-            NSUInteger start = NSMaxRange(verification);
-            refreshedDiagnostics = [capture
-                rangeOfString:@"IOSUsePlaySystemChromeDiagnostics"
-                      options:0
-                        range:NSMakeRange(
-                            start,
-                            capture.length - start
-                        )];
-        }
-
         BOOL passed = YES;
         passed &= Require(
             collector != nil &&
@@ -276,13 +263,27 @@ int main(int argc, const char *argv[]) {
                 [fingerprintCommand containsString:
                     @"IOSUseScreenshotFingerprintWithSettlingOnMain"],
             @"screenshot and action fingerprints must share bounded strict "
-            @"settling for transient compositor geometry/chrome frames"
+            @"settling for transient compositor geometry frames"
         );
         passed &= Require(
-            refreshedDiagnostics.location != NSNotFound &&
-                [capture containsString:@"lastImageEvidence"],
-            @"system-chrome diagnostics must be refreshed after same-frame "
-            @"pixel verification"
+            fullFrame != nil &&
+                [fullFrame containsString:@"@\"uncropped\": @YES"] &&
+                [fullFrame containsString:
+                    @"@\"safeAreaCropped\": @NO"] &&
+                [fullFrame containsString:
+                    @"@\"identityMapping\":"] &&
+                payload != nil &&
+                [payload containsString:@"@\"syntheticChrome\": @NO"] &&
+                [payload containsString:@"@\"fullFrame\":"] &&
+                composite != nil &&
+                [composite containsString:
+                    @"primary native window does not uniquely cover"] &&
+                ![runtime containsString:@"IOSUsePlaySystemChrome"] &&
+                ![runtime containsString:@"systemChromeEvidence"] &&
+                ![runtime containsString:@"containsSystemChrome"] &&
+                ![runtime containsString:@"systemChromeMapped"],
+            @"screenshot must prove a full uncropped identity-mapped frame "
+            @"without a Runtime-owned system-chrome overlay"
         );
         passed &= Require(
             [bridge containsString:

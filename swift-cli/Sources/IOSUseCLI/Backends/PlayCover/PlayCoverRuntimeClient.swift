@@ -407,6 +407,16 @@ struct PlayCoverRuntimeOpenPayload: Codable, Equatable, Sendable {
     let postcondition: PlayCoverRuntimePostcondition
 }
 
+struct PlayCoverRuntimeFullFrame: Codable, Equatable, Sendable {
+    let logicalRect: PlayCoverRuntimeFrame
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let scale: Double
+    let uncropped: Bool
+    let safeAreaCropped: Bool
+    let identityMapping: Bool
+}
+
 struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
     let jpegBase64: String
     let pixelWidth: Int
@@ -416,13 +426,14 @@ struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
     let scale: Double
     let source: String
     let complete: Bool
+    let syntheticChrome: Bool
+    let fullFrame: PlayCoverRuntimeFullFrame
     let snapshotGeneration: Int64
     let captureGeneration: Int64
     let dom: PlayCoverRuntimeDOMPayload?
     let compositorWindowNumbers: [Int]?
     let sourceBackingSizes: [PlayCoverRuntimeJSONValue]?
     let appKitWindowEvidence: PlayCoverRuntimeJSONValue?
-    let systemChromeEvidence: PlayCoverRuntimeJSONValue?
     let compositor: PlayCoverRuntimeJSONValue?
 
     init(
@@ -434,6 +445,8 @@ struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
         scale: Double,
         source: String,
         complete: Bool,
+        syntheticChrome: Bool,
+        fullFrame: PlayCoverRuntimeFullFrame,
         snapshotGeneration: Int64,
         captureGeneration: Int64,
         dom: PlayCoverRuntimeDOMPayload?,
@@ -441,8 +454,6 @@ struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
         sourceBackingSizes:
             [PlayCoverRuntimeJSONValue]? = nil,
         appKitWindowEvidence:
-            PlayCoverRuntimeJSONValue? = nil,
-        systemChromeEvidence:
             PlayCoverRuntimeJSONValue? = nil,
         compositor: PlayCoverRuntimeJSONValue? = nil
     ) {
@@ -454,13 +465,14 @@ struct PlayCoverRuntimeScreenshotPayload: Codable, Equatable, Sendable {
         self.scale = scale
         self.source = source
         self.complete = complete
+        self.syntheticChrome = syntheticChrome
+        self.fullFrame = fullFrame
         self.snapshotGeneration = snapshotGeneration
         self.captureGeneration = captureGeneration
         self.dom = dom
         self.compositorWindowNumbers = compositorWindowNumbers
         self.sourceBackingSizes = sourceBackingSizes
         self.appKitWindowEvidence = appKitWindowEvidence
-        self.systemChromeEvidence = systemChromeEvidence
         self.compositor = compositor
     }
 }

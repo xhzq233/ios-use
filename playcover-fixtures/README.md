@@ -4,11 +4,12 @@
 PlayCover backend. It deliberately combines:
 
 - UIKit controls, a native modal alert, an in-window UIKit popup, text input,
-  and four safe-area edge probes;
+  and four full-canvas edge probes;
 - SwiftUI controls and text input;
 - a `WKWebView` with accessible controls;
 - an animated `MTKView` underneath a UIKit overlay;
-- a bottom `UITabBarController` whose items exercise the home-indicator region;
+- a bottom `UITabBarController` whose items exercise the App's bottom canvas
+  edge without a fabricated Home Indicator;
 - the `iosusefixture://` URL scheme with an accessible
   `fixture.url.status` postcondition.
 
@@ -18,7 +19,8 @@ Build the iPhoneOS source App consumed by PlayCover:
 ./playcover-fixtures/build.sh
 ```
 
-Build a Simulator oracle without sharing generated state with ios-use:
+Build an auxiliary Simulator fixture without sharing generated state with
+ios-use:
 
 ```bash
 ./playcover-fixtures/build.sh --sdk iphonesimulator
@@ -30,8 +32,8 @@ Generated projects and build products stay untracked under this directory.
 
 The native `UIAlertController` and the custom popup are separate gates.
 On Catalyst the alert intentionally exercises the native AppKit panel. The
-popup is instead added directly to the fixture `UIWindow`, bounded by its
-top and bottom safe area, and exposes stable identifier/label pairs:
+popup is instead added directly to the fixture `UIWindow`, bounded by the
+complete App canvas, and exposes stable identifier/label pairs:
 `fixture.uikit.popup.open` / `Open UIKit Popup`,
 `fixture.uikit.popup` / `UIKit In-Window Popup`,
 `fixture.uikit.popup.confirm` / `Confirm and Close`, and
@@ -60,16 +62,15 @@ to derive the global mouse point. Set `IOS_USE_POPUP_EVIDENCE_DIR` to a new
 path when the JSON responses and mouse-event record must be retained instead
 of using an automatically removed temporary directory.
 
-On an iPhone 15 Pro Max (`iPhone16,2`) the fixture writes
-`Documents/geometry.json` and exposes the same value as
-`fixture.uikit.geometry`. The required portrait oracle is:
+The fixture writes `Documents/geometry.json` and exposes the same value as
+`fixture.uikit.geometry`. The required fixed render contract is:
 
 ```text
-logical 430x932 scale 3 native 1290x2796 safe 59,0,34,0
+logical 430x932 scale 3 native 1290x2796
 ```
 
-The fixture pins light appearance so the reference surfaces and status glyph
-contrast do not change with the macOS automatic day/night appearance.
+The fixture pins light appearance so reference surfaces do not change with the
+macOS automatic day/night appearance.
 
 The empty `UILaunchScreen` declaration is intentional. Removing it puts a
 freshly built App into the legacy 320x480 compatibility mode and must be
@@ -77,8 +78,9 @@ rejected by the PlayCover Runtime rather than hidden by screenshot resizing.
 
 This fixture is only one part of the unified backend gate. A passing mock DOM
 or UIKit-only image is insufficient: the final PlayCover path must also prove
-real touch/input, Metal plus UIKit composition, system chrome, signing,
-session identity, and the configured external-App live workflow.
+real touch/input, Metal plus UIKit composition, complete uncropped App
+rendering without synthetic chrome, signing, session identity, and the
+configured external-App live workflow.
 
 `runtime_socket_probe.swift` is intentionally a bounded negative-test client,
 not an automation API. The unified live gate uses it only against a fixture

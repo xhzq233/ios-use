@@ -234,9 +234,15 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 "scale": Int(IOSUsePlayDeviceScale),
                 "source": "window-compositor",
                 "complete": true,
+                "syntheticChrome": false,
+                "fullFrame": self.fullFramePayload(),
                 "snapshotGeneration": 41,
                 "captureGeneration": 9,
                 "dom": dom,
+                "compositor": [
+                    "syntheticChrome": false,
+                    "fullFrame": self.fullFramePayload(),
+                ],
             ]
             payload["tap"] = self.actionPayload(generation: 42)
             return .body(try self.successResponse(
@@ -253,6 +259,16 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
 
         XCTAssertEqual(result.screenshot?.snapshotGeneration, 41)
         XCTAssertEqual(result.screenshot?.captureGeneration, 9)
+        XCTAssertEqual(result.screenshot?.syntheticChrome, false)
+        XCTAssertEqual(
+            result.screenshot?.fullFrame.logicalRect,
+            .init(
+                x: 0,
+                y: 0,
+                width: Double(IOSUsePlayDeviceLogicalWidth),
+                height: Double(IOSUsePlayDeviceLogicalHeight)
+            )
+        )
         XCTAssertEqual(result.screenshot?.dom?.snapshotGeneration, 41)
         let element = try XCTUnwrap(result.dom?.elements.first)
         XCTAssertEqual(element.nodeID, "n-41")
@@ -674,11 +690,10 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     "height": Int(IOSUsePlayDeviceLogicalHeight),
                 ],
                 "safeArea": [
-                    "top": Int(IOSUsePlayDeviceSafeAreaTop),
-                    "left": Int(IOSUsePlayDeviceSafeAreaLeft),
-                    "bottom":
-                        Int(IOSUsePlayDeviceSafeAreaBottom),
-                    "right": Int(IOSUsePlayDeviceSafeAreaRight),
+                    "top": 17,
+                    "left": 3,
+                    "bottom": 29,
+                    "right": 4,
                 ],
             ],
             "stage": "ready",
@@ -798,42 +813,40 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             "algorithm": "sha256-bgra8-premultiplied",
             "hash": hash,
             "logicalRect": [
-                "x": 0,
-                "y": Int(IOSUsePlayDeviceSafeAreaTop),
-                "width": Int(IOSUsePlayDeviceLogicalWidth),
-                "height": Int(
-                    IOSUsePlayDeviceLogicalHeight
-                        - IOSUsePlayDeviceSafeAreaTop
-                        - IOSUsePlayDeviceSafeAreaBottom
-                ),
+                "x": 20,
+                "y": 100,
+                "width": 121,
+                "height": 44,
             ],
             "nativePixelRect": [
-                "x": 0,
-                "y": Int(
-                    IOSUsePlayDeviceSafeAreaTop
-                        * IOSUsePlayDeviceScale
-                ),
-                "width": Int(IOSUsePlayDeviceNativeWidth),
-                "height": Int(
-                    (
-                        IOSUsePlayDeviceLogicalHeight
-                            - IOSUsePlayDeviceSafeAreaTop
-                            - IOSUsePlayDeviceSafeAreaBottom
-                    ) * IOSUsePlayDeviceScale
-                ),
+                "x": 60,
+                "y": 300,
+                "width": 363,
+                "height": 132,
             ],
-            "pixelWidth": Int(IOSUsePlayDeviceNativeWidth),
-            "pixelHeight": Int(
-                (
-                    IOSUsePlayDeviceLogicalHeight
-                        - IOSUsePlayDeviceSafeAreaTop
-                        - IOSUsePlayDeviceSafeAreaBottom
-                ) * IOSUsePlayDeviceScale
-            ),
+            "pixelWidth": 363,
+            "pixelHeight": 132,
             "captureGeneration": generation,
             "source": "window-compositor",
             "complete": true,
             "compositor": [:],
+        ]
+    }
+
+    private func fullFramePayload() -> [String: Any] {
+        [
+            "logicalRect": [
+                "x": 0,
+                "y": 0,
+                "width": Int(IOSUsePlayDeviceLogicalWidth),
+                "height": Int(IOSUsePlayDeviceLogicalHeight),
+            ],
+            "pixelWidth": Int(IOSUsePlayDeviceNativeWidth),
+            "pixelHeight": Int(IOSUsePlayDeviceNativeHeight),
+            "scale": Int(IOSUsePlayDeviceScale),
+            "uncropped": true,
+            "safeAreaCropped": false,
+            "identityMapping": true,
         ]
     }
 

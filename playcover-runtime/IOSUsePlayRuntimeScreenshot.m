@@ -1,7 +1,6 @@
 #import "IOSUsePlayRuntimeScreenshot.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayDevice.h"
-#import "IOSUsePlaySystemChrome.h"
 #import "IOSUsePlayWindowCompositor.h"
 
 #import <UIKit/UIKit.h>
@@ -54,7 +53,6 @@ enum {
 @property(nonatomic) NSUInteger cgFrontToBackIndex;
 @property(nonatomic) NSInteger orderedWindowsIndex;
 @property(nonatomic) NSInteger parentWindowNumber;
-@property(nonatomic) BOOL containsSystemChrome;
 @property(nonatomic, strong)
     NSMutableArray<NSDictionary<NSString *, id> *> *uiWindowEvidence;
 @end
@@ -84,6 +82,29 @@ static NSDictionary<NSString *, NSNumber *> *IOSUseScreenshotRectJSON(
         @"y": @(rect.origin.y),
         @"width": @(rect.size.width),
         @"height": @(rect.size.height),
+    };
+}
+
+/// The compositor always produces the entire fixed logical device, never a
+/// safe-area crop. Keep this proof adjacent to the rendered screenshot rather
+/// than inferring it from a UIKit safe-area value, which belongs to the App.
+static NSDictionary<NSString *, id> *IOSUseScreenshotFullFrameEvidence(
+    BOOL identityMapping
+) {
+    CGRect deviceFrame = CGRectMake(
+        0,
+        0,
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight
+    );
+    return @{
+        @"logicalRect": IOSUseScreenshotRectJSON(deviceFrame),
+        @"pixelWidth": @(IOSUsePlayDeviceNativeWidth),
+        @"pixelHeight": @(IOSUsePlayDeviceNativeHeight),
+        @"scale": @(IOSUsePlayDeviceScale),
+        @"uncropped": @YES,
+        @"safeAreaCropped": @NO,
+        @"identityMapping": @(identityMapping),
     };
 }
 
@@ -536,7 +557,6 @@ IOSUseScreenshotCollectNativeWindows(
     CGRect *deviceFrame,
     NSUInteger *visibleUIKitWindowCount,
     NSUInteger *mappedUIKitWindowCount,
-    BOOL *systemChromeMapped,
     NSString **failureCode,
     NSString **failureMessage
 ) {
@@ -620,7 +640,6 @@ IOSUseScreenshotCollectNativeWindows(
     NSMutableArray<NSDictionary<NSString *, id> *> *uiMappings =
         [NSMutableArray arrayWithCapacity:uiWindows.count];
     NSUInteger mappedCount = 0;
-    NSUInteger chromeCount = 0;
     for (UIWindow *uiWindow in uiWindows) {
         CGRect logicalFrame = uiWindow.frame;
         if (!IOSUseScreenshotLogicalRectIsInsideDevice(logicalFrame)) {
@@ -660,10 +679,6 @@ IOSUseScreenshotCollectNativeWindows(
             );
             return nil;
         }
-        BOOL chrome = [uiWindow.accessibilityIdentifier
-            isEqualToString:
-                @"io.ios-use.play-runtime.system-chrome"];
-        chromeCount += chrome ? 1 : 0;
         NSUInteger sceneWindowIndex =
             [uiWindow.windowScene.windows indexOfObjectIdenticalTo:
                 uiWindow];
@@ -680,14 +695,12 @@ IOSUseScreenshotCollectNativeWindows(
             @"key": @(uiWindow.isKeyWindow),
             @"frame": IOSUseScreenshotRectJSON(logicalFrame),
             @"mappingSource": mappingSource ?: @"unknown",
-            @"systemChrome": @(chrome),
         };
         [mappedNativeWindows addObject:appKitWindow];
         [uiMappings addObject:@{
             @"uiWindow": uiWindow,
             @"appKitWindow": appKitWindow,
             @"evidence": evidence,
-            @"systemChrome": @(chrome),
         }];
         mappedCount += 1;
     }
@@ -752,9 +765,6 @@ IOSUseScreenshotCollectNativeWindows(
             );
             return nil;
         }
-        BOOL chrome = [mapping[@"systemChrome"] boolValue];
-        record.containsSystemChrome =
-            record.containsSystemChrome || chrome;
         [record.uiWindowEvidence addObject:mapping[@"evidence"]];
     }
     if (mappedUIKitWindowCount != NULL) {
@@ -776,22 +786,6 @@ IOSUseScreenshotCollectNativeWindows(
         );
         return nil;
     }
-    if (chromeCount != 1) {
-        IOSUseScreenshotSetFailure(
-            @"compositor_chrome_window_invalid",
-            [NSString stringWithFormat:
-                @"expected one visible system-chrome UIWindow, found %lu",
-                (unsigned long)chromeCount
-            ],
-            failureCode,
-            failureMessage
-        );
-        return nil;
-    }
-    if (systemChromeMapped != NULL) {
-        *systemChromeMapped = YES;
-    }
-
     CGRect baseFrame = baseRecord.frame;
     if (!IOSUseScreenshotRectIsDeviceSize(baseFrame)) {
         IOSUseScreenshotSetFailure(
@@ -1016,7 +1010,7 @@ static BOOL IOSUseScreenshotHasUsablePixels(CGImageRef image) {
         nontransparent += pixels[index * 4 + 3] > 0 ? 1 : 0;
     }
     // A solid-color app is a valid screenshot. Completeness comes from the
-    // per-window proof and system-chrome verification, not color variance.
+    // full-frame native-window proof, not color variance.
     return nontransparent > sampleWidth * sampleHeight / 2;
 }
 
@@ -1029,7 +1023,7 @@ IOSUseScreenshotCompositorEvidence(
     NSUInteger visibleUIKitWindowCount,
     NSUInteger mappedUIKitWindowCount,
     NSUInteger capturedWindowCount,
-    BOOL systemChromeMapped
+    BOOL identityMapping
 ) {
     NSMutableArray<NSDictionary<NSString *, id> *> *windowEvidence =
         [NSMutableArray arrayWithCapacity:windows.count];
@@ -1065,8 +1059,6 @@ IOSUseScreenshotCompositorEvidence(
             @"mappedUIKitWindowCount":
                 @(window.uiWindowEvidence.count),
             @"uiWindows": window.uiWindowEvidence,
-            @"containsSystemChrome":
-                @(window.containsSystemChrome),
             @"captureGeometry": geometry,
         }];
     }
@@ -1084,6 +1076,10 @@ IOSUseScreenshotCompositorEvidence(
         @"capturedWindowCount": @(capturedWindowCount),
         @"baseWindowNumber": @(baseWindowNumber),
         @"deviceFrame": IOSUseScreenshotRectJSON(deviceFrame),
+        @"syntheticChrome": @NO,
+        @"fullFrame": IOSUseScreenshotFullFrameEvidence(
+            identityMapping
+        ),
         @"windows": windowEvidence,
         @"completeness": @{
             @"allVisibleUIKitWindowsMapped": @(
@@ -1097,7 +1093,9 @@ IOSUseScreenshotCompositorEvidence(
                 (BOOL)(windows.count == capturedWindowCount)
             ),
             @"baseWindowCoversDevice": @YES,
-            @"systemChromeMapped": @(systemChromeMapped),
+            @"syntheticChrome": @NO,
+            @"fullFrameUncropped": @YES,
+            @"safeAreaCropped": @NO,
             @"allWindowGeometryInsideDevice": @YES,
             @"appKitCGWindowSizesMatch": @YES,
             @"cgWindowPlacementAuthoritative": @YES,
@@ -1135,7 +1133,7 @@ IOSUseScreenshotCopyWindowPlan(
 static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
     NSDictionary<NSString *, id> **compositorEvidence,
     NSDictionary<NSString *, id> **appKitWindowEvidence,
-    NSDictionary<NSString *, id> **systemChromeEvidence,
+    NSDictionary<NSString *, id> **fullFrameEvidence,
     unsigned long long *captureGeneration,
     NSString **failureCode,
     NSString **failureMessage
@@ -1155,7 +1153,9 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
     }
     NSDictionary<NSString *, id> *windowEvidence =
         [IOSUsePlayAppKitBridge diagnostics];
-    if (![windowEvidence[@"identityTransform"] boolValue] ||
+    BOOL identityMapping =
+        [windowEvidence[@"identityTransform"] boolValue];
+    if (!identityMapping ||
         ![windowEvidence[@"status"]
             isEqualToString:@"configured"]) {
         IOSUseScreenshotSetFailure(
@@ -1166,25 +1166,6 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
         );
         return NULL;
     }
-    IOSUsePlaySystemChromeInstall();
-    NSDictionary<NSString *, id> *chrome =
-        IOSUsePlaySystemChromeDiagnostics();
-    BOOL chromeSurfaces =
-        [chrome[@"dynamicIslandSurface"] boolValue] &&
-        [chrome[@"statusSurface"] boolValue] &&
-        [chrome[@"homeIndicatorSurface"] boolValue] &&
-        [chrome[@"passthrough"] boolValue] &&
-        [chrome[@"safeAreaReady"] boolValue];
-    if (!chromeSurfaces) {
-        IOSUseScreenshotSetFailure(
-            @"system_chrome_unavailable",
-            @"independent system-chrome surfaces are not compositor-ready",
-            failureCode,
-            failureMessage
-        );
-        return NULL;
-    }
-
     static IOSUseCGSMainConnectionID mainConnection;
     static IOSUseCGSHWCaptureWindowList captureWindows;
     static IOSUseCGWindowListCopyWindowInfo copyWindowInfo;
@@ -1232,7 +1213,6 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
     CGRect deviceFrame = CGRectZero;
     NSUInteger visibleUIKitWindowCount = 0;
     NSUInteger mappedUIKitWindowCount = 0;
-    BOOL systemChromeMapped = NO;
     NSArray<IOSUseScreenshotNativeWindow *> *windows =
         IOSUseScreenshotCollectNativeWindows(
             copyWindowInfo,
@@ -1240,7 +1220,6 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
             &deviceFrame,
             &visibleUIKitWindowCount,
             &mappedUIKitWindowCount,
-            &systemChromeMapped,
             failureCode,
             failureMessage
         );
@@ -1322,7 +1301,6 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
     CGRect postDeviceFrame = CGRectZero;
     NSUInteger postVisibleUIKitWindowCount = 0;
     NSUInteger postMappedUIKitWindowCount = 0;
-    BOOL postSystemChromeMapped = NO;
     NSArray<IOSUseScreenshotNativeWindow *> *postWindows =
         IOSUseScreenshotCollectNativeWindows(
             copyWindowInfo,
@@ -1330,7 +1308,6 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
             &postDeviceFrame,
             &postVisibleUIKitWindowCount,
             &postMappedUIKitWindowCount,
-            &postSystemChromeMapped,
             failureCode,
             failureMessage
         );
@@ -1347,7 +1324,6 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
             visibleUIKitWindowCount &&
         postMappedUIKitWindowCount ==
             mappedUIKitWindowCount &&
-        postSystemChromeMapped == systemChromeMapped &&
         IOSUsePlayWindowCapturePlansEqual(
             beforePlan,
             windows.count,
@@ -1442,38 +1418,8 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
         );
         return NULL;
     }
-    NSString *chromeFailure = nil;
-    if (!IOSUsePlaySystemChromeVerifyImage(
-            image,
-            &chromeFailure
-        )) {
-        CGImageRelease(image);
-        IOSUseScreenshotSetFailure(
-            @"incomplete_compositor",
-            chromeFailure ?:
-                @"compositor omitted a required system-chrome surface",
-            failureCode,
-            failureMessage
-        );
-        return NULL;
-    }
-    chrome = IOSUsePlaySystemChromeDiagnostics();
-    NSDictionary<NSString *, id> *verifiedImageEvidence =
-        [chrome[@"lastImageEvidence"]
-            isKindOfClass:NSDictionary.class]
-            ? chrome[@"lastImageEvidence"]
-            : nil;
-    if (![verifiedImageEvidence[@"ready"] boolValue]) {
-        CGImageRelease(image);
-        IOSUseScreenshotSetFailure(
-            @"incomplete_compositor",
-            @"verified system-chrome evidence is unavailable for the "
-            @"captured frame",
-            failureCode,
-            failureMessage
-        );
-        return NULL;
-    }
+    NSDictionary<NSString *, id> *fullFrame =
+        IOSUseScreenshotFullFrameEvidence(identityMapping);
     unsigned long long generation =
         atomic_fetch_add(
             &IOSUseScreenshotCaptureGeneration,
@@ -1492,14 +1438,14 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
                 visibleUIKitWindowCount,
                 mappedUIKitWindowCount,
                 capturedCount,
-                systemChromeMapped
+                [fullFrame[@"identityMapping"] boolValue]
             );
     }
     if (appKitWindowEvidence != NULL) {
         *appKitWindowEvidence = windowEvidence;
     }
-    if (systemChromeEvidence != NULL) {
-        *systemChromeEvidence = chrome;
+    if (fullFrameEvidence != NULL) {
+        *fullFrameEvidence = fullFrame;
     }
     return image;
 }
@@ -1511,12 +1457,12 @@ IOSUseScreenshotPayloadOnMain(
 ) {
     NSDictionary<NSString *, id> *compositor = nil;
     NSDictionary<NSString *, id> *windowEvidence = nil;
-    NSDictionary<NSString *, id> *chromeEvidence = nil;
+    NSDictionary<NSString *, id> *fullFrameEvidence = nil;
     unsigned long long generation = 0;
     CGImageRef image = IOSUseScreenshotCaptureFrameOnMain(
         &compositor,
         &windowEvidence,
-        &chromeEvidence,
+        &fullFrameEvidence,
         &generation,
         failureCode,
         failureMessage
@@ -1583,9 +1529,10 @@ IOSUseScreenshotPayloadOnMain(
         @"captureGeneration": @(generation),
         @"compositorWindowNumbers": windowNumbers,
         @"sourceBackingSizes": sizes,
+        @"syntheticChrome": @NO,
+        @"fullFrame": fullFrameEvidence ?: @{},
         @"compositor": compositor ?: @{},
         @"appKitWindowEvidence": windowEvidence ?: @{},
-        @"systemChromeEvidence": chromeEvidence ?: @{},
     };
 }
 
@@ -1594,7 +1541,6 @@ static BOOL IOSUseScreenshotTransientCaptureFailure(
 ) {
     return [@[
         @"window_geometry_unavailable",
-        @"system_chrome_unavailable",
         @"compositor_primary_window_unavailable",
         @"compositor_primary_window_unmapped",
         @"compositor_primary_geometry_invalid",

@@ -34,7 +34,7 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
         )
     }
 
-    func testScreenshotMachineOutputKeepsRuntimeEvidence() {
+    func testScreenshotMachineOutputKeepsFullFrameRuntimeEvidence() {
         let artifact = ScreenshotArtifactService.Result(
             stdout: "",
             imagePath: "/tmp/evidence.jpg",
@@ -54,8 +54,28 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
             snapshotGeneration: 72,
             captureGeneration: 9,
             runtimeEvidence: [
-                "systemChromeEvidence": .object([
-                    "complete": .bool(true),
+                "syntheticChrome": .bool(false),
+                "fullFrame": .object([
+                    "logicalRect": .object([
+                        "x": .number(0),
+                        "y": .number(0),
+                        "width": .number(
+                            Double(IOSUsePlayDeviceLogicalWidth)
+                        ),
+                        "height": .number(
+                            Double(IOSUsePlayDeviceLogicalHeight)
+                        ),
+                    ]),
+                    "pixelWidth": .number(
+                        Double(IOSUsePlayDeviceNativeWidth)
+                    ),
+                    "pixelHeight": .number(
+                        Double(IOSUsePlayDeviceNativeHeight)
+                    ),
+                    "scale": .number(Double(IOSUsePlayDeviceScale)),
+                    "uncropped": .bool(true),
+                    "safeAreaCropped": .bool(false),
+                    "identityMapping": .bool(true),
                 ]),
             ]
         )
@@ -76,9 +96,16 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
         XCTAssertEqual(root["snapshotGeneration"], .integer(72))
         XCTAssertEqual(root["captureGeneration"], .integer(9))
         XCTAssertEqual(
-            evidence["systemChromeEvidence"],
-            .object(["complete": .boolean(true)])
+            evidence["syntheticChrome"],
+            .boolean(false)
         )
+        guard case .object(let fullFrame)? = evidence["fullFrame"]
+        else {
+            return XCTFail("missing full-frame runtime evidence")
+        }
+        XCTAssertEqual(fullFrame["uncropped"], .boolean(true))
+        XCTAssertEqual(fullFrame["safeAreaCropped"], .boolean(false))
+        XCTAssertEqual(fullFrame["identityMapping"], .boolean(true))
     }
 
     func testRuntimeJSONEvidenceConversionPreservesShape() {
@@ -131,14 +158,10 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
                     )
                 ),
                 safeArea: .init(
-                    top: Double(IOSUsePlayDeviceSafeAreaTop),
-                    left: Double(IOSUsePlayDeviceSafeAreaLeft),
-                    bottom: Double(
-                        IOSUsePlayDeviceSafeAreaBottom
-                    ),
-                    right: Double(
-                        IOSUsePlayDeviceSafeAreaRight
-                    )
+                    top: 17,
+                    left: 3,
+                    bottom: 29,
+                    right: 4
                 )
             ),
             stage: "ready",

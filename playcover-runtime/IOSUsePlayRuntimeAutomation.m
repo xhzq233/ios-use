@@ -1154,26 +1154,19 @@ static BOOL IOSUseAutomationViewHasAncestorOfClass(
 }
 
 static BOOL IOSUseAutomationIsBottomInteraction(
-    UIView *hitView,
-    CGPoint point
+    UIView *hitView
 ) {
-    BOOL inHomeGestureRegion =
-        point.y >=
-            IOSUsePlayDeviceLogicalHeight -
-                IOSUsePlayDeviceSafeAreaBottom;
-    BOOL inTabBar = IOSUseAutomationViewHasAncestorOfClass(
+    return IOSUseAutomationViewHasAncestorOfClass(
         hitView,
         UITabBar.class
     );
-    return inHomeGestureRegion || inTabBar;
 }
 
 static BOOL IOSUseAutomationBottomTouchRequiresFocusRelease(
     UIResponder *responder,
-    UIView *hitView,
-    CGPoint point
+    UIView *hitView
 ) {
-    if (!IOSUseAutomationIsBottomInteraction(hitView, point) ||
+    if (!IOSUseAutomationIsBottomInteraction(hitView) ||
         responder == nil ||
         ![responder conformsToProtocol:@protocol(UIKeyInput)] ||
         !responder.isFirstResponder) {
@@ -1616,7 +1609,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
     }
     NSDictionary<NSString *, id> *focusTransition = nil;
     if ([command isEqualToString:@"tap"] &&
-        IOSUseAutomationIsBottomInteraction(hitView, point)) {
+        IOSUseAutomationIsBottomInteraction(hitView)) {
         UIResponder *focused =
             IOSUseAutomationCurrentFirstResponder();
         NSString *beforeClass = focused == nil
@@ -1626,8 +1619,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         BOOL focusReleased = NO;
         if (IOSUseAutomationBottomTouchRequiresFocusRelease(
                 focused,
-                hitView,
-                point
+                hitView
             )) {
             requested = [focused resignFirstResponder];
             for (UIWindow *candidateWindow in
@@ -1646,7 +1638,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                 if (commandError != NULL) {
                     *commandError = IOSUseAutomationError(
                         @"first_responder_release_failed",
-                        @"the active text responder retained the bottom interaction region",
+                        @"the active text responder retained the tab-bar interaction",
                         @"interaction",
                         @"first-responder",
                         YES,
@@ -1667,7 +1659,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                 *commandError = IOSUseAutomationError(
                     @"text_input_transient_dismissal_failed",
                     transientError.localizedDescription ?:
-                        @"could not dismiss the AppKit text-input transient before a bottom interaction",
+                        @"could not dismiss the AppKit text-input transient before a tab-bar interaction",
                     @"interaction",
                     @"first-responder",
                     YES,
@@ -1685,7 +1677,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             UIResponder *after =
                 IOSUseAutomationCurrentFirstResponder();
             focusTransition = @{
-                @"reason": @"bottom-interaction-region",
+                @"reason": @"tab-bar-interaction",
                 @"requested": @(requested),
                 @"focusReleased": @(focusReleased),
                 @"beforeClass": beforeClass ?: @"",

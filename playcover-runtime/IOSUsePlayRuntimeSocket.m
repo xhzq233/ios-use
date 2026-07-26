@@ -270,8 +270,9 @@ static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
         CGRect logical = screen.bounds;
         CGRect native = screen.nativeBounds;
         CGRect windowBounds = keyWindow.bounds;
+        UIView *rootView = keyWindow.rootViewController.view;
         UIEdgeInsets safeArea =
-            keyWindow.rootViewController.view.safeAreaInsets;
+            rootView == nil ? UIEdgeInsetsZero : rootView.safeAreaInsets;
         geometry = @{
             @"logical": @{
                 @"width": @(logical.size.width),
@@ -309,14 +310,6 @@ static NSMutableDictionary<NSString *, id> *IOSUseBasePayload(void) {
                 IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
             fabs(windowBounds.size.height -
                 IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
-            fabs(safeArea.top -
-                IOSUsePlayDeviceSafeAreaTop) <= 0.5 &&
-            fabs(safeArea.left -
-                IOSUsePlayDeviceSafeAreaLeft) <= 0.5 &&
-            fabs(safeArea.bottom -
-                IOSUsePlayDeviceSafeAreaBottom) <= 0.5 &&
-            fabs(safeArea.right -
-                IOSUsePlayDeviceSafeAreaRight) <= 0.5 &&
             [hooks[@"configurationStage"]
                 isEqualToString:@"window-configured"];
         stage = exact

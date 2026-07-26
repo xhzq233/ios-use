@@ -650,11 +650,16 @@ final class PlayCoverDriverClient: DriverCommandClient {
             throw PlayCoverDriverClientError
                 .malformedRuntimePayload("screenshot generation")
         }
+        try Self.validateScreenshotFullFrame(screenshot)
         let jpeg = try decodeRuntimeJPEG(screenshot)
         var runtimeEvidence:
             [String: PlayCoverRuntimeJSONValue] = [
                 "source": .string(screenshot.source),
                 "complete": .bool(screenshot.complete),
+                "syntheticChrome": .bool(screenshot.syntheticChrome),
+                "fullFrame": Self.fullFrameEvidence(
+                    screenshot.fullFrame
+                ),
                 "snapshotGeneration":
                     .number(Double(screenshot.snapshotGeneration)),
                 "captureGeneration":
@@ -675,9 +680,6 @@ final class PlayCoverDriverClient: DriverCommandClient {
         }
         if let appKit = screenshot.appKitWindowEvidence {
             runtimeEvidence["appKitWindowEvidence"] = appKit
-        }
-        if let chrome = screenshot.systemChromeEvidence {
-            runtimeEvidence["systemChromeEvidence"] = chrome
         }
         if let compositor = screenshot.compositor {
             runtimeEvidence["compositor"] = compositor
@@ -1038,32 +1040,11 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 "window height"
             ),
             (
-                approximatelyEqual(
-                    geometry.safeArea.top,
-                    Double(IOSUsePlayDeviceSafeAreaTop)
+                validNaturalSafeArea(
+                    geometry.safeArea,
+                    logicalSize: geometry.logical
                 ),
-                "safe-area top"
-            ),
-            (
-                approximatelyEqual(
-                    geometry.safeArea.left,
-                    Double(IOSUsePlayDeviceSafeAreaLeft)
-                ),
-                "safe-area left"
-            ),
-            (
-                approximatelyEqual(
-                    geometry.safeArea.bottom,
-                    Double(IOSUsePlayDeviceSafeAreaBottom)
-                ),
-                "safe-area bottom"
-            ),
-            (
-                approximatelyEqual(
-                    geometry.safeArea.right,
-                    Double(IOSUsePlayDeviceSafeAreaRight)
-                ),
-                "safe-area right"
+                "safe-area diagnostics"
             ),
             (
                 stage == "window-configured"
@@ -1075,6 +1056,87 @@ final class PlayCoverDriverClient: DriverCommandClient {
             throw PlayCoverDriverClientError
                 .runtimeGeometryMismatch(mismatch.1)
         }
+    }
+
+    private static func validNaturalSafeArea(
+        _ safeArea: PlayCoverRuntimeSafeArea,
+        logicalSize: PlayCoverRuntimeSize
+    ) -> Bool {
+        let values = [
+            safeArea.top,
+            safeArea.left,
+            safeArea.bottom,
+            safeArea.right,
+        ]
+        guard values.allSatisfy(\.isFinite),
+              values.allSatisfy({ $0 >= 0 }),
+              safeArea.top <= logicalSize.height,
+              safeArea.bottom <= logicalSize.height,
+              safeArea.left <= logicalSize.width,
+              safeArea.right <= logicalSize.width else {
+            return false
+        }
+        return safeArea.top + safeArea.bottom <= logicalSize.height
+            && safeArea.left + safeArea.right <= logicalSize.width
+    }
+
+    private static func validateScreenshotFullFrame(
+        _ screenshot: PlayCoverRuntimeScreenshotPayload
+    ) throws {
+        guard screenshot.syntheticChrome == false else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload("synthetic chrome screenshot")
+        }
+        let fullFrame = screenshot.fullFrame
+        let logicalRect = fullFrame.logicalRect
+        guard approximatelyEqual(logicalRect.x, 0),
+              approximatelyEqual(logicalRect.y, 0),
+              approximatelyEqual(
+                  logicalRect.width,
+                  Self.logicalSize.width
+              ),
+              approximatelyEqual(
+                  logicalRect.height,
+                  Self.logicalSize.height
+              ),
+              fullFrame.pixelWidth == Int(Self.nativePixelSize.width),
+              fullFrame.pixelHeight == Int(Self.nativePixelSize.height),
+              approximatelyEqual(fullFrame.scale, Self.deviceScale),
+              fullFrame.uncropped,
+              fullFrame.safeAreaCropped == false,
+              fullFrame.identityMapping else {
+            throw PlayCoverDriverClientError
+                .runtimeGeometryMismatch("screenshot full frame")
+        }
+        let expectedFullFrame = fullFrameEvidence(fullFrame)
+        guard let compositor = screenshot.compositor,
+              case .object(let compositorEvidence) = compositor,
+              compositorEvidence["syntheticChrome"] == .bool(false),
+              compositorEvidence["fullFrame"] == expectedFullFrame else {
+            throw PlayCoverDriverClientError
+                .malformedRuntimePayload(
+                    "screenshot compositor full-frame evidence"
+                )
+        }
+    }
+
+    private static func fullFrameEvidence(
+        _ fullFrame: PlayCoverRuntimeFullFrame
+    ) -> PlayCoverRuntimeJSONValue {
+        .object([
+            "logicalRect": .object([
+                "x": .number(fullFrame.logicalRect.x),
+                "y": .number(fullFrame.logicalRect.y),
+                "width": .number(fullFrame.logicalRect.width),
+                "height": .number(fullFrame.logicalRect.height),
+            ]),
+            "pixelWidth": .number(Double(fullFrame.pixelWidth)),
+            "pixelHeight": .number(Double(fullFrame.pixelHeight)),
+            "scale": .number(fullFrame.scale),
+            "uncropped": .bool(fullFrame.uncropped),
+            "safeAreaCropped": .bool(fullFrame.safeAreaCropped),
+            "identityMapping": .bool(fullFrame.identityMapping),
+        ])
     }
 
     private func decodeRuntimeJPEG(

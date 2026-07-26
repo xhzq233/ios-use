@@ -140,6 +140,26 @@ requires the adapter trace to execute composition before root signing and
 requires the production signing manifest to list every nested code object
 before `.`.
 
+### Failure-layer boundary
+
+The headless facade preserves the pinned primitive order while adding typed
+ios-use error boundaries. This is diagnostic classification only; it does not
+replace a PlayCover primitive or retry a failed mutation:
+
+| Pinned/local operation | ios-use failure boundary |
+| --- | --- |
+| Mach-O conversion or Runtime load-command injection | `machOTransformFailed` / `playcover_macho_transform_failed` |
+| `Entitlements.composeEntitlements` and composed-plist serialization | `entitlementFailed` / `playcover_entitlement_failed` |
+| nested or root `Shell` signing/verification | `codeSigningFailed` / `playcover_codesign_failed` |
+| `NSWorkspace` launch identity, dyld launch, or rollback | `launchFailed` / `playcover_dyld_launch_failed` |
+| post-launch authenticated Runtime hello deadline | `launchTimedOut` / `playcover_runtime_hello_timed_out` |
+
+Malformed Mach-O remains a validation failure before conversion. The Runtime
+hello timeout is deliberately distinct from launch failure because the process
+may exist but has not proven its direct Unix-socket identity. Machine JSON
+exposes these stable phase/code pairs without embedding source paths, session
+IDs, or signing material.
+
 The complete prepare fixture exercises that sequence with a signed two-slice
 arm64-iPhoneOS/x86_64-simulator main executable, `.appex`, framework, resource,
 provisioning file, arm64 Catalyst Runtime, and a structurally valid

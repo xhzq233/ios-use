@@ -308,7 +308,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertEqual(captured?.distance, 240)
     }
 
-    func testScreenshotRequiresCompleteStrictFixedGeometryAndGeneration()
+    func testScreenshotRequiresCompleteFullFrameAndGeneration()
         throws
     {
         let jpeg = try makeJPEG(
@@ -360,7 +360,19 @@ final class PlayCoverDriverClientTests: XCTestCase {
             capture.runtimeEvidence?["compositor"],
             .object([
                 "complete": .bool(true),
+                "syntheticChrome": .bool(false),
+                "fullFrame": fullFrameEvidence(
+                    valid.fullFrame
+                ),
             ])
+        )
+        XCTAssertEqual(
+            capture.runtimeEvidence?["syntheticChrome"],
+            .bool(false)
+        )
+        XCTAssertEqual(
+            capture.runtimeEvidence?["fullFrame"],
+            fullFrameEvidence(valid.fullFrame)
         )
         XCTAssertNil(capture.warning)
 
@@ -427,6 +439,51 @@ final class PlayCoverDriverClientTests: XCTestCase {
                     screenshot: valid
                 ),
                 .runtimeGeometryMismatch("logical width")
+            ),
+            (
+                makePayload(
+                    capability: .screenshot,
+                    screenshot: makeScreenshot(
+                        jpeg: jpeg,
+                        syntheticChrome: true
+                    )
+                ),
+                .malformedRuntimePayload("synthetic chrome screenshot")
+            ),
+            (
+                makePayload(
+                    capability: .screenshot,
+                    screenshot: makeScreenshot(
+                        jpeg: jpeg,
+                        fullFrame: makeFullFrame(
+                            logicalRect: .init(
+                                x: 1,
+                                y: 0,
+                                width: Double(
+                                    IOSUsePlayDeviceLogicalWidth
+                                ),
+                                height: Double(
+                                    IOSUsePlayDeviceLogicalHeight
+                                )
+                            )
+                        )
+                    )
+                ),
+                .runtimeGeometryMismatch("screenshot full frame")
+            ),
+            (
+                makePayload(
+                    capability: .screenshot,
+                    screenshot: makeScreenshot(
+                        jpeg: jpeg,
+                        compositor: .object([
+                            "syntheticChrome": .bool(false),
+                        ])
+                    )
+                ),
+                .malformedRuntimePayload(
+                    "screenshot compositor full-frame evidence"
+                )
             ),
         ]
         for (payload, expected) in invalid {
@@ -835,7 +892,13 @@ final class PlayCoverDriverClientTests: XCTestCase {
 
     private func makeGeometry(
         logicalWidth: Double =
-            Double(IOSUsePlayDeviceLogicalWidth)
+            Double(IOSUsePlayDeviceLogicalWidth),
+        safeArea: PlayCoverRuntimeSafeArea = .init(
+            top: 17,
+            left: 3,
+            bottom: 29,
+            right: 4
+        )
     ) -> PlayCoverRuntimeGeometry {
         PlayCoverRuntimeGeometry(
             logical: .init(
@@ -851,14 +914,46 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 width: Double(IOSUsePlayDeviceLogicalWidth),
                 height: Double(IOSUsePlayDeviceLogicalHeight)
             ),
-            safeArea: .init(
-                top: Double(IOSUsePlayDeviceSafeAreaTop),
-                left: Double(IOSUsePlayDeviceSafeAreaLeft),
-                bottom:
-                    Double(IOSUsePlayDeviceSafeAreaBottom),
-                right: Double(IOSUsePlayDeviceSafeAreaRight)
+            safeArea: safeArea
+        )
+    }
+
+    func testFixedDeviceAcceptsNaturalSafeAreaDiagnostics()
+        throws
+    {
+        XCTAssertNoThrow(
+            try PlayCoverDriverClient.validateFixedDevice(
+                makeGeometry(
+                    safeArea: .init(
+                        top: 17,
+                        left: 3,
+                        bottom: 29,
+                        right: 4
+                    )
+                ),
+                stage: "ready"
             )
         )
+
+        let invalid: [(PlayCoverRuntimeSafeArea, String)] = [
+            (.init(top: -1, left: 0, bottom: 0, right: 0), "negative"),
+            (.init(top: 500, left: 0, bottom: 500, right: 0), "vertical"),
+            (.init(top: 0, left: 300, bottom: 0, right: 300), "horizontal"),
+        ]
+        for (safeArea, label) in invalid {
+            XCTAssertThrowsError(
+                try PlayCoverDriverClient.validateFixedDevice(
+                    makeGeometry(safeArea: safeArea),
+                    stage: "ready"
+                ),
+                "expected invalid \(label) safe-area diagnostics"
+            ) { error in
+                XCTAssertEqual(
+                    error as? PlayCoverDriverClientError,
+                    .runtimeGeometryMismatch("safe-area diagnostics")
+                )
+            }
+        }
     }
 
     private func makePayload(
@@ -1057,29 +1152,16 @@ final class PlayCoverDriverClientTests: XCTestCase {
         afterHash: String
     ) -> PlayCoverRuntimePixelEvidence {
         let logicalRect = PlayCoverRuntimeFrame(
-            x: 0,
-            y: Double(IOSUsePlayDeviceSafeAreaTop),
-            width: Double(IOSUsePlayDeviceLogicalWidth),
-            height: Double(
-                IOSUsePlayDeviceLogicalHeight
-                    - IOSUsePlayDeviceSafeAreaTop
-                    - IOSUsePlayDeviceSafeAreaBottom
-            )
+            x: 20,
+            y: 100,
+            width: 121,
+            height: 44
         )
         let nativeRect = PlayCoverRuntimeFrame(
-            x: 0,
-            y: Double(
-                IOSUsePlayDeviceSafeAreaTop
-                    * IOSUsePlayDeviceScale
-            ),
-            width: Double(IOSUsePlayDeviceNativeWidth),
-            height: Double(
-                (
-                    IOSUsePlayDeviceLogicalHeight
-                        - IOSUsePlayDeviceSafeAreaTop
-                        - IOSUsePlayDeviceSafeAreaBottom
-                ) * IOSUsePlayDeviceScale
-            )
+            x: 60,
+            y: 300,
+            width: 363,
+            height: 132
         )
         func fingerprint(
             hash: String,
@@ -1090,14 +1172,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 hash: hash,
                 logicalRect: logicalRect,
                 nativePixelRect: nativeRect,
-                pixelWidth: Int(IOSUsePlayDeviceNativeWidth),
-                pixelHeight: Int(
-                    (
-                        IOSUsePlayDeviceLogicalHeight
-                            - IOSUsePlayDeviceSafeAreaTop
-                            - IOSUsePlayDeviceSafeAreaBottom
-                    ) * IOSUsePlayDeviceScale
-                ),
+                pixelWidth: 363,
+                pixelHeight: 132,
                 captureGeneration: generation,
                 source: "window-compositor",
                 complete: true,
@@ -1133,6 +1209,9 @@ final class PlayCoverDriverClientTests: XCTestCase {
     private func makeScreenshot(
         jpeg: Data,
         complete: Bool = true,
+        syntheticChrome: Bool = false,
+        fullFrame: PlayCoverRuntimeFullFrame? = nil,
+        compositor: PlayCoverRuntimeJSONValue? = nil,
         snapshotGeneration: Int64 = 20,
         captureGeneration: Int64 = 8,
         source: String = "window-compositor",
@@ -1140,7 +1219,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
             Double(IOSUsePlayDeviceLogicalWidth),
         dom: PlayCoverRuntimeDOMPayload? = nil
     ) -> PlayCoverRuntimeScreenshotPayload {
-        .init(
+        let resolvedFullFrame = fullFrame ?? makeFullFrame()
+        return .init(
             jpegBase64: jpeg.base64EncodedString(),
             pixelWidth: Int(IOSUsePlayDeviceNativeWidth),
             pixelHeight: Int(IOSUsePlayDeviceNativeHeight),
@@ -1150,6 +1230,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
             scale: Double(IOSUsePlayDeviceScale),
             source: source,
             complete: complete,
+            syntheticChrome: syntheticChrome,
+            fullFrame: resolvedFullFrame,
             snapshotGeneration: snapshotGeneration,
             captureGeneration: captureGeneration,
             dom: dom,
@@ -1167,13 +1249,56 @@ final class PlayCoverDriverClientTests: XCTestCase {
             appKitWindowEvidence: .object([
                 "ready": .bool(true),
             ]),
-            systemChromeEvidence: .object([
-                "ready": .bool(true),
-            ]),
-            compositor: .object([
+            compositor: compositor ?? .object([
                 "complete": .bool(true),
+                "syntheticChrome": .bool(false),
+                "fullFrame": fullFrameEvidence(resolvedFullFrame),
             ])
         )
+    }
+
+    private func makeFullFrame(
+        logicalRect: PlayCoverRuntimeFrame = .init(
+            x: 0,
+            y: 0,
+            width: Double(IOSUsePlayDeviceLogicalWidth),
+            height: Double(IOSUsePlayDeviceLogicalHeight)
+        ),
+        pixelWidth: Int = Int(IOSUsePlayDeviceNativeWidth),
+        pixelHeight: Int = Int(IOSUsePlayDeviceNativeHeight),
+        scale: Double = Double(IOSUsePlayDeviceScale),
+        uncropped: Bool = true,
+        safeAreaCropped: Bool = false,
+        identityMapping: Bool = true
+    ) -> PlayCoverRuntimeFullFrame {
+        .init(
+            logicalRect: logicalRect,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            scale: scale,
+            uncropped: uncropped,
+            safeAreaCropped: safeAreaCropped,
+            identityMapping: identityMapping
+        )
+    }
+
+    private func fullFrameEvidence(
+        _ fullFrame: PlayCoverRuntimeFullFrame
+    ) -> PlayCoverRuntimeJSONValue {
+        .object([
+            "logicalRect": .object([
+                "x": .number(fullFrame.logicalRect.x),
+                "y": .number(fullFrame.logicalRect.y),
+                "width": .number(fullFrame.logicalRect.width),
+                "height": .number(fullFrame.logicalRect.height),
+            ]),
+            "pixelWidth": .number(Double(fullFrame.pixelWidth)),
+            "pixelHeight": .number(Double(fullFrame.pixelHeight)),
+            "scale": .number(fullFrame.scale),
+            "uncropped": .bool(fullFrame.uncropped),
+            "safeAreaCropped": .bool(fullFrame.safeAreaCropped),
+            "identityMapping": .bool(fullFrame.identityMapping),
+        ])
     }
 
     private func makeJPEG(

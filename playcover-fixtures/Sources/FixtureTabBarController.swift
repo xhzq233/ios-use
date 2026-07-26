@@ -18,32 +18,16 @@ final class FixtureTabBarController: UITabBarController {
         super.init(coder: coder)
     }
 
-    override var prefersHomeIndicatorAutoHidden: Bool {
-        false
-    }
-
-    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
-        []
-    }
-
-    override var childForStatusBarStyle: UIViewController? {
-        selectedViewController
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-        // The iPhone16,2 oracle is captured in a fixed light appearance.
-        // Do not inherit an automatic macOS day/night appearance: it can make
-        // a darkContent status bar indistinguishable from a dark
-        // systemBackground while all logical geometry remains unchanged.
+        // Keep the fixture itself deterministic across macOS appearances.
         overrideUserInterfaceStyle = .light
         view.backgroundColor = .systemBackground
         let swiftUIViewController = FixtureHostingController(
             rootView: SwiftUIFixtureView()
         )
-        // UIHostingController is transparent on Mac Catalyst. Give this
-        // light-mode fixture the explicit iPhone system surface that matches
-        // its default/dark status-bar style.
+        // UIHostingController is transparent on Mac Catalyst, so give the
+        // fixture content an explicit light surface.
         swiftUIViewController.view.backgroundColor = .systemBackground
         viewControllers = [
             tab(
@@ -493,67 +477,6 @@ final class UIKitFixtureViewController:
             trailing: true,
             bottom: false
         )
-        addSafeAreaProbe(
-            title: "Safe Top Left",
-            identifier: "fixture.safe.top-left",
-            horizontal: view.safeAreaLayoutGuide.leadingAnchor,
-            vertical: view.safeAreaLayoutGuide.topAnchor,
-            trailing: false,
-            bottom: false
-        )
-        addSafeAreaProbe(
-            title: "Safe Top Right",
-            identifier: "fixture.safe.top-right",
-            horizontal: view.safeAreaLayoutGuide.trailingAnchor,
-            vertical: view.safeAreaLayoutGuide.topAnchor,
-            trailing: true,
-            bottom: false
-        )
-        addSafeAreaProbe(
-            title: "Safe Bottom Left",
-            identifier: "fixture.safe.bottom-left",
-            horizontal: view.safeAreaLayoutGuide.leadingAnchor,
-            vertical: view.safeAreaLayoutGuide.bottomAnchor,
-            trailing: false,
-            bottom: true
-        )
-        addIslandProbe(
-            title: "Island Left",
-            identifier: "fixture.island.left",
-            leading: true
-        )
-        addIslandProbe(
-            title: "Island Right",
-            identifier: "fixture.island.right",
-            leading: false
-        )
-        let homeProbe = UIButton(type: .system)
-        configureProbe(
-            homeProbe,
-            title: "Above Home",
-            identifier: "fixture.home.above"
-        )
-        view.addSubview(homeProbe)
-        NSLayoutConstraint.activate([
-            homeProbe.centerXAnchor.constraint(
-                equalTo: view.centerXAnchor
-            ),
-            homeProbe.bottomAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-                constant: -2
-            ),
-            homeProbe.heightAnchor.constraint(
-                greaterThanOrEqualToConstant: 30
-            ),
-        ])
-        addSafeAreaProbe(
-            title: "Safe Bottom Right",
-            identifier: "fixture.safe.bottom-right",
-            horizontal: view.safeAreaLayoutGuide.trailingAnchor,
-            vertical: view.safeAreaLayoutGuide.bottomAnchor,
-            trailing: true,
-            bottom: true
-        )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(fixtureURLDidOpen(_:)),
@@ -827,7 +750,7 @@ final class UIKitFixtureViewController:
             "return \(inputReturnCount) \(value)"
     }
 
-    @objc private func safeAreaProbeTapped(_ sender: UIButton) {
+    @objc private func edgeProbeTapped(_ sender: UIButton) {
         recordProbe(sender.accessibilityIdentifier ?? "unknown")
     }
 
@@ -867,7 +790,7 @@ final class UIKitFixtureViewController:
         urlStatusLabel.accessibilityValue = value
     }
 
-    private func addSafeAreaProbe(
+    private func addEdgeProbe(
         title: String,
         identifier: String,
         horizontal: NSLayoutXAxisAnchor,
@@ -904,7 +827,7 @@ final class UIKitFixtureViewController:
         trailing: Bool,
         bottom: Bool
     ) {
-        addSafeAreaProbe(
+        addEdgeProbe(
             title: title,
             identifier: identifier,
             horizontal: horizontal,
@@ -912,38 +835,6 @@ final class UIKitFixtureViewController:
             trailing: trailing,
             bottom: bottom
         )
-    }
-
-    private func addIslandProbe(
-        title: String,
-        identifier: String,
-        leading: Bool
-    ) {
-        let button = UIButton(type: .system)
-        configureProbe(
-            button,
-            title: title,
-            identifier: identifier
-        )
-        view.addSubview(button)
-        NSLayoutConstraint.activate([
-            leading
-                ? button.trailingAnchor.constraint(
-                    equalTo: view.centerXAnchor,
-                    constant: -54
-                )
-                : button.leadingAnchor.constraint(
-                    equalTo: view.centerXAnchor,
-                    constant: 54
-                ),
-            button.topAnchor.constraint(
-                equalTo: view.topAnchor,
-                constant: 8
-            ),
-            button.heightAnchor.constraint(
-                greaterThanOrEqualToConstant: 30
-            ),
-        ])
     }
 
     private func configureProbe(
@@ -958,7 +849,7 @@ final class UIKitFixtureViewController:
         button.accessibilityIdentifier = identifier
         button.addTarget(
             self,
-            action: #selector(safeAreaProbeTapped(_:)),
+            action: #selector(edgeProbeTapped(_:)),
             for: .touchUpInside
         )
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -966,12 +857,7 @@ final class UIKitFixtureViewController:
 }
 
 private final class FixtureHostingController<Content: View>:
-    UIHostingController<Content>
-{
-    override var preferredStatusBarStyle: UIStatusBarStyle {
-        .darkContent
-    }
-}
+    UIHostingController<Content> {}
 
 private struct SwiftUIFixtureView: View {
     @State private var count = 0
@@ -1005,10 +891,6 @@ private struct SwiftUIFixtureView: View {
 }
 
 final class WebFixtureViewController: UIViewController {
-    override var preferredStatusBarStyle: UIStatusBarStyle {
-        .darkContent
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
         let configuration = WKWebViewConfiguration()
@@ -1053,10 +935,6 @@ final class WebFixtureViewController: UIViewController {
 final class MetalFixtureViewController: UIViewController, MTKViewDelegate {
     private var commandQueue: MTLCommandQueue?
     private var frameIndex = 0
-
-    override var preferredStatusBarStyle: UIStatusBarStyle {
-        .lightContent
-    }
 
     override func viewDidLoad() {
         super.viewDidLoad()

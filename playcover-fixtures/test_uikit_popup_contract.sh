@@ -85,9 +85,6 @@ require_source "private var popupOverlay: UIControl?"
 require_source "let hostWindow = view.window"
 require_source "hostWindow.addSubview(overlay)"
 require_source "overlay.accessibilityViewIsModal = true"
-require_source "let safeArea = hostWindow.safeAreaLayoutGuide"
-require_source "equalTo: safeArea.topAnchor"
-require_source "equalTo: safeArea.bottomAnchor"
 require_source "greaterThanOrEqualTo: overlay.topAnchor"
 require_source "lessThanOrEqualTo: overlay.bottomAnchor"
 require_source "UIColor.black.withAlphaComponent(0.58)"
@@ -205,13 +202,14 @@ jq -e --slurpfile status "$IOS_USE_POPUP_TEMP/status.json" '
   (.data.postDom.elements[] |
     select(.identifier == "fixture.uikit.popup") |
     .frame as $frame |
-    ($frame[1] >= $runtime.safeAreaTop) and
-    (($frame[1] + $frame[3]) <=
-      ($runtime.logicalHeight - $runtime.safeAreaBottom))) and
+    ($frame[0] >= 0) and
+    ($frame[1] >= 0) and
+    (($frame[0] + $frame[2]) <= $runtime.logicalWidth) and
+    (($frame[1] + $frame[3]) <= $runtime.logicalHeight)) and
   .data.postcondition.changed == true and
   .data.postcondition.pixelEvidence.changed == true
 ' "$IOS_USE_POPUP_TEMP/runtime-open.json" >/dev/null ||
-  fail_contract "Runtime open lacks popup DOM, safe-area, or pixel evidence"
+  fail_contract "Runtime open lacks popup DOM, full-frame, or pixel evidence"
 
 run_cli runtime-confirm \
   tap "Confirm and Close" --dom --json

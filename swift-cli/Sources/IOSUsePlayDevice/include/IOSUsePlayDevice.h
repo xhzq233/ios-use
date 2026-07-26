@@ -4,9 +4,9 @@
  * The single compile-time device contract shared by the PlayCover Runtime and
  * the Swift host.  Do not mirror these values in plist/bootstrap/session data.
  *
- * The safe-area and system-chrome geometry below matches the current
- * iPhone16,2 portrait contract.  It is intentionally centralized here, but
- * still requires the plan's live iPhone/vPhone oracle gate before release.
+ * This header fixes only the target App's logical/native render surface.
+ * Runtime-reported safe-area values are platform diagnostics: they are not a
+ * host-prescribed inset or a synthetic system-chrome contract.
  */
 
 #ifndef IOS_USE_PLAY_DEVICE_H
@@ -25,19 +25,6 @@ enum {
         IOSUsePlayDeviceLogicalWidth * IOSUsePlayDeviceScale,
     IOSUsePlayDeviceNativeHeight =
         IOSUsePlayDeviceLogicalHeight * IOSUsePlayDeviceScale,
-
-    IOSUsePlayDeviceSafeAreaTop = 59,
-    IOSUsePlayDeviceSafeAreaLeft = 0,
-    IOSUsePlayDeviceSafeAreaBottom = 34,
-    IOSUsePlayDeviceSafeAreaRight = 0,
-
-    IOSUsePlayDeviceStatusBarHeight = 59,
-    IOSUsePlayDeviceDynamicIslandWidth = 126,
-    IOSUsePlayDeviceDynamicIslandHeight = 37,
-    IOSUsePlayDeviceDynamicIslandTop = 11,
-    IOSUsePlayDeviceHomeIndicatorWidth = 148,
-    IOSUsePlayDeviceHomeIndicatorHeight = 5,
-    IOSUsePlayDeviceHomeIndicatorBottom = 8,
 };
 
 static inline const char *IOSUsePlayDeviceProductType(void) {

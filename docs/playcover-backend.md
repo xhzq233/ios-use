@@ -34,7 +34,6 @@ adapter, AppKit bridge, and tests:
 | Portrait logical screen | 430 x 932 points |
 | Scale | 3x |
 | Virtual native raster | 1290 x 2796 pixels |
-| Safe area | top 59, left 0, bottom 34, right 0 points |
 
 The Runtime does not read a device profile or bootstrap file. Fixed geometry
 is not persisted in the session or cache key. A header change alters the
@@ -46,10 +45,11 @@ points with an identity AppKit-to-UIKit logical transform. A display that
 cannot fit that window causes start to fail; the backend does not introduce a
 second scaled coordinate system.
 
-The full device frame includes the Dynamic Island, status glyphs, and Home
-Indicator. The fallback system chrome is an independent pass-through UIKit
-window. Safe-area insets are layout guides inside the full 430 x 932 root;
-they are not crop bounds and the overlay cannot consume App touch events.
+The full device frame is the target App's complete 430 x 932 logical rendering.
+The Runtime does not create a fallback system-chrome window or draw synthetic
+Dynamic Island, status glyphs, time, battery, or Home Indicator. Safe-area
+values are observed from the App/platform rather than forced to an iPhone
+constant; they never crop the output or consume App touch events.
 
 ## Architecture and Session
 
@@ -63,7 +63,7 @@ ios-use start --playcover [--app <source-or-managed-prepared.app>]
      -> NSWorkspace launch with exact environment and PID
   -> IOSUsePlayRuntime.framework
      -> pinned PlayTools platform/geometry/keychain hooks
-     -> fixed AppKit window and system chrome
+     -> fixed AppKit window and complete App compositor
      -> DOM, wait, touch/input, compositor, URL, and diagnostics
      -> owner-only AF_UNIX listener
   -> PlayCoverRuntimeClient
@@ -175,7 +175,7 @@ pixel condition. Text input first verifies the supported first responder;
 secure, custom, or unsupported input returns a structured error.
 
 Screenshot and capture read only the target process's WindowServer backing
-surfaces, including Metal and the system-chrome overlay. They do not use
+surfaces, including Metal, with no synthetic chrome overlay. They do not use
 ScreenCaptureKit or request Screen Recording permission. A frame is accepted
 only when source surfaces are live, complete, nontransparent, geometrically
 consistent, and produce the strict 1290 x 2796 output. UIKit-only rendering is

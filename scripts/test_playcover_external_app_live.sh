@@ -325,10 +325,17 @@ assert_status() {
       .data.driver.runtime.nativeWidth == 1290 and
       .data.driver.runtime.nativeHeight == 2796 and
       .data.driver.runtime.scale == 3 and
-      .data.driver.runtime.safeAreaTop == 59 and
-      .data.driver.runtime.safeAreaLeft == 0 and
-      .data.driver.runtime.safeAreaBottom == 34 and
-      .data.driver.runtime.safeAreaRight == 0 and
+      (.data.driver.runtime.diagnostics.runtime.rendering |
+        .syntheticChrome == false and
+        .safeAreaOverride == false and
+        (.fullFrame |
+          .logicalRect == {"x":0,"y":0,"width":430,"height":932} and
+          .pixelWidth == 1290 and
+          .pixelHeight == 2796 and
+          .scale == 3 and
+          .uncropped == true and
+          .safeAreaCropped == false and
+          .identityMapping == true)) and
       (.data.driver.runtime.diagnostics.observed.appKit |
         .status == "configured" and
         .borderless == 1 and
@@ -350,19 +357,26 @@ assert_screenshot() {
       .data.logicalSize == [430,932] and
       .data.runtimeEvidence.complete == true and
       .data.runtimeEvidence.captureGeneration > 0 and
+      .data.runtimeEvidence.syntheticChrome == false and
+      (.data.runtimeEvidence.fullFrame as $fullFrame |
+        $fullFrame == {
+          "logicalRect":{"x":0,"y":0,"width":430,"height":932},
+          "pixelWidth":1290,
+          "pixelHeight":2796,
+          "scale":3,
+          "uncropped":true,
+          "safeAreaCropped":false,
+          "identityMapping":true
+        } and
+        .data.runtimeEvidence.compositor.syntheticChrome == false and
+        .data.runtimeEvidence.compositor.fullFrame == $fullFrame) and
       (.data.runtimeEvidence.compositor.completeness |
         .allVisibleNativeWindowsOrdered == true and
         .allVisibleUIKitWindowsMapped == true and
         .allWindowGeometryInsideDevice == true and
         .baseWindowCoversDevice == true and
         .requestedCapturedCountMatch == true and
-        .systemChromeMapped == true and
-        .windowSetStableDuringCapture == true) and
-      (.data.runtimeEvidence.systemChromeEvidence |
-        .lastImageEvidence.ready == true and
-        .surfaceEvidence.dynamicIsland.ready == true and
-        .surfaceEvidence.status.ready == true and
-        .surfaceEvidence.homeIndicator.ready == true)
+        .windowSetStableDuringCapture == true)
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name is not a complete 1290x2796 device screenshot"
   fi

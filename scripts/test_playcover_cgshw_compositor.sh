@@ -33,6 +33,22 @@ xcrun clang \
   -Wextra \
   -Werror \
   -framework Foundation \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/SystemChromeContractTests.m" \
+  -o "$IOS_USE_SMOKE_TEMP/SyntheticChromeRemovalContract"
+
+"$IOS_USE_SMOKE_TEMP/SyntheticChromeRemovalContract" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeScreenshot.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntime.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeSocket.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayRuntimeAutomation.m"
+
+xcrun clang \
+  -fobjc-arc \
+  -fmodules \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -framework Foundation \
   -I "$IOS_USE_REPO_ROOT/swift-cli/Sources/IOSUsePlayDevice/include" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/tests/RuntimeAutomationSourceContract.m" \
   -o "$IOS_USE_SMOKE_TEMP/RuntimeAutomationSourceContract"
