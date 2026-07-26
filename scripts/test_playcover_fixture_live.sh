@@ -1507,6 +1507,11 @@ assert_json status '
 assert_canonical_host_status status
 
 runner_pid="$(jq -er '.data.driver.runnerPid' "$RUN_DIR/status.stdout")"
+runtime_socket_path="$(
+  jq -er \
+    '.data.driver.playcoverRuntimeSocketPath' \
+    "$RUN_DIR/status.stdout"
+)"
 record_case oslog_exact oslog --pid "$runner_pid" \
   --pattern 'ios-use-runtime' --timeout 1s
 assert_evidence oslog_exact '\[ios-use-runtime\]'
@@ -1579,6 +1584,37 @@ assert_canvas_only_capture_manifest "$capture_manifest"
 record_case dom_initial dom --json
 assert_evidence dom_initial 'fixture.uikit.increment'
 assert_evidence dom_initial 'fixture.full.top-left'
+
+absolute_tap_x="$(
+  jq -er '
+    [.data.elements[] |
+      select(.label == "No-op Target" and .state.visible == true)][0]
+      .frame |
+    .[0] + (.[2] * 0.25)
+  ' "$RUN_DIR/dom_initial.stdout"
+)"
+absolute_tap_y="$(
+  jq -er '
+    [.data.elements[] |
+      select(.label == "No-op Target" and .state.visible == true)][0]
+      .frame |
+    .[1] + (.[3] * 0.25)
+  ' "$RUN_DIR/dom_initial.stdout"
+)"
+record_case absolute_tap tap \
+  "$absolute_tap_x,$absolute_tap_y" --json
+if ! jq -e \
+    --argjson x "$absolute_tap_x" \
+    --argjson y "$absolute_tap_y" '
+      ((.data.finalState.point[0] - $x) | fabs) < 0.001 and
+      ((.data.finalState.point[1] - $y) | fabs) < 0.001 and
+      .data.finalState.phase == "ended"
+    ' "$RUN_DIR/absolute_tap.stdout" >/dev/null; then
+  echo \
+    "[playcover-fixture-live] FAIL: absolute tap was remapped away from its logical point" \
+    >&2
+  exit 1
+fi
 
 record_case tap tap "Increment" --dom --json
 assert_evidence tap 'Count 1'
@@ -1843,6 +1879,12 @@ assert_ocr_evidence screenshot_metal \
 assert_metal_pixel screenshot_metal
 
 record_case stop stop
+if [[ -e "$runtime_socket_path" || -L "$runtime_socket_path" ]]; then
+  echo \
+    "[playcover-fixture-live] FAIL: normal stop left its Runtime-owned socket path" \
+    >&2
+  exit 1
+fi
 archive_session_home
 restore_original_frontmost_application
 trap - EXIT

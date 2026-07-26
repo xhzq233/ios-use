@@ -711,17 +711,30 @@ final class PlayCoverDriverClientTests: XCTestCase {
         displayScale: Double = 0.75,
         inverseDisplayScale: Double? = nil,
         opaque: Bool = true,
+        contentWidth: Double? = nil,
+        contentHeight: Double? = nil,
         hostFrameWidth: Double? = nil,
         canvasWidth: Double? = nil,
+        canvasHeight: Double? = nil,
+        canvasY: Double = 0,
         canvasCGX: Double = 40,
-        canvasCGY: Double = 38
+        canvasCGY: Double? = nil
     ) -> PlayCoverRuntimeHostGeometry {
-        let contentWidth = 430 * displayScale
-        let contentHeight = 932 * displayScale
-        let resolvedHostFrameWidth = hostFrameWidth ?? contentWidth
-        let resolvedCanvasWidth = canvasWidth ?? contentWidth
+        let resolvedContentWidth =
+            contentWidth ?? 430 * displayScale
+        let resolvedContentHeight =
+            contentHeight ?? 932 * displayScale
+        let resolvedHostFrameWidth =
+            hostFrameWidth ?? resolvedContentWidth
+        let resolvedCanvasWidth =
+            canvasWidth ?? resolvedContentWidth
+        let resolvedCanvasHeight =
+            canvasHeight ?? 932 * displayScale
         let resolvedInverseDisplayScale =
             inverseDisplayScale ?? 1 / displayScale
+        let resolvedCanvasCGY = canvasCGY ??
+            38 + resolvedContentHeight - canvasY -
+                resolvedCanvasHeight
         return .init(
             status: status,
             hostPolicy: hostPolicy,
@@ -729,19 +742,19 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 x: 40,
                 y: 30,
                 width: resolvedHostFrameWidth,
-                height: contentHeight + 28
+                height: resolvedContentHeight + 28
             ),
             contentBounds: .init(
                 x: 0,
                 y: 0,
-                width: contentWidth,
-                height: contentHeight
+                width: resolvedContentWidth,
+                height: resolvedContentHeight
             ),
             canvasRect: .init(
                 x: 0,
-                y: 0,
+                y: canvasY,
                 width: resolvedCanvasWidth,
-                height: contentHeight
+                height: resolvedCanvasHeight
             ),
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
             displayScale: displayScale,
@@ -758,20 +771,20 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 hostContentCGWindowRect: .init(
                     x: 40,
                     y: 38,
-                    width: contentWidth,
-                    height: contentHeight
+                    width: resolvedContentWidth,
+                    height: resolvedContentHeight
                 ),
                 hostCGWindowBounds: .init(
                     x: 40,
                     y: 10,
                     width: resolvedHostFrameWidth,
-                    height: contentHeight + 28
+                    height: resolvedContentHeight + 28
                 ),
                 canvasCGWindowRect: .init(
                     x: canvasCGX,
-                    y: canvasCGY,
+                    y: resolvedCanvasCGY,
                     width: resolvedCanvasWidth,
-                    height: contentHeight
+                    height: resolvedCanvasHeight
                 ),
                 hostWindowNumber: 17
             )
@@ -877,6 +890,54 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
         XCTAssertEqual(hundredPercentGeometry.host?.frame.width, 430)
         XCTAssertEqual(hundredPercentGeometry.host?.frame.height, 960)
+    }
+
+    func testFixedDeviceRequiresBootstrapHostAspectNormalization()
+        throws
+    {
+        let base = makeGeometry()
+        let displayScale = 422.0 / 430.0
+        let canvasHeight = 932.0 * displayScale
+        func geometry(contentHeight: Double)
+            -> PlayCoverRuntimeGeometry
+        {
+            let canvasY = (contentHeight - canvasHeight) / 2
+            return PlayCoverRuntimeGeometry(
+                logical: base.logical,
+                native: base.native,
+                scale: base.scale,
+                window: base.window,
+                safeArea: base.safeArea,
+                host: makeSimulatorScaleHostGeometry(
+                    displayScale: displayScale,
+                    contentWidth: 422,
+                    contentHeight: contentHeight,
+                    canvasWidth: 422,
+                    canvasHeight: canvasHeight,
+                    canvasY: canvasY
+                )
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry(contentHeight: 916),
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale host canvas layout"
+                )
+            )
+        }
+        XCTAssertNoThrow(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry(contentHeight: 915),
+                stage: "ready"
+            )
+        )
     }
 
     func testFixedDeviceRejectsMissingOrInvalidSimulatorScaleHost()

@@ -179,14 +179,17 @@ enum PlayCoverSessionService {
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> LaunchResult {
-        let resolved = try resolveApp(
-            explicitAppPath: explicitAppPath,
-            paths: paths
-        )
         let sessionID = UUID().uuidString
         try ensureOwnerOnlyRunDirectory(paths.playcoverRun)
         let socketPath = try paths.playCoverRuntimeSocketPath(
             sessionID: sessionID
+        )
+        // Validate the fixed-length Unix transport path before source
+        // inspection or a cold prepare. A custom IOS_USE_HOME that cannot
+        // host the Runtime socket must fail without doing expensive App work.
+        let resolved = try resolveApp(
+            explicitAppPath: explicitAppPath,
+            paths: paths
         )
         var timing = resolved.timing
         let verificationStarted = PlayCoverMonotonicClock.now()
@@ -331,7 +334,6 @@ enum PlayCoverSessionService {
                 initialState else {
             switch initialState {
             case .missing:
-                try cleanupRuntimeSocket(session)
                 return pid
             case .unverifiable(let errorNumber):
                 throw PlayCoverBackendError.terminateFailed(
@@ -392,7 +394,6 @@ enum PlayCoverSessionService {
                 currentState else {
             switch currentState {
             case .missing:
-                try cleanupRuntimeSocket(session)
                 return pid
             case .unverifiable(let errorNumber):
                 throw PlayCoverBackendError.terminateFailed(
@@ -446,7 +447,6 @@ enum PlayCoverSessionService {
         let signalResult = sendSignal(pid, SIGTERM)
         let signalError = errno
         if signalResult != 0, signalError == ESRCH {
-            try cleanupRuntimeSocket(session)
             return pid
         }
         guard signalResult == 0 else {
@@ -459,7 +459,6 @@ enum PlayCoverSessionService {
         while ProcessInfo.processInfo.systemUptime < deadline {
             switch processState(pid) {
             case .missing:
-                try cleanupRuntimeSocket(session)
                 return pid
             case .running(let currentExecutable):
                 if PlayCoverRuntimeClient.canonicalPath(
@@ -469,7 +468,6 @@ enum PlayCoverSessionService {
                 ) {
                     // The exact App exited and the PID was reused.
                     // Never signal the replacement process.
-                    try cleanupRuntimeSocket(session)
                     return pid
                 }
             case .unverifiable(let errorNumber):
@@ -481,7 +479,6 @@ enum PlayCoverSessionService {
                     // process before kill(0) observes it as missing. No
                     // further signal is sent, so PID reuse cannot
                     // redirect termination to a replacement process.
-                    try cleanupRuntimeSocket(session)
                     return pid
                 }
                 throw PlayCoverBackendError.terminateFailed(
@@ -569,7 +566,7 @@ enum PlayCoverSessionService {
         return try PlayCoverService.fastVerify(appPath: appPath)
     }
 
-    private static func expectedRuntimeSocketPath(
+    static func expectedRuntimeSocketPath(
         sessionID: String,
         manifest: PlayCoverPrepareManifest
     ) throws -> String {
@@ -589,15 +586,56 @@ enum PlayCoverSessionService {
                     + "session generation"
             )
         }
-        let paths = IOSUsePaths.resolve(
-            environment: [
-                "IOS_USE_HOME":
-                    playcover.deletingLastPathComponent().path,
-            ]
+        let socketToken = sessionID
+            .unicodeScalars
+            .filter {
+                CharacterSet.alphanumerics.contains($0)
+            }
+            .map(String.init)
+            .joined()
+        guard !socketToken.isEmpty else {
+            throw CLIParseError.invalidValue(
+                "PlayCover sessionID cannot produce a runtime "
+                    + "socket name."
+            )
+        }
+        let socketName =
+            "s-\(socketToken.prefix(32)).sock"
+        // `run` may already have been removed when stop is recovering a
+        // crashed session. Canonicalize the still-existing managed
+        // `playcover` parent before appending the run/name components so the
+        // `/tmp` -> `/private/tmp` alias cannot change socket identity merely
+        // because the leaf directory disappeared.
+        let canonicalPlaycoverPath: String
+        #if canImport(Darwin)
+        var buffer = [CChar](
+            repeating: 0,
+            count: Int(PATH_MAX)
         )
-        return try paths.playCoverRuntimeSocketPath(
-            sessionID: sessionID
+        if playcover.path.withCString({
+            Darwin.realpath($0, &buffer)
+        }) != nil {
+            canonicalPlaycoverPath = String(cString: buffer)
+        } else {
+            canonicalPlaycoverPath = playcover.path
+        }
+        #else
+        canonicalPlaycoverPath =
+            playcover.resolvingSymlinksInPath().path
+        #endif
+        let expected = URL(
+            fileURLWithPath: canonicalPlaycoverPath,
+            isDirectory: true
         )
+            .appendingPathComponent("run", isDirectory: true)
+            .appendingPathComponent(socketName).path
+        guard expected.utf8.count <= 103 else {
+            throw CLIParseError.invalidValue(
+                "IOS_USE_HOME is too long for a PlayCover Unix socket "
+                    + "(\(expected.utf8.count) UTF-8 bytes; maximum 103)."
+            )
+        }
+        return expected
     }
 
     private static func validateManagedGenerationPath(
@@ -761,40 +799,6 @@ enum PlayCoverSessionService {
                     + "owner-only directory"
             )
         }
-        #endif
-    }
-
-    private static func cleanupRuntimeSocket(
-        _ session: SessionService.Info
-    ) throws {
-        guard let path =
-                session.playCoverRuntimeSocketPath,
-              !path.isEmpty else {
-            return
-        }
-        #if canImport(Darwin)
-        var info = stat()
-        if lstat(path, &info) != 0 {
-            if errno == ENOENT { return }
-            throw PlayCoverBackendError.terminateFailed(
-                "cannot inspect Runtime socket: errno \(errno)"
-            )
-        }
-        guard (info.st_mode & mode_t(S_IFMT))
-                == mode_t(S_IFSOCK),
-              info.st_uid == geteuid() else {
-            throw PlayCoverBackendError.terminateFailed(
-                "refusing to remove a Runtime path that is not "
-                    + "an owned Unix socket"
-            )
-        }
-        guard unlink(path) == 0 || errno == ENOENT else {
-            throw PlayCoverBackendError.terminateFailed(
-                "cannot remove Runtime socket: errno \(errno)"
-            )
-        }
-        #else
-        try? FileManager.default.removeItem(atPath: path)
         #endif
     }
 

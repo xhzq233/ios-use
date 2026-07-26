@@ -1496,6 +1496,615 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     }
 
+    func testLongSessionSocketPathFailsBeforeSourceInspection()
+        throws
+    {
+        let longRoot = "/tmp/ios-use-"
+            + String(repeating: "x", count: 95)
+        defer {
+            try? FileManager.default.removeItem(
+                atPath: longRoot
+            )
+        }
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": longRoot]
+        )
+        var inspected = false
+        PlayCoverManagedAppService.inspectOverrideForTesting = {
+            _ in
+            inspected = true
+            throw PlayCoverBackendError.invalidApp(
+                "source inspection must not run"
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverSessionService.launch(
+                explicitAppPath: "/tmp/Source.app",
+                timeout: 1,
+                paths: paths
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "too long for a PlayCover Unix socket"
+                )
+            )
+        }
+        XCTAssertFalse(inspected)
+    }
+
+    func testLaunchPreservesUntrackedStaleRuntimeSocket()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let stalePath = runtimeSocketPath(
+            in: fixture,
+            token: String(repeating: "6", count: 32)
+        )
+        let descriptor = try bindUnixSocket(
+            at: stalePath,
+            type: SOCK_STREAM
+        )
+        Darwin.close(descriptor)
+        PlayCoverManagedAppService.inspectOverrideForTesting = {
+            _ in
+            throw PlayCoverBackendError.invalidApp(
+                "expected inspection failure"
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverSessionService.launch(
+                explicitAppPath: "/tmp/Source.app",
+                timeout: 1,
+                paths: fixture.paths
+            )
+        )
+        XCTAssertTrue(pathExists(stalePath))
+    }
+
+    func testFreshExactRuntimeSocketPathRejectsExistingObjects()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+
+        let listenerPath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: UUID().uuidString
+            )
+        let listener = try bindUnixSocket(
+            at: listenerPath,
+            type: SOCK_STREAM,
+            listening: true
+        )
+        defer { Darwin.close(listener) }
+        let queuedClient = try connectUnixSocket(at: listenerPath)
+        defer { Darwin.close(queuedClient) }
+        try assertFreshSocketValidationPreservesExistingPath(
+            listenerPath
+        )
+
+        let stalePath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: UUID().uuidString
+            )
+        let stale = try bindUnixSocket(
+            at: stalePath,
+            type: SOCK_STREAM
+        )
+        Darwin.close(stale)
+        try assertFreshSocketValidationPreservesExistingPath(
+            stalePath
+        )
+
+        let filePath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: UUID().uuidString
+            )
+        try Data("owned-by-test".utf8).write(
+            to: URL(fileURLWithPath: filePath)
+        )
+        try assertFreshSocketValidationPreservesExistingPath(
+            filePath
+        )
+        XCTAssertEqual(
+            try String(contentsOfFile: filePath, encoding: .utf8),
+            "owned-by-test"
+        )
+
+        let linkPath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: UUID().uuidString
+            )
+        XCTAssertEqual(
+            symlink("unknown-target", linkPath),
+            0
+        )
+        try assertFreshSocketValidationPreservesExistingPath(
+            linkPath
+        )
+        var target = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let targetLength = readlink(
+            linkPath,
+            &target,
+            target.count - 1
+        )
+        XCTAssertGreaterThan(targetLength, 0)
+        target[Int(targetLength)] = 0
+        XCTAssertEqual(String(cString: target), "unknown-target")
+    }
+
+    func testTerminateNeverUnlinksStaleLiveOrDatagramSocketPaths()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try fixture.createManagedApp(manifest: manifest)
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in manifest
+        }
+        PlayCoverSessionService.processStateOverrideForTesting = {
+            _ in .missing
+        }
+
+        let staleSessionID = UUID().uuidString
+        let stalePath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: staleSessionID
+            )
+        let staleDescriptor = try bindUnixSocket(
+            at: stalePath,
+            type: SOCK_STREAM
+        )
+        Darwin.close(staleDescriptor)
+        XCTAssertEqual(
+            try PlayCoverSessionService.terminate(
+                session: makeSessionInfo(
+                    manifest: manifest,
+                    sessionID: staleSessionID,
+                    socketPath: stalePath
+                )
+            ),
+            4_242
+        )
+        XCTAssertTrue(pathExists(stalePath))
+
+        let liveSessionID = UUID().uuidString
+        let livePath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: liveSessionID
+            )
+        let liveDescriptor = try bindUnixSocket(
+            at: livePath,
+            type: SOCK_STREAM,
+            listening: true
+        )
+        defer { Darwin.close(liveDescriptor) }
+        let queuedClient = try connectUnixSocket(at: livePath)
+        defer { Darwin.close(queuedClient) }
+        XCTAssertEqual(
+            try PlayCoverSessionService.terminate(
+                session: makeSessionInfo(
+                    manifest: manifest,
+                    sessionID: liveSessionID,
+                    socketPath: livePath
+                )
+            ),
+            4_242
+        )
+        XCTAssertTrue(pathExists(livePath))
+
+        let datagramSessionID = UUID().uuidString
+        let datagramPath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: datagramSessionID
+            )
+        let datagramDescriptor = try bindUnixSocket(
+            at: datagramPath,
+            type: SOCK_DGRAM
+        )
+        defer { Darwin.close(datagramDescriptor) }
+        XCTAssertEqual(
+            try PlayCoverSessionService.terminate(
+                session: makeSessionInfo(
+                    manifest: manifest,
+                    sessionID: datagramSessionID,
+                    socketPath: datagramPath
+                )
+            ),
+            4_242
+        )
+        XCTAssertTrue(pathExists(datagramPath))
+    }
+
+    func testTerminateDoesNotWaitForOrUnlinkListenerTeardown()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try fixture.createManagedApp(manifest: manifest)
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in manifest
+        }
+        PlayCoverSessionService.processStateOverrideForTesting = {
+            _ in .missing
+        }
+
+        let sessionID = UUID().uuidString
+        let socketPath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: sessionID
+            )
+        let descriptor = try bindUnixSocket(
+            at: socketPath,
+            type: SOCK_STREAM,
+            listening: true
+        )
+        let listenerClosed = expectation(
+            description: "listener closed"
+        )
+        DispatchQueue.global().asyncAfter(
+            deadline: .now() + 0.25
+        ) {
+            Darwin.close(descriptor)
+            listenerClosed.fulfill()
+        }
+
+        let started = ProcessInfo.processInfo.systemUptime
+        XCTAssertEqual(
+            try PlayCoverSessionService.terminate(
+                session: makeSessionInfo(
+                    manifest: manifest,
+                    sessionID: sessionID,
+                    socketPath: socketPath
+                )
+            ),
+            4_242
+        )
+        XCTAssertLessThan(
+            ProcessInfo.processInfo.systemUptime - started,
+            0.2
+        )
+        wait(for: [listenerClosed], timeout: 1)
+        XCTAssertTrue(pathExists(socketPath))
+    }
+
+    func testTerminatePreservesRegularAndSymlinkRuntimePaths()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try fixture.createManagedApp(manifest: manifest)
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in manifest
+        }
+        PlayCoverSessionService.processStateOverrideForTesting = {
+            _ in .missing
+        }
+
+        let regularSessionID = UUID().uuidString
+        let regularPath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: regularSessionID
+            )
+        try Data("preserve".utf8).write(
+            to: URL(fileURLWithPath: regularPath)
+        )
+        XCTAssertEqual(
+            try PlayCoverSessionService.terminate(
+                session: makeSessionInfo(
+                    manifest: manifest,
+                    sessionID: regularSessionID,
+                    socketPath: regularPath
+                )
+            ),
+            4_242
+        )
+        XCTAssertEqual(
+            try String(contentsOfFile: regularPath),
+            "preserve"
+        )
+
+        let symlinkSessionID = UUID().uuidString
+        let symlinkPath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: symlinkSessionID
+            )
+        let targetPath = fixture.root + "/socket-link-target"
+        try Data("target".utf8).write(
+            to: URL(fileURLWithPath: targetPath)
+        )
+        try FileManager.default.createSymbolicLink(
+            atPath: symlinkPath,
+            withDestinationPath: targetPath
+        )
+        XCTAssertEqual(
+            try PlayCoverSessionService.terminate(
+                session: makeSessionInfo(
+                    manifest: manifest,
+                    sessionID: symlinkSessionID,
+                    socketPath: symlinkPath
+                )
+            ),
+            4_242
+        )
+        XCTAssertTrue(pathExists(symlinkPath))
+        XCTAssertEqual(
+            try String(contentsOfFile: targetPath),
+            "target"
+        )
+    }
+
+    func testTerminateSucceedsWhenSocketAndRunDirectoryAreMissing()
+        throws {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try fixture.createManagedApp(manifest: manifest)
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in manifest
+        }
+        PlayCoverSessionService.processStateOverrideForTesting = {
+            _ in .missing
+        }
+        let sessionID = UUID().uuidString
+        let socketPath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: sessionID
+            )
+        XCTAssertEqual(
+            try PlayCoverSessionService.expectedRuntimeSocketPath(
+                sessionID: sessionID,
+                manifest: manifest
+            ),
+            socketPath
+        )
+        try FileManager.default.removeItem(
+            atPath: fixture.paths.playcoverRun
+        )
+        XCTAssertEqual(
+            try PlayCoverSessionService.expectedRuntimeSocketPath(
+                sessionID: sessionID,
+                manifest: manifest
+            ),
+            socketPath
+        )
+
+        XCTAssertEqual(
+            try PlayCoverSessionService.terminate(
+                session: makeSessionInfo(
+                    manifest: manifest,
+                    sessionID: sessionID,
+                    socketPath: socketPath
+                )
+            ),
+            4_242
+        )
+    }
+
+    func testTerminateDoesNotMutateSocketOutsideOwnerOnlyRunDirectory()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try fixture.createManagedApp(manifest: manifest)
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in manifest
+        }
+        PlayCoverSessionService.processStateOverrideForTesting = {
+            _ in .missing
+        }
+        let sessionID = UUID().uuidString
+        let socketPath =
+            try fixture.paths.playCoverRuntimeSocketPath(
+                sessionID: sessionID
+            )
+        let descriptor = try bindUnixSocket(
+            at: socketPath,
+            type: SOCK_STREAM
+        )
+        Darwin.close(descriptor)
+        XCTAssertEqual(
+            chmod(fixture.paths.playcoverRun, 0o755),
+            0
+        )
+
+        XCTAssertEqual(
+            try PlayCoverSessionService.terminate(
+                session: makeSessionInfo(
+                    manifest: manifest,
+                    sessionID: sessionID,
+                    socketPath: socketPath
+                )
+            ),
+            4_242
+        )
+        XCTAssertTrue(pathExists(socketPath))
+    }
+
+    private func runtimeSocketPath(
+        in fixture: SessionFixture,
+        token: String
+    ) -> String {
+        fixture.paths.playcoverRun + "/s-\(token).sock"
+    }
+
+    private func pathExists(_ path: String) -> Bool {
+        var info = stat()
+        return lstat(path, &info) == 0
+    }
+
+    private func assertFreshSocketValidationPreservesExistingPath(
+        _ path: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        var before = stat()
+        XCTAssertEqual(
+            lstat(path, &before),
+            0,
+            file: file,
+            line: line
+        )
+        XCTAssertThrowsError(
+            try PlayCoverService.validateFreshRuntimeSocketPath(
+                path
+            ),
+            file: file,
+            line: line
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "refusing an existing Runtime socket path"
+                ),
+                String(describing: error),
+                file: file,
+                line: line
+            )
+        }
+        var after = stat()
+        XCTAssertEqual(
+            lstat(path, &after),
+            0,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            before.st_dev,
+            after.st_dev,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            before.st_ino,
+            after.st_ino,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            before.st_mode,
+            after.st_mode,
+            file: file,
+            line: line
+        )
+    }
+
+    private func bindUnixSocket(
+        at path: String,
+        type: Int32,
+        listening: Bool = false
+    ) throws -> Int32 {
+        let descriptor = Darwin.socket(AF_UNIX, type, 0)
+        guard descriptor >= 0 else {
+            throw posixTestError(errno)
+        }
+        var address: sockaddr_un
+        do {
+            address = try unixSocketAddress(at: path)
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+        let bindResult = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(
+                to: sockaddr.self,
+                capacity: 1
+            ) {
+                Darwin.bind(
+                    descriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_un>.size)
+                )
+            }
+        }
+        guard bindResult == 0 else {
+            let errorNumber = errno
+            Darwin.close(descriptor)
+            throw posixTestError(errorNumber)
+        }
+        if listening, Darwin.listen(descriptor, 1) != 0 {
+            let errorNumber = errno
+            Darwin.close(descriptor)
+            throw posixTestError(errorNumber)
+        }
+        return descriptor
+    }
+
+    private func connectUnixSocket(
+        at path: String
+    ) throws -> Int32 {
+        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw posixTestError(errno)
+        }
+        var address: sockaddr_un
+        do {
+            address = try unixSocketAddress(at: path)
+        } catch {
+            Darwin.close(descriptor)
+            throw error
+        }
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(
+                to: sockaddr.self,
+                capacity: 1
+            ) {
+                Darwin.connect(
+                    descriptor,
+                    $0,
+                    socklen_t(MemoryLayout<sockaddr_un>.size)
+                )
+            }
+        }
+        guard result == 0 else {
+            let errorNumber = errno
+            Darwin.close(descriptor)
+            throw posixTestError(errorNumber)
+        }
+        return descriptor
+    }
+
+    private func unixSocketAddress(
+        at path: String
+    ) throws -> sockaddr_un {
+        var address = sockaddr_un()
+        let bytes = Array(path.utf8)
+        let capacity = MemoryLayout.size(
+            ofValue: address.sun_path
+        )
+        guard bytes.count + 1 <= capacity else {
+            throw posixTestError(ENAMETOOLONG)
+        }
+        address.sun_len = UInt8(
+            MemoryLayout<sockaddr_un>.size
+        )
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) {
+            $0.initializeMemory(
+                as: UInt8.self,
+                repeating: 0
+            )
+            $0.copyBytes(from: bytes)
+        }
+        return address
+    }
+
+    private func posixTestError(
+        _ errorNumber: Int32
+    ) -> NSError {
+        NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(errorNumber)
+        )
+    }
+
     private enum LockMutation: CaseIterable {
         case socket
         case app

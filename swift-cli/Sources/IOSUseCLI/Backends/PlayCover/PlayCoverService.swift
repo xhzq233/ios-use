@@ -36,7 +36,7 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v8+playcover-"
+        "ios-use-headless-v9+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
@@ -485,7 +485,19 @@ public enum PlayCoverService {
             isDirectory: true
         ).standardizedFileURL
         try validateManifest(manifest, appURL: app)
-        try prepareRuntimeSocket(runtimeSocketPath)
+        let expectedRuntimeSocketPath =
+            try PlayCoverSessionService.expectedRuntimeSocketPath(
+                sessionID: sessionID,
+                manifest: manifest
+            )
+        guard canonicalPath(runtimeSocketPath)
+                == canonicalPath(expectedRuntimeSocketPath) else {
+            throw PlayCoverBackendError.launchFailed(
+                "Runtime socket path does not match the random "
+                    + "session and managed generation"
+            )
+        }
+        try validateFreshRuntimeSocketPath(runtimeSocketPath)
 
         var launched: LaunchedApplicationIdentity?
         var keyCoverUnlocked = false
@@ -498,11 +510,13 @@ public enum PlayCoverService {
                 )
             )
             keyCoverUnlocked = true
+            let deadline =
+                ProcessInfo.processInfo.systemUptime + timeout
             let identity = try launchPreparedApplication(
                 manifest: manifest,
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
-                timeout: timeout
+                deadline: deadline
             )
             launched = identity
             guard identity.pid > 0,
@@ -517,7 +531,6 @@ public enum PlayCoverService {
                 )
             }
 
-            let deadline = ProcessInfo.processInfo.systemUptime + timeout
             var lastError: Error?
             while ProcessInfo.processInfo.systemUptime < deadline {
                 do {
@@ -551,7 +564,16 @@ public enum PlayCoverService {
                     )
                 } catch {
                     lastError = error
-                    Thread.sleep(forTimeInterval: 0.05)
+                    Thread.sleep(
+                        forTimeInterval: min(
+                            0.05,
+                            max(
+                                0,
+                                deadline -
+                                    ProcessInfo.processInfo.systemUptime
+                            )
+                        )
+                    )
                 }
             }
             throw PlayCoverBackendError.launchTimedOut(
@@ -591,7 +613,6 @@ public enum PlayCoverService {
                     )
                 )
             }
-            try removeOwnedSocketIfStale(runtimeSocketPath)
             throw error
         }
     }
@@ -615,7 +636,6 @@ public enum PlayCoverService {
         guard let actualExecutable = PlayCoverRuntimeClient.executablePath(
             for: identity.pid
         ) else {
-            try? removeOwnedSocketIfStale(identity.runtimeSocketPath)
             return identity.pid
         }
         guard canonicalPath(actualExecutable)
@@ -647,7 +667,6 @@ public enum PlayCoverService {
                 isDirectory: true
             )
         )
-        try removeOwnedSocketIfStale(identity.runtimeSocketPath)
         return identity.pid
     }
 
@@ -799,6 +818,28 @@ public enum PlayCoverService {
         return result
     }
 
+    static func launchConfigurationEnvironment(
+        source: [String: String] = ProcessInfo.processInfo.environment,
+        sessionID: String,
+        runtimeSocketPath: String,
+        managedHomePath: String
+    ) -> [String: String] {
+        // NSWorkspace overlays OpenConfiguration.environment on the
+        // caller's inherited environment. Explicitly clear every inherited
+        // key that is outside the launch allowlist so shell credentials
+        // cannot reach the prepared App.
+        var result = source.mapValues { _ in "" }
+        result.merge(
+            sanitizedLaunchEnvironment(
+                source: source,
+                sessionID: sessionID,
+                runtimeSocketPath: runtimeSocketPath,
+                managedHomePath: managedHomePath
+            )
+        ) { _, allowed in allowed }
+        return result
+    }
+
     private static func validateHello(
         _ payload: PlayCoverRuntimeHelloPayload,
         sessionID: String,
@@ -823,11 +864,66 @@ public enum PlayCoverService {
               geometry.scale == expectedScale,
               geometry.window.width == expectedLogicalWidth,
               geometry.window.height == expectedLogicalHeight else {
+            var hostSummary = "host=missing"
+            if let host = geometry.host {
+                hostSummary = [
+                    "status=\(host.status)",
+                    "frame=\(host.frame.width)x\(host.frame.height)",
+                    "content=\(host.contentBounds.width)x"
+                        + "\(host.contentBounds.height)",
+                    "canvas=\(host.canvasRect.width)x"
+                        + "\(host.canvasRect.height)",
+                    "canvasBounds=\(host.canvasBounds.width)x"
+                        + "\(host.canvasBounds.height)",
+                    "displayScale=\(host.displayScale)",
+                    "hostPolicy=\(host.hostPolicy)",
+                    "opaque=\(host.opaque)",
+                    "publicTitleBar=\(host.publicTitleBar)",
+                    "titleVisible=\(host.titleVisible)",
+                    "resizable=\(host.resizable)",
+                    "title=\(host.title)",
+                    "expectedTitle=\(host.titleExpected)",
+                    "captureReady=\(host.capture.ready)",
+                    "captureError=\(host.capture.error ?? "none")",
+                ].joined(separator: ",")
+            }
+            var appKitFailure = "unavailable"
+            var sceneGeometryFailure = "unavailable"
+            if case .object(let appKit)? =
+                payload.observed["appKit"] {
+                if case .string(let failure)? =
+                    appKit["failure"] {
+                    appKitFailure = failure
+                }
+                if case .object(let sceneGeometry)? =
+                    appKit["sceneGeometry"],
+                   case .string(let failure)? =
+                    sceneGeometry["failure"] {
+                    sceneGeometryFailure = failure
+                }
+            }
+            let observedSummary = [
+                "stage=\(payload.stage)",
+                "pid=\(payload.pid)/\(pid)",
+                "bundle=\(payload.bundleIdentifier)/"
+                    + "\(manifest.bundleIdentifier)",
+                "logical=\(geometry.logical.width)x"
+                    + "\(geometry.logical.height)",
+                "native=\(geometry.native.width)x"
+                    + "\(geometry.native.height)",
+                "scale=\(geometry.scale)",
+                "window=\(geometry.window.width)x"
+                    + "\(geometry.window.height)",
+                hostSummary,
+                "appKitFailure=\(appKitFailure)",
+                "sceneGeometryFailure=\(sceneGeometryFailure)",
+            ].joined(separator: "; ")
             throw PlayCoverBackendError.launchFailed(
                 "Runtime hello identity/geometry is not the fixed "
                     + "\(IOSUsePlayDeviceLogicalWidth)x"
                     + "\(IOSUsePlayDeviceLogicalHeight)@"
-                    + "\(IOSUsePlayDeviceScale)x contract"
+                    + "\(IOSUsePlayDeviceScale)x contract: "
+                    + observedSummary
             )
         }
         return PlayCoverHello(
@@ -925,11 +1021,9 @@ public enum PlayCoverService {
               Set(manifest.sourceInventory.map(\.relativePath)).count
                 == manifest.sourceInventory.count,
               Set(manifest.sourceMachOs.map(\.relativePath)).count
-                == manifest.sourceMachOs.count,
-              manifest.entitlementDiff.removedFromOriginal.isEmpty else {
+                == manifest.sourceMachOs.count else {
             throw PlayCoverBackendError.verificationFailed(
-                "manifest schema, identity, generation, or entitlement "
-                    + "preservation is invalid"
+                "manifest schema, identity, or generation is invalid"
             )
         }
     }
@@ -1207,23 +1301,63 @@ public enum PlayCoverService {
         }
     }
 
+    static func acceptsOwnedLaunchIdentity(
+        pid: Int32,
+        bundleIdentifier: String,
+        bundleURLPath: String,
+        executablePath: String,
+        existingPIDs: Set<Int32>,
+        manifest: PlayCoverPrepareManifest
+    ) -> Bool {
+        pid > 0
+            && !existingPIDs.contains(pid)
+            && bundleIdentifier == manifest.bundleIdentifier
+            && canonicalPath(bundleURLPath)
+                == canonicalPath(manifest.preparedAppPath)
+            && canonicalPath(executablePath)
+                == canonicalPath(manifest.executablePath)
+    }
+
     private static func launchPreparedApplication(
         manifest: PlayCoverPrepareManifest,
         sessionID: String,
         runtimeSocketPath: String,
-        timeout: Double
+        deadline: TimeInterval
     ) throws -> LaunchedApplicationIdentity {
         #if canImport(AppKit)
         let configuration = NSWorkspace.OpenConfiguration()
-        configuration.createsNewApplicationInstance = true
         configuration.activates = true
         configuration.addsToRecentItems = false
         configuration.promptsUserIfNeeded = false
-        configuration.environment = sanitizedLaunchEnvironment(
+        configuration.environment = launchConfigurationEnvironment(
             sessionID: sessionID,
             runtimeSocketPath: runtimeSocketPath,
             managedHomePath: managedHomePath(for: manifest)
         )
+        let existingApplications =
+            NSRunningApplication.runningApplications(
+                withBundleIdentifier: manifest.bundleIdentifier
+            )
+        let existingPIDs = Set(
+            existingApplications.map(\.processIdentifier)
+        )
+        guard !existingApplications.contains(where: { application in
+            guard let bundlePath = application.bundleURL?
+                    .standardizedFileURL.path,
+                  let executablePath = application.executableURL?
+                    .standardizedFileURL.path else {
+                return false
+            }
+            return canonicalPath(bundlePath)
+                    == canonicalPath(manifest.preparedAppPath)
+                && canonicalPath(executablePath)
+                    == canonicalPath(manifest.executablePath)
+        }) else {
+            throw PlayCoverBackendError.launchFailed(
+                "the exact prepared App is already running outside "
+                    + "this start invocation"
+            )
+        }
         let box = LaunchBox()
         let semaphore = DispatchSemaphore(value: 0)
         NSWorkspace.shared.openApplication(
@@ -1235,9 +1369,18 @@ public enum PlayCoverService {
         ) { application, error in
             if let application,
                let bundleIdentifier = application.bundleIdentifier,
-               let bundlePath = application.bundleURL?.standardizedFileURL.path,
+               let bundlePath = application.bundleURL?
+                    .standardizedFileURL.path,
                let executablePath = application.executableURL?
-                    .standardizedFileURL.path {
+                    .standardizedFileURL.path,
+               acceptsOwnedLaunchIdentity(
+                    pid: application.processIdentifier,
+                    bundleIdentifier: bundleIdentifier,
+                    bundleURLPath: bundlePath,
+                    executablePath: executablePath,
+                    existingPIDs: existingPIDs,
+                    manifest: manifest
+               ) {
                 box.set(
                     .success(
                         LaunchedApplicationIdentity(
@@ -1252,28 +1395,144 @@ public enum PlayCoverService {
                 box.set(
                     .failure(
                         error ?? PlayCoverBackendError.launchFailed(
-                            "NSWorkspace returned incomplete App identity"
+                            "NSWorkspace returned a pre-existing, "
+                                + "incomplete, or mismatched App identity"
                         )
                     )
                 )
             }
             semaphore.signal()
         }
-        guard semaphore.wait(
-            timeout: .now() + min(timeout, 10)
-        ) == .success,
-              let value = box.get() else {
-            throw PlayCoverBackendError.launchFailed(
-                "NSWorkspace launch completion timed out"
-            )
+        // The caller supplies the one monotonic `start --timeout` deadline
+        // shared by launch discovery and the subsequent ready Runtime hello.
+        // Large Apps may exceed LaunchServices' historical ten-second window,
+        // but discovery must not restart the public timeout.
+        var callbackError: Error?
+        func authenticatesCurrentLaunch(
+            _ identity: LaunchedApplicationIdentity
+        ) -> Bool {
+            do {
+                _ = try PlayCoverRuntimeClient(
+                    socketPath: runtimeSocketPath,
+                    sessionID: sessionID,
+                    expectedPID: identity.pid,
+                    expectedBundleIdentifier:
+                        manifest.bundleIdentifier,
+                    expectedExecutablePath:
+                        manifest.executablePath,
+                    timeoutSeconds: min(
+                        0.05,
+                        max(
+                            0.01,
+                            deadline -
+                                ProcessInfo.processInfo.systemUptime
+                        )
+                    )
+                ).hello()
+                return true
+            } catch {
+                return false
+            }
         }
-        do {
-            return try value.get()
-        } catch {
-            throw PlayCoverBackendError.launchFailed(
-                "NSWorkspace could not launch prepared App: \(error)"
-            )
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            // A large UIKit App can create its RunningBoard process and bind
+            // the injected Runtime socket before NSWorkspace invokes its
+            // completion handler. Resolve that newly-created, exact managed
+            // App identity instead of treating a slow callback as a failed
+            // launch.
+            let candidates = NSRunningApplication.runningApplications(
+                withBundleIdentifier: manifest.bundleIdentifier
+            ).compactMap { application
+                -> LaunchedApplicationIdentity? in
+                guard let bundleIdentifier =
+                        application.bundleIdentifier,
+                      let bundlePath = application.bundleURL?
+                        .standardizedFileURL.path,
+                      let executablePath = application.executableURL?
+                        .standardizedFileURL.path,
+                      acceptsOwnedLaunchIdentity(
+                        pid: application.processIdentifier,
+                        bundleIdentifier: bundleIdentifier,
+                        bundleURLPath: bundlePath,
+                        executablePath: executablePath,
+                        existingPIDs: existingPIDs,
+                        manifest: manifest
+                      ) else {
+                    return nil
+                }
+                return LaunchedApplicationIdentity(
+                    pid: application.processIdentifier,
+                    bundleIdentifier: bundleIdentifier,
+                    bundleURLPath: bundlePath,
+                    executablePath: executablePath
+                )
+            }
+            // A process that merely appeared after the initial snapshot may
+            // have been launched concurrently by Finder or another
+            // NSWorkspace client. Neither polling nor callback success grants
+            // rollback ownership until that exact PID authenticates this
+            // invocation's session/socket identity.
+            let provenCandidates = candidates.filter {
+                authenticatesCurrentLaunch($0)
+            }
+            if provenCandidates.count == 1,
+               let identity = provenCandidates.first {
+                return identity
+            }
+            if provenCandidates.count > 1 {
+                throw PlayCoverBackendError.launchFailed(
+                    "multiple App processes authenticated the same "
+                        + "launch session"
+                )
+            }
+
+            // Check the callback after polling. LaunchServices can report a
+            // generic error after RunningBoard has already created the exact
+            // process; returning the owned candidate avoids orphaning it.
+            if let value = box.get() {
+                switch value {
+                case .success(let identity):
+                    if authenticatesCurrentLaunch(identity) {
+                        return identity
+                    }
+                case .failure(let error):
+                    // A newly-created exact process may not be visible to
+                    // NSRunningApplication in the same poll that observes the
+                    // callback failure. Keep polling to the bounded deadline
+                    // so it can be claimed and rolled back by the caller.
+                    callbackError = error
+                }
+            }
+
+            if Thread.isMainThread {
+                let remaining = max(
+                    0,
+                    deadline - ProcessInfo.processInfo.systemUptime
+                )
+                _ = RunLoop.current.run(
+                    mode: .default,
+                    before: Date().addingTimeInterval(
+                        min(0.05, remaining)
+                    )
+                )
+            } else {
+                let remaining = max(
+                    0,
+                    deadline - ProcessInfo.processInfo.systemUptime
+                )
+                _ = semaphore.wait(
+                    timeout: .now() + min(0.05, remaining)
+                )
+            }
         }
+        throw PlayCoverBackendError.launchFailed(
+            "NSWorkspace did not return or expose a matching App process"
+                + (
+                    callbackError.map {
+                        "; callback error: \($0)"
+                    } ?? ""
+                )
+        )
         #else
         throw PlayCoverBackendError.launchFailed(
             "PlayCover launch is supported only on macOS"
@@ -1390,99 +1649,66 @@ public enum PlayCoverService {
         #endif
     }
 
-    private static func prepareRuntimeSocket(_ path: String) throws {
+    static func validateFreshRuntimeSocketPath(_ path: String) throws {
         let socketURL = URL(fileURLWithPath: path)
-        try FileManager.default.createDirectory(
-            at: socketURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: socketURL.deletingLastPathComponent().path
-        )
-        try removeOwnedSocketIfStale(path)
-    }
-
-    private static func removeOwnedSocketIfStale(_ path: String) throws {
+        let directoryPath =
+            socketURL.deletingLastPathComponent().path
+        let socketName = socketURL.lastPathComponent
         #if canImport(Darwin)
-        var original = stat()
-        guard lstat(path, &original) == 0 else {
-            if errno == ENOENT { return }
+        let directory = Darwin.open(
+            directoryPath,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+        )
+        guard directory >= 0 else {
             throw PlayCoverBackendError.launchFailed(
-                "cannot inspect Runtime socket: errno \(errno)"
+                "cannot open the owner-only Runtime socket "
+                    + "directory: errno \(errno)"
             )
         }
-        guard original.st_mode & S_IFMT == S_IFSOCK,
-              original.st_uid == geteuid() else {
+        defer { Darwin.close(directory) }
+        var directoryInfo = stat()
+        guard fstat(directory, &directoryInfo) == 0,
+              (directoryInfo.st_mode & S_IFMT) == S_IFDIR,
+              directoryInfo.st_uid == geteuid(),
+              (directoryInfo.st_mode & mode_t(0o077)) == 0 else {
             throw PlayCoverBackendError.launchFailed(
-                "refusing non-socket, symlink, or foreign Runtime path"
+                "Runtime socket directory is not an owner-only "
+                    + "directory"
             )
         }
-        var address = try unixAddress(path)
-        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        guard descriptor >= 0 else {
-            throw PlayCoverBackendError.launchFailed(
-                "cannot probe Runtime socket: errno \(errno)"
+        var existing = stat()
+        let inspectionResult = socketName.withCString {
+            fstatat(
+                directory,
+                $0,
+                &existing,
+                AT_SYMLINK_NOFOLLOW
             )
         }
-        defer { Darwin.close(descriptor) }
-        let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(
-                    descriptor,
-                    $0,
-                    socklen_t(MemoryLayout<sockaddr_un>.size)
-                )
-            }
-        }
-        if connected == 0 {
+        guard inspectionResult != 0 else {
             throw PlayCoverBackendError.launchFailed(
-                "a live Runtime is already listening at \(path)"
+                "refusing an existing Runtime socket path for a "
+                    + "new random session"
             )
         }
-        guard errno == ECONNREFUSED || errno == ENOENT else {
+        guard errno == ENOENT else {
             throw PlayCoverBackendError.launchFailed(
-                "cannot prove Runtime socket is stale: errno \(errno)"
+                "cannot inspect Runtime socket path: errno \(errno)"
             )
         }
-        var current = stat()
-        guard lstat(path, &current) == 0,
-              current.st_dev == original.st_dev,
-              current.st_ino == original.st_ino,
-              current.st_mode & S_IFMT == S_IFSOCK,
-              current.st_uid == geteuid() else {
-            if errno == ENOENT { return }
+        #else
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: directoryPath,
+            isDirectory: &isDirectory
+        ),
+            isDirectory.boolValue,
+            !FileManager.default.fileExists(atPath: path) else {
             throw PlayCoverBackendError.launchFailed(
-                "Runtime socket changed during cleanup"
-            )
-        }
-        guard Darwin.unlink(path) == 0 || errno == ENOENT else {
-            throw PlayCoverBackendError.launchFailed(
-                "cannot remove stale Runtime socket: errno \(errno)"
+                "Runtime socket directory or new path is invalid"
             )
         }
         #endif
-    }
-
-    private static func unixAddress(_ path: String) throws -> sockaddr_un {
-        let bytes = Array(path.utf8)
-        var address = sockaddr_un()
-        let capacity = MemoryLayout.size(ofValue: address.sun_path)
-        guard !bytes.isEmpty,
-              !bytes.contains(0),
-              bytes.count + 1 <= capacity else {
-            throw PlayCoverBackendError.launchFailed(
-                "Runtime socket path is invalid or exceeds \(capacity - 1) bytes"
-            )
-        }
-        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-        address.sun_family = sa_family_t(AF_UNIX)
-        withUnsafeMutableBytes(of: &address.sun_path) {
-            $0.initializeMemory(as: UInt8.self, repeating: 0)
-            $0.copyBytes(from: bytes)
-        }
-        return address
     }
 
     private static func canonicalJSON<T: Encodable>(

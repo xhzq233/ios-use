@@ -291,6 +291,87 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
+    func testWorkspaceLaunchEnvironmentClearsInheritedSecrets() {
+        let result = PlayCoverService.launchConfigurationEnvironment(
+            source: [
+                "HOME": "/Users/test",
+                "API_TOKEN": "secret",
+                "SSH_AUTH_SOCK": "/private/agent.sock",
+            ],
+            sessionID: "session-one",
+            runtimeSocketPath: "/state/run/s-sessionone.sock",
+            managedHomePath: "/state/managed-home"
+        )
+
+        XCTAssertEqual(result["HOME"], "/state/managed-home")
+        XCTAssertEqual(result["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
+        XCTAssertEqual(result["IOS_USE_PLAY_SESSION_ID"], "session-one")
+        XCTAssertEqual(
+            result["IOS_USE_PLAY_RUNTIME_SOCKET"],
+            "/state/run/s-sessionone.sock"
+        )
+        XCTAssertEqual(result["API_TOKEN"], "")
+        XCTAssertEqual(result["SSH_AUTH_SOCK"], "")
+        XCTAssertFalse(result.values.contains("secret"))
+    }
+
+    func testLaunchIdentityMustBeNewAndMatchPreparedGeneration()
+        throws {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "a", count: 64)
+        )
+
+        XCTAssertTrue(
+            PlayCoverService.acceptsOwnedLaunchIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                existingPIDs: [41],
+                manifest: manifest
+            )
+        )
+        XCTAssertFalse(
+            PlayCoverService.acceptsOwnedLaunchIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                existingPIDs: [42],
+                manifest: manifest
+            ),
+            "a completion callback must never claim a pre-existing PID"
+        )
+        XCTAssertFalse(
+            PlayCoverService.acceptsOwnedLaunchIdentity(
+                pid: 43,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: fixture.app.path,
+                executablePath: manifest.executablePath,
+                existingPIDs: [],
+                manifest: manifest
+            )
+        )
+        XCTAssertFalse(
+            PlayCoverService.acceptsOwnedLaunchIdentity(
+                pid: 44,
+                bundleIdentifier: "com.example.other",
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                existingPIDs: [],
+                manifest: manifest
+            )
+        )
+    }
+
     func testRuntimeCandidatesPreferCurrentManagedHome() {
         let paths = IOSUsePaths.resolve(
             environment: ["IOS_USE_HOME": "/state/ios-use"]

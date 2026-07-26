@@ -252,7 +252,18 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             ],
             "ios-use must sign loose children and nested bundles before root"
         )
-        XCTAssertEqual(manifest.entitlementDiff.removedFromOriginal, [])
+        XCTAssertEqual(
+            manifest.entitlementDiff.removedFromOriginal,
+            [
+                "application-identifier",
+                "aps-environment",
+                "com.apple.developer.associated-domains",
+                "com.apple.developer.icloud-container-identifiers",
+                "com.apple.developer.team-identifier",
+                "com.apple.security.application-groups",
+                "keychain-access-groups",
+            ]
+        )
         XCTAssertFalse(
             manifest.entitlementDiff.playCoverBaseline.isEmpty,
             "the root signature must retain the PlayCover composer baseline"
@@ -894,8 +905,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         let iosUseSign = "PlayCoverUpstreamEngine.signInsideOut"
         let arm64 =
             "slices[cpu=16777228,subtype=0,occurrence=0]."
-        let extensionPath =
-            "PlugIns/FixtureExtension.appex/FixtureExtension"
         let pinnedSandbox = [
             "(allow user-preference-write (preference-domain "
                 + "\".GlobalPreferences\"))",
@@ -966,7 +975,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Fixture",
                 arm64 + "size",
                 .exact("90096"),
-                .exact("92912"),
+                .exact("91824"),
                 "The pinned PlayTools path and --deep entitlement signature "
                     + "produce a different signed thin-slice size.",
                 "PlayTools.installInIPA + \(pinnedSign)",
@@ -998,10 +1007,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
                         + "vmaddr=4295032832;vmsize=32768;fileoff=65536;"
-                        + "filesize=27376;maxprot=1;initprot=1;sections=0;"
+                        + "filesize=26288;maxprot=1;initprot=1;sections=0;"
                         + "flags=0;sha256="
-                        + "aa93b8f897221d6f3f3b08c71e71fe77b1dc0fbe2a210ac0"
-                        + "b717e518278cace8"
+                        + "9f0db39d2e7f7bbd542923bec31766fea83b697ef99e129c0"
+                        + "7cbbfb406e92208"
                 ),
                 "Different signature payload sizes change only the __LINKEDIT "
                     + "segment extent.",
@@ -1020,9 +1029,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 ),
                 .exact(
                     "cmd=0x0000001d;size=16;semantic=dataoff=65840;"
-                        + "datasize=27072;sha256="
-                        + "62bfb13f4eac76422d1acc896c828b12723b819f69b3bbd66"
-                        + "fd2e1c0926ff077"
+                        + "datasize=25984;sha256="
+                        + "21de3d7e64c8e726e82709dd8241b76421ada099338c264f2"
+                        + "697a38563f80d50"
                 ),
                 "Pinned --deep and ios-use inside-out signing encode different "
                     + "entitlement payload sizes in LC_CODE_SIGNATURE.",
@@ -1097,18 +1106,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.length",
                 pinned: "6241",
-                iosUse: "9065",
+                iosUse: "7969",
                 reason: "The distinct canonical entitlement payloads have "
                     + "different complete SuperBlob lengths."
-            ),
-            signatureEvidenceAllowance(
-                "main-superblob-padding-size",
-                path: "Fixture",
-                field: "superBlob.paddingSize",
-                pinned: "18015",
-                iosUse: "18007",
-                reason: "codesign aligns the distinct SuperBlob payloads "
-                    + "within their recorded LC_CODE_SIGNATURE extents."
             ),
             signatureEvidenceAllowance(
                 "main-superblob-structure",
@@ -1118,23 +1118,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "bfc22c32540b50c222c8c857a3bced4edb396770e1e472cc"
                         + "c80314f59dfccfcb",
                 iosUse:
-                    "a9238fa7c6ec3a3b3f5ff07075668a230e7cec8d2b29c5d7"
-                        + "9428aee7aef56050",
+                    "9c696f32d870c04857eb33bb0e59e5d3da2154c6044a7be1"
+                        + "c1fdb1b3eb9d99ed",
                 reason: "The exact slot offsets and envelope layout follow "
                     + "the two different entitlement blob sizes."
-            ),
-            signatureEvidenceAllowance(
-                "main-superblob-padding",
-                path: "Fixture",
-                field: "superBlob.paddingSHA256",
-                pinned:
-                    "6374cf23aba8af727e5ee1206e3f182abcbebb2a88ed922cf"
-                        + "9eee069b43f438d",
-                iosUse:
-                    "6b30a91c0f19e68955540a4cb036a2b6b769d771f170cbba"
-                        + "d8f316def886ab67",
-                reason: "The exact ignored alignment bytes left by each "
-                    + "codesign path are retained as signature evidence."
             ),
             signatureEvidenceAllowance(
                 "main-resource-seal-slot",
@@ -1145,8 +1132,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "539c4ff7df096fe00ff51aefcd29f3ce7adc4e2be315ee372"
                         + "4519d2eecaf52d4",
                 iosUse:
-                    "8b6e8a3a5f15c3318f6a279c60efec987c791dcf2804c406"
-                        + "fb4912d290974ed3",
+                    "dd3156e16f9a14b23b4ffdaeb9db0887eacca77acc7a27aaf"
+                        + "34decede49d3d2b",
                 reason: "The pinned PlayTools/plugin resources and ios-use "
                     + "Runtime resources have distinct exact CodeResources "
                     + "seals."
@@ -1160,8 +1147,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0ba86751c7eeb8616eb14d560b4c7e8f8903e101854520f9"
                         + "6edc1c95db87781f",
                 iosUse:
-                    "3e237669308e5f410c2a863baa17f27979056b8d3243c001"
-                        + "dc03da80e4558bfa",
+                    "db0a6717fd6d5592540f0989fd74dbdf7df42bb80e8887c39"
+                        + "3c0d9effd759742",
                 reason: "Code slot zero contains the deliberately different "
                     + "injected load command and signature extent."
             ),
@@ -1170,7 +1157,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=5,occurrence=0].length",
                 pinned: "2986",
-                iosUse: "4559",
+                iosUse: "3884",
                 reason: "The compared canonical XML entitlement dictionaries "
                     + "serialize to these exact blob lengths."
             ),
@@ -1183,8 +1170,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0a7652ac0273840acb038840ead73854a58f76340105fc1210"
                         + "ea7a67033c7aea",
                 iosUse:
-                    "3cbe6b448be43b6692eafbed9da4d4698cd8b70dcfeeb5e5"
-                        + "1a8c9482a6a20a4d",
+                    "3f18e655ddc17d07e9e4ffd771dd6b02038bfa91b3f964967"
+                        + "068c94c0a47a362",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full XML entitlement blobs must match "
                     + "these exact encodings."
@@ -1194,7 +1181,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].offset",
                 pinned: "3931",
-                iosUse: "5504",
+                iosUse: "4829",
                 reason: "The DER slot starts immediately after the different "
                     + "XML entitlement blob."
             ),
@@ -1203,7 +1190,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].length",
                 pinned: "2302",
-                iosUse: "3553",
+                iosUse: "3132",
                 reason: "The decoded and parity-checked DER entitlement "
                     + "dictionaries have these exact encoded lengths."
             ),
@@ -1216,8 +1203,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0c0a0d9d9d91d53004e2d343aedba1b4f6110cea9783bacc"
                         + "6c2fe2ddcce8e08f",
                 iosUse:
-                    "54d48840922e5363956de7cf363dad2db0f4a6c51b2c83cc"
-                        + "60f11f5f0cf8c231",
+                    "69ab921a7ad11599dc961ebc273cde53a828ac157bc958561"
+                        + "b6cd6e4ffe1d03e",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full DER entitlement blobs must match "
                     + "these exact encodings."
@@ -1227,7 +1214,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=65536,occurrence=0].offset",
                 pinned: "6233",
-                iosUse: "9057",
+                iosUse: "7961",
                 reason: "The empty ad-hoc CMS wrapper follows the exact XML "
                     + "and DER entitlement slot extents."
             ),
@@ -1239,8 +1226,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0fefbbc83136bf80b28853dd1c249300f56c34cad6e06600"
                         + "f4fe3f102713c62d",
                 iosUse:
-                    "e3ed554e0df736b58dfe4edc90550338b6de5a63ecf8f7c"
-                        + "c3ebdbee0399b0ce4",
+                    "bd75e59e2503ecfb9f94c2a74d0078ad14af6fa8dcd4bb5"
+                        + "a628faf785fad5e85",
                 reason: "DER decoding matches each side's separately allowed "
                     + "canonical XML entitlement dictionary."
             ),
@@ -1266,89 +1253,13 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                         + "f4fe3f102713c62d"
                 ),
                 .exact(
-                    "e3ed554e0df736b58dfe4edc90550338b6de5a63ecf8f7c"
-                        + "c3ebdbee0399b0ce4"
+                    "bd75e59e2503ecfb9f94c2a74d0078ad14af6fa8dcd4bb5"
+                        + "a628faf785fad5e85"
                 ),
                 "The ios-use Runtime socket/managed-home rules intentionally "
                     + "change the signed main entitlement payload.",
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
-            ),
-            allowance(
-                "main-application-identifier",
-                "Fixture",
-                arm64 + "signature.entitlements.application-identifier",
-                .absent,
-                .exact("\"TEAM.com.example.differential\""),
-                "ios-use preserves the source application identifier while "
-                    + "the pinned final --deep sign drops it.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "main-push-environment",
-                "Fixture",
-                arm64 + "signature.entitlements.aps-environment",
-                .absent,
-                .exact("\"development\""),
-                "ios-use preserves the source push environment while the "
-                    + "pinned final --deep sign drops it.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "main-associated-domains",
-                "Fixture",
-                arm64 + "signature.entitlements."
-                    + "com.apple.developer.associated-domains",
-                .absent,
-                .exact("[\"applinks:example.com\"]"),
-                "ios-use preserves the source associated-domain capability.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "main-icloud-containers",
-                "Fixture",
-                arm64 + "signature.entitlements."
-                    + "com.apple.developer.icloud-container-identifiers",
-                .absent,
-                .exact("[\"iCloud.com.example.differential\"]"),
-                "ios-use preserves the source iCloud container capability.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "main-team-identifier",
-                "Fixture",
-                arm64 + "signature.entitlements."
-                    + "com.apple.developer.team-identifier",
-                .absent,
-                .exact("\"TEAM\""),
-                "ios-use preserves the source team identifier.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "main-application-groups",
-                "Fixture",
-                arm64 + "signature.entitlements."
-                    + "com.apple.security.application-groups",
-                .absent,
-                .exact("[\"group.com.example.differential\"]"),
-                "ios-use preserves the source App Group capability.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "main-keychain-groups",
-                "Fixture",
-                arm64 + "signature.entitlements.keychain-access-groups",
-                .absent,
-                .exact("[\"TEAM.com.example.differential\"]"),
-                "ios-use preserves the source keychain group capability.",
-                pinnedSign,
-                iosUseSign
             ),
             allowance(
                 "embedded-runtime-object",
@@ -1378,349 +1289,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "inside its single Runtime framework.",
                 "PlayTools.installPluginInIPA",
                 "IOSUsePlayRuntime"
-            ),
-            allowance(
-                "extension-signed-size",
-                extensionPath,
-                arm64 + "size",
-                .exact("68032"),
-                .exact("68928"),
-                "Inside-out signing preserves extension entitlements, so its "
-                    + "signed thin-slice is larger than pinned --deep output.",
-                pinnedSign,
-                iosUseSign
-            ),
-            signatureEvidenceAllowance(
-                "extension-superblob-length",
-                path: extensionPath,
-                field: "superBlob.length",
-                pinned: "691",
-                iosUse: "1585",
-                reason: "Only ios-use preserves the extension entitlement "
-                    + "slots, producing this exact SuperBlob extent."
-            ),
-            signatureEvidenceAllowance(
-                "extension-superblob-padding-size",
-                path: extensionPath,
-                field: "superBlob.paddingSize",
-                pinned: "18013",
-                iosUse: "18015",
-                reason: "The two extension SuperBlobs have distinct exact "
-                    + "alignment extents within LC_CODE_SIGNATURE."
-            ),
-            signatureEvidenceAllowance(
-                "extension-superblob-structure",
-                path: extensionPath,
-                field: "superBlob.structureSHA256",
-                pinned:
-                    "02ab98f005a9f33d71005e0fce048eca18fc7bfda67b8ec0"
-                        + "b9805a7182be7268",
-                iosUse:
-                    "3f50f1d3ad7c4f32a2056a095f092d8024a1eb326030111c"
-                        + "3ade929bebe62e51",
-                reason: "The exact envelope records the two additional "
-                    + "ios-use entitlement slots and shifted offsets."
-            ),
-            signatureEvidenceAllowance(
-                "extension-superblob-padding",
-                path: extensionPath,
-                field: "superBlob.paddingSHA256",
-                pinned:
-                    "a751f72fbbaea8b15333f8f9ddc6920d239e7987b7e8813a"
-                        + "20bc4905c30d755a",
-                iosUse:
-                    "db67065cb20b009ec3df05a65c66fc14d13499cddfef6f82"
-                        + "bcf38352ca7ed6d6",
-                reason: "The exact ignored padding left by each codesign path "
-                    + "is retained and explicitly allowed."
-            ),
-            signatureEvidenceAllowance(
-                "extension-superblob-slot-count",
-                path: extensionPath,
-                field: "superBlob.slots.count",
-                pinned: "3",
-                iosUse: "5",
-                reason: "ios-use adds exactly XML and DER entitlement slots "
-                    + "that pinned --deep omits."
-            ),
-            signatureEvidenceAllowance(
-                "extension-code-directory-offset",
-                path: extensionPath,
-                field: "superBlob.slots[type=0,occurrence=0].offset",
-                pinned: "36",
-                iosUse: "52",
-                reason: "The larger ios-use SuperBlob index table shifts the "
-                    + "primary CodeDirectory by sixteen bytes."
-            ),
-            signatureEvidenceAllowance(
-                "extension-code-directory-length",
-                path: extensionPath,
-                field: "superBlob.slots[type=0,occurrence=0].length",
-                pinned: "635",
-                iosUse: "763",
-                reason: "Preserved extension entitlements add four signed "
-                    + "special-slot hash positions."
-            ),
-            signatureEvidenceAllowance(
-                "extension-code-directory-structure",
-                path: extensionPath,
-                field: "superBlob.slots[type=0,occurrence=0]."
-                    + "codeDirectory.structureSHA256",
-                pinned:
-                    "e63fc62d1f394fc81cd29cf5582f76ae6852e5761dc1c31b"
-                        + "1fd5c9c256f6896b",
-                iosUse:
-                    "4bbc536f1bdd55010419df0ea9f29bf4d0ddbebe025d47dea"
-                        + "7d22e0215b32cec",
-                reason: "The structure hash captures the exact differing "
-                    + "special-slot count while excluding hash payloads."
-            ),
-            signatureEvidenceAllowance(
-                "extension-special-slot-minus-four",
-                path: extensionPath,
-                field: "superBlob.slots[type=0,occurrence=0]."
-                    + "codeDirectory.specialSlots[-4]",
-                pinned: nil,
-                iosUse: String(repeating: "0", count: 64),
-                reason: "The preserved entitlement slot range introduces the "
-                    + "required empty -4 placeholder."
-            ),
-            signatureEvidenceAllowance(
-                "extension-xml-entitlements-binding",
-                path: extensionPath,
-                field: "superBlob.slots[type=0,occurrence=0]."
-                    + "codeDirectory.specialSlots[-5].binding",
-                pinned: nil,
-                iosUse: "bound",
-                reason: "Only ios-use binds the preserved XML entitlements."
-            ),
-            signatureEvidenceAllowance(
-                "extension-special-slot-minus-six",
-                path: extensionPath,
-                field: "superBlob.slots[type=0,occurrence=0]."
-                    + "codeDirectory.specialSlots[-6]",
-                pinned: nil,
-                iosUse: String(repeating: "0", count: 64),
-                reason: "The preserved DER slot range introduces the required "
-                    + "empty -6 placeholder."
-            ),
-            signatureEvidenceAllowance(
-                "extension-der-entitlements-binding",
-                path: extensionPath,
-                field: "superBlob.slots[type=0,occurrence=0]."
-                    + "codeDirectory.specialSlots[-7].binding",
-                pinned: nil,
-                iosUse: "bound",
-                reason: "Only ios-use binds the parity-checked DER "
-                    + "entitlements."
-            ),
-            signatureEvidenceAllowance(
-                "extension-code-slot-zero",
-                path: extensionPath,
-                field: "superBlob.slots[type=0,occurrence=0]."
-                    + "codeDirectory.codeSlots[0]",
-                pinned:
-                    "b7e6b5795a5e9db819dc22a12f707f03985fc17c10f94353"
-                        + "61d8f8c43d576dd9",
-                iosUse:
-                    "8002bfc1676ca44ba2ec5add34afef6033144c16fee81fda8"
-                        + "643492975701677",
-                reason: "Code slot zero contains the exact differing "
-                    + "LC_CODE_SIGNATURE extent."
-            ),
-            signatureEvidenceAllowance(
-                "extension-requirements-slot-offset",
-                path: extensionPath,
-                field: "superBlob.slots[type=2,occurrence=0].offset",
-                pinned: "671",
-                iosUse: "815",
-                reason: "The identical requirement blob follows the exact "
-                    + "differently sized CodeDirectory."
-            ),
-            signatureEvidenceAllowance(
-                "extension-xml-entitlements-slot",
-                path: extensionPath,
-                field: "superBlob.slots[type=5,occurrence=0].presence",
-                pinned: nil,
-                iosUse:
-                    "present;index=2;offset=827;type=5;magic=0xfade7171;"
-                        + "length=507;normalizedBytesSHA256="
-                        + "44b5de8a6f64ae13e1d5f98a89d2976f66e4ffc8b9b975b1"
-                        + "1855a2799edcb50e",
-                reason: "ios-use preserves exactly one XML entitlement slot "
-                    + "with this path-normalized raw encoding."
-            ),
-            signatureEvidenceAllowance(
-                "extension-cms-slot-index",
-                path: extensionPath,
-                field: "superBlob.slots[type=65536,occurrence=0].index",
-                pinned: "2",
-                iosUse: "4",
-                reason: "The identical empty CMS wrapper follows the two "
-                    + "additional entitlement table entries."
-            ),
-            signatureEvidenceAllowance(
-                "extension-cms-slot-offset",
-                path: extensionPath,
-                field: "superBlob.slots[type=65536,occurrence=0].offset",
-                pinned: "683",
-                iosUse: "1577",
-                reason: "The CMS wrapper follows the exact CodeDirectory, "
-                    + "requirements, XML, and DER slot extents."
-            ),
-            signatureEvidenceAllowance(
-                "extension-der-entitlements-slot",
-                path: extensionPath,
-                field: "superBlob.slots[type=7,occurrence=0].presence",
-                pinned: nil,
-                iosUse:
-                    "present;index=3;offset=1334;type=7;magic=0xfade7172;"
-                        + "length=243;normalizedBytesSHA256="
-                        + "d836ebc012cf2cf760d6d2f21f20faffe5a7c8557a9814e1"
-                        + "7b5daff854b9bf2b",
-                reason: "ios-use preserves exactly one DER entitlement slot "
-                    + "with this path-normalized raw encoding."
-            ),
-            signatureEvidenceAllowance(
-                "extension-der-entitlements-hash",
-                path: extensionPath,
-                field: "derEntitlementsCanonicalSHA256",
-                pinned: nil,
-                iosUse:
-                    "30df76f405220f89fd06a6d1aa1a29baddaa1fbf6f6fd622"
-                        + "6224bba002ac2648",
-                reason: "The decoded DER dictionary exactly matches the "
-                    + "separately compared preserved XML entitlements."
-            ),
-            allowance(
-                "extension-linkedit-command",
-                extensionPath,
-                arm64 + "loadCommands[2]",
-                .exact(
-                    "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
-                        + "vmaddr=4295016448;vmsize=32768;fileoff=49152;"
-                        + "filesize=18880;maxprot=1;initprot=1;sections=0;"
-                        + "flags=0;sha256="
-                        + "79287df6792b5a42fc0da9777505760011f2fe1d8f7738cae"
-                        + "1b7fa0a2d2fdc64"
-                ),
-                .exact(
-                    "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
-                        + "vmaddr=4295016448;vmsize=32768;fileoff=49152;"
-                        + "filesize=19776;maxprot=1;initprot=1;sections=0;"
-                        + "flags=0;sha256="
-                        + "46c911dd74a600ed9f6036bf1ef49a88e1e74795772ddf025"
-                        + "bb0e0deebe27df1"
-                ),
-                "Preserved extension entitlements change the __LINKEDIT "
-                    + "signature extent.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "extension-code-signature-command",
-                extensionPath,
-                arm64 + "loadCommands[15]",
-                .exact(
-                    "cmd=0x0000001d;size=16;semantic=dataoff=49328;"
-                        + "datasize=18704;sha256="
-                        + "d1d67e07cf6766879c042ae0b59d357c0f4e730aa328062c"
-                        + "019f55f7d9116598"
-                ),
-                .exact(
-                    "cmd=0x0000001d;size=16;semantic=dataoff=49328;"
-                        + "datasize=19600;sha256="
-                        + "bc622e5b5cae94fc611287502ff498450fdcca35a7ff2e6b"
-                        + "1dbfa93e7656a33b"
-                ),
-                "Preserved extension entitlements change only the "
-                    + "LC_CODE_SIGNATURE payload.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "extension-signature-cdhash",
-                extensionPath,
-                arm64 + "signature.cdHash",
-                .lowercaseHexDigest(length: 40),
-                .lowercaseHexDigest(length: 40),
-                "Preserving source extension capabilities changes its "
-                    + "CodeDirectory digest; immutable bytes and all other "
-                    + "signature metadata are compared separately.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "extension-code-directory-slots",
-                extensionPath,
-                arm64 + "signature.codeDirectory.hashes",
-                .exact("13+3"),
-                .exact("13+7"),
-                "The preserved extension entitlement payload contributes "
-                    + "additional signed special slots.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "extension-signature-entitlements-hash",
-                extensionPath,
-                arm64 + "signature.entitlementsCanonicalSHA256",
-                .absent,
-                .exact(
-                    "30df76f405220f89fd06a6d1aa1a29baddaa1fbf6f6fd622"
-                        + "6224bba002ac2648"
-                ),
-                "Pinned --deep drops extension entitlements while ios-use "
-                    + "inside-out signing restores their signed payload.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "extension-application-identifier",
-                extensionPath,
-                arm64 + "signature.entitlements.application-identifier",
-                .absent,
-                .exact("\"TEAM.com.example.differential.extension\""),
-                "ios-use restores the source extension application identifier "
-                    + "after pinned --deep signing drops it.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "extension-team-identifier",
-                extensionPath,
-                arm64 + "signature.entitlements."
-                    + "com.apple.developer.team-identifier",
-                .absent,
-                .exact("\"TEAM\""),
-                "ios-use restores the source extension team identifier after "
-                    + "pinned --deep signing drops it.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "extension-application-group",
-                extensionPath,
-                arm64 + "signature.entitlements."
-                    + "com.apple.security.application-groups",
-                .absent,
-                .exact("[\"group.com.example.differential\"]"),
-                "ios-use restores the source extension App Group after pinned "
-                    + "--deep signing drops it.",
-                pinnedSign,
-                iosUseSign
-            ),
-            allowance(
-                "extension-custom-capability",
-                extensionPath,
-                arm64 + "signature.entitlements."
-                    + "com.example.extension-capability",
-                .absent,
-                .exact("true"),
-                "ios-use restores the representative extension capability "
-                    + "after pinned --deep signing drops it.",
-                pinnedSign,
-                iosUseSign
             ),
         ]
     }

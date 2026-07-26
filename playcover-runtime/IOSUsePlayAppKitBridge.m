@@ -13,6 +13,7 @@
 typedef id (*IOSUseBridgeSendID)(id, SEL);
 typedef id (*IOSUseBridgeSendIDInteger)(id, SEL, NSInteger);
 typedef BOOL (*IOSUseBridgeSendBool)(id, SEL);
+typedef BOOL (*IOSUseBridgeSendBoolInteger)(id, SEL, NSInteger);
 typedef NSInteger (*IOSUseBridgeSendInteger)(id, SEL);
 typedef CGFloat (*IOSUseBridgeSendFloat)(id, SEL);
 typedef CGPoint (*IOSUseBridgeSendPoint)(id, SEL);
@@ -116,6 +117,13 @@ static id IOSUsePlayCanvasView;
 static IOSUsePlayHostCanvasLayout IOSUsePlayCurrentHostCanvasLayout;
 static BOOL IOSUsePlayHostCanvasLayoutReady;
 static BOOL IOSUsePlayHostCanvasLayoutUpdateScheduled;
+static id IOSUsePlayBootstrapContentWindow;
+static BOOL IOSUsePlayBootstrapContentReady;
+static BOOL IOSUsePlayBootstrapContentNormalizationScheduled;
+static NSUInteger IOSUsePlayBootstrapContentNormalizationAttempts;
+static NSUInteger IOSUsePlayHostContentGeneration;
+static NSUInteger IOSUsePlayHostActivationGeneration;
+static NSUInteger IOSUsePlayHostActivationAttempts;
 static Class IOSUsePlayResizeHookClass;
 static IOSUseBridgeSendProposedSize IOSUsePlayOriginalProposedSize;
 static NSString *IOSUsePlayHostTitle;
@@ -1694,74 +1702,14 @@ static CGSize IOSUseBridgeFixedSceneCanvasSize(void) {
     );
 }
 
-static BOOL IOSUseBridgeSceneGeometryHasFixedSystemFrame(
+static BOOL IOSUseBridgeSceneHasFixedCanvas(
     UIWindowScene *scene,
     UIWindow *uiWindow
 ) {
-    if (scene == nil || uiWindow == nil || uiWindow.windowScene != scene ||
-        !IOSUseBridgeRectIsDeviceScreen(uiWindow.bounds)) {
-        return NO;
-    }
-    if (@available(macCatalyst 16.0, *)) {
-        CGRect systemFrame = scene.effectiveGeometry.systemFrame;
-        CGSize fixed = IOSUseBridgeFixedSceneCanvasSize();
-        return !CGRectIsNull(systemFrame) &&
-            !CGRectIsInfinite(systemFrame) &&
-            isfinite(systemFrame.origin.x) &&
-            isfinite(systemFrame.origin.y) &&
-            IOSUseBridgeApproximatelyEqual(systemFrame.size.width, fixed.width) &&
-            IOSUseBridgeApproximatelyEqual(systemFrame.size.height, fixed.height);
-    }
-    return NO;
-}
-
-static void IOSUseBridgeScheduleSceneGeometryVerification(
-    UIWindowScene *scene,
-    UIWindow *uiWindow,
-    NSUInteger remainingAttempts
-) {
-    // `requestGeometryUpdate...` has only an error callback.  Do not install
-    // or size the AppKit wrapper until the requested system frame is actually
-    // observable; otherwise its asynchronous update can overwrite the host's
-    // first resizable frame after we have marked it configured.
-    dispatch_after(
-        dispatch_time(
-            DISPATCH_TIME_NOW,
-            (int64_t)(NSEC_PER_MSEC * 25)
-        ),
-        dispatch_get_main_queue(),
-        ^{
-            if (scene != IOSUsePlaySceneGeometryScene ||
-                IOSUsePlaySceneGeometryState !=
-                    IOSUseBridgeSceneGeometryStatePending) {
-                return;
-            }
-            if (IOSUseBridgeSceneGeometryHasFixedSystemFrame(
-                    scene,
-                    uiWindow
-                )) {
-                IOSUsePlaySceneGeometryState =
-                    IOSUseBridgeSceneGeometryStateReady;
-                IOSUsePlaySceneGeometryFailure = nil;
-                [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
-                return;
-            }
-            if (remainingAttempts > 0) {
-                IOSUseBridgeScheduleSceneGeometryVerification(
-                    scene,
-                    uiWindow,
-                    remainingAttempts - 1
-                );
-                return;
-            }
-            IOSUsePlaySceneGeometryState =
-                IOSUseBridgeSceneGeometryStateFailed;
-            IOSUsePlaySceneGeometryFailure =
-                @"fixed UIWindowSceneGeometryPreferencesMac request did not "
-                 "settle to a 430 x 932 system frame";
-            [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
-        }
-    );
+    return scene != nil &&
+        uiWindow != nil &&
+        uiWindow.windowScene == scene &&
+        IOSUseBridgeRectIsDeviceScreen(uiWindow.bounds);
 }
 
 static IOSUseBridgeSceneGeometryState
@@ -1784,63 +1732,26 @@ IOSUseBridgeLockSceneToFixedCanvas(UIWindow *uiWindow) {
             IOSUseBridgeSceneGeometryStateNotRequested;
         IOSUsePlaySceneGeometryFailure = nil;
     }
-    if (IOSUsePlaySceneGeometryState ==
-        IOSUseBridgeSceneGeometryStateReady ||
-        IOSUsePlaySceneGeometryState ==
-            IOSUseBridgeSceneGeometryStateFailed) {
-        return IOSUsePlaySceneGeometryState;
-    }
-    if (IOSUsePlaySceneGeometryState ==
-        IOSUseBridgeSceneGeometryStatePending) {
-        return IOSUsePlaySceneGeometryState;
-    }
     if (@available(macCatalyst 16.0, *)) {
         scene.sizeRestrictions.allowsFullScreen = NO;
-        CGRect currentSystemFrame = scene.effectiveGeometry.systemFrame;
-        if (CGRectIsNull(currentSystemFrame) ||
-            CGRectIsInfinite(currentSystemFrame) ||
-            !isfinite(currentSystemFrame.origin.x) ||
-            !isfinite(currentSystemFrame.origin.y)) {
-            currentSystemFrame = CGRectZero;
-        }
-        CGRect fixedSystemFrame = CGRectMake(
-            currentSystemFrame.origin.x,
-            currentSystemFrame.origin.y,
-            fixed.width,
-            fixed.height
-        );
-        UIWindowSceneGeometryPreferencesMac *preferences =
-            [[UIWindowSceneGeometryPreferencesMac alloc]
-                initWithSystemFrame:fixedSystemFrame];
+    }
+    if (IOSUseBridgeSceneHasFixedCanvas(scene, uiWindow)) {
+        IOSUsePlaySceneGeometryState =
+            IOSUseBridgeSceneGeometryStateReady;
+        IOSUsePlaySceneGeometryFailure = nil;
+    } else {
+        // `effectiveGeometry.systemFrame` is the public AppKit window frame,
+        // including its title bar. It is deliberately taller than the fixed
+        // UIKit canvas and must not be forced to 430 x 932. The size
+        // restrictions and observed UIWindow bounds are the authoritative
+        // fixed-canvas proof; Runtime's periodic main-queue probe retries
+        // while UIKit applies them.
         IOSUsePlaySceneGeometryState =
             IOSUseBridgeSceneGeometryStatePending;
-        IOSUsePlaySceneGeometryFailure = nil;
-        [scene requestGeometryUpdateWithPreferences:preferences
-                                       errorHandler:^(NSError *requestError) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (scene != IOSUsePlaySceneGeometryScene ||
-                    IOSUsePlaySceneGeometryState !=
-                        IOSUseBridgeSceneGeometryStatePending) {
-                    return;
-                }
-                IOSUsePlaySceneGeometryState =
-                    IOSUseBridgeSceneGeometryStateFailed;
-                IOSUsePlaySceneGeometryFailure =
-                    requestError.localizedDescription ?:
-                    @"fixed UIWindowSceneGeometryPreferencesMac request failed";
-                [IOSUsePlayAppKitBridge configureFixedWindow:NULL];
-            });
-        }];
-        IOSUseBridgeScheduleSceneGeometryVerification(
-            scene,
-            uiWindow,
-            79
-        );
-        return IOSUsePlaySceneGeometryState;
+        IOSUsePlaySceneGeometryFailure =
+            @"waiting for UIWindowScene size restrictions to settle to the "
+             "fixed 430 x 932 UIKit canvas";
     }
-    IOSUsePlaySceneGeometryState = IOSUseBridgeSceneGeometryStateFailed;
-    IOSUsePlaySceneGeometryFailure =
-        @"UIWindowSceneGeometryPreferencesMac requires macCatalyst 16.0";
     return IOSUsePlaySceneGeometryState;
 }
 
@@ -1897,30 +1808,29 @@ static NSUInteger IOSUseBridgeEnableAllResizableEdges(
     return allEdges;
 }
 
-static BOOL IOSUseBridgeInstallAllResizableEdgesHook(
-    id window,
-    Class fullScreenWindowClass
-) {
+static BOOL IOSUseBridgeInstallAllResizableEdgesHook(id window) {
     Class windowClass = [window class];
+    Class standardWindowClass = NSClassFromString(@"NSWindow");
+    if (windowClass == standardWindowClass) {
+        return YES;
+    }
+    // UIKitMacHelper currently uses UINSWindow rather than the older
+    // UINSFullScreenWindow on some macOS releases. Limit the compatibility
+    // override to the exact UIKit-owned host class; never mutate NSWindow or
+    // an unrelated AppKit subclass.
+    if (![NSStringFromClass(windowClass) hasPrefix:@"UINS"]) {
+        return NO;
+    }
     SEL selector = NSSelectorFromString(
         @"_resizableEdgesForGrowing:shrinking:"
     );
-    Class standardWindowClass =
-        class_getSuperclass(fullScreenWindowClass);
     Method windowMethod =
         class_getInstanceMethod(windowClass, selector);
-    Method standardMethod =
-        class_getInstanceMethod(standardWindowClass, selector);
     const char *windowTypes = windowMethod == NULL
         ? NULL
         : method_getTypeEncoding(windowMethod);
-    const char *standardTypes = standardMethod == NULL
-        ? NULL
-        : method_getTypeEncoding(standardMethod);
     if (!IOSUseBridgeResizableEdgesMethodMatches(windowMethod) ||
-        !IOSUseBridgeResizableEdgesMethodMatches(standardMethod) ||
-        windowTypes == NULL || standardTypes == NULL ||
-        strcmp(windowTypes, standardTypes) != 0) {
+        windowTypes == NULL) {
         return NO;
     }
 
@@ -1940,19 +1850,11 @@ static BOOL IOSUseBridgeInstallAllResizableEdgesHook(
 
 static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
     Class windowClass = [window class];
-    Class fullScreenWindowClass =
-        NSClassFromString(@"UINSFullScreenWindow");
-    if (fullScreenWindowClass == Nil) {
+    if (!IOSUseBridgeInstallAllResizableEdgesHook(window)) {
         return NO;
     }
-    if (![window isKindOfClass:fullScreenWindowClass]) {
+    if (![NSStringFromClass(windowClass) hasPrefix:@"UINS"]) {
         return YES;
-    }
-    if (!IOSUseBridgeInstallAllResizableEdgesHook(
-            window,
-            fullScreenWindowClass
-        )) {
-        return NO;
     }
     if (IOSUsePlayResizeHookClass == windowClass &&
         IOSUsePlayOriginalProposedSize != NULL) {
@@ -1966,8 +1868,10 @@ static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
         @"_sizeForProposedSize:resizeEdges:"
     );
     Method method = class_getInstanceMethod(windowClass, selector);
-    if (method == NULL ||
-        method_getNumberOfArguments(method) != 4) {
+    if (method == NULL) {
+        return NO;
+    }
+    if (method_getNumberOfArguments(method) != 4) {
         return NO;
     }
     char *returnType = method_copyReturnType(method);
@@ -2016,6 +1920,10 @@ static BOOL IOSUseBridgeApplyWindowPolicy(id window) {
     // Preserve UIKitMacHelper's ordinary titled window. The host owns only
     // public resize policy; UIKit keeps its fixed 430 x 932 logical scene.
     const NSInteger resizable = 1 << 3;
+    // UIKitMacHelper may override both AppKit's resizable-edge hit testing
+    // and proposed-size path. The compatibility hook is restricted to the
+    // exact UINS host class, and four-edge availability remains part of the
+    // launch contract.
     if (!IOSUseBridgeInstallSimulatorScaleResizeHook(window)) {
         return NO;
     }
@@ -2117,7 +2025,179 @@ static BOOL IOSUseBridgeInstallHostCanvas(id window) {
     IOSUsePlayHostContentView = hostContent;
     IOSUsePlayCanvasView = currentContent;
     IOSUsePlayHostCanvasLayoutReady = NO;
+    IOSUsePlayBootstrapContentWindow = window;
+    IOSUsePlayBootstrapContentReady = NO;
+    IOSUsePlayBootstrapContentNormalizationScheduled = NO;
+    IOSUsePlayBootstrapContentNormalizationAttempts = 0;
+    IOSUsePlayHostContentGeneration += 1;
+    IOSUsePlayHostActivationGeneration =
+        IOSUsePlayHostContentGeneration;
+    IOSUsePlayHostActivationAttempts = 0;
     return YES;
+}
+
+static void IOSUseBridgeRequestHostActivation(
+    id window,
+    BOOL requiresKeyUIKitWindow
+) {
+    if (window != IOSUsePlayHostWindow ||
+        IOSUsePlayHostActivationGeneration !=
+            IOSUsePlayHostContentGeneration) {
+        return;
+    }
+    id application = IOSUseBridgeApplication();
+    if (application == nil) {
+        return;
+    }
+    NSInteger policy =
+        IOSUseBridgeInteger(application, @"activationPolicy");
+    if (policy != 0) {
+        SEL policySelector =
+            NSSelectorFromString(@"setActivationPolicy:");
+        if (![application respondsToSelector:policySelector]) {
+            return;
+        }
+        BOOL accepted =
+            ((IOSUseBridgeSendBoolInteger)objc_msgSend)(
+                application,
+                policySelector,
+                0
+            );
+        if (!accepted &&
+            IOSUseBridgeInteger(application, @"activationPolicy") != 0) {
+            return;
+        }
+    }
+    if ((!requiresKeyUIKitWindow &&
+            IOSUseBridgeBool(application, @"isActive")) ||
+        IOSUsePlayHostActivationAttempts >= 20) {
+        return;
+    }
+    IOSUsePlayHostActivationAttempts += 1;
+    IOSUseBridgeSetBool(
+        application,
+        @"activateIgnoringOtherApps:",
+        YES
+    );
+    SEL activateSelector = NSSelectorFromString(@"activate");
+    if ([application respondsToSelector:activateSelector]) {
+        ((IOSUseBridgeSendVoid)objc_msgSend)(
+            application,
+            activateSelector
+        );
+    }
+    // UIKit scene/key-window selection is the acknowledgement. A background
+    // fallback calls this bounded, idempotent request again on later probes.
+}
+
+static BOOL IOSUseBridgeNormalizeBootstrapContentAspect(
+    id window,
+    NSString **failure
+) {
+    if (failure != NULL) {
+        *failure = nil;
+    }
+    if (window != IOSUsePlayBootstrapContentWindow) {
+        if (failure != NULL) {
+            *failure =
+                @"bootstrap content normalization lost its exact host";
+        }
+        return NO;
+    }
+    if (IOSUsePlayBootstrapContentReady) {
+        return YES;
+    }
+    CGRect contentBounds = IOSUseBridgeRect(
+        IOSUsePlayHostContentView,
+        @"bounds"
+    );
+    IOSUsePlayHostCanvasLayout layout;
+    NSString *layoutFailure = nil;
+    if (!IOSUsePlayResolveHostCanvasLayout(
+            contentBounds,
+            &layout,
+            &layoutFailure
+        )) {
+        if (failure != NULL) {
+            *failure = layoutFailure;
+        }
+        return NO;
+    }
+    CGFloat horizontalRounding =
+        contentBounds.size.width - layout.canvasRect.size.width;
+    CGFloat verticalRounding =
+        contentBounds.size.height - layout.canvasRect.size.height;
+    if (horizontalRounding <= 0.5 && verticalRounding <= 0.5) {
+        IOSUsePlayBootstrapContentReady = YES;
+        return YES;
+    }
+
+    // UIKitMacHelper can publish an initial integral-point content size that
+    // predates contentAspectRatio. Snap only that new host to the already
+    // resolved aspect-fit size. Subsequent user resize stays entirely under
+    // normal AppKit aspect-ratio handling.
+    SEL setContentSize = NSSelectorFromString(@"setContentSize:");
+    if (![window respondsToSelector:setContentSize]) {
+        if (failure != NULL) {
+            *failure =
+                @"AppKit host cannot normalize its bootstrap content aspect";
+        }
+        return NO;
+    }
+    if (IOSUsePlayBootstrapContentNormalizationScheduled) {
+        if (failure != NULL) {
+            *failure =
+                @"waiting for bootstrap content aspect normalization";
+        }
+        return NO;
+    }
+    if (IOSUsePlayBootstrapContentNormalizationAttempts >= 3) {
+        if (failure != NULL) {
+            *failure =
+                @"AppKit host did not settle to its bootstrap content aspect";
+        }
+        return NO;
+    }
+    IOSUsePlayBootstrapContentNormalizationScheduled = YES;
+    CGSize normalizedSize = layout.canvasRect.size;
+    CGRect bootstrapContentBounds = contentBounds;
+    id bootstrapContentView = IOSUsePlayHostContentView;
+    NSUInteger bootstrapGeneration =
+        IOSUsePlayHostContentGeneration;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (bootstrapGeneration !=
+                IOSUsePlayHostContentGeneration ||
+            window != IOSUsePlayBootstrapContentWindow ||
+            bootstrapContentView != IOSUsePlayHostContentView) {
+            return;
+        }
+        IOSUsePlayBootstrapContentNormalizationScheduled = NO;
+        if (window != IOSUsePlayHostWindow) {
+            return;
+        }
+        CGRect currentContentBounds = IOSUseBridgeRect(
+            IOSUsePlayHostContentView,
+            @"bounds"
+        );
+        if (IOSUseBridgeBool(window, @"inLiveResize") ||
+            !IOSUseBridgeRectApproximatelyEqual(
+                currentContentBounds,
+                bootstrapContentBounds
+            )) {
+            return;
+        }
+        IOSUsePlayBootstrapContentNormalizationAttempts += 1;
+        IOSUseBridgeSetSize(
+            window,
+            @"setContentSize:",
+            normalizedSize
+        );
+    });
+    if (failure != NULL) {
+        *failure =
+            @"waiting for bootstrap content aspect normalization";
+    }
+    return NO;
 }
 
 static BOOL IOSUseBridgeUpdateHostCanvasLayout(
@@ -3377,8 +3457,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             ? @"waiting-for-scene-geometry"
             : @"scene-geometry-failed";
         IOSUsePlayWindowFailure = pending
-            ? @"waiting for fixed UIWindowSceneGeometryPreferencesMac "
-               "geometry before installing the AppKit host"
+            ? IOSUsePlaySceneGeometryFailure ?:
+                @"waiting for the fixed UIKit canvas before installing the "
+                 "AppKit host"
             : IOSUsePlaySceneGeometryFailure ?:
                 @"fixed scene geometry is unavailable";
         if (error != NULL) {
@@ -3431,7 +3512,33 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         }
         return NO;
     }
+    if (isNewHost || usedBackgroundActivationFallback) {
+        IOSUseBridgeRequestHostActivation(
+            window,
+            usedBackgroundActivationFallback
+        );
+        // The mapped NSWindow is owned by UIKitMacHelper. NSWorkspace launch
+        // activation and UIKit scene activation decide when it becomes key;
+        // ordering it directly while the zoom controller is reconciling the
+        // scene frame re-enters AppKit and terminates with SIGTRAP.
+    }
     NSString *layoutFailure = nil;
+    if (!IOSUseBridgeNormalizeBootstrapContentAspect(
+            window,
+            &layoutFailure
+        )) {
+        IOSUsePlayWindowStatus = @"geometry-mismatch";
+        IOSUsePlayWindowFailure = layoutFailure ?:
+            @"could not normalize the initial host content aspect";
+        if (error != NULL) {
+            *error = [NSError errorWithDomain:IOSUsePlayWindowErrorDomain
+                                         code:11
+                                     userInfo:@{
+                NSLocalizedDescriptionKey: IOSUsePlayWindowFailure,
+            }];
+        }
+        return NO;
+    }
     if (!IOSUseBridgeUpdateHostCanvasLayout(window, &layoutFailure)) {
         IOSUsePlayWindowStatus = @"geometry-mismatch";
         IOSUsePlayWindowFailure = layoutFailure ?:
@@ -3444,30 +3551,6 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             }];
         }
         return NO;
-    }
-    if (isNewHost) {
-        IOSUseBridgeSetInteger(
-            IOSUseBridgeApplication(),
-            @"setActivationPolicy:",
-            0
-        );
-        IOSUseBridgeSetBool(
-            IOSUseBridgeApplication(),
-            @"activateIgnoringOtherApps:",
-            YES
-        );
-        SEL activateSelector = NSSelectorFromString(@"activate");
-        id application = IOSUseBridgeApplication();
-        if ([application respondsToSelector:activateSelector]) {
-            ((IOSUseBridgeSendVoid)objc_msgSend)(
-                application,
-                activateSelector
-            );
-        }
-        // The mapped NSWindow is owned by UIKitMacHelper.  NSWorkspace launch
-        // activation and UIKit scene activation decide when it becomes key;
-        // ordering it directly while the zoom controller is reconciling the
-        // scene frame re-enters AppKit and terminates with SIGTRAP.
     }
     BOOL mouseMonitorReady =
         IOSUseBridgeInstallMouseLocalMonitor();
@@ -3498,10 +3581,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             restrictions.maximumSize.height,
             fixed.height
         );
-    // The fixed system-frame check is a one-time bootstrap proof before the
-    // host wrapper is installed.  A later public AppKit resize may legitimately
-    // change the outer NSWindow system frame; it must not trigger another
-    // UIKit geometry request or invalidate the fixed inner canvas.
+    // This is a one-time proof that UIKit has honored the fixed scene size
+    // restrictions before the host wrapper is installed. A later public
+    // AppKit resize changes only the outer window and display scale.
     BOOL sceneGeometryBootstrapped =
         IOSUsePlaySceneGeometryState ==
             IOSUseBridgeSceneGeometryStateReady &&
@@ -3542,7 +3624,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         : sceneGeometryBootstrapped
             ? @"AppKit host or fixed logical canvas geometry is not ready"
             : IOSUsePlaySceneGeometryFailure ?:
-                @"fixed UIWindowSceneGeometryPreferencesMac geometry is not ready";
+                @"fixed UIKit scene geometry is not ready";
     if (!exact && error != NULL) {
         *error = [NSError errorWithDomain:IOSUsePlayWindowErrorDomain
                                      code:2
@@ -4115,8 +4197,8 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
                     IOSUseBridgeSceneGeometryStateReady &&
                 IOSUsePlaySceneGeometryScene == uiWindow.windowScene
             ),
-            @"fixedSystemFrame": @(
-                IOSUseBridgeSceneGeometryHasFixedSystemFrame(
+            @"fixedCanvas": @(
+                IOSUseBridgeSceneHasFixedCanvas(
                     uiWindow.windowScene,
                     uiWindow
                 )

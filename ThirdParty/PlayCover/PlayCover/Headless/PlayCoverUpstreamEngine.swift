@@ -2240,49 +2240,74 @@ public enum PlayCoverUpstreamEngine {
                 )
             )
         }
-        let primaryCodeDirectories = slots.filter { $0.type == 0 }
+        let codeDirectorySlots = slots.filter {
+            isCodeDirectorySlotType($0.type)
+        }
+        let primaryCodeDirectories = codeDirectorySlots.filter {
+            $0.type == 0
+        }
         guard primaryCodeDirectories.count == 1,
-              let primaryCodeDirectory =
-                primaryCodeDirectories[0].codeDirectory else {
+              codeDirectorySlots.allSatisfy({
+                  $0.magic == 0xfade_0c02 && $0.codeDirectory != nil
+              }),
+              Set(codeDirectorySlots.map(\.type)).count
+                == codeDirectorySlots.count,
+              !slots.contains(where: {
+                  $0.codeDirectory != nil
+                      && !isCodeDirectorySlotType($0.type)
+              }) else {
             throw PlayCoverUpstreamError.malformedMachO(
-                "\(path) must contain exactly one primary CodeDirectory"
+                "\(path) must contain one primary and unique legal "
+                    + "alternate CodeDirectories"
             )
         }
-        for slot in slots where slot.type > 0 && slot.type < 0x1_000 {
-            guard let signedHash =
-                primaryCodeDirectory.specialSlotHashes["-\(slot.type)"] else {
-                throw PlayCoverUpstreamError.malformedMachO(
-                    "\(path) signature slot \(slot.index) is not bound by "
-                        + "the primary CodeDirectory"
+        for codeDirectorySlot in codeDirectorySlots {
+            guard let codeDirectory = codeDirectorySlot.codeDirectory else {
+                preconditionFailure(
+                    "legal CodeDirectory slot lost parsed evidence"
                 )
             }
-            let fullHash: String
-            switch primaryCodeDirectory.hashType {
-            case 1:
-                fullHash = hex(Insecure.SHA1.hash(data: slot.bytes))
-            case 2, 3:
-                fullHash = slot.bytesSHA256
-            case 4:
-                fullHash = hex(SHA384.hash(data: slot.bytes))
-            default:
-                throw PlayCoverUpstreamError.malformedMachO(
-                    "\(path) has unsupported special-slot hash type "
-                        + "\(primaryCodeDirectory.hashType)"
+            for slot in slots where slot.type > 0
+                    && slot.type < 0x1_000 {
+                guard let signedHash =
+                    codeDirectory.specialSlotHashes["-\(slot.type)"] else {
+                    throw PlayCoverUpstreamError.malformedMachO(
+                        "\(path) signature slot \(slot.index) is not bound "
+                            + "by CodeDirectory type "
+                            + "\(codeDirectorySlot.type)"
+                    )
+                }
+                let fullHash: String
+                switch codeDirectory.hashType {
+                case 1:
+                    fullHash = hex(Insecure.SHA1.hash(data: slot.bytes))
+                case 2, 3:
+                    fullHash = slot.bytesSHA256
+                case 4:
+                    fullHash = hex(SHA384.hash(data: slot.bytes))
+                default:
+                    throw PlayCoverUpstreamError.malformedMachO(
+                        "\(path) has unsupported special-slot hash type "
+                            + "\(codeDirectory.hashType)"
+                    )
+                }
+                let expectedCharacters =
+                    Int(codeDirectory.hashSize) * 2
+                guard expectedCharacters <= fullHash.count else {
+                    throw PlayCoverUpstreamError.malformedMachO(
+                        "\(path) special-slot hash size exceeds its algorithm"
+                    )
+                }
+                let actualHash = String(
+                    fullHash.prefix(expectedCharacters)
                 )
-            }
-            let expectedCharacters =
-                Int(primaryCodeDirectory.hashSize) * 2
-            guard expectedCharacters <= fullHash.count else {
-                throw PlayCoverUpstreamError.malformedMachO(
-                    "\(path) special-slot hash size exceeds its algorithm"
-                )
-            }
-            let actualHash = String(fullHash.prefix(expectedCharacters))
-            guard signedHash == actualHash else {
-                throw PlayCoverUpstreamError.malformedMachO(
-                    "\(path) signature slot \(slot.index) hash is not bound "
-                        + "by the primary CodeDirectory"
-                )
+                guard signedHash == actualHash else {
+                    throw PlayCoverUpstreamError.malformedMachO(
+                        "\(path) signature slot \(slot.index) hash is not "
+                            + "bound by CodeDirectory type "
+                            + "\(codeDirectorySlot.type)"
+                    )
+                }
             }
         }
         var structure = Data(
@@ -2305,6 +2330,10 @@ public enum PlayCoverUpstreamEngine {
             paddingSHA256: hex(SHA256.hash(data: padding)),
             slots: slots
         )
+    }
+
+    private static func isCodeDirectorySlotType(_ type: UInt32) -> Bool {
+        type == 0 || (type >= 0x1_000 && type < 0x1_005)
     }
 
     private static func codeDirectoryEvidence(
@@ -2418,7 +2447,8 @@ public enum PlayCoverUpstreamEngine {
         )
         return try signatureEvidence(
             temporary,
-            embeddedSignature: embedded
+            embeddedSignature: embedded,
+            diagnosticPath: path
         )
     }
 
@@ -2636,14 +2666,10 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
-        // Pinned PlayCover only overlays originals under PlaySign.  ios-use
-        // cannot silently discard App capabilities, so the final local patch
-        // preserves every original key and lets codesign/launch reject an
-        // unsupported capability precisely.
+        // Keep pinned composition semantics: source entitlements are overlaid
+        // only when PlaySign is active. The local patch below extends only the
+        // sandbox profile needed by the injected Runtime.
         var final = baseline
-        for (key, value) in original {
-            final[key] = value
-        }
         var finalSandbox =
             final["com.apple.security.temporary-exception.sbpl"] as? [String]
                 ?? []
@@ -2693,12 +2719,6 @@ public enum PlayCoverUpstreamEngine {
         let removed = originalNormalized.keys.filter {
             finalNormalized[$0] == nil
         }.sorted()
-        guard removed.isEmpty else {
-            throw PlayCoverUpstreamError.entitlementFailed(
-                "entitlement composer removed original keys: "
-                    + removed.joined(separator: ", ")
-            )
-        }
         let baselineAdded = baselineNormalized.keys.filter {
             originalNormalized[$0] == nil
         }.sorted()
@@ -2736,16 +2756,11 @@ public enum PlayCoverUpstreamEngine {
 
     static func signInsideOut(
         appURL: URL,
-        source: PlayCoverUpstreamAppInspection,
+        source _: PlayCoverUpstreamAppInspection,
         finalEntitlements: Data
     ) throws -> [String] {
         let prepared = try inspect(appURL: appURL)
         let preparedMachOPaths = Set(prepared.machOs.map(\.relativePath))
-        let sourceMachOs = Dictionary(
-            uniqueKeysWithValues: source.machOs.map {
-                ($0.relativePath, $0)
-            }
-        )
         let nestedBundles = prepared.inventory.compactMap {
             entry -> String? in
             guard entry.kind == .directory,
@@ -2764,8 +2779,10 @@ public enum PlayCoverUpstreamEngine {
         }
 
         // A bundle's executable is signed by signing the bundle code object.
-        // Signing that binary first and then signing the directory without its
-        // original entitlements would silently replace extension capabilities.
+        // Pinned Installer's per-Mach-O signing drops source entitlements
+        // before its final `codesign --deep` pass, which does not restore
+        // them. Keep nested executables in their containing bundle pass and
+        // sign that bundle without source entitlements.
         let nestedMainExecutables = Set(
             nestedBundles.compactMap {
                 nestedBundleExecutableRelativePath(
@@ -2788,11 +2805,9 @@ public enum PlayCoverUpstreamEngine {
             return $0.relativePath < $1.relativePath
         }
         for macho in dependencies {
-            let entitlements = sourceMachOs[macho.relativePath]?
-                .signature.entitlementsPlist
             try sign(
                 appURL.appendingPathComponent(macho.relativePath),
-                entitlements: entitlements
+                entitlements: nil
             )
             order.append(macho.relativePath)
             try verifyCodeSignature(
@@ -2801,23 +2816,10 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
-        let sourceRoot = URL(
-            fileURLWithPath: source.appPath,
-            isDirectory: true
-        )
-        let sourceMachOPaths = Set(source.machOs.map(\.relativePath))
         for relative in nestedBundles {
-            let sourceExecutable = nestedBundleExecutableRelativePath(
-                bundleRelativePath: relative,
-                appURL: sourceRoot,
-                knownMachOs: sourceMachOPaths
-            )
-            let entitlements = sourceExecutable.flatMap {
-                sourceMachOs[$0]?.signature.entitlementsPlist
-            }
             try sign(
                 appURL.appendingPathComponent(relative),
-                entitlements: entitlements
+                entitlements: nil
             )
             order.append(relative)
             try verifyCodeSignature(
@@ -2903,8 +2905,10 @@ public enum PlayCoverUpstreamEngine {
 
     private static func signatureEvidence(
         _ url: URL,
-        embeddedSignature: EmbeddedSignatureEvidence? = nil
+        embeddedSignature: EmbeddedSignatureEvidence? = nil,
+        diagnosticPath: String? = nil
     ) throws -> PlayCoverUpstreamSignature {
+        let evidencePath = diagnosticPath ?? url.path
         let metadata = codeSignatureMetadata(url)
         let hasDEREntitlements = embeddedSignature?.slots.contains {
             $0.type == 7
@@ -2920,14 +2924,19 @@ public enum PlayCoverUpstreamEngine {
             signed: Bool,
             entitlementsPlist: Data?
         ) throws -> PlayCoverUpstreamSignature {
-            if let primaryCodeDirectory = embeddedSignature?.slots.first(
-                where: { $0.type == 0 }
-            )?.codeDirectory {
-                guard metadata?.cdHash?.lowercased()
-                        == primaryCodeDirectory.cdHash else {
+            if let embeddedSignature {
+                let displayed = metadata?.cdHash?.lowercased()
+                let candidates = embeddedSignature.slots.filter {
+                    isCodeDirectorySlotType($0.type)
+                }.compactMap(\.codeDirectory)
+                guard let displayed,
+                      candidates.contains(where: {
+                          $0.cdHash == displayed
+                      }) else {
                     throw PlayCoverUpstreamError.malformedMachO(
-                        "\(url.path) displayed CDHash does not match its "
-                            + "primary CodeDirectory"
+                        "\(evidencePath) displayed CDHash "
+                            + "\(displayed ?? "missing") does not match any "
+                            + "embedded CodeDirectory"
                     )
                 }
             }
@@ -2969,8 +2978,9 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
+        let output: String
         do {
-            let output = try Shell.run(
+            output = try Shell.run(
                 print: false,
                 "/usr/bin/codesign",
                 "-d",
@@ -2978,14 +2988,6 @@ public enum PlayCoverUpstreamEngine {
                 "-",
                 "--xml",
                 url.path
-            )
-            guard let xml = extractPlist(from: output),
-                  !xml.isEmpty else {
-                return try result(signed: true, entitlementsPlist: nil)
-            }
-            return try result(
-                signed: true,
-                entitlementsPlist: Data(xml.utf8)
             )
         } catch {
             let description = String(describing: error)
@@ -2996,9 +2998,17 @@ public enum PlayCoverUpstreamEngine {
                 return try result(signed: signed, entitlementsPlist: nil)
             }
             throw PlayCoverUpstreamError.commandFailed(
-                "extract entitlements from \(url.path): \(description)"
+                "extract entitlements from \(evidencePath): \(description)"
             )
         }
+        guard let xml = extractPlist(from: output),
+              !xml.isEmpty else {
+            return try result(signed: true, entitlementsPlist: nil)
+        }
+        return try result(
+            signed: true,
+            entitlementsPlist: Data(xml.utf8)
+        )
     }
 
     private static func decodedDEREntitlements(

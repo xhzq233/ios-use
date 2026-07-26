@@ -511,7 +511,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         })
     }
 
-    func testPinnedEntitlementComposerPreservesRepresentativeCapabilities()
+    func testNonPlaySignCompositionMatchesPinnedRestrictedKeySemantics()
         throws {
         let fixture = try makeApp(
             executable: makeThinMachO(dependencies: [])
@@ -556,16 +556,51 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 format: nil
             ) as? [String: Any]
         )
+        let pinned = try Entitlements.composeEntitlements(
+            BaseApp(appUrl: fixture.app),
+            discordActivityEnabled: false,
+            bypass: false,
+            playSignActive: false,
+            homeDirectory:
+                FileManager.default.homeDirectoryForCurrentUser
+        )
+        var finalWithoutSandbox = final
+        finalWithoutSandbox.removeValue(
+            forKey: "com.apple.security.temporary-exception.sbpl"
+        )
+        var pinnedWithoutSandbox = pinned
+        pinnedWithoutSandbox.removeValue(
+            forKey: "com.apple.security.temporary-exception.sbpl"
+        )
+        XCTAssertEqual(
+            finalWithoutSandbox as NSDictionary,
+            pinnedWithoutSandbox as NSDictionary
+        )
         for key in original.keys {
-            XCTAssertNotNil(final[key], "lost original entitlement \(key)")
+            XCTAssertNil(
+                final[key],
+                "non-PlaySign unexpectedly restored \(key)"
+            )
         }
-        XCTAssertTrue(composition.diff.removedFromOriginal.isEmpty)
+        XCTAssertEqual(
+            composition.diff.removedFromOriginal,
+            original.keys.sorted()
+        )
         let sandbox = try XCTUnwrap(
             final["com.apple.security.temporary-exception.sbpl"]
                 as? [String]
         )
+        let pinnedSandbox = try XCTUnwrap(
+            pinned["com.apple.security.temporary-exception.sbpl"]
+                as? [String]
+        )
+        XCTAssertEqual(
+            Array(sandbox.prefix(pinnedSandbox.count)),
+            pinnedSandbox
+        )
+        XCTAssertEqual(sandbox.count, pinnedSandbox.count + 2)
         XCTAssertTrue(sandbox.contains {
-            $0.contains(fixture.root.appendingPathComponent("run").path)
+            $0.contains("/run")
         })
         XCTAssertFalse(sandbox.contains { $0.contains("s-one.sock") })
     }
@@ -698,7 +733,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertNotNil(result["UILaunchScreen"] as? NSDictionary)
     }
 
-    func testNestedBundleSigningPreservesExtensionEntitlements() throws {
+    func testNestedBundleSigningMatchesPinnedDeepEntitlements() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let source = root.appendingPathComponent(
@@ -726,15 +761,35 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let sourceInspection = try PlayCoverUpstreamEngine.inspect(
             appURL: source
         )
+        let mainEntitlements = try plistData([
+            "com.apple.security.app-sandbox": true,
+        ])
+        let mainEntitlementsURL = root.appendingPathComponent(
+            "main-entitlements.plist"
+        )
+        try mainEntitlements.write(to: mainEntitlementsURL)
+        let pinned = root.appendingPathComponent(
+            "Pinned.app",
+            isDirectory: true
+        )
+        try FileManager.default.copyItem(at: source, to: pinned)
+        // Pinned Installer signs each converted Mach-O without entitlements
+        // before the final `codesign --deep` pass.
+        try Shell.signMacho(
+            pinned.appendingPathComponent(
+                "PlugIns/Test.appex/TestExtension"
+            )
+        )
+        try Shell.signAppWithPinnedOracle(
+            pinned,
+            entitlements: mainEntitlementsURL
+        )
 
         let prepared = root.appendingPathComponent(
             "Prepared.app",
             isDirectory: true
         )
         try FileManager.default.copyItem(at: source, to: prepared)
-        let mainEntitlements = try plistData([
-            "com.apple.security.app-sandbox": true,
-        ])
         let order = try PlayCoverUpstreamEngine.signInsideOut(
             appURL: prepared,
             source: sourceInspection,
@@ -744,41 +799,56 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertTrue(order.contains("PlugIns/Test.appex"))
         XCTAssertFalse(order.contains("PlugIns/Test.appex/TestExtension"))
         XCTAssertEqual(order.last, ".")
-        let preparedExtensionExecutable = prepared.appendingPathComponent(
+        let extensionRelativePath =
             "PlugIns/Test.appex/TestExtension"
-        )
-        let evidence = try PlayCoverUpstreamEngine.inspectMachO(
-            at: preparedExtensionExecutable,
-            relativePath: "PlugIns/Test.appex/TestExtension"
+        let actualEvidence = try PlayCoverUpstreamEngine.inspectMachO(
+            at: prepared.appendingPathComponent(extensionRelativePath),
+            relativePath: extensionRelativePath
         ).signature
-        let restored = try XCTUnwrap(
-            evidence.entitlementsPlist.flatMap {
-                try? PropertyListSerialization.propertyList(
-                    from: $0,
+        let pinnedEvidence = try PlayCoverUpstreamEngine.inspectMachO(
+            at: pinned.appendingPathComponent(extensionRelativePath),
+            relativePath: extensionRelativePath
+        ).signature
+        func decodedEntitlements(
+            _ evidence: PlayCoverUpstreamSignature
+        ) throws -> NSDictionary? {
+            guard let data = evidence.entitlementsPlist else {
+                return nil
+            }
+            return try XCTUnwrap(
+                PropertyListSerialization.propertyList(
+                    from: data,
                     options: [],
                     format: nil
-                ) as? [String: Any]
-            }
-        )
-        XCTAssertEqual(
-            restored["com.example.extension-capability"] as? Bool,
-            true
-        )
-        XCTAssertEqual(
-            restored["com.apple.security.application-groups"] as? [String],
-            ["group.fixture"]
-        )
-        for codeObject in [extensionURL.lastPathComponent, "."] {
-            let url = codeObject == "."
-                ? prepared
-                : prepared.appendingPathComponent("PlugIns/Test.appex")
-            _ = try Shell.run(
-                print: false,
-                "/usr/bin/codesign",
-                "--verify",
-                "--strict",
-                url.path
+                ) as? NSDictionary
             )
+        }
+        let actualEntitlements = try decodedEntitlements(actualEvidence)
+        let pinnedEntitlements = try decodedEntitlements(pinnedEvidence)
+        XCTAssertEqual(actualEntitlements, pinnedEntitlements)
+        XCTAssertNil(
+            actualEntitlements?[
+                "com.example.extension-capability"
+            ]
+        )
+        XCTAssertNil(
+            actualEntitlements?[
+                "com.apple.security.application-groups"
+            ]
+        )
+        for app in [prepared, pinned] {
+            for codeObject in ["PlugIns/Test.appex", "."] {
+                let url = codeObject == "."
+                    ? app
+                    : app.appendingPathComponent(codeObject)
+                _ = try Shell.run(
+                    print: false,
+                    "/usr/bin/codesign",
+                    "--verify",
+                    "--strict",
+                    url.path
+                )
+            }
         }
     }
 
@@ -886,7 +956,22 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             )
         )
         XCTAssertEqual(result.signingOrder.last, ".")
-        XCTAssertTrue(result.entitlementDiff.removedFromOriginal.isEmpty)
+        XCTAssertEqual(
+            result.entitlementDiff.removedFromOriginal,
+            [
+                "application-identifier",
+                "com.apple.developer.associated-domains",
+                "com.apple.developer.team-identifier",
+                "keychain-access-groups",
+            ]
+        )
+        let preparedExtension = try XCTUnwrap(
+            result.prepared.machOs.first {
+                $0.relativePath
+                    == "PlugIns/Test.appex/TestExtension"
+            }
+        )
+        XCTAssertNil(preparedExtension.signature.entitlementsPlist)
         _ = try Shell.run(
             print: false,
             "/usr/bin/codesign",

@@ -44,12 +44,26 @@ Runtime build hash and therefore selects a new prepared generation naturally.
 The outer AppKit surface is an opaque, rectangular, resizable system window.
 Its public title bar displays `CFBundleDisplayName`, falling back to
 `CFBundleName` and then the bundle ID. UIKitMacHelper's scene-owning
-`UINSFullScreenWindow` is retained because moving the scene's view tree into a
-second plain `NSWindow` backgrounds the UIKit scene. After validating the
-private AppKit method signatures, the Runtime makes all four resize edges
-available on that `NSWindow` subclass, accepts valid proposed host sizes, and
-applies a 430:932 content aspect ratio. It leaves `_startLiveResize` untouched
-and does not create a second mirror/forwarding window.
+`UINSWindow`/`NSWindow` subclass is retained because moving the scene's view
+tree into a second plain `NSWindow` backgrounds the UIKit scene. After
+validating the private AppKit method signatures, the Runtime installs the two
+resize compatibility methods only on the exact current `UINS*` class, makes
+all four resize edges available, accepts valid proposed host sizes, and
+applies a 430:932 content aspect ratio. A missing selector, mismatched ABI, or
+partial edge mask fails readiness. It leaves `_startLiveResize` untouched and
+does not create a second mirror/forwarding window.
+
+UIKit is fixed by `UIWindowScene.sizeRestrictions` plus the observed
+430 x 932 `UIWindow.bounds`. The Mac `effectiveGeometry.systemFrame` includes
+the system title bar, so the Runtime deliberately neither forces nor treats
+that outer frame as the device canvas.
+
+If UIKitMacHelper publishes a first integral-point content size before the
+aspect policy settles, the Runtime performs one bounded, asynchronous
+bootstrap `setContentSize:` to the already resolved aspect-fit size and
+verifies it on later probes. This touches neither the window position nor
+UIKit bounds, and it is permanently disabled for that host before user resize
+begins.
 
 The content view has no transparent spacer or synthetic chrome. It applies
 only one uniform display scale and origin to the inner render canvas; the
@@ -86,7 +100,17 @@ ios-use start --playcover [--app <source-or-managed-prepared.app>]
 
 The only runtime identity is one random `sessionID`. Start passes the session
 ID and derived socket path through the launch environment. The Runtime binds
-that socket and never reads a sidecar configuration file.
+that socket and never reads a sidecar configuration file. NSWorkspace overlays
+launch variables rather than replacing the caller environment, so ios-use
+explicitly clears every inherited non-allowlisted key before launch; shell
+credentials are never forwarded to the target App.
+
+Neither an NSWorkspace callback nor a newly observed PID grants process
+ownership by itself. The candidate must be new, match the exact managed
+Bundle/App/executable, and authenticate this start's random session and socket
+through Runtime `hello`; only then may rollback or session commit use that PID.
+Launch discovery uses the full validated `start --timeout` value rather than a
+shorter hidden deadline.
 
 Each connection carries one four-byte big-endian length-prefixed JSON request:
 
@@ -114,8 +138,21 @@ automatically.
 All applicable commands keep routing to this Runtime until `ios-use stop`.
 `stop` does not call a lifecycle RPC: the host revalidates the exact
 generation, PID, and executable, sends termination only to that process, and
-clears only matching session state. `activateApp`, `terminateApp`, `home`, and
-DDI operations fail as unsupported before touching another backend.
+clears only matching session state. The host never probes or unlinks a Runtime
+socket: on Darwin, even a live listener can return `ECONNREFUSED` when its
+accept queue is full, and pathname deletion cannot be made conditional on an
+inode. The Runtime owns its freshly bound random path, marks its listener
+close-on-exec, and removes that path from its `atexit` and `SIGTERM` exits.
+Crash/SIGKILL residue and all unknown run-directory entries remain preserved;
+the next random session uses a different path. Start fails closed if its new
+path unexpectedly exists. As with the generation namespace guard, this is an
+owner-only cache boundary rather than a defense against a malicious process
+running as the same user: the Runtime's signal-safe `unlink` assumes another
+same-UID writer does not replace its bound pathname. The injected Runtime owns
+the host lifecycle for this backend, so it installs the process `SIGTERM`
+handler and exits with `_exit(143)` after removing that pathname.
+`activateApp`, `terminateApp`, `home`, and DDI operations fail as unsupported
+before touching another backend.
 
 ## Prepare, Signing, and Cache
 
@@ -136,8 +173,9 @@ The headless dependency graph retains the pinned Installer order:
 6. update only required Info.plist compatibility keys, remove the copied
    mobile provision, and compose entitlements through pinned PlayCover,
    KeyCover, and PlayChain paths;
-7. sign nested binaries and bundles from the inside out, preserving each
-   nested code object's source entitlements, then sign the outer App;
+7. sign nested binaries and bundles from the inside out with the same
+   non-PlaySign entitlement result as pinned PlayCover, then sign the outer
+   App with the composed root entitlements;
 8. remove quarantine and verify every Mach-O, dependency, load command,
    entitlement, nested signature, and outer seal.
 
@@ -231,15 +269,16 @@ Tap, long press, and swipe use the directly ported PlayTools fake-touch
 backend with begin/move/end/cancel phases and monotonic timing. The Runtime
 resolves selectors against one fresh snapshot, performs a UIKit hit test in
 430 x 932 logical coordinates, and proves that the expected touch phases were
-delivered. A valid no-op control or a swipe already at its boundary is still a
-successful delivery; callers use `--dom`, `waitFor`, or an explicit screenshot
-when they require a visible result. Text input separately verifies the exact
-first responder and final text; secure, custom, or unsupported input returns a
-structured error. Native AppKit alert panels are projected into the same
-logical canvas, but their buttons are invoked through the panel's real
-target/action rather than falling through to a UIKit touch beneath the panel.
-Alert dismissal and URL opening likewise keep their command-specific
-disappearance/delivery checks.
+delivered. Absolute `tap x,y` points are already in that fixed logical space
+and are never reinterpreted as an element-relative ratio. A valid no-op control
+or a swipe already at its boundary is still a successful delivery; callers use
+`--dom`, `waitFor`, or an explicit screenshot when they require a visible
+result. Text input separately verifies the exact first responder and final
+text; secure, custom, or unsupported input returns a structured error. Native
+AppKit alert panels are projected into the same logical canvas, but their
+buttons are invoked through the panel's real target/action rather than falling
+through to a UIKit touch beneath the panel. Alert dismissal and URL opening
+likewise keep their command-specific disappearance/delivery checks.
 
 Screenshot and capture crop and normalize only the inner fixed canvas from the
 target process's WindowServer backing surfaces, including Metal. The AppKit

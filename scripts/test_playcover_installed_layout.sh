@@ -76,6 +76,7 @@ CUSTOM_HOME="$TEMP_ROOT/h"
 INSTALLED_BINARY="$PREFIX/bin/ios-use"
 INSTALLED_RUNTIME="$PREFIX/share/ios-use/playcover/IOSUsePlayRuntime.framework"
 LOG_FILE="$TEMP_ROOT/start.log"
+STATUS_FILE="$TEMP_ROOT/status.json"
 SOURCE_ASSET="source.tar.gz"
 INSTALL_VERSION_FOR_TEST="v0.0.0-test"
 EXPECTED_RUNTIME="$RUNTIME_SOURCE"
@@ -428,9 +429,17 @@ fi
 
 (
   cd "$TEMP_ROOT"
-  IOS_USE_HOME="$CUSTOM_HOME" "$INSTALLED_BINARY" status >/dev/null
+  IOS_USE_HOME="$CUSTOM_HOME" \
+    "$INSTALLED_BINARY" status --json >"$STATUS_FILE"
   IOS_USE_HOME="$CUSTOM_HOME" "$INSTALLED_BINARY" stop
 )
+RUNTIME_SOCKET="$(
+  jq -er '.data.driver.playcoverRuntimeSocketPath' "$STATUS_FILE"
+)"
+if [[ -e "$RUNTIME_SOCKET" || -L "$RUNTIME_SOCKET" ]]; then
+  echo "[installed-layout] ERROR: normal stop left its Runtime-owned socket path" >&2
+  exit 1
+fi
 if [[ -e "$CUSTOM_HOME/playcover/IOSUsePlayRuntime.framework" ]]; then
   echo "[installed-layout] ERROR: installed execution copied executable Runtime content into IOS_USE_HOME" >&2
   exit 1

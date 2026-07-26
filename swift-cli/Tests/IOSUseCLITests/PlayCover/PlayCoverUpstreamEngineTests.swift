@@ -140,6 +140,73 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: fatURL), fatBytesBefore)
     }
 
+    func testInspectAcceptsCodesignSelectedAlternateCodeDirectory()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverDualCodeDirectory-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let executable = root.appendingPathComponent("DualCodeDirectory")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: "/bin/echo"),
+            to: executable
+        )
+        let codesign = Process()
+        let output = Pipe()
+        codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        codesign.arguments = [
+            "--force",
+            "--sign",
+            "-",
+            "--digest-algorithm=sha1,sha256",
+            executable.path,
+        ]
+        codesign.standardOutput = output
+        codesign.standardError = output
+        try codesign.run()
+        let codesignOutput =
+            try output.fileHandleForReading.readToEnd() ?? Data()
+        codesign.waitUntilExit()
+        guard codesign.terminationStatus == 0 else {
+            return XCTFail(
+                String(data: codesignOutput, encoding: .utf8)
+                    ?? "codesign failed without UTF-8 output"
+            )
+        }
+
+        let inspection = try PlayCoverUpstreamEngine.inspectMachO(
+            at: executable,
+            relativePath: executable.lastPathComponent
+        )
+        let arm64 = try XCTUnwrap(
+            inspection.allSlices.first {
+                $0.cpuType == Int32(bitPattern: 0x0100_000c)
+            }
+        )
+        let primary = try XCTUnwrap(
+            arm64.signature.embeddedSlots.first {
+                $0.type == 0
+            }?.codeDirectory
+        )
+        let alternate = try XCTUnwrap(
+            arm64.signature.embeddedSlots.first {
+                $0.type == 0x1_000
+            }?.codeDirectory
+        )
+
+        XCTAssertEqual(primary.hashType, 1)
+        XCTAssertEqual(alternate.hashType, 2)
+        XCTAssertNotEqual(primary.cdHash, alternate.cdHash)
+        XCTAssertEqual(arm64.signature.cdHash, alternate.cdHash)
+    }
+
     func testRuntimeBuildHashPreservesExistingFramedContract() throws {
         let root = FileManager.default.temporaryDirectory
             .resolvingSymlinksInPath()

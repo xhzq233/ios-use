@@ -11,6 +11,8 @@
 #import <fcntl.h>
 #import <limits.h>
 #import <os/lock.h>
+#import <signal.h>
+#import <string.h>
 #import <sys/socket.h>
 #import <sys/stat.h>
 #import <sys/time.h>
@@ -26,8 +28,10 @@ static NSString *IOSUseRuntimeSocketPath;
 static NSString *IOSUseRuntimeSocketStatus = @"not-started";
 static NSString *IOSUseRuntimeSocketFailureStage;
 static NSNumber *IOSUseRuntimeSocketFailureErrno;
-static ino_t IOSUseRuntimeSocketInode;
-static dev_t IOSUseRuntimeSocketDevice;
+static char IOSUseRuntimeSocketSignalPath[
+    sizeof(((struct sockaddr_un *)0)->sun_path)
+];
+static volatile sig_atomic_t IOSUseRuntimeSocketOwned;
 static os_unfair_lock IOSUseRuntimeSocketStateLock =
     OS_UNFAIR_LOCK_INIT;
 
@@ -128,6 +132,15 @@ static void IOSUseRecordSocketFailure(
 }
 
 static BOOL IOSUseConfigureSocket(int descriptor, BOOL connection) {
+    int descriptorFlags = fcntl(descriptor, F_GETFD);
+    if (descriptorFlags < 0 ||
+        fcntl(
+            descriptor,
+            F_SETFD,
+            descriptorFlags | FD_CLOEXEC
+        ) != 0) {
+        return NO;
+    }
     int enabled = 1;
     if (setsockopt(
             descriptor,
@@ -1167,19 +1180,19 @@ static BOOL IOSUseSecureSocketDirectory(NSString *socketPath) {
 }
 
 static void IOSUseRemoveOwnedSocket(void) {
-    NSString *path = IOSUseRuntimeSocketPath;
-    if (path.length == 0 ||
-        IOSUseRuntimeSocketInode == 0) {
+    if (IOSUseRuntimeSocketOwned == 0) {
         return;
     }
-    struct stat status;
-    if (lstat(path.fileSystemRepresentation, &status) == 0 &&
-        S_ISSOCK(status.st_mode) &&
-        status.st_uid == geteuid() &&
-        status.st_ino == IOSUseRuntimeSocketInode &&
-        status.st_dev == IOSUseRuntimeSocketDevice) {
-        (void)unlink(path.fileSystemRepresentation);
-    }
+    // Consume deletion ownership before unlink. If SIGTERM interrupts
+    // another cleanup between these operations, preserving a residue is
+    // safer than allowing a later callback to delete a replacement path.
+    IOSUseRuntimeSocketOwned = 0;
+    (void)unlink(IOSUseRuntimeSocketSignalPath);
+}
+
+static void IOSUseHandleTerminationSignal(int signalNumber) {
+    IOSUseRemoveOwnedSocket();
+    _exit(128 + signalNumber);
 }
 
 static int IOSUseCreateListener(NSString *socketPath) {
@@ -1243,10 +1256,39 @@ static int IOSUseCreateListener(NSString *socketPath) {
         unlink(filePath);
         return -1;
     }
-    IOSUseRuntimeSocketInode = status.st_ino;
-    IOSUseRuntimeSocketDevice = status.st_dev;
+    size_t signalPathLength = strlen(filePath);
+    if (signalPathLength + 1 >
+        sizeof(IOSUseRuntimeSocketSignalPath)) {
+        IOSUseRecordSocketFailure(
+            @"socket-signal-path-length",
+            ENAMETOOLONG
+        );
+        close(listener);
+        IOSUseRemoveOwnedSocket();
+        return -1;
+    }
+    memcpy(
+        IOSUseRuntimeSocketSignalPath,
+        filePath,
+        signalPathLength + 1
+    );
+    IOSUseRuntimeSocketOwned = 1;
     if (listen(listener, 16) != 0) {
         IOSUseRecordSocketFailure(@"socket-listen", errno);
+        close(listener);
+        IOSUseRemoveOwnedSocket();
+        return -1;
+    }
+    struct sigaction terminationAction = {0};
+    terminationAction.sa_handler =
+        IOSUseHandleTerminationSignal;
+    terminationAction.sa_flags = SA_RESETHAND;
+    sigemptyset(&terminationAction.sa_mask);
+    if (sigaction(SIGTERM, &terminationAction, NULL) != 0) {
+        IOSUseRecordSocketFailure(
+            @"socket-termination-handler",
+            errno
+        );
         close(listener);
         IOSUseRemoveOwnedSocket();
         return -1;

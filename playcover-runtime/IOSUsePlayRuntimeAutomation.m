@@ -1252,7 +1252,10 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
     if ([command isEqualToString:@"tap"]) {
         NSDictionary *offset = arguments[@"offset"];
         NSDictionary *ratio = arguments[@"ratio"];
-        if (ratio != nil) {
+        // Absolute coordinates are already expressed in the fixed logical
+        // device space. Applying the element-relative default ratio again
+        // would move the point to the center of the hit-tested view.
+        if (ratio != nil && target[@"point"] == nil) {
             if (!IOSUseAutomationIsNumber(ratio[@"x"]) ||
                 !IOSUseAutomationIsNumber(ratio[@"y"])) {
                 if (commandError != NULL) {

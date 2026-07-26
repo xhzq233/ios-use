@@ -122,6 +122,51 @@ static BOOL IOSUseHostCanvasTestResizeRounding(void) {
     );
 }
 
+static BOOL IOSUseHostCanvasTestBootstrapAspectTarget(void) {
+    IOSUsePlayHostCanvasLayout initial = {0};
+    IOSUsePlayHostCanvasLayout normalized = {0};
+    NSString *initialFailure = nil;
+    NSString *normalizedFailure = nil;
+    BOOL initialReady = IOSUsePlayResolveHostCanvasLayout(
+        CGRectMake(0, 0, 422, 916),
+        &initial,
+        &initialFailure
+    );
+    CGFloat verticalSurplus =
+        916.0 - initial.canvasRect.size.height;
+    CGRect normalizedBounds = CGRectMake(
+        0,
+        0,
+        initial.canvasRect.size.width,
+        initial.canvasRect.size.height
+    );
+    BOOL normalizedReady = initialReady &&
+        IOSUsePlayResolveHostCanvasLayout(
+            normalizedBounds,
+            &normalized,
+            &normalizedFailure
+        );
+    BOOL passed = initialReady && initialFailure == nil &&
+        verticalSurplus > 0.5 &&
+        normalizedReady && normalizedFailure == nil &&
+        IOSUseHostCanvasTestRectEquals(
+            normalized.canvasRect,
+            normalizedBounds
+        ) &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            normalized.displayScale,
+            initial.displayScale
+        );
+    return IOSUseHostCanvasTestRequire(
+        passed,
+        [NSString stringWithFormat:
+            @"422x916 bootstrap aspect target was not gap-free: %@ / %@",
+            initialFailure ?: @"initial geometry",
+            normalizedFailure ?: @"normalized geometry"
+        ]
+    );
+}
+
 static BOOL IOSUseHostCanvasTestRoundTrip(
     IOSUsePlayHostCanvasLayout layout,
     CGPoint logicalPoint
@@ -472,6 +517,8 @@ int main(int argc, const char *argv[]) {
         );
         BOOL resizeRoundingReady =
             IOSUseHostCanvasTestResizeRounding();
+        BOOL bootstrapAspectReady =
+            IOSUseHostCanvasTestBootstrapAspectTarget();
         NSString *undersizedFailure = nil;
         BOOL undersizedRejected = !IOSUsePlayResolveHostCanvasLayout(
             CGRectMake(0, 0, 214.9, 466),
@@ -575,7 +622,7 @@ int main(int argc, const char *argv[]) {
         BOOL fractionalCrop =
             IOSUseHostCanvasTestFractionalCropExcludesDecorations();
         BOOL passed = unitReady && resizeReady && minimumReady &&
-            resizeRoundingReady &&
+            resizeRoundingReady && bootstrapAspectReady &&
             undersizedRejected && unitRoundTrip && resizedRoundTrip &&
             outsideRejected && canvasCGReady &&
             fullLogicalReady && accessibilityTransformReady &&
@@ -583,11 +630,12 @@ int main(int argc, const char *argv[]) {
             crop1x && crop2x && fractionalCrop;
         fprintf(
             stderr,
-            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d pass=%d\n",
+            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d bootstrap=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d pass=%d\n",
             unitReady,
             resizeReady,
             minimumReady,
             resizeRoundingReady,
+            bootstrapAspectReady,
             outsideRejected,
             canvasCGReady && fullLogicalReady,
             accessibilityTransformReady,
