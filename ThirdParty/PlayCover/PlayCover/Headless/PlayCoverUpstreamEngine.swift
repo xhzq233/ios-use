@@ -671,13 +671,15 @@ public enum PlayCoverUpstreamEngine {
     public static func inspect(appURL: URL) throws -> PlayCoverUpstreamAppInspection {
         try inspect(
             appURL: appURL,
-            nestedBuildHashRoot: nil
+            nestedBuildHashRoot: nil,
+            deferredStrictVerifyRelativePath: nil
         ).inspection
     }
 
     private static func inspect(
         appURL: URL,
-        nestedBuildHashRoot: String?
+        nestedBuildHashRoot: String?,
+        deferredStrictVerifyRelativePath: String?
     ) throws -> (
         inspection: PlayCoverUpstreamAppInspection,
         nestedBuildHash: String?
@@ -722,20 +724,32 @@ public enum PlayCoverUpstreamEngine {
                 "main executable does not exist: \(executable.path)"
             )
         }
+        let mainRelative = try relativePath(executable, in: app)
+        if let deferredStrictVerifyRelativePath,
+           mainRelative != deferredStrictVerifyRelativePath {
+            throw PlayCoverUpstreamError.verificationFailed(
+                "final main executable does not match the preparation plan: "
+                    + "expected \(deferredStrictVerifyRelativePath), got "
+                    + mainRelative
+            )
+        }
 
         let snapshot = try treeSnapshot(
             appURL: app,
             preloadedRegularFileData: ["Info.plist": infoData],
             inspectMachOs: true,
             nestedBuildHashRoot: nestedBuildHashRoot,
+            deferredStrictVerifyRelativePath:
+                deferredStrictVerifyRelativePath,
             passKind: .appInspection
         )
         let inventory = snapshot.inventory
         let machOs = snapshot.machOs
-        let mainRelative = try relativePath(executable, in: app)
-        guard let mainMachO = machOs.first(where: {
+        let matchingMainMachOs = machOs.filter {
             $0.relativePath == mainRelative
-        }) else {
+        }
+        guard matchingMainMachOs.count == 1,
+              let mainMachO = matchingMainMachOs.first else {
             throw PlayCoverUpstreamError.invalidApp(
                 "main executable is not a supported arm64 Mach-O"
             )
@@ -1048,7 +1062,9 @@ public enum PlayCoverUpstreamEngine {
             expectedRuntimeBuildHash: options.expectedRuntimeBuildHash,
             embeddedRuntimeFrameworkRelativePath:
                 embeddedRuntimeRelativePath,
-            signingOrder: signing
+            signingOrder: signing,
+            preparedMainExecutableRelativePath:
+                source.mainExecutableRelativePath
         )
         // A completed source build remaining byte-stable through publication
         // is the caller's contract. Re-reading either the live source or its
@@ -1080,7 +1096,8 @@ public enum PlayCoverUpstreamEngine {
             runtimeLoadPath: runtimeLoadPath,
             expectedRuntimeBuildHash: nil,
             embeddedRuntimeFrameworkRelativePath: nil,
-            signingOrder: signingOrder
+            signingOrder: signingOrder,
+            preparedMainExecutableRelativePath: nil
         )
     }
 
@@ -1089,16 +1106,25 @@ public enum PlayCoverUpstreamEngine {
         runtimeLoadPath: String,
         expectedRuntimeBuildHash: String?,
         embeddedRuntimeFrameworkRelativePath: String?,
-        signingOrder: [String]? = nil
+        signingOrder: [String]? = nil,
+        preparedMainExecutableRelativePath: String?
     ) throws -> PlayCoverUpstreamAppInspection {
+        let deferredMainExecutableRelativePath =
+            deferredPreparedMainExecutableRelativePath(
+                plannedMainExecutableRelativePath:
+                    preparedMainExecutableRelativePath,
+                signingOrder: signingOrder
+            )
         let result = try inspect(
             appURL: appURL,
             nestedBuildHashRoot:
                 expectedRuntimeBuildHash == nil
                     ? nil
-                    : embeddedRuntimeFrameworkRelativePath
+                    : embeddedRuntimeFrameworkRelativePath,
+            deferredStrictVerifyRelativePath:
+                deferredMainExecutableRelativePath
         )
-        let inspection = result.inspection
+        var inspection = result.inspection
         if let expectedRuntimeBuildHash {
             guard let actualRuntimeBuildHash = result.nestedBuildHash else {
                 throw PlayCoverUpstreamError.verificationFailed(
@@ -1126,10 +1152,12 @@ public enum PlayCoverUpstreamEngine {
                     "non-Catalyst Mach-O remains: \(macho.relativePath)"
                 )
             }
-            guard macho.signature.isValid else {
-                throw PlayCoverUpstreamError.verificationFailed(
-                    "\(macho.relativePath) code signature is invalid"
-                )
+            if macho.relativePath != deferredMainExecutableRelativePath {
+                guard macho.signature.isValid else {
+                    throw PlayCoverUpstreamError.verificationFailed(
+                        "\(macho.relativePath) code signature is invalid"
+                    )
+                }
             }
         }
         guard let main = inspection.machOs.first(where: {
@@ -1184,6 +1212,7 @@ public enum PlayCoverUpstreamEngine {
                 return lhsDepth == rhsDepth ? $0 < $1 : lhsDepth > rhsDepth
             } + ["."]
         }
+        var rootSignatureWasVerified = false
         for relative in bundlePaths {
             try verifyCodeSignature(
                 relative == "."
@@ -1191,8 +1220,204 @@ public enum PlayCoverUpstreamEngine {
                     : appURL.appendingPathComponent(relative),
                 label: relative == "." ? appURL.lastPathComponent : relative
             )
+            rootSignatureWasVerified = relative == "."
+                || rootSignatureWasVerified
+        }
+        if deferredMainExecutableRelativePath != nil {
+            guard rootSignatureWasVerified else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "final outer App signature was not verified"
+                )
+            }
+            inspection = try inspectionByValidatingDeferredMainSignature(
+                inspection
+            )
+            guard inspection.machOs.allSatisfy(\.signature.isValid) else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "prepared signature evidence is incomplete"
+                )
+            }
         }
         return inspection
+    }
+
+    static func deferredPreparedMainExecutableRelativePath(
+        plannedMainExecutableRelativePath: String?,
+        signingOrder: [String]?
+    ) -> String? {
+        guard let plannedMainExecutableRelativePath,
+              !plannedMainExecutableRelativePath.isEmpty,
+              let signingOrder,
+              signingOrder.last == ".",
+              signingOrder.filter({ $0 == "." }).count == 1,
+              Set(signingOrder).count == signingOrder.count else {
+            return nil
+        }
+        return plannedMainExecutableRelativePath
+    }
+
+    private static func inspectionByValidatingDeferredMainSignature(
+        _ inspection: PlayCoverUpstreamAppInspection
+    ) throws -> PlayCoverUpstreamAppInspection {
+        var matchingMainCount = 0
+        let machOs = try inspection.machOs.map { macho in
+            guard macho.relativePath
+                    == inspection.mainExecutableRelativePath else {
+                return macho
+            }
+            matchingMainCount += 1
+            guard macho.signature.isSigned else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "\(macho.relativePath) is not signed"
+                )
+            }
+            let finalizedSignature = signature(
+                macho.signature,
+                replacingValidityWith: true
+            )
+            let sliceInspections: [
+                PlayCoverUpstreamMachOSliceInspection
+            ]?
+            switch macho.container {
+            case .thin:
+                guard let slices = macho.sliceInspections,
+                      slices.count == 1,
+                      slices[0].signature.isSigned else {
+                    throw PlayCoverUpstreamError.verificationFailed(
+                        "\(macho.relativePath) thin signature evidence "
+                            + "is incomplete"
+                    )
+                }
+                sliceInspections = [
+                    slice(
+                        slices[0],
+                        replacingSignature: signature(
+                            slices[0].signature,
+                            replacingValidityWith: true
+                        )
+                    ),
+                ]
+            case .fat, .fat64:
+                sliceInspections = macho.sliceInspections
+            }
+            return machO(
+                macho,
+                replacingSignature: finalizedSignature,
+                sliceInspections: sliceInspections
+            )
+        }
+        guard matchingMainCount == 1,
+              let main = machOs.first(where: {
+                  $0.relativePath
+                      == inspection.mainExecutableRelativePath
+              }) else {
+            throw PlayCoverUpstreamError.verificationFailed(
+                "final main executable signature evidence is not unique"
+            )
+        }
+        return PlayCoverUpstreamAppInspection(
+            appPath: inspection.appPath,
+            sourceContentHash: inspection.sourceContentHash,
+            infoPlistSHA256: inspection.infoPlistSHA256,
+            bundleIdentifier: inspection.bundleIdentifier,
+            executableName: inspection.executableName,
+            executablePath: inspection.executablePath,
+            mainExecutableRelativePath:
+                inspection.mainExecutableRelativePath,
+            signature: main.signature,
+            provisioning: inspection.provisioning,
+            inventory: inspection.inventory,
+            machOs: machOs
+        )
+    }
+
+    private static func signature(
+        _ value: PlayCoverUpstreamSignature,
+        replacingValidityWith isValid: Bool
+    ) -> PlayCoverUpstreamSignature {
+        PlayCoverUpstreamSignature(
+            isSigned: value.isSigned,
+            isValid: isValid,
+            cdHash: value.cdHash,
+            identifier: value.identifier,
+            teamIdentifier: value.teamIdentifier,
+            signatureType: value.signatureType,
+            flags: value.flags,
+            codeDirectoryVersion: value.codeDirectoryVersion,
+            codeDirectoryHashes: value.codeDirectoryHashes,
+            hashChoices: value.hashChoices,
+            hashType: value.hashType,
+            pageSize: value.pageSize,
+            superBlobLength: value.superBlobLength,
+            superBlobPaddingSize: value.superBlobPaddingSize,
+            superBlobStructureSHA256:
+                value.superBlobStructureSHA256,
+            superBlobPaddingSHA256: value.superBlobPaddingSHA256,
+            embeddedSlots: value.embeddedSlots,
+            entitlementsPlist: value.entitlementsPlist,
+            derEntitlementsPlist: value.derEntitlementsPlist
+        )
+    }
+
+    private static func slice(
+        _ value: PlayCoverUpstreamMachOSliceInspection,
+        replacingSignature signature: PlayCoverUpstreamSignature
+    ) -> PlayCoverUpstreamMachOSliceInspection {
+        PlayCoverUpstreamMachOSliceInspection(
+            fatIndex: value.fatIndex,
+            cpuType: value.cpuType,
+            cpuSubtype: value.cpuSubtype,
+            offset: value.offset,
+            size: value.size,
+            alignment: value.alignment,
+            byteSwapped: value.byteSwapped,
+            fileType: value.fileType,
+            headerFlags: value.headerFlags,
+            headerReserved: value.headerReserved,
+            commandCount: value.commandCount,
+            commandBytes: value.commandBytes,
+            firstSectionOffset: value.firstSectionOffset,
+            platform: value.platform,
+            minimumOS: value.minimumOS,
+            sdk: value.sdk,
+            encrypted: value.encrypted,
+            dependencies: value.dependencies,
+            rpaths: value.rpaths,
+            loadCommands: value.loadCommands,
+            signature: signature,
+            sliceSHA256: value.sliceSHA256,
+            immutableContentSHA256: value.immutableContentSHA256
+        )
+    }
+
+    private static func machO(
+        _ value: PlayCoverUpstreamMachOInspection,
+        replacingSignature signature: PlayCoverUpstreamSignature,
+        sliceInspections: [PlayCoverUpstreamMachOSliceInspection]?
+    ) -> PlayCoverUpstreamMachOInspection {
+        PlayCoverUpstreamMachOInspection(
+            relativePath: value.relativePath,
+            fileSHA256: value.fileSHA256,
+            container: value.container,
+            fatHeaderBigEndian: value.fatHeaderBigEndian,
+            arm64SliceOffset: value.arm64SliceOffset,
+            arm64SliceSize: value.arm64SliceSize,
+            byteSwapped: value.byteSwapped,
+            cpuType: value.cpuType,
+            fileType: value.fileType,
+            commandCount: value.commandCount,
+            commandBytes: value.commandBytes,
+            firstSectionOffset: value.firstSectionOffset,
+            platform: value.platform,
+            minimumOS: value.minimumOS,
+            sdk: value.sdk,
+            encrypted: value.encrypted,
+            dependencies: value.dependencies,
+            rpaths: value.rpaths,
+            loadCommands: value.loadCommands,
+            signature: signature,
+            sliceInspections: sliceInspections
+        )
     }
 
     public static func contentHash(appURL: URL) throws -> String {
@@ -1412,6 +1637,7 @@ public enum PlayCoverUpstreamEngine {
         fileSHA256: String,
         at url: URL,
         relativePath: String,
+        deferTopLevelStrictVerify: Bool = false,
         sliceTemporaryFileCreated:
             ((URL) throws -> Void)? = nil
     ) throws -> PlayCoverUpstreamMachOInspection {
@@ -1687,7 +1913,9 @@ public enum PlayCoverUpstreamEngine {
                     signatureSource: .original(
                         url,
                         fileSHA256: fileSHA256
-                    )
+                    ),
+                    performStrictVerify:
+                        !deferTopLevelStrictVerify
                 )
             }
             guard let thinSignature = sliceInspections.first?.signature else {
@@ -1699,7 +1927,10 @@ public enum PlayCoverUpstreamEngine {
                 from: thinSignature
             )
         case .fat, .fat64:
-            signature = try signatureEvidence(url)
+            signature = try signatureEvidence(
+                url,
+                performStrictVerify: !deferTopLevelStrictVerify
+            )
             sliceInspections =
                 try withSecureSliceTemporaryDirectory { directory in
                     try rawSlices.map {
@@ -1955,7 +2186,8 @@ public enum PlayCoverUpstreamEngine {
     private static func inspectSlice(
         _ slice: Slice,
         path: String,
-        signatureSource: SliceSignatureSource
+        signatureSource: SliceSignatureSource,
+        performStrictVerify: Bool = true
     ) throws -> PlayCoverUpstreamMachOSliceInspection {
         let data = slice.data
         let swapped = slice.byteSwapped
@@ -2297,7 +2529,8 @@ public enum PlayCoverUpstreamEngine {
             signature = try signatureEvidence(
                 original,
                 embeddedSignature: embedded,
-                diagnosticPath: signaturePath
+                diagnosticPath: signaturePath,
+                performStrictVerify: performStrictVerify
             )
             sliceSHA256 = fileSHA256
         case .extracted(let directory, let fileCreated):
@@ -2916,6 +3149,7 @@ public enum PlayCoverUpstreamEngine {
         inspectMachOs: Bool,
         collectFileHashes: Bool = true,
         nestedBuildHashRoot: String? = nil,
+        deferredStrictVerifyRelativePath: String? = nil,
         passKind: FullContentPassKind
     ) throws -> TreeSnapshot {
         fullContentPassObserverForTesting?(passKind, appURL)
@@ -3068,7 +3302,10 @@ public enum PlayCoverUpstreamEngine {
                         data,
                         fileSHA256: fileSHA256,
                         at: entry.url,
-                        relativePath: entry.relativePath
+                        relativePath: entry.relativePath,
+                        deferTopLevelStrictVerify:
+                            entry.relativePath
+                                == deferredStrictVerifyRelativePath
                     )
                 }
             case .symbolicLink:
@@ -3480,7 +3717,8 @@ public enum PlayCoverUpstreamEngine {
     private static func signatureEvidence(
         _ url: URL,
         embeddedSignature: EmbeddedSignatureEvidence? = nil,
-        diagnosticPath: String? = nil
+        diagnosticPath: String? = nil,
+        performStrictVerify: Bool = true
     ) throws -> PlayCoverUpstreamSignature {
         let evidencePath = diagnosticPath ?? url.path
         codeSignatureObserverForTesting?(.display, url)
@@ -3560,7 +3798,10 @@ public enum PlayCoverUpstreamEngine {
             }
             return PlayCoverUpstreamSignature(
                 isSigned: signed,
-                isValid: signed && codeSignatureIsValid(url),
+                isValid:
+                    signed
+                    && performStrictVerify
+                    && codeSignatureIsValid(url),
                 cdHash: metadata?.cdHash,
                 identifier: metadata?.identifier,
                 teamIdentifier: metadata?.teamIdentifier,

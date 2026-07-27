@@ -432,6 +432,47 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertEqual(result.machOs[0].arm64SliceSize, UInt64(thin.count))
     }
 
+    func testBundleSignedFatMainKeepsStandaloneSliceValidityAsEvidence()
+        throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let app = root.appendingPathComponent(
+            "FatFixture.app",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: app,
+            withIntermediateDirectories: false
+        )
+        let executable = app.appendingPathComponent("FatFixture")
+        try FileManager.default.copyItem(
+            at: URL(fileURLWithPath: "/usr/bin/true"),
+            to: executable
+        )
+        try plistData([
+            "CFBundleIdentifier": "com.example.fatfixture",
+            "CFBundleExecutable": "FatFixture",
+        ]).write(to: app.appendingPathComponent("Info.plist"))
+        try codesign(app, entitlements: nil)
+
+        let inspection = try PlayCoverUpstreamEngine.inspect(appURL: app)
+        let main = try XCTUnwrap(
+            inspection.machOs.first {
+                $0.relativePath == inspection.mainExecutableRelativePath
+            }
+        )
+        let slices = try XCTUnwrap(main.sliceInspections)
+
+        XCTAssertTrue(main.signature.isValid)
+        XCTAssertFalse(slices.isEmpty)
+        XCTAssertTrue(
+            slices.contains { !$0.signature.isValid },
+            "a bundle-valid universal main can have extracted slices that "
+                + "cannot verify without its Info.plist context"
+        )
+    }
+
     func testInspectByteSwappedThinArm64() throws {
         let fixture = try makeApp(
             executable: makeThinMachO(
@@ -1137,6 +1178,40 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         }
     }
 
+    func testPreparedMainDeferralRequiresUniqueRootLastSigningOrder() {
+        func deferred(_ order: [String]?) -> String? {
+            PlayCoverUpstreamEngine
+                .deferredPreparedMainExecutableRelativePath(
+                    plannedMainExecutableRelativePath: "Fixture",
+                    signingOrder: order
+                )
+        }
+
+        XCTAssertEqual(
+            deferred(["Frameworks/Runtime.framework", "."]),
+            "Fixture"
+        )
+        XCTAssertNil(deferred(nil))
+        XCTAssertNil(deferred([]))
+        XCTAssertNil(deferred(["Frameworks/Runtime.framework"]))
+        XCTAssertNil(deferred([".", "Frameworks/Runtime.framework"]))
+        XCTAssertNil(deferred([".", "."]))
+        XCTAssertNil(
+            deferred([
+                "Frameworks/Runtime.framework",
+                "Frameworks/Runtime.framework",
+                ".",
+            ])
+        )
+        XCTAssertNil(
+            PlayCoverUpstreamEngine
+                .deferredPreparedMainExecutableRelativePath(
+                    plannedMainExecutableRelativePath: nil,
+                    signingOrder: ["."]
+                )
+        )
+    }
+
     func testCompleteHeadlessPrepareUsesPinnedInstallerPipeline() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1155,13 +1230,26 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 path: String
             )
         ] = []
+        var finalInspectionPath: String?
+        var finalInspectionStarted = false
+        var finalSignatureObservations: [
+            (
+                kind: PlayCoverUpstreamEngine.CodeSignatureObservationKind,
+                path: String
+            )
+        ] = []
         PlayCoverUpstreamEngine.fullContentPassObserverForTesting = {
             kind,
             url in
-            contentPasses.append((kind, url.standardizedFileURL.path))
+            let path = url.standardizedFileURL.path
+            contentPasses.append((kind, path))
+            if path == finalInspectionPath {
+                finalInspectionStarted = true
+            }
         }
         defer {
             PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
+            PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
         }
         let sourceInspection = try PlayCoverUpstreamEngine.inspect(
             appURL: source
@@ -1189,6 +1277,16 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "prepared/Fixture.app",
             isDirectory: true
         )
+        finalInspectionPath = staging.path
+        PlayCoverUpstreamEngine.codeSignatureObserverForTesting = {
+            kind,
+            url in
+            if finalInspectionStarted {
+                finalSignatureObservations.append(
+                    (kind, url.standardizedFileURL.path)
+                )
+            }
+        }
         let runtimeLoadPath =
             "@executable_path/Frameworks/IOSUsePlayRuntime.framework/"
                 + "IOSUsePlayRuntime"
@@ -1207,6 +1305,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             sourceInspection: sourceInspection
         )
         PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
+        PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
 
         XCTAssertEqual(
             contentPasses.map(\.kind),
@@ -1280,6 +1379,60 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             )
         )
         XCTAssertEqual(result.signingOrder.last, ".")
+        let strictPaths = finalSignatureObservations.compactMap {
+            $0.kind == .strictVerify ? $0.path : nil
+        }
+        XCTAssertFalse(
+            strictPaths.contains(
+                staging.appendingPathComponent("Fixture").path
+            ),
+            "private prepare must let the final outer App verification "
+                + "validate its main executable"
+        )
+        XCTAssertEqual(
+            strictPaths.filter { $0 == staging.path }.count,
+            1
+        )
+        XCTAssertEqual(strictPaths.last, staging.path)
+        XCTAssertTrue(result.prepared.signature.isValid)
+        XCTAssertTrue(
+            result.prepared.machOs.allSatisfy(\.signature.isValid)
+        )
+        let preparedMain = try XCTUnwrap(
+            result.prepared.machOs.first {
+                $0.relativePath
+                    == result.prepared.mainExecutableRelativePath
+            }
+        )
+        XCTAssertTrue(
+            preparedMain.container != .thin
+                || preparedMain.allSlices.allSatisfy(
+                    \.signature.isValid
+                )
+        )
+        var publicVerifyStrictPaths: [String] = []
+        PlayCoverUpstreamEngine.codeSignatureObserverForTesting = {
+            kind,
+            url in
+            if kind == .strictVerify {
+                publicVerifyStrictPaths.append(
+                    url.standardizedFileURL.path
+                )
+            }
+        }
+        _ = try PlayCoverUpstreamEngine.verify(
+            appURL: staging,
+            runtimeLoadPath: runtimeLoadPath,
+            signingOrder: result.signingOrder
+        )
+        PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
+        XCTAssertTrue(
+            publicVerifyStrictPaths.contains(
+                staging.appendingPathComponent("Fixture").path
+            ),
+            "public verify must keep direct main validation"
+        )
+        XCTAssertEqual(publicVerifyStrictPaths.last, staging.path)
         XCTAssertEqual(
             result.entitlementDiff.removedFromOriginal,
             [
@@ -1302,6 +1455,103 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "--verify",
             "--strict",
             staging.path
+        )
+    }
+
+    func testDeferredMainSignatureFailsClosedWhenRootSealChanges()
+        throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent(
+            "Source.app",
+            isDirectory: true
+        )
+        try makeIOSAppWithExtension(at: source, root: root)
+        let sourceInspection = try PlayCoverUpstreamEngine.inspect(
+            appURL: source
+        )
+        let runtime = try makeCatalystRuntimeFramework(in: root)
+        try codesign(runtime, entitlements: nil)
+        let managed = root.appendingPathComponent(
+            "managed",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: managed.appendingPathComponent("prepared"),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let staging = managed.appendingPathComponent(
+            "prepared/Fixture.app",
+            isDirectory: true
+        )
+        var mutationError: Error?
+        var mutated = false
+        var strictPaths: [String] = []
+        PlayCoverUpstreamEngine.codeSignatureObserverForTesting = {
+            kind,
+            url in
+            guard kind == .strictVerify else {
+                return
+            }
+            strictPaths.append(url.standardizedFileURL.path)
+            guard url.standardizedFileURL.path == staging.path,
+                  !mutated else {
+                return
+            }
+            do {
+                let executable = staging.appendingPathComponent("Fixture")
+                var bytes = try Data(contentsOf: executable)
+                bytes[bytes.startIndex + 32] ^= 0x01
+                try bytes.write(to: executable)
+                mutated = true
+            } catch {
+                mutationError = error
+            }
+        }
+        defer {
+            PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
+        }
+        let runtimeLoadPath =
+            "@executable_path/Frameworks/IOSUsePlayRuntime.framework/"
+                + "IOSUsePlayRuntime"
+
+        XCTAssertThrowsError(
+            try PlayCoverUpstreamEngine.prepare(
+                PlayCoverUpstreamPrepareOptions(
+                    sourceApp: source,
+                    stagingApp: staging,
+                    runtimeFramework: runtime,
+                    managedHome: managed,
+                    runtimeSocketPath: managed.appendingPathComponent(
+                        "run/s-runtime.sock"
+                    ).path,
+                    runtimeLoadPath: runtimeLoadPath,
+                    expectedRuntimeBuildHash:
+                        try PlayCoverUpstreamEngine.runtimeBuildHash(
+                            frameworkURL: runtime
+                        )
+                ),
+                sourceInspection: sourceInspection
+            )
+        ) { error in
+            guard case PlayCoverUpstreamError.verificationFailed(
+                let message
+            ) = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("Fixture.app code signature"),
+                message
+            )
+        }
+        XCTAssertNil(mutationError)
+        XCTAssertTrue(mutated)
+        XCTAssertEqual(strictPaths.last, staging.path)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: staging.path),
+            "failed root validation must roll staging back"
         )
     }
 
