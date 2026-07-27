@@ -7,6 +7,29 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         case sliceTemporaryFileObserved
     }
 
+    func testLowercaseHexEncodingIsByteExactForArraysAndSlices() {
+        let bytes: [UInt8] = [
+            0x00, 0x01, 0x0f, 0x10, 0x7f, 0x80, 0xfe, 0xff,
+        ]
+        let expected = "00010f107f80feff"
+        XCTAssertEqual(
+            PlayCoverUpstreamEngine.hex(bytes),
+            expected
+        )
+
+        let padded = Data([0xaa] + bytes + [0xbb])
+        XCTAssertEqual(
+            PlayCoverUpstreamEngine.hex(
+                padded.dropFirst().dropLast()
+            ),
+            expected
+        )
+        XCTAssertEqual(
+            PlayCoverUpstreamEngine.hex([UInt8]()),
+            ""
+        )
+    }
+
     func testLengthFramedTreeHashDistinguishesAmbiguousTrees() throws {
         let first = try makeApp(executable: makeThinMachO(dependencies: []))
         let second = try makeApp(executable: makeThinMachO(dependencies: []))
@@ -316,6 +339,24 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             slice.signature.embeddedSlots.isEmpty,
             "slice evidence must retain parsed embedded-signature evidence"
         )
+        let primaryCodeDirectory = try XCTUnwrap(
+            slice.signature.embeddedSlots.first {
+                $0.type == 0
+            }?.codeDirectory
+        )
+        XCTAssertFalse(primaryCodeDirectory.codeSlotHashes.isEmpty)
+        for hash in primaryCodeDirectory.codeSlotHashes {
+            XCTAssertEqual(
+                hash.utf8.count,
+                Int(primaryCodeDirectory.hashSize) * 2
+            )
+            XCTAssertTrue(
+                hash.utf8.allSatisfy {
+                    ($0 >= 0x30 && $0 <= 0x39)
+                        || ($0 >= 0x61 && $0 <= 0x66)
+                }
+            )
+        }
     }
 
     func testInspectFatArm64SelectsBoundedSlice() throws {

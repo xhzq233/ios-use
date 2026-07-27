@@ -2584,18 +2584,15 @@ public enum PlayCoverUpstreamEngine {
             for slot in 1...specialCount {
                 let start = hashOffset - slot * hashSize
                 let bytes = blob[start..<(start + hashSize)]
-                specialSlotHashes["-\(slot)"] = bytes.map {
-                    String(format: "%02x", $0)
-                }.joined()
+                specialSlotHashes["-\(slot)"] = hex(bytes)
             }
         }
         var codeSlotHashes: [String] = []
+        codeSlotHashes.reserveCapacity(codeCount)
         for slot in 0..<codeCount {
             let start = hashOffset + slot * hashSize
             let bytes = blob[start..<(start + hashSize)]
-            codeSlotHashes.append(
-                bytes.map { String(format: "%02x", $0) }.joined()
-            )
+            codeSlotHashes.append(hex(bytes))
         }
         var normalized = blob
         normalized.replaceSubrange(
@@ -4379,9 +4376,20 @@ public enum PlayCoverUpstreamEngine {
         }
     }
 
-    private static func hex<D: Sequence>(_ digest: D) -> String
+    private static let lowercaseHexAlphabet =
+        Array("0123456789abcdef".utf8)
+
+    static func hex<D: Sequence>(_ digest: D) -> String
         where D.Element == UInt8 {
-        digest.map { String(format: "%02x", $0) }.joined()
+        var encoded: [UInt8] = []
+        if digest.underestimatedCount <= Int.max / 2 {
+            encoded.reserveCapacity(digest.underestimatedCount * 2)
+        }
+        for byte in digest {
+            encoded.append(lowercaseHexAlphabet[Int(byte >> 4)])
+            encoded.append(lowercaseHexAlphabet[Int(byte & 0x0f)])
+        }
+        return String(decoding: encoded, as: UTF8.self)
     }
 }
 
