@@ -114,6 +114,7 @@ final class CLIParserTests: XCTestCase {
                 "--playcover",
                 "--app",
                 "/fixtures/Demo.app",
+                "--log",
                 "--timeout",
                 "800ms",
             ]),
@@ -121,6 +122,7 @@ final class CLIParserTests: XCTestCase {
                 StartOptions(
                     playCover: true,
                     appPath: "/fixtures/Demo.app",
+                    log: true,
                     timeout: 0.8
                 )
             )
@@ -158,6 +160,14 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(
                 error as? CLIParseError,
                 .invalidValue("--app and --timeout require --playcover")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--log"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--log requires --playcover")
             )
         }
     }
@@ -661,6 +671,23 @@ final class CLIParserTests: XCTestCase {
     }
 
     func testParsesGlobalJSONWithoutStealingOptionValues() throws {
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "start",
+                "--playcover",
+                "--log",
+                "--json",
+            ]),
+            ParsedInvocation(
+                command: .start(
+                    StartOptions(
+                        playCover: true,
+                        log: true
+                    )
+                ),
+                json: true
+            )
+        )
         XCTAssertEqual(
             try CLIParser.parseInvocation(["--json", "status"]),
             ParsedInvocation(command: .status(StatusOptions()), json: true)

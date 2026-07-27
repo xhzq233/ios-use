@@ -4,6 +4,38 @@ import UIKit
 private let fixtureCrashNotificationPrefix =
     "com.iosuse.playfixture.self-sigkill."
 
+private func writeFixtureStdioMarker(
+    descriptor: Int32,
+    stream: String
+) {
+    let sessionID = ProcessInfo.processInfo.environment[
+        "IOS_USE_PLAY_SESSION_ID"
+    ] ?? "missing-session"
+    let bytes = Array(
+        "[ios-use-play-fixture] \(stream) \(sessionID)\n".utf8
+    )
+    bytes.withUnsafeBytes { buffer in
+        guard let base = buffer.baseAddress else {
+            return
+        }
+        var offset = 0
+        while offset < buffer.count {
+            let written = Darwin.write(
+                descriptor,
+                base.advanced(by: offset),
+                buffer.count - offset
+            )
+            if written > 0 {
+                offset += written
+            } else if written < 0, errno == EINTR {
+                continue
+            } else {
+                return
+            }
+        }
+    }
+}
+
 private func fixtureCrashNotificationCallback(
     _ center: CFNotificationCenter?,
     _ observer: UnsafeMutableRawPointer?,
@@ -40,6 +72,14 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     ) -> Bool {
         _ = application
         _ = launchOptions
+        writeFixtureStdioMarker(
+            descriptor: STDOUT_FILENO,
+            stream: "stdout"
+        )
+        writeFixtureStdioMarker(
+            descriptor: STDERR_FILENO,
+            stream: "stderr"
+        )
         registerCrashNotification()
         return true
     }

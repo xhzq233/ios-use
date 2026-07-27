@@ -11,7 +11,7 @@ code.
 The public lifecycle is intentionally small:
 
 ```bash
-./ios-use start --playcover --app /path/to/Source.app
+./ios-use start --playcover --app /path/to/Source.app --log
 ./ios-use status
 # normal ios-use UI, screenshot, capture, URL, and log commands
 ./ios-use stop
@@ -23,6 +23,17 @@ from the current `IOS_USE_HOME`. There are no public `playcover inspect`,
 entry points. After rebuilding a source App, pass `--app` again; bare start
 deliberately does not inspect, hash, or otherwise depend on the original source
 path.
+
+`--log` is optional. It asks the CLI to create a unique owner-only file under
+`IOS_USE_HOME/playcover/logs/`, then makes the injected Runtime redirect the
+target App's stdout and stderr to that exact pre-created file. Start prints the
+path, and `status` reports it as `stdio log`. The file is retained after a
+successful stop, an App crash, or a failed launch so it remains usable as
+evidence. The flag and path are per-session state only; they do not participate
+in source inspection, the Runtime hash, or the generation key. This capture
+begins at the Runtime's earliest controllable C constructor. Objective-C
+`+load` and dyld diagnostics that precede constructors are outside its
+contract; exact-PID unified logging remains a separate source.
 
 ## Fixed Device Contract
 
@@ -91,7 +102,7 @@ constant; they never crop the output or consume App touch events.
 ## Architecture and Session
 
 ```text
-ios-use start --playcover [--app <source-or-managed-prepared.app>]
+ios-use start --playcover [--app <source-or-managed-prepared.app>] [--log]
   -> PlayCoverManagedAppService
      -> source classification or managed-generation selection
      -> deterministic generation selection under this IOS_USE_HOME
@@ -115,6 +126,13 @@ that socket and never reads a sidecar configuration file. NSWorkspace overlays
 launch variables rather than replacing the caller environment, so ios-use
 explicitly clears every inherited non-allowlisted key before launch; shell
 credentials are never forwarded to the target App.
+
+For `--log`, the same restricted environment also carries the CLI-generated
+canonical path plus the pre-created file's device and inode. The Runtime opens
+the owner-only parent and leaf without following symlinks, verifies a regular
+0600 file owned by the current user with exactly one link and the expected
+identity, then redirects file descriptors 1 and 2. Runtime hello reports that
+exact outcome, and start does not commit the session unless it matches.
 
 The launch facade is a real `.app` directory whose top-level children are
 symlinks to the immutable prepared App, matching pinned PlayCover's

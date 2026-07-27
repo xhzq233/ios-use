@@ -17,6 +17,7 @@ public enum SessionService {
         public let playCoverExecutablePath: String?
         public let playCoverGenerationKey: String?
         public let playCoverRuntimeSocketPath: String?
+        public let playCoverLogPath: String?
 
         public init(
             udid: String,
@@ -33,7 +34,8 @@ public enum SessionService {
             playCoverAppPath: String? = nil,
             playCoverExecutablePath: String? = nil,
             playCoverGenerationKey: String? = nil,
-            playCoverRuntimeSocketPath: String? = nil
+            playCoverRuntimeSocketPath: String? = nil,
+            playCoverLogPath: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
@@ -50,6 +52,7 @@ public enum SessionService {
             self.playCoverExecutablePath = playCoverExecutablePath
             self.playCoverGenerationKey = playCoverGenerationKey
             self.playCoverRuntimeSocketPath = playCoverRuntimeSocketPath
+            self.playCoverLogPath = playCoverLogPath
         }
 
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
@@ -68,7 +71,8 @@ public enum SessionService {
                 playCoverAppPath: playCoverAppPath,
                 playCoverExecutablePath: playCoverExecutablePath,
                 playCoverGenerationKey: playCoverGenerationKey,
-                playCoverRuntimeSocketPath: playCoverRuntimeSocketPath
+                playCoverRuntimeSocketPath: playCoverRuntimeSocketPath,
+                playCoverLogPath: playCoverLogPath
             )
         }
     }
@@ -177,6 +181,7 @@ public enum SessionService {
 
     public static func startPlayCover(
         appPath: String?,
+        captureStdio: Bool = false,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
@@ -184,6 +189,7 @@ public enum SessionService {
         return try SessionOperationLock.withExclusiveLock(paths: paths) {
             try startPlayCoverLocked(
                 appPath: appPath,
+                captureStdio: captureStdio,
                 timeout: timeout,
                 paths: paths,
                 started: started
@@ -193,6 +199,7 @@ public enum SessionService {
 
     private static func startPlayCoverLocked(
         appPath: String?,
+        captureStdio: Bool,
         timeout: Double,
         paths: IOSUsePaths,
         started: UInt64
@@ -202,6 +209,7 @@ public enum SessionService {
         do {
             let result = try PlayCoverSessionService.launch(
                 explicitAppPath: appPath,
+                captureStdio: captureStdio,
                 timeout: timeout,
                 paths: paths
             )
@@ -229,6 +237,9 @@ public enum SessionService {
             for warning in pruning.warnings {
                 output += "Warning: \(warning)\n"
             }
+            if let logPath = result.logPath {
+                output += "PlayCover log: \(logPath)\n"
+            }
             var timing = result.timing
             timing.totalNanoseconds =
                 PlayCoverMonotonicClock.elapsed(since: started)
@@ -250,29 +261,52 @@ public enum SessionService {
                     )
                     clearDriverLock(paths: paths)
                 } catch let finalCleanupError {
-                    throw CLIParseError.invalidValue(
-                        "\(error). Preserving the active session "
-                            + "lock also failed: \(lockError). "
-                            + "Final cleanup failed: "
-                            + "\(finalCleanupError)"
+                    throw PlayCoverSessionCommitRollbackError(
+                        result: error.result,
+                        originalError: CLIParseError.invalidValue(
+                            "\(error). Preserving the active session "
+                                + "lock also failed: \(lockError)"
+                        ),
+                        cleanupError: finalCleanupError
                     )
                 }
-                throw CLIParseError.invalidValue(
+                let stoppedError = CLIParseError.invalidValue(
                     "\(error). The App was stopped because its "
                         + "active session lock could not be written: "
                         + "\(lockError)"
                 )
+                if let logPath = error.result.logPath {
+                    throw PlayCoverSessionLoggedLaunchError(
+                        logPath: logPath,
+                        underlying: stoppedError
+                    )
+                }
+                throw stoppedError
             }
             throw error
         } catch {
             if let launch {
+                let reportedError: Error
+                if let logPath = launch.logPath {
+                    reportedError =
+                        PlayCoverSessionLoggedLaunchError(
+                            logPath: logPath,
+                            underlying: error
+                        )
+                } else {
+                    reportedError = error
+                }
                 do {
                     _ = try PlayCoverSessionService.terminate(result: launch)
                 } catch let cleanupError {
-                    throw CLIParseError.invalidValue(
-                        "PlayCover start failed after launch, and cleanup failed: \(cleanupError). Original error: \(error)"
+                    throw PlayCoverSessionCommitRollbackError(
+                        result: launch,
+                        originalError: reportedError,
+                        cleanupError: cleanupError
                     )
                 }
+                clearDriverLock(paths: paths)
+                throw reportedError
             }
             clearDriverLock(paths: paths)
             throw error

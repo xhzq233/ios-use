@@ -63,6 +63,8 @@ run_non_live() {
     --cache-dir "${IOS_USE_PLAYCOVER_UPSTREAM_CACHE:-${TMPDIR:-/tmp}/ios-use-playcover-upstream-audit}"
   echo "[playcover-gate] Building and analyzing the Runtime..."
   bash "$ROOT_DIR/scripts/build_playcover_runtime.sh" --replace --analyze
+  echo "[playcover-gate] Testing fail-closed Runtime stdio capture..."
+  bash "$ROOT_DIR/scripts/test_playcover_runtime_stdio.sh"
   echo "[playcover-gate] Rebuilding the workspace CLI used by all following checks..."
   bash "$ROOT_DIR/scripts/build_swift_cli.sh"
   echo "[playcover-gate] Building the UIKit/SwiftUI/WKWebView/Metal fixture..."

@@ -385,6 +385,8 @@ final class IOSUseCLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(result.stdout.contains("--app <source-or-prepared.app>"))
+        XCTAssertTrue(result.stdout.contains("--log"))
+        XCTAssertTrue(result.stdout.contains("retained after stop"))
         XCTAssertTrue(result.stdout.contains("automatically prepares"))
         XCTAssertFalse(result.stdout.contains("--app <prepared.app>"))
     }

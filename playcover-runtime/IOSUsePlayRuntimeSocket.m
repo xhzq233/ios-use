@@ -2,6 +2,7 @@
 #import "IOSUsePlayRuntimeAutomation.h"
 #import "IOSUsePlayRuntimeDOM.h"
 #import "IOSUsePlayRuntimeScreenshot.h"
+#import "IOSUsePlayRuntimeStdio.h"
 #import "IOSUsePlayDevice.h"
 #import "IOSUsePlaySwiftBridge.h"
 
@@ -70,6 +71,48 @@ static NSDictionary<NSString *, id> *IOSUseErrorObject(
             @"candidates": @[],
             @"suggestions": @[],
         },
+    };
+}
+
+static NSDictionary<NSString *, id> *IOSUseRuntimeStdioEvidence(void) {
+    IOSUsePlayRuntimeStdioState state = {0};
+    IOSUsePlayRuntimeCopyStdioState(&state);
+    NSString *status = @"failed";
+    switch (state.status) {
+        case IOSUsePlayRuntimeStdioDisabled:
+            status = @"disabled";
+            break;
+        case IOSUsePlayRuntimeStdioRedirected:
+            status = @"redirected";
+            break;
+        case IOSUsePlayRuntimeStdioFailed:
+            status = @"failed";
+            break;
+    }
+    NSString *path = state.path[0] == '\0'
+        ? nil
+        : [NSString stringWithUTF8String:state.path];
+    NSString *failureStage =
+        state.failureStage[0] == '\0'
+            ? nil
+            : [NSString
+                stringWithUTF8String:state.failureStage];
+    return @{
+        @"status": status,
+        @"path": path ?: NSNull.null,
+        @"device":
+            state.status == IOSUsePlayRuntimeStdioDisabled
+                ? (id)NSNull.null
+                : @(state.device),
+        @"inode":
+            state.status == IOSUsePlayRuntimeStdioDisabled
+                ? (id)NSNull.null
+                : @(state.inode),
+        @"failureStage": failureStage ?: NSNull.null,
+        @"errorNumber":
+            state.status == IOSUsePlayRuntimeStdioFailed
+                ? @(state.errorNumber)
+                : (id)NSNull.null,
     };
 }
 
@@ -901,6 +944,11 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(void) {
     if (![playChain[@"status"] isEqualToString:@"ready"]) {
         stage = @"playchain-location-invalid";
     }
+    NSDictionary<NSString *, id> *stdio =
+        IOSUseRuntimeStdioEvidence();
+    if ([stdio[@"status"] isEqualToString:@"failed"]) {
+        stage = @"stdio-redirection-failed";
+    }
     NSDictionary<NSString *, id> *identity = @{
         @"pid": @(getpid()),
         @"bundleIdentifier":
@@ -910,6 +958,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(void) {
         @"capabilities": IOSUseCapabilities(),
         @"geometry": geometry ?: @{},
         @"stage": stage ?: @"geometry-mismatch",
+        @"stdio": stdio,
     };
     return @{
         @"identity": identity,

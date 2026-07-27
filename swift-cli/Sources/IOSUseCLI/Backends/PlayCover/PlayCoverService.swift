@@ -662,6 +662,7 @@ public enum PlayCoverService {
         generationIdentity: PlayCoverGenerationIdentity? = nil,
         sessionID: String,
         runtimeSocketPath: String,
+        stdioLog: PlayCoverStdioLogIdentity? = nil,
         timeout: Double = 15
     ) throws -> PlayCoverLaunchIdentity {
         guard !sessionID.isEmpty,
@@ -697,6 +698,15 @@ public enum PlayCoverService {
             )
         }
         try validateFreshRuntimeSocketPath(runtimeSocketPath)
+        if let stdioLog {
+            guard stdioLog.path.hasPrefix("/"),
+                  !stdioLog.path.utf8.contains(0),
+                  stdioLog.inode > 0 else {
+                throw PlayCoverBackendError.stdioLogFailed(
+                    "PlayCover stdio log identity is incomplete"
+                )
+            }
+        }
 
         var launched: LaunchedApplicationIdentity?
         var launchAlias: SessionLaunchAlias?
@@ -717,6 +727,7 @@ public enum PlayCoverService {
                 manifest: manifest,
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
+                stdioLog: stdioLog,
                 deadline: deadline,
                 launchAlias: &launchAlias,
                 workspaceOpenSubmitted: &workspaceOpenSubmitted
@@ -758,7 +769,8 @@ public enum PlayCoverService {
                         payload,
                         sessionID: sessionID,
                         manifest: manifest,
-                        pid: identity.pid
+                        pid: identity.pid,
+                        stdioLog: stdioLog
                     )
                     return PlayCoverLaunchIdentity(
                         sessionID: sessionID,
@@ -771,6 +783,9 @@ public enum PlayCoverService {
                         hello: hello
                     )
                 } catch {
+                    if runtimeHelloFailureIsTerminal(error) {
+                        throw error
+                    }
                     lastError = error
                     Thread.sleep(
                         forTimeInterval: min(
@@ -1026,7 +1041,8 @@ public enum PlayCoverService {
         source: [String: String] = ProcessInfo.processInfo.environment,
         sessionID: String? = nil,
         runtimeSocketPath: String? = nil,
-        managedHomePath: String? = nil
+        managedHomePath: String? = nil,
+        stdioLog: PlayCoverStdioLogIdentity? = nil
     ) -> [String: String] {
         let allowed = [
             "HOME",
@@ -1053,6 +1069,14 @@ public enum PlayCoverService {
         if let runtimeSocketPath {
             result["IOS_USE_PLAY_RUNTIME_SOCKET"] = runtimeSocketPath
         }
+        if let stdioLog {
+            result["IOS_USE_PLAY_STDIO_LOG"] = "1"
+            result["IOS_USE_PLAY_STDIO_LOG_PATH"] = stdioLog.path
+            result["IOS_USE_PLAY_STDIO_LOG_DEVICE"] =
+                String(stdioLog.device)
+            result["IOS_USE_PLAY_STDIO_LOG_INODE"] =
+                String(stdioLog.inode)
+        }
         return result
     }
 
@@ -1060,7 +1084,8 @@ public enum PlayCoverService {
         source: [String: String] = ProcessInfo.processInfo.environment,
         sessionID: String,
         runtimeSocketPath: String,
-        managedHomePath: String
+        managedHomePath: String,
+        stdioLog: PlayCoverStdioLogIdentity? = nil
     ) -> [String: String] {
         // NSWorkspace overlays OpenConfiguration.environment on the
         // caller's inherited environment. Explicitly clear every inherited
@@ -1072,7 +1097,8 @@ public enum PlayCoverService {
                 source: source,
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
-                managedHomePath: managedHomePath
+                managedHomePath: managedHomePath,
+                stdioLog: stdioLog
             )
         ) { _, allowed in allowed }
         return result
@@ -1082,8 +1108,13 @@ public enum PlayCoverService {
         _ payload: PlayCoverRuntimeHelloPayload,
         sessionID: String,
         manifest: PlayCoverPrepareManifest,
-        pid: Int32
+        pid: Int32,
+        stdioLog: PlayCoverStdioLogIdentity?
     ) throws -> PlayCoverHello {
+        try validateStdio(
+            payload.stdio,
+            expected: stdioLog
+        )
         let geometry = payload.geometry
         let expectedLogicalWidth = Double(IOSUsePlayDeviceLogicalWidth)
         let expectedLogicalHeight = Double(IOSUsePlayDeviceLogicalHeight)
@@ -1180,6 +1211,63 @@ public enum PlayCoverService {
             stage: payload.stage,
             capabilities: payload.capabilities
         )
+    }
+
+    static func validateStdio(
+        _ state: PlayCoverRuntimeStdioState?,
+        expected: PlayCoverStdioLogIdentity?
+    ) throws {
+        if let expected {
+            guard let state else {
+                throw PlayCoverBackendError.stdioLogFailed(
+                    "Runtime hello omitted stdio initialization evidence"
+                )
+            }
+            guard state.status == "redirected",
+                  state.path.map(canonicalPath)
+                    == canonicalPath(expected.path),
+                  state.device == expected.device,
+                  state.inode == expected.inode,
+                  state.failureStage == nil,
+                  state.errorNumber == nil else {
+                throw PlayCoverBackendError.stdioLogFailed(
+                    "Runtime stdio redirection did not match the "
+                        + "requested per-session log: status="
+                        + "\(state.status), stage="
+                        + "\(state.failureStage ?? "none"), errno="
+                        + "\(state.errorNumber.map(String.init) ?? "none")"
+                )
+            }
+            return
+        }
+        // Schema-v3 Runtime generations prepared before --log do not carry
+        // this optional field. Preserve bare-start reuse for an unlogged
+        // session; a logged start still requires exact evidence above.
+        guard let state else {
+            return
+        }
+        guard state.status == "disabled",
+              state.path == nil,
+              state.device == nil,
+              state.inode == nil,
+              state.failureStage == nil,
+              state.errorNumber == nil else {
+            throw PlayCoverBackendError.stdioLogFailed(
+                "Runtime stdio redirection was active without --log"
+            )
+        }
+    }
+
+    static func runtimeHelloFailureIsTerminal(
+        _ error: Error
+    ) -> Bool {
+        guard let backendError = error as? PlayCoverBackendError,
+              case .stdioLogFailed = backendError else {
+            return false
+        }
+        // Constructor stdio state is immutable. Repeating hello cannot repair
+        // a missing, failed, or mismatched exact log identity.
+        return true
     }
 
     private static func writeGenerationSidecars(
@@ -2568,6 +2656,7 @@ public enum PlayCoverService {
         manifest: PlayCoverPrepareManifest,
         sessionID: String,
         runtimeSocketPath: String,
+        stdioLog: PlayCoverStdioLogIdentity? = nil,
         deadline: TimeInterval,
         launchAlias: inout SessionLaunchAlias?,
         workspaceOpenSubmitted: inout Bool
@@ -2585,7 +2674,8 @@ public enum PlayCoverService {
         configuration.environment = launchConfigurationEnvironment(
             sessionID: sessionID,
             runtimeSocketPath: runtimeSocketPath,
-            managedHomePath: managedHomePath(for: manifest)
+            managedHomePath: managedHomePath(for: manifest),
+            stdioLog: stdioLog
         )
         let existingApplications =
             NSRunningApplication.runningApplications(
@@ -2871,10 +2961,20 @@ public enum PlayCoverService {
             let currentProcessStart
         ):
             guard canonicalPath(executable)
-                    == canonicalPath(manifest.executablePath),
-                  currentProcessStart == expectedProcessStart else {
-                // The owned App exited and the PID was reused. This also
-                // handles same-executable reuse, which path-only checks miss.
+                    == canonicalPath(manifest.executablePath) else {
+                // The owned App exited and the PID was reused by a different
+                // executable.
+                return
+            }
+            guard let currentProcessStart else {
+                throw PlayCoverBackendError.launchFailed(
+                    "rollback cannot verify pid \(pid): the live "
+                        + "executable has no stable process birth token"
+                )
+            }
+            guard currentProcessStart == expectedProcessStart else {
+                // The owned App exited and the PID was reused by the same
+                // executable; the stable birth token proves the replacement.
                 return
             }
         }
@@ -2941,10 +3041,21 @@ public enum PlayCoverService {
                 let processStartTimeMicroseconds
             ):
                 if canonicalPath(executable)
-                    != canonicalPath(expectedExecutablePath)
-                    || processStartTimeMicroseconds
-                        != expectedProcessStartTimeMicroseconds {
-                    // The exact process exited and its PID was reused.
+                    != canonicalPath(expectedExecutablePath) {
+                    // The exact process exited and its PID was reused by a
+                    // different executable.
+                    return true
+                }
+                guard let processStartTimeMicroseconds else {
+                    throw PlayCoverBackendError.launchFailed(
+                        "rollback cannot verify pid \(pid): the live "
+                            + "executable has no stable process birth token"
+                    )
+                }
+                if processStartTimeMicroseconds
+                    != expectedProcessStartTimeMicroseconds {
+                    // The exact process exited and its PID was reused by the
+                    // same executable.
                     return true
                 }
             case .unverifiable(let errorNumber):

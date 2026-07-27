@@ -394,6 +394,18 @@ validate_pass_attestation() {
           .runtimeSocketPath |
           test("/playcover/run/s-[^/]+\\.sock$")
         ) and
+        (.stdioLogPath | type) == "string" and
+        (
+          .stdioLogPath |
+          test("/playcover/logs/stdio-[0-9a-f-]{36}\\.log$")
+        ) and
+        (
+          .stdioLogIdentity |
+          type == "string" and
+          test("^[0-9]+:[0-9]+:[0-9]+:600:1$")
+        ) and
+        .stdioMarkersObservedWhileAlive == true and
+        .stdioLogRetainedAfterCrashAndStop == true and
         .staleSessionObserved == true and
         .trigger == "fixture-darwin-notification" and
         .selfTriggered == true and
@@ -992,6 +1004,71 @@ assert_lock_matches_status() {
   fi
 }
 
+assert_stdio_log() {
+  local status_case="$1"
+  local status_file="$RUN_DIR/${status_case}.stdout"
+  local session_identifier
+  local lower_session_identifier
+  local log_path
+  local expected_path
+  local log_device
+  local log_inode
+  local markers_observed=0
+  session_identifier="$(
+    jq -er '.data.driver.sessionIdentifier' "$status_file"
+  )" || fail_gate "$status_case has no exact session identifier"
+  log_path="$(
+    jq -er '.data.driver.playcoverLogPath' "$status_file"
+  )" || fail_gate "$status_case has no per-session stdio log"
+  lower_session_identifier="$(
+    printf '%s' "$session_identifier" |
+      /usr/bin/tr '[:upper:]' '[:lower:]'
+  )"
+  expected_path="$CANONICAL_SESSION_HOME/playcover/logs/stdio-$lower_session_identifier.log"
+  if [[
+    "$log_path" != "$expected_path" ||
+    ! -f "$log_path" ||
+    -L "$log_path" ||
+    "$(/usr/bin/stat -f '%u' "$log_path")" != "$(/usr/bin/id -u)" ||
+    "$(/usr/bin/stat -f '%Lp' "$log_path")" != "600" ||
+    "$(/usr/bin/stat -f '%l' "$log_path")" != "1"
+  ]]; then
+    fail_gate "$status_case has no exact owner-only stdio log"
+  fi
+  log_device="$(/usr/bin/stat -f '%d' "$log_path")"
+  log_inode="$(/usr/bin/stat -f '%i' "$log_path")"
+  if ! jq -e \
+      --arg path "$log_path" \
+      --arg device "$log_device" \
+      --arg inode "$log_inode" '
+        .data.driver.playcoverLogPath == $path and
+        .data.driver.runtime.stdio.status == "redirected" and
+        .data.driver.runtime.stdio.path == $path and
+        .data.driver.runtime.stdio.device == $device and
+        .data.driver.runtime.stdio.inode == $inode and
+        .data.driver.runtime.stdio.failureStage == null and
+        .data.driver.runtime.stdio.errorNumber == null
+      ' "$status_file" >/dev/null; then
+    fail_gate "$status_case omitted exact Runtime stdio identity"
+  fi
+  for _ in $(seq 1 100); do
+    if rg -Fq \
+        "[ios-use-play-fixture] stdout $session_identifier" \
+        "$log_path" &&
+      rg -Fq \
+        "[ios-use-play-fixture] stderr $session_identifier" \
+        "$log_path"; then
+      markers_observed=1
+      break
+    fi
+    sleep 0.05
+  done
+  if [[ "$markers_observed" != "1" ]]; then
+    fail_gate "$status_case stdio log omitted fixture markers"
+  fi
+  printf '%s\n' "$log_path"
+}
+
 assert_expected_generation() {
   local case_name="$1"
   local generation="$2"
@@ -1412,13 +1489,17 @@ assert_clean_session_stopped \
   "$endpoint_pid" \
   "$endpoint_socket"
 
-run_cli crash_start start --playcover
+run_cli crash_start start --playcover --log
 assert_bare_start_reused crash_start "$protocol_generation_key"
 run_cli crash_status status --json
 assert_healthy_status crash_status
 assert_expected_generation crash_status "$protocol_generation_key"
 assert_lock_matches_status crash_status
 assert_live_runtime_socket crash_status
+crash_stdio_log="$(assert_stdio_log crash_status)"
+crash_stdio_log_identity="$(
+  /usr/bin/stat -f '%d:%i:%u:%Lp:%l' "$crash_stdio_log"
+)"
 crash_pid="$(
   jq -er '.data.driver.runnerPid' \
     "$RUN_DIR/crash_status.stdout"
@@ -1483,6 +1564,14 @@ if /bin/kill -0 "$crash_pid" 2>/dev/null; then
   fail_gate "App-crash stale cleanup left PID $crash_pid alive"
 fi
 if [[
+  ! -f "$crash_stdio_log" ||
+  -L "$crash_stdio_log" ||
+  "$(/usr/bin/stat -f '%d:%i:%u:%Lp:%l' "$crash_stdio_log")" !=
+    "$crash_stdio_log_identity"
+]]; then
+  fail_gate "App SIGKILL/stop did not retain the exact stdio log"
+fi
+if [[
   ! -S "$crash_socket" ||
   -L "$crash_socket" ||
   "$(stat -f '%d:%i:%u:%Lp' "$crash_socket")" != "$crash_socket_identity"
@@ -1500,6 +1589,8 @@ printf 'path=%s\nidentity=%s\n' \
 jq -cn \
   --argjson runnerPid "$crash_pid" \
   --arg runtimeSocketPath "$crash_socket" \
+  --arg stdioLogPath "$crash_stdio_log" \
+  --arg stdioLogIdentity "$crash_stdio_log_identity" \
   --arg identityBefore "$crash_socket_identity" \
   --arg identityAfterStop "$crash_socket_identity_after_stop" '
     {
@@ -1508,6 +1599,10 @@ jq -cn \
       selfTriggered: true,
       runnerPid: $runnerPid,
       runtimeSocketPath: $runtimeSocketPath,
+      stdioLogPath: $stdioLogPath,
+      stdioLogIdentity: $stdioLogIdentity,
+      stdioMarkersObservedWhileAlive: true,
+      stdioLogRetainedAfterCrashAndStop: true,
       staleSessionObserved: true,
       driverLockAbsentAfterStop: true,
       runnerPidAbsentAfterStop: true,

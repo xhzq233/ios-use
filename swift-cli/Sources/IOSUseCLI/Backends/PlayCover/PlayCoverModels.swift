@@ -359,6 +359,7 @@ public enum PlayCoverBackendError:
     case prepareFailed(String)
     case verificationFailed(String)
     case cacheTampered(String)
+    case stdioLogFailed(String)
     case launchFailed(String)
     case launchTimedOut(String)
     case terminateFailed(String)
@@ -392,6 +393,8 @@ public enum PlayCoverBackendError:
             return "PlayCover verification failed: \(message)"
         case .cacheTampered(let message):
             return "PlayCover prepared cache failed integrity checks: \(message)"
+        case .stdioLogFailed(let message):
+            return "PlayCover stdio log setup failed: \(message)"
         case .launchFailed(let message):
             return "PlayCover launch failed: \(message)"
         case .launchTimedOut(let message):

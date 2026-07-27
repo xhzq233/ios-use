@@ -53,7 +53,9 @@ enum DriverSessionStore {
             playCoverGenerationKey:
                 raw["playcoverGenerationKey"] as? String,
             playCoverRuntimeSocketPath:
-                raw["playcoverRuntimeSocketPath"] as? String
+                raw["playcoverRuntimeSocketPath"] as? String,
+            playCoverLogPath:
+                raw["playcoverLogPath"] as? String
         )
         if deviceType == PlayCoverSessionService.deviceType {
             guard let appPath = info.playCoverAppPath, !appPath.isEmpty,
@@ -87,6 +89,13 @@ enum DriverSessionStore {
                 throw CLIParseError.invalidValue(
                     "Invalid driver.lock: PlayCover Runtime socket does "
                         + "not match its sessionID."
+                )
+            }
+            if let logPath = info.playCoverLogPath {
+                try PlayCoverStdioLogService.validateSessionPath(
+                    logPath,
+                    sessionID: sessionID,
+                    paths: paths
                 )
             }
             guard isManagedPreparedApp(
@@ -277,6 +286,9 @@ enum DriverSessionStore {
         }
         if let socketPath = info.playCoverRuntimeSocketPath {
             root["playcoverRuntimeSocketPath"] = socketPath
+        }
+        if let logPath = info.playCoverLogPath {
+            root["playcoverLogPath"] = logPath
         }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)

@@ -8,6 +8,7 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 EVIDENCE_ROOT="${IOS_USE_PLAYCOVER_EVIDENCE_ROOT:-$ROOT_DIR/.ios-use/live-evidence}"
 RUN_DIR="$EVIDENCE_ROOT/playcover-fixture-v${MATRIX_VERSION}/$RUN_ID"
 SESSION_HOME=""
+CANONICAL_SESSION_HOME=""
 ARCHIVED_SESSION_HOME="$RUN_DIR/session-home"
 MANIFEST="$RUN_DIR/manifest.tsv"
 FIXTURE_APP="${IOS_USE_PLAYCOVER_FIXTURE_APP:-}"
@@ -150,6 +151,7 @@ if rg -q '"CGSSessionScreenIsLocked"=(Yes|true|1)' \
 fi
 
 SESSION_HOME="$(mktemp -d /tmp/iupf.XXXXXX)"
+CANONICAL_SESSION_HOME="$(cd "$SESSION_HOME" && pwd -P)"
 printf '%s\n' "$SESSION_HOME" >"$RUN_DIR/session-home-origin"
 
 archive_session_home() {
@@ -1941,7 +1943,7 @@ EXPECTED_HOST_TITLE="$(expected_host_title_for_app "$FIXTURE_APP")" || {
 printf '%s\n' "$EXPECTED_HOST_TITLE" >"$RUN_DIR/expected-host-title"
 
 capture_original_frontmost_application
-record_case start start --playcover --app "$FIXTURE_APP"
+record_case start start --playcover --app "$FIXTURE_APP" --log
 record_case status status --json
 assert_evidence status \
   '"status"[[:space:]]*:[[:space:]]*"healthy"'
@@ -1978,6 +1980,71 @@ assert_json status '
 assert_canonical_host_status status
 
 runner_pid="$(jq -er '.data.driver.runnerPid' "$RUN_DIR/status.stdout")"
+session_identifier="$(
+  jq -er '.data.driver.sessionIdentifier' "$RUN_DIR/status.stdout"
+)"
+stdio_log_path="$(
+  jq -er '.data.driver.playcoverLogPath' "$RUN_DIR/status.stdout"
+)"
+lower_session_identifier="$(
+  printf '%s' "$session_identifier" |
+    /usr/bin/tr '[:upper:]' '[:lower:]'
+)"
+expected_stdio_log_path="$CANONICAL_SESSION_HOME/playcover/logs/stdio-$lower_session_identifier.log"
+if [[
+  "$stdio_log_path" != "$expected_stdio_log_path" ||
+  ! -f "$stdio_log_path" ||
+  -L "$stdio_log_path" ||
+  "$(/usr/bin/stat -f '%u' "$stdio_log_path")" != "$(/usr/bin/id -u)" ||
+  "$(/usr/bin/stat -f '%Lp' "$stdio_log_path")" != "600" ||
+  "$(/usr/bin/stat -f '%l' "$stdio_log_path")" != "1"
+]]; then
+  echo \
+    "[playcover-fixture-live] FAIL: start did not create the exact owner-only per-session stdio log" \
+    >&2
+  exit 1
+fi
+stdio_log_device="$(/usr/bin/stat -f '%d' "$stdio_log_path")"
+stdio_log_inode="$(/usr/bin/stat -f '%i' "$stdio_log_path")"
+stdio_log_identity="$(
+  /usr/bin/stat -f '%d:%i:%u:%Lp:%l' "$stdio_log_path"
+)"
+if ! jq -e \
+    --arg path "$stdio_log_path" \
+    --arg device "$stdio_log_device" \
+    --arg inode "$stdio_log_inode" '
+      .data.driver.playcoverLogPath == $path and
+      .data.driver.runtime.stdio.status == "redirected" and
+      .data.driver.runtime.stdio.path == $path and
+      .data.driver.runtime.stdio.device == $device and
+      .data.driver.runtime.stdio.inode == $inode and
+      .data.driver.runtime.stdio.failureStage == null and
+      .data.driver.runtime.stdio.errorNumber == null
+    ' "$RUN_DIR/status.stdout" >/dev/null; then
+  echo \
+    "[playcover-fixture-live] FAIL: status omitted exact Runtime stdio identity" \
+    >&2
+  exit 1
+fi
+stdio_markers_observed=0
+for _ in $(seq 1 100); do
+  if rg -Fq \
+      "[ios-use-play-fixture] stdout $session_identifier" \
+      "$stdio_log_path" &&
+    rg -Fq \
+      "[ios-use-play-fixture] stderr $session_identifier" \
+      "$stdio_log_path"; then
+    stdio_markers_observed=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$stdio_markers_observed" != "1" ]]; then
+  echo \
+    "[playcover-fixture-live] FAIL: live stdio log omitted fixture stdout/stderr markers" \
+    >&2
+  exit 1
+fi
 runtime_socket_path="$(
   jq -er \
     '.data.driver.playcoverRuntimeSocketPath' \
@@ -2351,6 +2418,17 @@ assert_ocr_evidence screenshot_metal \
 assert_metal_pixel screenshot_metal
 
 record_case stop stop
+if [[
+  ! -f "$stdio_log_path" ||
+  -L "$stdio_log_path" ||
+  "$(/usr/bin/stat -f '%d:%i:%u:%Lp:%l' "$stdio_log_path")" !=
+    "$stdio_log_identity"
+]]; then
+  echo \
+    "[playcover-fixture-live] FAIL: normal stop did not retain the exact stdio log" \
+    >&2
+  exit 1
+fi
 if [[ -e "$runtime_socket_path" || -L "$runtime_socket_path" ]]; then
   echo \
     "[playcover-fixture-live] FAIL: normal stop left its Runtime-owned socket path" \

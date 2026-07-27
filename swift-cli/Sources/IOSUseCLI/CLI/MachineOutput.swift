@@ -78,10 +78,16 @@ enum MachineOutput {
         if let mutationMayHaveApplied {
             classified.mutationMayHaveApplied = mutationMayHaveApplied
         }
+        var failureData = data
+        if let logPath = playCoverLogPath(in: error),
+           case .object(var fields) = failureData {
+            fields["playcoverLogPath"] = .string(logPath)
+            failureData = .object(fields)
+        }
         return render(
             FailureEnvelope(
                 command: command,
-                data: data,
+                data: failureData,
                 warnings: warnings,
                 error: classified,
                 evidenceManifest: evidenceManifest
@@ -164,6 +170,31 @@ enum MachineOutput {
                 phase: IOSUseErrorPhase.postcondition,
                 retryable: classified.retryable,
                 fatal: classified.fatal,
+                mutationMayHaveApplied: true
+            )
+        }
+        if let loggedError =
+                error as? PlayCoverSessionLoggedLaunchError {
+            var classified = classify(loggedError.underlying)
+            classified.message = loggedError.description
+            return classified
+        }
+        if let sessionError =
+                error as? PlayCoverSessionUnterminatedLaunchError {
+            var classified = classify(sessionError.underlying)
+            classified.message = sessionError.description
+            classified.mutationMayHaveApplied = true
+            return classified
+        }
+        if let rollbackError =
+                error as? PlayCoverSessionCommitRollbackError {
+            return MachineError(
+                message: rollbackError.description,
+                category: IOSUseErrorCategory.session,
+                code: "playcover_session_commit_rollback_failed",
+                phase: "playcover_session_commit",
+                retryable: false,
+                fatal: true,
                 mutationMayHaveApplied: true
             )
         }
@@ -263,6 +294,12 @@ enum MachineOutput {
                 phase = "playcover_verify"
                 retryable = false
                 fatal = true
+            case .stdioLogFailed:
+                category = IOSUseErrorCategory.internalFailure
+                code = "playcover_stdio_log_failed"
+                phase = "playcover_stdio_setup"
+                retryable = false
+                fatal = false
             case .launchFailed:
                 category = IOSUseErrorCategory.internalFailure
                 code = "playcover_dyld_launch_failed"
@@ -318,6 +355,24 @@ enum MachineOutput {
             fatal: false,
             mutationMayHaveApplied: false
         )
+    }
+
+    private static func playCoverLogPath(
+        in error: Error
+    ) -> String? {
+        if let loggedError =
+                error as? PlayCoverSessionLoggedLaunchError {
+            return loggedError.logPath
+        }
+        if let sessionError =
+                error as? PlayCoverSessionUnterminatedLaunchError {
+            return sessionError.result.logPath
+        }
+        if let rollbackError =
+                error as? PlayCoverSessionCommitRollbackError {
+            return rollbackError.result.logPath
+        }
+        return nil
     }
 
     private static func render<T: Encodable>(_ value: T, exitCode: Int32, toStderr: Bool) -> CLIResult {

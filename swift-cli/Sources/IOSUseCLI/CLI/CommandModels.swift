@@ -90,6 +90,7 @@ public struct StartOptions: Equatable, Sendable {
     public var verbose = false
     public var playCover = false
     public var appPath: String?
+    public var log = false
     public var timeout: Double = 15
 
     public init(
@@ -97,12 +98,14 @@ public struct StartOptions: Equatable, Sendable {
         verbose: Bool = false,
         playCover: Bool = false,
         appPath: String? = nil,
+        log: Bool = false,
         timeout: Double = 15
     ) {
         self.udid = udid
         self.verbose = verbose
         self.playCover = playCover
         self.appPath = appPath
+        self.log = log
         self.timeout = timeout
     }
 }

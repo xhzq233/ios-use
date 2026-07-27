@@ -65,6 +65,10 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(paths.playcover, "/state/ios-use/playcover")
         XCTAssertEqual(paths.playcoverRun, "/state/ios-use/playcover/run")
         XCTAssertEqual(
+            paths.playcoverLogs,
+            "/state/ios-use/playcover/logs"
+        )
+        XCTAssertEqual(
             paths.playcoverPrepared,
             "/state/ios-use/playcover/prepared"
         )
@@ -314,6 +318,10 @@ final class PlayCoverCoreTests: XCTestCase {
                 "HOME": "/Users/test",
                 "API_TOKEN": "secret",
                 "SSH_AUTH_SOCK": "/private/agent.sock",
+                "IOS_USE_PLAY_STDIO_LOG": "1",
+                "IOS_USE_PLAY_STDIO_LOG_PATH": "/untrusted/log",
+                "IOS_USE_PLAY_STDIO_LOG_DEVICE": "9",
+                "IOS_USE_PLAY_STDIO_LOG_INODE": "8",
             ],
             sessionID: "session-one",
             runtimeSocketPath: "/state/run/s-sessionone.sock",
@@ -329,7 +337,144 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertEqual(result["API_TOKEN"], "")
         XCTAssertEqual(result["SSH_AUTH_SOCK"], "")
+        XCTAssertEqual(result["IOS_USE_PLAY_STDIO_LOG"], "")
+        XCTAssertEqual(result["IOS_USE_PLAY_STDIO_LOG_PATH"], "")
+        XCTAssertEqual(result["IOS_USE_PLAY_STDIO_LOG_DEVICE"], "")
+        XCTAssertEqual(result["IOS_USE_PLAY_STDIO_LOG_INODE"], "")
         XCTAssertFalse(result.values.contains("secret"))
+    }
+
+    func testLaunchEnvironmentForwardsExactStdioIdentity() {
+        let log = PlayCoverStdioLogIdentity(
+            path: "/state/playcover/logs/stdio-session.log",
+            device: 12,
+            inode: 34
+        )
+        let result = PlayCoverService.launchConfigurationEnvironment(
+            source: [
+                "HOME": "/Users/test",
+                "IOS_USE_PLAY_STDIO_LOG_PATH": "/untrusted/log",
+            ],
+            sessionID: "session-one",
+            runtimeSocketPath: "/state/run/s-sessionone.sock",
+            managedHomePath: "/state",
+            stdioLog: log
+        )
+
+        XCTAssertEqual(result["IOS_USE_PLAY_STDIO_LOG"], "1")
+        XCTAssertEqual(
+            result["IOS_USE_PLAY_STDIO_LOG_PATH"],
+            log.path
+        )
+        XCTAssertEqual(
+            result["IOS_USE_PLAY_STDIO_LOG_DEVICE"],
+            "12"
+        )
+        XCTAssertEqual(
+            result["IOS_USE_PLAY_STDIO_LOG_INODE"],
+            "34"
+        )
+        XCTAssertFalse(result.values.contains("/untrusted/log"))
+    }
+
+    func testReadyGateRequiresExactRequestedStdioIdentity() {
+        let expected = PlayCoverStdioLogIdentity(
+            path: "/state/playcover/logs/stdio-session.log",
+            device: 12,
+            inode: 34
+        )
+        let redirected = PlayCoverRuntimeStdioState(
+            status: "redirected",
+            path: expected.path,
+            device: expected.device,
+            inode: expected.inode,
+            failureStage: nil,
+            errorNumber: nil
+        )
+        XCTAssertNoThrow(
+            try PlayCoverService.validateStdio(
+                redirected,
+                expected: expected
+            )
+        )
+        XCTAssertNoThrow(
+            try PlayCoverService.validateStdio(
+                .init(
+                    status: "disabled",
+                    path: nil,
+                    device: nil,
+                    inode: nil,
+                    failureStage: nil,
+                    errorNumber: nil
+                ),
+                expected: nil
+            )
+        )
+        XCTAssertNoThrow(
+            try PlayCoverService.validateStdio(
+                nil,
+                expected: nil
+            )
+        )
+        for mismatched in [
+            PlayCoverRuntimeStdioState(
+                status: "failed",
+                path: expected.path,
+                device: expected.device,
+                inode: expected.inode,
+                failureStage: "open-exact-log-file",
+                errorNumber: EACCES
+            ),
+            PlayCoverRuntimeStdioState(
+                status: "redirected",
+                path: expected.path + ".other",
+                device: expected.device,
+                inode: expected.inode,
+                failureStage: nil,
+                errorNumber: nil
+            ),
+            PlayCoverRuntimeStdioState(
+                status: "redirected",
+                path: expected.path,
+                device: expected.device,
+                inode: expected.inode + 1,
+                failureStage: nil,
+                errorNumber: nil
+            ),
+        ] {
+            XCTAssertThrowsError(
+                try PlayCoverService.validateStdio(
+                    mismatched,
+                    expected: expected
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try PlayCoverService.validateStdio(
+                redirected,
+                expected: nil
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverService.validateStdio(
+                nil,
+                expected: expected
+            )
+        )
+        XCTAssertTrue(
+            PlayCoverService.runtimeHelloFailureIsTerminal(
+                PlayCoverBackendError.stdioLogFailed(
+                    "exact identity mismatch"
+                )
+            )
+        )
+        XCTAssertFalse(
+            PlayCoverService.runtimeHelloFailureIsTerminal(
+                PlayCoverBackendError.launchFailed(
+                    "window is not ready"
+                )
+            )
+        )
     }
 
     func testLaunchIdentityMustBeNewAndMatchPreparedGeneration()
@@ -1853,6 +1998,113 @@ final class PlayCoverCoreTests: XCTestCase {
             XCTAssertTrue(
                 String(describing: error).contains(
                     "rollback cannot verify pid 42: errno \(EPERM)"
+                )
+            )
+        }
+        XCTAssertEqual(processProbeCount, 2)
+        XCTAssertEqual(signals, [SIGTERM])
+    }
+
+    func testFailedLaunchRollbackRejectsMissingLiveBirthTokenBeforeSignal()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "d", count: 64)
+        )
+        let identity = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 42,
+            bundleIdentifier: manifest.bundleIdentifier,
+            bundleURLPath: manifest.preparedAppPath,
+            executablePath: manifest.executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .workspaceCallback
+        )
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            _ in .running(
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: nil
+            )
+        }
+        var signalCount = 0
+        PlayCoverService.failedLaunchSignalOverrideForTesting = {
+            _,
+            _ in
+            signalCount += 1
+            return 0
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverService.terminateFailedLaunch(
+                identity: identity,
+                manifest: manifest
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "live executable has no stable process birth token"
+                )
+            )
+        }
+        XCTAssertEqual(signalCount, 0)
+    }
+
+    func testFailedLaunchRollbackRejectsMissingBirthTokenAfterSIGTERM()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "d", count: 64)
+        )
+        let identity = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 42,
+            bundleIdentifier: manifest.bundleIdentifier,
+            bundleURLPath: manifest.preparedAppPath,
+            executablePath: manifest.executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .workspaceCallback
+        )
+        var processProbeCount = 0
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            _ in
+            processProbeCount += 1
+            return .running(
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds:
+                    processProbeCount == 1 ? 100 : nil
+            )
+        }
+        var signals: [Int32] = []
+        PlayCoverService.failedLaunchSignalOverrideForTesting = {
+            _,
+            signal in
+            signals.append(signal)
+            return 0
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverService.terminateFailedLaunch(
+                identity: identity,
+                manifest: manifest
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "live executable has no stable process birth token"
                 )
             )
         }

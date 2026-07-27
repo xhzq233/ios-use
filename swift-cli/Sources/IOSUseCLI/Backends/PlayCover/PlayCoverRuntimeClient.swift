@@ -462,6 +462,19 @@ protocol PlayCoverRuntimeIdentifiedPayload {
     var executablePath: String { get }
 }
 
+struct PlayCoverRuntimeStdioState:
+    Codable,
+    Equatable,
+    Sendable
+{
+    let status: String
+    let path: String?
+    let device: UInt64?
+    let inode: UInt64?
+    let failureStage: String?
+    let errorNumber: Int32?
+}
+
 struct PlayCoverRuntimeHelloPayload:
     Codable,
     Equatable,
@@ -475,6 +488,7 @@ struct PlayCoverRuntimeHelloPayload:
     let geometry: PlayCoverRuntimeGeometry
     let stage: String
     let observed: [String: PlayCoverRuntimeJSONValue]
+    var stdio: PlayCoverRuntimeStdioState? = nil
 }
 
 struct PlayCoverRuntimeDiagnosticsPayload:
@@ -490,6 +504,7 @@ struct PlayCoverRuntimeDiagnosticsPayload:
     let geometry: PlayCoverRuntimeGeometry
     let stage: String
     let diagnostics: [String: PlayCoverRuntimeJSONValue]
+    var stdio: PlayCoverRuntimeStdioState? = nil
 }
 
 struct PlayCoverRuntimePingPayload: Codable, Equatable, Sendable {

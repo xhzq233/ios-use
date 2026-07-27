@@ -10,7 +10,40 @@ struct PlayCoverSessionUnterminatedLaunchError: Error,
     let result: PlayCoverSessionService.LaunchResult
     let underlying: PlayCoverUnterminatedLaunchError
 
-    var description: String { underlying.description }
+    var description: String {
+        underlying.description
+            + (result.logPath.map {
+                "\nPlayCover log: \($0)"
+            } ?? "")
+    }
+}
+
+struct PlayCoverSessionLoggedLaunchError: Error,
+    CustomStringConvertible
+{
+    let logPath: String
+    let underlying: Error
+
+    var description: String {
+        "\(underlying)\nPlayCover log: \(logPath)"
+    }
+}
+
+struct PlayCoverSessionCommitRollbackError: Error,
+    CustomStringConvertible
+{
+    let result: PlayCoverSessionService.LaunchResult
+    let originalError: Error
+    let cleanupError: Error
+
+    var description: String {
+        "PlayCover session commit failed and exact rollback could "
+            + "not be confirmed. Original error: \(originalError). "
+            + "Cleanup error: \(cleanupError)"
+            + (result.logPath.map {
+                "\nPlayCover log: \($0)"
+            } ?? "")
+    }
 }
 
 enum PlayCoverSessionService {
@@ -33,6 +66,7 @@ enum PlayCoverSessionService {
         let productType: String
         let pid: Int32
         let runtimeSocketPath: String
+        let logPath: String?
         let reused: Bool
         let timing: PlayCoverStartTiming
 
@@ -45,6 +79,7 @@ enum PlayCoverSessionService {
             productType: String,
             pid: Int32,
             runtimeSocketPath: String,
+            logPath: String? = nil,
             reused: Bool,
             timing: PlayCoverStartTiming = .empty
         ) {
@@ -56,6 +91,7 @@ enum PlayCoverSessionService {
             self.productType = productType
             self.pid = pid
             self.runtimeSocketPath = runtimeSocketPath
+            self.logPath = logPath
             self.reused = reused
             self.timing = timing
         }
@@ -65,6 +101,7 @@ enum PlayCoverSessionService {
         _ appPath: String,
         _ sessionID: String,
         _ runtimeSocketPath: String,
+        _ stdioLog: PlayCoverStdioLogIdentity?,
         _ timeout: Double
     ) throws -> LaunchResult
 
@@ -196,6 +233,7 @@ enum PlayCoverSessionService {
 
     static func launch(
         explicitAppPath: String?,
+        captureStdio: Bool = false,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> LaunchResult {
@@ -242,96 +280,121 @@ enum PlayCoverSessionService {
         // separate transaction; a failed launch rolls back the App without
         // making this immutable generation undiscoverable for retry.
         try recordPrepared(verifiedManifest, paths: paths)
-        let launchStarted = PlayCoverMonotonicClock.now()
-        let rawResult: LaunchResult
-        if let launchOverrideForTesting {
-            rawResult = try launchOverrideForTesting(
-                verifiedManifest.preparedAppPath,
-                sessionID,
-                socketPath,
-                timeout
+        let stdioLog = captureStdio
+            ? try PlayCoverStdioLogService.create(
+                sessionID: sessionID,
+                paths: paths
             )
-        } else {
-            let identity: PlayCoverLaunchIdentity
-            do {
-                identity = try PlayCoverService.launchVerified(
-                    manifest: verifiedManifest,
-                    generationIdentity:
-                        validatedManifest.generationIdentity,
-                    sessionID: sessionID,
-                    runtimeSocketPath: socketPath,
-                    timeout: timeout
+            : nil
+        do {
+            let launchStarted = PlayCoverMonotonicClock.now()
+            let rawResult: LaunchResult
+            if let launchOverrideForTesting {
+                rawResult = try launchOverrideForTesting(
+                    verifiedManifest.preparedAppPath,
+                    sessionID,
+                    socketPath,
+                    stdioLog,
+                    timeout
                 )
-            } catch let error as PlayCoverUnterminatedLaunchError {
-                timing.launchNanoseconds =
-                    PlayCoverMonotonicClock.elapsed(
-                        since: launchStarted
+            } else {
+                let identity: PlayCoverLaunchIdentity
+                do {
+                    identity = try PlayCoverService.launchVerified(
+                        manifest: verifiedManifest,
+                        generationIdentity:
+                            validatedManifest.generationIdentity,
+                        sessionID: sessionID,
+                        runtimeSocketPath: socketPath,
+                        stdioLog: stdioLog,
+                        timeout: timeout
                     )
-                throw PlayCoverSessionUnterminatedLaunchError(
-                    result: LaunchResult(
-                        sessionID: error.sessionID,
-                        appPath: error.appPath,
-                        bundleIdentifier:
-                            error.bundleIdentifier,
-                        executablePath: error.executablePath,
-                        generationKey: error.generationKey,
-                        productType: String(
-                            cString:
-                                IOSUsePlayDeviceProductType()
+                } catch let error as PlayCoverUnterminatedLaunchError {
+                    timing.launchNanoseconds =
+                        PlayCoverMonotonicClock.elapsed(
+                            since: launchStarted
+                        )
+                    throw PlayCoverSessionUnterminatedLaunchError(
+                        result: LaunchResult(
+                            sessionID: error.sessionID,
+                            appPath: error.appPath,
+                            bundleIdentifier:
+                                error.bundleIdentifier,
+                            executablePath: error.executablePath,
+                            generationKey: error.generationKey,
+                            productType: String(
+                                cString:
+                                    IOSUsePlayDeviceProductType()
+                            ),
+                            pid: error.pid,
+                            runtimeSocketPath:
+                                error.runtimeSocketPath,
+                            logPath: stdioLog?.path,
+                            reused: resolved.reused,
+                            timing: timing
                         ),
-                        pid: error.pid,
-                        runtimeSocketPath:
-                            error.runtimeSocketPath,
-                        reused: resolved.reused,
-                        timing: timing
+                        underlying: error
+                    )
+                }
+                rawResult = LaunchResult(
+                    sessionID: identity.sessionID,
+                    appPath: identity.appPath,
+                    bundleIdentifier: identity.bundleIdentifier,
+                    executablePath: identity.executablePath,
+                    generationKey: identity.generationKey,
+                    productType: String(
+                        cString: IOSUsePlayDeviceProductType()
                     ),
+                    pid: identity.pid,
+                    runtimeSocketPath: identity.runtimeSocketPath,
+                    logPath: stdioLog?.path,
+                    reused: resolved.reused
+                )
+            }
+            timing.launchNanoseconds =
+                PlayCoverMonotonicClock.elapsed(since: launchStarted)
+            let result = LaunchResult(
+                sessionID: rawResult.sessionID,
+                appPath: rawResult.appPath,
+                bundleIdentifier: rawResult.bundleIdentifier,
+                executablePath: rawResult.executablePath,
+                generationKey: rawResult.generationKey,
+                productType: rawResult.productType,
+                pid: rawResult.pid,
+                runtimeSocketPath: rawResult.runtimeSocketPath,
+                logPath: stdioLog?.path,
+                reused: resolved.reused,
+                timing: timing
+            )
+            guard result.sessionID == sessionID,
+                  result.appPath
+                    == verifiedManifest.preparedAppPath,
+                  result.pid > 0,
+                  result.bundleIdentifier
+                    == verifiedManifest.bundleIdentifier,
+                  result.executablePath
+                    == verifiedManifest.executablePath,
+                  result.generationKey
+                    == verifiedManifest.generationKey,
+                  result.runtimeSocketPath == socketPath else {
+                throw PlayCoverBackendError.launchFailed(
+                    "Runtime hello returned incomplete or mismatched "
+                        + "single-session identity"
+                )
+            }
+            return result
+        } catch let error as
+                PlayCoverSessionUnterminatedLaunchError {
+            throw error
+        } catch {
+            if let stdioLog {
+                throw PlayCoverSessionLoggedLaunchError(
+                    logPath: stdioLog.path,
                     underlying: error
                 )
             }
-            rawResult = LaunchResult(
-                sessionID: identity.sessionID,
-                appPath: identity.appPath,
-                bundleIdentifier: identity.bundleIdentifier,
-                executablePath: identity.executablePath,
-                generationKey: identity.generationKey,
-                productType: String(
-                    cString: IOSUsePlayDeviceProductType()
-                ),
-                pid: identity.pid,
-                runtimeSocketPath: identity.runtimeSocketPath,
-                reused: resolved.reused
-            )
+            throw error
         }
-        timing.launchNanoseconds =
-            PlayCoverMonotonicClock.elapsed(since: launchStarted)
-        let result = LaunchResult(
-            sessionID: rawResult.sessionID,
-            appPath: rawResult.appPath,
-            bundleIdentifier: rawResult.bundleIdentifier,
-            executablePath: rawResult.executablePath,
-            generationKey: rawResult.generationKey,
-            productType: rawResult.productType,
-            pid: rawResult.pid,
-            runtimeSocketPath: rawResult.runtimeSocketPath,
-            reused: resolved.reused,
-            timing: timing
-        )
-        guard result.sessionID == sessionID,
-              result.appPath == verifiedManifest.preparedAppPath,
-              result.pid > 0,
-              result.bundleIdentifier
-                == verifiedManifest.bundleIdentifier,
-              result.executablePath
-                == verifiedManifest.executablePath,
-              result.generationKey
-                == verifiedManifest.generationKey,
-              result.runtimeSocketPath == socketPath else {
-            throw PlayCoverBackendError.launchFailed(
-                "Runtime hello returned incomplete or mismatched "
-                    + "single-session identity"
-            )
-        }
-        return result
     }
 
     @discardableResult
@@ -760,7 +823,8 @@ enum PlayCoverSessionService {
             playCoverExecutablePath: result.executablePath,
             playCoverGenerationKey: result.generationKey,
             playCoverRuntimeSocketPath:
-                result.runtimeSocketPath
+                result.runtimeSocketPath,
+            playCoverLogPath: result.logPath
         )
     }
 

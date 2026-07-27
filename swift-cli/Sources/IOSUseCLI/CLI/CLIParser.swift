@@ -75,7 +75,8 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .status, .install, .apps, .open, .appLifecycle, .driver:
+            case .start, .status, .install, .apps, .open,
+                    .appLifecycle, .driver:
                 break
             default:
                 throw CLIParseError.unknownOption("--json")
@@ -154,6 +155,8 @@ public enum CLIParser {
                     throw CLIParseError.invalidValue("--app may only be provided once")
                 }
                 options.appPath = try parser.value(for: arg)
+            case "--log":
+                options.log = true
             case "--timeout":
                 options.timeout = try parsePositiveDurationSecondsStrict(
                     try parser.value(for: arg),
@@ -177,6 +180,8 @@ public enum CLIParser {
             guard options.udid == nil else {
                 throw CLIParseError.invalidValue("a device UDID cannot be used with --playcover")
             }
+        } else if options.log {
+            throw CLIParseError.invalidValue("--log requires --playcover")
         } else if options.appPath != nil || timeoutWasProvided {
             throw CLIParseError.invalidValue("--app and --timeout require --playcover")
         }

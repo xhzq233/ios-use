@@ -107,6 +107,36 @@ if [ ! -x "$IOS_USE_RUNTIME_FRAMEWORK/IOSUsePlayRuntime" ]; then
   exit 1
 fi
 
+IOS_USE_RUNTIME_BINARY="$IOS_USE_RUNTIME_FRAMEWORK/IOSUsePlayRuntime"
+IOS_USE_RUNTIME_ENTRY="$(
+  /usr/bin/nm -nm "$IOS_USE_RUNTIME_BINARY" |
+    /usr/bin/awk '
+      $NF == "_IOSUsePlayRuntimeInitializeEntry" && value == "" {
+        value = $1
+      }
+      END { print value }
+    '
+)"
+IOS_USE_RUNTIME_FIRST_INIT="$(
+  /usr/bin/otool -v -s __TEXT __init_offsets \
+    "$IOS_USE_RUNTIME_BINARY" |
+    /usr/bin/awk '
+      $1 ~ /^[0-9a-fA-F]+$/ && NF >= 2 && value == "" {
+        value = $2
+      }
+      END { print value }
+    '
+)"
+IOS_USE_RUNTIME_ENTRY="${IOS_USE_RUNTIME_ENTRY#"${IOS_USE_RUNTIME_ENTRY%%[!0]*}"}"
+IOS_USE_RUNTIME_FIRST_INIT="${IOS_USE_RUNTIME_FIRST_INIT#"${IOS_USE_RUNTIME_FIRST_INIT%%[!0]*}"}"
+if [ -z "$IOS_USE_RUNTIME_ENTRY" ] ||
+   [ "$IOS_USE_RUNTIME_FIRST_INIT" != "$IOS_USE_RUNTIME_ENTRY" ]; then
+  echo \
+    "[playcover-runtime] ERROR: stdio/Runtime entry is not the first constructor" \
+    >&2
+  exit 1
+fi
+
 IOS_USE_RUNTIME_INFO_PLIST="$IOS_USE_RUNTIME_FRAMEWORK/Info.plist"
 if [ ! -f "$IOS_USE_RUNTIME_INFO_PLIST" ]; then
   IOS_USE_RUNTIME_INFO_PLIST="$IOS_USE_RUNTIME_FRAMEWORK/Versions/A/Resources/Info.plist"

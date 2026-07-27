@@ -16,6 +16,7 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let artifacts: String
     public let playcover: String
     public let playcoverRun: String
+    public let playcoverLogs: String
     public let playcoverLastPrepared: String
     public let playcoverPrepared: String
     public let playcoverRuntime: String
@@ -88,6 +89,7 @@ public struct IOSUsePaths: Equatable, Sendable {
             artifacts: "\(configured.root)/artifacts",
             playcover: "\(configured.root)/playcover",
             playcoverRun: "\(configured.root)/playcover/run",
+            playcoverLogs: "\(configured.root)/playcover/logs",
             playcoverLastPrepared: "\(configured.root)/playcover/last-prepared.json",
             playcoverPrepared: "\(configured.root)/playcover/prepared",
             playcoverRuntime: "\(configured.root)/playcover/IOSUsePlayRuntime.framework"

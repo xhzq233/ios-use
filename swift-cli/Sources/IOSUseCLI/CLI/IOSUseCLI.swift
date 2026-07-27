@@ -133,6 +133,7 @@ public struct IOSUseCLI: Sendable {
                 if options.playCover {
                     output = try SessionService.startPlayCover(
                         appPath: options.appPath,
+                        captureStdio: options.log,
                         timeout: options.timeout,
                         paths: paths
                     )

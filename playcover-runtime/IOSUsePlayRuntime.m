@@ -105,8 +105,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(void) {
     };
 }
 
-__attribute__((constructor))
-static void IOSUsePlayRuntimeInitialize(void) {
+void IOSUsePlayRuntimeInitializeAfterStdio(void) {
     @autoreleasepool {
         // UIKitMacHelper chooses its 0.77 iOS-on-Mac compatibility scale
         // before the first scene exists. Install the fixed identity scale

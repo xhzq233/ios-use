@@ -85,7 +85,7 @@ enum CLIHelp {
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
-                   ios-use start --playcover [--app <source-or-prepared.app>] [--timeout <duration>]
+                   ios-use start --playcover [--app <source-or-prepared.app>] [--log] [--timeout <duration>]
 
             Start a configured XCTest driver or a PlayCover App and
             record it as the active backend in driver.lock.
@@ -96,12 +96,16 @@ enum CLIHelp {
             successful prepared generation without rechecking the original
             source; pass --app again after rebuilding. Successful PlayCover
             starts print inspect/clone/convert/sign/verify/launch timings.
+            --log captures target-App stdout/stderr from the injected Runtime
+            onward in an owner-only per-session file retained after stop,
+            crash, or launch failure.
 
             Options:
               --verbose                    Enable verbose XCTest output
               --playcover                  Select the PlayCover backend
               --app <source-or-prepared.app>
                                            Prepare if needed, then launch this App
+              --log                        Capture target-App stdout/stderr to a retained session log
               --timeout <duration>          Wait up to 60 seconds for direct Runtime socket hello; default 15s
 
             """

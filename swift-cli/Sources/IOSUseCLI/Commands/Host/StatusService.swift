@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 public enum StatusService {
     static var playCoverDiagnosticsForTesting:
@@ -59,6 +62,7 @@ public enum StatusService {
                     "playcoverExecutablePath": info.playCoverExecutablePath.map(MachineValue.string) ?? .null,
                     "playcoverGenerationKey": info.playCoverGenerationKey.map(MachineValue.string) ?? .null,
                     "playcoverRuntimeSocketPath": info.playCoverRuntimeSocketPath.map(MachineValue.string) ?? .null,
+                    "playcoverLogPath": info.playCoverLogPath.map(MachineValue.string) ?? .null,
                     "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
                     "versionMatchesCli": info.deviceType == PlayCoverSessionService.deviceType
                         ? .null
@@ -88,6 +92,10 @@ public enum StatusService {
                         // making it look like a socket/identity failure.
                         if let payload {
                             runtime["stage"] = .string(payload.stage)
+                            runtime["stdio"] =
+                                playCoverRuntimeStdioMachineValue(
+                                    payload.stdio
+                                )
                             if let host = payload.geometry.host {
                                 runtime["host"] =
                                     playCoverRuntimeHostMachineValue(host)
@@ -217,6 +225,10 @@ public enum StatusService {
                !generation.isEmpty {
                 parts.append("generation: \(generation)")
             }
+            if let logPath = info.playCoverLogPath,
+               !logPath.isEmpty {
+                parts.append("stdio log: \(logPath)")
+            }
             if info.deviceType == PlayCoverSessionService.deviceType {
                 switch playCoverRuntimeHealth(info: info) {
                 case .healthy(let payload):
@@ -333,6 +345,10 @@ public enum StatusService {
             )
         }
         do {
+            try validatePlayCoverRuntimeStdio(
+                payload,
+                info: info
+            )
             try PlayCoverDriverClient.validateFixedDevice(
                 payload.geometry,
                 stage: payload.stage
@@ -365,6 +381,67 @@ public enum StatusService {
         }
     }
 
+    private static func validatePlayCoverRuntimeStdio(
+        _ payload: PlayCoverRuntimeDiagnosticsPayload,
+        info: SessionService.Info
+    ) throws {
+        if let expectedPath = info.playCoverLogPath {
+            guard let stdio = payload.stdio else {
+                throw CLIParseError.invalidValue(
+                    "PlayCover Runtime omitted stdio initialization evidence."
+                )
+            }
+            guard stdio.status == "redirected",
+                  stdio.path.map(
+                    PlayCoverRuntimeClient.canonicalPath
+                  ) == PlayCoverRuntimeClient.canonicalPath(
+                    expectedPath
+                  ),
+                  let device = stdio.device,
+                  let inode = stdio.inode,
+                  stdio.failureStage == nil,
+                  stdio.errorNumber == nil else {
+                throw CLIParseError.invalidValue(
+                    "PlayCover Runtime stdio log no longer matches "
+                        + "the active session."
+                )
+            }
+            #if canImport(Darwin)
+            var status = stat()
+            guard Darwin.lstat(expectedPath, &status) == 0,
+                  status.st_mode & S_IFMT == S_IFREG,
+                  status.st_uid == geteuid(),
+                  status.st_nlink == 1,
+                  status.st_mode & 0o7777 == 0o600,
+                  UInt64(truncatingIfNeeded: status.st_dev)
+                    == device,
+                  UInt64(status.st_ino) == inode else {
+                throw CLIParseError.invalidValue(
+                    "PlayCover stdio log path no longer identifies "
+                        + "the Runtime's owner-only open file."
+                )
+            }
+            #endif
+        } else {
+            // Existing schema-v3 prepared generations predate the optional
+            // stdio field and remain valid for sessions without --log.
+            guard let stdio = payload.stdio else {
+                return
+            }
+            guard stdio.status == "disabled",
+                  stdio.path == nil,
+                  stdio.device == nil,
+                  stdio.inode == nil,
+                  stdio.failureStage == nil,
+                  stdio.errorNumber == nil else {
+                throw CLIParseError.invalidValue(
+                    "PlayCover Runtime reports stdio capture for a "
+                        + "session started without --log."
+                )
+            }
+        }
+    }
+
     static func playCoverRuntimeMachineValue(
         _ payload: PlayCoverRuntimeDiagnosticsPayload
     ) -> MachineValue {
@@ -390,6 +467,9 @@ public enum StatusService {
             "safeAreaBottom": .double(payload.geometry.safeArea.bottom),
             "safeAreaRight": .double(payload.geometry.safeArea.right),
             "stage": .string(payload.stage),
+            "stdio": playCoverRuntimeStdioMachineValue(
+                payload.stdio
+            ),
         ]
         if let host = payload.geometry.host {
             fields["host"] = playCoverRuntimeHostMachineValue(host)
@@ -400,6 +480,29 @@ public enum StatusService {
             )
         )
         return .object(fields)
+    }
+
+    private static func playCoverRuntimeStdioMachineValue(
+        _ stdio: PlayCoverRuntimeStdioState?
+    ) -> MachineValue {
+        guard let stdio else {
+            return .null
+        }
+        return .object([
+            "status": .string(stdio.status),
+            "path": stdio.path.map(MachineValue.string) ?? .null,
+            "device": stdio.device.map {
+                .string(String($0))
+            } ?? .null,
+            "inode": stdio.inode.map {
+                .string(String($0))
+            } ?? .null,
+            "failureStage":
+                stdio.failureStage.map(MachineValue.string) ?? .null,
+            "errorNumber": stdio.errorNumber.map {
+                .integer(Int($0))
+            } ?? .null,
+        ])
     }
 
     private static func playCoverRuntimeHostMachineValue(

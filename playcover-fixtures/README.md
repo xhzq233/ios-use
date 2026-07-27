@@ -88,6 +88,11 @@ logical 430x932 scale 3 native 1290x2796
 The fixture pins light appearance so reference surfaces do not change with the
 macOS automatic day/night appearance.
 
+At launch it writes one session-specific marker to stdout and another to
+stderr. A session started with `start --playcover --log` must expose both
+markers in the printed owner-only log while the App is still running, and the
+same file must remain after normal stop or the fixture-owned crash gate.
+
 The empty `UILaunchScreen` declaration is intentional. Removing it puts a
 freshly built App into the legacy 320x480 compatibility mode and must be
 rejected by the PlayCover Runtime rather than hidden by screenshot resizing.
