@@ -252,7 +252,8 @@ enum PlayCoverManagedAppService {
                                 paths,
                                 layout.app.path
                             ),
-                            phaseTimings: nil
+                            phaseTimings: nil,
+                            upstreamResult: nil
                         )
                     }
                     return try PlayCoverService.prepareMeasured(

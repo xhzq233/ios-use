@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MODE="non-live"
@@ -11,12 +12,13 @@ Usage: scripts/test_playcover_backend.sh [--non-live|--live]
 --non-live  Run the hermetic build, analysis, fixture, compositor, vendored
             Swift, release-install, and installed-execution gate. This is
             suitable for hosted CI.
---live      Run the versioned public fixture matrix, the isolated Runtime
-            protocol/crash stress gate, and the generic external-App live gate.
-            The latter requires a private scenario and raw evidence directory
-            supplied by the dedicated Apple-silicon runner. Missing live
-            prerequisites fail with EX_CONFIG (78); they are not reported as a
-            passing or skipped live result.
+--live      Run the lock-independent isolated Runtime protocol/crash stress
+            gate first, then the versioned unlocked public fixture matrix and
+            generic external-App live gate. The latter requires a private
+            scenario and raw evidence directory supplied by the dedicated
+            Apple-silicon runner. Missing live prerequisites fail with
+            EX_CONFIG (78); they are not reported as a passing or skipped live
+            result.
 USAGE
 }
 
@@ -73,6 +75,16 @@ run_non_live() {
   # no XCTest target; `swift build` is its complete Swift gate.
   swift build --package-path "$ROOT_DIR/ThirdParty/inject"
   swift test --package-path "$ROOT_DIR/ThirdParty/PlayCover"
+  echo "[playcover-gate] Running the complete CLI suite, including PID-reuse cases..."
+  (
+    # The differential fixture has reviewed 0755/0644 modes. Keep the gate's
+    # evidence owner-only while preventing its outer umask from changing those
+    # fixture inputs.
+    umask 022
+    swift test --package-path "$ROOT_DIR/swift-cli"
+  )
+  echo "[playcover-gate] Recording the pinned prepare differential attestation..."
+  bash "$ROOT_DIR/scripts/test_playcover_prepare_differential.sh"
   echo "[playcover-gate] Verifying installer behavior and release-installed execution..."
   bash "$ROOT_DIR/scripts/test_install.sh"
   bash "$ROOT_DIR/scripts/test_playcover_installed_layout.sh"
@@ -81,11 +93,10 @@ run_non_live() {
 
 run_live() {
   require_apple_silicon_xcode 78
-  bash "$ROOT_DIR/scripts/build_swift_cli.sh"
-  echo "[playcover-live] Running versioned fixture acceptance matrix..."
-  bash "$ROOT_DIR/scripts/test_playcover_fixture_live.sh" --live
   echo "[playcover-live] Running isolated Runtime protocol/crash stress matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"
+  echo "[playcover-live] Running versioned fixture acceptance matrix..."
+  bash "$ROOT_DIR/scripts/test_playcover_fixture_live.sh" --live
   echo "[playcover-live] Running configured external-App live/stress workflow..."
   bash "$ROOT_DIR/scripts/test_playcover_external_app_live.sh" --live
   echo "[playcover-live] external-App live/stress gate passed"

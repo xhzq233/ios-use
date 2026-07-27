@@ -222,6 +222,30 @@ Each successful start prints a single `PlayCover timing:` line covering
 `inspect`, `clone`, `convert`, `sign`, `verify`, `launch`, and `total`.
 Cache-hit phases that did not run are shown as `skipped`.
 
+The production prepare manifest remains a cache-integrity seal; ordinary
+`start` never performs a second pinned prepare. A separate hermetic
+differential gate emits a Codable JSON attestation outside the checkout. It
+consumes the two distinct, module-owned prepare result types and re-inspects
+the source plus both outputs before publication. The two canonical managed
+homes must be disjoint, each output must remain beneath its matching home, and
+path normalization applies only at path-token boundaries. The evidence records
+both complete object/slice selector sets, every App and inventory comparator
+family (including fields that compare equal), source/output/revision identity,
+static allowance reasons and symbols, one-sided baseline provenance, a fixed
+36-file transitive source closure, and the SHA-256 plus device/inode of the
+loaded XCTest image that executed the comparison. The normalized closure
+digest is embedded at build time and must match both source snapshots; the gate
+uses an isolated SwiftPM scratch directory. Managed-path replacement accepts
+only actual lexical/canonical roots and exact descendants, and the pinned result
+must identify the full-PlayTools Installer producer. Allowances are reviewed
+inputs and cannot be generated from observed differences. A candidate is
+published by hard link only after the entire filtered suite and all evidence
+sentinels succeed; an existing final is never replaced. The attestation is
+explicitly scoped
+`hermetic-fixture`; a real external-App attestation requires its own reviewed
+baseline/allowance configuration and is not inferred from the live UI
+scenario.
+
 One owner-only cross-process operation lock serializes every backend's start
 and stop mutation within an `IOS_USE_HOME`, including PlayCover prepare
 publication, session commit, and cache collection. After a successful start,
@@ -297,6 +321,33 @@ diagnostics, so a host drag that relayouts the scene makes Runtime health fail.
 `open` delivers only to the exact active target. Unified
 logs are constrained to the exact PID/executable, and failure evidence keeps
 screenshot and DOM generations coherent.
+
+The lock-independent public-fixture stress gate runs before any unlocked
+global-mouse acceptance. It refuses fixture overrides and freshly rebuilds the
+Runtime, workspace CLI, and public fixture from one clean Git checkout on every
+invocation; CLI object files use a new SwiftPM scratch directory and fixture
+objects use new DerivedData. Its evidence binds the unchanged HEAD to the exact
+CLI, Runtime, complete fixture App tree, protocol-probe, and
+prepared-generation digests. It exercises zero-length, oversized, exact-limit, malformed,
+invalid-UTF-8, and truncated Runtime frames and proves listener health after
+each one. One cold prepare is followed by 20 bare
+start/status/stop cycles with unique session IDs and one immutable generation;
+each cycle verifies the exact lock/PID/socket identity and the eventual removal
+of only that cycle's lock and Runtime-owned socket. The same gate verifies
+scene replacement, endpoint-loss classification, fixture-owned self-`SIGKILL`
+stale cleanup,
+preservation of the crash socket residue, and recovery through a fresh random
+session. Its schema-v1 attestation records every clean-stop absence result and
+the crash residue's before/after device, inode, owner, and mode observations.
+The fixture self-crash is requested through a session-specific Darwin
+notification, so the host never signals a potentially recycled PID. The
+non-live aggregate also runs the full CLI suite, including deterministic
+recorded-PID-reuse cases that cannot be forced safely in a host live run.
+The run directory and attestation candidate are exclusively created and the
+final is a no-clobber hard link; it does not rely on `ditto` preserving a Unix
+socket in the archived home.
+These process-local checks remain additive: they do not replace the unlocked
+real cursor, corner-drag, backing-scale, popup, and mouse/touch matrix.
 
 ## Upstream Provenance
 

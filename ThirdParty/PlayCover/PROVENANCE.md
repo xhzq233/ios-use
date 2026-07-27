@@ -244,3 +244,15 @@ The dedicated gate is:
 ```sh
 scripts/test_playcover_prepare_differential.sh
 ```
+
+The gate runs in an isolated SwiftPM scratch directory and publishes a
+schema-v1 attestation only after every exact allowance and one-sided baseline
+is consumed. Its producer closure is a fixed 36-file list whose normalized
+SHA-256 is embedded into the executing test binary at build time and checked
+against source snapshots at both ends of attestation. The binary digest is read
+through an open descriptor whose device/inode must match the vnode backing the
+loaded `.xctest` Mach-O image. The source and both prepared Apps are then
+re-inspected, and the pinned result must carry the full-PlayTools Installer
+oracle producer identity. Managed-path normalization accepts only actual
+lexical/canonical roots and their exact descendants; it does not invent
+`/private` aliases or collapse sibling path prefixes.

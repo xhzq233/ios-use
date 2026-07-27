@@ -10,7 +10,7 @@ enum ProbeFailure: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "usage: runtime_socket_probe.swift <socket> <oversized-frame|malformed-json|invalid-utf8>"
+            return "usage: runtime_socket_probe.swift <socket> <zero-length|oversized-frame|exact-limit-invalid-json|malformed-json|invalid-utf8|truncated-frame>"
         case .pathTooLong:
             return "Runtime socket path exceeds sockaddr_un.sun_path"
         case .systemCall(let name, let code):
@@ -94,19 +94,40 @@ func run() throws {
     }
     let socketPath = CommandLine.arguments[1]
     let mode = CommandLine.arguments[2]
-    let expectedCode: String
+    let expectedCode: String?
+    let expectsConnectionClose: Bool
     let request: Data
     switch mode {
+    case "zero-length":
+        request = encodeFrame(Data())
+        expectedCode = "invalid_frame"
+        expectsConnectionClose = false
     case "oversized-frame":
         var length = UInt32(65_537).bigEndian
         request = withUnsafeBytes(of: &length) { Data($0) }
         expectedCode = "invalid_frame"
+        expectsConnectionClose = false
+    case "exact-limit-invalid-json":
+        request = encodeFrame(
+            Data(repeating: 0x20, count: 65_536)
+        )
+        expectedCode = "invalid_json"
+        expectsConnectionClose = false
     case "malformed-json":
         request = encodeFrame(Data("{".utf8))
         expectedCode = "invalid_json"
+        expectsConnectionClose = false
     case "invalid-utf8":
         request = encodeFrame(Data([0xff]))
         expectedCode = "invalid_json"
+        expectsConnectionClose = false
+    case "truncated-frame":
+        var length = UInt32(16).bigEndian
+        request =
+            withUnsafeBytes(of: &length) { Data($0) }
+            + Data("{".utf8)
+        expectedCode = nil
+        expectsConnectionClose = true
     default:
         throw ProbeFailure.usage
     }
@@ -153,6 +174,39 @@ func run() throws {
     }
 
     try writeAll(request, descriptor: descriptor)
+    if expectsConnectionClose {
+        guard Darwin.shutdown(descriptor, SHUT_WR) == 0 else {
+            throw ProbeFailure.systemCall("shutdown", errno)
+        }
+        var byte: UInt8 = 0
+        let received = Darwin.read(descriptor, &byte, 1)
+        guard received == 0 else {
+            if received < 0 {
+                throw ProbeFailure.systemCall("read", errno)
+            }
+            throw ProbeFailure.invalidResponse(
+                "truncated request unexpectedly returned a response"
+            )
+        }
+        let output: [String: Any] = [
+            "schemaVersion": 1,
+            "mode": mode,
+            "runtimeErrorCode": "connection_closed",
+            "runtimeListenerSurvived": true,
+        ]
+        let encoded = try JSONSerialization.data(
+            withJSONObject: output,
+            options: [.sortedKeys]
+        )
+        FileHandle.standardOutput.write(encoded)
+        FileHandle.standardOutput.write(Data([0x0a]))
+        return
+    }
+    guard let expectedCode = expectedCode else {
+        throw ProbeFailure.invalidResponse(
+            "probe mode has no expected Runtime error"
+        )
+    }
     let header = try readExactly(4, descriptor: descriptor)
     let responseLength = header.reduce(UInt32(0)) {
         ($0 << 8) | UInt32($1)

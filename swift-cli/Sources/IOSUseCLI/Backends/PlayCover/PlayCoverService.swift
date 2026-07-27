@@ -280,7 +280,8 @@ public enum PlayCoverService {
         )
         return PlayCoverPreparedArtifact(
             manifest: manifest,
-            phaseTimings: upstream.phaseTimings
+            phaseTimings: upstream.phaseTimings,
+            upstreamResult: upstream
         )
     }
 

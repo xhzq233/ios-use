@@ -1,4 +1,23 @@
+import Darwin
 import UIKit
+
+private let fixtureCrashNotificationPrefix =
+    "com.iosuse.playfixture.self-sigkill."
+
+private func fixtureCrashNotificationCallback(
+    _ center: CFNotificationCenter?,
+    _ observer: UnsafeMutableRawPointer?,
+    _ name: CFNotificationName?,
+    _ object: UnsafeRawPointer?,
+    _ userInfo: CFDictionary?
+) {
+    _ = center
+    _ = observer
+    _ = name
+    _ = object
+    _ = userInfo
+    _ = Darwin.kill(Darwin.getpid(), SIGKILL)
+}
 
 extension Notification.Name {
     static let fixtureOpenURL = Notification.Name(
@@ -11,6 +30,8 @@ extension Notification.Name {
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    private var crashNotificationName: CFNotificationName?
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [
@@ -19,7 +40,21 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     ) -> Bool {
         _ = application
         _ = launchOptions
+        registerCrashNotification()
         return true
+    }
+
+    func applicationWillTerminate(_ application: UIApplication) {
+        _ = application
+        guard let crashNotificationName else {
+            return
+        }
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            crashNotificationName,
+            nil
+        )
     }
 
     func application(
@@ -50,5 +85,26 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             object: url.absoluteString
         )
         return true
+    }
+
+    private func registerCrashNotification() {
+        guard let rawSessionID = ProcessInfo.processInfo.environment[
+            "IOS_USE_PLAY_SESSION_ID"
+        ],
+        let sessionID = UUID(uuidString: rawSessionID)?.uuidString else {
+            return
+        }
+        let name = CFNotificationName(
+            (fixtureCrashNotificationPrefix + sessionID) as CFString
+        )
+        crashNotificationName = name
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            fixtureCrashNotificationCallback,
+            name.rawValue,
+            nil,
+            .deliverImmediately
+        )
     }
 }

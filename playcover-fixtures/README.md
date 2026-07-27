@@ -28,6 +28,8 @@ ios-use:
 
 `Release` is the default configuration. Pass
 `--configuration Debug` when a debug-dylib/nested-code fixture is required.
+`--derived-data-path /absolute/path` gives isolated acceptance gates a fresh
+Xcode build directory without changing the normal local default.
 Generated projects and build products stay untracked under this directory.
 
 The native `UIAlertController` and the custom popup are separate gates.
@@ -99,7 +101,10 @@ identity, and the configured external-App live workflow.
 `runtime_socket_probe.swift` is intentionally a bounded negative-test client,
 not an automation API. The unified live gate uses it only against a fixture
 session in a freshly created `IOS_USE_HOME` to prove exact protocol errors for
-oversized, malformed-JSON, and invalid-UTF-8 frames while the Runtime listener
-remains healthy. The same isolated stress gate also proves Runtime-endpoint
-loss and App-crash cleanup without exposing a production kill or unlink
-command.
+zero-length, oversized, exact-limit invalid-JSON, malformed-JSON, invalid-UTF-8,
+and truncated frames while the Runtime listener remains healthy. The same
+isolated stress gate also proves Runtime-endpoint loss and App-crash cleanup
+without exposing a production kill or unlink command. For the crash case, this
+fixture alone registers a Darwin notification derived from the Runtime
+session ID and sends `SIGKILL` to itself when notified; the host gate never
+signals a PID that could have been recycled.

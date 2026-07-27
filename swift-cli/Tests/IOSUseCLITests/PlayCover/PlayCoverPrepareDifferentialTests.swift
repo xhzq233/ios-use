@@ -1,9 +1,19 @@
 import Foundation
-import PlayCoverUpstream
+@testable import PlayCoverUpstream
 import XCTest
 @testable import IOSUseCLI
 
 final class PlayCoverPrepareDifferentialTests: XCTestCase {
+    private enum HermeticOneSidedGoldenV1 {
+        static let manifestID = "playcover-hermetic-one-sided-v1"
+        static let runtimeSHA256 =
+            "119fa7707e50c05fd7157223ab553af1140ee9ff437126c0a"
+                + "2c2d00b853d2cd1"
+        static let pluginSHA256 =
+            "70af94bb12ace93bda3d29348ba4d209761832142108a28fa"
+                + "5e5c7664e1771bf"
+    }
+
     func testVendoredPlayAppSigningAuthorityIsOrderedAndExplicitlyExcluded()
         throws
     {
@@ -105,15 +115,26 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 ),
                 relativePath: pluginRelativePath
             )
+        try requireGoldenDigest(
+            runtimeBaselineInspection.fileSHA256,
+            expected: HermeticOneSidedGoldenV1.runtimeSHA256,
+            name: "fixture Runtime"
+        )
+        try requireGoldenDigest(
+            pluginBaselineInspection.fileSHA256,
+            expected: HermeticOneSidedGoldenV1.pluginSHA256,
+            name: "fixture AKInterface plugin"
+        )
         let baselines = [
             PlayCoverDifferentialObjectBaseline(
                 id: "pinned-akinterface-input",
                 side: .pinned,
                 relativePath: pluginRelativePath,
                 inspection: pluginBaselineInspection,
-                sourceSHA256: pluginBaselineInspection.fileSHA256,
+                sourceSHA256: HermeticOneSidedGoldenV1.pluginSHA256,
                 provenance:
-                    "fixture PlayTools.framework resource consumed by "
+                    HermeticOneSidedGoldenV1.manifestID
+                    + "; fixture PlayTools.framework resource consumed by "
                     + "PlayTools.installPluginInIPA"
             ),
             PlayCoverDifferentialObjectBaseline(
@@ -121,9 +142,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 side: .iosUse,
                 relativePath: runtimeRelativePath,
                 inspection: runtimeBaselineInspection,
-                sourceSHA256: runtimeBaselineInspection.fileSHA256,
+                sourceSHA256: HermeticOneSidedGoldenV1.runtimeSHA256,
                 provenance:
-                    "fixture Runtime framework passed to "
+                    HermeticOneSidedGoldenV1.manifestID
+                    + "; fixture Runtime framework passed to "
                     + "PlayCoverService.prepare"
             ),
         ]
@@ -166,15 +188,25 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             "IOSUse.app",
             isDirectory: true
         )
-        let manifest = try PlayCoverService.prepare(
-            sourceAppPath: source.path,
+        let plan = try PlayCoverService.makePreparationPlan(
+            source: PlayCoverService.inspectPreparationSource(
+                appPath: source.path
+            ),
+            runtimeFrameworkPath: runtime.path
+        )
+        let preparedArtifact = try PlayCoverService.prepareMeasured(
+            plan: plan,
             outputAppPath: candidateOutput.path,
-            runtimeFrameworkPath: runtime.path,
             paths: paths
+        )
+        let manifest = preparedArtifact.manifest
+        let iosUseResult = try XCTUnwrap(
+            preparedArtifact.upstreamResult
         )
         let iosUse = try PlayCoverUpstreamEngine.inspect(
             appURL: candidateOutput
         )
+        XCTAssertEqual(iosUseResult.prepared, iosUse)
 
         XCTAssertEqual(
             PlayCoverPinnedHeadlessInstallerOracle.referenceLineage,
@@ -511,29 +543,30 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             Int(pinnedPlugin.commandCount)
         )
 
-        var pinnedReplacements = pathReplacements(for: pinnedHome)
-        pinnedReplacements[
-            PlayCoverPinnedPrimitiveCharacterization.playToolsLoadPath
-        ] = "<PLAYTOOLS>"
-        let normalization = PlayCoverDifferentialNormalization(
-            pinnedPathReplacements: pinnedReplacements,
-            iosUsePathReplacements: pathReplacements(
-                for: iosUseHome
+        let normalization =
+            try PlayCoverDifferentialNormalization.hermeticFixture(
+                pinnedManagedHome: pinnedHome,
+                iosUseManagedHome: iosUseHome
             )
-        )
         let actual = try PlayCoverPrepareDifferentialGate.differences(
             pinned: pinned.prepared,
             iosUse: iosUse,
             oneSidedBaselines: baselines,
             normalization: normalization
         )
-        let allowances = makeAllowances(
-            pluginBaseline: pluginBaselineInspection,
-            runtimeBaseline: runtimeBaselineInspection
-        )
+        let allowances = makeAllowances()
         let report = try PlayCoverPrepareDifferentialGate.enforce(
             pinned: pinned.prepared,
             iosUse: iosUse,
+            allowances: allowances,
+            oneSidedBaselines: baselines,
+            normalization: normalization
+        )
+        let attestation = try PlayCoverPrepareDifferentialGate.attest(
+            repositoryRoot: repositoryRoot(),
+            sourceApp: source,
+            pinnedResult: pinned,
+            iosUseResult: iosUseResult,
             allowances: allowances,
             oneSidedBaselines: baselines,
             normalization: normalization
@@ -575,6 +608,335 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 $0.field.contains(".signature.")
             }
         )
+
+        let commonObjectSelectors = [
+            "Fixture",
+            "Frameworks/Fat64Fixture",
+            "Frameworks/FixtureKit.framework/FixtureKit",
+            "Frameworks/libswiftUIKit.dylib",
+            "PlugIns/FixtureExtension.appex/FixtureExtension",
+        ]
+        let expectedPinnedObjects = (
+            commonObjectSelectors + [pluginRelativePath]
+        ).sorted()
+        let expectedIOSUseObjects = (
+            commonObjectSelectors + [runtimeRelativePath]
+        ).sorted()
+        func arm64SliceSelectors(_ paths: [String]) -> [String] {
+            paths.map {
+                $0 + "#cpu=16777228,subtype=0,occurrence=0"
+            }.sorted()
+        }
+        let expectedPinnedSlices = arm64SliceSelectors(
+            expectedPinnedObjects
+        )
+        let expectedIOSUseSlices = arm64SliceSelectors(
+            expectedIOSUseObjects
+        )
+        let expectedMatchedSlices = Array(
+            Set(expectedPinnedSlices).union(expectedIOSUseSlices)
+        ).sorted()
+        XCTAssertEqual(attestation.schemaVersion, 1)
+        XCTAssertEqual(attestation.scope, .hermeticFixture)
+        XCTAssertEqual(attestation.result, "pass")
+        XCTAssertEqual(
+            attestation.implementation.algorithm,
+            "embedded-source-closure-plus-loaded-xctest-inode-sha256-v2"
+        )
+        XCTAssertEqual(
+            attestation.implementation.relativeSourcePaths,
+            [
+                "ThirdParty/PlayCover/Package.resolved",
+                "ThirdParty/PlayCover/Package.swift",
+                "ThirdParty/PlayCover/PROVENANCE.md",
+                "ThirdParty/PlayCover/PlayCover/AppInstaller/"
+                    + "Installer.swift",
+                "ThirdParty/PlayCover/PlayCover/Headless/"
+                    + "HeadlessSupport.swift",
+                "ThirdParty/PlayCover/PlayCover/Headless/"
+                    + "PlayCoverPrepareDifferential.swift",
+                "ThirdParty/PlayCover/PlayCover/Headless/"
+                    + "PlayCoverUpstreamEngine.swift",
+                "ThirdParty/PlayCover/PlayCover/Model/AppInfo.swift",
+                "ThirdParty/PlayCover/PlayCover/Model/BaseApp.swift",
+                "ThirdParty/PlayCover/PlayCover/Model/PlayApp.swift",
+                "ThirdParty/PlayCover/PlayCover/Model/PlayRules.swift",
+                "ThirdParty/PlayCover/PlayCover/PlayCoverError.swift",
+                "ThirdParty/PlayCover/PlayCover/Rules/default.yaml",
+                "ThirdParty/PlayCover/PlayCover/Utils/"
+                    + "Entitlements.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
+                    + "DataExtensions.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
+                    + "FileExtensions.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
+                    + "URLExtensions.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/KeyCover.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/Macho.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/PlayTools.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/Shell.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/SystemConfig.swift",
+                "ThirdParty/inject/Injection/Injection/BitType.swift",
+                "ThirdParty/inject/Injection/Injection/Command.swift",
+                "ThirdParty/inject/Injection/Injection/Extension.swift",
+                "ThirdParty/inject/Injection/Injection/Inject.swift",
+                "ThirdParty/inject/Injection/Injection/Shell.swift",
+                "ThirdParty/inject/Package.swift",
+                "ThirdParty/inject/PROVENANCE.md",
+                "scripts/audit_playcover_upstreams.sh",
+                "scripts/test_playcover_prepare_differential.sh",
+                "swift-cli/Package.resolved",
+                "swift-cli/Package.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverService.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverStartTiming.swift",
+                "swift-cli/Tests/IOSUseCLITests/PlayCover/"
+                    + "PlayCoverPrepareDifferentialTests.swift",
+            ].sorted()
+        )
+        XCTAssertEqual(attestation.implementation.contentSHA256.count, 64)
+        XCTAssertEqual(
+            attestation.implementation.embeddedSourceClosureSHA256,
+            attestation.implementation.contentSHA256
+        )
+        XCTAssertEqual(
+            attestation.implementation.testExecutableSHA256.count,
+            64
+        )
+        XCTAssertGreaterThan(
+            attestation.implementation.testExecutableSize,
+            0
+        )
+        XCTAssertGreaterThan(
+            attestation.implementation.testExecutableDevice,
+            0
+        )
+        XCTAssertGreaterThan(
+            attestation.implementation.testExecutableInode,
+            0
+        )
+        XCTAssertEqual(
+            attestation.normalization.mode,
+            .hermeticFixtureManagedPathsV1
+        )
+        XCTAssertEqual(
+            attestation.source,
+            PlayCoverDifferentialSourceEvidence(
+                inputContentSHA256: sourceHash,
+                pinnedHashAfterPrepare: sourceHash,
+                iosUseHashAfterPrepare: sourceHash,
+                recomputedAtAttestationSHA256: sourceHash,
+                unchanged: true
+            )
+        )
+        XCTAssertEqual(
+            attestation.pinnedOutput.contentSHA256,
+            pinned.prepared.sourceContentHash
+        )
+        XCTAssertEqual(
+            attestation.pinnedOutput.playCoverRevision,
+            PlayCoverPinnedHeadlessInstallerOracle.playCoverRevision
+        )
+        XCTAssertEqual(
+            attestation.pinnedOutput.preparationLineage,
+            .pinnedHeadlessInstallerOracle
+        )
+        XCTAssertEqual(
+            attestation.pinnedOutput.consumedBaselineIDs,
+            ["pinned-akinterface-input"]
+        )
+        XCTAssertEqual(
+            attestation.iosUseOutput.contentSHA256,
+            iosUse.sourceContentHash
+        )
+        XCTAssertEqual(
+            attestation.iosUseOutput.playCoverRevision,
+            PlayCoverUpstreamEngine.playCoverRevision
+        )
+        XCTAssertEqual(
+            attestation.iosUseOutput.preparationLineage,
+            .iosUseServiceAndUpstreamEngine
+        )
+        XCTAssertEqual(
+            attestation.iosUseOutput.consumedBaselineIDs,
+            ["ios-use-runtime-input"]
+        )
+        XCTAssertEqual(
+            attestation.selectorCoverage.pinnedObjectSelectors,
+            expectedPinnedObjects
+        )
+        XCTAssertEqual(
+            attestation.selectorCoverage.iosUseObjectSelectors,
+            expectedIOSUseObjects
+        )
+        XCTAssertEqual(
+            attestation.selectorCoverage.pinnedSliceSelectors,
+            expectedPinnedSlices
+        )
+        XCTAssertEqual(
+            attestation.selectorCoverage.iosUseSliceSelectors,
+            expectedIOSUseSlices
+        )
+        XCTAssertEqual(
+            attestation.selectorCoverage.objects.map(\.selector),
+            Array(
+                Set(expectedPinnedObjects).union(expectedIOSUseObjects)
+            ).sorted()
+        )
+        XCTAssertEqual(
+            attestation.selectorCoverage.matchedSlices.map(\.selector),
+            expectedMatchedSlices
+        )
+        XCTAssertEqual(
+            attestation.selectorCoverage.matchedSlices.map(
+                \.checkedFieldFamilies
+            ),
+            Array(
+                repeating: PlayCoverDifferentialFieldFamily.allCases,
+                count: expectedMatchedSlices.count
+            )
+        )
+        XCTAssertEqual(
+            attestation.appCoverage.checkedFieldFamilies,
+            PlayCoverDifferentialAppFieldFamily.allCases
+        )
+        let expectedInventorySelectors = Array(
+            Set(pinned.prepared.inventory.map(\.relativePath))
+                .union(iosUse.inventory.map(\.relativePath))
+        ).sorted()
+        XCTAssertEqual(
+            attestation.appCoverage.inventoryEntries.map(\.selector),
+            expectedInventorySelectors
+        )
+        XCTAssertEqual(
+            attestation.appCoverage.inventoryEntries.map(
+                \.checkedFieldFamilies
+            ),
+            Array(
+                repeating:
+                    PlayCoverDifferentialInventoryFieldFamily.allCases,
+                count: expectedInventorySelectors.count
+            )
+        )
+        let matchedCoverage = Dictionary(
+            uniqueKeysWithValues:
+                attestation.selectorCoverage.matchedSlices.map {
+                    ($0.selector, $0)
+                }
+        )
+        for path in commonObjectSelectors {
+            let selector = try XCTUnwrap(
+                arm64SliceSelectors([path]).first
+            )
+            XCTAssertEqual(
+                matchedCoverage[selector]?.comparison,
+                .pinnedVersusIOSUse
+            )
+            XCTAssertNil(matchedCoverage[selector]?.baselineID)
+        }
+        let pluginSelector = try XCTUnwrap(
+            arm64SliceSelectors([pluginRelativePath]).first
+        )
+        XCTAssertEqual(
+            matchedCoverage[pluginSelector]?.comparison,
+            .pinnedVersusBaseline
+        )
+        XCTAssertEqual(
+            matchedCoverage[pluginSelector]?.baselineID,
+            "pinned-akinterface-input"
+        )
+        let runtimeSelector = try XCTUnwrap(
+            arm64SliceSelectors([runtimeRelativePath]).first
+        )
+        XCTAssertEqual(
+            matchedCoverage[runtimeSelector]?.comparison,
+            .iosUseVersusBaseline
+        )
+        XCTAssertEqual(
+            matchedCoverage[runtimeSelector]?.baselineID,
+            "ios-use-runtime-input"
+        )
+
+        let allowancesByID = Dictionary(
+            uniqueKeysWithValues: allowances.map { ($0.id, $0) }
+        )
+        XCTAssertEqual(
+            attestation.consumedAllowances.map(\.id),
+            allowances.map(\.id).sorted()
+        )
+        for evidence in attestation.consumedAllowances {
+            let recorded = try XCTUnwrap(allowancesByID[evidence.id])
+            let difference = try XCTUnwrap(
+                report.differences.first {
+                    $0.relativePath == evidence.relativePath
+                        && $0.field == evidence.field
+                }
+            )
+            XCTAssertEqual(evidence.relativePath, recorded.relativePath)
+            XCTAssertEqual(evidence.field, recorded.field)
+            XCTAssertEqual(evidence.reason, recorded.reason)
+            XCTAssertEqual(evidence.pinnedSymbol, recorded.pinnedSymbol)
+            XCTAssertEqual(evidence.iosUseSymbol, recorded.iosUseSymbol)
+            XCTAssertEqual(
+                evidence.observedPinnedValue,
+                difference.pinnedValue
+            )
+            XCTAssertEqual(
+                evidence.observedIOSUseValue,
+                difference.iosUseValue
+            )
+        }
+        XCTAssertEqual(
+            attestation.consumedBaselines.map(\.id),
+            ["ios-use-runtime-input", "pinned-akinterface-input"]
+        )
+        let attestedBaselines = Dictionary(
+            uniqueKeysWithValues:
+                attestation.consumedBaselines.map { ($0.id, $0) }
+        )
+        for baseline in baselines {
+            let evidence = try XCTUnwrap(attestedBaselines[baseline.id])
+            XCTAssertEqual(evidence.side, baseline.side)
+            XCTAssertEqual(evidence.relativePath, baseline.relativePath)
+            XCTAssertEqual(evidence.sourceSHA256, baseline.sourceSHA256)
+            XCTAssertEqual(evidence.provenance, baseline.provenance)
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let encodedAttestation = try encoder.encode(attestation)
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                PlayCoverDifferentialAttestation.self,
+                from: encodedAttestation
+            ),
+            attestation
+        )
+        if let outputPath = ProcessInfo.processInfo.environment[
+            "IOS_USE_PLAYCOVER_DIFFERENTIAL_ATTESTATION_PATH"
+        ], !outputPath.isEmpty {
+            guard outputPath.hasPrefix("/") else {
+                XCTFail("attestation candidate path must be absolute")
+                throw NSError(
+                    domain: "PlayCoverPrepareDifferentialTests",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "attestation candidate path must be absolute",
+                    ]
+                )
+            }
+            let output = URL(fileURLWithPath: outputPath)
+            try encodedAttestation.write(
+                to: output,
+                options: .withoutOverwriting
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: output.path
+            )
+        }
     }
 
     func testDifferentialGateRejectsUnrecordedAndStaleAllowances() throws {
@@ -686,6 +1048,586 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             XCTAssertEqual(
                 $0 as? PlayCoverDifferentialGateError,
                 .staleAllowances(["stale-platform"])
+            )
+        }
+    }
+
+    func testAppAndInventoryDifferencesRequireExactAllowances() throws {
+        let machO = makeInspection(
+            path: "Fixture",
+            dependencies: [],
+            signature: PlayCoverUpstreamSignature(
+                isSigned: true,
+                isValid: true,
+                entitlementsPlist: nil
+            )
+        )
+        let pinned = makeAppInspection(
+            machOs: [machO],
+            infoPlistSHA256: String(repeating: "c", count: 64),
+            inventory: [
+                PlayCoverUpstreamInventoryEntry(
+                    relativePath: "asset.dat",
+                    kind: .regularFile,
+                    size: 4,
+                    posixPermissions: 0o644,
+                    sha256: String(repeating: "d", count: 64),
+                    symbolicLinkDestination: nil,
+                    codeObjectKind: nil
+                ),
+            ]
+        )
+        let iosUse = makeAppInspection(
+            machOs: [machO],
+            infoPlistSHA256: String(repeating: "e", count: 64),
+            provisioning: PlayCoverUpstreamProvisioningEvidence(
+                present: true,
+                size: 12,
+                sha256: String(repeating: "f", count: 64)
+            ),
+            inventory: [
+                PlayCoverUpstreamInventoryEntry(
+                    relativePath: "asset.dat",
+                    kind: .regularFile,
+                    size: 4,
+                    posixPermissions: 0o644,
+                    sha256: String(repeating: "0", count: 64),
+                    symbolicLinkDestination: nil,
+                    codeObjectKind: nil
+                ),
+            ]
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverPrepareDifferentialGate.enforce(
+                pinned: pinned,
+                iosUse: iosUse,
+                allowances: []
+            )
+        ) {
+            guard case PlayCoverDifferentialGateError.unallowed(let values) =
+                    $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertEqual(
+                values.map { "\($0.relativePath) \($0.field)" },
+                [
+                    ". app.infoPlistSHA256",
+                    ". app.provisioning.present",
+                    ". app.provisioning.size",
+                    ". app.provisioning.sha256",
+                    "asset.dat inventory.sha256",
+                ]
+            )
+        }
+    }
+
+    func testAttestationRejectsUnconstrainedNormalization() throws {
+        let machO = makeInspection(
+            path: "Fixture",
+            dependencies: [],
+            signature: PlayCoverUpstreamSignature(
+                isSigned: true,
+                isValid: true,
+                entitlementsPlist: nil
+            )
+        )
+        let inspection = makeAppInspection(machOs: [machO])
+        let source = makeAppInspection(
+            machOs: [machO],
+            appPath: "/Source.app",
+            sourceContentHash: String(repeating: "d", count: 64)
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverPrepareDifferentialGate.attest(
+                repositoryRoot: repositoryRoot(),
+                sourceApp: URL(fileURLWithPath: source.appPath),
+                pinnedResult: makePinnedPrepareResult(
+                    source: source,
+                    prepared: inspection
+                ),
+                iosUseResult: makeIOSUsePrepareResult(
+                    source: source,
+                    prepared: inspection
+                ),
+                allowances: []
+            )
+        ) {
+            guard case PlayCoverDifferentialAttestationError
+                    .invalidIdentity(let messages) = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertTrue(
+                messages.contains(
+                    "hermetic attestation requires constrained normalization"
+                )
+            )
+        }
+    }
+
+    func testHermeticNormalizationRejectsAliasedOrNestedHomes() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-home-identity-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let pinnedHome = root.appendingPathComponent(
+            "pinned",
+            isDirectory: true
+        )
+        let nestedHome = pinnedHome.appendingPathComponent(
+            "nested",
+            isDirectory: true
+        )
+        let aliasHome = root.appendingPathComponent(
+            "alias",
+            isDirectory: true
+        )
+        try makePrivateDirectory(nestedHome)
+        try FileManager.default.createSymbolicLink(
+            at: aliasHome,
+            withDestinationURL: pinnedHome
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        for iosUseHome in [nestedHome, aliasHome] {
+            XCTAssertThrowsError(
+                try PlayCoverDifferentialNormalization.hermeticFixture(
+                    pinnedManagedHome: pinnedHome,
+                    iosUseManagedHome: iosUseHome
+                )
+            ) {
+                guard case PlayCoverDifferentialAttestationError
+                        .invalidIdentity(let messages) = $0 else {
+                    return XCTFail("unexpected error: \($0)")
+                }
+                XCTAssertTrue(
+                    messages.contains {
+                        $0.contains(
+                            "canonical, non-overlapping directories"
+                        )
+                    }
+                )
+            }
+        }
+    }
+
+    func testHermeticNormalizationDoesNotRewriteSiblingPrefixes() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-path-boundary-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let pinnedHome = root.appendingPathComponent(
+            "pinned",
+            isDirectory: true
+        )
+        let iosUseHome = root.appendingPathComponent(
+            "ios-use",
+            isDirectory: true
+        )
+        try makePrivateDirectory(pinnedHome)
+        try makePrivateDirectory(iosUseHome)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let normalization =
+            try PlayCoverDifferentialNormalization.hermeticFixture(
+                pinnedManagedHome: pinnedHome,
+                iosUseManagedHome: iosUseHome
+            )
+        let signature = PlayCoverUpstreamSignature(
+            isSigned: true,
+            isValid: true,
+            entitlementsPlist: nil
+        )
+        let pinned = makeAppInspection(
+            machOs: [
+                makeInspection(
+                    path: "Fixture",
+                    dependencies: [
+                        pinnedHome.path + "/child/libEqual.dylib",
+                        pinnedHome.path + "-sibling/libBoundary.dylib",
+                        pinnedHome.path + ":sibling/libColon.dylib",
+                        pinnedHome.path + " sibling/libSpace.dylib",
+                    ],
+                    signature: signature
+                ),
+            ]
+        )
+        let iosUse = makeAppInspection(
+            machOs: [
+                makeInspection(
+                    path: "Fixture",
+                    dependencies: [
+                        iosUseHome.path + "/child/libEqual.dylib",
+                        iosUseHome.path + "-sibling/libBoundary.dylib",
+                        iosUseHome.path + ":sibling/libColon.dylib",
+                        iosUseHome.path + " sibling/libSpace.dylib",
+                    ],
+                    signature: signature
+                ),
+            ]
+        )
+
+        let differences = try PlayCoverPrepareDifferentialGate.differences(
+            pinned: pinned,
+            iosUse: iosUse,
+            normalization: normalization
+        )
+        XCTAssertEqual(
+            differences.map(\.field),
+            ["slices[cpu=16777228,subtype=0,occurrence=0].dependencies"]
+        )
+        let difference = try XCTUnwrap(differences.first)
+        let pinnedDependencies = try JSONDecoder().decode(
+            [String].self,
+            from: Data(try XCTUnwrap(difference.pinnedValue).utf8)
+        )
+        let iosUseDependencies = try JSONDecoder().decode(
+            [String].self,
+            from: Data(try XCTUnwrap(difference.iosUseValue).utf8)
+        )
+        XCTAssertEqual(
+            pinnedDependencies,
+            [
+                "<MANAGED_HOME>/child/libEqual.dylib",
+                pinnedHome.path + "-sibling/libBoundary.dylib",
+                pinnedHome.path + ":sibling/libColon.dylib",
+                pinnedHome.path + " sibling/libSpace.dylib",
+            ]
+        )
+        XCTAssertEqual(
+            iosUseDependencies,
+            [
+                "<MANAGED_HOME>/child/libEqual.dylib",
+                iosUseHome.path + "-sibling/libBoundary.dylib",
+                iosUseHome.path + ":sibling/libColon.dylib",
+                iosUseHome.path + " sibling/libSpace.dylib",
+            ]
+        )
+    }
+
+    func testAttestationRejectsPrimitiveCharacterizationLineage() throws {
+        let inspection = makeAppInspection(machOs: [])
+        let pinnedResult = makePinnedPrepareResult(
+            source: inspection,
+            prepared: inspection,
+            producer: .primitiveCharacterization
+        )
+        let iosUseResult = makeIOSUsePrepareResult(
+            source: inspection,
+            prepared: inspection
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverPrepareDifferentialGate.attest(
+                repositoryRoot: URL(fileURLWithPath: "/"),
+                sourceApp: URL(fileURLWithPath: inspection.appPath),
+                pinnedResult: pinnedResult,
+                iosUseResult: iosUseResult,
+                allowances: []
+            )
+        ) {
+            guard case PlayCoverDifferentialAttestationError
+                    .invalidIdentity(let messages) = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertEqual(
+                messages,
+                [
+                    "pinned prepare result was not produced by the full "
+                        + "PlayTools Installer oracle",
+                ]
+            )
+        }
+    }
+
+    func testHermeticNormalizationDoesNotInventPrivateAlias() throws {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(
+                ".ios-use-playcover-alias-boundary-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let pinnedHome = root.appendingPathComponent(
+            "pinned",
+            isDirectory: true
+        )
+        let iosUseHome = root.appendingPathComponent(
+            "ios-use",
+            isDirectory: true
+        )
+        try makePrivateDirectory(pinnedHome)
+        try makePrivateDirectory(iosUseHome)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let normalization =
+            try PlayCoverDifferentialNormalization.hermeticFixture(
+                pinnedManagedHome: pinnedHome,
+                iosUseManagedHome: iosUseHome
+            )
+        let signature = PlayCoverUpstreamSignature(
+            isSigned: true,
+            isValid: true,
+            entitlementsPlist: nil
+        )
+        let pinned = makeAppInspection(
+            machOs: [
+                makeInspection(
+                    path: "Fixture",
+                    dependencies: [
+                        "/private" + pinnedHome.path + "/libBoundary.dylib",
+                    ],
+                    signature: signature
+                ),
+            ]
+        )
+        let iosUse = makeAppInspection(
+            machOs: [
+                makeInspection(
+                    path: "Fixture",
+                    dependencies: [
+                        "/private" + iosUseHome.path + "/libBoundary.dylib",
+                    ],
+                    signature: signature
+                ),
+            ]
+        )
+
+        let differences = try PlayCoverPrepareDifferentialGate.differences(
+            pinned: pinned,
+            iosUse: iosUse,
+            normalization: normalization
+        )
+        XCTAssertEqual(
+            differences.map(\.field),
+            ["slices[cpu=16777228,subtype=0,occurrence=0].dependencies"]
+        )
+        let difference = try XCTUnwrap(differences.first)
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                [String].self,
+                from: Data(try XCTUnwrap(difference.pinnedValue).utf8)
+            ),
+            ["/private" + pinnedHome.path + "/libBoundary.dylib"]
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                [String].self,
+                from: Data(try XCTUnwrap(difference.iosUseValue).utf8)
+            ),
+            ["/private" + iosUseHome.path + "/libBoundary.dylib"]
+        )
+    }
+
+    func testAttestationBindsPreparedAppsToTheirManagedHomes() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-output-binding-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let pinnedHome = root.appendingPathComponent(
+            "pinned",
+            isDirectory: true
+        )
+        let iosUseHome = root.appendingPathComponent(
+            "ios-use",
+            isDirectory: true
+        )
+        try makePrivateDirectory(pinnedHome)
+        try makePrivateDirectory(iosUseHome)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let normalization =
+            try PlayCoverDifferentialNormalization.hermeticFixture(
+                pinnedManagedHome: pinnedHome,
+                iosUseManagedHome: iosUseHome
+            )
+        let machO = makeInspection(
+            path: "Fixture",
+            dependencies: [],
+            signature: PlayCoverUpstreamSignature(
+                isSigned: true,
+                isValid: true,
+                entitlementsPlist: nil
+            )
+        )
+        let source = makeAppInspection(
+            machOs: [machO],
+            appPath: root.appendingPathComponent("Source.app").path
+        )
+        let pinned = makeAppInspection(
+            machOs: [machO],
+            appPath: root.appendingPathComponent(
+                "outside/Pinned.app"
+            ).path
+        )
+        let iosUse = makeAppInspection(
+            machOs: [machO],
+            appPath: iosUseHome.appendingPathComponent(
+                "IOSUse.app"
+            ).path
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverPrepareDifferentialGate.attest(
+                repositoryRoot: repositoryRoot(),
+                sourceApp: URL(fileURLWithPath: source.appPath),
+                pinnedResult: makePinnedPrepareResult(
+                    source: source,
+                    prepared: pinned
+                ),
+                iosUseResult: makeIOSUsePrepareResult(
+                    source: source,
+                    prepared: iosUse
+                ),
+                allowances: [],
+                normalization: normalization
+            )
+        ) {
+            guard case PlayCoverDifferentialAttestationError
+                    .invalidIdentity(let messages) = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertTrue(
+                messages.contains(
+                    "pinned prepared App is outside its managed home"
+                )
+            )
+        }
+    }
+
+    func testAttestationRequiresEverySliceSelectorToBeCovered()
+        throws
+    {
+        let signature = PlayCoverUpstreamSignature(
+            isSigned: true,
+            isValid: true,
+            entitlementsPlist: nil
+        )
+        let base = makeInspection(
+            path: "Fixture",
+            dependencies: [],
+            signature: signature
+        )
+        let arm64 = try XCTUnwrap(base.allSlices.first)
+        let x86 = PlayCoverUpstreamMachOSliceInspection(
+            fatIndex: 1,
+            cpuType: 0x0100_0007,
+            cpuSubtype: 3,
+            offset: 1_024,
+            size: 1_024,
+            alignment: 12,
+            byteSwapped: false,
+            fileType: 2,
+            commandCount: 1,
+            commandBytes: 24,
+            firstSectionOffset: 512,
+            platform: 7,
+            minimumOS: 0x000b_0000,
+            sdk: 0x000e_0000,
+            encrypted: false,
+            dependencies: [],
+            rpaths: [],
+            loadCommands: [],
+            signature: signature,
+            sliceSHA256: String(repeating: "1", count: 64),
+            immutableContentSHA256: String(repeating: "2", count: 64)
+        )
+        let allowance = PlayCoverDifferentialAllowance(
+            id: "reviewed-extra-slice-presence",
+            relativePath: "Fixture",
+            field: "slices[cpu=16777223,subtype=3,occurrence=0].presence",
+            pinnedValue: .absent,
+            iosUseValue: .exact("present"),
+            reason:
+                "Negative test proves presence allowance cannot replace "
+                + "full slice comparison or a reviewed baseline.",
+            pinnedSymbol: "negative-test-pinned",
+            iosUseSymbol: "negative-test-ios-use"
+        )
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-normalization-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let pinnedHome = root.appendingPathComponent(
+            "pinned",
+            isDirectory: true
+        )
+        let iosUseHome = root.appendingPathComponent(
+            "ios-use",
+            isDirectory: true
+        )
+        try makePrivateDirectory(pinnedHome)
+        try makePrivateDirectory(iosUseHome)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pinned = makeAppInspection(
+            machOs: [
+                makeInspection(
+                    path: "Fixture",
+                    dependencies: [],
+                    signature: signature,
+                    sliceInspections: [arm64]
+                ),
+            ],
+            appPath: pinnedHome.appendingPathComponent(
+                "Pinned.app"
+            ).path
+        )
+        let iosUse = makeAppInspection(
+            machOs: [
+                makeInspection(
+                    path: "Fixture",
+                    dependencies: [],
+                    signature: signature,
+                    sliceInspections: [arm64, x86]
+                ),
+            ],
+            appPath: iosUseHome.appendingPathComponent(
+                "IOSUse.app"
+            ).path
+        )
+        let normalization =
+            try PlayCoverDifferentialNormalization.hermeticFixture(
+                pinnedManagedHome: pinnedHome,
+                iosUseManagedHome: iosUseHome
+            )
+        let source = makeAppInspection(
+            machOs: [base],
+            appPath: root.appendingPathComponent("Source.app").path,
+            sourceContentHash: String(repeating: "d", count: 64)
+        )
+
+        XCTAssertNoThrow(
+            try PlayCoverPrepareDifferentialGate.enforce(
+                pinned: pinned,
+                iosUse: iosUse,
+                allowances: [allowance],
+                normalization: normalization
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverPrepareDifferentialGate.attest(
+                repositoryRoot: repositoryRoot(),
+                sourceApp: URL(fileURLWithPath: source.appPath),
+                pinnedResult: makePinnedPrepareResult(
+                    source: source,
+                    prepared: pinned
+                ),
+                iosUseResult: makeIOSUsePrepareResult(
+                    source: source,
+                    prepared: iosUse
+                ),
+                allowances: [allowance],
+                normalization: normalization
+            )
+        ) {
+            guard case PlayCoverDifferentialAttestationError
+                    .invalidIdentity(let messages) = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertTrue(
+                messages.contains(
+                    "slice selectors are not each covered exactly once"
+                )
             )
         }
     }
@@ -897,10 +1839,37 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         }
     }
 
-    private func makeAllowances(
-        pluginBaseline: PlayCoverUpstreamMachOInspection,
-        runtimeBaseline: PlayCoverUpstreamMachOInspection
-    ) -> [PlayCoverDifferentialAllowance] {
+    private func repositoryRoot() -> URL {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 {
+            root.deleteLastPathComponent()
+        }
+        return root.standardizedFileURL
+    }
+
+    private func requireGoldenDigest(
+        _ actual: String,
+        expected: String,
+        name: String
+    ) throws {
+        guard actual == expected else {
+            XCTFail(
+                "\(name) does not match the reviewed "
+                    + "\(HermeticOneSidedGoldenV1.manifestID) manifest: "
+                    + "expected \(expected), observed \(actual)"
+            )
+            throw NSError(
+                domain: "PlayCoverPrepareDifferentialTests",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "\(name) one-sided golden digest changed",
+                ]
+            )
+        }
+    }
+
+    private func makeAllowances() -> [PlayCoverDifferentialAllowance] {
         let pinnedSign = "Shell.signAppWith(--deep)"
         let iosUseSign = "PlayCoverUpstreamEngine.signInsideOut"
         let arm64 =
@@ -970,6 +1939,304 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             )
         }
         return [
+            allowance(
+                "app-root-signature-cdhash",
+                ".",
+                "app.signature.cdHash",
+                .lowercaseHexDigest(length: 40),
+                .lowercaseHexDigest(length: 40),
+                "Both complete App roots are validly ad-hoc signed over "
+                    + "different reviewed embedded code/resource sets.",
+                pinnedSign,
+                iosUseSign
+            ),
+            allowance(
+                "app-root-entitlements-hash",
+                ".",
+                "app.signature.entitlementsCanonicalSHA256",
+                .exact(
+                    "0fefbbc83136bf80b28853dd1c249300f56c34cad6e06600"
+                        + "f4fe3f102713c62d"
+                ),
+                .exact(
+                    "bd75e59e2503ecfb9f94c2a74d0078ad14af6fa8dcd4bb5"
+                        + "a628faf785fad5e85"
+                ),
+                "The root signature carries the same separately reviewed "
+                    + "entitlement dictionaries as the main executable.",
+                "Entitlements.composeEntitlements",
+                "PlayCoverUpstreamEngine.composeEntitlements"
+            ),
+            allowance(
+                "app-root-runtime-sandbox",
+                ".",
+                "app.signature.entitlements."
+                    + "com.apple.security.temporary-exception.sbpl",
+                .exact(entitlementStringArray(pinnedSandbox)),
+                .exact(entitlementStringArray(iosUseSandbox)),
+                "The direct Runtime socket and managed PlayChain require the "
+                    + "same four ios-use-only rules reviewed on the main "
+                    + "executable signature.",
+                "Entitlements.composeEntitlements",
+                "PlayCoverUpstreamEngine.composeEntitlements"
+            ),
+            allowance(
+                "inventory-main-executable-size",
+                "Fixture",
+                "inventory.size",
+                .exact("90096"),
+                .exact("91824"),
+                "The exact signed main executable sizes are also recorded by "
+                    + "the inventory comparator.",
+                pinnedSign,
+                iosUseSign
+            ),
+            allowance(
+                "inventory-runtime-framework-directory",
+                "Frameworks/IOSUsePlayRuntime.framework",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "493",
+                        "<absent>", "<absent>", "frameworkBundle",
+                    ])
+                ),
+                "ios-use embeds one reviewed Runtime framework; pinned "
+                    + "PlayCover loads its system PlayTools framework.",
+                "PlayTools.playToolsPath",
+                "PlayCoverUpstreamEngine.prepare"
+            ),
+            allowance(
+                "inventory-runtime-executable",
+                "Frameworks/IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "51472", "448",
+                        "<MACHO-COMPARATOR>", "<absent>",
+                        "frameworkExecutable",
+                    ])
+                ),
+                "The one-sided executable is independently pinned by "
+                    + "\(HermeticOneSidedGoldenV1.manifestID) and compared as "
+                    + "a complete Mach-O baseline.",
+                "PlayTools.playToolsPath",
+                "PlayCoverUpstreamEngine.prepare"
+            ),
+            allowance(
+                "inventory-runtime-info",
+                "Frameworks/IOSUsePlayRuntime.framework/Info.plist",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "389", "420",
+                        "570393b042e964dc7fba7e1ed127935241c6d605ada7ed9f5"
+                            + "a9d10611bad5a86",
+                        "<absent>", "<absent>",
+                    ])
+                ),
+                "The fixture Runtime Info.plist is a reviewed immutable "
+                    + "resource of the ios-use-only framework.",
+                "PlayTools.playToolsPath",
+                "makeCatalystRuntimeFramework"
+            ),
+            allowance(
+                "inventory-runtime-signature-directory",
+                "Frameworks/IOSUsePlayRuntime.framework/_CodeSignature",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "493",
+                        "<absent>", "<absent>", "<absent>",
+                    ])
+                ),
+                "Inside-out signing creates the ios-use Runtime framework "
+                    + "signature directory.",
+                "Shell.signAppWith(--deep)",
+                "PlayCoverUpstreamEngine.signInsideOut"
+            ),
+            allowance(
+                "inventory-runtime-code-resources",
+                "Frameworks/IOSUsePlayRuntime.framework/_CodeSignature/"
+                    + "CodeResources",
+                "inventory.presence",
+                .absent,
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "1798", "420",
+                        "<SIGNATURE-COMPARATOR>", "<absent>", "<absent>",
+                    ])
+                ),
+                "The Runtime framework seal is validated by the signature "
+                    + "comparator; inventory fixes its exact shape.",
+                "Shell.signAppWith(--deep)",
+                "PlayCoverUpstreamEngine.signInsideOut"
+            ),
+            allowance(
+                "inventory-plugin-directory",
+                "PlugIns/AKInterface.bundle",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "511",
+                        "<absent>", "<absent>", "<absent>",
+                    ])
+                ),
+                .absent,
+                "Pinned PlayTools installs its AppKit plugin; ios-use ports "
+                    + "that adapter into the single Runtime framework.",
+                "PlayTools.installPluginInIPA",
+                "IOSUsePlayRuntime"
+            ),
+            allowance(
+                "inventory-plugin-contents-directory",
+                "PlugIns/AKInterface.bundle/Contents",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "493",
+                        "<absent>", "<absent>", "<absent>",
+                    ])
+                ),
+                .absent,
+                "This is the exact reviewed bundle layout of the pinned "
+                    + "AKInterface plugin.",
+                "PlayTools.installPluginInIPA",
+                "IOSUsePlayRuntime"
+            ),
+            allowance(
+                "inventory-plugin-info",
+                "PlugIns/AKInterface.bundle/Contents/Info.plist",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "386", "420",
+                        "b86f9460df6e0db3cc600b1629e8c51a42331bf1789f53abd"
+                            + "838563712d40e72",
+                        "<absent>", "<absent>",
+                    ])
+                ),
+                .absent,
+                "The pinned plugin Info.plist is an exact reviewed "
+                    + "one-sided resource.",
+                "PlayTools.installPluginInIPA",
+                "IOSUsePlayRuntime"
+            ),
+            allowance(
+                "inventory-plugin-macos-directory",
+                "PlugIns/AKInterface.bundle/Contents/MacOS",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "493",
+                        "<absent>", "<absent>", "<absent>",
+                    ])
+                ),
+                .absent,
+                "This directory contains only the independently pinned "
+                    + "AKInterface Mach-O.",
+                "PlayTools.installPluginInIPA",
+                "IOSUsePlayRuntime"
+            ),
+            allowance(
+                "inventory-plugin-executable",
+                "PlugIns/AKInterface.bundle/Contents/MacOS/AKInterface",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "51520", "448",
+                        "<MACHO-COMPARATOR>", "<absent>", "machO",
+                    ])
+                ),
+                .absent,
+                "The one-sided executable is independently pinned by "
+                    + "\(HermeticOneSidedGoldenV1.manifestID) and compared as "
+                    + "a complete Mach-O baseline.",
+                "PlayTools.installPluginInIPA",
+                "IOSUsePlayRuntime"
+            ),
+            allowance(
+                "inventory-plugin-signature-directory",
+                "PlugIns/AKInterface.bundle/Contents/_CodeSignature",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "493",
+                        "<absent>", "<absent>", "<absent>",
+                    ])
+                ),
+                .absent,
+                "Pinned signing creates the exact plugin signature "
+                    + "directory.",
+                "Shell.signAppWith(--deep)",
+                "PlayCoverUpstreamEngine.signInsideOut"
+            ),
+            allowance(
+                "inventory-plugin-code-resources",
+                "PlugIns/AKInterface.bundle/Contents/_CodeSignature/"
+                    + "CodeResources",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "2200", "420",
+                        "<SIGNATURE-COMPARATOR>", "<absent>", "<absent>",
+                    ])
+                ),
+                .absent,
+                "The plugin seal is validated by the signature comparator; "
+                    + "inventory fixes its exact shape.",
+                "Shell.signAppWith(--deep)",
+                "PlayCoverUpstreamEngine.signInsideOut"
+            ),
+            allowance(
+                "inventory-root-code-resources-size",
+                "_CodeSignature/CodeResources",
+                "inventory.size",
+                .exact("5747"),
+                .exact("5418"),
+                "The root resource seals enumerate different reviewed "
+                    + "one-sided Runtime/plugin resource sets.",
+                pinnedSign,
+                iosUseSign
+            ),
+            allowance(
+                "inventory-playtools-localization-directory",
+                "en.lproj",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "directory", "<absent>", "493",
+                        "<absent>", "<absent>", "<absent>",
+                    ])
+                ),
+                .absent,
+                "Pinned PlayTools contributes its fixture localization "
+                    + "directory; ios-use has no GUI localization payload.",
+                "PlayTools.installInIPA",
+                "IOSUsePlayRuntime"
+            ),
+            allowance(
+                "inventory-playtools-localization-file",
+                "en.lproj/Playtools.strings",
+                "inventory.presence",
+                .exact(
+                    jsonStringArray([
+                        "present", "regularFile", "22", "420",
+                        "0254a5ed327f1e3c33590be0d2e350fe80c86dce060720197"
+                            + "fea81ad3973177a",
+                        "<absent>", "<absent>",
+                    ])
+                ),
+                .absent,
+                "Pinned PlayTools contributes this exact reviewed fixture "
+                    + "localization file; ios-use ports no GUI strings.",
+                "PlayTools.installInIPA",
+                "IOSUsePlayRuntime"
+            ),
             allowance(
                 "main-signed-size",
                 "Fixture",
@@ -1268,7 +2535,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .absent,
                 .exact(
                     "present;baseline=ios-use-runtime-input;fileSHA256="
-                        + runtimeBaseline.fileSHA256
+                        + HermeticOneSidedGoldenV1.runtimeSHA256
                 ),
                 "Pinned PlayCover loads system PlayTools; ios-use embeds and "
                     + "signs its Runtime framework in the managed App.",
@@ -1281,7 +2548,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "object.presence",
                 .exact(
                     "present;baseline=pinned-akinterface-input;fileSHA256="
-                        + pluginBaseline.fileSHA256
+                        + HermeticOneSidedGoldenV1.pluginSHA256
                 ),
                 .absent,
                 "Pinned PlayTools installs and signs its AppKit plugin bundle; "
@@ -1888,30 +3155,75 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
     }
 
     private func makeAppInspection(
-        machOs: [PlayCoverUpstreamMachOInspection]
+        machOs: [PlayCoverUpstreamMachOInspection],
+        appPath: String = "/Fixture.app",
+        sourceContentHash: String = String(repeating: "b", count: 64),
+        infoPlistSHA256: String = String(repeating: "c", count: 64),
+        provisioning: PlayCoverUpstreamProvisioningEvidence =
+            PlayCoverUpstreamProvisioningEvidence(
+                present: false,
+                size: nil,
+                sha256: nil
+            ),
+        inventory: [PlayCoverUpstreamInventoryEntry] = []
     ) -> PlayCoverUpstreamAppInspection {
         let signature = machOs.first?.signature
             ?? PlayCoverUpstreamSignature(
                 isSigned: false,
                 isValid: false,
                 entitlementsPlist: nil
-            )
+        )
         return PlayCoverUpstreamAppInspection(
-            appPath: "/Fixture.app",
-            sourceContentHash: String(repeating: "b", count: 64),
-            infoPlistSHA256: String(repeating: "c", count: 64),
+            appPath: appPath,
+            sourceContentHash: sourceContentHash,
+            infoPlistSHA256: infoPlistSHA256,
             bundleIdentifier: "com.example.fixture",
             executableName: "Fixture",
-            executablePath: "/Fixture.app/Fixture",
+            executablePath: appPath + "/Fixture",
             mainExecutableRelativePath: "Fixture",
             signature: signature,
-            provisioning: PlayCoverUpstreamProvisioningEvidence(
-                present: false,
-                size: nil,
-                sha256: nil
-            ),
-            inventory: [],
+            provisioning: provisioning,
+            inventory: inventory,
             machOs: machOs
+        )
+    }
+
+    private func makePinnedPrepareResult(
+        source: PlayCoverUpstreamAppInspection,
+        prepared: PlayCoverUpstreamAppInspection,
+        producer: PlayCoverPinnedPrepareProducer =
+            .fullPlayToolsInstallerOracle
+    ) -> PlayCoverPinnedPrimitivePrepareResult {
+        PlayCoverPinnedPrimitivePrepareResult(
+            sourceBefore: source,
+            sourceHashAfterPrepare: source.sourceContentHash,
+            prepared: prepared,
+            convertedMachOs: prepared.machOs.map(\.relativePath),
+            signingOrder: ["."],
+            executedPinnedSymbols: ["negative-test"],
+            producer: producer
+        )
+    }
+
+    private func makeIOSUsePrepareResult(
+        source: PlayCoverUpstreamAppInspection,
+        prepared: PlayCoverUpstreamAppInspection
+    ) -> PlayCoverUpstreamPrepareResult {
+        PlayCoverUpstreamPrepareResult(
+            sourceBefore: source,
+            sourceHashAfterPrepare: source.sourceContentHash,
+            prepared: prepared,
+            convertedMachOs: prepared.machOs.map(\.relativePath),
+            signingOrder: ["."],
+            entitlementDiff: PlayCoverUpstreamEntitlementDiff(
+                original: [:],
+                playCoverBaseline: [:],
+                final: [:],
+                addedByPlayCover: [],
+                addedByIOSUse: [],
+                changedFromOriginal: [],
+                removedFromOriginal: []
+            )
         )
     }
 

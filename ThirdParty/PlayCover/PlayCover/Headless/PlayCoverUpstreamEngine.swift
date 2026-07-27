@@ -586,7 +586,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
     }
 }
 
-public struct PlayCoverUpstreamPrepareResult: Codable, Equatable, Sendable {
+public struct PlayCoverUpstreamPrepareResult: Equatable, Sendable {
     public let sourceBefore: PlayCoverUpstreamAppInspection
     public let sourceHashAfterPrepare: String
     public let prepared: PlayCoverUpstreamAppInspection
@@ -595,7 +595,7 @@ public struct PlayCoverUpstreamPrepareResult: Codable, Equatable, Sendable {
     public let entitlementDiff: PlayCoverUpstreamEntitlementDiff
     public let phaseTimings: PlayCoverUpstreamPreparePhaseTimings?
 
-    public init(
+    init(
         sourceBefore: PlayCoverUpstreamAppInspection,
         sourceHashAfterPrepare: String,
         prepared: PlayCoverUpstreamAppInspection,

@@ -5,6 +5,7 @@ import PlayCoverUpstream
 struct PlayCoverPreparedArtifact: Sendable {
     let manifest: PlayCoverPrepareManifest
     let phaseTimings: PlayCoverUpstreamPreparePhaseTimings?
+    let upstreamResult: PlayCoverUpstreamPrepareResult?
 }
 
 struct PlayCoverStartTiming: Equatable, Sendable {
