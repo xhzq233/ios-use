@@ -321,7 +321,6 @@ public enum PlayCoverService {
         ).standardizedFileURL
         let manifestEvidence = try readManifest(for: app)
         let manifest = manifestEvidence.value
-        try validateManifest(manifest, appURL: app)
         try fastVerifyGeneration(
             appPath: app.path,
             manifestEvidence: manifestEvidence
@@ -380,7 +379,6 @@ public enum PlayCoverService {
         ).standardizedFileURL
         let manifestEvidence = try readManifest(for: app)
         let manifest = manifestEvidence.value
-        try validateManifest(manifest, appURL: app)
         try fastVerifyGeneration(
             appPath: app.path,
             manifestEvidence: manifestEvidence
