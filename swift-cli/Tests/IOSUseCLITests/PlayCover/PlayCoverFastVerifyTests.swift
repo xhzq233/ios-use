@@ -33,7 +33,9 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                 beforeSignatures[path, default: 0] += 1
             case .afterCodeSignature(let path):
                 afterSignatures[path, default: 0] += 1
-            case .beforeMetadataOpen,
+            case .afterGenerationOpen,
+                 .afterPreparedAppOpen,
+                 .beforeMetadataOpen,
                  .afterMetadataOpen,
                  .afterMetadataRead:
                 break
@@ -148,6 +150,198 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         }
         #else
         throw XCTSkip("descriptor hashing is Darwin-only")
+        #endif
+    }
+
+    func testFastVerifyUsesOneGenerationDescriptorAndAccepts0755AppRoot()
+        throws
+    {
+        #if canImport(Darwin)
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        var appStatus = stat()
+        XCTAssertEqual(lstat(fixture.app.path, &appStatus), 0)
+        XCTAssertEqual(Int(appStatus.st_mode & 0o777), 0o755)
+        var generationOpenCount = 0
+        var appOpenCount = 0
+        PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            switch event {
+            case .afterGenerationOpen:
+                generationOpenCount += 1
+            case .afterPreparedAppOpen:
+                appOpenCount += 1
+            default:
+                break
+            }
+        }
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        XCTAssertNoThrow(
+            try PlayCoverService.fastVerify(appPath: fixture.app.path)
+        )
+
+        XCTAssertEqual(generationOpenCount, 1)
+        XCTAssertEqual(appOpenCount, 1)
+        #else
+        throw XCTSkip("descriptor verification is Darwin-only")
+        #endif
+    }
+
+    func testGenerationReplacementAfterCompletedReadFailsFinalIdentity()
+        throws
+    {
+        #if canImport(Darwin)
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let parent = fixture.root.deletingLastPathComponent()
+        let replacement = parent.appendingPathComponent(
+            "IOSUsePlayCoverReplacement-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let displaced = parent.appendingPathComponent(
+            "IOSUsePlayCoverDisplaced-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: replacement)
+            try? FileManager.default.removeItem(at: displaced)
+        }
+        try FileManager.default.copyItem(
+            at: fixture.root,
+            to: replacement
+        )
+        let replacementExecutable = replacement
+            .appendingPathComponent(fixture.app.lastPathComponent)
+            .appendingPathComponent(fixture.manifest.executableName)
+        try Data("damaged replacement".utf8).write(
+            to: replacementExecutable
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: replacementExecutable.path
+        )
+        var replaced = false
+        var reachedAnchoredHash = false
+        PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            if case .beforeFileHash = event {
+                reachedAnchoredHash = true
+            }
+            guard event
+                    == .afterMetadataRead(
+                        PlayCoverService.completedFilename
+                    ),
+                  !replaced else {
+                return
+            }
+            replaced = true
+            guard Darwin.rename(
+                    fixture.root.path,
+                    displaced.path
+                  ) == 0,
+                  Darwin.rename(
+                    replacement.path,
+                    fixture.root.path
+                  ) == 0 else {
+                throw NSError(
+                    domain: NSPOSIXErrorDomain,
+                    code: Int(errno)
+                )
+            }
+        }
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertTrue(replaced)
+        XCTAssertTrue(
+            reachedAnchoredHash,
+            "replacement should be rejected by the final generation check"
+        )
+        #else
+        throw XCTSkip("descriptor verification is Darwin-only")
+        #endif
+    }
+
+    func testPreparedAppReplacementAfterOpenFailsFinalIdentity()
+        throws
+    {
+        #if canImport(Darwin)
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let replacement = fixture.root.appendingPathComponent(
+            "Replacement.app",
+            isDirectory: true
+        )
+        let displaced = fixture.root.appendingPathComponent(
+            "Displaced.app",
+            isDirectory: true
+        )
+        try FileManager.default.copyItem(
+            at: fixture.app,
+            to: replacement
+        )
+        var replaced = false
+        var reachedAnchoredHash = false
+        PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            if case .beforeFileHash = event {
+                reachedAnchoredHash = true
+            }
+            guard event == .afterPreparedAppOpen,
+                  !replaced else {
+                return
+            }
+            replaced = true
+            guard Darwin.rename(
+                    fixture.app.path,
+                    displaced.path
+                  ) == 0,
+                  Darwin.rename(
+                    replacement.path,
+                    fixture.app.path
+                  ) == 0 else {
+                throw NSError(
+                    domain: NSPOSIXErrorDomain,
+                    code: Int(errno)
+                )
+            }
+        }
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertTrue(replaced)
+        XCTAssertTrue(
+            reachedAnchoredHash,
+            "replacement should be rejected after anchored verification"
+        )
+        #else
+        throw XCTSkip("descriptor verification is Darwin-only")
+        #endif
+    }
+
+    func testPreparedAppRootSymlinkFailsClosed() throws {
+        #if canImport(Darwin)
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let saved = fixture.root.appendingPathComponent(
+            "Saved.app",
+            isDirectory: true
+        )
+        try FileManager.default.moveItem(at: fixture.app, to: saved)
+        try FileManager.default.createSymbolicLink(
+            at: fixture.app,
+            withDestinationURL: saved
+        )
+
+        assertFastVerifyTampered(fixture.app.path)
+        #else
+        throw XCTSkip("descriptor verification is Darwin-only")
         #endif
     }
 
@@ -468,11 +662,15 @@ private struct FastVerifyFixture {
         try FileManager.default.createDirectory(
             at: app,
             withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
+            attributes: [.posixPermissions: 0o755]
         )
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o700],
             ofItemAtPath: root.path
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: app.path
         )
         let info: [String: Any] = [
             "CFBundleIdentifier": "com.example.fastverify",

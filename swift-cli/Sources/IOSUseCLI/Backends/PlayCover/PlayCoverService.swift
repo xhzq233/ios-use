@@ -32,6 +32,8 @@ struct PlayCoverUnterminatedLaunchError: Error,
 
 public enum PlayCoverService {
     enum FastVerifyEvent: Equatable {
+        case afterGenerationOpen
+        case afterPreparedAppOpen
         case beforeMetadataOpen(String)
         case afterMetadataOpen(String)
         case afterMetadataRead(String)
@@ -319,11 +321,9 @@ public enum PlayCoverService {
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
-        let manifestEvidence = try readManifest(for: app)
-        let manifest = manifestEvidence.value
-        try fastVerifyGeneration(
-            appPath: app.path,
-            manifestEvidence: manifestEvidence
+        let manifest = try fastVerifiedManifest(
+            app: app,
+            suppliedManifest: nil
         )
         let upstream: PlayCoverUpstreamAppInspection
         do {
@@ -377,13 +377,10 @@ public enum PlayCoverService {
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
-        let manifestEvidence = try readManifest(for: app)
-        let manifest = manifestEvidence.value
-        try fastVerifyGeneration(
-            appPath: app.path,
-            manifestEvidence: manifestEvidence
+        return try fastVerifiedManifest(
+            app: app,
+            suppliedManifest: nil
         )
-        return manifest
     }
 
     /// Reads and validates only the recorded generation identity. The caller
@@ -408,97 +405,116 @@ public enum PlayCoverService {
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
-        let manifestEvidence: DecodedMetadata<PlayCoverPrepareManifest>
-        if let suppliedManifest {
-            manifestEvidence = DecodedMetadata(
-                value: suppliedManifest,
-                rawData: try canonicalJSON(suppliedManifest)
-            )
-        } else {
-            manifestEvidence = try readManifest(for: app)
-        }
-        try fastVerifyGeneration(
-            appPath: app.path,
-            manifestEvidence: manifestEvidence
+        _ = try fastVerifiedManifest(
+            app: app,
+            suppliedManifest: suppliedManifest
         )
     }
 
-    private static func fastVerifyGeneration(
-        appPath: String,
-        manifestEvidence: DecodedMetadata<PlayCoverPrepareManifest>
-    ) throws {
-        let app = URL(
-            fileURLWithPath: appPath,
-            isDirectory: true
-        ).standardizedFileURL
-        let manifest = manifestEvidence.value
-        try validateManifest(manifest, appURL: app)
-        let marker = try readJSON(
-            PlayCoverCompletedGeneration.self,
-            from: completedURL(for: app),
-            maximumBytes: completedMarkerMaximumBytes
-        )
-        guard marker.schemaVersion == 2,
-              marker.generationKey == manifest.generationKey else {
-            throw PlayCoverBackendError.cacheTampered(
-                "completed marker identity does not match the manifest"
+    private static func fastVerifiedManifest(
+        app: URL,
+        suppliedManifest: PlayCoverPrepareManifest?
+    ) throws -> PlayCoverPrepareManifest {
+        try withStableGenerationDescriptor(for: app) {
+            generationDescriptor,
+            generationURL in
+            let manifestEvidence = try readJSONMetadata(
+                PlayCoverPrepareManifest.self,
+                generationDescriptor: generationDescriptor,
+                generationURL: generationURL,
+                filename: manifestFilename,
+                maximumBytes: generationManifestMaximumBytes
             )
-        }
-        guard marker.manifestSHA256
-                == sha256(manifestEvidence.rawData) else {
-            throw PlayCoverBackendError.cacheTampered(
-                "manifest hash does not match immutable completed marker"
+            let manifest = manifestEvidence.value
+            try validateManifest(manifest, appURL: app)
+            if let suppliedManifest,
+               suppliedManifest != manifest {
+                throw PlayCoverBackendError.cacheTampered(
+                    "supplied manifest does not match generation metadata"
+                )
+            }
+            let marker = try readJSONMetadata(
+                PlayCoverCompletedGeneration.self,
+                generationDescriptor: generationDescriptor,
+                generationURL: generationURL,
+                filename: completedFilename,
+                maximumBytes: completedMarkerMaximumBytes
+            ).value
+            guard marker.schemaVersion == 2,
+                  marker.generationKey == manifest.generationKey else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "completed marker identity does not match the manifest"
+                )
+            }
+            guard marker.manifestSHA256
+                    == sha256(manifestEvidence.rawData) else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "manifest hash does not match immutable completed marker"
+                )
+            }
+            guard marker.inventorySHA256
+                    == sha256(try canonicalJSON(manifest.inventory)),
+                  marker.machoSealSHA256
+                    == sha256(try canonicalJSON(manifest.machOs)) else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "completed inventory/Mach-O seal does not match manifest"
+                )
+            }
+            let executable = URL(fileURLWithPath: manifest.executablePath)
+            let runtime = app
+                .appendingPathComponent("Frameworks", isDirectory: true)
+                .appendingPathComponent(
+                    runtimeFrameworkName,
+                    isDirectory: true
+                )
+                .appendingPathComponent(runtimeExecutableName)
+            let executableRelativePath = try recordedRelativePath(
+                executable,
+                in: app
             )
-        }
-        guard marker.inventorySHA256
-                == sha256(try canonicalJSON(manifest.inventory)),
-              marker.machoSealSHA256
-                == sha256(try canonicalJSON(manifest.machOs)) else {
-            throw PlayCoverBackendError.cacheTampered(
-                "completed inventory/Mach-O seal does not match manifest"
+            let runtimeRelativePath = try recordedRelativePath(
+                runtime,
+                in: app
             )
-        }
-        let executable = URL(fileURLWithPath: manifest.executablePath)
-        let runtime = app
-            .appendingPathComponent("Frameworks", isDirectory: true)
-            .appendingPathComponent(
-                runtimeFrameworkName,
-                isDirectory: true
-            )
-            .appendingPathComponent(runtimeExecutableName)
-        let executableRelativePath = try recordedRelativePath(
-            executable,
-            in: app
-        )
-        let runtimeRelativePath = try recordedRelativePath(runtime, in: app)
-        let verification = try verifyRecordedCodeObjects(
-            app: app,
-            manifest: manifest,
-            fast: true,
-            requiredHashes: [
-                executableRelativePath,
-                runtimeRelativePath,
-            ]
-        )
-        guard
-            let actualExecutableHash =
-                verification.fileSHA256[executableRelativePath],
-            verification.executablePaths.contains(executableRelativePath),
-            marker.executableSHA256 == actualExecutableHash
-        else {
-            throw PlayCoverBackendError.cacheTampered(
-                "prepared executable hash changed"
-            )
-        }
-        guard
-            let actualRuntimeHash =
-                verification.fileSHA256[runtimeRelativePath],
-            verification.executablePaths.contains(runtimeRelativePath),
-            marker.runtimeSHA256 == actualRuntimeHash
-        else {
-            throw PlayCoverBackendError.cacheTampered(
-                "embedded Runtime hash changed"
-            )
+            return try withPreparedAppDescriptor(
+                generationDescriptor: generationDescriptor,
+                generationURL: generationURL,
+                app: app
+            ) { appDescriptor in
+                let verification = try verifyRecordedCodeObjects(
+                    app: app,
+                    borrowedAppDescriptor: appDescriptor,
+                    manifest: manifest,
+                    fast: true,
+                    requiredHashes: [
+                        executableRelativePath,
+                        runtimeRelativePath,
+                    ]
+                )
+                guard
+                    let actualExecutableHash =
+                        verification.fileSHA256[executableRelativePath],
+                    verification.executablePaths.contains(
+                        executableRelativePath
+                    ),
+                    marker.executableSHA256 == actualExecutableHash
+                else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "prepared executable hash changed"
+                    )
+                }
+                guard
+                    let actualRuntimeHash =
+                        verification.fileSHA256[runtimeRelativePath],
+                    verification.executablePaths.contains(runtimeRelativePath),
+                    marker.runtimeSHA256 == actualRuntimeHash
+                else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "embedded Runtime hash changed"
+                    )
+                }
+                return manifest
+            }
         }
     }
 
@@ -1091,9 +1107,131 @@ public enum PlayCoverService {
         let executablePaths: Set<String>
     }
 
+    private static func withStableGenerationDescriptor<T>(
+        for app: URL,
+        _ body: (Int32, URL) throws -> T
+    ) throws -> T {
+        let generationURL = app.deletingLastPathComponent()
+        let generationDescriptor = Darwin.open(
+            generationURL.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard generationDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot open generation directory without following links: "
+                    + "\(generationURL.path), errno \(errno)"
+            )
+        }
+        defer { Darwin.close(generationDescriptor) }
+        var openedStatus = stat()
+        guard fstat(generationDescriptor, &openedStatus) == 0,
+              openedStatus.st_mode & S_IFMT == S_IFDIR,
+              openedStatus.st_uid == geteuid(),
+              openedStatus.st_mode & 0o077 == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "generation metadata directory is not owner-only"
+            )
+        }
+        try emitFastVerifyEvent(.afterGenerationOpen)
+        let result = try body(generationDescriptor, generationURL)
+        var finalStatus = stat()
+        var pathStatus = stat()
+        guard fstat(generationDescriptor, &finalStatus) == 0,
+              lstat(generationURL.path, &pathStatus) == 0,
+              sameRecordedIdentity(openedStatus, finalStatus),
+              sameRecordedIdentity(openedStatus, pathStatus) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "generation directory changed during verification"
+            )
+        }
+        return result
+    }
+
+    private static func withPreparedAppDescriptor<T>(
+        generationDescriptor: Int32,
+        generationURL: URL,
+        app: URL,
+        _ body: (Int32) throws -> T
+    ) throws -> T {
+        let appName = app.lastPathComponent
+        guard !appName.isEmpty,
+              appName != ".",
+              appName != "..",
+              app.deletingLastPathComponent().standardizedFileURL.path
+                == generationURL.standardizedFileURL.path else {
+            throw PlayCoverBackendError.cacheTampered(
+                "prepared App is not a direct generation child"
+            )
+        }
+        let appDescriptor = Darwin.openat(
+            generationDescriptor,
+            appName,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard appDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot open the prepared App root from its generation: "
+                    + "errno \(errno)"
+            )
+        }
+        defer { Darwin.close(appDescriptor) }
+        var openedStatus = stat()
+        guard fstat(appDescriptor, &openedStatus) == 0,
+              openedStatus.st_mode & S_IFMT == S_IFDIR else {
+            throw PlayCoverBackendError.cacheTampered(
+                "prepared App root is not a stable directory"
+            )
+        }
+        try emitFastVerifyEvent(.afterPreparedAppOpen)
+        let result = try body(appDescriptor)
+        var finalStatus = stat()
+        var pathStatus = stat()
+        guard fstat(appDescriptor, &finalStatus) == 0,
+              fstatat(
+                generationDescriptor,
+                appName,
+                &pathStatus,
+                AT_SYMLINK_NOFOLLOW
+              ) == 0,
+              sameRecordedIdentity(openedStatus, finalStatus),
+              sameRecordedIdentity(openedStatus, pathStatus) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "prepared App root changed during verification"
+            )
+        }
+        return result
+    }
+
     @discardableResult
     private static func verifyRecordedCodeObjects(
         app: URL,
+        manifest: PlayCoverPrepareManifest,
+        fast: Bool,
+        requiredHashes: Set<String> = []
+    ) throws -> RecordedCodeVerification {
+        let appDescriptor = Darwin.open(
+            app.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard appDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot open the prepared App root: errno \(errno)"
+            )
+        }
+        defer { Darwin.close(appDescriptor) }
+        return try verifyRecordedCodeObjects(
+            app: app,
+            borrowedAppDescriptor: appDescriptor,
+            manifest: manifest,
+            fast: fast,
+            requiredHashes: requiredHashes
+        )
+    }
+
+    @discardableResult
+    private static func verifyRecordedCodeObjects(
+        app: URL,
+        borrowedAppDescriptor appDescriptor: Int32,
         manifest: PlayCoverPrepareManifest,
         fast: Bool,
         requiredHashes: Set<String> = []
@@ -1115,16 +1253,6 @@ public enum PlayCoverService {
                 || entry.codeObjectKind != nil
                 || nestedContainers.contains(entry.relativePath)
         }
-        let appDescriptor = Darwin.open(
-            app.path,
-            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
-        )
-        guard appDescriptor >= 0 else {
-            throw PlayCoverBackendError.cacheTampered(
-                "cannot open the prepared App root: errno \(errno)"
-            )
-        }
-        defer { Darwin.close(appDescriptor) }
         var appStatus = stat()
         guard fstat(appDescriptor, &appStatus) == 0,
               appStatus.st_mode & S_IFMT == S_IFDIR else {
@@ -1470,11 +1598,6 @@ public enum PlayCoverService {
             .appendingPathComponent(manifestFilename)
     }
 
-    private static func completedURL(for appURL: URL) -> URL {
-        appURL.deletingLastPathComponent()
-            .appendingPathComponent(completedFilename)
-    }
-
     static func requireManagedPath(
         _ url: URL,
         paths: IOSUsePaths,
@@ -1544,26 +1667,11 @@ public enum PlayCoverService {
         }
     }
 
-    private static func readJSON<T: Decodable>(
-        _ type: T.Type,
-        from url: URL,
-        maximumBytes: Int
-    ) throws -> T {
-        try readJSONMetadata(
-            type,
-            from: url,
-            maximumBytes: maximumBytes
-        ).value
-    }
-
     private static func readJSONMetadata<T: Decodable>(
         _ type: T.Type,
         from url: URL,
         maximumBytes: Int
     ) throws -> DecodedMetadata<T> {
-        try emitFastVerifyEvent(
-            .beforeMetadataOpen(url.lastPathComponent)
-        )
         let parent = url.deletingLastPathComponent()
         let parentDescriptor = Darwin.open(
             parent.path,
@@ -1585,25 +1693,40 @@ public enum PlayCoverService {
                 "generation metadata directory is not owner-only"
             )
         }
+        return try readJSONMetadata(
+            type,
+            generationDescriptor: parentDescriptor,
+            generationURL: parent,
+            filename: url.lastPathComponent,
+            maximumBytes: maximumBytes
+        )
+    }
+
+    private static func readJSONMetadata<T: Decodable>(
+        _ type: T.Type,
+        generationDescriptor: Int32,
+        generationURL: URL,
+        filename: String,
+        maximumBytes: Int
+    ) throws -> DecodedMetadata<T> {
+        try emitFastVerifyEvent(.beforeMetadataOpen(filename))
         do {
             let data = try PlayCoverManagedAppService.readOwnedRegularFile(
-                parentDescriptor: parentDescriptor,
-                name: url.lastPathComponent,
+                parentDescriptor: generationDescriptor,
+                name: filename,
                 maximumBytes: maximumBytes,
                 afterOpen: {
                     try emitFastVerifyEvent(
-                        .afterMetadataOpen(url.lastPathComponent)
+                        .afterMetadataOpen(filename)
                     )
                 }
             )
             guard !data.isEmpty else {
                 throw PlayCoverBackendError.cacheTampered(
-                    "\(url.lastPathComponent) is empty"
+                    "\(filename) is empty"
                 )
             }
-            try emitFastVerifyEvent(
-                .afterMetadataRead(url.lastPathComponent)
-            )
+            try emitFastVerifyEvent(.afterMetadataRead(filename))
             return DecodedMetadata(
                 value: try JSONDecoder().decode(
                     type,
@@ -1615,7 +1738,9 @@ public enum PlayCoverService {
             throw error
         } catch {
             throw PlayCoverBackendError.cacheTampered(
-                "cannot decode \(url.path): \(error)"
+                "cannot decode "
+                    + "\(generationURL.appendingPathComponent(filename).path): "
+                    + "\(error)"
             )
         }
     }
