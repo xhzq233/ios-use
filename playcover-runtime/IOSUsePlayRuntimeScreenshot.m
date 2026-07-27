@@ -925,6 +925,26 @@ IOSUseScreenshotCollectNativeWindows(
             );
             return nil;
         }
+        if (!IOSUsePlayAppKitCGWindowSizesMatch(
+                record.frame,
+                cgBounds
+            )) {
+            IOSUseScreenshotSetFailure(
+                @"compositor_window_geometry_invalid",
+                [NSString stringWithFormat:
+                    @"visible AppKit window %u size %.3fx%.3f "
+                    @"disagrees with CGWindow size %.3fx%.3f",
+                    record.windowNumber,
+                    record.frame.size.width,
+                    record.frame.size.height,
+                    cgBounds.size.width,
+                    cgBounds.size.height
+                ],
+                failureCode,
+                failureMessage
+            );
+            return nil;
+        }
         CGRect deviceLogicalRect = CGRectNull;
         NSString *canvasIntersectionFailure = nil;
         BOOL intersectsCanvas =
@@ -1110,8 +1130,14 @@ IOSUseScreenshotCompositorEvidence(
 ) {
     NSMutableArray<NSDictionary<NSString *, id> *> *windowEvidence =
         [NSMutableArray arrayWithCapacity:windows.count];
+    BOOL appKitCGWindowSizesMatch = windows.count > 0;
     for (NSUInteger index = 0; index < windows.count; index += 1) {
         IOSUseScreenshotNativeWindow *window = windows[index];
+        appKitCGWindowSizesMatch &=
+            IOSUsePlayAppKitCGWindowSizesMatch(
+                window.frame,
+                window.cgWindowBounds
+            );
         NSDictionary *geometry = index < sourceEvidence.count
             ? sourceEvidence[index]
             : @{};
@@ -1188,7 +1214,8 @@ IOSUseScreenshotCompositorEvidence(
             @"fullFrameUncropped": @YES,
             @"safeAreaCropped": @NO,
             @"allWindowGeometryInsideDevice": @YES,
-            @"appKitCGWindowSizesMatch": @YES,
+            @"appKitCGWindowSizesMatch":
+                @(appKitCGWindowSizesMatch),
             @"cgWindowPlacementAuthoritative": @YES,
             @"windowSetStableDuringCapture": @YES,
         },

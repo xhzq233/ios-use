@@ -926,6 +926,22 @@ NSArray *IOSUsePlayUnionCaptureWindows(
     return result;
 }
 
+BOOL IOSUsePlayAppKitCGWindowSizesMatch(
+    CGRect appKitFrame,
+    CGRect cgWindowBounds
+) {
+    return IOSUseCompositorFiniteRect(appKitFrame) &&
+        IOSUseCompositorFiniteRect(cgWindowBounds) &&
+        IOSUseCompositorApproximatelyEqual(
+            appKitFrame.size.width,
+            cgWindowBounds.size.width
+        ) &&
+        IOSUseCompositorApproximatelyEqual(
+            appKitFrame.size.height,
+            cgWindowBounds.size.height
+        );
+}
+
 BOOL IOSUsePlayValidateRelativeWindowGeometry(
     CGRect baseAppKitFrame,
     CGRect baseCGWindowBounds,
@@ -946,13 +962,9 @@ BOOL IOSUsePlayValidateRelativeWindowGeometry(
         }
         return NO;
     }
-    if (!IOSUseCompositorApproximatelyEqual(
-            baseAppKitFrame.size.width,
-            baseCGWindowBounds.size.width
-        ) ||
-        !IOSUseCompositorApproximatelyEqual(
-            baseAppKitFrame.size.height,
-            baseCGWindowBounds.size.height
+    if (!IOSUsePlayAppKitCGWindowSizesMatch(
+            baseAppKitFrame,
+            baseCGWindowBounds
         )) {
         if (failure != NULL) {
             *failure = [NSString stringWithFormat:
@@ -966,13 +978,9 @@ BOOL IOSUsePlayValidateRelativeWindowGeometry(
         }
         return NO;
     }
-    if (!IOSUseCompositorApproximatelyEqual(
-            appKitFrame.size.width,
-            cgWindowBounds.size.width
-        ) ||
-        !IOSUseCompositorApproximatelyEqual(
-            appKitFrame.size.height,
-            cgWindowBounds.size.height
+    if (!IOSUsePlayAppKitCGWindowSizesMatch(
+            appKitFrame,
+            cgWindowBounds
         )) {
         if (failure != NULL) {
             *failure = [NSString stringWithFormat:

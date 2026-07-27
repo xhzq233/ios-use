@@ -175,6 +175,13 @@ IOSUsePlayCompositeWindowCaptures(
     NSString * _Nullable * _Nullable failure
 ) CF_RETURNS_RETAINED;
 
+/// AppKit and CGWindow use different global origins but must report the same
+/// logical size for one native window.
+FOUNDATION_EXPORT BOOL IOSUsePlayAppKitCGWindowSizesMatch(
+    CGRect appKitFrame,
+    CGRect cgWindowBounds
+);
+
 /// Validates that AppKit and CGWindow describe the same-sized base and target
 /// windows. Placement is authoritative from the exact own-process CGWindow
 /// bounds relative to the exact base CGWindow bounds; raw NSWindow origins are

@@ -412,11 +412,29 @@ int main(void) {
             clickAt1x.x - clickAt2x.x,
             clickAt1x.y - clickAt2x.y
         );
-        BOOL passed = scale1Ready && scale2Ready && clickDrift <= 0.5;
+        BOOL sizePredicateReady =
+            IOSUsePlayAppKitCGWindowSizesMatch(
+                CGRectMake(590, 0, 430, 932),
+                CGRectMake(40, 374, 430, 932)
+            ) &&
+            !IOSUsePlayAppKitCGWindowSizesMatch(
+                CGRectMake(590, 0, 429, 932),
+                CGRectMake(40, 374, 430, 932)
+            ) &&
+            !IOSUsePlayAppKitCGWindowSizesMatch(
+                CGRectMake(590, 0, 430, 931),
+                CGRectMake(40, 374, 430, 932)
+            );
+        BOOL passed = scale1Ready &&
+            scale2Ready &&
+            clickDrift <= 0.5 &&
+            sizePredicateReady;
         fprintf(
             stderr,
-            "[window-compositor-backing-scale] host-scale click-drift=%.3f logical-point pass=%d\n",
+            "[window-compositor-backing-scale] host-scale "
+            "click-drift=%.3f logical-point sizes=%d pass=%d\n",
             clickDrift,
+            sizePredicateReady,
             passed
         );
         return passed ? 0 : 1;
