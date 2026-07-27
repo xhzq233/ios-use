@@ -259,6 +259,60 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         }
     }
 
+    func testPruneRetainsValidManifestLargerThanOneMiB()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let keys = (1...4).map {
+            String(repeating: String($0), count: 64)
+        }
+        for (index, key) in keys.enumerated() {
+            try fixture.createGeneration(
+                key: key,
+                completedAt:
+                    "2026-07-\(String(format: "%02d", index + 1))T00:00:00Z"
+            )
+        }
+        let largeManifestKey = keys[3]
+        try fixture.writeSidecarJSON(
+            [
+                "schemaVersion": 3,
+                "backend": "playcover-headless",
+                "generationKey": largeManifestKey,
+                "completedAt": "2026-07-04T00:00:00Z",
+                "fixturePadding": String(repeating: "x", count: 4_300_000),
+            ],
+            named: PlayCoverService.manifestFilename,
+            generationKey: largeManifestKey
+        )
+        let manifestSize = try XCTUnwrap(
+            FileManager.default.attributesOfItem(
+                atPath: fixture.generationDirectory(largeManifestKey)
+                    .appendingPathComponent(
+                        PlayCoverService.manifestFilename
+                    ).path
+            )[.size] as? NSNumber
+        ).intValue
+        XCTAssertGreaterThan(manifestSize, 1_048_576)
+        XCTAssertLessThanOrEqual(
+            manifestSize,
+            PlayCoverService.generationManifestMaximumBytes
+        )
+        try fixture.writeReference(generationKey: keys[2])
+        try fixture.writeDriverLock(generationKey: keys[1])
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: keys[0]
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        XCTAssertTrue(result.warnings.isEmpty)
+        XCTAssertTrue(fixture.generationExists(largeManifestKey))
+    }
+
     func testPruneFailsClosedForMalformedState() throws {
         let fixture = try CacheMaintenanceFixture()
         defer { fixture.remove() }
@@ -321,10 +375,11 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
             PlayCoverService.completedFilename,
             generationKey: corruptKeys[1]
         )
-        try fixture.writeSidecar(
-            Data(repeating: 0x20, count: 1_048_577),
-            named: PlayCoverService.manifestFilename,
-            generationKey: corruptKeys[2]
+        try fixture.truncateSidecar(
+            PlayCoverService.manifestFilename,
+            generationKey: corruptKeys[2],
+            byteCount:
+                PlayCoverService.generationManifestMaximumBytes + 1
         )
         try fixture.writeSidecar(
             Data("not-json".utf8),
@@ -867,6 +922,19 @@ private struct CacheMaintenanceFixture {
             named: name,
             generationKey: generationKey
         )
+    }
+
+    func truncateSidecar(
+        _ name: String,
+        generationKey: String,
+        byteCount: Int
+    ) throws {
+        let handle = try FileHandle(
+            forWritingTo: generationDirectory(generationKey)
+                .appendingPathComponent(name)
+        )
+        try handle.truncate(atOffset: UInt64(byteCount))
+        try handle.close()
     }
 
     func remove() {

@@ -345,11 +345,15 @@ enum PlayCoverGenerationPruner {
             )
             let manifestResult = readSidecar(
                 parentDescriptor: generationDescriptor,
-                filename: PlayCoverService.manifestFilename
+                filename: PlayCoverService.manifestFilename,
+                maximumBytes:
+                    PlayCoverService.generationManifestMaximumBytes
             )
             let completedResult = readSidecar(
                 parentDescriptor: generationDescriptor,
-                filename: PlayCoverService.completedFilename
+                filename: PlayCoverService.completedFilename,
+                maximumBytes:
+                    PlayCoverService.completedMarkerMaximumBytes
             )
             #else
             let url = preparedRoot.appendingPathComponent(
@@ -375,13 +379,17 @@ enum PlayCoverGenerationPruner {
                 at: url.appendingPathComponent(
                     PlayCoverService.manifestFilename
                 ),
-                filename: PlayCoverService.manifestFilename
+                filename: PlayCoverService.manifestFilename,
+                maximumBytes:
+                    PlayCoverService.generationManifestMaximumBytes
             )
             let completedResult = readSidecar(
                 at: url.appendingPathComponent(
                     PlayCoverService.completedFilename
                 ),
-                filename: PlayCoverService.completedFilename
+                filename: PlayCoverService.completedFilename,
+                maximumBytes:
+                    PlayCoverService.completedMarkerMaximumBytes
             )
             #endif
 
@@ -501,13 +509,15 @@ enum PlayCoverGenerationPruner {
     #if canImport(Darwin)
     private static func readSidecar(
         parentDescriptor: Int32,
-        filename: String
+        filename: String,
+        maximumBytes: Int
     ) -> SidecarRead {
         do {
             return .success(
                 try PlayCoverManagedAppService.readOwnedRegularFile(
                     parentDescriptor: parentDescriptor,
-                    name: filename
+                    name: filename,
+                    maximumBytes: maximumBytes
                 )
             )
         } catch {
@@ -519,10 +529,16 @@ enum PlayCoverGenerationPruner {
     #else
     private static func readSidecar(
         at url: URL,
-        filename: String
+        filename: String,
+        maximumBytes: Int
     ) -> SidecarRead {
         do {
-            return .success(try readOwnedRegularFile(at: url))
+            return .success(
+                try readOwnedRegularFile(
+                    at: url,
+                    maximumBytes: maximumBytes
+                )
+            )
         } catch {
             return .failure(
                 "\(filename) is missing, oversized, or unsafe: \(error)"
