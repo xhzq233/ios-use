@@ -442,12 +442,12 @@ assert_canonical_host_status() {
         (.y | type) == "number" and
         (.width | type) == "number" and .width > 0 and
         (.height | type) == "number" and .height > 0;
-      def physical_canvas($rect; $canvas):
+      def logical_canvas($rect):
         ($rect | rectangle) and
         (($rect.x | abs) <= 0.5) and
         (($rect.y | abs) <= 0.5) and
-        ((($rect.width - $canvas.width) | abs) <= 0.5) and
-        ((($rect.height - $canvas.height) | abs) <= 0.5);
+        ((($rect.width - 430) | abs) <= 0.5) and
+        ((($rect.height - 932) | abs) <= 0.5);
       .data.driver.runtime as $runtime |
       ($runtime.diagnostics.runtime.window) as $window |
       ($window.canvasCapture) as $capture |
@@ -486,16 +486,15 @@ assert_canonical_host_status() {
       (($window.resizeEdges.shrinking % 16) == 15) and
       $window.canvasBounds ==
         {"x":0,"y":0,"width":430,"height":932} and
-      physical_canvas($window.renderViewBounds; $canvas) and
-      physical_canvas($window.sceneRenderViewBounds; $canvas) and
-      physical_canvas($window.sceneRenderViewFrame; $canvas) and
-      physical_canvas($window.inputRenderViewFrame; $canvas) and
-      physical_canvas($window.inputRenderViewBounds; $canvas) and
+      logical_canvas($window.renderViewBounds) and
+      logical_canvas($window.sceneRenderViewBounds) and
+      logical_canvas($window.sceneRenderViewFrame) and
+      logical_canvas($window.inputRenderViewFrame) and
+      logical_canvas($window.inputRenderViewBounds) and
       ($window.sceneScale.idiom | type) == "number" and
-      $window.sceneScale.idiom > 0 and
-      (($window.sceneScale.windows - $window.displayScale) | abs) <=
-        0.01 and
-      $window.sceneScale.downscaleWindowIfNecessary == true and
+      (($window.sceneScale.idiom - 1) | abs) <= 0.01 and
+      (($window.sceneScale.windows - 1) | abs) <= 0.01 and
+      $window.sceneScale.downscaleWindowIfNecessary == false and
       $window.sceneMinimumSize == {"width":430,"height":932} and
       $window.sceneMaximumSize == {"width":430,"height":932} and
       ($window.displayScale | type) == "number" and

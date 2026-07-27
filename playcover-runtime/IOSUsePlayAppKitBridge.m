@@ -115,12 +115,11 @@ static NSDictionary<NSString *, id> *IOSUsePlayLastMouseUpDelivery;
 static NSUInteger IOSUsePlayMouseDeliveryCount;
 static id IOSUsePlayHostWindow;
 static id IOSUsePlayHostContentView;
+static id IOSUsePlayScaleView;
 static id IOSUsePlayCanvasView;
 static IOSUsePlayHostCanvasLayout IOSUsePlayCurrentHostCanvasLayout;
 static BOOL IOSUsePlayHostCanvasLayoutReady;
 static BOOL IOSUsePlayHostCanvasLayoutUpdateScheduled;
-static CGRect IOSUsePlayPendingHostCanvasRect;
-static NSUInteger IOSUsePlayHostCanvasLayoutSettleAttempts;
 static id IOSUsePlayBootstrapContentWindow;
 static BOOL IOSUsePlayBootstrapContentReady;
 static BOOL IOSUsePlayBootstrapContentNormalizationScheduled;
@@ -596,21 +595,6 @@ static BOOL IOSUseBridgeRectApproximatelyEqual(CGRect lhs, CGRect rhs) {
             lhs.size.height,
             rhs.size.height
         );
-}
-
-static BOOL IOSUseBridgeRectMatchesPhysicalCanvas(
-    CGRect rect,
-    CGSize canvasSize
-) {
-    const CGFloat tolerance = 0.5;
-    return isfinite(rect.origin.x) &&
-        isfinite(rect.origin.y) &&
-        isfinite(rect.size.width) &&
-        isfinite(rect.size.height) &&
-        fabs(rect.origin.x) <= tolerance &&
-        fabs(rect.origin.y) <= tolerance &&
-        fabs(rect.size.width - canvasSize.width) <= tolerance &&
-        fabs(rect.size.height - canvasSize.height) <= tolerance;
 }
 
 static CGSize IOSUseBridgeHostMinimumContentSize(void) {
@@ -2026,6 +2010,7 @@ static BOOL IOSUseBridgeInstallHostCanvas(id window) {
         : nil;
     if (window == IOSUsePlayHostWindow &&
         currentContent == IOSUsePlayHostContentView &&
+        IOSUsePlayScaleView != nil &&
         IOSUsePlayCanvasView != nil) {
         return YES;
     }
@@ -2043,15 +2028,23 @@ static BOOL IOSUseBridgeInstallHostCanvas(id window) {
         );
     }
     id hostContent = IOSUseBridgeNewViewWithFrame(contentBounds);
+    id scaleView = IOSUseBridgeNewViewWithFrame(contentBounds);
     SEL setContentViewSelector = NSSelectorFromString(@"setContentView:");
     SEL addSubviewSelector = NSSelectorFromString(@"addSubview:");
     if (hostContent == nil ||
+        scaleView == nil ||
         ![window respondsToSelector:setContentViewSelector] ||
-        ![hostContent respondsToSelector:addSubviewSelector]) {
+        ![hostContent respondsToSelector:addSubviewSelector] ||
+        ![scaleView respondsToSelector:addSubviewSelector]) {
         return NO;
     }
     IOSUseBridgeSetUnsignedInteger(
         currentContent,
+        @"setAutoresizingMask:",
+        0
+    );
+    IOSUseBridgeSetUnsignedInteger(
+        scaleView,
         @"setAutoresizingMask:",
         0
     );
@@ -2063,14 +2056,18 @@ static BOOL IOSUseBridgeInstallHostCanvas(id window) {
     ((IOSUseBridgeSendIDArgument)objc_msgSend)(
         hostContent,
         addSubviewSelector,
+        scaleView
+    );
+    ((IOSUseBridgeSendIDArgument)objc_msgSend)(
+        scaleView,
+        addSubviewSelector,
         currentContent
     );
     IOSUsePlayHostWindow = window;
     IOSUsePlayHostContentView = hostContent;
+    IOSUsePlayScaleView = scaleView;
     IOSUsePlayCanvasView = currentContent;
     IOSUsePlayHostCanvasLayoutReady = NO;
-    IOSUsePlayPendingHostCanvasRect = CGRectZero;
-    IOSUsePlayHostCanvasLayoutSettleAttempts = 0;
     IOSUsePlayBootstrapContentWindow = window;
     IOSUsePlayBootstrapContentReady = NO;
     IOSUsePlayBootstrapContentNormalizationScheduled = NO;
@@ -2136,27 +2133,42 @@ static void IOSUseBridgeLayoutIfNeeded(id view) {
     }
 }
 
-static BOOL IOSUseBridgeApplySceneDisplayScale(
-    CGFloat scale,
+static BOOL IOSUseBridgeNormalizeLogicalRenderView(
+    id view,
+    CGRect logicalFrame
+) {
+    if (view == nil) {
+        return NO;
+    }
+    CGRect frame = IOSUseBridgeRect(view, @"frame");
+    BOOL frameReady =
+        IOSUseBridgeRectApproximatelyEqual(frame, logicalFrame) ||
+        IOSUseBridgeSetRect(view, @"setFrame:", logicalFrame);
+    CGRect bounds = IOSUseBridgeRect(view, @"bounds");
+    BOOL boundsReady =
+        IOSUseBridgeRectApproximatelyEqual(bounds, logicalFrame) ||
+        IOSUseBridgeSetRect(view, @"setBounds:", logicalFrame);
+    return frameReady && boundsReady;
+}
+
+static BOOL IOSUseBridgeReassertIdentitySceneScale(
     NSString **failure
 ) {
     Class scaleClass = NSClassFromString(
         @"UINSSceneViewController"
     );
     if (!IOSUsePlaySceneScaleBootstrapReady ||
-        scaleClass == Nil ||
-        !isfinite(scale) ||
-        scale <= 0) {
-        IOSUsePlaySceneScaleStatus = @"unavailable";
-        IOSUsePlaySceneScaleFailure =
-            @"UIKitMacHelper scene scale bootstrap is unavailable";
+        scaleClass == Nil) {
         if (failure != NULL) {
-            *failure = IOSUsePlaySceneScaleFailure;
+            *failure =
+                @"UIKitMacHelper identity scene scale is unavailable";
         }
         return NO;
     }
     SEL idiomGetter =
         NSSelectorFromString(@"defaultUIScaleFactorForIdiom");
+    SEL idiomSetter =
+        NSSelectorFromString(@"setDefaultUIScaleFactorForIdiom:");
     SEL windowsGetter =
         NSSelectorFromString(@"defaultUIScaleFactorForWindows");
     SEL windowsSetter =
@@ -2165,33 +2177,37 @@ static BOOL IOSUseBridgeApplySceneDisplayScale(
         NSSelectorFromString(@"downscaleWindowIfNecessary");
     SEL downscaleSetter =
         NSSelectorFromString(@"setDownscaleWindowIfNecessary:");
-    CGFloat windows =
-        ((CGFloat (*)(id, SEL))objc_msgSend)(
+    CGFloat idiom = ((CGFloat (*)(id, SEL))objc_msgSend)(
+        (id)scaleClass,
+        idiomGetter
+    );
+    if (!IOSUseBridgeApproximatelyEqual(idiom, 1.0)) {
+        ((void (*)(id, SEL, CGFloat))objc_msgSend)(
             (id)scaleClass,
-            windowsGetter
+            idiomSetter,
+            1.0
         );
-    // The identity Idiom value is only a pre-scene bootstrap input.
-    // UIKitMacHelper may subsequently update that private class default while
-    // preserving the observed 430 x 932 UIWindow. Runtime readiness therefore
-    // validates the resulting logical/physical geometry, not this incidental
-    // getter.
-    if (!IOSUseBridgeApproximatelyEqual(windows, scale)) {
+    }
+    CGFloat windows = ((CGFloat (*)(id, SEL))objc_msgSend)(
+        (id)scaleClass,
+        windowsGetter
+    );
+    if (!IOSUseBridgeApproximatelyEqual(windows, 1.0)) {
         ((void (*)(id, SEL, CGFloat))objc_msgSend)(
             (id)scaleClass,
             windowsSetter,
-            scale
+            1.0
         );
     }
-    BOOL downscale =
-        ((BOOL (*)(id, SEL))objc_msgSend)(
-            (id)scaleClass,
-            downscaleGetter
-        );
-    if (!downscale) {
+    BOOL downscale = ((BOOL (*)(id, SEL))objc_msgSend)(
+        (id)scaleClass,
+        downscaleGetter
+    );
+    if (downscale) {
         ((void (*)(id, SEL, BOOL))objc_msgSend)(
             (id)scaleClass,
             downscaleSetter,
-            YES
+            NO
         );
     }
     IOSUsePlayObservedIdiomScale =
@@ -2210,18 +2226,20 @@ static BOOL IOSUseBridgeApplySceneDisplayScale(
             downscaleGetter
         );
     BOOL ready =
-        isfinite(IOSUsePlayObservedIdiomScale) &&
-        IOSUsePlayObservedIdiomScale > 0 &&
+        IOSUseBridgeApproximatelyEqual(
+            IOSUsePlayObservedIdiomScale,
+            1.0
+        ) &&
         IOSUseBridgeApproximatelyEqual(
             IOSUsePlayObservedWindowScale,
-            scale
+            1.0
         ) &&
-        IOSUsePlayObservedDownscale;
+        !IOSUsePlayObservedDownscale;
     IOSUsePlaySceneScaleStatus =
         ready ? @"configured" : @"rejected";
     IOSUsePlaySceneScaleFailure = ready
         ? nil
-        : @"UIKitMacHelper has not settled to the host display scale";
+        : @"UIKitMacHelper rejected the identity scene scale";
     if (!ready && failure != NULL) {
         *failure = IOSUsePlaySceneScaleFailure;
     }
@@ -2401,6 +2419,7 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
     }
     if (window != IOSUsePlayHostWindow ||
         IOSUsePlayHostContentView == nil ||
+        IOSUsePlayScaleView == nil ||
         IOSUsePlayCanvasView == nil) {
         if (failure != NULL) {
             *failure = @"AppKit host canvas is not installed";
@@ -2424,21 +2443,19 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
         }
         return NO;
     }
-    if (!IOSUseBridgeRectApproximatelyEqual(
-            IOSUsePlayPendingHostCanvasRect,
-            layout.canvasRect
-        )) {
-        IOSUsePlayPendingHostCanvasRect = layout.canvasRect;
-        IOSUsePlayHostCanvasLayoutSettleAttempts = 0;
-    }
+    NSString *sceneScaleFailure = nil;
+    BOOL sceneScaleReady =
+        IOSUseBridgeReassertIdentitySceneScale(
+            &sceneScaleFailure
+        );
     CGRect requiredBounds = CGRectMake(
         0,
         0,
-        layout.canvasRect.size.width,
-        layout.canvasRect.size.height
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight
     );
     CGRect currentFrame = IOSUseBridgeRect(
-        IOSUsePlayCanvasView,
+        IOSUsePlayScaleView,
         @"frame"
     );
     BOOL frameReady =
@@ -2447,17 +2464,21 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
             layout.canvasRect
         ) ||
         IOSUseBridgeSetRect(
-            IOSUsePlayCanvasView,
+            IOSUsePlayScaleView,
             @"setFrame:",
             layout.canvasRect
         );
-    // UIKitMacHelper owns the only render transform. Give its outer render
-    // view an identity frame-to-bounds mapping in physical host points, then
-    // publish the matching Windows scale. Its Auto Layout/KVO path updates
-    // UINSSceneView and UINSInputView; touching those views directly creates
-    // either a clipped viewport or a second scale transform.
+    // Our ordinary NSView wrapper is the single display-scale boundary: its
+    // frame is the physical host canvas while its bounds remain the fixed
+    // logical device. The UIKit-owned scene container stays entirely at
+    // 430 x 932 inside it, so AppKit applies one uniform transform to every
+    // UIKit surface and automatically inverse-maps native mouse input.
+    // Never publish the host displayScale into UIKitMacHelper's class-global
+    // window scale after scene creation; only the identity invariant above is
+    // reasserted because late non-identity changes split independently hosted
+    // UIKit layers across different scales.
     CGRect currentBounds = IOSUseBridgeRect(
-        IOSUsePlayCanvasView,
+        IOSUsePlayScaleView,
         @"bounds"
     );
     BOOL boundsReady =
@@ -2466,53 +2487,92 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
             requiredBounds
         ) ||
         IOSUseBridgeSetRect(
+            IOSUsePlayScaleView,
+            @"setBounds:",
+            requiredBounds
+        );
+    CGRect currentCanvasFrame = IOSUseBridgeRect(
+        IOSUsePlayCanvasView,
+        @"frame"
+    );
+    BOOL canvasFrameReady =
+        IOSUseBridgeRectApproximatelyEqual(
+            currentCanvasFrame,
+            requiredBounds
+        ) ||
+        IOSUseBridgeSetRect(
+            IOSUsePlayCanvasView,
+            @"setFrame:",
+            requiredBounds
+        );
+    CGRect currentCanvasBounds = IOSUseBridgeRect(
+        IOSUsePlayCanvasView,
+        @"bounds"
+    );
+    BOOL canvasBoundsReady =
+        IOSUseBridgeRectApproximatelyEqual(
+            currentCanvasBounds,
+            requiredBounds
+        ) ||
+        IOSUseBridgeSetRect(
             IOSUsePlayCanvasView,
             @"setBounds:",
             requiredBounds
         );
-    NSString *scaleFailure = nil;
-    BOOL scaleReady = frameReady && boundsReady &&
-        IOSUseBridgeApplySceneDisplayScale(
-            layout.displayScale,
-            &scaleFailure
-        );
-    if (scaleReady) {
+    if (frameReady && boundsReady &&
+        canvasFrameReady && canvasBoundsReady) {
         IOSUseBridgeLayoutIfNeeded(IOSUsePlayHostContentView);
+        IOSUseBridgeLayoutIfNeeded(IOSUsePlayScaleView);
         IOSUseBridgeLayoutIfNeeded(IOSUsePlayCanvasView);
     }
     CGRect resolvedFrame = IOSUseBridgeRect(
-        IOSUsePlayCanvasView,
+        IOSUsePlayScaleView,
         @"frame"
     );
     CGRect resolvedBounds = IOSUseBridgeRect(
+        IOSUsePlayScaleView,
+        @"bounds"
+    );
+    CGRect resolvedCanvasFrame = IOSUseBridgeRect(
+        IOSUsePlayCanvasView,
+        @"frame"
+    );
+    CGRect resolvedCanvasBounds = IOSUseBridgeRect(
         IOSUsePlayCanvasView,
         @"bounds"
     );
     id sceneRenderView =
         IOSUseBridgeSceneRenderView(IOSUsePlayCanvasView);
+    BOOL sceneRenderViewReady =
+        IOSUseBridgeNormalizeLogicalRenderView(
+            sceneRenderView,
+            requiredBounds
+        );
     id inputRenderView =
         IOSUseBridgeInputRenderView(sceneRenderView);
-    CGSize physicalCanvasSize = layout.canvasRect.size;
-    BOOL renderTreeReady =
-        sceneRenderView != nil &&
-        inputRenderView != nil &&
-        IOSUseBridgeRectMatchesPhysicalCanvas(
-            IOSUseBridgeRect(sceneRenderView, @"frame"),
-            physicalCanvasSize
-        ) &&
-        IOSUseBridgeRectMatchesPhysicalCanvas(
-            IOSUseBridgeRect(sceneRenderView, @"bounds"),
-            physicalCanvasSize
-        ) &&
-        IOSUseBridgeRectMatchesPhysicalCanvas(
-            IOSUseBridgeRect(inputRenderView, @"frame"),
-            physicalCanvasSize
-        ) &&
-        IOSUseBridgeRectMatchesPhysicalCanvas(
-            IOSUseBridgeRect(inputRenderView, @"bounds"),
-            physicalCanvasSize
+    BOOL inputRenderViewReady =
+        IOSUseBridgeNormalizeLogicalRenderView(
+            inputRenderView,
+            requiredBounds
         );
-    if (!boundsReady || !frameReady || !scaleReady ||
+    CGRect resolvedSceneFrame =
+        IOSUseBridgeRect(sceneRenderView, @"frame");
+    CGRect resolvedSceneBounds =
+        IOSUseBridgeRect(sceneRenderView, @"bounds");
+    CGRect resolvedInputFrame =
+        IOSUseBridgeRect(inputRenderView, @"frame");
+    CGRect resolvedInputBounds =
+        IOSUseBridgeRect(inputRenderView, @"bounds");
+    BOOL renderTreeReady =
+        sceneRenderViewReady &&
+        inputRenderViewReady &&
+        IOSUseBridgeRectIsDeviceScreen(resolvedSceneFrame) &&
+        IOSUseBridgeRectIsDeviceScreen(resolvedSceneBounds) &&
+        IOSUseBridgeRectIsDeviceScreen(resolvedInputFrame) &&
+        IOSUseBridgeRectIsDeviceScreen(resolvedInputBounds);
+    if (!sceneScaleReady ||
+        !boundsReady || !frameReady ||
+        !canvasFrameReady || !canvasBoundsReady ||
         !renderTreeReady ||
         !IOSUseBridgeRectApproximatelyEqual(
             resolvedFrame,
@@ -2521,25 +2581,35 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
         !IOSUseBridgeRectApproximatelyEqual(
             resolvedBounds,
             requiredBounds
+        ) ||
+        !IOSUseBridgeRectApproximatelyEqual(
+            resolvedCanvasFrame,
+            requiredBounds
+        ) ||
+        !IOSUseBridgeRectApproximatelyEqual(
+            resolvedCanvasBounds,
+            requiredBounds
         )) {
         IOSUsePlayHostCanvasLayoutReady = NO;
-        // UIKitMacHelper applies its scale through KVO/Auto Layout. A resize
-        // notification can arrive one main-queue turn before the render tree
-        // settles, so retry the coalesced observation instead of permanently
-        // rejecting an otherwise valid host.
-        if (IOSUsePlayHostCanvasLayoutSettleAttempts < 32) {
-            IOSUsePlayHostCanvasLayoutSettleAttempts += 1;
-            IOSUseBridgeScheduleHostCanvasLayoutUpdate();
-        }
         if (failure != NULL) {
-            *failure = scaleFailure ?:
-                @"waiting for UIKitMacHelper physical render layout";
+            *failure = sceneScaleFailure ?:
+                [NSString stringWithFormat:
+                @"UIKit render tree is not the fixed logical canvas "
+                 @"(scale=%@/%@ canvas=%@/%@ scene=%@/%@ input=%@/%@)",
+                NSStringFromCGRect(resolvedFrame),
+                NSStringFromCGRect(resolvedBounds),
+                NSStringFromCGRect(resolvedCanvasFrame),
+                NSStringFromCGRect(resolvedCanvasBounds),
+                NSStringFromCGRect(resolvedSceneFrame),
+                NSStringFromCGRect(resolvedSceneBounds),
+                NSStringFromCGRect(resolvedInputFrame),
+                NSStringFromCGRect(resolvedInputBounds)
+            ];
         }
         return NO;
     }
     IOSUsePlayCurrentHostCanvasLayout = layout;
     IOSUsePlayHostCanvasLayoutReady = YES;
-    IOSUsePlayHostCanvasLayoutSettleAttempts = 0;
     return YES;
 }
 
@@ -3571,9 +3641,10 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         }
     }
     if (IOSUsePlaySceneScaleFailure == nil) {
-        // These are constructor-only defaults. UIKitMacHelper reads them
-        // before it creates UINSSceneViewController. Runtime resize updates
-        // only the Windows scale and must never reset the Idiom scale.
+        // UIKitMacHelper reads these before it creates
+        // UINSSceneViewController. Keep its scene identity-scaled for the
+        // process lifetime; the outer scene-container frame/bounds mapping is
+        // the only display transform.
         for (NSString *selectorName in setters) {
             ((void (*)(id, SEL, CGFloat))objc_msgSend)(
                 (id)scaleClass,
@@ -3581,6 +3652,13 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
                 1.0
             );
         }
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(
+            (id)scaleClass,
+            NSSelectorFromString(
+                @"setDownscaleWindowIfNecessary:"
+            ),
+            NO
+        );
         IOSUsePlayObservedIdiomScale =
             ((CGFloat (*)(id, SEL))objc_msgSend)(
                 (id)scaleClass,
@@ -3606,9 +3684,10 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             IOSUseBridgeApproximatelyEqual(
                 IOSUsePlayObservedWindowScale,
                 1.0
-            );
+            ) &&
+            !IOSUsePlayObservedDownscale;
         IOSUsePlaySceneScaleStatus =
-            exact ? @"bootstrapped" : @"rejected";
+            exact ? @"configured" : @"rejected";
         IOSUsePlaySceneScaleFailure = exact
             ? nil
             : @"UIKitMacHelper rejected the identity scale bootstrap";
@@ -3822,7 +3901,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         IOSUseBridgeInstallMouseLocalMonitor();
 
     CGRect canvasFrame = IOSUseBridgeRect(
-        IOSUsePlayCanvasView,
+        IOSUsePlayScaleView,
         @"frame"
     );
     UISceneSizeRestrictions *restrictions = uiWindow.windowScene.sizeRestrictions;
@@ -4312,7 +4391,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     CGRect canvasBounds =
         uiWindow == nil ? CGRectZero : uiWindow.bounds;
     CGRect canvasFrame = IOSUseBridgeRect(
-        IOSUsePlayCanvasView,
+        IOSUsePlayScaleView,
         @"frame"
     );
     CGRect renderViewBounds = IOSUseBridgeRect(

@@ -966,12 +966,10 @@ final class PlayCoverDriverClient: DriverCommandClient {
                         host.displayScale * host.inverseDisplayScale,
                         1
                     ) &&
-                    host.idiomScale.isFinite && host.idiomScale > 0 &&
-                    approximatelyEqual(
-                        host.windowScale,
-                        host.displayScale
-                    ) &&
-                    host.downscaleWindowIfNecessary,
+                    host.idiomScale.isFinite &&
+                    approximatelyEqual(host.idiomScale, 1) &&
+                    approximatelyEqual(host.windowScale, 1) &&
+                    !host.downscaleWindowIfNecessary,
                 "simulator-scale host display scale"
             ),
             (
@@ -989,44 +987,24 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 "simulator-scale fixed canvas bounds"
             ),
             (
-                physicalCanvasRect(
-                    host.renderViewBounds,
-                    width: expectedCanvasWidth,
-                    height: expectedCanvasHeight
-                ),
-                "simulator-scale physical render-view bounds"
+                fixedLogicalCanvasRect(host.renderViewBounds),
+                "simulator-scale logical render-view bounds"
             ),
             (
-                physicalCanvasRect(
-                    host.sceneRenderViewFrame,
-                    width: expectedCanvasWidth,
-                    height: expectedCanvasHeight
-                ),
-                "simulator-scale physical scene-render frame"
+                fixedLogicalCanvasRect(host.sceneRenderViewFrame),
+                "simulator-scale logical scene-render frame"
             ),
             (
-                physicalCanvasRect(
-                    host.sceneRenderViewBounds,
-                    width: expectedCanvasWidth,
-                    height: expectedCanvasHeight
-                ),
-                "simulator-scale physical scene-render bounds"
+                fixedLogicalCanvasRect(host.sceneRenderViewBounds),
+                "simulator-scale logical scene-render bounds"
             ),
             (
-                physicalCanvasRect(
-                    host.inputRenderViewFrame,
-                    width: expectedCanvasWidth,
-                    height: expectedCanvasHeight
-                ),
-                "simulator-scale physical input-render frame"
+                fixedLogicalCanvasRect(host.inputRenderViewFrame),
+                "simulator-scale logical input-render frame"
             ),
             (
-                physicalCanvasRect(
-                    host.inputRenderViewBounds,
-                    width: expectedCanvasWidth,
-                    height: expectedCanvasHeight
-                ),
-                "simulator-scale physical input-render bounds"
+                fixedLogicalCanvasRect(host.inputRenderViewBounds),
+                "simulator-scale logical input-render bounds"
             ),
             (
                 validHostFrame(host.frame) &&
@@ -1132,17 +1110,14 @@ final class PlayCoverDriverClient: DriverCommandClient {
             frame.width > 0 && frame.height > 0
     }
 
-    private static func physicalCanvasRect(
-        _ frame: PlayCoverRuntimeFrame,
-        width: Double,
-        height: Double
+    private static func fixedLogicalCanvasRect(
+        _ frame: PlayCoverRuntimeFrame
     ) -> Bool {
         let tolerance = 0.5
-        return validHostFrame(frame) &&
-            abs(frame.x) <= tolerance &&
+        return abs(frame.x) <= tolerance &&
             abs(frame.y) <= tolerance &&
-            abs(frame.width - width) <= tolerance &&
-            abs(frame.height - height) <= tolerance
+            abs(frame.width - logicalSize.width) <= tolerance &&
+            abs(frame.height - logicalSize.height) <= tolerance
     }
 
     private static func hostFrameContains(

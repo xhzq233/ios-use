@@ -2391,38 +2391,38 @@ final class PlayCoverSessionTests: XCTestCase {
             renderViewBounds: .init(
                 x: 0,
                 y: 0,
-                width: 322.5,
-                height: 699
+                width: 430,
+                height: 932
             ),
             sceneRenderViewFrame: .init(
                 x: 0,
                 y: 0,
-                width: 322.5,
-                height: 699
+                width: 430,
+                height: 932
             ),
             sceneRenderViewBounds: .init(
                 x: 0,
                 y: 0,
-                width: 322.5,
-                height: 699
+                width: 430,
+                height: 932
             ),
             inputRenderViewFrame: .init(
                 x: 0,
                 y: 0,
-                width: 322.5,
-                height: 699
+                width: 430,
+                height: 932
             ),
             inputRenderViewBounds: .init(
                 x: 0,
                 y: 0,
-                width: 322.5,
-                height: 699
+                width: 430,
+                height: 932
             ),
             displayScale: 0.75,
             inverseDisplayScale: 4.0 / 3.0,
             idiomScale: 1,
-            windowScale: 0.75,
-            downscaleWindowIfNecessary: true,
+            windowScale: 1,
+            downscaleWindowIfNecessary: false,
             opaque: true,
             publicTitleBar: true,
             titleVisible: true,

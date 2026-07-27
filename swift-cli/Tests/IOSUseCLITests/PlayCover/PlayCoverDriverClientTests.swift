@@ -728,7 +728,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         inputRenderViewBoundsHeight: Double? = nil,
         idiomScale: Double = 1,
         windowScale: Double? = nil,
-        downscaleWindowIfNecessary: Bool = true,
+        downscaleWindowIfNecessary: Bool = false,
         canvasY: Double = 0,
         canvasCGX: Double = 40,
         canvasCGY: Double? = nil
@@ -773,37 +773,37 @@ final class PlayCoverDriverClientTests: XCTestCase {
             renderViewBounds: .init(
                 x: 0,
                 y: 0,
-                width: renderViewWidth ?? resolvedCanvasWidth,
-                height: renderViewHeight ?? resolvedCanvasHeight
+                width: renderViewWidth ?? 430,
+                height: renderViewHeight ?? 932
             ),
             sceneRenderViewFrame: .init(
                 x: 0,
                 y: 0,
-                width: sceneRenderViewFrameWidth ?? resolvedCanvasWidth,
-                height: sceneRenderViewFrameHeight ?? resolvedCanvasHeight
+                width: sceneRenderViewFrameWidth ?? 430,
+                height: sceneRenderViewFrameHeight ?? 932
             ),
             sceneRenderViewBounds: .init(
                 x: 0,
                 y: 0,
-                width: sceneRenderViewWidth ?? resolvedCanvasWidth,
-                height: sceneRenderViewHeight ?? resolvedCanvasHeight
+                width: sceneRenderViewWidth ?? 430,
+                height: sceneRenderViewHeight ?? 932
             ),
             inputRenderViewFrame: .init(
                 x: 0,
                 y: 0,
-                width: inputRenderViewFrameWidth ?? resolvedCanvasWidth,
-                height: inputRenderViewFrameHeight ?? resolvedCanvasHeight
+                width: inputRenderViewFrameWidth ?? 430,
+                height: inputRenderViewFrameHeight ?? 932
             ),
             inputRenderViewBounds: .init(
                 x: 0,
                 y: 0,
-                width: inputRenderViewBoundsWidth ?? resolvedCanvasWidth,
-                height: inputRenderViewBoundsHeight ?? resolvedCanvasHeight
+                width: inputRenderViewBoundsWidth ?? 430,
+                height: inputRenderViewBoundsHeight ?? 932
             ),
             displayScale: displayScale,
             inverseDisplayScale: resolvedInverseDisplayScale,
             idiomScale: idiomScale,
-            windowScale: windowScale ?? displayScale,
+            windowScale: windowScale ?? 1,
             downscaleWindowIfNecessary: downscaleWindowIfNecessary,
             opaque: opaque,
             publicTitleBar: true,
@@ -1036,9 +1036,10 @@ final class PlayCoverDriverClientTests: XCTestCase {
 
         for host in [
             makeSimulatorScaleHostGeometry(idiomScale: 0),
-            makeSimulatorScaleHostGeometry(windowScale: 1),
+            makeSimulatorScaleHostGeometry(idiomScale: 0.77),
+            makeSimulatorScaleHostGeometry(windowScale: 0.75),
             makeSimulatorScaleHostGeometry(
-                downscaleWindowIfNecessary: false
+                downscaleWindowIfNecessary: true
             ),
         ] {
             let invalidScale = PlayCoverRuntimeGeometry(
@@ -1084,7 +1085,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
                 .runtimeGeometryMismatch(
-                    "simulator-scale physical render-view bounds"
+                    "simulator-scale logical render-view bounds"
                 )
             )
         }
@@ -1109,7 +1110,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
                 .runtimeGeometryMismatch(
-                    "simulator-scale physical scene-render frame"
+                    "simulator-scale logical scene-render frame"
                 )
             )
         }
@@ -1134,7 +1135,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
                 .runtimeGeometryMismatch(
-                    "simulator-scale physical scene-render bounds"
+                    "simulator-scale logical scene-render bounds"
                 )
             )
         }
@@ -1159,7 +1160,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
                 .runtimeGeometryMismatch(
-                    "simulator-scale physical input-render frame"
+                    "simulator-scale logical input-render frame"
                 )
             )
         }
@@ -1184,7 +1185,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
                 .runtimeGeometryMismatch(
-                    "simulator-scale physical input-render bounds"
+                    "simulator-scale logical input-render bounds"
                 )
             )
         }
@@ -1319,7 +1320,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
                 .runtimeGeometryMismatch(
-                    "simulator-scale physical render-view bounds"
+                    "simulator-scale host canvas layout"
                 )
             )
         }
@@ -1342,14 +1343,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
-                "renderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
-                "sceneRenderViewFrame":{"x":0,"y":0,"width":322.5,"height":699},
-                "sceneRenderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
-                "inputRenderViewFrame":{"x":0,"y":0,"width":322.5,"height":699},
-                "inputRenderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
+                "renderViewBounds":{"x":0,"y":0,"width":430,"height":932},
+                "sceneRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
+                "sceneRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
+                "inputRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
+                "inputRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
                 "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
-                "idiomScale":1,"windowScale":0.75,
-                "downscaleWindowIfNecessary":true,
+                "idiomScale":1,"windowScale":1,
+                "downscaleWindowIfNecessary":false,
                 "opaque":true,
                 "publicTitleBar":true,"titleVisible":true,"resizable":true,
                 "title":"Fixture","titleExpected":"Fixture",
@@ -1394,14 +1395,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
-                "renderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
-                "sceneRenderViewFrame":{"x":0,"y":0,"width":322.5,"height":699},
-                "sceneRenderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
-                "inputRenderViewFrame":{"x":0,"y":0,"width":322.5,"height":699},
-                "inputRenderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
+                "renderViewBounds":{"x":0,"y":0,"width":430,"height":932},
+                "sceneRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
+                "sceneRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
+                "inputRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
+                "inputRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
                 "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
-                "idiomScale":1,"windowScale":0.75,
-                "downscaleWindowIfNecessary":true,
+                "idiomScale":1,"windowScale":1,
+                "downscaleWindowIfNecessary":false,
                 "opaque":true,
                 "publicTitleBar":true,"titleVisible":true,"resizable":true,
                 "title":"Fixture","titleExpected":"Fixture",

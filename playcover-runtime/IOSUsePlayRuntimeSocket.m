@@ -518,15 +518,12 @@ static BOOL IOSUseSocketContainsRect(CGRect outer, CGRect inner) {
         CGRectGetMaxY(inner) <= CGRectGetMaxY(outer) + 0.01;
 }
 
-static BOOL IOSUseSocketMatchesPhysicalCanvas(
-    CGRect rect,
-    CGRect canvasRect
-) {
+static BOOL IOSUseSocketMatchesFixedLogicalCanvas(CGRect rect) {
     const CGFloat tolerance = 0.5;
     return fabs(rect.origin.x) <= tolerance &&
         fabs(rect.origin.y) <= tolerance &&
-        fabs(rect.size.width - canvasRect.size.width) <= tolerance &&
-        fabs(rect.size.height - canvasRect.size.height) <= tolerance;
+        fabs(rect.size.width - IOSUsePlayDeviceLogicalWidth) <= tolerance &&
+        fabs(rect.size.height - IOSUsePlayDeviceLogicalHeight) <= tolerance;
 }
 
 static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
@@ -616,30 +613,16 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         fabs(canvasBounds.origin.y) <= 0.01 &&
         fabs(canvasBounds.size.width - IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
         fabs(canvasBounds.size.height - IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
-        IOSUseSocketMatchesPhysicalCanvas(
-            renderViewBounds,
-            canvasRect
-        ) &&
-        IOSUseSocketMatchesPhysicalCanvas(
-            sceneRenderViewFrame,
-            canvasRect
-        ) &&
-        IOSUseSocketMatchesPhysicalCanvas(
-            sceneRenderViewBounds,
-            canvasRect
-        ) &&
-        IOSUseSocketMatchesPhysicalCanvas(
-            inputRenderViewFrame,
-            canvasRect
-        ) &&
-        IOSUseSocketMatchesPhysicalCanvas(
-            inputRenderViewBounds,
-            canvasRect
-        ) &&
-        isfinite(idiomScale) && idiomScale > 0 &&
+        IOSUseSocketMatchesFixedLogicalCanvas(renderViewBounds) &&
+        IOSUseSocketMatchesFixedLogicalCanvas(sceneRenderViewFrame) &&
+        IOSUseSocketMatchesFixedLogicalCanvas(sceneRenderViewBounds) &&
+        IOSUseSocketMatchesFixedLogicalCanvas(inputRenderViewFrame) &&
+        IOSUseSocketMatchesFixedLogicalCanvas(inputRenderViewBounds) &&
+        isfinite(idiomScale) &&
+        fabs(idiomScale - 1.0) <= 0.01 &&
         isfinite(windowScale) &&
-        fabs(windowScale - displayScale) <= 0.01 &&
-        [host[@"downscaleWindowIfNecessary"] boolValue] &&
+        fabs(windowScale - 1.0) <= 0.01 &&
+        ![host[@"downscaleWindowIfNecessary"] boolValue] &&
         IOSUseSocketContainsRect(contentBounds, canvasRect) &&
         leftMargin >= -0.01 && rightMargin >= -0.01 &&
         bottomMargin >= -0.01 && topMargin >= -0.01 &&
