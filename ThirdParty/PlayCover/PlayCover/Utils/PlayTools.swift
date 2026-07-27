@@ -70,8 +70,7 @@ public final class PlayTools {
         _ exec: URL,
         loadPath: String
     ) throws {
-        var binary = try Data(contentsOf: exec)
-        try Macho.stripBinary(&binary)
+        try validateRuntimeInjectionInput(exec)
 
         var injectionSucceeded = false
         Inject.injectMachO(
@@ -84,6 +83,14 @@ public final class PlayTools {
         guard injectionSucceeded else {
             throw PlayCoverUpstreamError.injectionFailed(exec.path)
         }
+    }
+
+    /// Preserve the pinned direct-helper failure boundary without eagerly
+    /// copying the already-converted thin executable before Inject performs
+    /// its single mutation read.
+    static func validateRuntimeInjectionInput(_ exec: URL) throws {
+        var binary = try Data(contentsOf: exec, options: .alwaysMapped)
+        try Macho.stripBinary(&binary)
     }
 
     /// Executes the pinned `installInIPA` implementation with an explicit

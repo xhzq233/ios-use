@@ -73,6 +73,11 @@ Local patches are intentionally limited to:
   `IOS_USE_HOME` inputs;
 - using the embedded ios-use Runtime load path instead of the system-installed
   PlayTools path;
+- preserving the pinned injection preflight failure boundary with an
+  always-mapped view of the production executable, so validating an
+  already-converted thin Mach-O does not eagerly copy the whole file before
+  pinned Inject performs its mutation read; the independent pinned
+  `installInIPA` oracle remains unchanged;
 - explicit inside-out ad-hoc signing in the ios-use production path (never
   `codesign --deep` there), while retaining pinned `--deep` behavior solely in
   the independent differential oracle;

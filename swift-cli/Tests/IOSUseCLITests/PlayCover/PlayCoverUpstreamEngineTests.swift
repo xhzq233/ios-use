@@ -1,8 +1,57 @@
 import Foundation
-import PlayCoverUpstream
+@testable import PlayCoverUpstream
 import XCTest
 
 final class PlayCoverUpstreamEngineTests: XCTestCase {
+    func testRuntimeInjectionPreflightPreservesPinnedFailureBoundaries()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverInjectionPreflight-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        let thin = root.appendingPathComponent("Thin")
+        try makeThinMachO(
+            cpuType: 0x0100_000c,
+            cpuSubtype: 0,
+            platform: 6
+        ).write(to: thin)
+        XCTAssertNoThrow(
+            try PlayTools.validateRuntimeInjectionInput(thin)
+        )
+
+        let short = root.appendingPathComponent("Short")
+        try Data(repeating: 0, count: 7).write(to: short)
+        XCTAssertThrowsError(
+            try PlayTools.validateRuntimeInjectionInput(short)
+        ) {
+            guard case PlayCoverError.failedToStripBinary = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+        }
+
+        let x86Only = root.appendingPathComponent("X86OnlyFat")
+        let x86 = makeThinMachO(
+            cpuType: 0x0100_0007,
+            cpuSubtype: 3,
+            platform: 7
+        )
+        try makeFatMachOWithoutArm64(x86_64: x86).write(to: x86Only)
+        XCTAssertThrowsError(
+            try PlayTools.validateRuntimeInjectionInput(x86Only)
+        ) {
+            guard case PlayCoverError.failedToStripBinary = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+        }
+    }
+
     func testContentHashPreservesFramedContractAndPathSemantics() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -458,6 +507,22 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             Data(repeating: 0, count: arm64Offset - result.count)
         )
         result.append(arm64)
+        result.append(
+            Data(repeating: 0, count: x86Offset - result.count)
+        )
+        result.append(x86_64)
+        return result
+    }
+
+    private func makeFatMachOWithoutArm64(x86_64: Data) -> Data {
+        let x86Offset = 4_096
+        var result = Data([0xca, 0xfe, 0xba, 0xbe])
+        appendU32BE(1, to: &result)
+        appendU32BE(0x0100_0007, to: &result)
+        appendU32BE(3, to: &result)
+        appendU32BE(UInt32(x86Offset), to: &result)
+        appendU32BE(UInt32(x86_64.count), to: &result)
+        appendU32BE(12, to: &result)
         result.append(
             Data(repeating: 0, count: x86Offset - result.count)
         )
