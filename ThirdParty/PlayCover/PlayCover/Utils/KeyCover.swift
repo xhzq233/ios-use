@@ -327,11 +327,21 @@ struct PlayAppHeadlessLifecycle {
     }
 
     func lockKeyCover() throws {
+        KeyCover.shared.restorePersistedKey()
+        defer {
+            KeyCover.shared.keyCoverPlainTextKey = nil
+        }
         let key = KeyCoverKey(appBundleID: bundleIdentifier)
-        if FileManager.default.fileExists(atPath: key.decryptedKeyDB.path),
-           KeyCover.shared.keyCoverPlainTextKey != nil {
+        if FileManager.default.fileExists(
+            atPath: key.decryptedKeyDB.path
+        ) {
+            guard KeyCover.shared.keyCoverPlainTextKey != nil else {
+                throw PlayCoverUpstreamError.commandFailed(
+                    "KeyCover password is unavailable for "
+                        + bundleIdentifier
+                )
+            }
             try KeyCover.shared.lockChain(key)
         }
-        KeyCover.shared.keyCoverPlainTextKey = nil
     }
 }

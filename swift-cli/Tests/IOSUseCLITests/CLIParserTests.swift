@@ -697,6 +697,10 @@ final class CLIParserTests: XCTestCase {
             ParsedInvocation(command: .status(StatusOptions()), json: true)
         )
         XCTAssertEqual(
+            try CLIParser.parseInvocation(["stop", "--json"]),
+            ParsedInvocation(command: .stop, json: true)
+        )
+        XCTAssertEqual(
             try CLIParser.parseInvocation(["tap", "General", "--json"]),
             ParsedInvocation(
                 command: .driver(.tap(target: "General", offset: nil, offsetRatio: nil, traits: nil, cindex: nil, postDom: nil)),

@@ -17,6 +17,7 @@ final class PlayCoverSessionTests: XCTestCase {
         PlayCoverSessionService
             .terminationIdentityProbeOverrideForTesting = nil
         PlayCoverSessionService.fastVerifyOverrideForTesting = nil
+        PlayCoverService.keyCoverLockOverrideForTesting = nil
         PlayCoverService.launchAliasRootOverrideForTesting = nil
         PlayCoverManagedAppService.inspectOverrideForTesting = nil
         PlayCoverManagedAppService.verifyOverrideForTesting = nil
@@ -208,10 +209,34 @@ final class PlayCoverSessionTests: XCTestCase {
                 .intValue,
             0o600
         )
+        var keyCoverLocked = false
+        PlayCoverService.keyCoverLockOverrideForTesting = {
+            bundleIdentifier,
+            managedHome in
+            XCTAssertEqual(
+                bundleIdentifier,
+                manifest.bundleIdentifier
+            )
+            XCTAssertEqual(
+                managedHome.standardizedFileURL.path,
+                URL(
+                    fileURLWithPath: fixture.root,
+                    isDirectory: true
+                ).standardizedFileURL.path
+            )
+            XCTAssertTrue(
+                FileManager.default.fileExists(
+                    atPath: launchAlias.bundleURL.path
+                ),
+                "KeyCover must lock before the facade is removed"
+            )
+            keyCoverLocked = true
+        }
 
         let stop = cli.run(arguments: ["stop"])
 
         XCTAssertEqual(stop.exitCode, 0, stop.stderr)
+        XCTAssertTrue(keyCoverLocked)
         XCTAssertEqual(
             stop.stdout,
             "PlayCover App stopped (pid 4242)\n"
@@ -237,6 +262,121 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest.preparedAppPath,
                 manifest.preparedAppPath,
             ]
+        )
+    }
+
+    func testStopPreservesLockAndFacadeUntilKeyCoverRetrySucceeds()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try fixture.createManagedApp(manifest: manifest)
+        try Data("launch".utf8).write(
+            to: URL(
+                fileURLWithPath: manifest.preparedAppPath,
+                isDirectory: true
+            ).appendingPathComponent("Info.plist")
+        )
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in manifest
+        }
+        let sessionID = UUID().uuidString.lowercased()
+        let socketPath = try fixture.paths
+            .playCoverRuntimeSocketPath(sessionID: sessionID)
+        let info = makeSessionInfo(
+            manifest: manifest,
+            sessionID: sessionID,
+            socketPath: socketPath
+        )
+        try SessionService.writeDriverLock(
+            info: info,
+            paths: fixture.paths
+        )
+        let alias = try PlayCoverService.createSessionLaunchAlias(
+            manifest: manifest,
+            sessionID: sessionID
+        )
+        PlayCoverSessionService.terminateOverrideForTesting = {
+            Int32($0.runnerPid ?? 0)
+        }
+        var lockAttempts = 0
+        PlayCoverService.keyCoverLockOverrideForTesting = { _, _ in
+            lockAttempts += 1
+            if lockAttempts == 1 {
+                throw CLIParseError.invalidValue(
+                    "injected KeyCover failure"
+                )
+            }
+        }
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": fixture.root]
+        )
+
+        let first = cli.run(arguments: ["--json", "stop"])
+
+        XCTAssertEqual(first.exitCode, 1)
+        XCTAssertTrue(first.stderr.contains("KeyCover"))
+        let envelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(first.stderr.utf8)
+            ) as? [String: Any]
+        )
+        let machineError = try XCTUnwrap(
+            envelope["error"] as? [String: Any]
+        )
+        XCTAssertEqual(
+            machineError["code"] as? String,
+            "playcover_stop_cleanup_failed"
+        )
+        XCTAssertEqual(
+            machineError["phase"] as? String,
+            "playcover_stop_cleanup"
+        )
+        XCTAssertEqual(machineError["retryable"] as? Bool, true)
+        XCTAssertEqual(machineError["fatal"] as? Bool, false)
+        XCTAssertEqual(
+            machineError["mutationMayHaveApplied"] as? Bool,
+            true
+        )
+        XCTAssertNotNil(
+            try SessionService.readDriverLockInfo(
+                paths: fixture.paths
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: alias.bundleURL.path
+            )
+        )
+
+        let second = cli.run(arguments: ["--json", "stop"])
+
+        XCTAssertEqual(second.exitCode, 0, second.stderr)
+        let successEnvelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(second.stdout.utf8)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(successEnvelope["ok"] as? Bool, true)
+        XCTAssertEqual(successEnvelope["command"] as? String, "stop")
+        let successData = try XCTUnwrap(
+            successEnvelope["data"] as? [String: Any]
+        )
+        let driver = try XCTUnwrap(
+            successData["driver"] as? [String: Any]
+        )
+        XCTAssertEqual(driver["status"] as? String, "notRunning")
+        XCTAssertEqual(lockAttempts, 2)
+        XCTAssertNil(
+            try SessionService.readDriverLockInfo(
+                paths: fixture.paths
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: alias.bundleURL.path
+            )
         )
     }
 
@@ -1089,7 +1229,99 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     }
 
-    func testUnterminatedLaunchFailurePreservesExactSessionLock()
+    func testJournalHandoffFailureKeepsFatalMachineOwnership()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try fixture.createManagedApp(manifest: manifest)
+        try PlayCoverSessionService.recordPrepared(
+            manifest,
+            paths: fixture.paths
+        )
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in manifest
+        }
+        var launched: PlayCoverSessionService.LaunchResult?
+        PlayCoverSessionService.launchOverrideForTesting = {
+            _, sessionID, socketPath, stdioLog, _ in
+            let stdioLog = try XCTUnwrap(stdioLog)
+            let result = self.makeLaunchResult(
+                manifest: manifest,
+                sessionID: sessionID,
+                socketPath: socketPath,
+                logPath: stdioLog.path,
+                usesPendingLaunchJournal: true,
+                reused: true
+            )
+            launched = result
+            return result
+        }
+        PlayCoverSessionService.terminateOverrideForTesting = {
+            _ in
+            XCTFail(
+                "a durable driver.lock handoff failure must "
+                    + "preserve both authorities"
+            )
+            return 0
+        }
+
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": fixture.root]
+        ).run(
+            arguments: [
+                "start",
+                "--playcover",
+                "--log",
+                "--json",
+            ]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        let envelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(result.stderr.utf8)
+            ) as? [String: Any]
+        )
+        let error = try XCTUnwrap(
+            envelope["error"] as? [String: Any]
+        )
+        XCTAssertEqual(
+            error["code"] as? String,
+            "playcover_session_handoff_failed"
+        )
+        XCTAssertEqual(
+            error["phase"] as? String,
+            "playcover_session_commit"
+        )
+        XCTAssertEqual(error["retryable"] as? Bool, false)
+        XCTAssertEqual(error["fatal"] as? Bool, true)
+        XCTAssertEqual(
+            error["mutationMayHaveApplied"] as? Bool,
+            true
+        )
+        let data = try XCTUnwrap(
+            envelope["data"] as? [String: Any]
+        )
+        let launch = try XCTUnwrap(launched)
+        let logPath = try XCTUnwrap(launch.logPath)
+        XCTAssertEqual(
+            data["playcoverLogPath"] as? String,
+            logPath
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: logPath)
+        )
+        XCTAssertEqual(
+            try SessionService.readDriverLockInfo(
+                paths: fixture.paths
+            )?.sessionIdentifier,
+            launch.sessionID
+        )
+    }
+
+    func testUnterminatedLaunchFailureDoesNotPublishDriverLock()
         throws
     {
         let fixture = try SessionFixture()
@@ -1149,26 +1381,15 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(
             result.stderr.contains(
-                "active session lock must be preserved"
+                "durable pending launch journal must be preserved"
             )
         )
-        let lock = try XCTUnwrap(
+        XCTAssertNil(
             try SessionService.readDriverLockInfo(
                 paths: fixture.paths
-            )
-        )
-        XCTAssertEqual(lock.runnerPid, Int(expected?.pid ?? 0))
-        XCTAssertEqual(
-            lock.sessionIdentifier,
-            expected?.sessionID
-        )
-        XCTAssertEqual(
-            lock.playCoverRuntimeSocketPath,
-            expected?.runtimeSocketPath
-        )
-        XCTAssertEqual(
-            lock.playCoverLogPath,
-            expected?.logPath
+            ),
+            "a launch which never passed the ready gate must not "
+                + "publish driver.lock"
         )
         let expectedLogPath = try XCTUnwrap(expected?.logPath)
         XCTAssertTrue(
@@ -3114,6 +3335,7 @@ final class PlayCoverSessionTests: XCTestCase {
         sessionID: String,
         socketPath: String,
         logPath: String? = nil,
+        usesPendingLaunchJournal: Bool = false,
         reused: Bool
     ) -> PlayCoverSessionService.LaunchResult {
         .init(
@@ -3126,6 +3348,8 @@ final class PlayCoverSessionTests: XCTestCase {
             pid: 4_242,
             runtimeSocketPath: socketPath,
             logPath: logPath,
+            usesPendingLaunchJournal:
+                usesPendingLaunchJournal,
             reused: reused
         )
     }

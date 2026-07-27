@@ -218,6 +218,18 @@ public enum SessionService {
                 info: PlayCoverSessionService.makeSessionInfo(from: result),
                 paths: paths
             )
+            do {
+                try PlayCoverSessionService
+                    .retirePendingLaunchJournalAfterDriverCommit(
+                        result: result,
+                        paths: paths
+                    )
+            } catch {
+                throw PlayCoverSessionJournalHandoffError(
+                    result: result,
+                    underlying: error
+                )
+            }
             let cacheDisposition = result.reused ? "reused" : "prepared"
             let pruning =
                 PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
@@ -246,43 +258,14 @@ public enum SessionService {
             output += "PlayCover timing: \(timing.outputLine)\n"
             return output
         } catch let error as
+                PlayCoverSessionJournalHandoffError {
+            throw error
+        } catch let error as
                 PlayCoverSessionUnterminatedLaunchError {
-            do {
-                try writeDriverLock(
-                    info: PlayCoverSessionService.makeSessionInfo(
-                        from: error.result
-                    ),
-                    paths: paths
-                )
-            } catch let lockError {
-                do {
-                    _ = try PlayCoverSessionService.terminate(
-                        result: error.result
-                    )
-                    clearDriverLock(paths: paths)
-                } catch let finalCleanupError {
-                    throw PlayCoverSessionCommitRollbackError(
-                        result: error.result,
-                        originalError: CLIParseError.invalidValue(
-                            "\(error). Preserving the active session "
-                                + "lock also failed: \(lockError)"
-                        ),
-                        cleanupError: finalCleanupError
-                    )
-                }
-                let stoppedError = CLIParseError.invalidValue(
-                    "\(error). The App was stopped because its "
-                        + "active session lock could not be written: "
-                        + "\(lockError)"
-                )
-                if let logPath = error.result.logPath {
-                    throw PlayCoverSessionLoggedLaunchError(
-                        logPath: logPath,
-                        underlying: stoppedError
-                    )
-                }
-                throw stoppedError
-            }
+            // The ready gate did not complete, so driver.lock must not
+            // advertise an active backend. The durable owned journal is the
+            // sole recovery authority for `status`, `stop`, and the next
+            // `start`.
             throw error
         } catch {
             if let launch {
@@ -297,7 +280,20 @@ public enum SessionService {
                     reportedError = error
                 }
                 do {
-                    _ = try PlayCoverSessionService.terminate(result: launch)
+                    if launch.usesPendingLaunchJournal {
+                        try PlayCoverPendingLaunchCoordinator
+                            .rollbackAfterDriverCommitFailure(
+                                result: launch,
+                                paths: paths
+                            )
+                    } else {
+                        _ = try PlayCoverSessionService.terminate(
+                            result: launch
+                        )
+                        try DriverSessionStore.removeDriverLock(
+                            paths: paths
+                        )
+                    }
                 } catch let cleanupError {
                     throw PlayCoverSessionCommitRollbackError(
                         result: launch,
@@ -305,7 +301,6 @@ public enum SessionService {
                         cleanupError: cleanupError
                     )
                 }
-                clearDriverLock(paths: paths)
                 throw reportedError
             }
             clearDriverLock(paths: paths)
@@ -314,6 +309,9 @@ public enum SessionService {
     }
 
     private static func prepareForStart(paths: IOSUsePaths) throws {
+        try PlayCoverPendingLaunchCoordinator.recoverBeforeStart(
+            paths: paths
+        )
         if let current = try readDriverLockInfo(paths: paths) {
             if isIncompleteRealDriverLock(current) {
                 try cleanupIncompleteRealDriverLock(current, paths: paths)
@@ -361,7 +359,32 @@ public enum SessionService {
     }
 
     private static func stopLocked(paths: IOSUsePaths) throws -> String {
-        let current = try requireDriverLock(paths: paths)
+        guard let current = try readDriverLockInfo(paths: paths) else {
+            if let recovered = try PlayCoverPendingLaunchCoordinator
+                .stopPendingWithoutDriverLock(paths: paths) {
+                let pidText = recovered.pid.map {
+                    " (pid \($0))"
+                } ?? ""
+                return "PlayCover pending launch stopped\(pidText)\n"
+                    + "PlayCover session stopped\n"
+            }
+            _ = try requireDriverLock(paths: paths)
+            preconditionFailure(
+                "requireDriverLock must throw when driver.lock is absent"
+            )
+        }
+        if let recovered =
+                try PlayCoverPendingLaunchCoordinator
+                    .reconcilePendingWithDriverLock(
+                        current,
+                        paths: paths
+                    ) {
+            let pidText = recovered.pid.map {
+                " (pid \($0))"
+            } ?? ""
+            return "PlayCover pending launch stopped\(pidText)\n"
+                + "PlayCover session stopped\n"
+        }
         if current.deviceType == PlayCoverSessionService.deviceType {
             let pid = try PlayCoverSessionService.terminate(
                 session: current

@@ -228,9 +228,24 @@ public struct IOSUseCLI: Sendable {
             }
         case .stop:
             do {
-                return CLIResult(exitCode: 0, stdout: try SessionService.stop(paths: paths))
+                let output = try SessionService.stop(paths: paths)
+                if json {
+                    let snapshot = StatusService.machineSnapshot(
+                        paths: paths
+                    )
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: snapshot.data,
+                        warnings: snapshot.warnings
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: output)
             } catch {
-                return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
             }
         case .proxy(.doctor):
             return CLIResult(exitCode: 0, stdout: ProxyService.doctor(paths: paths))

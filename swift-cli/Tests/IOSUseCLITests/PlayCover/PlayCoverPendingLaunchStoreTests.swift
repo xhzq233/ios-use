@@ -157,6 +157,49 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         XCTAssertEqual(record.terminalCallback?.outcome, .failure)
     }
 
+    func testDurableDriverLockRetiresMatchingPendingJournal()
+        throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try advanceToSubmissionArmed(fixture)
+        let owner = PlayCoverPendingLaunchStore.Owner(
+            pid: 601,
+            processBirthMicroseconds: 602,
+            source: .authenticatedRuntime
+        )
+        _ = try PlayCoverPendingLaunchStore.markOwned(
+            sessionID: fixture.sessionID,
+            owner: owner,
+            callbackSucceeded: false,
+            paths: fixture.paths
+        )
+        let result = PlayCoverSessionService.LaunchResult(
+            sessionID: fixture.sessionID,
+            appPath: fixture.appPath,
+            bundleIdentifier: "com.example.fixture",
+            executablePath: fixture.executablePath,
+            generationKey: fixture.generationKey,
+            productType: "iPhone16,2",
+            pid: owner.pid,
+            runtimeSocketPath:
+                fixture.intent.runtimeSocketPath,
+            usesPendingLaunchJournal: true,
+            reused: true
+        )
+
+        try PlayCoverSessionService
+            .retirePendingLaunchJournalAfterDriverCommit(
+                result: result,
+                paths: fixture.paths
+            )
+
+        XCTAssertNil(
+            try PlayCoverPendingLaunchStore.load(
+                paths: fixture.paths
+            )
+        )
+    }
+
     func testInvalidBootAndCleanupTransitionsDoNotMutateJournal()
         throws {
         let fixture = try makeFixture()

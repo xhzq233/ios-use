@@ -10,6 +10,7 @@ final class PlayCoverCoreTests: XCTestCase {
         PlayCoverService.failedLaunchTerminatorOverrideForTesting = nil
         PlayCoverService.failedLaunchProcessStateOverrideForTesting = nil
         PlayCoverService.failedLaunchSignalOverrideForTesting = nil
+        PlayCoverService.keyCoverLockOverrideForTesting = nil
         PlayCoverService.launchAliasRootOverrideForTesting = nil
         PlayCoverService.launchIntegrityEventOverrideForTesting = nil
         #if canImport(AppKit)
@@ -979,6 +980,162 @@ final class PlayCoverCoreTests: XCTestCase {
     }
 
     #if canImport(AppKit)
+    func testPendingLaunchHooksAndRestartableAliasCleanup()
+        throws {
+        let source = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: source.root) }
+        var template = Array("/tmp/iu-alias-XXXXXX".utf8CString)
+        let rootPointer = try XCTUnwrap(Darwin.mkdtemp(&template))
+        let root = URL(
+            fileURLWithPath: String(cString: rootPointer),
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root.path]
+        )
+        try SessionOperationLock.withExclusiveLock(paths: paths) {}
+
+        let generationKey = String(repeating: "9", count: 64)
+        let generation = URL(
+            fileURLWithPath: paths.playcoverPrepared,
+            isDirectory: true
+        ).appendingPathComponent(
+            generationKey,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: generation,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let app = generation.appendingPathComponent(
+            "Fixture.app",
+            isDirectory: true
+        )
+        try FileManager.default.copyItem(
+            at: source.app,
+            to: app
+        )
+        let inspection = try PlayCoverService.inspect(
+            appPath: app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: app.path,
+            generationKey: generationKey
+        )
+        let aliasRoot = root.appendingPathComponent(
+            "launch-aliases",
+            isDirectory: true
+        )
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            aliasRoot
+        let sessionID = UUID().uuidString.lowercased()
+        let intent = PlayCoverPendingLaunchStore.Intent(
+            sessionID: sessionID,
+            runtimeSocketPath:
+                try paths.playCoverRuntimeSocketPath(
+                    sessionID: sessionID
+                ),
+            generationKey: generationKey,
+            appPath: app.path,
+            bundleIdentifier: manifest.bundleIdentifier,
+            executablePath: manifest.executablePath,
+            aliasPath: PlayCoverService.sessionLaunchAlias(
+                sessionID: sessionID
+            ).bundleURL.path
+        )
+        _ = try PlayCoverPendingLaunchStore.createIntent(
+            intent,
+            paths: paths
+        )
+        PlayCoverService.workspaceOpenOverrideForTesting = {
+            _,
+            _,
+            completion in
+            completion(
+                nil,
+                NSError(
+                    domain: "PlayCoverCoreTests",
+                    code: 7
+                )
+            )
+        }
+        var launchAlias:
+            PlayCoverService.SessionLaunchAlias?
+        var openSubmitted = false
+        var postSubmissionIntegrityError: Error?
+        var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
+        try PlayCoverService
+            .withUncheckedLaunchCapabilityForTesting(
+                appPath: manifest.preparedAppPath
+            ) { capability in
+                XCTAssertThrowsError(
+                    try PlayCoverService
+                        .launchPreparedApplication(
+                            manifest: manifest,
+                            launchCapability: capability,
+                            sessionID: sessionID,
+                            runtimeSocketPath:
+                                intent.runtimeSocketPath,
+                            pendingLaunchPaths: paths,
+                            deadline:
+                                ProcessInfo.processInfo
+                                    .systemUptime + 0.05,
+                            launchAlias: &launchAlias,
+                            workspaceOpenSubmitted:
+                                &openSubmitted,
+                            postSubmissionIntegrityError:
+                                &postSubmissionIntegrityError,
+                            launchPhaseTiming:
+                                &launchPhaseTiming
+                        )
+                )
+            }
+        XCTAssertTrue(openSubmitted)
+        let pending = try XCTUnwrap(
+            PlayCoverPendingLaunchStore.load(paths: paths)
+        )
+        XCTAssertEqual(pending.phase, .terminalCallback)
+        XCTAssertNotNil(pending.aliasDevice)
+        XCTAssertNotNil(pending.aliasInode)
+        XCTAssertEqual(
+            pending.terminalCallback?.outcome,
+            .failure
+        )
+        let alias = try XCTUnwrap(launchAlias)
+        let names = try FileManager.default
+            .contentsOfDirectory(atPath: alias.bundleURL.path)
+            .sorted()
+        let confirmed = try PlayCoverPendingLaunchStore
+            .markConfirmedStopped(
+                sessionID: sessionID,
+                cleanupProof:
+                    .terminalCallbackAndEmptyCensus,
+                paths: paths
+            )
+
+        try FileManager.default.removeItem(
+            at: alias.bundleURL.appendingPathComponent(
+                try XCTUnwrap(names.first)
+            )
+        )
+        try PlayCoverService.removeSessionLaunchAlias(
+            pendingLaunch: confirmed,
+            manifest: manifest
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: alias.bundleURL.path
+            )
+        )
+        try PlayCoverPendingLaunchStore.removeConfirmed(
+            sessionID: sessionID,
+            paths: paths
+        )
+    }
+
     func testWorkspaceLaunchSubmitsTheSessionAlias() throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -2214,6 +2371,52 @@ final class PlayCoverCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(signals, [SIGTERM])
+    }
+
+    func testPendingLaunchOwnerRevalidationRejectsPIDReuse()
+        throws
+    {
+        let executablePath = "/tmp/Prepared.app/Fixture"
+        let identity = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 42,
+            bundleIdentifier: "com.example.fixture",
+            bundleURLPath: "/tmp/Launch.app",
+            executablePath: executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .workspaceCallback
+        )
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            pid in
+            XCTAssertEqual(pid, identity.pid)
+            return .running(
+                executablePath: executablePath,
+                processStartTimeMicroseconds: 100
+            )
+        }
+
+        XCTAssertNoThrow(
+            try PlayCoverService.revalidatePendingLaunchIdentity(
+                identity
+            )
+        )
+
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            _ in .running(
+                executablePath: executablePath,
+                processStartTimeMicroseconds: 101
+            )
+        }
+        XCTAssertThrowsError(
+            try PlayCoverService.revalidatePendingLaunchIdentity(
+                identity
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "PID was reused before ownership commit"
+                )
+            )
+        }
     }
 
     func testRuntimeHelloTimeoutRollbackTreatsPostSIGTERMESRCHAsExit()

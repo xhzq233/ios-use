@@ -200,4 +200,56 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
             "playcover_stdio_setup"
         )
     }
+
+    func testLaunchCleanupFailureIsRetryableMutationAndRetainsLog()
+        throws
+    {
+        let result = MachineOutput.failure(
+            command: "start",
+            error: PlayCoverSessionCleanupError(
+                operation: .launch,
+                cleanupError:
+                    PlayCoverBackendError.cacheTampered(
+                        "facade cleanup failed"
+                    ),
+                originalError:
+                    PlayCoverBackendError.launchTimedOut(
+                        "hello timed out"
+                    ),
+                logPath: "/tmp/stdio-session.log"
+            )
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        let envelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(result.stderr.utf8)
+            ) as? [String: Any]
+        )
+        let error = try XCTUnwrap(
+            envelope["error"] as? [String: Any]
+        )
+        XCTAssertEqual(error["category"] as? String, "session")
+        XCTAssertEqual(
+            error["code"] as? String,
+            "playcover_launch_cleanup_failed"
+        )
+        XCTAssertEqual(
+            error["phase"] as? String,
+            "playcover_launch_cleanup"
+        )
+        XCTAssertEqual(error["retryable"] as? Bool, true)
+        XCTAssertEqual(error["fatal"] as? Bool, false)
+        XCTAssertEqual(
+            error["mutationMayHaveApplied"] as? Bool,
+            true
+        )
+        let data = try XCTUnwrap(
+            envelope["data"] as? [String: Any]
+        )
+        XCTAssertEqual(
+            data["playcoverLogPath"] as? String,
+            "/tmp/stdio-session.log"
+        )
+    }
 }

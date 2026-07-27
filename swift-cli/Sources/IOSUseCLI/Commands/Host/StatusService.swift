@@ -120,7 +120,51 @@ public enum StatusService {
                 }
                 driver = .object(fields)
             } else {
-                driver = .object(["status": .string("notRunning")])
+                do {
+                    if let pending =
+                            try PlayCoverPendingLaunchCoordinator
+                                .readOnlySnapshot(paths: paths) {
+                        driver = .object([
+                            "status": .string(pending.status),
+                            "deviceType": .string(
+                                PlayCoverSessionService.deviceType
+                            ),
+                            "phase": .string(
+                                pending.phase.rawValue
+                            ),
+                            "sessionIdentifier": .string(
+                                pending.sessionID
+                            ),
+                            "bundleId": .string(
+                                pending.bundleIdentifier
+                            ),
+                            "playcoverGenerationKey": .string(
+                                pending.generationKey
+                            ),
+                            "ownerPid": pending.ownerPID.map {
+                                .integer(Int($0))
+                            } ?? .null,
+                            "reason": .string(pending.reason),
+                        ])
+                    } else {
+                        driver = .object([
+                            "status": .string("notRunning"),
+                        ])
+                    }
+                } catch {
+                    driver = .object([
+                        "status": .string("invalidPendingLaunch"),
+                        "deviceType": .string(
+                            PlayCoverSessionService.deviceType
+                        ),
+                        "error": .string(
+                            String(describing: error)
+                        ),
+                    ])
+                    warnings.append(
+                        "PlayCover pending launch is invalid: \(error)"
+                    )
+                }
             }
         } catch {
             driver = .object([
@@ -200,7 +244,32 @@ public enum StatusService {
     ) -> [String] {
         do {
             guard let info = try SessionService.readDriverLockInfo(paths: paths) else {
-                return ["  not running (no driver.lock)"]
+                do {
+                    guard let pending =
+                            try PlayCoverPendingLaunchCoordinator
+                                .readOnlySnapshot(paths: paths) else {
+                        return ["  not running (no driver.lock)"]
+                    }
+                    var parts = [
+                        pending.status,
+                        "device: \(PlayCoverSessionService.deviceType)",
+                        "phase: \(pending.phase.rawValue)",
+                        "session: \(pending.sessionID)",
+                        "bundle: \(pending.bundleIdentifier)",
+                        "generation: \(pending.generationKey)",
+                    ]
+                    if let ownerPID = pending.ownerPID {
+                        parts.append("owner pid: \(ownerPID)")
+                    }
+                    parts.append("reason: \(pending.reason)")
+                    return [
+                        "  - \(parts.joined(separator: " | "))",
+                    ]
+                } catch {
+                    return [
+                        "  invalid PlayCover pending launch: \(error)",
+                    ]
+                }
             }
             var parts = ["running", "udid: \(info.udid)", "device: \(info.deviceType)", "name: \(info.deviceName)", "iOS: \(info.deviceVersion)"]
             if let startMode = info.startMode, !startMode.isEmpty {

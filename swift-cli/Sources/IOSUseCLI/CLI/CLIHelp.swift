@@ -112,10 +112,13 @@ enum CLIHelp {
             """
         case "stop":
             return """
-            Usage: ios-use stop
+            Usage: ios-use stop [--json]
 
             Stop the active XCTest driver or exact PlayCover process recorded
             in driver.lock, then clear the active backend.
+
+            Options:
+              --json       Print the common machine-readable envelope
 
             """
         case "install":

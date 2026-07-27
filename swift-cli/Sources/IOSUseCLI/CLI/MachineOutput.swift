@@ -198,6 +198,40 @@ enum MachineOutput {
                 mutationMayHaveApplied: true
             )
         }
+        if let handoffError =
+                error as? PlayCoverSessionJournalHandoffError {
+            return MachineError(
+                message: handoffError.description,
+                category: IOSUseErrorCategory.session,
+                code: "playcover_session_handoff_failed",
+                phase: "playcover_session_commit",
+                retryable: false,
+                fatal: true,
+                mutationMayHaveApplied: true
+            )
+        }
+        if let cleanupError =
+                error as? PlayCoverSessionCleanupError {
+            let code: String
+            let phase: String
+            switch cleanupError.operation {
+            case .launch:
+                code = "playcover_launch_cleanup_failed"
+                phase = "playcover_launch_cleanup"
+            case .stop:
+                code = "playcover_stop_cleanup_failed"
+                phase = "playcover_stop_cleanup"
+            }
+            return MachineError(
+                message: cleanupError.description,
+                category: IOSUseErrorCategory.session,
+                code: code,
+                phase: phase,
+                retryable: true,
+                fatal: false,
+                mutationMayHaveApplied: true
+            )
+        }
         if let launchError = error as? PlayCoverUnterminatedLaunchError {
             return MachineError(
                 message: launchError.description,
@@ -371,6 +405,14 @@ enum MachineOutput {
         if let rollbackError =
                 error as? PlayCoverSessionCommitRollbackError {
             return rollbackError.result.logPath
+        }
+        if let handoffError =
+                error as? PlayCoverSessionJournalHandoffError {
+            return handoffError.result.logPath
+        }
+        if let cleanupError =
+                error as? PlayCoverSessionCleanupError {
+            return cleanupError.logPath
         }
         return nil
     }

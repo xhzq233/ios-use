@@ -249,9 +249,20 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             try Data(contentsOf: firstKey.decryptedKeyDB),
             payload
         )
+        KeyCover.shared = KeyCover()
         try PlayCoverHeadlessKeyCover.lock(
             bundleIdentifier: bundleID,
             managedHome: firstHome
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: firstKey.decryptedKeyDB.path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: firstKey.encryptedKeyDB.path
+            )
         )
 
         _ = try PlayCoverHeadlessKeyCover.configure(

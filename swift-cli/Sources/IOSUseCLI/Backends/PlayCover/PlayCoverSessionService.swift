@@ -4,6 +4,44 @@ import IOSUsePlayDevice
 import Darwin
 #endif
 
+struct PlayCoverSessionCleanupError: Error,
+    CustomStringConvertible
+{
+    enum Operation {
+        case launch
+        case stop
+    }
+
+    let operation: Operation
+    let cleanupError: Error
+    let originalError: Error?
+    let logPath: String?
+
+    var description: String {
+        let prefix: String
+        switch operation {
+        case .launch:
+            prefix =
+                "PlayCover launch failed and its exact process is "
+                + "stopped, but launch cleanup did not finish"
+        case .stop:
+            prefix =
+                "PlayCover stop applied its lifecycle mutation, "
+                + "but session cleanup did not finish"
+        }
+        return prefix
+            + ": \(cleanupError)"
+            + (originalError.map {
+                ". Original error: \($0)"
+            } ?? "")
+            + ". Durable recovery authority was preserved; "
+            + "retry `ios-use stop` after resolving the cleanup error."
+            + (logPath.map {
+                "\nPlayCover log: \($0)"
+            } ?? "")
+    }
+}
+
 struct PlayCoverSessionUnterminatedLaunchError: Error,
     CustomStringConvertible
 {
@@ -46,6 +84,22 @@ struct PlayCoverSessionCommitRollbackError: Error,
     }
 }
 
+struct PlayCoverSessionJournalHandoffError: Error,
+    CustomStringConvertible
+{
+    let result: PlayCoverSessionService.LaunchResult
+    let underlying: Error
+
+    var description: String {
+        "PlayCover driver.lock is durable, but pending launch "
+            + "handoff did not finish: \(underlying). The active "
+            + "session and recovery evidence were preserved."
+            + (result.logPath.map {
+                "\nPlayCover log: \($0)"
+            } ?? "")
+    }
+}
+
 enum PlayCoverSessionService {
     static let deviceType = "playcover"
 
@@ -67,6 +121,7 @@ enum PlayCoverSessionService {
         let pid: Int32
         let runtimeSocketPath: String
         let logPath: String?
+        let usesPendingLaunchJournal: Bool
         let reused: Bool
         let timing: PlayCoverStartTiming
 
@@ -80,6 +135,7 @@ enum PlayCoverSessionService {
             pid: Int32,
             runtimeSocketPath: String,
             logPath: String? = nil,
+            usesPendingLaunchJournal: Bool = false,
             reused: Bool,
             timing: PlayCoverStartTiming = .empty
         ) {
@@ -92,6 +148,8 @@ enum PlayCoverSessionService {
             self.pid = pid
             self.runtimeSocketPath = runtimeSocketPath
             self.logPath = logPath
+            self.usesPendingLaunchJournal =
+                usesPendingLaunchJournal
             self.reused = reused
             self.timing = timing
         }
@@ -317,6 +375,7 @@ enum PlayCoverSessionService {
                         sessionID: sessionID,
                         runtimeSocketPath: socketPath,
                         stdioLog: stdioLog,
+                        pendingLaunchPaths: paths,
                         launchPhaseTiming: &launchPhaseTiming,
                         timeout: timeout
                     )
@@ -342,6 +401,7 @@ enum PlayCoverSessionService {
                             runtimeSocketPath:
                                 error.runtimeSocketPath,
                             logPath: stdioLog?.path,
+                            usesPendingLaunchJournal: true,
                             reused: resolved.reused,
                             timing: timing
                         ),
@@ -360,6 +420,7 @@ enum PlayCoverSessionService {
                     pid: identity.pid,
                     runtimeSocketPath: identity.runtimeSocketPath,
                     logPath: stdioLog?.path,
+                    usesPendingLaunchJournal: true,
                     reused: resolved.reused
                 )
             }
@@ -376,6 +437,8 @@ enum PlayCoverSessionService {
                 pid: rawResult.pid,
                 runtimeSocketPath: rawResult.runtimeSocketPath,
                 logPath: stdioLog?.path,
+                usesPendingLaunchJournal:
+                    rawResult.usesPendingLaunchJournal,
                 reused: resolved.reused,
                 timing: timing
             )
@@ -410,6 +473,134 @@ enum PlayCoverSessionService {
         }
     }
 
+    static func retirePendingLaunchJournalAfterDriverCommit(
+        result: LaunchResult,
+        paths: IOSUsePaths
+    ) throws {
+        guard result.usesPendingLaunchJournal else {
+            return
+        }
+        try retirePendingLaunchJournalAfterDriverCommit(
+            sessionID: result.sessionID,
+            pid: result.pid,
+            appPath: result.appPath,
+            bundleIdentifier: result.bundleIdentifier,
+            executablePath: result.executablePath,
+            generationKey: result.generationKey,
+            runtimeSocketPath: result.runtimeSocketPath,
+            paths: paths,
+            required: true
+        )
+    }
+
+    static func retirePendingLaunchJournalAfterDriverCommit(
+        session: SessionService.Info,
+        paths: IOSUsePaths
+    ) throws {
+        guard session.deviceType == deviceType,
+              let sessionID = session.sessionIdentifier,
+              let pidValue = session.runnerPid,
+              pidValue > 0,
+              pidValue <= Int(Int32.max),
+              let appPath = session.playCoverAppPath,
+              let bundleIdentifier = session.bundleId,
+              let executablePath =
+                session.playCoverExecutablePath,
+              let generationKey =
+                session.playCoverGenerationKey,
+              let runtimeSocketPath =
+                session.playCoverRuntimeSocketPath else {
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: PlayCover handoff identity "
+                    + "is incomplete."
+            )
+        }
+        try retirePendingLaunchJournalAfterDriverCommit(
+            sessionID: sessionID,
+            pid: Int32(pidValue),
+            appPath: appPath,
+            bundleIdentifier: bundleIdentifier,
+            executablePath: executablePath,
+            generationKey: generationKey,
+            runtimeSocketPath: runtimeSocketPath,
+            paths: paths,
+            required: false
+        )
+    }
+
+    private static func retirePendingLaunchJournalAfterDriverCommit(
+        sessionID: String,
+        pid: Int32,
+        appPath: String,
+        bundleIdentifier: String,
+        executablePath: String,
+        generationKey: String,
+        runtimeSocketPath: String,
+        paths: IOSUsePaths,
+        required: Bool
+    ) throws {
+        guard var record = try PlayCoverPendingLaunchStore.load(
+            paths: paths
+        ) else {
+            if required {
+                throw PlayCoverPendingLaunchStoreError(
+                    message:
+                        "driver.lock commit has no matching "
+                        + "pending launch"
+                )
+            }
+            return
+        }
+        guard record.sessionID == sessionID,
+              record.owner?.pid == pid,
+              record.appPath == appPath,
+              record.bundleIdentifier == bundleIdentifier,
+              record.executablePath == executablePath,
+              record.generationKey == generationKey,
+              record.runtimeSocketPath == runtimeSocketPath else {
+            throw PlayCoverPendingLaunchStoreError(
+                message:
+                    "driver.lock does not match the pending "
+                    + "launch authority"
+            )
+        }
+        switch record.phase {
+        case .owned:
+            record = try PlayCoverPendingLaunchStore
+                .markDriverLockCommitted(
+                    sessionID: sessionID,
+                    paths: paths
+                )
+            fallthrough
+        case .driverLockCommitted:
+            record = try PlayCoverPendingLaunchStore
+                .markConfirmedStopped(
+                    sessionID: sessionID,
+                    cleanupProof: .driverLockRetired,
+                    paths: paths
+                )
+        case .confirmedStopped:
+            guard record.cleanupProof == .driverLockRetired else {
+                throw PlayCoverPendingLaunchStoreError(
+                    message:
+                        "driver.lock handoff conflicts with "
+                        + "pending cleanup proof"
+                )
+            }
+        case .intent, .aliasReady, .submissionArmed,
+             .terminalCallback:
+            throw PlayCoverPendingLaunchStoreError(
+                message:
+                    "driver.lock was committed before durable "
+                    + "process ownership"
+            )
+        }
+        try PlayCoverPendingLaunchStore.removeConfirmed(
+            sessionID: sessionID,
+            paths: paths
+        )
+    }
+
     @discardableResult
     static func terminate(result: LaunchResult) throws -> Int32 {
         try terminate(session: makeSessionInfo(from: result))
@@ -425,10 +616,20 @@ enum PlayCoverSessionService {
                 "Invalid driver.lock: PlayCover sessionID is missing."
             )
         }
-        try PlayCoverService.removeSessionLaunchAlias(
-            sessionID: sessionID,
-            manifest: manifest
-        )
+        do {
+            try PlayCoverService.lockKeyCover(for: manifest)
+            try PlayCoverService.removeSessionLaunchAlias(
+                sessionID: sessionID,
+                manifest: manifest
+            )
+        } catch {
+            throw PlayCoverSessionCleanupError(
+                operation: .stop,
+                cleanupError: error,
+                originalError: nil,
+                logPath: session.playCoverLogPath
+            )
+        }
         return pid
     }
 
@@ -676,6 +877,28 @@ enum PlayCoverSessionService {
             throw PlayCoverBackendError.terminateFailed(
                 "active session Runtime socket does not match its "
                     + "exact sessionID and prepared generation"
+            )
+        }
+        return manifest
+    }
+
+    static func validatePendingGeneration(
+        _ record: PlayCoverPendingLaunchStore.Record
+    ) throws -> PlayCoverPrepareManifest {
+        let manifest = try fastVerify(
+            appPath: record.appPath,
+            expectedGenerationIdentity: nil
+        ).manifest
+        guard manifest.preparedAppPath == record.appPath,
+              manifest.bundleIdentifier
+                == record.bundleIdentifier,
+              manifest.executablePath
+                == record.executablePath,
+              manifest.generationKey
+                == record.generationKey else {
+            throw PlayCoverBackendError.terminateFailed(
+                "pending launch no longer matches its exact "
+                    + "prepared App generation"
             )
         }
         return manifest

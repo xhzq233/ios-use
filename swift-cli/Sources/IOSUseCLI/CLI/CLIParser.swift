@@ -75,7 +75,7 @@ public enum CLIParser {
         }
         if json {
             switch parsed {
-            case .start, .status, .install, .apps, .open,
+            case .start, .stop, .status, .install, .apps, .open,
                     .appLifecycle, .driver:
                 break
             default:
