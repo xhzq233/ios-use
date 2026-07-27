@@ -26,7 +26,10 @@ let package = Package(
                 .product(name: "Yams", package: "Yams"),
             ],
             path: "PlayCover",
-            exclude: ["Model/PlayApp.swift"],
+            exclude: [
+                "Model/PlayApp.swift",
+                "Utils/Extensions/PlayAppExtensions.swift",
+            ],
             sources: [
                 "PlayCoverError.swift",
                 "AppInstaller/Installer.swift",

@@ -106,6 +106,15 @@ public enum PlayCoverService {
         ((Int32) -> FailedLaunchProcessState)?
     static var failedLaunchSignalOverrideForTesting:
         ((Int32, Int32) -> Int32)?
+    static var launchAliasRootOverrideForTesting: URL?
+    #if canImport(AppKit)
+    static var workspaceOpenOverrideForTesting:
+        ((
+            URL,
+            NSWorkspace.OpenConfiguration,
+            @escaping (NSRunningApplication?, Error?) -> Void
+        ) -> Void)?
+    #endif
     static var fastVerifyEventOverrideForTesting:
         ((FastVerifyEvent) throws -> Void)?
     static var generationKeyComputationObserverForTesting:
@@ -690,6 +699,8 @@ public enum PlayCoverService {
         try validateFreshRuntimeSocketPath(runtimeSocketPath)
 
         var launched: LaunchedApplicationIdentity?
+        var launchAlias: SessionLaunchAlias?
+        var workspaceOpenSubmitted = false
         var keyCoverUnlocked = false
         do {
             try PlayCoverHeadlessKeyCover.unlock(
@@ -706,13 +717,16 @@ public enum PlayCoverService {
                 manifest: manifest,
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
-                deadline: deadline
+                deadline: deadline,
+                launchAlias: &launchAlias,
+                workspaceOpenSubmitted: &workspaceOpenSubmitted
             )
             launched = identity
-            guard identity.pid > 0,
+            guard let launchAlias,
+                  identity.pid > 0,
                   identity.bundleIdentifier == manifest.bundleIdentifier,
                   canonicalPath(identity.bundleURLPath)
-                    == canonicalPath(manifest.preparedAppPath),
+                    == canonicalPath(launchAlias.bundleURL.path),
                   canonicalPath(identity.executablePath)
                     == canonicalPath(manifest.executablePath) else {
                 throw PlayCoverBackendError.launchFailed(
@@ -798,6 +812,23 @@ public enum PlayCoverService {
                     )
                 }
             }
+            var errorToThrow = error
+            if let launchAlias,
+               launched != nil || !workspaceOpenSubmitted {
+                do {
+                    try removeSessionLaunchAlias(
+                        launchAlias,
+                        manifest: manifest
+                    )
+                } catch let cleanupError {
+                    errorToThrow = PlayCoverBackendError.launchFailed(
+                        "the App launch failed and its process is stopped, "
+                            + "but the session launch alias could not be "
+                            + "removed: \(cleanupError). Original error: "
+                            + "\(error)"
+                    )
+                }
+            }
             if keyCoverUnlocked {
                 try PlayCoverHeadlessKeyCover.lock(
                     bundleIdentifier: manifest.bundleIdentifier,
@@ -807,7 +838,7 @@ public enum PlayCoverService {
                     )
                 )
             }
-            throw error
+            throw errorToThrow
         }
     }
 
@@ -830,6 +861,10 @@ public enum PlayCoverService {
         guard let actualExecutable = PlayCoverRuntimeClient.executablePath(
             for: identity.pid
         ) else {
+            try removeSessionLaunchAlias(
+                sessionID: identity.sessionID,
+                manifest: manifest
+            )
             return identity.pid
         }
         guard canonicalPath(actualExecutable)
@@ -860,6 +895,10 @@ public enum PlayCoverService {
                 fileURLWithPath: managedHomePath(for: manifest),
                 isDirectory: true
             )
+        )
+        try removeSessionLaunchAlias(
+            sessionID: identity.sessionID,
+            manifest: manifest
         )
         return identity.pid
     }
@@ -2170,6 +2209,11 @@ public enum PlayCoverService {
         let source: LaunchIdentitySource
     }
 
+    struct SessionLaunchAlias: Equatable {
+        let rootURL: URL
+        let bundleURL: URL
+    }
+
     enum FailedLaunchProcessState: Equatable {
         case running(
             executablePath: String,
@@ -2196,19 +2240,310 @@ public enum PlayCoverService {
         }
     }
 
+    private struct LaunchAliasEntry {
+        let name: String
+        let destination: String
+    }
+
+    static func sessionLaunchAlias(
+        sessionID: String
+    ) -> SessionLaunchAlias {
+        let root: URL
+        if let launchAliasRootOverrideForTesting {
+            root = launchAliasRootOverrideForTesting.standardizedFileURL
+        } else {
+            root = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(
+                    "Applications/PlayCover",
+                    isDirectory: true
+                )
+        }
+        return SessionLaunchAlias(
+            rootURL: root,
+            bundleURL: root.appendingPathComponent(
+                "a-\(sha256(Data(sessionID.utf8))).app",
+                isDirectory: true
+            )
+        )
+    }
+
+    /// Pinned PlayCover launches a real `.app` directory whose top-level
+    /// children are symlinks to the prepared App. Keep that exact facade
+    /// shape, but give every ios-use session a private random identity and
+    /// retain the prepared generation as the only session authority.
+    static func createSessionLaunchAlias(
+        manifest: PlayCoverPrepareManifest,
+        sessionID: String
+    ) throws -> SessionLaunchAlias {
+        let alias = sessionLaunchAlias(sessionID: sessionID)
+        let entries = try launchAliasEntries(manifest: manifest)
+        try ensureLaunchAliasRoot(alias.rootURL)
+        var status = stat()
+        guard lstat(alias.bundleURL.path, &status) != 0,
+              errno == ENOENT else {
+            throw PlayCoverBackendError.launchFailed(
+                "the random session launch alias already exists"
+            )
+        }
+        var createdAliasDirectory = false
+        do {
+            try FileManager.default.createDirectory(
+                at: alias.bundleURL,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o755]
+            )
+            createdAliasDirectory = true
+            for entry in entries {
+                try FileManager.default.createSymbolicLink(
+                    atPath: alias.bundleURL
+                        .appendingPathComponent(entry.name).path,
+                    withDestinationPath: entry.destination
+                )
+            }
+            try validateSessionLaunchAlias(
+                alias,
+                expectedEntries: entries
+            )
+            return alias
+        } catch {
+            if createdAliasDirectory {
+                try? removePartialSessionLaunchAlias(alias)
+            }
+            if let backendError = error as? PlayCoverBackendError {
+                throw backendError
+            }
+            throw PlayCoverBackendError.launchFailed(
+                "cannot create the pinned PlayCover session launch "
+                    + "alias: \(error)"
+            )
+        }
+    }
+
+    static func removeSessionLaunchAlias(
+        sessionID: String,
+        manifest: PlayCoverPrepareManifest
+    ) throws {
+        try removeSessionLaunchAlias(
+            sessionLaunchAlias(sessionID: sessionID),
+            manifest: manifest
+        )
+    }
+
+    static func removeSessionLaunchAlias(
+        _ alias: SessionLaunchAlias,
+        manifest: PlayCoverPrepareManifest
+    ) throws {
+        var rootStatus = stat()
+        if lstat(alias.rootURL.path, &rootStatus) != 0 {
+            if errno == ENOENT {
+                return
+            }
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot inspect the launch alias root: errno \(errno)"
+            )
+        }
+        try validateLaunchAliasRootStatus(rootStatus)
+        var aliasStatus = stat()
+        if lstat(alias.bundleURL.path, &aliasStatus) != 0 {
+            if errno == ENOENT {
+                return
+            }
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot inspect the session launch alias: errno \(errno)"
+            )
+        }
+        try validateSessionLaunchAlias(
+            alias,
+            expectedEntries: try launchAliasEntries(
+                manifest: manifest
+            )
+        )
+        try FileManager.default.removeItem(at: alias.bundleURL)
+    }
+
+    private static func ensureLaunchAliasRoot(
+        _ root: URL
+    ) throws {
+        var status = stat()
+        if lstat(root.path, &status) != 0 {
+            guard errno == ENOENT else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "cannot inspect the launch alias root: errno \(errno)"
+                )
+            }
+            do {
+                try FileManager.default.createDirectory(
+                    at: root,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
+            } catch {
+                throw PlayCoverBackendError.launchFailed(
+                    "cannot create the owner-only launch alias root: "
+                        + "\(error)"
+                )
+            }
+            guard lstat(root.path, &status) == 0 else {
+                throw PlayCoverBackendError.launchFailed(
+                    "the launch alias root disappeared after creation"
+                )
+            }
+        }
+        try validateLaunchAliasRootStatus(status)
+    }
+
+    private static func validateLaunchAliasRootStatus(
+        _ status: stat
+    ) throws {
+        #if canImport(Darwin)
+        let expectedUserID = geteuid()
+        #else
+        let expectedUserID: UInt32 = status.st_uid
+        #endif
+        guard status.st_mode & S_IFMT == S_IFDIR,
+              status.st_uid == expectedUserID,
+              status.st_mode & 0o700 == 0o700,
+              status.st_mode & 0o022 == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the PlayCover launch alias root is not an owned, "
+                    + "non-writable real directory"
+            )
+        }
+    }
+
+    private static func validateSessionLaunchAlias(
+        _ alias: SessionLaunchAlias,
+        expectedEntries: [LaunchAliasEntry]
+    ) throws {
+        var aliasStatus = stat()
+        #if canImport(Darwin)
+        let expectedUserID = geteuid()
+        #else
+        let expectedUserID: UInt32 = aliasStatus.st_uid
+        #endif
+        guard lstat(alias.bundleURL.path, &aliasStatus) == 0,
+              aliasStatus.st_mode & S_IFMT == S_IFDIR,
+              aliasStatus.st_uid == expectedUserID,
+              aliasStatus.st_mode & 0o022 == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the session launch alias is not an owned real directory"
+            )
+        }
+        let actualNames = try FileManager.default.contentsOfDirectory(
+            atPath: alias.bundleURL.path
+        )
+        let expected = Dictionary(
+            uniqueKeysWithValues: expectedEntries.map {
+                ($0.name, $0.destination)
+            }
+        )
+        guard Set(actualNames) == Set(expected.keys),
+              actualNames.count == expected.count else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the session launch alias top-level inventory changed"
+            )
+        }
+        for name in actualNames {
+            let child = alias.bundleURL.appendingPathComponent(name)
+            var childStatus = stat()
+            guard let destination = expected[name],
+                  lstat(child.path, &childStatus) == 0,
+                  childStatus.st_mode & S_IFMT == S_IFLNK,
+                  childStatus.st_uid == expectedUserID,
+                  try FileManager.default.destinationOfSymbolicLink(
+                    atPath: child.path
+                  ) == destination else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "the session launch alias entry changed: \(name)"
+                )
+            }
+        }
+    }
+
+    private static func removePartialSessionLaunchAlias(
+        _ alias: SessionLaunchAlias
+    ) throws {
+        var aliasStatus = stat()
+        guard lstat(alias.bundleURL.path, &aliasStatus) == 0 else {
+            return
+        }
+        #if canImport(Darwin)
+        let expectedUserID = geteuid()
+        #else
+        let expectedUserID: UInt32 = aliasStatus.st_uid
+        #endif
+        guard aliasStatus.st_mode & S_IFMT == S_IFDIR,
+              aliasStatus.st_uid == expectedUserID else {
+            return
+        }
+        let names = try FileManager.default.contentsOfDirectory(
+            atPath: alias.bundleURL.path
+        )
+        for name in names {
+            var childStatus = stat()
+            guard lstat(
+                alias.bundleURL.appendingPathComponent(name).path,
+                &childStatus
+            ) == 0,
+            childStatus.st_mode & S_IFMT == S_IFLNK,
+            childStatus.st_uid == expectedUserID else {
+                return
+            }
+        }
+        try FileManager.default.removeItem(at: alias.bundleURL)
+    }
+
+    private static func launchAliasEntries(
+        manifest: PlayCoverPrepareManifest
+    ) throws -> [LaunchAliasEntry] {
+        let app = URL(
+            fileURLWithPath: manifest.preparedAppPath,
+            isDirectory: true
+        ).standardizedFileURL
+        let names: [String]
+        do {
+            names = try FileManager.default.contentsOfDirectory(
+                atPath: app.path
+            ).sorted()
+        } catch {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot enumerate the prepared App for its launch alias: "
+                    + "\(error)"
+            )
+        }
+        guard !names.isEmpty,
+              names.allSatisfy({
+                !$0.isEmpty
+                    && $0 != "."
+                    && $0 != ".."
+                    && !$0.contains("/")
+              }) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the prepared App has no safe top-level launch inventory"
+            )
+        }
+        return names.map {
+            LaunchAliasEntry(
+                name: $0,
+                destination: app.appendingPathComponent($0).path
+            )
+        }
+    }
+
     static func acceptsOwnedLaunchIdentity(
         pid: Int32,
         bundleIdentifier: String,
         bundleURLPath: String,
         executablePath: String,
         existingPIDs: Set<Int32>,
-        manifest: PlayCoverPrepareManifest
+        manifest: PlayCoverPrepareManifest,
+        launchAliasPath: String
     ) -> Bool {
         pid > 0
             && !existingPIDs.contains(pid)
             && bundleIdentifier == manifest.bundleIdentifier
             && canonicalPath(bundleURLPath)
-                == canonicalPath(manifest.preparedAppPath)
+                == canonicalPath(launchAliasPath)
             && canonicalPath(executablePath)
                 == canonicalPath(manifest.executablePath)
     }
@@ -2229,11 +2564,13 @@ public enum PlayCoverService {
         return candidate == callbackIdentity
     }
 
-    private static func launchPreparedApplication(
+    static func launchPreparedApplication(
         manifest: PlayCoverPrepareManifest,
         sessionID: String,
         runtimeSocketPath: String,
-        deadline: TimeInterval
+        deadline: TimeInterval,
+        launchAlias: inout SessionLaunchAlias?,
+        workspaceOpenSubmitted: inout Bool
     ) throws -> LaunchedApplicationIdentity {
         #if canImport(AppKit)
         let configuration = NSWorkspace.OpenConfiguration()
@@ -2258,15 +2595,11 @@ public enum PlayCoverService {
             existingApplications.map(\.processIdentifier)
         )
         guard !existingApplications.contains(where: { application in
-            guard let bundlePath = application.bundleURL?
-                    .standardizedFileURL.path,
-                  let executablePath = application.executableURL?
+            guard let executablePath = application.executableURL?
                     .standardizedFileURL.path else {
                 return false
             }
-            return canonicalPath(bundlePath)
-                    == canonicalPath(manifest.preparedAppPath)
-                && canonicalPath(executablePath)
+            return canonicalPath(executablePath)
                     == canonicalPath(manifest.executablePath)
         }) else {
             throw PlayCoverBackendError.launchFailed(
@@ -2274,15 +2607,17 @@ public enum PlayCoverService {
                     + "this start invocation"
             )
         }
+        let alias = try createSessionLaunchAlias(
+            manifest: manifest,
+            sessionID: sessionID
+        )
+        launchAlias = alias
         let box = LaunchBox()
         let semaphore = DispatchSemaphore(value: 0)
-        NSWorkspace.shared.openApplication(
-            at: URL(
-                fileURLWithPath: manifest.preparedAppPath,
-                isDirectory: true
-            ),
-            configuration: configuration
-        ) { application, error in
+        workspaceOpenSubmitted = true
+        let completion:
+            (NSRunningApplication?, Error?) -> Void = {
+                application, error in
             if let application,
                let bundleIdentifier = application.bundleIdentifier,
                let bundlePath = application.bundleURL?
@@ -2295,7 +2630,8 @@ public enum PlayCoverService {
                     bundleURLPath: bundlePath,
                     executablePath: executablePath,
                     existingPIDs: existingPIDs,
-                    manifest: manifest
+                    manifest: manifest,
+                    launchAliasPath: alias.bundleURL.path
                ) {
                 box.set(
                     .success(
@@ -2323,6 +2659,19 @@ public enum PlayCoverService {
                 )
             }
             semaphore.signal()
+        }
+        if let workspaceOpenOverrideForTesting {
+            workspaceOpenOverrideForTesting(
+                alias.bundleURL,
+                configuration,
+                completion
+            )
+        } else {
+            NSWorkspace.shared.openApplication(
+                at: alias.bundleURL,
+                configuration: configuration,
+                completionHandler: completion
+            )
         }
         // The caller supplies the one monotonic `start --timeout` deadline
         // shared by launch discovery and the subsequent ready Runtime hello.
@@ -2381,7 +2730,8 @@ public enum PlayCoverService {
                         bundleURLPath: bundlePath,
                         executablePath: executablePath,
                         existingPIDs: existingPIDs,
-                        manifest: manifest
+                        manifest: manifest,
+                        launchAliasPath: alias.bundleURL.path
                       ) else {
                     return nil
                 }

@@ -26,6 +26,7 @@ exactly.
 - `Utils/Entitlements.swift`
 - `Utils/Extensions/DataExtensions.swift`
 - `Utils/Extensions/FileExtensions.swift`
+- `Utils/Extensions/PlayAppExtensions.swift`
 - `Utils/Extensions/URLExtensions.swift`
 - `Utils/KeyCover.swift`
 - `Utils/Macho.swift`
@@ -60,10 +61,13 @@ not listed here, or a listed path that becomes byte-identical, fails
 The imported source is the authority for iOS-to-Mac conversion and prepare
 ordering.  `Package.swift` selects the non-GUI closure and
 `PlayCover/Headless/PlayCoverUpstreamEngine.swift` provides the ios-use API.
-`Model/PlayApp.swift` is nevertheless retained byte-for-byte, audited, and
-included in corresponding source. It is explicitly excluded from the SwiftPM
-target because the class also closes over non-vendored GUI/global application
-state; exclusion is a link boundary, not a source omission.
+`Model/PlayApp.swift` and `Utils/Extensions/PlayAppExtensions.swift` are
+nevertheless retained byte-for-byte, audited, and included in corresponding
+source. They are explicitly excluded from the SwiftPM target because the class
+also closes over non-vendored GUI/global application state; exclusion is a
+link boundary, not a source omission. The headless host directly adapts the
+pinned `createAlias` shape—a real `.app` directory whose top-level children
+symlink to the prepared App—while keeping ios-use as the sole lifecycle owner.
 
 Local patches are intentionally limited to:
 
@@ -132,18 +136,18 @@ The rest of `PlayApp` is corresponding source but is deliberately not linked:
 
 | GUI/global `PlayApp` symbols | Why the headless target does not link them |
 | --- | --- |
-| `init`, alias URLs, `hasAlias`, Finder/cache/delete helpers | They create global Finder aliases, load keymap/Discord state, or mutate/delete the installed/source App. ios-use prepares only a managed clone and keeps the source read-only. |
-| `launch`, `runAppExec`, `isInfoPlistSigned`, timeout assertions | ios-use owns launch/PID/session/UDS identity and termination. Linking PlayCover's `NSWorkspace` alias launch and display-sleep loop would create a second lifecycle owner. |
+| `init`, display-name alias URLs, `hasAlias`, Finder/cache/delete helpers | They load keymap/Discord state or mutate/delete the installed/source App. ios-use prepares only a managed clone and derives a collision-free session alias name instead of reusing global display names. |
+| `launch`, `runAppExec`, `isInfoPlistSigned`, timeout assertions | ios-use owns launch/PID/session/UDS identity and termination. It opens its session-scoped pinned-shape alias through `NSWorkspace`, but does not link PlayCover's second lifecycle owner or display-sleep loop. |
 | `unlockKeyCover` / `lockKeyCover` UI branch | The methods depend on `NSAlert` and mutable GUI settings. The headless KeyCover/PlayChain primitives are invoked from the managed prepare/session boundary without modal UI. |
 | `prohibitedToPlay`, `maliciousProhibited`, and their deletion/cache branch | These are PlayCover product policy and GUI recovery behavior, not conversion or signing semantics. In particular, deleting an input conflicts with ios-use's source-immutability contract. |
 
-`Package.swift` therefore names `Model/PlayApp.swift` in `exclude` rather than
-silently leaving an unhandled source. `scripts/audit_playcover_upstreams.sh`
-requires that exact exclusion, the ordered `PlayApp.sign` symbols, and the
-byte-identical pinned file. The full prepare differential test additionally
-requires the adapter trace to execute composition before root signing and
-requires the production signing manifest to list every nested code object
-before `.`.
+`Package.swift` therefore names `Model/PlayApp.swift` and
+`Utils/Extensions/PlayAppExtensions.swift` in `exclude` rather than silently
+leaving unhandled sources. `scripts/audit_playcover_upstreams.sh` requires that
+exact exclusion, the ordered `PlayApp.sign` symbols, and both byte-identical
+pinned files. The full prepare differential test additionally requires the
+adapter trace to execute composition before root signing and requires the
+production signing manifest to list every nested code object before `.`.
 
 ### Failure-layer boundary
 
@@ -252,7 +256,7 @@ scripts/test_playcover_prepare_differential.sh
 
 The gate runs in an isolated SwiftPM scratch directory and publishes a
 schema-v1 attestation only after every exact allowance and one-sided baseline
-is consumed. Its producer closure is a fixed 36-file list whose normalized
+is consumed. Its producer closure is a fixed 39-file list whose normalized
 SHA-256 is embedded into the executing test binary at build time and checked
 against source snapshots at both ends of attestation. The binary digest is read
 through an open descriptor whose device/inode must match the vnode backing the

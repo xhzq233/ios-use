@@ -88,7 +88,8 @@ ios-use start --playcover [--app <source-or-managed-prepared.app>]
   -> PlayCoverService
      -> pinned PlayCover prepare graph and full verification
      -> one bounded integrity verification immediately before launch
-     -> NSWorkspace launch with exact environment and PID
+     -> pinned-shape session App facade under ~/Applications/PlayCover
+     -> NSWorkspace facade launch with exact environment and PID
   -> IOSUsePlayRuntime.framework
      -> pinned PlayTools platform/geometry/keychain hooks
      -> opaque resizable AppKit host, fixed canvas, and complete App compositor
@@ -105,12 +106,19 @@ launch variables rather than replacing the caller environment, so ios-use
 explicitly clears every inherited non-allowlisted key before launch; shell
 credentials are never forwarded to the target App.
 
+The launch facade is a real `.app` directory whose top-level children are
+symlinks to the immutable prepared App, matching pinned PlayCover's
+`createAlias` shape. Each random session gets a collision-free facade name.
 Neither an NSWorkspace callback nor a newly observed PID grants process
-ownership by itself. The candidate must be new, match the exact managed
-Bundle/App/executable, and authenticate this start's random session and socket
-through Runtime `hello`; only then may rollback or session commit use that PID.
-Launch discovery uses the full validated `start --timeout` value rather than a
-shorter hidden deadline.
+ownership by itself. The candidate must be new, report that exact session
+facade as its bundle URL, retain the exact prepared executable, and
+authenticate this start's random session and socket through Runtime `hello`;
+only then may rollback or session commit use that PID. Confirmed stop and
+confirmed rollback remove the facade. A facade whose asynchronous open was
+submitted without yielding an owned process remains fail-closed so a late
+LaunchServices completion cannot lose its Bundle resources; the next CLI start
+uses a new session facade. Launch discovery uses the full validated
+`start --timeout` value rather than a shorter hidden deadline.
 
 Each connection carries one four-byte big-endian length-prefixed JSON request:
 
@@ -232,7 +240,7 @@ path normalization applies only at path-token boundaries. The evidence records
 both complete object/slice selector sets, every App and inventory comparator
 family (including fields that compare equal), source/output/revision identity,
 static allowance reasons and symbols, one-sided baseline provenance, a fixed
-36-file transitive source closure, and the SHA-256 plus device/inode of the
+39-file transitive source closure, and the SHA-256 plus device/inode of the
 loaded XCTest image that executed the comparison. The normalized closure
 digest is embedded at build time and must match both source snapshots; the gate
 uses an isolated SwiftPM scratch directory. Managed-path replacement accepts

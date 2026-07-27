@@ -86,6 +86,36 @@ require_ordered_text() {
   echo "[upstream-audit] $description: exact ordered symbols"
 }
 
+require_exact_playcover_exclude_block() {
+  local package="$1"
+  local start_count
+  local actual
+  local expected
+  start_count="$(
+    grep -E -c '^[[:space:]]*exclude: \[$' "$package" || true
+  )"
+  actual="$(
+    awk '
+      /^[[:space:]]*exclude: \[$/ { capture = 1 }
+      capture { print }
+      capture && /^[[:space:]]*],$/ { exit }
+    ' "$package"
+  )"
+  expected="$(
+    cat <<'EXCLUDE'
+            exclude: [
+                "Model/PlayApp.swift",
+                "Utils/Extensions/PlayAppExtensions.swift",
+            ],
+EXCLUDE
+  )"
+  if [[ "$start_count" != "1" || "$actual" != "$expected" ]]; then
+    echo "[upstream-audit] ERROR: PlayCover Package.swift must keep the exact pinned GUI exclusion block." >&2
+    exit 1
+  fi
+  echo "[upstream-audit] PlayCover Package.swift: exact pinned GUI exclusion block"
+}
+
 verify_provenance_metadata() {
   local name="$1"
   local provenance="$2"
@@ -351,6 +381,7 @@ PLAYCOVER_IMPORTED_FILES=(
   "Utils/Entitlements.swift"
   "Utils/Extensions/DataExtensions.swift"
   "Utils/Extensions/FileExtensions.swift"
+  "Utils/Extensions/PlayAppExtensions.swift"
   "Utils/Extensions/URLExtensions.swift"
   "Utils/KeyCover.swift"
   "Utils/Macho.swift"
@@ -429,14 +460,18 @@ verify_expected_vendored_files inject \
   "$ROOT_DIR/ThirdParty/inject/Injection/Injection" "" \
   "${INJECT_IMPORTED_FILES[@]}"
 
+require_exact_playcover_exclude_block \
+  "$ROOT_DIR/ThirdParty/PlayCover/Package.swift"
+
 for playcover_source in "${PLAYCOVER_IMPORTED_FILES[@]}"; do
   if [[ "$playcover_source" == "Rules/default.yaml" ]]; then
     require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
       ".copy(\"$playcover_source\")" \
       "PlayCover Package.swift resource membership for $playcover_source"
-  elif [[ "$playcover_source" == "Model/PlayApp.swift" ]]; then
+  elif [[ "$playcover_source" == "Model/PlayApp.swift" \
+       || "$playcover_source" == "Utils/Extensions/PlayAppExtensions.swift" ]]; then
     require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
-      "exclude: [\"$playcover_source\"]," \
+      "\"$playcover_source\"," \
       "PlayCover Package.swift explicit GUI exclusion for $playcover_source"
   else
     require_exact_text "$ROOT_DIR/ThirdParty/PlayCover/Package.swift" \
@@ -503,7 +538,7 @@ audit_expected_files PlayCover "$PLAYCOVER_UPSTREAM" "$ROOT_DIR" \
   "${PLAYCOVER_IMPORTED_FILES[@]}"
 verify_recorded_patches PlayCover \
   "$ROOT_DIR/ThirdParty/PlayCover/PROVENANCE.md" "$PLAYCOVER_PATCHES"
-echo "[upstream-audit] PlayCover local-only integration: PlayCover/Headless/** (headless API facade). Model/PlayApp.swift is an exact audited corresponding-source authority, explicitly excluded from SwiftPM because its GUI class closure is not linked; PlayApp.sign is adapter-traced through entitlement composition and root-last signing. GUI omissions: Views/**, ViewModel/**, Services/**, AppInstaller/Downloader.swift, AppContainer.swift, Store/download/update/keymap/preferences/UI resources and app targets."
+echo "[upstream-audit] PlayCover local-only integration: PlayCover/Headless/** (headless API facade). Model/PlayApp.swift and Utils/Extensions/PlayAppExtensions.swift are exact audited corresponding-source authorities, explicitly excluded from SwiftPM because the GUI class closure is not linked; PlayApp.sign is adapter-traced through entitlement composition and root-last signing. GUI omissions: Views/**, ViewModel/**, Services/**, AppInstaller/Downloader.swift, AppContainer.swift, Store/download/update/keymap/preferences/UI resources and app targets."
 
 audit_expected_files PlayTools "$PLAYTOOLS_UPSTREAM" "$ROOT_DIR" \
   . playcover-runtime/PlayTools "$PLAYTOOLS_PATCHES" \

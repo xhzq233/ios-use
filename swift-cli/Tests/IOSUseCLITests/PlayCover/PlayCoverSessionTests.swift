@@ -17,6 +17,7 @@ final class PlayCoverSessionTests: XCTestCase {
         PlayCoverSessionService
             .terminationIdentityProbeOverrideForTesting = nil
         PlayCoverSessionService.fastVerifyOverrideForTesting = nil
+        PlayCoverService.launchAliasRootOverrideForTesting = nil
         PlayCoverManagedAppService.inspectOverrideForTesting = nil
         PlayCoverManagedAppService.verifyOverrideForTesting = nil
         PlayCoverManagedAppService.readManifestOverrideForTesting = nil
@@ -121,6 +122,22 @@ final class PlayCoverSessionTests: XCTestCase {
                 sessionID: sessionID
             )
         )
+        try Data("launch".utf8).write(
+            to: URL(
+                fileURLWithPath: manifest.preparedAppPath,
+                isDirectory: true
+            ).appendingPathComponent("Info.plist")
+        )
+        let launchAlias =
+            try PlayCoverService.createSessionLaunchAlias(
+                manifest: manifest,
+                sessionID: sessionID
+            )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: launchAlias.bundleURL.path
+            )
+        )
 
         let lock = try XCTUnwrap(
             try SessionService.readDriverLockInfo(
@@ -201,6 +218,11 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: fixture.paths.driverLock
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: launchAlias.bundleURL.path
             )
         )
         XCTAssertEqual(
@@ -2689,6 +2711,14 @@ private struct SessionFixture {
         paths = IOSUsePaths.resolve(
             environment: ["IOS_USE_HOME": root]
         )
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            URL(
+                fileURLWithPath: root,
+                isDirectory: true
+            ).appendingPathComponent(
+                "launch-aliases",
+                isDirectory: true
+            )
         try FileManager.default.createDirectory(
             atPath: root,
             withIntermediateDirectories: false,

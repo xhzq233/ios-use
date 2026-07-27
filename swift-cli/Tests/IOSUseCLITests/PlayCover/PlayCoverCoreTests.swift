@@ -10,6 +10,10 @@ final class PlayCoverCoreTests: XCTestCase {
         PlayCoverService.failedLaunchTerminatorOverrideForTesting = nil
         PlayCoverService.failedLaunchProcessStateOverrideForTesting = nil
         PlayCoverService.failedLaunchSignalOverrideForTesting = nil
+        PlayCoverService.launchAliasRootOverrideForTesting = nil
+        #if canImport(AppKit)
+        PlayCoverService.workspaceOpenOverrideForTesting = nil
+        #endif
         PlayCoverManagedAppService.inspectOverrideForTesting = nil
         PlayCoverManagedAppService.verifyOverrideForTesting = nil
         PlayCoverManagedAppService.readManifestOverrideForTesting = nil
@@ -341,25 +345,29 @@ final class PlayCoverCoreTests: XCTestCase {
                 .appendingPathComponent("Prepared.app").path,
             generationKey: String(repeating: "a", count: 64)
         )
+        let launchAliasPath = fixture.root
+            .appendingPathComponent("Launch.app").path
 
         XCTAssertTrue(
             PlayCoverService.acceptsOwnedLaunchIdentity(
                 pid: 42,
                 bundleIdentifier: manifest.bundleIdentifier,
-                bundleURLPath: manifest.preparedAppPath,
+                bundleURLPath: launchAliasPath,
                 executablePath: manifest.executablePath,
                 existingPIDs: [41],
-                manifest: manifest
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
             )
         )
         XCTAssertFalse(
             PlayCoverService.acceptsOwnedLaunchIdentity(
                 pid: 42,
                 bundleIdentifier: manifest.bundleIdentifier,
-                bundleURLPath: manifest.preparedAppPath,
+                bundleURLPath: launchAliasPath,
                 executablePath: manifest.executablePath,
                 existingPIDs: [42],
-                manifest: manifest
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
             ),
             "a completion callback must never claim a pre-existing PID"
         )
@@ -370,20 +378,233 @@ final class PlayCoverCoreTests: XCTestCase {
                 bundleURLPath: fixture.app.path,
                 executablePath: manifest.executablePath,
                 existingPIDs: [],
-                manifest: manifest
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
             )
         )
         XCTAssertFalse(
             PlayCoverService.acceptsOwnedLaunchIdentity(
                 pid: 44,
                 bundleIdentifier: "com.example.other",
-                bundleURLPath: manifest.preparedAppPath,
+                bundleURLPath: launchAliasPath,
                 executablePath: manifest.executablePath,
                 existingPIDs: [],
-                manifest: manifest
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
             )
         )
     }
+
+    func testSessionLaunchAliasUsesPinnedTopLevelSymlinkFarm()
+        throws {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try Data("hidden".utf8).write(
+            to: fixture.app.appendingPathComponent(".launch-hidden")
+        )
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.app.path,
+            generationKey: String(repeating: "1", count: 64)
+        )
+        let aliasRoot = fixture.root.appendingPathComponent(
+            "launch-aliases",
+            isDirectory: true
+        )
+        PlayCoverService.launchAliasRootOverrideForTesting = aliasRoot
+
+        let alias = try PlayCoverService.createSessionLaunchAlias(
+            manifest: manifest,
+            sessionID: "session-alias"
+        )
+
+        var aliasStatus = stat()
+        XCTAssertEqual(lstat(alias.bundleURL.path, &aliasStatus), 0)
+        XCTAssertEqual(aliasStatus.st_mode & S_IFMT, S_IFDIR)
+        let sourceNames = try FileManager.default.contentsOfDirectory(
+            atPath: fixture.app.path
+        ).sorted()
+        let aliasNames = try FileManager.default.contentsOfDirectory(
+            atPath: alias.bundleURL.path
+        ).sorted()
+        XCTAssertEqual(aliasNames, sourceNames)
+        XCTAssertTrue(aliasNames.contains(".launch-hidden"))
+        for name in aliasNames {
+            let destination = try FileManager.default
+                .destinationOfSymbolicLink(
+                    atPath: alias.bundleURL
+                        .appendingPathComponent(name).path
+                )
+            XCTAssertEqual(
+                destination,
+                fixture.app.appendingPathComponent(name).path
+            )
+        }
+        XCTAssertThrowsError(
+            try PlayCoverService.createSessionLaunchAlias(
+                manifest: manifest,
+                sessionID: "session-alias"
+            )
+        ) { error in
+            guard case .launchFailed(let message) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(message.contains("already exists"))
+        }
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: alias.bundleURL.path
+            ),
+            "an unresolved session alias must remain fail-closed"
+        )
+        let nextAlias = try PlayCoverService.createSessionLaunchAlias(
+            manifest: manifest,
+            sessionID: "next-session-alias"
+        )
+        XCTAssertNotEqual(
+            nextAlias,
+            alias,
+            "an unresolved prior session alias must not block a new start"
+        )
+        try PlayCoverService.removeSessionLaunchAlias(
+            nextAlias,
+            manifest: manifest
+        )
+        try PlayCoverService.removeSessionLaunchAlias(
+            sessionID: "session-alias",
+            manifest: manifest
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: alias.bundleURL.path
+            )
+        )
+    }
+
+    func testSessionLaunchAliasCleanupRefusesUnexpectedRegularFile()
+        throws {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.app.path,
+            generationKey: String(repeating: "2", count: 64)
+        )
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            fixture.root.appendingPathComponent(
+                "launch-aliases",
+                isDirectory: true
+            )
+        let alias = try PlayCoverService.createSessionLaunchAlias(
+            manifest: manifest,
+            sessionID: "tampered-alias"
+        )
+        let infoAlias = alias.bundleURL.appendingPathComponent(
+            "Info.plist"
+        )
+        try FileManager.default.removeItem(at: infoAlias)
+        try Data("not a symlink".utf8).write(to: infoAlias)
+
+        XCTAssertThrowsError(
+            try PlayCoverService.removeSessionLaunchAlias(
+                sessionID: "tampered-alias",
+                manifest: manifest
+            )
+        ) { error in
+            guard case .cacheTampered =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+        var status = stat()
+        XCTAssertEqual(lstat(infoAlias.path, &status), 0)
+        XCTAssertEqual(status.st_mode & S_IFMT, S_IFREG)
+    }
+
+    #if canImport(AppKit)
+    func testWorkspaceLaunchSubmitsTheSessionAlias() throws {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.app.path,
+            generationKey: String(repeating: "3", count: 64)
+        )
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            fixture.root.appendingPathComponent(
+                "launch-aliases",
+                isDirectory: true
+            )
+        let sessionID = "workspace-alias"
+        let socketPath = fixture.root.appendingPathComponent(
+            "runtime.sock"
+        ).path
+        var submittedURL: URL?
+        var submittedEnvironment: [String: String]?
+        PlayCoverService.workspaceOpenOverrideForTesting = {
+            url,
+            configuration,
+            completion in
+            submittedURL = url
+            submittedEnvironment = configuration.environment
+            completion(
+                nil,
+                NSError(
+                    domain: "PlayCoverCoreTests",
+                    code: 1
+                )
+            )
+        }
+        var alias: PlayCoverService.SessionLaunchAlias?
+        var openSubmitted = false
+
+        XCTAssertThrowsError(
+            try PlayCoverService.launchPreparedApplication(
+                manifest: manifest,
+                sessionID: sessionID,
+                runtimeSocketPath: socketPath,
+                deadline:
+                    ProcessInfo.processInfo.systemUptime + 0.05,
+                launchAlias: &alias,
+                workspaceOpenSubmitted: &openSubmitted
+            )
+        )
+
+        let expectedAlias =
+            PlayCoverService.sessionLaunchAlias(sessionID: sessionID)
+        XCTAssertTrue(openSubmitted)
+        XCTAssertEqual(alias, expectedAlias)
+        XCTAssertEqual(submittedURL, expectedAlias.bundleURL)
+        XCTAssertEqual(
+            submittedEnvironment?["IOS_USE_PLAY_SESSION_ID"],
+            sessionID
+        )
+        XCTAssertEqual(
+            submittedEnvironment?["IOS_USE_PLAY_RUNTIME_SOCKET"],
+            socketPath
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: expectedAlias.bundleURL.path
+            ),
+            "a submitted asynchronous open remains recoverable"
+        )
+        try PlayCoverService.removeSessionLaunchAlias(
+            expectedAlias,
+            manifest: manifest
+        )
+    }
+    #endif
 
     func testConcurrentFinderCandidateNeedsCallbackOrRuntimeIdentity()
         throws

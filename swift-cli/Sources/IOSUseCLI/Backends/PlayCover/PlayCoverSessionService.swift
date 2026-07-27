@@ -342,7 +342,23 @@ enum PlayCoverSessionService {
     static func terminate(
         session: SessionService.Info
     ) throws -> Int32 {
-        try validateGeneration(session: session)
+        let manifest = try validateGeneration(session: session)
+        let pid = try terminateConfirmedProcess(session: session)
+        guard let sessionID = session.sessionIdentifier else {
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: PlayCover sessionID is missing."
+            )
+        }
+        try PlayCoverService.removeSessionLaunchAlias(
+            sessionID: sessionID,
+            manifest: manifest
+        )
+        return pid
+    }
+
+    private static func terminateConfirmedProcess(
+        session: SessionService.Info
+    ) throws -> Int32 {
         if let terminateOverrideForTesting {
             return try terminateOverrideForTesting(session)
         }
@@ -416,7 +432,7 @@ enum PlayCoverSessionService {
         // immutable and live identity immediately before signaling so a
         // generation mutation or PID reuse during that wait cannot redirect
         // termination.
-        try validateGeneration(session: session)
+        _ = try validateGeneration(session: session)
         let currentState = processState(pid)
         guard case .running(let currentExecutable) =
                 currentState else {
@@ -523,7 +539,7 @@ enum PlayCoverSessionService {
 
     static func validateGeneration(
         session: SessionService.Info
-    ) throws {
+    ) throws -> PlayCoverPrepareManifest {
         guard session.deviceType == deviceType,
               session.startMode == deviceType,
               let appPath = session.playCoverAppPath,
@@ -586,6 +602,7 @@ enum PlayCoverSessionService {
                     + "exact sessionID and prepared generation"
             )
         }
+        return manifest
     }
 
     private static func fastVerify(

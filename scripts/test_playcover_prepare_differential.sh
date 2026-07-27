@@ -213,6 +213,7 @@ if ! jq -e '
       "ThirdParty/PlayCover/PlayCover/Utils/Entitlements.swift",
       "ThirdParty/PlayCover/PlayCover/Utils/Extensions/DataExtensions.swift",
       "ThirdParty/PlayCover/PlayCover/Utils/Extensions/FileExtensions.swift",
+      "ThirdParty/PlayCover/PlayCover/Utils/Extensions/PlayAppExtensions.swift",
       "ThirdParty/PlayCover/PlayCover/Utils/Extensions/URLExtensions.swift",
       "ThirdParty/PlayCover/PlayCover/Utils/KeyCover.swift",
       "ThirdParty/PlayCover/PlayCover/Utils/Macho.swift",

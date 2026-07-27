@@ -58,10 +58,20 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             ),
             encoding: .utf8
         )
-        XCTAssertTrue(
-            package.contains(
-                "exclude: [\"Model/PlayApp.swift\"],"
-            )
+        let exactExclusionBlock =
+            "            exclude: [\n"
+            + "                \"Model/PlayApp.swift\",\n"
+            + "                \"Utils/Extensions/"
+            + "PlayAppExtensions.swift\",\n"
+            + "            ],\n"
+            + "            sources: ["
+        XCTAssertEqual(
+            package.components(
+                separatedBy: exactExclusionBlock
+            ).count - 1,
+            1,
+            "both pinned GUI authorities must remain in the exact "
+                + "exclude block immediately before sources"
         )
         XCTAssertEqual(
             package.components(
@@ -69,6 +79,15 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             ).count - 1,
             1,
             "PlayApp.swift must be named only by the explicit GUI exclusion"
+        )
+        XCTAssertEqual(
+            package.components(
+                separatedBy:
+                    "\"Utils/Extensions/PlayAppExtensions.swift\""
+            ).count - 1,
+            1,
+            "PlayAppExtensions.swift must be named only by the "
+                + "explicit GUI exclusion"
         )
         XCTAssertTrue(
             PlayCoverPinnedHeadlessInstallerOracle
@@ -727,6 +746,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "DataExtensions.swift",
                 "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
                     + "FileExtensions.swift",
+                "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
+                    + "PlayAppExtensions.swift",
                 "ThirdParty/PlayCover/PlayCover/Utils/Extensions/"
                     + "URLExtensions.swift",
                 "ThirdParty/PlayCover/PlayCover/Utils/KeyCover.swift",
