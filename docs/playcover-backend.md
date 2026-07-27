@@ -385,12 +385,21 @@ invalid-UTF-8, and truncated Runtime frames and proves listener health after
 each one. One cold prepare is followed by 20 bare
 start/status/stop cycles with unique session IDs and one immutable generation;
 each cycle verifies the exact lock/PID/socket identity and the eventual removal
-of only that cycle's lock and Runtime-owned socket. The same gate verifies
+of only that cycle's lock and Runtime-owned socket. Each warm start must emit
+exactly one complete timing line. The gate preserves all 20 raw samples and
+computes the per-phase median, raw median absolute deviation, normalized MAD,
+relative raw MAD, and observed/skipped counts. Aggregate phases retain 0.1 ms
+input precision and launch subphases retain 0.001 ms precision. These values
+are diagnostic evidence rather than an unevidenced absolute performance
+threshold. The same gate verifies
 scene replacement, endpoint-loss classification, fixture-owned self-`SIGKILL`
 stale cleanup,
 preservation of the crash socket residue, and recovery through a fresh random
-session. Its schema-v1 attestation records every clean-stop absence result and
-the crash residue's before/after device, inode, owner, and mode observations.
+session. Its schema-v2 attestation embeds the timing summary and raw samples,
+binds the timing filter's SHA-256, records every clean-stop absence result, and
+records the crash residue's before/after device, inode, owner, and mode
+observations. The summary is accepted only when it exactly matches a
+recomputation from its embedded samples.
 The fixture self-crash is requested through a session-specific Darwin
 notification, so the host never signals a potentially recycled PID. The
 non-live aggregate also runs the full CLI suite, including deterministic

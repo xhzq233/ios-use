@@ -27,6 +27,8 @@ for script in "$ROOT_DIR"/scripts/*.sh; do
 done
 echo "[ci-test] Running install smoke tests..."
 bash "$ROOT_DIR/scripts/test_install.sh"
+echo "[ci-test] Testing PlayCover warm timing statistics..."
+bash "$ROOT_DIR/scripts/test_playcover_timing_stats.sh"
 if command -v node >/dev/null 2>&1; then
   node --check "$ROOT_DIR/scripts/benchmark.js"
   node --check "$ROOT_DIR/scripts/ios_use_test_simulator.js"

@@ -232,7 +232,9 @@ latency. Launch is further observed as alias creation, synchronous open
 dispatch, exact ownership, Runtime transport/ping, and ready geometry.
 Runtime transport/ping is a nested subtotal of exact ownership, not an
 additional duration to add to it. Skipped cache-hit or unobserved phases are
-reported explicitly.
+reported explicitly. The isolated live Runtime stress gate preserves 20 warm
+same-generation fixture samples and reports per-phase median/MAD statistics
+with the raw samples needed to recompute them.
 
 The CLI creates one random session ID and connects straight to the injected
 Runtime's owner-only Unix socket. `driver.lock` keeps PlayCover selected until
