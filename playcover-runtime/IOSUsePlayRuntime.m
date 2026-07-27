@@ -14,6 +14,7 @@
 #import <UIKit/UIKit.h>
 
 static NSUInteger IOSUseRuntimeConfigurationAttempt;
+static BOOL IOSUseRuntimeSurfaceProbePending;
 static NSString *IOSUseRuntimeConfigurationStage = @"loaded";
 static NSString *IOSUseRuntimeConfigurationFailure;
 
@@ -37,6 +38,11 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeFullFrameEvidence(void) {
 }
 
 static void IOSUseScheduleRuntimeSurfaceProbe(NSTimeInterval delay) {
+    NSCAssert(NSThread.isMainThread, @"surface scheduling is main-only");
+    if (IOSUseRuntimeSurfaceProbePending) {
+        return;
+    }
+    IOSUseRuntimeSurfaceProbePending = YES;
     dispatch_after(
         dispatch_time(
             DISPATCH_TIME_NOW,
@@ -44,6 +50,7 @@ static void IOSUseScheduleRuntimeSurfaceProbe(NSTimeInterval delay) {
         ),
         dispatch_get_main_queue(),
         ^{
+            IOSUseRuntimeSurfaceProbePending = NO;
             IOSUseConfigureRuntimeSurface();
         }
     );
