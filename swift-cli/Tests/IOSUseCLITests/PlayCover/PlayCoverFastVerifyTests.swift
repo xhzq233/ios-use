@@ -107,7 +107,10 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         var afterHashes: [String: Int] = [:]
         var beforeSignatures: [String: Int] = [:]
         var afterSignatures: [String: Int] = [:]
+        let eventLock = NSLock()
         PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            eventLock.lock()
+            defer { eventLock.unlock() }
             switch event {
             case .beforeFileHash(let path):
                 beforeHashes[path, default: 0] += 1
@@ -181,6 +184,201 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             ),
             "the Runtime bundle already verifies its executable"
         )
+    }
+
+    func testFastVerifyOverlapsHashesWithNestedSignaturesAndKeepsRootLast()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let hashStarted = DispatchSemaphore(value: 0)
+        let releaseHash = DispatchSemaphore(value: 0)
+        let stateLock = NSLock()
+        var blockedFirstHash = false
+        var hashIsBlocked = false
+        var hashReleaseSucceeded = false
+        var completedHashEvents = 0
+        var attemptedNestedOverlap = false
+        var nestedObservedBlockedHash = false
+        var rootObservedCompletedHashes = false
+        PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            switch event {
+            case .beforeFileHash:
+                stateLock.lock()
+                let shouldBlock = !blockedFirstHash
+                blockedFirstHash = true
+                if shouldBlock {
+                    hashIsBlocked = true
+                }
+                stateLock.unlock()
+                guard shouldBlock else {
+                    return
+                }
+                hashStarted.signal()
+                let released =
+                    releaseHash.wait(timeout: .now() + 5) == .success
+                stateLock.lock()
+                hashIsBlocked = false
+                hashReleaseSucceeded = released
+                stateLock.unlock()
+            case .afterFileHash:
+                stateLock.lock()
+                completedHashEvents += 1
+                stateLock.unlock()
+            case .afterGenerationOpen,
+                 .afterPreparedAppOpen,
+                 .beforeMetadataOpen,
+                 .afterMetadataOpen,
+                 .afterMetadataRead,
+                 .beforeCodeSignature,
+                 .afterCodeSignature:
+                return
+            }
+        }
+        Shell.runResultOverrideForTesting = {
+            _, arguments, _ in
+            if arguments.last == "." {
+                stateLock.lock()
+                rootObservedCompletedHashes =
+                    !hashIsBlocked
+                    && hashReleaseSucceeded
+                    && completedHashEvents == 2
+                stateLock.unlock()
+            } else {
+                stateLock.lock()
+                let shouldCoordinate = !attemptedNestedOverlap
+                attemptedNestedOverlap = true
+                stateLock.unlock()
+                guard shouldCoordinate else {
+                    return Shell.RunResult(
+                        stdout: "",
+                        stderr: "",
+                        exitCode: 0
+                    )
+                }
+                let overlapped =
+                    hashStarted.wait(timeout: .now() + 5) == .success
+                stateLock.lock()
+                let blocked = hashIsBlocked
+                if !nestedObservedBlockedHash {
+                    nestedObservedBlockedHash = overlapped && blocked
+                }
+                stateLock.unlock()
+                releaseHash.signal()
+            }
+            return Shell.RunResult(
+                stdout: "",
+                stderr: "",
+                exitCode: 0
+            )
+        }
+
+        try PlayCoverService.fastVerifyGeneration(
+            appPath: fixture.app.path,
+            manifest: fixture.manifest
+        )
+
+        stateLock.lock()
+        let nestedObserved = nestedObservedBlockedHash
+        let releaseSucceeded = hashReleaseSucceeded
+        let rootObserved = rootObservedCompletedHashes
+        stateLock.unlock()
+        XCTAssertTrue(
+            nestedObserved,
+            "a nested codesign must run while the hash lane is blocked"
+        )
+        XCTAssertTrue(
+            releaseSucceeded,
+            "the hash lane must be released by the concurrent nested lane"
+        )
+        XCTAssertTrue(
+            rootObserved,
+            "root codesign must remain after every required hash as the "
+                + "final App seal"
+        )
+    }
+
+    func testConcurrentNestedSignatureFailureDoesNotMaskHashFailure()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let hashMutated = DispatchSemaphore(value: 0)
+        let releaseHash = DispatchSemaphore(value: 0)
+        let stateLock = NSLock()
+        var mutatedFirstHash = false
+        var hashReleaseSucceeded = false
+        var nestedFailureInjected = false
+        PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            guard case .beforeFileHash(let relative) = event else {
+                return
+            }
+            stateLock.lock()
+            let shouldMutate = !mutatedFirstHash
+            mutatedFirstHash = true
+            stateLock.unlock()
+            guard shouldMutate else {
+                return
+            }
+            let target = fixture.app.appendingPathComponent(relative)
+            var bytes = try Data(contentsOf: target)
+            bytes[0] ^= 0xff
+            try bytes.write(to: target)
+            hashMutated.signal()
+            let released =
+                releaseHash.wait(timeout: .now() + 5) == .success
+            stateLock.lock()
+            hashReleaseSucceeded = released
+            stateLock.unlock()
+        }
+        Shell.runResultOverrideForTesting = {
+            _, arguments, _ in
+            guard arguments.last != "." else {
+                XCTFail(
+                    "root signature must not run after a nested "
+                        + "signature failure"
+                )
+                return Shell.RunResult(
+                    stdout: "",
+                    stderr: "",
+                    exitCode: 0
+                )
+            }
+            let overlapped =
+                hashMutated.wait(timeout: .now() + 5) == .success
+            stateLock.lock()
+            nestedFailureInjected = overlapped
+            stateLock.unlock()
+            releaseHash.signal()
+            return Shell.RunResult(
+                stdout: "",
+                stderr: "nested signature failed",
+                exitCode: 1
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverService.fastVerifyGeneration(
+                appPath: fixture.app.path,
+                manifest: fixture.manifest
+            )
+        ) { error in
+            guard case .cacheTampered(let detail) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                detail.contains("recorded file changed:"),
+                "hash failure must retain its former precedence: \(detail)"
+            )
+            XCTAssertFalse(detail.contains("nested signature failed"))
+        }
+        stateLock.lock()
+        let injected = nestedFailureInjected
+        let released = hashReleaseSucceeded
+        stateLock.unlock()
+        XCTAssertTrue(injected)
+        XCTAssertTrue(released)
     }
 
     func testGenerationSidecarsUseFinalInspectionHashesWithoutPreparedFiles()
@@ -569,7 +767,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             XCTAssertTrue(stableRoot.hasPrefix("/.vol/"))
             let relative = try XCTUnwrap(arguments.last)
             XCTAssertFalse(relative.hasPrefix("/"))
-            if !exercisedABA {
+            if relative == ".", !exercisedABA {
                 exercisedABA = true
                 guard Darwin.rename(
                         fixture.app.path,

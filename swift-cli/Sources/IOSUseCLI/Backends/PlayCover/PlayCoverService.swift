@@ -110,6 +110,10 @@ public enum PlayCoverService {
         ((FastVerifyEvent) throws -> Void)?
     static var generationKeyComputationObserverForTesting:
         (() -> Void)?
+    private static let fastVerifyHashQueue = DispatchQueue(
+        label: "com.iosuse.playcover.fast-verify-hash",
+        qos: .userInitiated
+    )
 
     public static func inspect(
         appPath: String
@@ -1277,6 +1281,31 @@ public enum PlayCoverService {
         let executablePaths: Set<String>
     }
 
+    private final class RecordedHashesResultBox:
+        @unchecked Sendable
+    {
+        private let lock = NSLock()
+        private var storage: Result<[String: String], Error>?
+
+        func set(_ result: Result<[String: String], Error>) {
+            lock.lock()
+            storage = result
+            lock.unlock()
+        }
+
+        func get() throws -> [String: String] {
+            lock.lock()
+            let result = storage
+            lock.unlock()
+            guard let result else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "concurrent executable hash verification did not finish"
+                )
+            }
+            return try result.get()
+        }
+    }
+
     private static func withStableGenerationDescriptor<T>(
         for app: URL,
         _ body: (Int32, URL) throws -> T
@@ -1466,7 +1495,6 @@ public enum PlayCoverService {
                 entry,
                 appDescriptor: appDescriptor,
                 hashContents: !fast
-                    || requiredHashes.contains(entry.relativePath)
             )
             verifiedStatuses[entry.relativePath] = result.status
             if let hash = result.sha256 {
@@ -1477,7 +1505,13 @@ public enum PlayCoverService {
                 executablePaths.insert(entry.relativePath)
             }
         }
-        guard requiredHashes.isSubset(of: Set(hashes.keys)) else {
+        let requiredHashEntries = relevantEntries.filter {
+            requiredHashes.contains($0.relativePath)
+        }
+        guard requiredHashes.isSubset(
+                of: Set(requiredHashEntries.map(\.relativePath))
+              ),
+              fast || requiredHashes.isSubset(of: Set(hashes.keys)) else {
             throw PlayCoverBackendError.cacheTampered(
                 "manifest is missing a required executable hash entry"
             )
@@ -1487,36 +1521,37 @@ public enum PlayCoverService {
                 appDescriptor,
                 label: "prepared App root"
             )
-        for relative in orderedCodePaths {
-            if relative != "." {
-                _ = try recordedURL(app: app, relativePath: relative)
-            }
-            try emitFastVerifyEvent(.beforeCodeSignature(relative))
-            let result = try Shell.runWithResult(
-                "/usr/bin/codesign",
-                arguments: ["--verify", "--strict", relative],
-                cwd: stableAppURL.path
-            )
-            guard result.exitCode == 0 else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "recorded code object signature is invalid "
-                        + "(\(relative)): \(result.stderr)"
-                )
-            }
-            try emitFastVerifyEvent(.afterCodeSignature(relative))
-            guard
-                let expected = verifiedStatuses[relative],
-                try recordedPathStillHasIdentity(
-                    relative,
+        if fast, !requiredHashEntries.isEmpty {
+            hashes.merge(
+                try verifyNestedCodeSignaturesWhileHashing(
+                    entries: requiredHashEntries,
+                    nestedCodePaths: Array(orderedCodePaths.dropLast()),
+                    app: app,
                     appDescriptor: appDescriptor,
-                    expected: expected
-                )
-            else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "recorded code object changed during signature "
-                        + "verification: \(relative)"
-                )
-            }
+                    expectedStatuses: verifiedStatuses,
+                    stableAppURL: stableAppURL
+                ),
+                uniquingKeysWith: { _, verified in verified }
+            )
+            try verifyRecordedCodeSignature(
+                ".",
+                appDescriptor: appDescriptor,
+                expectedStatuses: verifiedStatuses,
+                stableAppURL: stableAppURL
+            )
+        } else {
+            try verifyRecordedCodeSignatures(
+                orderedCodePaths,
+                app: app,
+                appDescriptor: appDescriptor,
+                expectedStatuses: verifiedStatuses,
+                stableAppURL: stableAppURL
+            )
+        }
+        guard requiredHashes.isSubset(of: Set(hashes.keys)) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "manifest is missing a required executable hash entry"
+            )
         }
         for relative in codePaths.subtracting(signaturePaths).sorted() {
             guard
@@ -1537,6 +1572,131 @@ public enum PlayCoverService {
             fileSHA256: hashes,
             executablePaths: executablePaths
         )
+    }
+
+    private static func verifyNestedCodeSignaturesWhileHashing(
+        entries: [PlayCoverInventoryEntry],
+        nestedCodePaths: [String],
+        app: URL,
+        appDescriptor: Int32,
+        expectedStatuses: [String: stat],
+        stableAppURL: URL
+    ) throws -> [String: String] {
+        let hashes = RecordedHashesResultBox()
+        let work = DispatchGroup()
+        work.enter()
+        fastVerifyHashQueue.async {
+            defer { work.leave() }
+            hashes.set(
+                Result {
+                    try verifyRecordedHashes(
+                        entries,
+                        appDescriptor: appDescriptor,
+                        expectedStatuses: expectedStatuses
+                    )
+                }
+            )
+        }
+        let signature = Result {
+            try verifyRecordedCodeSignatures(
+                nestedCodePaths,
+                app: app,
+                appDescriptor: appDescriptor,
+                expectedStatuses: expectedStatuses,
+                stableAppURL: stableAppURL
+            )
+        }
+        work.wait()
+
+        // Hashes ran before every signature in the former sequential
+        // implementation. Preserve their failure precedence while
+        // overlapping only read-only nested checks. The root signature still
+        // runs after this join as the final temporal seal for the whole App.
+        let result = try hashes.get()
+        try signature.get()
+        return result
+    }
+
+    private static func verifyRecordedHashes(
+        _ entries: [PlayCoverInventoryEntry],
+        appDescriptor: Int32,
+        expectedStatuses: [String: stat]
+    ) throws -> [String: String] {
+        var hashes: [String: String] = [:]
+        for entry in entries {
+            let result = try verifyRecordedEntry(
+                entry,
+                appDescriptor: appDescriptor,
+                hashContents: true
+            )
+            guard let expected = expectedStatuses[entry.relativePath],
+                  sameRecordedIdentity(expected, result.status),
+                  let hash = result.sha256 else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "recorded file changed before concurrent hashing: "
+                        + entry.relativePath
+                )
+            }
+            hashes[entry.relativePath] = hash
+        }
+        return hashes
+    }
+
+    private static func verifyRecordedCodeSignatures(
+        _ relativePaths: [String],
+        app: URL,
+        appDescriptor: Int32,
+        expectedStatuses: [String: stat],
+        stableAppURL: URL
+    ) throws {
+        for relative in relativePaths {
+            if relative != "." {
+                _ = try recordedURL(
+                    app: app,
+                    relativePath: relative
+                )
+            }
+            try verifyRecordedCodeSignature(
+                relative,
+                appDescriptor: appDescriptor,
+                expectedStatuses: expectedStatuses,
+                stableAppURL: stableAppURL
+            )
+        }
+    }
+
+    private static func verifyRecordedCodeSignature(
+        _ relative: String,
+        appDescriptor: Int32,
+        expectedStatuses: [String: stat],
+        stableAppURL: URL
+    ) throws {
+        try emitFastVerifyEvent(.beforeCodeSignature(relative))
+        let result = try Shell.runWithResult(
+            "/usr/bin/codesign",
+            arguments: ["--verify", "--strict", relative],
+            cwd: stableAppURL.path
+        )
+        guard result.exitCode == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "recorded code object signature is invalid "
+                    + "(\(relative)): \(result.stderr)"
+            )
+        }
+        try emitFastVerifyEvent(.afterCodeSignature(relative))
+        guard
+            let expected = expectedStatuses[relative],
+            try recordedPathStillHasIdentity(
+                relative,
+                appDescriptor: appDescriptor,
+                expected: expected
+            )
+        else {
+            throw PlayCoverBackendError.cacheTampered(
+                "recorded code object changed during signature "
+                    + "verification: \(relative)"
+            )
+        }
     }
 
     private struct RecordedEntryVerification {
