@@ -675,8 +675,14 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
             IOSUsePlayDeviceLogicalHeight) <= 0.01;
 }
 
-static NSMutableDictionary<NSString *, id> *IOSUseIdentityPayload(void) {
+/// Capture every UIKit/AppKit field for one response in one main-thread turn.
+/// Hook diagnostics are intentionally shared by identity, observed evidence,
+/// and diagnostics so a request neither re-enumerates windows nor mixes
+/// geometry from different instants.
+static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(void) {
     __block NSDictionary<NSString *, id> *geometry;
+    __block NSDictionary<NSString *, id> *hooks;
+    __block NSDictionary<NSString *, id> *observed;
     __block NSString *stage;
     void (^capture)(void) = ^{
         UIScreen *screen = UIScreen.mainScreen;
@@ -699,8 +705,7 @@ static NSMutableDictionary<NSString *, id> *IOSUseIdentityPayload(void) {
         UIView *rootView = keyWindow.rootViewController.view;
         UIEdgeInsets safeArea =
             rootView == nil ? UIEdgeInsetsZero : rootView.safeAreaInsets;
-        NSDictionary<NSString *, id> *hooks =
-            IOSUsePlayRuntimeHookDiagnostics();
+        hooks = IOSUsePlayRuntimeHookDiagnostics();
         NSDictionary<NSString *, id> *hostGeometry =
             IOSUseHostGeometry(hooks);
         geometry = @{
@@ -726,6 +731,40 @@ static NSMutableDictionary<NSString *, id> *IOSUseIdentityPayload(void) {
                 @"bottom": @(safeArea.bottom),
                 @"right": @(safeArea.right),
             },
+        };
+        observed = @{
+            @"screenBounds": @{
+                @"x": @(logical.origin.x),
+                @"y": @(logical.origin.y),
+                @"width": @(logical.size.width),
+                @"height": @(logical.size.height),
+            },
+            @"nativeBounds": @{
+                @"x": @(native.origin.x),
+                @"y": @(native.origin.y),
+                @"width": @(native.size.width),
+                @"height": @(native.size.height),
+            },
+            @"screenScale": @(screen.scale),
+            @"windowBounds":
+                keyWindow == nil
+                    ? (id)NSNull.null
+                    : @{
+                        @"x": @(windowBounds.origin.x),
+                        @"y": @(windowBounds.origin.y),
+                        @"width": @(windowBounds.size.width),
+                        @"height": @(windowBounds.size.height),
+                    },
+            @"safeArea":
+                keyWindow == nil
+                    ? (id)NSNull.null
+                    : @{
+                        @"top": @(safeArea.top),
+                        @"left": @(safeArea.left),
+                        @"bottom": @(safeArea.bottom),
+                        @"right": @(safeArea.right),
+                    },
+            @"appKit": hooks[@"window"] ?: @{},
         };
         BOOL exact =
             fabs(logical.size.width -
@@ -761,7 +800,7 @@ static NSMutableDictionary<NSString *, id> *IOSUseIdentityPayload(void) {
     if (![playChain[@"status"] isEqualToString:@"ready"]) {
         stage = @"playchain-location-invalid";
     }
-    return [@{
+    NSDictionary<NSString *, id> *identity = @{
         @"pid": @(getpid()),
         @"bundleIdentifier":
             NSBundle.mainBundle.bundleIdentifier ?: @"",
@@ -770,72 +809,13 @@ static NSMutableDictionary<NSString *, id> *IOSUseIdentityPayload(void) {
         @"capabilities": IOSUseCapabilities(),
         @"geometry": geometry ?: @{},
         @"stage": stage ?: @"geometry-mismatch",
-    } mutableCopy];
-}
-
-static NSDictionary<NSString *, id> *IOSUseObserved(void) {
-    __block NSDictionary<NSString *, id> *observed;
-    void (^capture)(void) = ^{
-        UIScreen *screen = UIScreen.mainScreen;
-        UIWindow *keyWindow = nil;
-        for (UIScene *scene in
-             UIApplication.sharedApplication.connectedScenes) {
-            if (![scene isKindOfClass:UIWindowScene.class]) {
-                continue;
-            }
-            for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-                if (window.isKeyWindow) {
-                    keyWindow = window;
-                    break;
-                }
-            }
-        }
-        observed = @{
-            @"screenBounds": @{
-                @"x": @(screen.bounds.origin.x),
-                @"y": @(screen.bounds.origin.y),
-                @"width": @(screen.bounds.size.width),
-                @"height": @(screen.bounds.size.height),
-            },
-            @"nativeBounds": @{
-                @"x": @(screen.nativeBounds.origin.x),
-                @"y": @(screen.nativeBounds.origin.y),
-                @"width": @(screen.nativeBounds.size.width),
-                @"height": @(screen.nativeBounds.size.height),
-            },
-            @"screenScale": @(screen.scale),
-            @"windowBounds":
-                keyWindow == nil
-                    ? (id)NSNull.null
-                    : @{
-                        @"x": @(keyWindow.bounds.origin.x),
-                        @"y": @(keyWindow.bounds.origin.y),
-                        @"width": @(keyWindow.bounds.size.width),
-                        @"height": @(keyWindow.bounds.size.height),
-                    },
-            @"safeArea":
-                keyWindow == nil
-                    ? (id)NSNull.null
-                    : @{
-                        @"top": @(keyWindow.rootViewController.view
-                            .safeAreaInsets.top),
-                        @"left": @(keyWindow.rootViewController.view
-                            .safeAreaInsets.left),
-                        @"bottom": @(keyWindow.rootViewController.view
-                            .safeAreaInsets.bottom),
-                        @"right": @(keyWindow.rootViewController.view
-                            .safeAreaInsets.right),
-                    },
-            @"appKit": [IOSUsePlayRuntimeHookDiagnostics()
-                objectForKey:@"window"] ?: @{},
-        };
     };
-    if (NSThread.isMainThread) {
-        capture();
-    } else {
-        dispatch_sync(dispatch_get_main_queue(), capture);
-    }
-    return observed ?: @{};
+    return @{
+        @"identity": identity,
+        @"observed": observed ?: @{},
+        @"runtime": hooks ?: @{},
+        @"playChain": playChain ?: @{},
+    };
 }
 
 static NSDictionary<NSString *, id> *IOSUseSuccessEnvelope(
@@ -986,8 +966,10 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
                 NO
             );
         }
-        payload = IOSUseIdentityPayload();
-        payload[@"observed"] = IOSUseObserved();
+        NSDictionary<NSString *, id> *snapshot =
+            IOSUseRuntimeSnapshot();
+        payload = [snapshot[@"identity"] mutableCopy];
+        payload[@"observed"] = snapshot[@"observed"];
     } else if ([command isEqualToString:@"ping"]) {
         if (arguments.count != 0) {
             return IOSUseBasicErrorEnvelope(
@@ -1016,12 +998,14 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
                 NO
             );
         }
-        payload = IOSUseIdentityPayload();
+        NSDictionary<NSString *, id> *snapshot =
+            IOSUseRuntimeSnapshot();
+        payload = [snapshot[@"identity"] mutableCopy];
         payload[@"diagnostics"] = @{
-            @"runtime": IOSUsePlayRuntimeHookDiagnostics(),
+            @"runtime": snapshot[@"runtime"],
             @"socket": IOSUsePlayRuntimeSocketIdentity(),
-            @"observed": IOSUseObserved(),
-            @"playChain": [PlayKeychain storageIdentity],
+            @"observed": snapshot[@"observed"],
+            @"playChain": snapshot[@"playChain"],
         };
     } else if ([command isEqualToString:@"screenshot"]) {
         if (arguments.count != 0) {
