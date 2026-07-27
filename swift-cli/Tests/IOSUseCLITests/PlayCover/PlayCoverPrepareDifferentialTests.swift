@@ -742,6 +742,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "ThirdParty/inject/Package.swift",
                 "ThirdParty/inject/PROVENANCE.md",
                 "scripts/audit_playcover_upstreams.sh",
+                "scripts/test_playcover_external_prepare_differential.sh",
                 "scripts/test_playcover_prepare_differential.sh",
                 "swift-cli/Package.resolved",
                 "swift-cli/Package.swift",
@@ -749,6 +750,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "PlayCoverService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverStartTiming.swift",
+                "swift-cli/Tests/IOSUseCLITests/PlayCover/"
+                    + "PlayCoverExternalPrepareDifferentialTests.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                     + "PlayCoverPrepareDifferentialTests.swift",
             ].sorted()
