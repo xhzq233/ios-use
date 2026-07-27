@@ -276,9 +276,11 @@ The framework is a read-only source in the behavioral contract: prepare signs
 only the managed App copy. Installed-layout acceptance hashes the complete
 source framework before and after fixture execution.
 
-Runtime resolution first honors a valid framework explicitly managed by the
-current `IOS_USE_HOME`, then the adjacent development layout, and finally this
-stable prefix share location. Therefore changing `IOS_USE_HOME` isolates only
+Runtime resolution honors a valid framework explicitly managed by an explicit
+`IOS_USE_HOME`, then the adjacent development layout, and finally this stable
+prefix share location. The implicit default home is mutable session/cache state
+and is never a Runtime source, so a stale framework left there cannot shadow the
+Runtime beside a development build. Therefore changing `IOS_USE_HOME` isolates
 prepared Apps and sessions for a release install; it does not require a second
 Runtime installation or allow the installer to put mutable executable code in
 that home.

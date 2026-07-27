@@ -432,7 +432,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
-    func testRuntimeCandidatesPreferCurrentManagedHome() {
+    func testRuntimeCandidatesPreferExplicitManagedHome() {
         let paths = IOSUsePaths.resolve(
             environment: ["IOS_USE_HOME": "/state/ios-use"]
         )
@@ -447,6 +447,26 @@ final class PlayCoverCoreTests: XCTestCase {
                 "/opt/ios-use/bin/.ios-use/playcover/"
                     + "IOSUsePlayRuntime.framework",
                 "/opt/ios-use/share/ios-use/playcover/"
+                    + "IOSUsePlayRuntime.framework",
+            ]
+        )
+    }
+
+    func testRuntimeCandidatesIgnoreImplicitMutableHome() {
+        let paths = IOSUsePaths.resolve(
+            environment: ["HOME": "/Users/example"]
+        )
+
+        XCTAssertFalse(paths.hasExplicitHome)
+        XCTAssertEqual(
+            PlayCoverManagedAppService.runtimeCandidates(
+                paths: paths,
+                executablePath: "/work/ios-use"
+            ),
+            [
+                "/work/.ios-use/playcover/"
+                    + "IOSUsePlayRuntime.framework",
+                "/share/ios-use/playcover/"
                     + "IOSUsePlayRuntime.framework",
             ]
         )

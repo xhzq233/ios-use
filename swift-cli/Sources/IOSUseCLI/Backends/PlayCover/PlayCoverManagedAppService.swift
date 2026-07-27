@@ -409,8 +409,11 @@ enum PlayCoverManagedAppService {
         let executableDirectory = URL(fileURLWithPath: executablePath)
             .standardizedFileURL
             .deletingLastPathComponent()
-        let candidates = [
-            paths.playcoverRuntime,
+        var candidates: [String] = []
+        if paths.hasExplicitHome {
+            candidates.append(paths.playcoverRuntime)
+        }
+        candidates.append(contentsOf: [
             executableDirectory
                 .appendingPathComponent(".ios-use", isDirectory: true)
                 .appendingPathComponent("playcover", isDirectory: true)
@@ -425,7 +428,7 @@ enum PlayCoverManagedAppService {
                 .appendingPathComponent(
                     PlayCoverService.runtimeFrameworkName
                 ).path,
-        ]
+        ])
         var seen: Set<String> = []
         return candidates.compactMap {
             let value = standardizedPath($0)
