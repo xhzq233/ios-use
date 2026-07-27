@@ -2418,12 +2418,10 @@ assert_ocr_evidence screenshot_metal \
 assert_metal_pixel screenshot_metal
 
 record_case stop stop
-if [[
-  ! -f "$stdio_log_path" ||
-  -L "$stdio_log_path" ||
-  "$(/usr/bin/stat -f '%d:%i:%u:%Lp:%l' "$stdio_log_path")" !=
-    "$stdio_log_identity"
-]]; then
+if [[ ! -f "$stdio_log_path" || -L "$stdio_log_path" ]] ||
+  [[
+    "$(/usr/bin/stat -f '%d:%i:%u:%Lp:%l' "$stdio_log_path")" != "$stdio_log_identity"
+  ]]; then
   echo \
     "[playcover-fixture-live] FAIL: normal stop did not retain the exact stdio log" \
     >&2

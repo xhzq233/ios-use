@@ -1563,12 +1563,10 @@ assert_stopped crash_stopped
 if /bin/kill -0 "$crash_pid" 2>/dev/null; then
   fail_gate "App-crash stale cleanup left PID $crash_pid alive"
 fi
-if [[
-  ! -f "$crash_stdio_log" ||
-  -L "$crash_stdio_log" ||
-  "$(/usr/bin/stat -f '%d:%i:%u:%Lp:%l' "$crash_stdio_log")" !=
-    "$crash_stdio_log_identity"
-]]; then
+if [[ ! -f "$crash_stdio_log" || -L "$crash_stdio_log" ]] ||
+  [[
+    "$(/usr/bin/stat -f '%d:%i:%u:%Lp:%l' "$crash_stdio_log")" != "$crash_stdio_log_identity"
+  ]]; then
   fail_gate "App SIGKILL/stop did not retain the exact stdio log"
 fi
 if [[
