@@ -656,10 +656,17 @@ public enum PlayCoverUpstreamEngine {
         case runtimeBuildHash
     }
 
+    enum CodeSignatureObservationKind: Equatable {
+        case display
+        case strictVerify
+    }
+
     static var fullContentPassObserverForTesting:
         ((FullContentPassKind, URL) -> Void)?
     static var sliceSHA256ComputationObserverForTesting:
         ((PlayCoverUpstreamMachOContainer, UInt32) -> Void)?
+    static var codeSignatureObserverForTesting:
+        ((CodeSignatureObservationKind, URL) -> Void)?
 
     public static func inspect(appURL: URL) throws -> PlayCoverUpstreamAppInspection {
         try inspect(
@@ -3476,7 +3483,38 @@ public enum PlayCoverUpstreamEngine {
         diagnosticPath: String? = nil
     ) throws -> PlayCoverUpstreamSignature {
         let evidencePath = diagnosticPath ?? url.path
-        let metadata = codeSignatureMetadata(url)
+        codeSignatureObserverForTesting?(.display, url)
+        let displayResult: Result<String, Error>
+        do {
+            displayResult = .success(
+                try Shell.run(
+                    print: false,
+                    "/usr/bin/codesign",
+                    "-d",
+                    "--verbose=4",
+                    "--entitlements",
+                    "-",
+                    "--xml",
+                    url.path
+                )
+            )
+        } catch {
+            displayResult = .failure(error)
+        }
+        let displayOutput: String
+        let displaySucceeded: Bool
+        switch displayResult {
+        case .success(let output):
+            displayOutput = output
+            displaySucceeded = true
+        case .failure(let error):
+            displayOutput = String(describing: error)
+            displaySucceeded = false
+        }
+        let metadata = codeSignatureMetadata(
+            displayOutput,
+            commandSucceeded: displaySucceeded
+        )
         let hasDEREntitlements = embeddedSignature?.slots.contains {
             $0.type == 7
         } == true
@@ -3545,19 +3583,9 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
-        let output: String
-        do {
-            output = try Shell.run(
-                print: false,
-                "/usr/bin/codesign",
-                "-d",
-                "--entitlements",
-                "-",
-                "--xml",
-                url.path
-            )
-        } catch {
-            let description = String(describing: error)
+        switch displayResult {
+        case .failure:
+            let description = displayOutput
             if description.contains("code object is not signed at all")
                 || description.contains("does not have any entitlements")
                 || description.contains("Document is empty") {
@@ -3567,8 +3595,10 @@ public enum PlayCoverUpstreamEngine {
             throw PlayCoverUpstreamError.commandFailed(
                 "extract entitlements from \(evidencePath): \(description)"
             )
+        case .success:
+            break
         }
-        guard let xml = extractPlist(from: output),
+        guard let xml = extractPlist(from: displayOutput),
               !xml.isEmpty else {
             return try result(signed: true, entitlementsPlist: nil)
         }
@@ -3657,18 +3687,18 @@ public enum PlayCoverUpstreamEngine {
     }
 
     private static func codeSignatureMetadata(
-        _ url: URL
+        _ output: String,
+        commandSucceeded: Bool
     ) -> CodeSignatureMetadata? {
-        guard let output = try? Shell.run(
-            print: false,
-            "/usr/bin/codesign",
-            "-d",
-            "--verbose=4",
-            url.path
-        ) else {
-            return nil
+        let metadataOutput: Substring
+        if let plistRange = extractPlistRange(from: output) {
+            metadataOutput = output[..<plistRange.lowerBound]
+        } else {
+            metadataOutput = output[...]
         }
-        let lines = output.split(whereSeparator: \.isNewline).map(String.init)
+        let lines = metadataOutput
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
         var values: [String: String] = [:]
         for line in lines {
             guard let separator = line.firstIndex(of: "=") else {
@@ -3679,6 +3709,11 @@ public enum PlayCoverUpstreamEngine {
         }
         let codeDirectory = lines.first {
             $0.hasPrefix("CodeDirectory ")
+        }
+        guard commandSucceeded
+                || codeDirectory != nil
+                || values["CDHash"] != nil else {
+            return nil
         }
         func codeDirectoryToken(_ name: String) -> String? {
             codeDirectory?
@@ -3701,7 +3736,8 @@ public enum PlayCoverUpstreamEngine {
     }
 
     private static func codeSignatureIsValid(_ url: URL) -> Bool {
-        (try? Shell.run(
+        codeSignatureObserverForTesting?(.strictVerify, url)
+        return (try? Shell.run(
             print: false,
             "/usr/bin/codesign",
             "--verify",
@@ -3714,6 +3750,7 @@ public enum PlayCoverUpstreamEngine {
         _ url: URL,
         label: String
     ) throws {
+        codeSignatureObserverForTesting?(.strictVerify, url)
         do {
             _ = try Shell.run(
                 print: false,
@@ -4107,15 +4144,39 @@ public enum PlayCoverUpstreamEngine {
     }
 
     private static func extractPlist(from output: String) -> String? {
-        guard let start = output.range(of: "<?xml")?.lowerBound,
-              let endRange = output.range(
-                of: "</plist>",
-                options: .backwards,
-                range: start..<output.endIndex
-              ) else {
+        guard let range = extractPlistRange(from: output) else {
             return nil
         }
-        return String(output[start..<endRange.upperBound])
+        return String(output[range])
+    }
+
+    private static func extractPlistRange(
+        from output: String
+    ) -> Range<String.Index>? {
+        guard let closing = output.range(
+            of: "</plist>",
+            options: .backwards
+        ), output[closing.upperBound...].allSatisfy(\.isWhitespace) else {
+            return nil
+        }
+        var searchEnd = closing.lowerBound
+        while let declaration = output.range(
+            of: "<?xml",
+            options: .backwards,
+            range: output.startIndex..<searchEnd
+        ) {
+            let range = declaration.lowerBound..<closing.upperBound
+            let data = Data(output[range].utf8)
+            if (try? PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+            )) != nil {
+                return range
+            }
+            searchEnd = declaration.lowerBound
+        }
+        return nil
     }
 
     private static func codeObjectKind(

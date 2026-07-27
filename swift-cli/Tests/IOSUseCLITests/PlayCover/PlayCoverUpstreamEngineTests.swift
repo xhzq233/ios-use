@@ -3,6 +3,11 @@ import Foundation
 import XCTest
 
 final class PlayCoverUpstreamEngineTests: XCTestCase {
+    override func tearDown() {
+        PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
+        super.tearDown()
+    }
+
     func testRuntimeInjectionPreflightPreservesPinnedFailureBoundaries()
         throws
     {
@@ -254,6 +259,142 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertEqual(alternate.hashType, 2)
         XCTAssertNotEqual(primary.cdHash, alternate.cdHash)
         XCTAssertEqual(arm64.signature.cdHash, alternate.cdHash)
+    }
+
+    func testSignatureEvidenceUsesOneDisplayAndOneStrictVerifyPerThinTarget()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverSignatureDisplay-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        let template = root.appendingPathComponent("ThinTemplate")
+        _ = try Shell.run(
+            print: false,
+            "/usr/bin/lipo",
+            "/bin/echo",
+            "-thin",
+            "arm64e",
+            "-output",
+            template.path
+        )
+
+        let entitlements = root.appendingPathComponent("Entitlements.plist")
+        try PropertyListSerialization.data(
+            fromPropertyList: [
+                "com.apple.security.app-sandbox": true,
+                "com.iosuse.metadata-noise": "line1\nCDHash=evil",
+            ],
+            format: .xml,
+            options: 0
+        ).write(to: entitlements)
+
+        func signedCopy(
+            named name: String,
+            withEntitlements: Bool,
+            plistInPath: Bool = false
+        ) throws -> URL {
+            var parent = root
+            if plistInPath {
+                for component in [
+                    "Path<?xml version=\"1.0\"?>"
+                        + "<plist version=\"1.0\"><dict",
+                    "><",
+                    "plist>",
+                ] {
+                    parent.appendPathComponent(component, isDirectory: true)
+                    try FileManager.default.createDirectory(
+                        at: parent,
+                        withIntermediateDirectories: false
+                    )
+                }
+            }
+            let executable = parent.appendingPathComponent(name)
+            try FileManager.default.copyItem(
+                at: template,
+                to: executable
+            )
+            if withEntitlements {
+                _ = try Shell.run(
+                    print: false,
+                    "/usr/bin/codesign",
+                    "-fs-",
+                    executable.path,
+                    "--entitlements",
+                    entitlements.path,
+                    "--generate-entitlement-der"
+                )
+            } else {
+                try Shell.signMacho(executable)
+            }
+            return executable
+        }
+
+        func inspect(
+            _ executable: URL
+        ) throws -> PlayCoverUpstreamMachOInspection {
+            var observations:
+                [PlayCoverUpstreamEngine.CodeSignatureObservationKind] = []
+            PlayCoverUpstreamEngine.codeSignatureObserverForTesting = {
+                kind,
+                observedURL in
+                XCTAssertEqual(observedURL.path, executable.path)
+                observations.append(kind)
+            }
+            let inspection = try PlayCoverUpstreamEngine.inspectMachO(
+                at: executable,
+                relativePath: executable.lastPathComponent
+            )
+            XCTAssertEqual(
+                observations,
+                [.display, .strictVerify]
+            )
+            return inspection
+        }
+
+        let withoutEntitlements = try signedCopy(
+            named: "Without<?xmlEntitlements",
+            withEntitlements: false,
+            plistInPath: true
+        )
+        let withoutInspection = try inspect(withoutEntitlements)
+        XCTAssertTrue(withoutInspection.signature.isSigned)
+        XCTAssertTrue(withoutInspection.signature.isValid)
+        XCTAssertNotNil(withoutInspection.signature.cdHash)
+        XCTAssertNil(withoutInspection.signature.entitlementsPlist)
+
+        let withEntitlements = try signedCopy(
+            named: "With<?xmlEntitlements",
+            withEntitlements: true
+        )
+        let withInspection = try inspect(withEntitlements)
+        XCTAssertTrue(withInspection.signature.isSigned)
+        XCTAssertTrue(withInspection.signature.isValid)
+        XCTAssertNotNil(withInspection.signature.cdHash)
+        XCTAssertNotNil(withInspection.signature.entitlementsPlist)
+
+        let invalid = try signedCopy(
+            named: "InvalidSignature",
+            withEntitlements: false
+        )
+        let handle = try FileHandle(forUpdating: invalid)
+        try handle.seek(toOffset: 4_096)
+        let original = try XCTUnwrap(
+            try handle.read(upToCount: 1)?.first
+        )
+        try handle.seek(toOffset: 4_096)
+        try handle.write(contentsOf: Data([original ^ 0x01]))
+        try handle.close()
+        let invalidInspection = try inspect(invalid)
+        XCTAssertTrue(invalidInspection.signature.isSigned)
+        XCTAssertFalse(invalidInspection.signature.isValid)
+        XCTAssertNotNil(invalidInspection.signature.cdHash)
     }
 
     func testRuntimeBuildHashPreservesExistingFramedContract() throws {
