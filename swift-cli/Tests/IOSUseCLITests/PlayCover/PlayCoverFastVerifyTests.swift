@@ -93,6 +93,64 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
     }
 
+    func testDescriptorSHA256MatchesOneShotAcrossBufferBoundaries()
+        throws
+    {
+        #if canImport(Darwin)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverDescriptorHash-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sizes = [
+            0,
+            1,
+            1_048_575,
+            1_048_576,
+            1_048_577,
+            2_097_275,
+        ]
+        for size in sizes {
+            var data = Data(count: size)
+            data.withUnsafeMutableBytes {
+                (bytes: UnsafeMutableRawBufferPointer) in
+                for index in 0..<size {
+                    bytes[index] = UInt8(
+                        truncatingIfNeeded: index &* 31 &+ size
+                    )
+                }
+            }
+            let url = root.appendingPathComponent("bytes-\(size)")
+            try data.write(to: url)
+            let expected = SHA256.hash(data: data).map {
+                String(format: "%02x", $0)
+            }.joined()
+            let descriptor = Darwin.open(
+                url.path,
+                O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+            )
+            XCTAssertGreaterThanOrEqual(descriptor, 0)
+            guard descriptor >= 0 else { continue }
+            defer { Darwin.close(descriptor) }
+
+            XCTAssertEqual(
+                try PlayCoverService.fileSHA256(
+                    descriptor: descriptor
+                ),
+                expected,
+                "descriptor hash mismatch for \(size) bytes"
+            )
+        }
+        #else
+        throw XCTSkip("descriptor hashing is Darwin-only")
+        #endif
+    }
+
     func testManifestSymlinkFailsClosed() throws {
         let fixture = try FastVerifyFixture()
         defer { fixture.remove() }

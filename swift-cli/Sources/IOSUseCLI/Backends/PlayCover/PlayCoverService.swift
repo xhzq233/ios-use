@@ -2188,19 +2188,28 @@ public enum PlayCoverService {
         return hex(hasher.finalize())
     }
 
-    private static func fileSHA256(
+    static func fileSHA256(
         descriptor: Int32
     ) throws -> String {
         var hasher = SHA256()
         var buffer = [UInt8](repeating: 0, count: 1_048_576)
         while true {
-            let count = Darwin.read(
-                descriptor,
-                &buffer,
-                buffer.count
-            )
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.read(
+                    descriptor,
+                    $0.baseAddress,
+                    $0.count
+                )
+            }
             if count > 0 {
-                hasher.update(data: Data(buffer[0..<count]))
+                buffer.withUnsafeBytes {
+                    hasher.update(
+                        bufferPointer: UnsafeRawBufferPointer(
+                            start: $0.baseAddress,
+                            count: count
+                        )
+                    )
+                }
                 continue
             }
             if count == 0 {
