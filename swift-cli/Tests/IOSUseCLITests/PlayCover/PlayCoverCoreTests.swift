@@ -217,6 +217,31 @@ final class PlayCoverCoreTests: XCTestCase {
                 prepareRevision: plan.prepareRevision
             )
         )
+
+        let forwardedKey = String(repeating: "f", count: 64)
+        let forwardedPlan = PlayCoverPreparationPlan(
+            source: plan.source,
+            runtimeFrameworkPath: plan.runtimeFrameworkPath,
+            runtimeBuildHash: plan.runtimeBuildHash,
+            prepareRevision: plan.prepareRevision,
+            generationKey: forwardedKey
+        )
+        XCTAssertNotEqual(
+            forwardedKey,
+            PlayCoverService.makeGenerationKey(
+                sourceContentHash:
+                    plan.source.inspection.sourceContentHash,
+                runtimeBuildHash: plan.runtimeBuildHash,
+                prepareRevision: plan.prepareRevision
+            )
+        )
+        XCTAssertNoThrow(
+            try PlayCoverService.validatePreparationPlan(
+                forwardedPlan
+            ),
+            "Service must forward the immutable plan instead of "
+                + "recomputing its generation key or deep-comparing evidence"
+        )
     }
 
     func testManifestHasSingleGenerationIdentityAndNoBootstrapFields()

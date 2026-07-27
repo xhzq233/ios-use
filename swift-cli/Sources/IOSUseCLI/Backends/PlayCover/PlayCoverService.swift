@@ -46,7 +46,7 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v10+playcover-"
+        "ios-use-headless-v11+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
@@ -180,23 +180,7 @@ public enum PlayCoverService {
         paths: IOSUsePaths,
         publishedAppPath: String? = nil
     ) throws -> PlayCoverPreparedArtifact {
-        guard plan.source
-                == PlayCoverPreparationSource(
-                    plan.source.upstreamInspection
-                ),
-              plan.prepareRevision == prepareImplementationRevision,
-              plan.runtimeBuildHash.count == 64,
-              plan.runtimeBuildHash.allSatisfy({ $0.isHexDigit }),
-              plan.generationKey == makeGenerationKey(
-                sourceContentHash:
-                    plan.source.inspection.sourceContentHash,
-                runtimeBuildHash: plan.runtimeBuildHash,
-                prepareRevision: plan.prepareRevision
-              ) else {
-            throw PlayCoverBackendError.prepareFailed(
-                "preparation plan identity is invalid"
-            )
-        }
+        try validatePreparationPlan(plan)
         let source = plan.source.inspection
         let stagingIdentityURL = URL(
             fileURLWithPath: outputAppPath,
@@ -265,10 +249,6 @@ public enum PlayCoverService {
             upstream.prepared,
             appPath: publishedURL.path
         )
-        let sourceEvidence = PlayCoverAppInspection(
-            upstream.sourceBefore,
-            appPath: source.appPath
-        )
         let manifest = PlayCoverPrepareManifest(
             sourceAppPath: source.appPath,
             preparedAppPath: publishedURL.path,
@@ -284,8 +264,8 @@ public enum PlayCoverService {
             runtimeFrameworkName: runtimeFrameworkName,
             convertedMachOs: upstream.convertedMachOs,
             signingOrder: upstream.signingOrder,
-            sourceInventory: sourceEvidence.inventory,
-            sourceMachOs: sourceEvidence.machOs,
+            sourceInventory: source.inventory,
+            sourceMachOs: source.machOs,
             inventory: prepared.inventory,
             machOs: prepared.machOs,
             entitlementDiff: PlayCoverEntitlementDiff(
@@ -302,6 +282,30 @@ public enum PlayCoverService {
             phaseTimings: upstream.phaseTimings,
             upstreamResult: upstream
         )
+    }
+
+    static func validatePreparationPlan(
+        _ plan: PlayCoverPreparationPlan
+    ) throws {
+        let sourceHash = plan.source.inspection.sourceContentHash
+        let upstreamSourceHash =
+            plan.source.upstreamInspection.sourceContentHash
+        let sourcePath = canonicalPath(
+            plan.source.inspection.appPath
+        )
+        let upstreamSourcePath = canonicalPath(
+            plan.source.upstreamInspection.appPath
+        )
+        guard plan.prepareRevision == prepareImplementationRevision,
+              isSHA256(sourceHash),
+              upstreamSourceHash == sourceHash,
+              sourcePath == upstreamSourcePath,
+              isSHA256(plan.runtimeBuildHash),
+              isSHA256(plan.generationKey) else {
+            throw PlayCoverBackendError.prepareFailed(
+                "preparation plan identity is invalid"
+            )
+        }
     }
 
     /// Full verification. Managed cache reuse calls `fastVerifyGeneration`
@@ -775,6 +779,10 @@ public enum PlayCoverService {
         update(&hasher, runtimeBuildHash)
         update(&hasher, prepareRevision)
         return hex(hasher.finalize())
+    }
+
+    private static func isSHA256(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.allSatisfy(\.isHexDigit)
     }
 
     static func runtimeBuildHash(

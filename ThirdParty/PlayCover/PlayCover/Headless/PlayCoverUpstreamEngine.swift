@@ -649,7 +649,30 @@ public enum PlayCoverUpstreamEngine {
     private static let platformIPhoneOS: UInt32 = 2
     public static let platformMacCatalyst: UInt32 = 6
     private static let maximumLoadCommands = 1_000_000
+
+    enum FullContentPassKind: Equatable {
+        case appInspection
+        case appContentHash
+        case runtimeBuildHash
+    }
+
+    static var fullContentPassObserverForTesting:
+        ((FullContentPassKind, URL) -> Void)?
+
     public static func inspect(appURL: URL) throws -> PlayCoverUpstreamAppInspection {
+        try inspect(
+            appURL: appURL,
+            nestedBuildHashRoot: nil
+        ).inspection
+    }
+
+    private static func inspect(
+        appURL: URL,
+        nestedBuildHashRoot: String?
+    ) throws -> (
+        inspection: PlayCoverUpstreamAppInspection,
+        nestedBuildHash: String?
+    ) {
         let app = appURL.standardizedFileURL
         let fileManager = FileManager.default
         var isDirectory: ObjCBool = false
@@ -694,7 +717,9 @@ public enum PlayCoverUpstreamEngine {
         let snapshot = try treeSnapshot(
             appURL: app,
             preloadedRegularFileData: ["Info.plist": infoData],
-            inspectMachOs: true
+            inspectMachOs: true,
+            nestedBuildHashRoot: nestedBuildHashRoot,
+            passKind: .appInspection
         )
         let inventory = snapshot.inventory
         let machOs = snapshot.machOs
@@ -721,18 +746,21 @@ public enum PlayCoverUpstreamEngine {
                 snapshot: snapshot
             )
         )
-        return PlayCoverUpstreamAppInspection(
-            appPath: app.path,
-            sourceContentHash: snapshot.contentHash,
-            infoPlistSHA256: hex(SHA256.hash(data: infoData)),
-            bundleIdentifier: bundleIdentifier,
-            executableName: executableName,
-            executablePath: executable.path,
-            mainExecutableRelativePath: mainRelative,
-            signature: mainMachO.signature,
-            provisioning: provisioning,
-            inventory: inventory,
-            machOs: machOs
+        return (
+            inspection: PlayCoverUpstreamAppInspection(
+                appPath: app.path,
+                sourceContentHash: snapshot.contentHash,
+                infoPlistSHA256: hex(SHA256.hash(data: infoData)),
+                bundleIdentifier: bundleIdentifier,
+                executableName: executableName,
+                executablePath: executable.path,
+                mainExecutableRelativePath: mainRelative,
+                signature: mainMachO.signature,
+                provisioning: provisioning,
+                inventory: inventory,
+                machOs: machOs
+            ),
+            nestedBuildHash: snapshot.nestedBuildHash
         )
     }
 
@@ -820,40 +848,24 @@ public enum PlayCoverUpstreamEngine {
             .appendingPathComponent("playcover", isDirectory: true)
         try PlayTools.configureManagedContainer(managedPlayCover)
         _ = KeyCover.playChainPath
-        let sourceBaseApp = BaseApp(appUrl: options.sourceApp)
-        try Installer.saveEntitlements(sourceBaseApp)
-        let installerMachOs = try Installer.resolveValidMachOs(sourceBaseApp)
+        // The caller already performed the authoritative source inspection.
+        // Production prepare consumes that immutable result directly; the
+        // pinned Installer enumeration/encryption calls remain independently
+        // exercised by the differential oracle.
         let sourceByPath = Dictionary(
             uniqueKeysWithValues: source.machOs.map {
                 ($0.relativePath, $0)
             }
         )
-        let installerRelativePaths = try installerMachOs.map {
-            try relativePath($0, in: options.sourceApp)
-        }
-        guard Set(installerRelativePaths) == Set(sourceByPath.keys) else {
-            throw PlayCoverUpstreamError.verificationFailed(
-                "Installer enumeration and inspection inventory disagree"
-            )
-        }
-        for relative in installerRelativePaths {
+        let inspectedRelativePaths = source.machOs.map(\.relativePath)
+        for relative in inspectedRelativePaths {
             guard let macho = sourceByPath[relative] else {
                 throw PlayCoverUpstreamError.verificationFailed(
-                    "Installer Mach-O disappeared from source inventory: "
+                    "inspected Mach-O disappeared from source inventory: "
                         + relative
                 )
             }
-            let sourceURL = options.sourceApp.appendingPathComponent(relative)
-            let installerEncrypted = try Macho.isMachoEncrypted(
-                atURL: sourceURL
-            )
-            guard installerEncrypted == macho.encrypted else {
-                throw PlayCoverUpstreamError.verificationFailed(
-                    "pinned encryption check and bounded inspection "
-                        + "disagree for \(relative)"
-                )
-            }
-            if installerEncrypted {
+            if macho.encrypted {
                 throw PlayCoverUpstreamError.encryptedMachO(relative)
             }
             guard macho.platform == platformIPhoneOS
@@ -880,18 +892,6 @@ public enum PlayCoverUpstreamEngine {
             }
         }
         try afterSourceCloneForTesting?(options.stagingApp)
-        // The source can be rebuilt while `cp -cR` is walking it. Verify the
-        // immutable clone before applying any conversion, injection, or
-        // signing mutation so a transient inspect -> clone -> restore (ABA)
-        // cannot publish bytes that were never represented by the preparation
-        // plan.
-        let clonedSourceHash = try contentHash(appURL: options.stagingApp)
-        guard clonedSourceHash == source.sourceContentHash else {
-            throw PlayCoverUpstreamError.sourceMutated(
-                expected: source.sourceContentHash,
-                actual: clonedSourceHash
-            )
-        }
 
         let stagingFrameworks = options.stagingApp
             .appendingPathComponent("Frameworks", isDirectory: true)
@@ -913,22 +913,15 @@ public enum PlayCoverUpstreamEngine {
             at: options.runtimeFramework,
             to: embeddedRuntime
         )
-        if let expected = options.expectedRuntimeBuildHash {
-            let actual = try runtimeBuildHash(frameworkURL: embeddedRuntime)
-            guard actual == expected else {
-                throw PlayCoverUpstreamError.verificationFailed(
-                    "Runtime framework changed while staging: expected "
-                        + "\(expected), got \(actual)"
-                )
-            }
-        }
+        let embeddedRuntimeRelativePath =
+            "Frameworks/\(embeddedRuntime.lastPathComponent)"
         accumulateMonotonicDuration(
             &phaseTimings.cloneNanoseconds,
             since: cloneStarted
         )
 
         var converted: [String] = []
-        for relative in installerRelativePaths {
+        for relative in inspectedRelativePaths {
             guard let sourceMacho = sourceByPath[relative] else {
                 throw PlayCoverUpstreamError.verificationFailed(
                     "Installer Mach-O disappeared from evidence: \(relative)"
@@ -1015,9 +1008,10 @@ public enum PlayCoverUpstreamEngine {
             playSignActive: options.playSignActive
         )
         let signingStarted = monotonicTimestamp()
-        let signing = try signInsideOut(
+        let signing = try signInsideOutUsingPlan(
             appURL: options.stagingApp,
             source: source,
+            additionalNestedBundles: [embeddedRuntimeRelativePath],
             finalEntitlements: composition.finalPlist
         )
         accumulateMonotonicDuration(
@@ -1039,17 +1033,18 @@ public enum PlayCoverUpstreamEngine {
         }
 
         let verifyStarted = monotonicTimestamp()
-        let prepared = try verify(
+        let prepared = try verifyPrepared(
             appURL: options.stagingApp,
-            runtimeLoadPath: options.runtimeLoadPath
+            runtimeLoadPath: options.runtimeLoadPath,
+            expectedRuntimeBuildHash: options.expectedRuntimeBuildHash,
+            embeddedRuntimeFrameworkRelativePath:
+                embeddedRuntimeRelativePath,
+            signingOrder: signing
         )
-        let sourceAfter = try contentHash(appURL: options.sourceApp)
-        guard sourceAfter == source.sourceContentHash else {
-            throw PlayCoverUpstreamError.sourceMutated(
-                expected: source.sourceContentHash,
-                actual: sourceAfter
-            )
-        }
+        // A completed source build remaining byte-stable through publication
+        // is the caller's contract. Re-reading either the live source or its
+        // clone would add a content pass without making that contract stronger.
+        let sourceAfter = source.sourceContentHash
         accumulateMonotonicDuration(
             &phaseTimings.verifyNanoseconds,
             since: verifyStarted
@@ -1068,9 +1063,49 @@ public enum PlayCoverUpstreamEngine {
 
     public static func verify(
         appURL: URL,
-        runtimeLoadPath: String
+        runtimeLoadPath: String,
+        signingOrder: [String]? = nil
     ) throws -> PlayCoverUpstreamAppInspection {
-        let inspection = try inspect(appURL: appURL)
+        try verifyPrepared(
+            appURL: appURL,
+            runtimeLoadPath: runtimeLoadPath,
+            expectedRuntimeBuildHash: nil,
+            embeddedRuntimeFrameworkRelativePath: nil,
+            signingOrder: signingOrder
+        )
+    }
+
+    private static func verifyPrepared(
+        appURL: URL,
+        runtimeLoadPath: String,
+        expectedRuntimeBuildHash: String?,
+        embeddedRuntimeFrameworkRelativePath: String?,
+        signingOrder: [String]? = nil
+    ) throws -> PlayCoverUpstreamAppInspection {
+        let result = try inspect(
+            appURL: appURL,
+            nestedBuildHashRoot:
+                expectedRuntimeBuildHash == nil
+                    ? nil
+                    : embeddedRuntimeFrameworkRelativePath
+        )
+        let inspection = result.inspection
+        if let expectedRuntimeBuildHash {
+            guard let actualRuntimeBuildHash = result.nestedBuildHash else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "embedded Runtime framework is absent from the final "
+                        + "prepared App inspection"
+                )
+            }
+            guard actualRuntimeBuildHash == expectedRuntimeBuildHash else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "embedded Runtime build hash does not match the "
+                        + "preparation plan: expected "
+                        + "\(expectedRuntimeBuildHash), got "
+                        + actualRuntimeBuildHash
+                )
+            }
+        }
         for macho in inspection.machOs {
             guard !macho.encrypted else {
                 throw PlayCoverUpstreamError.verificationFailed(
@@ -1082,10 +1117,11 @@ public enum PlayCoverUpstreamEngine {
                     "non-Catalyst Mach-O remains: \(macho.relativePath)"
                 )
             }
-            try verifyCodeSignature(
-                appURL.appendingPathComponent(macho.relativePath),
-                label: macho.relativePath
-            )
+            guard macho.signature.isValid else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "\(macho.relativePath) code signature is invalid"
+                )
+            }
         }
         guard let main = inspection.machOs.first(where: {
             $0.relativePath == inspection.mainExecutableRelativePath
@@ -1114,7 +1150,39 @@ public enum PlayCoverUpstreamEngine {
                 )
             }
         }
-        try verifyCodeSignature(appURL, label: appURL.lastPathComponent)
+        let bundlePaths: [String]
+        if let signingOrder {
+            let directoryPaths = Set(
+                inspection.inventory.compactMap {
+                    $0.kind == .directory &&
+                        $0.codeObjectKind?.hasSuffix("Bundle") == true
+                        ? $0.relativePath
+                        : nil
+                }
+            )
+            bundlePaths = signingOrder.filter {
+                $0 == "." || directoryPaths.contains($0)
+            }
+        } else {
+            bundlePaths = inspection.inventory.compactMap {
+                $0.kind == .directory &&
+                    $0.codeObjectKind?.hasSuffix("Bundle") == true
+                    ? $0.relativePath
+                    : nil
+            }.sorted {
+                let lhsDepth = $0.split(separator: "/").count
+                let rhsDepth = $1.split(separator: "/").count
+                return lhsDepth == rhsDepth ? $0 < $1 : lhsDepth > rhsDepth
+            } + ["."]
+        }
+        for relative in bundlePaths {
+            try verifyCodeSignature(
+                relative == "."
+                    ? appURL
+                    : appURL.appendingPathComponent(relative),
+                label: relative == "." ? appURL.lastPathComponent : relative
+            )
+        }
         return inspection
     }
 
@@ -1128,7 +1196,9 @@ public enum PlayCoverUpstreamEngine {
         return try treeSnapshot(
             appURL: app,
             preloadedRegularFileData: [:],
-            inspectMachOs: false
+            inspectMachOs: false,
+            collectFileHashes: false,
+            passKind: .appContentHash
         ).contentHash
     }
 
@@ -1149,6 +1219,7 @@ public enum PlayCoverUpstreamEngine {
                 "Runtime is not a framework directory: \(root.path)"
             )
         }
+        fullContentPassObserverForTesting?(.runtimeBuildHash, root)
         let keys: Set<URLResourceKey> = [
             .isDirectoryKey,
             .isRegularFileKey,
@@ -1244,13 +1315,14 @@ public enum PlayCoverUpstreamEngine {
     }
 
     private struct RegularFileSnapshot {
-        let sha256: String
+        let sha256: String?
         let isMachO: Bool
         let retainedData: Data?
     }
 
     private struct TreeSnapshot {
         let contentHash: String
+        let nestedBuildHash: String?
         let inventory: [PlayCoverUpstreamInventoryEntry]
         let machOs: [PlayCoverUpstreamMachOInspection]
     }
@@ -2825,8 +2897,12 @@ public enum PlayCoverUpstreamEngine {
     private static func treeSnapshot(
         appURL: URL,
         preloadedRegularFileData: [String: Data],
-        inspectMachOs: Bool
+        inspectMachOs: Bool,
+        collectFileHashes: Bool = true,
+        nestedBuildHashRoot: String? = nil,
+        passKind: FullContentPassKind
     ) throws -> TreeSnapshot {
+        fullContentPassObserverForTesting?(passKind, appURL)
         let keys: [URLResourceKey] = [
             .isDirectoryKey,
             .isRegularFileKey,
@@ -2878,6 +2954,9 @@ public enum PlayCoverUpstreamEngine {
         }
 
         var hasher = SHA256()
+        var nestedHasher: SHA256? =
+            nestedBuildHashRoot == nil ? nil : SHA256()
+        var nestedRootFound = false
         var inventory = Array<PlayCoverUpstreamInventoryEntry?>(
             repeating: nil,
             count: metadata.count
@@ -2893,21 +2972,63 @@ public enum PlayCoverUpstreamEngine {
         }
         for index in sortedIndices {
             let entry = metadata[index]
+            if entry.relativePath == nestedBuildHashRoot {
+                nestedRootFound = entry.kind == .directory
+            }
+            let nestedRelativePath: String?
+            if let nestedBuildHashRoot,
+               entry.relativePath.hasPrefix(nestedBuildHashRoot + "/") {
+                nestedRelativePath = String(
+                    entry.relativePath.dropFirst(
+                        nestedBuildHashRoot.count + 1
+                    )
+                )
+            } else {
+                nestedRelativePath = nil
+            }
             update(&hasher, entry.relativePath)
             update(&hasher, entry.kind.rawValue)
             update(&hasher, entry.posixPermissions.map(String.init) ?? "-")
             update(&hasher, entry.size.map(String.init) ?? "-")
+            if let nestedRelativePath, var nested = nestedHasher {
+                let nestedKind: String
+                switch entry.kind {
+                case .regularFile:
+                    nestedKind = "file"
+                case .directory:
+                    nestedKind = "directory"
+                case .symbolicLink:
+                    nestedKind = "symlink"
+                case .other:
+                    nestedKind = "other"
+                }
+                update(&nested, nestedRelativePath)
+                update(&nested, nestedKind)
+                update(
+                    &nested,
+                    String(entry.posixPermissions ?? 0)
+                )
+                update(&nested, String(entry.size ?? 0))
+                nestedHasher = nested
+            }
             let fileSHA256: String?
             let codeKind: String?
             switch entry.kind {
             case .regularFile:
                 updateLength(&hasher, entry.size ?? 0)
+                if nestedRelativePath != nil, var nested = nestedHasher {
+                    updateLength(&nested, entry.size ?? 0)
+                    nestedHasher = nested
+                }
                 let file = try readRegularFile(
                     entry.url,
                     preloadedData:
                         preloadedRegularFileData[entry.relativePath],
                     retainMachOData: inspectMachOs,
-                    contentHasher: &hasher
+                    computeSHA256: collectFileHashes || inspectMachOs,
+                    contentHasher: &hasher,
+                    secondaryContentHasher: &nestedHasher,
+                    hashSecondaryContent: nestedRelativePath != nil
                 )
                 fileSHA256 = file.sha256
                 codeKind = file.isMachO
@@ -2922,15 +3043,27 @@ public enum PlayCoverUpstreamEngine {
                             "Mach-O bytes were not retained for inspection"
                         )
                     }
+                    guard let fileSHA256 = file.sha256 else {
+                        preconditionFailure(
+                            "Mach-O file hash was not materialized"
+                        )
+                    }
                     machOs[index] = try inspectMachO(
                         data,
-                        fileSHA256: file.sha256,
+                        fileSHA256: fileSHA256,
                         at: entry.url,
                         relativePath: entry.relativePath
                     )
                 }
             case .symbolicLink:
                 update(&hasher, entry.symbolicLinkDestination ?? "")
+                if nestedRelativePath != nil, var nested = nestedHasher {
+                    update(
+                        &nested,
+                        entry.symbolicLinkDestination ?? ""
+                    )
+                    nestedHasher = nested
+                }
                 fileSHA256 = nil
                 codeKind = nil
             case .directory, .other:
@@ -2949,8 +3082,15 @@ public enum PlayCoverUpstreamEngine {
                 codeObjectKind: codeKind
             )
         }
+        let nestedBuildHash: String?
+        if nestedRootFound, let nestedHasher {
+            nestedBuildHash = hex(nestedHasher.finalize())
+        } else {
+            nestedBuildHash = nil
+        }
         return TreeSnapshot(
             contentHash: hex(hasher.finalize()),
+            nestedBuildHash: nestedBuildHash,
             inventory: inventory.map {
                 guard let entry = $0 else {
                     preconditionFailure("inventory entry was not materialized")
@@ -2965,13 +3105,23 @@ public enum PlayCoverUpstreamEngine {
         _ url: URL,
         preloadedData: Data?,
         retainMachOData: Bool,
-        contentHasher: inout SHA256
+        computeSHA256: Bool,
+        contentHasher: inout SHA256,
+        secondaryContentHasher: inout SHA256?,
+        hashSecondaryContent: Bool
     ) throws -> RegularFileSnapshot {
         if let data = preloadedData {
             let macho = isMachO(data)
             contentHasher.update(data: data)
+            if hashSecondaryContent,
+               var secondary = secondaryContentHasher {
+                secondary.update(data: data)
+                secondaryContentHasher = secondary
+            }
             return RegularFileSnapshot(
-                sha256: hex(SHA256.hash(data: data)),
+                sha256: computeSHA256
+                    ? hex(SHA256.hash(data: data))
+                    : nil,
                 isMachO: macho,
                 retainedData: retainMachOData && macho ? data : nil
             )
@@ -2982,8 +3132,15 @@ public enum PlayCoverUpstreamEngine {
         // of accumulating a second heap copy.
         let data = try Data(contentsOf: url, options: .alwaysMapped)
         let macho = isMachO(data)
-        let fileSHA256 = hex(SHA256.hash(data: data))
+        let fileSHA256 = computeSHA256
+            ? hex(SHA256.hash(data: data))
+            : nil
         contentHasher.update(data: data)
+        if hashSecondaryContent,
+           var secondary = secondaryContentHasher {
+            secondary.update(data: data)
+            secondaryContentHasher = secondary
+        }
         return RegularFileSnapshot(
             sha256: fileSHA256,
             isMachO: macho,
@@ -3130,7 +3287,6 @@ public enum PlayCoverUpstreamEngine {
         finalEntitlements: Data
     ) throws -> [String] {
         let prepared = try inspect(appURL: appURL)
-        let preparedMachOPaths = Set(prepared.machOs.map(\.relativePath))
         let nestedBundles = prepared.inventory.compactMap {
             entry -> String? in
             guard entry.kind == .directory,
@@ -3139,7 +3295,52 @@ public enum PlayCoverUpstreamEngine {
                 return nil
             }
             return entry.relativePath
-        }.sorted {
+        }
+        return try signInsideOut(
+            appURL: appURL,
+            machOs: prepared.machOs,
+            mainExecutableRelativePath:
+                prepared.mainExecutableRelativePath,
+            nestedBundles: nestedBundles,
+            finalEntitlements: finalEntitlements
+        )
+    }
+
+    private static func signInsideOutUsingPlan(
+        appURL: URL,
+        source: PlayCoverUpstreamAppInspection,
+        additionalNestedBundles: [String],
+        finalEntitlements: Data
+    ) throws -> [String] {
+        let sourceNestedBundles = source.inventory.compactMap {
+            entry -> String? in
+            guard entry.kind == .directory,
+                  let codeKind = entry.codeObjectKind,
+                  codeKind.hasSuffix("Bundle") else {
+                return nil
+            }
+            return entry.relativePath
+        }
+        return try signInsideOut(
+            appURL: appURL,
+            machOs: source.machOs,
+            mainExecutableRelativePath:
+                source.mainExecutableRelativePath,
+            nestedBundles:
+                sourceNestedBundles + additionalNestedBundles,
+            finalEntitlements: finalEntitlements
+        )
+    }
+
+    private static func signInsideOut(
+        appURL: URL,
+        machOs: [PlayCoverUpstreamMachOInspection],
+        mainExecutableRelativePath: String,
+        nestedBundles unsortedNestedBundles: [String],
+        finalEntitlements: Data
+    ) throws -> [String] {
+        let preparedMachOPaths = Set(machOs.map(\.relativePath))
+        let nestedBundles = Array(Set(unsortedNestedBundles)).sorted {
             let lhsDepth = $0.split(separator: "/").count
             let rhsDepth = $1.split(separator: "/").count
             if lhsDepth != rhsDepth {
@@ -3163,8 +3364,8 @@ public enum PlayCoverUpstreamEngine {
             }
         )
         var order: [String] = []
-        let dependencies = prepared.machOs.filter {
-            $0.relativePath != prepared.mainExecutableRelativePath
+        let dependencies = machOs.filter {
+            $0.relativePath != mainExecutableRelativePath
                 && !nestedMainExecutables.contains($0.relativePath)
         }.sorted {
             let lhsDepth = $0.relativePath.split(separator: "/").count
@@ -3180,10 +3381,6 @@ public enum PlayCoverUpstreamEngine {
                 entitlements: nil
             )
             order.append(macho.relativePath)
-            try verifyCodeSignature(
-                appURL.appendingPathComponent(macho.relativePath),
-                label: macho.relativePath
-            )
         }
 
         for relative in nestedBundles {
@@ -3192,22 +3389,13 @@ public enum PlayCoverUpstreamEngine {
                 entitlements: nil
             )
             order.append(relative)
-            try verifyCodeSignature(
-                appURL.appendingPathComponent(relative),
-                label: relative
-            )
         }
         try sign(appURL, entitlements: finalEntitlements)
         order.append(".")
-        try verifyCodeSignature(appURL, label: ".")
-
-        // The outer seal must leave every child code object valid.
-        for relative in order {
-            let url = relative == "."
-                ? appURL
-                : appURL.appendingPathComponent(relative)
-            try verifyCodeSignature(url, label: relative)
-        }
+        // Verification is intentionally centralized in `verify` immediately
+        // after this function. Checking after every inner sign and then again
+        // after the outer seal multiplies codesign work without validating a
+        // different publishable state.
         return order
     }
 

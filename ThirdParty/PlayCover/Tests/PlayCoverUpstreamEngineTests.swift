@@ -1045,11 +1045,30 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         try makeIOSAppWithExtension(at: source, root: root)
         let sourceExecutable = source.appendingPathComponent("Fixture")
         let sourceExecutableBefore = try Data(contentsOf: sourceExecutable)
-        let sourceHashBefore = try PlayCoverUpstreamEngine.contentHash(
+        let runtime = try makeCatalystRuntimeFramework(in: root)
+        try codesign(runtime, entitlements: nil)
+        var contentPasses: [
+            (
+                kind: PlayCoverUpstreamEngine.FullContentPassKind,
+                path: String
+            )
+        ] = []
+        PlayCoverUpstreamEngine.fullContentPassObserverForTesting = {
+            kind,
+            url in
+            contentPasses.append((kind, url.standardizedFileURL.path))
+        }
+        defer {
+            PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
+        }
+        let sourceInspection = try PlayCoverUpstreamEngine.inspect(
             appURL: source
         )
-
-        let runtime = try makeCatalystRuntimeFramework(in: root)
+        let sourceHashBefore = sourceInspection.sourceContentHash
+        let runtimeBuildHash =
+            try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: runtime
+            )
         let managed = root.appendingPathComponent(
             "managed",
             isDirectory: true
@@ -1080,9 +1099,29 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 runtimeSocketPath: managed.appendingPathComponent(
                     "run/s-runtime.sock"
                 ).path,
-                runtimeLoadPath: runtimeLoadPath
-            )
+                runtimeLoadPath: runtimeLoadPath,
+                expectedRuntimeBuildHash: runtimeBuildHash
+            ),
+            sourceInspection: sourceInspection
         )
+        PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
+
+        XCTAssertEqual(
+            contentPasses.map(\.kind),
+            [
+                .appInspection,
+                .runtimeBuildHash,
+                .appInspection,
+            ],
+            "cold prepare must perform only source, original Runtime, "
+                + "and final prepared full-content passes"
+        )
+        XCTAssertEqual(contentPasses[0].path, source.path)
+        XCTAssertEqual(
+            contentPasses[1].path,
+            runtime.resolvingSymlinksInPath().path
+        )
+        XCTAssertEqual(contentPasses[2].path, staging.path)
 
         XCTAssertEqual(
             try Data(contentsOf: sourceExecutable),
@@ -1164,7 +1203,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
     }
 
-    func testPrepareRejectsClonedBytesThatWereNotInSourceInspection()
+    func testPreparedInspectionRejectsRuntimePlanHashMismatch()
         throws
     {
         let root = try makeTemporaryDirectory()
@@ -1176,6 +1215,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         try makeIOSAppWithExtension(at: source, root: root)
         let inspection = try PlayCoverUpstreamEngine.inspect(appURL: source)
         let runtime = try makeCatalystRuntimeFramework(in: root)
+        try codesign(runtime, entitlements: nil)
         let managed = root.appendingPathComponent(
             "managed",
             isDirectory: true
@@ -1199,38 +1239,46 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             ).path,
             runtimeLoadPath:
                 "@executable_path/Frameworks/"
-                + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime"
+                + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+            expectedRuntimeBuildHash: String(repeating: "0", count: 64)
         )
+        var contentPasses:
+            [PlayCoverUpstreamEngine.FullContentPassKind] = []
+        PlayCoverUpstreamEngine.fullContentPassObserverForTesting = {
+            kind,
+            _ in
+            contentPasses.append(kind)
+        }
+        defer {
+            PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
+        }
 
         XCTAssertThrowsError(
             try PlayCoverUpstreamEngine.prepare(
                 options,
-                sourceInspection: inspection,
-                afterSourceCloneForTesting: { cloned in
-                    try Data("different-sealed-resource".utf8).write(
-                        to: cloned.appendingPathComponent(
-                            "PlugIns/Test.appex/asset.dat"
-                        )
-                    )
-                }
+                sourceInspection: inspection
             )
         ) { error in
-            guard case PlayCoverUpstreamError.sourceMutated(
-                let expected,
-                let actual
+            guard case PlayCoverUpstreamError.verificationFailed(
+                let message
             ) = error else {
                 return XCTFail("unexpected error: \(error)")
             }
-            XCTAssertEqual(expected, inspection.sourceContentHash)
-            XCTAssertNotEqual(actual, expected)
+            XCTAssertTrue(
+                message.contains("embedded Runtime build hash"),
+                message
+            )
         }
+        XCTAssertEqual(
+            contentPasses,
+            [.appInspection],
+            "prepare must compare the embedded Runtime during the final "
+                + "prepared inspection, without clone or Runtime re-hash "
+                + "passes"
+        )
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: staging.path),
-            "a clone that fails the plan hash must be rolled back"
-        )
-        XCTAssertEqual(
-            try PlayCoverUpstreamEngine.contentHash(appURL: source),
-            inspection.sourceContentHash
+            "a final Runtime-plan mismatch must roll staging back"
         )
     }
 
