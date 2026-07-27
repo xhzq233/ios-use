@@ -166,10 +166,13 @@ Each connection carries one four-byte big-endian length-prefixed JSON request:
 ```
 
 The response echoes the schema, request ID, and session ID and contains either
-a command-specific typed payload or structured error. Full process identity,
-capabilities, fixed geometry, and readiness are returned by `hello` and
-`diagnostics`; ordinary DOM, screenshot, wait, and action responses contain
-only their command result. Request and response sizes, absolute deadlines, and
+a command-specific typed payload or structured error. `hello` returns process
+identity, capabilities, and only the exact fixed-geometry observations consumed
+by the launch readiness predicate. It deliberately omits window/view
+inventories, screen topology, alert state, resize history, and mouse delivery
+state. `diagnostics` retains the complete observational payload used by
+`status`; ordinary DOM, screenshot, wait, and action responses contain only
+their command result. Request and response sizes, absolute deadlines, and
 one-request-per-connection behavior are bounded. The CLI authenticates the
 peer UID and PID plus the live executable at the Unix transport, then verifies
 bundle, prepared generation, and Runtime identity during handshake and status.
@@ -380,7 +383,10 @@ Runtime, workspace CLI, and public fixture from one clean Git checkout on every
 invocation; CLI object files use a new SwiftPM scratch directory and fixture
 objects use new DerivedData. Its evidence binds the unchanged HEAD to the exact
 CLI, Runtime, complete fixture App tree, protocol-probe, and
-prepared-generation digests. It exercises zero-length, oversized, exact-limit, malformed,
+prepared-generation digests. A raw authenticated `hello` probe attests the
+exact minimal readiness field set and the absence of status-only AppKit fields,
+then proves the same session remains healthy through a full `status` request.
+The gate also exercises zero-length, oversized, exact-limit, malformed,
 invalid-UTF-8, and truncated Runtime frames and proves listener health after
 each one. One cold prepare is followed by 20 bare
 start/status/stop cycles with unique session IDs and one immutable generation;

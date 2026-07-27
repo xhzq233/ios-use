@@ -903,11 +903,12 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
             CGRectGetMaxY(canvasRect)) <= halfPixelTolerance;
 }
 
-/// Capture every UIKit/AppKit field for one response in one main-thread turn.
-/// Hook diagnostics are intentionally shared by identity, observed evidence,
-/// and diagnostics so a request neither re-enumerates windows nor mixes
-/// geometry from different instants.
-static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(void) {
+/// Capture one scope's UIKit/AppKit fields for one response in one main-thread
+/// turn. Readiness keeps the exact geometry predicate inputs without paying
+/// for status-only inventories; full diagnostics retains the public payload.
+static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
+    IOSUsePlayRuntimeDiagnosticsScope scope
+) {
     __block NSDictionary<NSString *, id> *geometry;
     __block NSDictionary<NSString *, id> *hooks;
     __block NSDictionary<NSString *, id> *observed;
@@ -933,7 +934,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(void) {
         UIView *rootView = keyWindow.rootViewController.view;
         UIEdgeInsets safeArea =
             rootView == nil ? UIEdgeInsetsZero : rootView.safeAreaInsets;
-        hooks = IOSUsePlayRuntimeHookDiagnostics();
+        hooks = IOSUsePlayRuntimeHookDiagnostics(scope);
         NSDictionary<NSString *, id> *hostGeometry =
             IOSUseHostGeometry(hooks);
         geometry = @{
@@ -1201,7 +1202,9 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
             );
         }
         NSDictionary<NSString *, id> *snapshot =
-            IOSUseRuntimeSnapshot();
+            IOSUseRuntimeSnapshot(
+                IOSUsePlayRuntimeDiagnosticsScopeReadiness
+            );
         payload = [snapshot[@"identity"] mutableCopy];
         payload[@"observed"] = snapshot[@"observed"];
     } else if ([command isEqualToString:@"ping"]) {
@@ -1233,7 +1236,9 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
             );
         }
         NSDictionary<NSString *, id> *snapshot =
-            IOSUseRuntimeSnapshot();
+            IOSUseRuntimeSnapshot(
+                IOSUsePlayRuntimeDiagnosticsScopeFull
+            );
         payload = [snapshot[@"identity"] mutableCopy];
         payload[@"diagnostics"] = @{
             @"runtime": snapshot[@"runtime"],

@@ -35,6 +35,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSArray<NSDictionary<NSString *, id> *> * _Nullable)
     activeAccessibilityElementsWithError:
         (NSError * _Nullable * _Nullable)error;
++ (NSDictionary<NSString *, id> *)readinessDiagnostics;
 + (NSDictionary<NSString *, id> *)diagnostics;
 
 @end

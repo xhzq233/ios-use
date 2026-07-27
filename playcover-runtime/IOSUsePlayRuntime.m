@@ -70,14 +70,28 @@ static void IOSUseConfigureRuntimeSurface(void) {
     IOSUseScheduleRuntimeSurfaceProbe(delay);
 }
 
-NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(void) {
-    return @{
+NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
+    IOSUsePlayRuntimeDiagnosticsScope scope
+) {
+    BOOL includeFullDiagnostics =
+        scope == IOSUsePlayRuntimeDiagnosticsScopeFull;
+    NSDictionary<NSString *, id> *window = includeFullDiagnostics
+        ? [IOSUsePlayAppKitBridge diagnostics]
+        : [IOSUsePlayAppKitBridge readinessDiagnostics];
+    NSMutableDictionary<NSString *, id> *diagnostics =
+        [@{
+            @"configurationStage": IOSUseRuntimeConfigurationStage,
+            @"configurationFailure":
+                IOSUseRuntimeConfigurationFailure ?: NSNull.null,
+            @"window": window,
+        } mutableCopy];
+    if (!includeFullDiagnostics) {
+        return diagnostics;
+    }
+    [diagnostics addEntriesFromDictionary:@{
         @"implementation": @"pinned-playtools",
         @"playToolsCommit":
             @"d688f695e83bf080be9ad4b7346e914c7c343d96",
-        @"configurationStage": IOSUseRuntimeConfigurationStage,
-        @"configurationFailure":
-            IOSUseRuntimeConfigurationFailure ?: NSNull.null,
         @"configurationAttempts": @(IOSUseRuntimeConfigurationAttempt),
         @"device": @{
             @"productType":
@@ -96,13 +110,13 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(void) {
             },
             @"scale": @(IOSUsePlayDeviceScale),
         },
-        @"window": [IOSUsePlayAppKitBridge diagnostics],
         @"rendering": @{
             @"syntheticChrome": @NO,
             @"safeAreaOverride": @NO,
             @"fullFrame": IOSUseRuntimeFullFrameEvidence(),
         },
-    };
+    }];
+    return diagnostics;
 }
 
 void IOSUsePlayRuntimeInitializeAfterStdio(void) {

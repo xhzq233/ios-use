@@ -10,7 +10,10 @@ enum ProbeFailure: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "usage: runtime_socket_probe.swift <socket> <zero-length|oversized-frame|exact-limit-invalid-json|malformed-json|invalid-utf8|truncated-frame>"
+            return "usage: runtime_socket_probe.swift <socket> "
+                + "<zero-length|oversized-frame|exact-limit-invalid-json|"
+                + "malformed-json|invalid-utf8|truncated-frame|"
+                + "hello-readiness> [session-id]"
         case .pathTooLong:
             return "Runtime socket path exceeds sockaddr_un.sun_path"
         case .systemCall(let name, let code):
@@ -89,15 +92,45 @@ func encodeFrame(_ body: Data) -> Data {
 }
 
 func run() throws {
-    guard CommandLine.arguments.count == 3 else {
+    guard CommandLine.arguments.count >= 3 else {
         throw ProbeFailure.usage
     }
     let socketPath = CommandLine.arguments[1]
     let mode = CommandLine.arguments[2]
+    let helloReadiness = mode == "hello-readiness"
+    guard (
+        helloReadiness && CommandLine.arguments.count == 4
+    ) || (
+        !helloReadiness && CommandLine.arguments.count == 3
+    ) else {
+        throw ProbeFailure.usage
+    }
+    let helloRequestID = helloReadiness ? UUID().uuidString : nil
     let expectedCode: String?
     let expectsConnectionClose: Bool
     let request: Data
     switch mode {
+    case "hello-readiness":
+        guard let requestID = helloRequestID else {
+            throw ProbeFailure.invalidResponse(
+                "hello request identity was not initialized"
+            )
+        }
+        let object: [String: Any] = [
+            "schemaVersion": 3,
+            "requestId": requestID,
+            "sessionID": CommandLine.arguments[3],
+            "command": "hello",
+            "arguments": [String: Any](),
+        ]
+        request = encodeFrame(
+            try JSONSerialization.data(
+                withJSONObject: object,
+                options: [.sortedKeys]
+            )
+        )
+        expectedCode = nil
+        expectsConnectionClose = false
     case "zero-length":
         request = encodeFrame(Data())
         expectedCode = "invalid_frame"
@@ -202,11 +235,6 @@ func run() throws {
         FileHandle.standardOutput.write(Data([0x0a]))
         return
     }
-    guard let expectedCode = expectedCode else {
-        throw ProbeFailure.invalidResponse(
-            "probe mode has no expected Runtime error"
-        )
-    }
     let header = try readExactly(4, descriptor: descriptor)
     let responseLength = header.reduce(UInt32(0)) {
         ($0 << 8) | UInt32($1)
@@ -218,6 +246,124 @@ func run() throws {
         Int(responseLength),
         descriptor: descriptor
     )
+    if helloReadiness {
+        guard let object = try JSONSerialization.jsonObject(with: body)
+                as? [String: Any],
+              (object["schemaVersion"] as? NSNumber)?.intValue == 3,
+              object["requestId"] as? String == helloRequestID,
+              object["sessionID"] as? String
+                == CommandLine.arguments[3],
+              (object["ok"] as? NSNumber)?.boolValue == true,
+              let payload = object["payload"] as? [String: Any],
+              payload["stage"] as? String == "ready",
+              let observed = payload["observed"] as? [String: Any],
+              let appKit = observed["appKit"] as? [String: Any] else {
+            throw ProbeFailure.invalidResponse(
+                "hello readiness envelope is incomplete"
+            )
+        }
+        let requiredAppKitKeys: Set<String> = [
+            "status",
+            "failure",
+            "frame",
+            "hostFrame",
+            "hostContentBounds",
+            "canvasRect",
+            "backingPixelCanvasRect",
+            "canvasBounds",
+            "renderViewBounds",
+            "sceneRenderViewFrame",
+            "sceneRenderViewBounds",
+            "inputRenderViewFrame",
+            "inputRenderViewBounds",
+            "displayScale",
+            "inverseDisplayScale",
+            "halfPixelTolerance",
+            "canvasCapture",
+            "sceneGeometry",
+            "backingScaleFactor",
+            "opaque",
+            "publicTitleBar",
+            "title",
+            "titleExpected",
+            "titleVisible",
+            "resizable",
+            "hostPolicy",
+            "sceneScale",
+        ]
+        let statusOnlyAppKitKeys: Set<String> = [
+            "attempts",
+            "contentLayoutRect",
+            "contentViewFrame",
+            "contentViewBounds",
+            "screenFrame",
+            "screenVisibleFrame",
+            "screenDisplayID",
+            "screenIsMain",
+            "cgVisibleFrame",
+            "expectedCGWindowBoundsFromAppKit",
+            "applicationActive",
+            "applicationActivationPolicy",
+            "windowKey",
+            "windowCanBecomeKey",
+            "scenes",
+            "contentViewTree",
+            "windowClass",
+            "windowNumber",
+            "cgWindowBounds",
+            "minSize",
+            "maxSize",
+            "contentMinSize",
+            "contentMaxSize",
+            "sceneMinimumSize",
+            "sceneMaximumSize",
+            "allWindows",
+            "nativeAlert",
+            "bootstrapNativeAlert",
+            "borderless",
+            "resizeEdges",
+            "styleMask",
+            "hasShadow",
+            "movable",
+            "ignoresMouseEvents",
+            "acceptsMouseMovedEvents",
+            "lastTextInputTransientDismissal",
+            "identityTransform",
+            "mouseMonitorReady",
+            "lastMouseDelivery",
+            "lastMouseDownDelivery",
+            "lastMouseUpDelivery",
+            "mouseDeliveryCount",
+        ]
+        let actualKeys = Set(appKit.keys)
+        guard requiredAppKitKeys.isSubset(of: actualKeys),
+              actualKeys.isDisjoint(with: statusOnlyAppKitKeys) else {
+            throw ProbeFailure.invalidResponse(
+                "hello contains missing readiness or status-only AppKit fields"
+            )
+        }
+        let output: [String: Any] = [
+            "schemaVersion": 1,
+            "mode": mode,
+            "runtimeListenerSurvived": true,
+            "responseBytes": Int(responseLength),
+            "readinessAppKitFieldCount": actualKeys.count,
+            "statusOnlyAppKitFieldCount":
+                actualKeys.intersection(statusOnlyAppKitKeys).count,
+        ]
+        let encoded = try JSONSerialization.data(
+            withJSONObject: output,
+            options: [.sortedKeys]
+        )
+        FileHandle.standardOutput.write(encoded)
+        FileHandle.standardOutput.write(Data([0x0a]))
+        return
+    }
+    guard let expectedCode = expectedCode else {
+        throw ProbeFailure.invalidResponse(
+            "probe mode has no expected Runtime error"
+        )
+    }
     guard let object = try JSONSerialization.jsonObject(with: body)
             as? [String: Any],
           (object["schemaVersion"] as? NSNumber)?.intValue == 3,

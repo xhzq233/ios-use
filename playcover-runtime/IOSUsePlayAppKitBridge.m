@@ -3623,6 +3623,13 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     return [[lines array] componentsJoinedByString:@"\n"];
 }
 
+@interface IOSUsePlayAppKitBridge ()
+
++ (NSDictionary<NSString *, id> *)diagnosticsIncludingStatusOnlyFields:
+    (BOOL)includeStatusOnlyFields;
+
+@end
+
 @implementation IOSUsePlayAppKitBridge
 
 + (BOOL)installFixedSceneScale:(NSError **)error {
@@ -4413,23 +4420,31 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     return elements;
 }
 
-+ (NSDictionary<NSString *, id> *)diagnostics {
++ (NSDictionary<NSString *, id> *)diagnosticsIncludingStatusOnlyFields:
+    (BOOL)includeStatusOnlyFields {
     // Keep diagnostics anchored to the strict foreground UIKit selection when
     // the host has not yet been installed; after installation the selected
     // host is the authoritative visible surface.
-    id selectedWindow = IOSUseBridgeSelectedWindow();
+    id selectedWindow =
+        includeStatusOnlyFields || IOSUsePlayHostWindow == nil
+            ? IOSUseBridgeSelectedWindow()
+            : nil;
     id window = IOSUsePlayHostWindow ?: selectedWindow;
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
     > *cgWindowMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
     NSDictionary<NSString *, id> *baseCGWindow =
-        IOSUseBridgeExactOnscreenCGWindowMetadata(
-            window,
-            cgWindowMetadata
-        );
+        includeStatusOnlyFields
+            ? IOSUseBridgeExactOnscreenCGWindowMetadata(
+                window,
+                cgWindowMetadata
+            )
+            : nil;
     CGRect frame = IOSUseBridgeRect(window, @"frame");
-    CGRect content = IOSUseBridgeRect(window, @"contentLayoutRect");
+    CGRect content = includeStatusOnlyFields
+        ? IOSUseBridgeRect(window, @"contentLayoutRect")
+        : CGRectNull;
     id contentView = IOSUsePlayHostContentView;
     if (contentView == nil && [window respondsToSelector:
         NSSelectorFromString(@"contentView")]) {
@@ -4439,7 +4454,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         );
     }
     CGRect bounds = IOSUseBridgeRect(contentView, @"bounds");
-    CGRect contentViewFrame = IOSUseBridgeRect(contentView, @"frame");
+    CGRect contentViewFrame = includeStatusOnlyFields
+        ? IOSUseBridgeRect(contentView, @"frame")
+        : CGRectNull;
     UIWindow *uiWindow = IOSUseBridgeKeyUIKitWindow();
     // This is the observed UIKit logical canvas. Do not synthesize the fixed
     // contract here: Runtime readiness must fail if a host drag causes
@@ -4474,20 +4491,24 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         inputRenderView,
         @"bounds"
     );
-    id windowScreen = [window respondsToSelector:
-        NSSelectorFromString(@"screen")]
-        ? ((IOSUseBridgeSendID)objc_msgSend)(
-            window,
-            NSSelectorFromString(@"screen")
-        )
-        : nil;
-    CGDirectDisplayID screenDisplayID =
-        IOSUseBridgeDisplayIDForScreen(windowScreen);
+    id windowScreen =
+        includeStatusOnlyFields &&
+            [window respondsToSelector:NSSelectorFromString(@"screen")]
+            ? ((IOSUseBridgeSendID)objc_msgSend)(
+                window,
+                NSSelectorFromString(@"screen")
+            )
+            : nil;
+    CGDirectDisplayID screenDisplayID = includeStatusOnlyFields
+        ? IOSUseBridgeDisplayIDForScreen(windowScreen)
+        : kCGNullDirectDisplay;
     BOOL screenIsMain =
         screenDisplayID != kCGNullDirectDisplay &&
         CGDisplayIsMain(screenDisplayID) != 0;
     UISceneSizeRestrictions *restrictions =
-        uiWindow.windowScene.sizeRestrictions;
+        includeStatusOnlyFields
+            ? uiWindow.windowScene.sizeRestrictions
+            : nil;
     CGFloat backingScale = [window respondsToSelector:
         NSSelectorFromString(@"backingScaleFactor")]
         ? ((IOSUseBridgeSendFloat)objc_msgSend)(
@@ -4496,15 +4517,19 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         )
         : 0;
     CGRect expectedCGWindowBounds = CGRectNull;
-    (void)IOSUseBridgeAppKitScreenRectToCGWindowRect(
-        frame,
-        &expectedCGWindowBounds
-    );
+    if (includeStatusOnlyFields) {
+        (void)IOSUseBridgeAppKitScreenRectToCGWindowRect(
+            frame,
+            &expectedCGWindowBounds
+        );
+    }
     // Keep one diagnostics response on one fresh alert selection. Public
     // automation accessors intentionally continue to re-select so a later
     // action never trusts this observational snapshot.
     NSDictionary<NSString *, id> *nativeAlertSelection =
-        IOSUseBridgeVisibleNativeAlertSelection();
+        includeStatusOnlyFields
+            ? IOSUseBridgeVisibleNativeAlertSelection()
+            : nil;
     id nativeAlertWindow = nativeAlertSelection[@"window"];
     CGRect nativeAlertFrame = nativeAlertSelection == nil
         ? CGRectNull
@@ -4513,19 +4538,26 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             nativeAlertSelection[@"cgMetadata"]
         );
     BOOL nativeAlertVisible = nativeAlertSelection != nil;
-    NSString *nativeAlertText =
-        IOSUseBridgeNativeAlertText(nativeAlertWindow);
+    NSString *nativeAlertText = includeStatusOnlyFields
+        ? IOSUseBridgeNativeAlertText(nativeAlertWindow)
+        : @"";
     NSArray<NSDictionary<NSString *, id> *> *nativeAlertActions =
-        IOSUseBridgePublicNativeAlertActions(nativeAlertWindow);
+        includeStatusOnlyFields
+            ? IOSUseBridgePublicNativeAlertActions(nativeAlertWindow)
+            : @[];
     NSDictionary<NSString *, id> *bootstrapNativeAlert =
-        IOSUseBridgeBootstrapNativeAlertDiagnostics();
+        includeStatusOnlyFields
+            ? IOSUseBridgeBootstrapNativeAlertDiagnostics()
+            : @{};
     NSUInteger growingResizeEdges = 0;
     NSUInteger shrinkingResizeEdges = 0;
-    NSUInteger resizeEdges = IOSUseBridgeResizableEdges(
-        window,
-        &growingResizeEdges,
-        &shrinkingResizeEdges
-    );
+    NSUInteger resizeEdges = includeStatusOnlyFields
+        ? IOSUseBridgeResizableEdges(
+            window,
+            &growingResizeEdges,
+            &shrinkingResizeEdges
+        )
+        : 0;
     NSError *canvasError = nil;
     NSDictionary<NSString *, id> *canvasCapture =
         IOSUseBridgeHostCanvasCaptureGeometry(
@@ -4543,6 +4575,80 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     NSString *windowTitle = [rawWindowTitle isKindOfClass:NSString.class]
         ? rawWindowTitle
         : @"";
+    if (!includeStatusOnlyFields) {
+        // Runtime hello consumes only the exact inputs to
+        // IOSUseHostGeometryReady plus failures that explain a not-ready
+        // surface. Keep this dictionary observational: every value above was
+        // captured in the same main-thread turn, including the exact owned
+        // CGWindow used by canvasCapture.
+        return @{
+            @"status": IOSUsePlayWindowStatus,
+            @"failure": IOSUsePlayWindowFailure ?: NSNull.null,
+            @"frame": IOSUseBridgeRectJSON(frame),
+            @"hostFrame": IOSUseBridgeRectJSON(frame),
+            @"hostContentBounds": IOSUseBridgeRectJSON(bounds),
+            @"canvasRect": IOSUseBridgeRectJSON(canvasFrame),
+            @"backingPixelCanvasRect":
+                IOSUsePlayHostCanvasLayoutReady
+                    ? IOSUseBridgeRectJSON(
+                        IOSUsePlayCurrentHostCanvasLayout
+                            .backingPixelCanvasRect
+                    )
+                    : (id)NSNull.null,
+            @"canvasBounds": IOSUseBridgeRectJSON(canvasBounds),
+            @"renderViewBounds": IOSUseBridgeRectJSON(renderViewBounds),
+            @"sceneRenderViewFrame":
+                IOSUseBridgeRectJSON(sceneRenderViewFrame),
+            @"sceneRenderViewBounds":
+                IOSUseBridgeRectJSON(sceneRenderViewBounds),
+            @"inputRenderViewFrame":
+                IOSUseBridgeRectJSON(inputRenderViewFrame),
+            @"inputRenderViewBounds":
+                IOSUseBridgeRectJSON(inputRenderViewBounds),
+            @"displayScale": IOSUsePlayHostCanvasLayoutReady
+                ? @(IOSUsePlayCurrentHostCanvasLayout.displayScale)
+                : (id)NSNull.null,
+            @"inverseDisplayScale": IOSUsePlayHostCanvasLayoutReady
+                ? @(IOSUsePlayCurrentHostCanvasLayout.inverseDisplayScale)
+                : (id)NSNull.null,
+            @"halfPixelTolerance": IOSUsePlayHostCanvasLayoutReady
+                ? @(IOSUsePlayCurrentHostCanvasLayout.halfPixelTolerance)
+                : (id)NSNull.null,
+            @"canvasCapture": canvasCapture ?: (id)@{
+                @"error":
+                    canvasError.localizedDescription ?: @"unavailable",
+            },
+            @"sceneGeometry": @{
+                @"failure":
+                    IOSUsePlaySceneGeometryFailure ?: NSNull.null,
+            },
+            @"backingScaleFactor": @(backingScale),
+            @"opaque": @(IOSUseBridgeBool(window, @"isOpaque")),
+            @"publicTitleBar": @(
+                (BOOL)((IOSUseBridgeInteger(window, @"styleMask") & 1) != 0)
+            ),
+            @"title": windowTitle,
+            @"titleExpected": IOSUseBridgeHostTitle(),
+            @"titleVisible": @(
+                IOSUseBridgeInteger(window, @"titleVisibility") == 0
+            ),
+            @"resizable": @(
+                (BOOL)((IOSUseBridgeInteger(window, @"styleMask") &
+                    ((NSInteger)1 << 3)) != 0)
+            ),
+            @"hostPolicy": @(
+                IOSUseBridgeWindowPolicyIsHost(window)
+            ),
+            @"sceneScale": @{
+                @"failure":
+                    IOSUsePlaySceneScaleFailure ?: NSNull.null,
+                @"idiom": @(IOSUsePlayObservedIdiomScale),
+                @"windows": @(IOSUsePlayObservedWindowScale),
+                @"downscaleWindowIfNecessary":
+                    @(IOSUsePlayObservedDownscale),
+            },
+        };
+    }
     return @{
         @"status": IOSUsePlayWindowStatus,
         @"failure": IOSUsePlayWindowFailure ?: NSNull.null,
@@ -4734,6 +4840,14 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             IOSUsePlayLastMouseUpDelivery ?: (id)NSNull.null,
         @"mouseDeliveryCount": @(IOSUsePlayMouseDeliveryCount),
     };
+}
+
++ (NSDictionary<NSString *, id> *)readinessDiagnostics {
+    return [self diagnosticsIncludingStatusOnlyFields:NO];
+}
+
++ (NSDictionary<NSString *, id> *)diagnostics {
+    return [self diagnosticsIncludingStatusOnlyFields:YES];
 }
 
 @end

@@ -276,6 +276,10 @@ validate_pass_attestation() {
       ) as $protocol |
       (
         .observations |
+        map(select(.kind == "hello-readiness-shape"))
+      ) as $readiness |
+      (
+        .observations |
         map(select(.kind == "clean-stop"))
       ) as $cleanStops |
       (
@@ -358,6 +362,7 @@ validate_pass_attestation() {
       .warmBareStartTiming.sampleCases ==
         expected_warm_cases($expectedCleanCycles) and
       .expectedCleanCycles == $expectedCleanCycles and
+      .summary.helloReadinessShapeCount == 1 and
       .summary.protocolBoundaryCount == 6 and
       .summary.cleanStopCount ==
         ($expectedCleanCycles + 3) and
@@ -365,7 +370,19 @@ validate_pass_attestation() {
       .summary.appSIGKILLCount == 1 and
       .summary.appCrashRecoveryCount == 1 and
       (.observations | length) ==
-        ($expectedCleanCycles + 12) and
+        ($expectedCleanCycles + 13) and
+      ($readiness | length) == 1 and
+      (
+        $readiness |
+        all(
+          .responseBytes > 0 and
+          .readinessAppKitFieldCount == 27 and
+          .statusOnlyAppKitFieldCount == 0 and
+          .fullStatusDiagnosticsVerified == true and
+          .runtimeListenerSurvived == true and
+          .postProbeSessionHealthy == true
+        )
+      ) and
       ($protocol | length) == 6 and
       (
         $protocol |
@@ -589,6 +606,11 @@ write_attestation() {
         expectedCleanCycles: $expectedCleanCycles,
         warmBareStartTiming: $warmTiming[0],
         summary: {
+          helloReadinessShapeCount: (
+            [$observations[] |
+              select(.kind == "hello-readiness-shape")] |
+            length
+          ),
           protocolBoundaryCount: (
             [$observations[] |
               select(.kind == "protocol-boundary")] |
@@ -1075,6 +1097,35 @@ assert_healthy_status() {
   fi
 }
 
+assert_full_status_diagnostics() {
+  local case_name="$1"
+  if ! jq -e '
+      .data.driver.runtime.diagnostics.runtime as $runtime |
+      ($runtime | has("implementation")) and
+      ($runtime | has("playToolsCommit")) and
+      ($runtime | has("configurationAttempts")) and
+      ($runtime | has("device")) and
+      ($runtime | has("rendering")) and
+      ($runtime.window as $window |
+        ($window | has("scenes")) and
+        ($window | has("contentViewTree")) and
+        ($window | has("allWindows")) and
+        ($window | has("screenFrame")) and
+        ($window | has("screenVisibleFrame")) and
+        ($window | has("screenDisplayID")) and
+        ($window | has("screenIsMain")) and
+        ($window | has("nativeAlert")) and
+        ($window | has("bootstrapNativeAlert")) and
+        ($window | has("resizeEdges")) and
+        ($window | has("styleMask")) and
+        ($window | has("mouseMonitorReady")) and
+        ($window | has("lastMouseDelivery")) and
+        ($window | has("mouseDeliveryCount")))
+    ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
+    fail_gate "$case_name omitted full status-only Runtime diagnostics"
+  fi
+}
+
 assert_stopped() {
   local case_name="$1"
   if ! jq -e \
@@ -1369,6 +1420,10 @@ runtime_socket="$(
   jq -er '.data.driver.playcoverRuntimeSocketPath' \
     "$RUN_DIR/protocol_status.stdout"
 )"
+protocol_session_identifier="$(
+  jq -er '.data.driver.sessionIdentifier' \
+    "$RUN_DIR/protocol_status.stdout"
+)"
 if [[ ! "$protocol_generation_key" =~ ^[0-9a-f]{64}$ ]]; then
   fail_gate "protocol start has no exact prepared generation"
 fi
@@ -1378,6 +1433,56 @@ if ! /usr/bin/grep -Fqx \
   fail_gate "protocol start did not explicitly prepare its generation"
 fi
 printf '%s\n' "$protocol_generation_key" >"$RUN_DIR/generation-key"
+
+readiness_probe_stdout="$RUN_DIR/hello_readiness.stdout"
+readiness_probe_stderr="$RUN_DIR/hello_readiness.stderr"
+record_command \
+  hello_readiness \
+  "$readiness_probe_stdout" \
+  "$readiness_probe_stderr" \
+  xcrun swift \
+  "$PROBE_SOURCE" \
+  "$runtime_socket" \
+  hello-readiness \
+  "$protocol_session_identifier"
+if ! xcrun swift \
+    "$PROBE_SOURCE" \
+    "$runtime_socket" \
+    hello-readiness \
+    "$protocol_session_identifier" \
+    >"$readiness_probe_stdout" 2>"$readiness_probe_stderr"; then
+  fail_gate "hello_readiness"
+fi
+if ! jq -e '
+    .schemaVersion == 1 and
+    .mode == "hello-readiness" and
+    .runtimeListenerSurvived == true and
+    .responseBytes > 0 and
+    .readinessAppKitFieldCount == 27 and
+    .statusOnlyAppKitFieldCount == 0
+  ' "$readiness_probe_stdout" >/dev/null; then
+  fail_gate "hello_readiness did not expose the minimal Runtime payload"
+fi
+run_cli hello_readiness_status status --json
+assert_healthy_status hello_readiness_status
+assert_full_status_diagnostics hello_readiness_status
+assert_expected_generation \
+  hello_readiness_status \
+  "$protocol_generation_key"
+assert_same_live_session protocol_status hello_readiness_status
+assert_lock_matches_status hello_readiness_status
+assert_live_runtime_socket hello_readiness_status
+jq -c '
+    {
+      kind: "hello-readiness-shape",
+      responseBytes,
+      readinessAppKitFieldCount,
+      statusOnlyAppKitFieldCount,
+      fullStatusDiagnosticsVerified: true,
+      runtimeListenerSurvived,
+      postProbeSessionHealthy: true
+    }
+  ' "$readiness_probe_stdout" >>"$OBSERVATIONS"
 
 for probe_mode in \
   oversized-frame \
@@ -1834,5 +1939,5 @@ fi
 GATE_PASSED=1
 trap - EXIT
 echo \
-  "[playcover-runtime-stress] PASS: bounded frames, endpoint loss, clean bare lifecycles with warm launch median/MAD evidence, semantic Runtime tap, and App-crash recovery with preserved residue" \
+  "[playcover-runtime-stress] PASS: minimal hello readiness, bounded frames, endpoint loss, clean bare lifecycles with warm launch median/MAD evidence, semantic Runtime tap, and App-crash recovery with preserved residue" \
   >&2
