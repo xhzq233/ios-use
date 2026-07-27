@@ -294,11 +294,17 @@ enum PlayCoverGenerationPruner {
                 "active PlayCover session is missing or invalid"
             )
         }
-        return [
+        var protected: Set<String> = [
             currentGenerationKey,
             reference.generationKey,
             activeGeneration,
         ]
+        if let pending = try PlayCoverPendingLaunchStore.load(
+            paths: paths
+        ) {
+            protected.insert(pending.generationKey)
+        }
+        return protected
     }
 
     private static func loadInventory(

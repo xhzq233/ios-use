@@ -270,6 +270,91 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         }
     }
 
+    func testPruneProtectsOldestGenerationWithValidPendingLaunch()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let keys = (1...8).map {
+            String(repeating: String($0), count: 64)
+        }
+        for (index, key) in keys.enumerated() {
+            try fixture.createGeneration(
+                key: key,
+                completedAt:
+                    "2026-07-\(String(format: "%02d", index + 1))T00:00:00Z"
+            )
+        }
+        try fixture.writeReference(generationKey: keys[6])
+        try fixture.writeDriverLock(generationKey: keys[5])
+        try fixture.writePendingIntent(generationKey: keys[0])
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: keys[7]
+            )
+
+        XCTAssertEqual(result.removedGenerationKeys, [keys[1]])
+        XCTAssertTrue(result.warnings.isEmpty)
+        XCTAssertTrue(fixture.generationExists(keys[0]))
+        XCTAssertFalse(fixture.generationExists(keys[1]))
+    }
+
+    func testPruneFailsClosedForInvalidOwnerOnlyPendingLaunch()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let keys = (1...8).map {
+            String(repeating: String($0), count: 64)
+        }
+        for (index, key) in keys.enumerated() {
+            try fixture.createGeneration(
+                key: key,
+                completedAt:
+                    "2026-06-\(String(format: "%02d", index + 1))T00:00:00Z"
+            )
+        }
+        try fixture.writeReference(generationKey: keys[6])
+        try fixture.writeDriverLock(generationKey: keys[5])
+        try fixture.writeInvalidOwnerOnlyPendingLaunch(
+            generationKey: keys[0]
+        )
+        let transientName =
+            ".staging-\(keys[0])-\(UUID().uuidString)"
+        let transient = URL(
+            fileURLWithPath: fixture.paths.playcoverPrepared,
+            isDirectory: true
+        ).appendingPathComponent(transientName, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: transient,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: keys[7]
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        XCTAssertEqual(result.warnings.count, 1)
+        XCTAssertTrue(
+            result.warnings[0].contains(
+                "prepared cache could not be safely pruned"
+            )
+        )
+        for key in keys {
+            XCTAssertTrue(fixture.generationExists(key))
+        }
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: transient.path),
+            "invalid pending launch must skip transaction residue cleanup"
+        )
+    }
+
     func testPruneRetainsValidManifestLargerThanOneMiB()
         throws
     {
@@ -884,6 +969,53 @@ private struct CacheMaintenanceFixture {
             ),
             paths: paths
         )
+    }
+
+    func writePendingIntent(generationKey: String) throws {
+        let sessionID = UUID().uuidString.lowercased()
+        _ = try PlayCoverPendingLaunchStore.createIntent(
+            PlayCoverPendingLaunchStore.Intent(
+                sessionID: sessionID,
+                runtimeSocketPath:
+                    try paths.playCoverRuntimeSocketPath(
+                        sessionID: sessionID
+                    ),
+                generationKey: generationKey,
+                appPath: appURL(generationKey).path,
+                bundleIdentifier: "com.example.fixture",
+                executablePath:
+                    appURL(generationKey)
+                        .appendingPathComponent("Fixture").path,
+                aliasPath: PlayCoverService.sessionLaunchAlias(
+                    sessionID: sessionID
+                ).bundleURL.path
+            ),
+            paths: paths
+        )
+    }
+
+    func writeInvalidOwnerOnlyPendingLaunch(
+        generationKey: String
+    ) throws {
+        try writePendingIntent(generationKey: generationKey)
+        let journal = URL(
+            fileURLWithPath: paths.playcoverPendingLaunch
+        )
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: journal)
+            ) as? [String: Any]
+        )
+        object["phase"] = "owned"
+        object["owner"] = [
+            "pid": 42,
+            "processBirthMicroseconds": 84,
+            "source": "workspaceCallback",
+        ]
+        try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ).write(to: journal)
     }
 
     func generationExists(_ key: String) -> Bool {
