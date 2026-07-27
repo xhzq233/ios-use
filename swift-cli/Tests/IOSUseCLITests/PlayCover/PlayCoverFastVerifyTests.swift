@@ -99,6 +99,91 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
     }
 
+    func testGenerationSidecarsUseFinalInspectionHashesWithoutPreparedFiles()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let manifest = fixture.manifest
+        let executable = try XCTUnwrap(
+            manifest.machOs.first {
+                $0.relativePath == manifest.executableName
+            }
+        )
+        let runtimePrefix =
+            "Frameworks/\(manifest.runtimeFrameworkName)/"
+        let runtime = try XCTUnwrap(
+            manifest.machOs.first {
+                $0.relativePath.hasPrefix(runtimePrefix)
+                    && $0.relativePath.split(separator: "/").last
+                        == Substring(
+                            PlayCoverService.runtimeExecutableName
+                        )
+            }
+        )
+
+        fixture.remove()
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: fixture.app.path)
+        )
+
+        let sidecars = try PlayCoverService.generationSidecars(
+            manifest: manifest
+        )
+
+        XCTAssertEqual(
+            sidecars.completed.executableSHA256,
+            executable.fileSHA256
+        )
+        XCTAssertEqual(
+            sidecars.completed.runtimeSHA256,
+            runtime.fileSHA256
+        )
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                PlayCoverPrepareManifest.self,
+                from: sidecars.manifestData
+            ),
+            manifest
+        )
+    }
+
+    func testMutationAfterFinalInspectionCannotBeSealedIntoCompletedMarker()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let executable = fixture.app.appendingPathComponent(
+            fixture.manifest.executableName
+        )
+        var bytes = try Data(contentsOf: executable)
+        bytes[bytes.index(before: bytes.endIndex)] ^= 0xff
+        try bytes.write(to: executable)
+
+        let sidecars = try PlayCoverService.generationSidecars(
+            manifest: fixture.manifest
+        )
+        let recordedExecutable = try XCTUnwrap(
+            fixture.manifest.machOs.first {
+                $0.relativePath == fixture.manifest.executableName
+            }
+        )
+        XCTAssertEqual(
+            sidecars.completed.executableSHA256,
+            recordedExecutable.fileSHA256
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(sidecars.completed).write(
+            to: fixture.completedURL
+        )
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+    }
+
     func testDescriptorSHA256MatchesOneShotAcrossBufferBoundaries()
         throws
     {
@@ -968,22 +1053,11 @@ private struct FastVerifyFixture {
             entitlementDiff: try Self.emptyEntitlementDiff(),
             completedAt: "2026-07-27T00:00:00Z"
         )
-        let manifestData = try Self.canonicalJSON(manifest)
-        let marker = PlayCoverCompletedGeneration(
-            schemaVersion: 2,
-            generationKey: generationKey,
-            manifestSHA256: Self.sha256(manifestData),
-            inventorySHA256: Self.sha256(
-                try Self.canonicalJSON(manifest.inventory)
-            ),
-            machoSealSHA256: Self.sha256(
-                try Self.canonicalJSON(manifest.machOs)
-            ),
-            executableSHA256: try Self.fileSHA256(executable),
-            runtimeSHA256: runtimeHash
+        let sidecars = try PlayCoverService.generationSidecars(
+            manifest: manifest
         )
-        try manifestData.write(to: manifestURL, options: .atomic)
-        try Self.canonicalJSON(marker).write(
+        try sidecars.manifestData.write(to: manifestURL, options: .atomic)
+        try Self.canonicalJSON(sidecars.completed).write(
             to: completedURL,
             options: .atomic
         )

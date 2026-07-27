@@ -1024,15 +1024,41 @@ public enum PlayCoverService {
         actualAppURL: URL
     ) throws {
         let generation = actualAppURL.deletingLastPathComponent()
+        let sidecars = try generationSidecars(manifest: manifest)
+        try writeAtomically(
+            sidecars.manifestData,
+            to: generation.appendingPathComponent(manifestFilename)
+        )
+        try writeAtomically(
+            canonicalJSON(sidecars.completed),
+            to: generation.appendingPathComponent(completedFilename)
+        )
+    }
+
+    static func generationSidecars(
+        manifest: PlayCoverPrepareManifest
+    ) throws -> (
+        manifestData: Data,
+        completed: PlayCoverCompletedGeneration
+    ) {
         let manifestData = try canonicalJSON(manifest)
-        let runtime = actualAppURL
-            .appendingPathComponent("Frameworks", isDirectory: true)
-            .appendingPathComponent(
-                runtimeFrameworkName,
-                isDirectory: true
-            )
-            .appendingPathComponent(runtimeExecutableName)
-        let marker = PlayCoverCompletedGeneration(
+        let executableSHA256 = try finalInspectionMachOHash(
+            manifest: manifest,
+            label: "main executable"
+        ) {
+            $0.relativePath == manifest.executableName
+        }
+        let runtimePrefix =
+            "Frameworks/\(manifest.runtimeFrameworkName)/"
+        let runtimeSHA256 = try finalInspectionMachOHash(
+            manifest: manifest,
+            label: "embedded Runtime executable"
+        ) {
+            $0.relativePath.hasPrefix(runtimePrefix)
+                && $0.relativePath.split(separator: "/").last
+                    == Substring(runtimeExecutableName)
+        }
+        let completed = PlayCoverCompletedGeneration(
             schemaVersion: 2,
             generationKey: manifest.generationKey,
             manifestSHA256: sha256(manifestData),
@@ -1042,29 +1068,37 @@ public enum PlayCoverService {
             machoSealSHA256: sha256(
                 try canonicalJSON(manifest.machOs)
             ),
-            executableSHA256: try fileSHA256(
-                URL(fileURLWithPath: actualExecutablePath(
-                    manifest: manifest,
-                    actualAppURL: actualAppURL
-                ))
-            ),
-            runtimeSHA256: try fileSHA256(runtime)
+            executableSHA256: executableSHA256,
+            runtimeSHA256: runtimeSHA256
         )
-        try writeAtomically(
-            manifestData,
-            to: generation.appendingPathComponent(manifestFilename)
-        )
-        try writeAtomically(
-            canonicalJSON(marker),
-            to: generation.appendingPathComponent(completedFilename)
-        )
+        return (manifestData, completed)
     }
 
-    private static func actualExecutablePath(
+    private static func finalInspectionMachOHash(
         manifest: PlayCoverPrepareManifest,
-        actualAppURL: URL
-    ) -> String {
-        actualAppURL.appendingPathComponent(manifest.executableName).path
+        label: String,
+        matching: (PlayCoverMachOInspection) -> Bool
+    ) throws -> String {
+        let machOs = manifest.machOs.filter(matching)
+        guard machOs.count == 1,
+              let machO = machOs.first,
+              isSHA256(machO.fileSHA256) else {
+            throw PlayCoverBackendError.verificationFailed(
+                "final prepared inspection does not uniquely seal \(label)"
+            )
+        }
+        let inventory = manifest.inventory.filter {
+            $0.relativePath == machO.relativePath
+        }
+        guard inventory.count == 1,
+              let entry = inventory.first,
+              entry.kind == "regularFile",
+              entry.sha256 == machO.fileSHA256 else {
+            throw PlayCoverBackendError.verificationFailed(
+                "final prepared inventory does not seal \(label)"
+            )
+        }
+        return machO.fileSHA256
     }
 
     private static func validateManifest(
