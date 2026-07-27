@@ -251,11 +251,14 @@ enum PlayCoverSessionService {
         )
         var timing = resolved.timing
         let verificationStarted = PlayCoverMonotonicClock.now()
-        let validatedManifest = try fastVerify(
+        let verifiedLaunch = try fastVerifiedLaunchCapability(
             appPath: resolved.appPath,
             expectedGenerationIdentity:
                 resolved.generationIdentity
         )
+        defer { verifiedLaunch.capability?.close() }
+        let validatedManifest = verifiedLaunch.evidence
+        let launchCapability = verifiedLaunch.capability
         let verifiedManifest = validatedManifest.manifest
         timing.addVerify(
             PlayCoverMonotonicClock.elapsed(
@@ -299,12 +302,18 @@ enum PlayCoverSessionService {
                     timeout
                 )
             } else {
+                guard let launchCapability else {
+                    throw PlayCoverBackendError.launchFailed(
+                        "fast-verified launch capability is missing"
+                    )
+                }
                 let identity: PlayCoverLaunchIdentity
                 do {
                     identity = try PlayCoverService.launchVerified(
                         manifest: verifiedManifest,
                         generationIdentity:
                             validatedManifest.generationIdentity,
+                        launchCapability: launchCapability,
                         sessionID: sessionID,
                         runtimeSocketPath: socketPath,
                         stdioLog: stdioLog,
@@ -690,6 +699,31 @@ enum PlayCoverSessionService {
             expectedGenerationIdentity:
                 expectedGenerationIdentity
         )
+    }
+
+    private static func fastVerifiedLaunchCapability(
+        appPath: String,
+        expectedGenerationIdentity:
+            PlayCoverGenerationIdentity?
+    ) throws -> (
+        evidence: PlayCoverValidatedPreparedManifest,
+        capability: PlayCoverService.FastVerifiedLaunchCapability?
+    ) {
+        if fastVerifyOverrideForTesting != nil {
+            let evidence = try fastVerify(
+                appPath: appPath,
+                expectedGenerationIdentity:
+                    expectedGenerationIdentity
+            )
+            return (evidence, nil)
+        }
+        let acquired =
+            try PlayCoverService.acquireFastVerifiedLaunchCapability(
+            appPath: appPath,
+            expectedGenerationIdentity:
+                expectedGenerationIdentity
+        )
+        return (acquired.evidence, acquired.capability)
     }
 
     static func expectedRuntimeSocketPath(

@@ -11,6 +11,7 @@ final class PlayCoverCoreTests: XCTestCase {
         PlayCoverService.failedLaunchProcessStateOverrideForTesting = nil
         PlayCoverService.failedLaunchSignalOverrideForTesting = nil
         PlayCoverService.launchAliasRootOverrideForTesting = nil
+        PlayCoverService.launchIntegrityEventOverrideForTesting = nil
         #if canImport(AppKit)
         PlayCoverService.workspaceOpenOverrideForTesting = nil
         #endif
@@ -981,11 +982,17 @@ final class PlayCoverCoreTests: XCTestCase {
             preparedAppPath: fixture.app.path,
             generationKey: String(repeating: "3", count: 64)
         )
-        PlayCoverService.launchAliasRootOverrideForTesting =
-            fixture.root.appendingPathComponent(
-                "launch-aliases",
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: fixture.root.path
+        )
+        let aliasRoot = fixture.root.deletingLastPathComponent()
+            .appendingPathComponent(
+                "\(fixture.root.lastPathComponent)-launch-aliases",
                 isDirectory: true
             )
+        defer { try? FileManager.default.removeItem(at: aliasRoot) }
+        PlayCoverService.launchAliasRootOverrideForTesting = aliasRoot
         let sessionID = "workspace-alias"
         let socketPath = fixture.root.appendingPathComponent(
             "runtime.sock"
@@ -1008,20 +1015,28 @@ final class PlayCoverCoreTests: XCTestCase {
         }
         var alias: PlayCoverService.SessionLaunchAlias?
         var openSubmitted = false
+        var postSubmissionIntegrityError: Error?
         var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
 
-        XCTAssertThrowsError(
-            try PlayCoverService.launchPreparedApplication(
-                manifest: manifest,
-                sessionID: sessionID,
-                runtimeSocketPath: socketPath,
-                deadline:
-                    ProcessInfo.processInfo.systemUptime + 0.05,
-                launchAlias: &alias,
-                workspaceOpenSubmitted: &openSubmitted,
-                launchPhaseTiming: &launchPhaseTiming
+        try PlayCoverService.withUncheckedLaunchCapabilityForTesting(
+            appPath: manifest.preparedAppPath
+        ) { capability in
+            XCTAssertThrowsError(
+                try PlayCoverService.launchPreparedApplication(
+                    manifest: manifest,
+                    launchCapability: capability,
+                    sessionID: sessionID,
+                    runtimeSocketPath: socketPath,
+                    deadline:
+                        ProcessInfo.processInfo.systemUptime + 0.05,
+                    launchAlias: &alias,
+                    workspaceOpenSubmitted: &openSubmitted,
+                    postSubmissionIntegrityError:
+                        &postSubmissionIntegrityError,
+                    launchPhaseTiming: &launchPhaseTiming
+                )
             )
-        )
+        }
 
         let expectedAlias =
             PlayCoverService.sessionLaunchAlias(sessionID: sessionID)

@@ -83,6 +83,12 @@ public enum PlayCoverService {
         case afterCodeSignature(String)
     }
 
+    enum LaunchIntegrityEvent: Equatable {
+        case afterFastVerificationBeforeLaunchBody
+        case afterAliasBuiltBeforePreSubmitValidation
+        case afterWorkspaceOpenReturnedBeforePostSubmitValidation
+    }
+
     public static let manifestFilename = "manifest.json"
     static let completedFilename = "completed.json"
     static let generationManifestMaximumBytes = 64 * 1_024 * 1_024
@@ -117,6 +123,8 @@ public enum PlayCoverService {
     #endif
     static var fastVerifyEventOverrideForTesting:
         ((FastVerifyEvent) throws -> Void)?
+    static var launchIntegrityEventOverrideForTesting:
+        ((LaunchIntegrityEvent) throws -> Void)?
     static var generationKeyComputationObserverForTesting:
         (() -> Void)?
     private static let fastVerifyHashQueue = DispatchQueue(
@@ -527,6 +535,29 @@ public enum PlayCoverService {
         suppliedManifest: PlayCoverPrepareManifest?,
         expectedGenerationIdentity: PlayCoverGenerationIdentity?
     ) throws -> PlayCoverValidatedPreparedManifest {
+        try withFastVerifiedManifestDescriptors(
+            app: app,
+            suppliedManifest: suppliedManifest,
+            expectedGenerationIdentity: expectedGenerationIdentity,
+            captureLaunchEntries: false
+        ) { evidence, _, _, _, _ in
+            evidence
+        }
+    }
+
+    private static func withFastVerifiedManifestDescriptors<T>(
+        app: URL,
+        suppliedManifest: PlayCoverPrepareManifest?,
+        expectedGenerationIdentity: PlayCoverGenerationIdentity?,
+        captureLaunchEntries: Bool,
+        body: (
+            PlayCoverValidatedPreparedManifest,
+            Int32,
+            URL,
+            Int32,
+            [AnchoredLaunchAliasEntry]?
+        ) throws -> T
+    ) throws -> T {
         try withStableGenerationDescriptor(for: app) {
             generationDescriptor,
             generationURL in
@@ -598,6 +629,12 @@ public enum PlayCoverService {
                 generationURL: generationURL,
                 app: app
             ) { appDescriptor in
+                let launchEntries = captureLaunchEntries
+                    ? try anchoredLaunchAliasEntries(
+                        app: app,
+                        appDescriptor: appDescriptor
+                    )
+                    : nil
                 let verification = try verifyRecordedCodeObjects(
                     app: app,
                     borrowedAppDescriptor: appDescriptor,
@@ -630,12 +667,180 @@ public enum PlayCoverService {
                         "embedded Runtime hash changed"
                     )
                 }
-                return PlayCoverValidatedPreparedManifest(
+                if let launchEntries {
+                    try validateAnchoredLaunchAliasEntries(
+                        launchEntries,
+                        appDescriptor: appDescriptor
+                    )
+                }
+                let evidence = PlayCoverValidatedPreparedManifest(
                     manifest: manifest,
                     generationIdentity: generationIdentity
                 )
+                return try body(
+                    evidence,
+                    generationDescriptor,
+                    generationURL,
+                    appDescriptor,
+                    launchEntries
+                )
             }
         }
+    }
+
+    static func withFastVerifiedLaunchCapability<T>(
+        appPath: String,
+        expectedGenerationIdentity: PlayCoverGenerationIdentity?,
+        body: (
+            PlayCoverValidatedPreparedManifest,
+            FastVerifiedLaunchCapability
+        ) throws -> T
+    ) throws -> T {
+        let acquired = try acquireFastVerifiedLaunchCapability(
+            appPath: appPath,
+            expectedGenerationIdentity: expectedGenerationIdentity
+        )
+        defer { acquired.capability.close() }
+        return try body(acquired.evidence, acquired.capability)
+    }
+
+    static func acquireFastVerifiedLaunchCapability(
+        appPath: String,
+        expectedGenerationIdentity: PlayCoverGenerationIdentity?
+    ) throws -> (
+        evidence: PlayCoverValidatedPreparedManifest,
+        capability: FastVerifiedLaunchCapability
+    ) {
+        let app = URL(
+            fileURLWithPath: appPath,
+            isDirectory: true
+        ).standardizedFileURL
+        let acquired = try withFastVerifiedManifestDescriptors(
+            app: app,
+            suppliedManifest: nil,
+            expectedGenerationIdentity: expectedGenerationIdentity,
+            captureLaunchEntries: true
+        ) {
+            evidence,
+            generationDescriptor,
+            generationURL,
+            appDescriptor,
+            launchEntries in
+            guard let launchEntries else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "fast verification did not capture launch inventory"
+                )
+            }
+            let capability = try retainLaunchCapability(
+                generationDescriptor: generationDescriptor,
+                generationURL: generationURL,
+                appDescriptor: appDescriptor,
+                app: app,
+                entries: launchEntries
+            )
+            return (evidence, capability)
+        }
+        try emitLaunchIntegrityEvent(
+            .afterFastVerificationBeforeLaunchBody
+        )
+        return acquired
+    }
+
+    private static func retainLaunchCapability(
+        generationDescriptor: Int32,
+        generationURL: URL,
+        appDescriptor: Int32,
+        app: URL,
+        entries: [AnchoredLaunchAliasEntry]
+    ) throws -> FastVerifiedLaunchCapability {
+        let retainedGenerationDescriptor = fcntl(
+            generationDescriptor,
+            F_DUPFD_CLOEXEC,
+            0
+        )
+        guard retainedGenerationDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot retain the fast-verified generation vnode: "
+                    + "errno \(errno)"
+            )
+        }
+        let retainedAppDescriptor = fcntl(
+            appDescriptor,
+            F_DUPFD_CLOEXEC,
+            0
+        )
+        guard retainedAppDescriptor >= 0 else {
+            Darwin.close(retainedGenerationDescriptor)
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot retain the fast-verified App vnode: errno \(errno)"
+            )
+        }
+        var generationStatus = stat()
+        var appStatus = stat()
+        guard fstat(
+                retainedGenerationDescriptor,
+                &generationStatus
+              ) == 0,
+              fstat(retainedAppDescriptor, &appStatus) == 0 else {
+            Darwin.close(retainedAppDescriptor)
+            Darwin.close(retainedGenerationDescriptor)
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot record the fast-verified launch vnodes"
+            )
+        }
+        do {
+            try validateAnchoredLaunchAliasEntries(
+                entries,
+                appDescriptor: retainedAppDescriptor
+            )
+            return FastVerifiedLaunchCapability(
+                generationDescriptor: retainedGenerationDescriptor,
+                generationURL: generationURL,
+                generationStatus: generationStatus,
+                appDescriptor: retainedAppDescriptor,
+                appURL: app,
+                appStatus: appStatus,
+                entries: entries
+            )
+        } catch {
+            Darwin.close(retainedAppDescriptor)
+            Darwin.close(retainedGenerationDescriptor)
+            throw error
+        }
+    }
+
+    static func withUncheckedLaunchCapabilityForTesting<T>(
+        appPath: String,
+        body: (FastVerifiedLaunchCapability) throws -> T
+    ) throws -> T {
+        let app = URL(
+            fileURLWithPath: appPath,
+            isDirectory: true
+        ).standardizedFileURL
+        let capability = try withStableGenerationDescriptor(for: app) {
+            generationDescriptor,
+            generationURL in
+            try withPreparedAppDescriptor(
+                generationDescriptor: generationDescriptor,
+                generationURL: generationURL,
+                app: app
+            ) { appDescriptor in
+                let entries = try anchoredLaunchAliasEntries(
+                    app: app,
+                    appDescriptor: appDescriptor
+                )
+                let capability = try retainLaunchCapability(
+                    generationDescriptor: generationDescriptor,
+                    generationURL: generationURL,
+                    appDescriptor: appDescriptor,
+                    app: app,
+                    entries: entries
+                )
+                return capability
+            }
+        }
+        defer { capability.close() }
+        return try body(capability)
     }
 
     public static func launch(
@@ -644,24 +849,27 @@ public enum PlayCoverService {
         runtimeSocketPath: String,
         timeout: Double = 15
     ) throws -> PlayCoverLaunchIdentity {
-        let validated = try fastVerifyEvidence(
+        var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
+        return try withFastVerifiedLaunchCapability(
             appPath: appPath,
             expectedGenerationIdentity: nil
-        )
-        var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
-        return try launchVerified(
-            manifest: validated.manifest,
-            generationIdentity: validated.generationIdentity,
-            sessionID: sessionID,
-            runtimeSocketPath: runtimeSocketPath,
-            launchPhaseTiming: &launchPhaseTiming,
-            timeout: timeout
-        )
+        ) { validated, capability in
+            try launchVerified(
+                manifest: validated.manifest,
+                generationIdentity: validated.generationIdentity,
+                launchCapability: capability,
+                sessionID: sessionID,
+                runtimeSocketPath: runtimeSocketPath,
+                launchPhaseTiming: &launchPhaseTiming,
+                timeout: timeout
+            )
+        }
     }
 
     static func launchVerified(
         manifest: PlayCoverPrepareManifest,
         generationIdentity: PlayCoverGenerationIdentity? = nil,
+        launchCapability: FastVerifiedLaunchCapability,
         sessionID: String,
         runtimeSocketPath: String,
         stdioLog: PlayCoverStdioLogIdentity? = nil,
@@ -715,6 +923,7 @@ public enum PlayCoverService {
         var launched: LaunchedApplicationIdentity?
         var launchAlias: SessionLaunchAlias?
         var workspaceOpenSubmitted = false
+        var postSubmissionIntegrityError: Error?
         var keyCoverUnlocked = false
         do {
             try PlayCoverHeadlessKeyCover.unlock(
@@ -729,14 +938,18 @@ public enum PlayCoverService {
                 ProcessInfo.processInfo.systemUptime + timeout
             let identity = try launchPreparedApplication(
                 manifest: manifest,
+                launchCapability: launchCapability,
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
                 stdioLog: stdioLog,
                 deadline: deadline,
                 launchAlias: &launchAlias,
                 workspaceOpenSubmitted: &workspaceOpenSubmitted,
+                postSubmissionIntegrityError:
+                    &postSubmissionIntegrityError,
                 launchPhaseTiming: &launchPhaseTiming
             )
+            launched = identity
             guard let launchAlias,
                   acceptsClaimedLaunchIdentity(
                     identity,
@@ -748,7 +961,9 @@ public enum PlayCoverService {
                         + "that does not match the prepared generation"
                 )
             }
-            launched = identity
+            if let postSubmissionIntegrityError {
+                throw postSubmissionIntegrityError
+            }
 
             let readyGeometryStarted =
                 PlayCoverMonotonicClock.now()
@@ -2133,6 +2348,16 @@ public enum PlayCoverService {
             && lhs.st_size == rhs.st_size
     }
 
+    private static func sameDirectoryAuthorityIdentity(
+        _ lhs: stat,
+        _ rhs: stat
+    ) -> Bool {
+        lhs.st_dev == rhs.st_dev
+            && lhs.st_ino == rhs.st_ino
+            && lhs.st_mode == rhs.st_mode
+            && lhs.st_uid == rhs.st_uid
+    }
+
     private static func recordedRelativePath(
         _ url: URL,
         in app: URL
@@ -2344,6 +2569,12 @@ public enum PlayCoverService {
         try fastVerifyEventOverrideForTesting?(event)
     }
 
+    private static func emitLaunchIntegrityEvent(
+        _ event: LaunchIntegrityEvent
+    ) throws {
+        try launchIntegrityEventOverrideForTesting?(event)
+    }
+
     private static func writeAtomically(
         _ data: Data,
         to url: URL
@@ -2387,6 +2618,49 @@ public enum PlayCoverService {
         let bundleURL: URL
     }
 
+    final class FastVerifiedLaunchCapability {
+        fileprivate var generationDescriptor: Int32
+        fileprivate let generationURL: URL
+        fileprivate let generationStatus: stat
+        fileprivate var appDescriptor: Int32
+        fileprivate let appURL: URL
+        fileprivate let appStatus: stat
+        fileprivate let entries: [AnchoredLaunchAliasEntry]
+
+        fileprivate init(
+            generationDescriptor: Int32,
+            generationURL: URL,
+            generationStatus: stat,
+            appDescriptor: Int32,
+            appURL: URL,
+            appStatus: stat,
+            entries: [AnchoredLaunchAliasEntry]
+        ) {
+            self.generationDescriptor = generationDescriptor
+            self.generationURL = generationURL
+            self.generationStatus = generationStatus
+            self.appDescriptor = appDescriptor
+            self.appURL = appURL
+            self.appStatus = appStatus
+            self.entries = entries
+        }
+
+        func close() {
+            if appDescriptor >= 0 {
+                Darwin.close(appDescriptor)
+                appDescriptor = -1
+            }
+            if generationDescriptor >= 0 {
+                Darwin.close(generationDescriptor)
+                generationDescriptor = -1
+            }
+        }
+
+        deinit {
+            close()
+        }
+    }
+
     enum FailedLaunchProcessState: Equatable {
         case running(
             executablePath: String,
@@ -2416,6 +2690,380 @@ public enum PlayCoverService {
     private struct LaunchAliasEntry {
         let name: String
         let destination: String
+    }
+
+    fileprivate struct AnchoredLaunchAliasEntry {
+        let name: String
+        let destination: String
+        let sourceStatus: stat
+    }
+
+    private final class SessionLaunchAliasCapability {
+        let alias: SessionLaunchAlias
+        let aliasName: String
+        var rootDescriptor: Int32
+        let rootStatus: stat
+        var aliasDescriptor: Int32
+        let aliasStatus: stat
+
+        init(
+            alias: SessionLaunchAlias,
+            aliasName: String,
+            rootDescriptor: Int32,
+            rootStatus: stat,
+            aliasDescriptor: Int32,
+            aliasStatus: stat
+        ) {
+            self.alias = alias
+            self.aliasName = aliasName
+            self.rootDescriptor = rootDescriptor
+            self.rootStatus = rootStatus
+            self.aliasDescriptor = aliasDescriptor
+            self.aliasStatus = aliasStatus
+        }
+
+        func close() {
+            if aliasDescriptor >= 0 {
+                Darwin.close(aliasDescriptor)
+                aliasDescriptor = -1
+            }
+            if rootDescriptor >= 0 {
+                Darwin.close(rootDescriptor)
+                rootDescriptor = -1
+            }
+        }
+
+        deinit {
+            close()
+        }
+    }
+
+    private static func anchoredLaunchAliasEntries(
+        app: URL,
+        appDescriptor: Int32
+    ) throws -> [AnchoredLaunchAliasEntry] {
+        let names = try PlayCoverManagedAppService
+            .anchoredDirectoryNames(
+                descriptor: appDescriptor,
+                label: "prepared App launch inventory"
+            ).sorted()
+        guard !names.isEmpty,
+              names.allSatisfy(isSafeLaunchAliasName) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the prepared App has no safe top-level launch inventory"
+            )
+        }
+        return try names.map { name in
+            var status = stat()
+            guard fstatat(
+                    appDescriptor,
+                    name,
+                    &status,
+                    AT_SYMLINK_NOFOLLOW
+                  ) == 0,
+                  status.st_uid == geteuid() else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "cannot capture prepared App launch entry: \(name)"
+                )
+            }
+            return AnchoredLaunchAliasEntry(
+                name: name,
+                destination: app.appendingPathComponent(name).path,
+                sourceStatus: status
+            )
+        }
+    }
+
+    private static func validateFastVerifiedLaunchCapability(
+        _ capability: FastVerifiedLaunchCapability
+    ) throws {
+        guard capability.generationDescriptor >= 0,
+              capability.appDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "fast-verified launch capability was already consumed"
+            )
+        }
+        var generationDescriptorStatus = stat()
+        var generationPathStatus = stat()
+        var appDescriptorStatus = stat()
+        var appPathStatus = stat()
+        guard fstat(
+                capability.generationDescriptor,
+                &generationDescriptorStatus
+              ) == 0,
+              lstat(
+                capability.generationURL.path,
+                &generationPathStatus
+              ) == 0,
+              sameRecordedIdentity(
+                capability.generationStatus,
+                generationDescriptorStatus
+              ),
+              sameRecordedIdentity(
+                capability.generationStatus,
+                generationPathStatus
+              ),
+              fstat(capability.appDescriptor, &appDescriptorStatus) == 0,
+              fstatat(
+                capability.generationDescriptor,
+                capability.appURL.lastPathComponent,
+                &appPathStatus,
+                AT_SYMLINK_NOFOLLOW
+              ) == 0,
+              sameRecordedIdentity(
+                capability.appStatus,
+                appDescriptorStatus
+              ),
+              sameRecordedIdentity(
+                capability.appStatus,
+                appPathStatus
+              ) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "fast-verified generation/App changed before launch "
+                    + "submission completed"
+            )
+        }
+        try validateAnchoredLaunchAliasEntries(
+            capability.entries,
+            appDescriptor: capability.appDescriptor
+        )
+    }
+
+    private static func validateAnchoredLaunchAliasEntries(
+        _ entries: [AnchoredLaunchAliasEntry],
+        appDescriptor: Int32
+    ) throws {
+        let actualNames = try PlayCoverManagedAppService
+            .anchoredDirectoryNames(
+                descriptor: appDescriptor,
+                label: "fast-verified prepared App"
+            )
+        let expectedNames = Set(entries.map(\.name))
+        guard actualNames.count == expectedNames.count,
+              Set(actualNames) == expectedNames else {
+            throw PlayCoverBackendError.cacheTampered(
+                "prepared App top-level inventory changed before launch"
+            )
+        }
+        for entry in entries {
+            var current = stat()
+            guard fstatat(
+                    appDescriptor,
+                    entry.name,
+                    &current,
+                    AT_SYMLINK_NOFOLLOW
+                  ) == 0,
+                  sameRecordedIdentity(entry.sourceStatus, current) else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "prepared App top-level entry changed before launch: "
+                        + entry.name
+                )
+            }
+        }
+    }
+
+    private static func openSessionLaunchAliasCapability(
+        alias: SessionLaunchAlias
+    ) throws -> SessionLaunchAliasCapability {
+        let aliasName = alias.bundleURL.lastPathComponent
+        guard isSafeLaunchAliasName(aliasName),
+              alias.bundleURL.deletingLastPathComponent()
+                .standardizedFileURL.path
+                == alias.rootURL.standardizedFileURL.path else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the session launch alias is not a direct safe child"
+            )
+        }
+        let rootDescriptor = Darwin.open(
+            alias.rootURL.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard rootDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot anchor the launch alias root: errno \(errno)"
+            )
+        }
+        var rootStatus = stat()
+        var rootPathStatus = stat()
+        guard fstat(rootDescriptor, &rootStatus) == 0,
+              lstat(alias.rootURL.path, &rootPathStatus) == 0,
+              sameDirectoryAuthorityIdentity(
+                rootStatus,
+                rootPathStatus
+              ) else {
+            Darwin.close(rootDescriptor)
+            throw PlayCoverBackendError.cacheTampered(
+                "the launch alias root changed while it was opened"
+            )
+        }
+        do {
+            try validateLaunchAliasRootStatus(rootStatus)
+        } catch {
+            Darwin.close(rootDescriptor)
+            throw error
+        }
+        let aliasDescriptor = Darwin.openat(
+            rootDescriptor,
+            aliasName,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard aliasDescriptor >= 0 else {
+            Darwin.close(rootDescriptor)
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot anchor the session launch alias: errno \(errno)"
+            )
+        }
+        var aliasStatus = stat()
+        var aliasPathStatus = stat()
+        guard fstat(aliasDescriptor, &aliasStatus) == 0,
+              fstatat(
+                rootDescriptor,
+                aliasName,
+                &aliasPathStatus,
+                AT_SYMLINK_NOFOLLOW
+              ) == 0,
+              sameRecordedIdentity(aliasStatus, aliasPathStatus),
+              aliasStatus.st_mode & S_IFMT == S_IFDIR,
+              aliasStatus.st_uid == geteuid(),
+              aliasStatus.st_mode & 0o022 == 0 else {
+            Darwin.close(aliasDescriptor)
+            Darwin.close(rootDescriptor)
+            throw PlayCoverBackendError.cacheTampered(
+                "the session launch alias is not an owned real directory"
+            )
+        }
+        return SessionLaunchAliasCapability(
+            alias: alias,
+            aliasName: aliasName,
+            rootDescriptor: rootDescriptor,
+            rootStatus: rootStatus,
+            aliasDescriptor: aliasDescriptor,
+            aliasStatus: aliasStatus
+        )
+    }
+
+    private static func validateSessionLaunchAliasCapability(
+        _ aliasCapability: SessionLaunchAliasCapability,
+        expectedEntries: [LaunchAliasEntry]
+    ) throws {
+        guard aliasCapability.rootDescriptor >= 0,
+              aliasCapability.aliasDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "session launch alias capability was already consumed"
+            )
+        }
+        var rootDescriptorStatus = stat()
+        var rootPathStatus = stat()
+        var aliasDescriptorStatus = stat()
+        var aliasPathStatus = stat()
+        guard fstat(
+                aliasCapability.rootDescriptor,
+                &rootDescriptorStatus
+              ) == 0,
+              lstat(
+                aliasCapability.alias.rootURL.path,
+                &rootPathStatus
+              ) == 0,
+              sameDirectoryAuthorityIdentity(
+                aliasCapability.rootStatus,
+                rootDescriptorStatus
+              ),
+              sameDirectoryAuthorityIdentity(
+                aliasCapability.rootStatus,
+                rootPathStatus
+              ),
+              fstat(
+                aliasCapability.aliasDescriptor,
+                &aliasDescriptorStatus
+              ) == 0,
+              fstatat(
+                aliasCapability.rootDescriptor,
+                aliasCapability.aliasName,
+                &aliasPathStatus,
+                AT_SYMLINK_NOFOLLOW
+              ) == 0,
+              sameRecordedIdentity(
+                aliasCapability.aliasStatus,
+                aliasDescriptorStatus
+              ),
+              sameRecordedIdentity(
+                aliasCapability.aliasStatus,
+                aliasPathStatus
+              ) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the launch alias root/facade changed during submission"
+            )
+        }
+        let expectedNames = Set(expectedEntries.map(\.name))
+        let actualNames = try PlayCoverManagedAppService
+            .anchoredDirectoryNames(
+                descriptor: aliasCapability.aliasDescriptor,
+                label: "session launch alias"
+            )
+        guard actualNames.count == expectedNames.count,
+              Set(actualNames) == expectedNames else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the session launch alias top-level inventory changed"
+            )
+        }
+        let expected = Dictionary(
+            uniqueKeysWithValues: expectedEntries.map {
+                ($0.name, $0.destination)
+            }
+        )
+        for name in actualNames {
+            var linkStatus = stat()
+            guard let destination = expected[name],
+                  fstatat(
+                    aliasCapability.aliasDescriptor,
+                    name,
+                    &linkStatus,
+                    AT_SYMLINK_NOFOLLOW
+                  ) == 0,
+                  linkStatus.st_mode & S_IFMT == S_IFLNK,
+                  linkStatus.st_uid == geteuid(),
+                  try anchoredSymbolicLinkDestination(
+                    descriptor: aliasCapability.aliasDescriptor,
+                    name: name
+                  ) == destination else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "the session launch alias entry changed: \(name)"
+                )
+            }
+        }
+    }
+
+    private static func anchoredSymbolicLinkDestination(
+        descriptor: Int32,
+        name: String
+    ) throws -> String {
+        var buffer = [CChar](
+            repeating: 0,
+            count: Int(PATH_MAX) + 1
+        )
+        let count = Darwin.readlinkat(
+            descriptor,
+            name,
+            &buffer,
+            buffer.count - 1
+        )
+        guard count >= 0, count < buffer.count - 1 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot read anchored launch alias entry \(name)"
+            )
+        }
+        buffer[Int(count)] = 0
+        return String(cString: buffer)
+    }
+
+    private static func isSafeLaunchAliasName(
+        _ name: String
+    ) -> Bool {
+        !name.isEmpty
+            && name != "."
+            && name != ".."
+            && !name.contains("/")
+            && !name.utf8.contains(0)
     }
 
     static func sessionLaunchAlias(
@@ -2448,8 +3096,18 @@ public enum PlayCoverService {
         manifest: PlayCoverPrepareManifest,
         sessionID: String
     ) throws -> SessionLaunchAlias {
-        let alias = sessionLaunchAlias(sessionID: sessionID)
         let entries = try launchAliasEntries(manifest: manifest)
+        return try createSessionLaunchAlias(
+            entries: entries,
+            sessionID: sessionID
+        )
+    }
+
+    private static func createSessionLaunchAlias(
+        entries: [LaunchAliasEntry],
+        sessionID: String
+    ) throws -> SessionLaunchAlias {
+        let alias = sessionLaunchAlias(sessionID: sessionID)
         try ensureLaunchAliasRoot(alias.rootURL)
         var status = stat()
         guard lstat(alias.bundleURL.path, &status) != 0,
@@ -2588,49 +3246,14 @@ public enum PlayCoverService {
         _ alias: SessionLaunchAlias,
         expectedEntries: [LaunchAliasEntry]
     ) throws {
-        var aliasStatus = stat()
-        #if canImport(Darwin)
-        let expectedUserID = geteuid()
-        #else
-        let expectedUserID: UInt32 = aliasStatus.st_uid
-        #endif
-        guard lstat(alias.bundleURL.path, &aliasStatus) == 0,
-              aliasStatus.st_mode & S_IFMT == S_IFDIR,
-              aliasStatus.st_uid == expectedUserID,
-              aliasStatus.st_mode & 0o022 == 0 else {
-            throw PlayCoverBackendError.cacheTampered(
-                "the session launch alias is not an owned real directory"
-            )
-        }
-        let actualNames = try FileManager.default.contentsOfDirectory(
-            atPath: alias.bundleURL.path
+        let capability = try openSessionLaunchAliasCapability(
+            alias: alias
         )
-        let expected = Dictionary(
-            uniqueKeysWithValues: expectedEntries.map {
-                ($0.name, $0.destination)
-            }
+        defer { capability.close() }
+        try validateSessionLaunchAliasCapability(
+            capability,
+            expectedEntries: expectedEntries
         )
-        guard Set(actualNames) == Set(expected.keys),
-              actualNames.count == expected.count else {
-            throw PlayCoverBackendError.cacheTampered(
-                "the session launch alias top-level inventory changed"
-            )
-        }
-        for name in actualNames {
-            let child = alias.bundleURL.appendingPathComponent(name)
-            var childStatus = stat()
-            guard let destination = expected[name],
-                  lstat(child.path, &childStatus) == 0,
-                  childStatus.st_mode & S_IFMT == S_IFLNK,
-                  childStatus.st_uid == expectedUserID,
-                  try FileManager.default.destinationOfSymbolicLink(
-                    atPath: child.path
-                  ) == destination else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "the session launch alias entry changed: \(name)"
-                )
-            }
-        }
     }
 
     private static func removePartialSessionLaunchAlias(
@@ -2685,12 +3308,7 @@ public enum PlayCoverService {
             )
         }
         guard !names.isEmpty,
-              names.allSatisfy({
-                !$0.isEmpty
-                    && $0 != "."
-                    && $0 != ".."
-                    && !$0.contains("/")
-              }) else {
+              names.allSatisfy(isSafeLaunchAliasName) else {
             throw PlayCoverBackendError.cacheTampered(
                 "the prepared App has no safe top-level launch inventory"
             )
@@ -2829,12 +3447,14 @@ public enum PlayCoverService {
 
     static func launchPreparedApplication(
         manifest: PlayCoverPrepareManifest,
+        launchCapability: FastVerifiedLaunchCapability,
         sessionID: String,
         runtimeSocketPath: String,
         stdioLog: PlayCoverStdioLogIdentity? = nil,
         deadline: TimeInterval,
         launchAlias: inout SessionLaunchAlias?,
         workspaceOpenSubmitted: inout Bool,
+        postSubmissionIntegrityError: inout Error?,
         launchPhaseTiming: inout PlayCoverLaunchPhaseTiming
     ) throws -> LaunchedApplicationIdentity {
         #if canImport(AppKit)
@@ -2873,11 +3493,18 @@ public enum PlayCoverService {
                     + "this start invocation"
             )
         }
+        try validateFastVerifiedLaunchCapability(launchCapability)
+        let launchEntries = launchCapability.entries.map {
+            LaunchAliasEntry(
+                name: $0.name,
+                destination: $0.destination
+            )
+        }
         let aliasStarted = PlayCoverMonotonicClock.now()
         let alias: SessionLaunchAlias
         do {
             alias = try createSessionLaunchAlias(
-                manifest: manifest,
+                entries: launchEntries,
                 sessionID: sessionID
             )
         } catch {
@@ -2888,11 +3515,24 @@ public enum PlayCoverService {
             throw error
         }
         launchAlias = alias
+        let aliasCapability: SessionLaunchAliasCapability
+        do {
+            aliasCapability = try openSessionLaunchAliasCapability(
+                alias: alias
+            )
+            try emitLaunchIntegrityEvent(
+                .afterAliasBuiltBeforePreSubmitValidation
+            )
+        } catch {
+            launchPhaseTiming.aliasNanoseconds =
+                PlayCoverMonotonicClock.elapsed(since: aliasStarted)
+            throw error
+        }
+        defer { aliasCapability.close() }
         launchPhaseTiming.aliasNanoseconds =
             PlayCoverMonotonicClock.elapsed(since: aliasStarted)
         let box = LaunchBox()
         let semaphore = DispatchSemaphore(value: 0)
-        workspaceOpenSubmitted = true
         let completion:
             (NSRunningApplication?, Error?) -> Void = {
                 application, error in
@@ -2938,6 +3578,16 @@ public enum PlayCoverService {
             }
             semaphore.signal()
         }
+        try validateFastVerifiedLaunchCapability(launchCapability)
+        try validateSessionLaunchAliasCapability(
+            aliasCapability,
+            expectedEntries: launchEntries
+        )
+        // NSWorkspace accepts a path, not an fd. These checks only sample the
+        // lexical identities immediately before and after the synchronous
+        // API call. Descriptor retention neither closes namespace ABA nor
+        // proves when LaunchServices consumes the asynchronous request.
+        workspaceOpenSubmitted = true
         if let workspaceOpenOverrideForTesting {
             let openDispatchStarted =
                 PlayCoverMonotonicClock.now()
@@ -2963,6 +3613,23 @@ public enum PlayCoverService {
                     since: openDispatchStarted
                 )
         }
+        do {
+            try emitLaunchIntegrityEvent(
+                .afterWorkspaceOpenReturnedBeforePostSubmitValidation
+            )
+            try validateFastVerifiedLaunchCapability(launchCapability)
+            try validateSessionLaunchAliasCapability(
+                aliasCapability,
+                expectedEntries: launchEntries
+            )
+        } catch {
+            // Submission may still create the App after this method returns
+            // from NSWorkspace. Keep the existing ownership loop alive so an
+            // exact process can be handed to the caller for rollback.
+            postSubmissionIntegrityError = error
+        }
+        aliasCapability.close()
+        launchCapability.close()
         // The caller supplies the one monotonic `start --timeout` deadline
         // shared by launch discovery and the subsequent ready Runtime hello.
         // Large Apps may exceed LaunchServices' historical ten-second window,
@@ -3129,6 +3796,9 @@ public enum PlayCoverService {
                     timeout: .now() + min(0.05, remaining)
                 )
             }
+        }
+        if let postSubmissionIntegrityError {
+            throw postSubmissionIntegrityError
         }
         throw PlayCoverBackendError.launchFailed(
             "NSWorkspace did not return or expose a matching App process"

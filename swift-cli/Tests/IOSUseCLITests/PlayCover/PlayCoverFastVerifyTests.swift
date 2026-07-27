@@ -10,6 +10,11 @@ final class PlayCoverFastVerifyTests: XCTestCase {
     override func tearDown() {
         Shell.runResultOverrideForTesting = nil
         PlayCoverService.fastVerifyEventOverrideForTesting = nil
+        PlayCoverService.launchIntegrityEventOverrideForTesting = nil
+        PlayCoverService.launchAliasRootOverrideForTesting = nil
+        #if canImport(AppKit)
+        PlayCoverService.workspaceOpenOverrideForTesting = nil
+        #endif
         PlayCoverService
             .generationKeyComputationObserverForTesting = nil
         super.tearDown()
@@ -1121,6 +1126,285 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         #endif
     }
 
+    func testLaunchCapabilityRejectsTopLevelReplacementAfterFastVerify()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        Shell.runResultOverrideForTesting = {
+            _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+        let info = fixture.app.appendingPathComponent("Info.plist")
+        let displaced = fixture.app.appendingPathComponent(
+            "Verified-Info.plist"
+        )
+        let originalSize = try Data(contentsOf: info).count
+        var replaced = false
+        PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            guard event == .afterCodeSignature("."),
+                  !replaced else {
+                return
+            }
+            replaced = true
+            try FileManager.default.moveItem(
+                at: info,
+                to: displaced
+            )
+            try Data(repeating: 0x20, count: originalSize).write(to: info)
+        }
+        var launchBodyCalled = false
+
+        XCTAssertThrowsError(
+            try PlayCoverService.withFastVerifiedLaunchCapability(
+                appPath: fixture.app.path,
+                expectedGenerationIdentity: nil
+            ) { _, _ in
+                launchBodyCalled = true
+            }
+        ) { error in
+            self.assertCacheTampered(error)
+        }
+
+        XCTAssertTrue(replaced)
+        XCTAssertFalse(
+            launchBodyCalled,
+            "replacement between verification and capability capture "
+                + "must not become the trusted launch baseline"
+        )
+    }
+
+    #if canImport(AppKit)
+    func testLaunchCapabilityRejectsAppReplacementBeforeSubmission()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let replacement = fixture.root.appendingPathComponent(
+            "Replacement.app",
+            isDirectory: true
+        )
+        let result = try launchIntegrityFailure(
+            fixture: fixture,
+            sessionID: "replace-app-before-submit",
+            event: .afterFastVerificationBeforeLaunchBody
+        ) {
+            try FileManager.default.moveItem(
+                at: fixture.app,
+                to: replacement
+            )
+            try FileManager.default.createDirectory(
+                at: fixture.app,
+                withIntermediateDirectories: false
+            )
+        }
+
+        assertCacheTampered(result.error)
+        XCTAssertTrue(result.mutationFired)
+        XCTAssertEqual(result.workspaceOpenCount, 0)
+        XCTAssertFalse(result.workspaceOpenSubmitted)
+        XCTAssertFalse(result.enteredOwnershipLoop)
+        XCTAssertNil(result.alias)
+    }
+
+    func testLaunchCapabilityRejectsAliasReplacementBeforeSubmission()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let sessionID = "replace-alias-before-submit"
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            fixture.launchAliasRoot
+        let alias = PlayCoverService.sessionLaunchAlias(
+            sessionID: sessionID
+        )
+        let displaced = alias.rootURL.appendingPathComponent(
+            "Displaced.app",
+            isDirectory: true
+        )
+        let result = try launchIntegrityFailure(
+            fixture: fixture,
+            sessionID: sessionID,
+            event: .afterAliasBuiltBeforePreSubmitValidation
+        ) {
+            try FileManager.default.moveItem(
+                at: alias.bundleURL,
+                to: displaced
+            )
+            try FileManager.default.createDirectory(
+                at: alias.bundleURL,
+                withIntermediateDirectories: false
+            )
+        }
+
+        assertCacheTampered(result.error)
+        XCTAssertTrue(result.mutationFired)
+        XCTAssertEqual(result.workspaceOpenCount, 0)
+        XCTAssertFalse(result.workspaceOpenSubmitted)
+        XCTAssertFalse(result.enteredOwnershipLoop)
+        XCTAssertEqual(result.alias, alias)
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: displaced.path)
+        )
+    }
+
+    func testLaunchCapabilityRejectsAliasReplacementAfterSubmission()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let sessionID = "replace-alias-after-submit"
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            fixture.launchAliasRoot
+        let alias = PlayCoverService.sessionLaunchAlias(
+            sessionID: sessionID
+        )
+        let displaced = alias.rootURL.appendingPathComponent(
+            "Submitted.app",
+            isDirectory: true
+        )
+        let result = try launchIntegrityFailure(
+            fixture: fixture,
+            sessionID: sessionID,
+            event:
+                .afterWorkspaceOpenReturnedBeforePostSubmitValidation
+        ) {
+            try FileManager.default.moveItem(
+                at: alias.bundleURL,
+                to: displaced
+            )
+            try FileManager.default.createDirectory(
+                at: alias.bundleURL,
+                withIntermediateDirectories: false
+            )
+        }
+
+        assertCacheTampered(result.error)
+        XCTAssertTrue(result.mutationFired)
+        XCTAssertEqual(result.workspaceOpenCount, 1)
+        XCTAssertTrue(result.workspaceOpenSubmitted)
+        XCTAssertTrue(
+            result.enteredOwnershipLoop,
+            "a submitted request must remain under ownership observation "
+                + "after post-submit integrity failure"
+        )
+        XCTAssertEqual(result.alias, alias)
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: displaced.path)
+        )
+    }
+
+    func testLaunchCapabilityAllowsSiblingInSharedAliasRoot()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let sibling = fixture.launchAliasRoot.appendingPathComponent(
+            "other-session.app",
+            isDirectory: true
+        )
+        let result = try launchIntegrityFailure(
+            fixture: fixture,
+            sessionID: "shared-root-sibling",
+            event: .afterAliasBuiltBeforePreSubmitValidation
+        ) {
+            try FileManager.default.createDirectory(
+                at: sibling,
+                withIntermediateDirectories: false
+            )
+        }
+
+        guard case .launchFailed =
+                result.error as? PlayCoverBackendError else {
+            return XCTFail("unexpected error: \(result.error)")
+        }
+        XCTAssertTrue(result.mutationFired)
+        XCTAssertEqual(result.workspaceOpenCount, 1)
+        XCTAssertTrue(result.workspaceOpenSubmitted)
+        XCTAssertTrue(result.enteredOwnershipLoop)
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: sibling.path)
+        )
+    }
+
+    private func launchIntegrityFailure(
+        fixture: FastVerifyFixture,
+        sessionID: String,
+        event: PlayCoverService.LaunchIntegrityEvent,
+        mutation: @escaping () throws -> Void
+    ) throws -> (
+        error: Error,
+        mutationFired: Bool,
+        workspaceOpenCount: Int,
+        workspaceOpenSubmitted: Bool,
+        enteredOwnershipLoop: Bool,
+        alias: PlayCoverService.SessionLaunchAlias?
+    ) {
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            fixture.launchAliasRoot
+        var mutationFired = false
+        PlayCoverService.launchIntegrityEventOverrideForTesting = {
+            actual in
+            guard actual == event, !mutationFired else { return }
+            mutationFired = true
+            try mutation()
+        }
+        var workspaceOpenCount = 0
+        PlayCoverService.workspaceOpenOverrideForTesting = {
+            _, _, _ in
+            workspaceOpenCount += 1
+        }
+        var alias: PlayCoverService.SessionLaunchAlias?
+        var workspaceOpenSubmitted = false
+        var postSubmissionIntegrityError: Error?
+        var timing = PlayCoverLaunchPhaseTiming.empty
+        do {
+            try PlayCoverService.withFastVerifiedLaunchCapability(
+                appPath: fixture.app.path,
+                expectedGenerationIdentity: nil
+            ) { evidence, capability in
+                _ = try PlayCoverService.launchPreparedApplication(
+                    manifest: evidence.manifest,
+                    launchCapability: capability,
+                    sessionID: sessionID,
+                    runtimeSocketPath:
+                        fixture.root.appendingPathComponent(
+                            "runtime.sock"
+                        ).path,
+                    deadline:
+                        ProcessInfo.processInfo.systemUptime + 0.1,
+                    launchAlias: &alias,
+                    workspaceOpenSubmitted:
+                        &workspaceOpenSubmitted,
+                    postSubmissionIntegrityError:
+                        &postSubmissionIntegrityError,
+                    launchPhaseTiming: &timing
+                )
+            }
+            throw NSError(
+                domain: "PlayCoverFastVerifyTests",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "launch integrity mutation was accepted",
+                ]
+            )
+        } catch {
+            return (
+                error,
+                mutationFired,
+                workspaceOpenCount,
+                workspaceOpenSubmitted,
+                timing.exactOwnershipNanoseconds != nil,
+                alias
+            )
+        }
+    }
+    #endif
+
     private func assertFastVerifyTampered(
         _ appPath: String,
         file: StaticString = #filePath,
@@ -1139,6 +1423,21 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                     line: line
                 )
             }
+        }
+    }
+
+    private func assertCacheTampered(
+        _ error: Error,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard case .cacheTampered =
+                error as? PlayCoverBackendError else {
+            return XCTFail(
+                "unexpected error: \(error)",
+                file: file,
+                line: line
+            )
         }
     }
 
@@ -1197,6 +1496,12 @@ private struct FastVerifyFixture {
     let manifest: PlayCoverPrepareManifest
     let manifestURL: URL
     let completedURL: URL
+    var launchAliasRoot: URL {
+        root.deletingLastPathComponent().appendingPathComponent(
+            "\(root.lastPathComponent)-launch-aliases",
+            isDirectory: true
+        )
+    }
 
     init(signingOrderOverride: [String]? = nil) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -1353,6 +1658,7 @@ private struct FastVerifyFixture {
 
     func remove() {
         try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.removeItem(at: launchAliasRoot)
     }
 
     private static func emptyEntitlementDiff()
