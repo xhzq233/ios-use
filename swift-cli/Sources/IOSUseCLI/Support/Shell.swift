@@ -28,6 +28,20 @@ enum Shell {
     static var runOverrideForTesting: ((String, [String], String?, Bool) throws -> String)?
     static var runResultOverrideForTesting: ((String, [String], String?) throws -> RunResult)?
 
+    static func configureExecutable(
+        _ process: Process,
+        executable: String,
+        arguments: [String]
+    ) {
+        if (executable as NSString).isAbsolutePath {
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [executable] + arguments
+        }
+    }
+
     static func run(_ executable: String, arguments: [String], cwd: String? = nil) throws -> String {
         try runCaptured(executable, arguments: arguments, cwd: cwd, combineStderr: false)
     }
@@ -55,8 +69,7 @@ enum Shell {
 
     static func runData(_ executable: String, arguments: [String], cwd: String? = nil) throws -> Data {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
+        configureExecutable(process, executable: executable, arguments: arguments)
         if let cwd {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         }
@@ -90,8 +103,7 @@ enum Shell {
 
     static func runInheriting(_ executable: String, arguments: [String], cwd: String? = nil) throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
+        configureExecutable(process, executable: executable, arguments: arguments)
         if let cwd {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         }
@@ -111,8 +123,7 @@ enum Shell {
         }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
+        configureExecutable(process, executable: executable, arguments: arguments)
         if let cwd {
             process.currentDirectoryURL = URL(fileURLWithPath: cwd)
         }
@@ -155,8 +166,7 @@ enum Shell {
         environment: [String: String]?
     ) throws -> RunResult {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
+        configureExecutable(process, executable: executable, arguments: arguments)
         if let environment {
             process.environment = environment
         }
