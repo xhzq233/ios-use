@@ -70,6 +70,14 @@ final class PlayCoverCoreTests: XCTestCase {
             "/state/ios-use/playcover/logs"
         )
         XCTAssertEqual(
+            paths.playcoverPendingLaunch,
+            "/state/ios-use/playcover/pending-launch.json"
+        )
+        XCTAssertEqual(
+            paths.playcoverPendingLaunchLock,
+            "/state/ios-use/playcover/pending-launch.lock"
+        )
+        XCTAssertEqual(
             paths.playcoverPrepared,
             "/state/ios-use/playcover/prepared"
         )
