@@ -99,6 +99,11 @@ final class PlayCoverSessionTests: XCTestCase {
             "sign=skipped",
             "verify=",
             "launch=",
+            "alias=skipped",
+            "openDispatch=skipped",
+            "exactOwnership=skipped",
+            "runtimeTransportPing=skipped",
+            "readyGeometry=skipped",
             "total=",
         ] {
             XCTAssertTrue(start.stdout.contains(phase), phase)

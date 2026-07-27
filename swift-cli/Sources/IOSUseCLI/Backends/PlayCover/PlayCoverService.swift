@@ -648,11 +648,13 @@ public enum PlayCoverService {
             appPath: appPath,
             expectedGenerationIdentity: nil
         )
+        var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
         return try launchVerified(
             manifest: validated.manifest,
             generationIdentity: validated.generationIdentity,
             sessionID: sessionID,
             runtimeSocketPath: runtimeSocketPath,
+            launchPhaseTiming: &launchPhaseTiming,
             timeout: timeout
         )
     }
@@ -663,8 +665,10 @@ public enum PlayCoverService {
         sessionID: String,
         runtimeSocketPath: String,
         stdioLog: PlayCoverStdioLogIdentity? = nil,
+        launchPhaseTiming: inout PlayCoverLaunchPhaseTiming,
         timeout: Double = 15
     ) throws -> PlayCoverLaunchIdentity {
+        launchPhaseTiming = .empty
         guard !sessionID.isEmpty,
               sessionID.utf8.count <= 128 else {
             throw PlayCoverBackendError.launchFailed(
@@ -730,7 +734,8 @@ public enum PlayCoverService {
                 stdioLog: stdioLog,
                 deadline: deadline,
                 launchAlias: &launchAlias,
-                workspaceOpenSubmitted: &workspaceOpenSubmitted
+                workspaceOpenSubmitted: &workspaceOpenSubmitted,
+                launchPhaseTiming: &launchPhaseTiming
             )
             guard let launchAlias,
                   acceptsClaimedLaunchIdentity(
@@ -745,6 +750,8 @@ public enum PlayCoverService {
             }
             launched = identity
 
+            let readyGeometryStarted =
+                PlayCoverMonotonicClock.now()
             var lastError: Error?
             while ProcessInfo.processInfo.systemUptime < deadline {
                 do {
@@ -771,6 +778,10 @@ public enum PlayCoverService {
                         pid: identity.pid,
                         stdioLog: stdioLog
                     )
+                    launchPhaseTiming.readyGeometryNanoseconds =
+                        PlayCoverMonotonicClock.elapsed(
+                            since: readyGeometryStarted
+                        )
                     return PlayCoverLaunchIdentity(
                         sessionID: sessionID,
                         pid: identity.pid,
@@ -783,6 +794,10 @@ public enum PlayCoverService {
                     )
                 } catch {
                     if runtimeHelloFailureIsTerminal(error) {
+                        launchPhaseTiming.readyGeometryNanoseconds =
+                            PlayCoverMonotonicClock.elapsed(
+                                since: readyGeometryStarted
+                            )
                         throw error
                     }
                     lastError = error
@@ -798,6 +813,10 @@ public enum PlayCoverService {
                     )
                 }
             }
+            launchPhaseTiming.readyGeometryNanoseconds =
+                PlayCoverMonotonicClock.elapsed(
+                    since: readyGeometryStarted
+                )
             throw PlayCoverBackendError.launchTimedOut(
                 "no verified Runtime hello within \(timeout) seconds"
                     + (lastError.map { "; last error: \($0)" } ?? "")
@@ -2748,7 +2767,8 @@ public enum PlayCoverService {
         stdioLog: PlayCoverStdioLogIdentity? = nil,
         deadline: TimeInterval,
         launchAlias: inout SessionLaunchAlias?,
-        workspaceOpenSubmitted: inout Bool
+        workspaceOpenSubmitted: inout Bool,
+        launchPhaseTiming: inout PlayCoverLaunchPhaseTiming
     ) throws -> LaunchedApplicationIdentity {
         #if canImport(AppKit)
         let configuration = NSWorkspace.OpenConfiguration()
@@ -2786,11 +2806,23 @@ public enum PlayCoverService {
                     + "this start invocation"
             )
         }
-        let alias = try createSessionLaunchAlias(
-            manifest: manifest,
-            sessionID: sessionID
-        )
+        let aliasStarted = PlayCoverMonotonicClock.now()
+        let alias: SessionLaunchAlias
+        do {
+            alias = try createSessionLaunchAlias(
+                manifest: manifest,
+                sessionID: sessionID
+            )
+        } catch {
+            launchPhaseTiming.aliasNanoseconds =
+                PlayCoverMonotonicClock.elapsed(
+                    since: aliasStarted
+                )
+            throw error
+        }
         launchAlias = alias
+        launchPhaseTiming.aliasNanoseconds =
+            PlayCoverMonotonicClock.elapsed(since: aliasStarted)
         let box = LaunchBox()
         let semaphore = DispatchSemaphore(value: 0)
         workspaceOpenSubmitted = true
@@ -2840,26 +2872,68 @@ public enum PlayCoverService {
             semaphore.signal()
         }
         if let workspaceOpenOverrideForTesting {
+            let openDispatchStarted =
+                PlayCoverMonotonicClock.now()
             workspaceOpenOverrideForTesting(
                 alias.bundleURL,
                 configuration,
                 completion
             )
+            launchPhaseTiming.openDispatchNanoseconds =
+                PlayCoverMonotonicClock.elapsed(
+                    since: openDispatchStarted
+                )
         } else {
+            let openDispatchStarted =
+                PlayCoverMonotonicClock.now()
             NSWorkspace.shared.openApplication(
                 at: alias.bundleURL,
                 configuration: configuration,
                 completionHandler: completion
             )
+            launchPhaseTiming.openDispatchNanoseconds =
+                PlayCoverMonotonicClock.elapsed(
+                    since: openDispatchStarted
+                )
         }
         // The caller supplies the one monotonic `start --timeout` deadline
         // shared by launch discovery and the subsequent ready Runtime hello.
         // Large Apps may exceed LaunchServices' historical ten-second window,
         // but discovery must not restart the public timeout.
+        let exactOwnershipStarted =
+            PlayCoverMonotonicClock.now()
+        var runtimeTransportPingNanoseconds: UInt64 = 0
+        var attemptedRuntimeTransportPing = false
+        defer {
+            let ownershipAndPingNanoseconds =
+                PlayCoverMonotonicClock.elapsed(
+                    since: exactOwnershipStarted
+                )
+            launchPhaseTiming.runtimeTransportPingNanoseconds =
+                attemptedRuntimeTransportPing
+                    ? runtimeTransportPingNanoseconds
+                    : nil
+            launchPhaseTiming.exactOwnershipNanoseconds =
+                ownershipAndPingNanoseconds
+        }
         var callbackError: Error?
         func authenticatesCurrentLaunch(
             _ identity: LaunchedApplicationIdentity
         ) -> Bool {
+            attemptedRuntimeTransportPing = true
+            let runtimeTransportPingStarted =
+                PlayCoverMonotonicClock.now()
+            defer {
+                let elapsed =
+                    PlayCoverMonotonicClock.elapsed(
+                        since: runtimeTransportPingStarted
+                    )
+                let (sum, overflow) =
+                    runtimeTransportPingNanoseconds
+                        .addingReportingOverflow(elapsed)
+                runtimeTransportPingNanoseconds =
+                    overflow ? UInt64.max : sum
+            }
             do {
                 let runtime = PlayCoverRuntimeClient(
                     socketPath: runtimeSocketPath,

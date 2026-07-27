@@ -885,6 +885,7 @@ final class PlayCoverCoreTests: XCTestCase {
         }
         var alias: PlayCoverService.SessionLaunchAlias?
         var openSubmitted = false
+        var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
 
         XCTAssertThrowsError(
             try PlayCoverService.launchPreparedApplication(
@@ -894,7 +895,8 @@ final class PlayCoverCoreTests: XCTestCase {
                 deadline:
                     ProcessInfo.processInfo.systemUptime + 0.05,
                 launchAlias: &alias,
-                workspaceOpenSubmitted: &openSubmitted
+                workspaceOpenSubmitted: &openSubmitted,
+                launchPhaseTiming: &launchPhaseTiming
             )
         )
 
@@ -902,6 +904,13 @@ final class PlayCoverCoreTests: XCTestCase {
             PlayCoverService.sessionLaunchAlias(sessionID: sessionID)
         XCTAssertTrue(openSubmitted)
         XCTAssertEqual(alias, expectedAlias)
+        XCTAssertNotNil(launchPhaseTiming.aliasNanoseconds)
+        XCTAssertNotNil(launchPhaseTiming.openDispatchNanoseconds)
+        XCTAssertNotNil(launchPhaseTiming.exactOwnershipNanoseconds)
+        XCTAssertNil(
+            launchPhaseTiming.runtimeTransportPingNanoseconds
+        )
+        XCTAssertNil(launchPhaseTiming.readyGeometryNanoseconds)
         XCTAssertEqual(submittedURL, expectedAlias.bundleURL)
         XCTAssertEqual(
             submittedEnvironment?["IOS_USE_PLAY_SESSION_ID"],

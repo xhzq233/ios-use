@@ -95,7 +95,8 @@ enum CLIHelp {
             already prepared App. When --app is omitted, it uses the most recent
             successful prepared generation without rechecking the original
             source; pass --app again after rebuilding. Successful PlayCover
-            starts print inspect/clone/convert/sign/verify/launch timings.
+            starts print prepare timings plus alias/open/ownership/Runtime/
+            ready-geometry launch timings.
             --log captures target-App stdout/stderr from the injected Runtime
             onward in an owner-only per-session file retained after stop,
             crash, or launch failure.

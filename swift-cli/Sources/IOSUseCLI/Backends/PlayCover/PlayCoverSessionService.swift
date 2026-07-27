@@ -288,6 +288,7 @@ enum PlayCoverSessionService {
             : nil
         do {
             let launchStarted = PlayCoverMonotonicClock.now()
+            var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
             let rawResult: LaunchResult
             if let launchOverrideForTesting {
                 rawResult = try launchOverrideForTesting(
@@ -307,6 +308,7 @@ enum PlayCoverSessionService {
                         sessionID: sessionID,
                         runtimeSocketPath: socketPath,
                         stdioLog: stdioLog,
+                        launchPhaseTiming: &launchPhaseTiming,
                         timeout: timeout
                     )
                 } catch let error as PlayCoverUnterminatedLaunchError {
@@ -314,6 +316,7 @@ enum PlayCoverSessionService {
                         PlayCoverMonotonicClock.elapsed(
                             since: launchStarted
                         )
+                    timing.launchPhaseTiming = launchPhaseTiming
                     throw PlayCoverSessionUnterminatedLaunchError(
                         result: LaunchResult(
                             sessionID: error.sessionID,
@@ -353,6 +356,7 @@ enum PlayCoverSessionService {
             }
             timing.launchNanoseconds =
                 PlayCoverMonotonicClock.elapsed(since: launchStarted)
+            timing.launchPhaseTiming = launchPhaseTiming
             let result = LaunchResult(
                 sessionID: rawResult.sessionID,
                 appPath: rawResult.appPath,

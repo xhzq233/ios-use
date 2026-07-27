@@ -261,7 +261,12 @@ prepare to reject a concurrently changed build.
 
 Each successful start prints a single `PlayCover timing:` line covering
 `inspect`, `clone`, `convert`, `sign`, `verify`, `launch`, and `total`.
-Cache-hit phases that did not run are shown as `skipped`.
+It also reports `alias`, `openDispatch`, `exactOwnership`,
+`runtimeTransportPing`, and `readyGeometry`. `exactOwnership` is gross wall
+time from open dispatch return through the exact claim;
+`runtimeTransportPing` is the accumulated nested subtotal of Runtime
+challenges attempted during that interval. Cache-hit or unobserved phases
+that did not run are shown as `skipped`.
 
 The production prepare manifest remains a cache-integrity seal; ordinary
 `start` never performs a second pinned prepare. A separate hermetic

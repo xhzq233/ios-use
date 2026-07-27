@@ -228,7 +228,11 @@ or bootstrap files. After rebuilding the source App, pass `--app` again so
 the new iPhoneOS Mach-O content selects or prepares its generation; bare start
 deliberately does not inspect the source build. Successful start output includes
 one timing line for inspect, clone, convert, sign, verify, launch, and total
-latency. Skipped cache-hit phases are reported explicitly.
+latency. Launch is further observed as alias creation, synchronous open
+dispatch, exact ownership, Runtime transport/ping, and ready geometry.
+Runtime transport/ping is a nested subtotal of exact ownership, not an
+additional duration to add to it. Skipped cache-hit or unobserved phases are
+reported explicitly.
 
 The CLI creates one random session ID and connects straight to the injected
 Runtime's owner-only Unix socket. `driver.lock` keeps PlayCover selected until
