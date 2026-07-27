@@ -587,6 +587,222 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
     }
 
+    func testScreenshotRequiresConsistentCompositorWindowInventory()
+        throws
+    {
+        let jpeg = try makeJPEG(
+            width: Int(IOSUsePlayDeviceNativeWidth),
+            height: Int(IOSUsePlayDeviceNativeHeight)
+        )
+        let fullFrame = makeFullFrame()
+        let validBackingSize = PlayCoverRuntimeJSONValue.object([
+            "width": .number(1290),
+            "height": .number(2796),
+        ])
+        let invalidScreenshots = [
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "windowCount": .number(2.5),
+                    ]
+                )
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "requestedWindowCount": .null,
+                    ]
+                )
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "capturedWindowCount": .number(1),
+                    ]
+                )
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "mappedUIKitWindowCount": .number(2),
+                    ]
+                )
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "visibleUIKitWindowCount": .number(2),
+                        "mappedUIKitWindowCount": .number(2),
+                    ]
+                )
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "windows": compositorWindowsEvidence(
+                            windowNumbers: [71],
+                            captureWindowNumbers: [71]
+                        ),
+                    ]
+                ),
+                compositorWindowNumbers: [71],
+                sourceBackingSizes: [validBackingSize]
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "windows": compositorWindowsEvidence(
+                            windowNumbers: [0, 42],
+                            captureWindowNumbers: [0, 42]
+                        ),
+                    ]
+                ),
+                compositorWindowNumbers: [0, 42]
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "windows": compositorWindowsEvidence(
+                            windowNumbers: [71, 71],
+                            captureWindowNumbers: [71, 71]
+                        ),
+                    ]
+                ),
+                compositorWindowNumbers: [71, 71]
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "windows": compositorWindowsEvidence(
+                            mappedCounts: [2, 1],
+                            uiWindowCounts: [1, 1]
+                        ),
+                    ]
+                )
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "windows": compositorWindowsEvidence(
+                            captureWindowNumbers: [71, 99]
+                        ),
+                    ]
+                )
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositor: compositorEvidence(
+                    fullFrame,
+                    topLevelOverrides: [
+                        "baseWindowNumber": .number(99),
+                    ]
+                )
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositorWindowNumbers: [71, 99]
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositorWindowNumbers: [42, 71]
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                compositorWindowNumbers: nil
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                sourceBackingSizes: [validBackingSize]
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                sourceBackingSizes: [
+                    validBackingSize,
+                    .object([
+                        "width": .number(781),
+                        "height": .number(657),
+                    ]),
+                ]
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                sourceBackingSizes: [
+                    validBackingSize,
+                    .object([
+                        "width": .number(0),
+                        "height": .number(657),
+                    ]),
+                ]
+            ),
+            makeScreenshot(
+                jpeg: jpeg,
+                includeSourceBackingSizes: false
+            ),
+        ]
+        let expected = PlayCoverDriverClientError
+            .malformedRuntimePayload(
+                "screenshot compositor window inventory"
+            )
+        for screenshot in invalidScreenshots {
+            XCTAssertThrowsError(
+                try makeClient(
+                    response: makePayload(
+                        capability: .screenshot,
+                        screenshot: screenshot
+                    )
+                ).screenshotCapture()
+            ) {
+                XCTAssertEqual(
+                    $0 as? PlayCoverDriverClientError,
+                    expected
+                )
+            }
+        }
+
+        let zeroUIKitWindows = compositorEvidence(
+            fullFrame,
+            topLevelOverrides: [
+                "visibleUIKitWindowCount": .number(0),
+                "mappedUIKitWindowCount": .number(0),
+                "windows": compositorWindowsEvidence(
+                    mappedCounts: [0, 0],
+                    uiWindowCounts: [0, 0]
+                ),
+            ]
+        )
+        XCTAssertNoThrow(
+            try makeClient(
+                response: makePayload(
+                    capability: .screenshot,
+                    screenshot: makeScreenshot(
+                        jpeg: jpeg,
+                        compositor: zeroUIKitWindows
+                    )
+                )
+            ).screenshotCapture()
+        )
+    }
+
     func testAtomicEvidenceRequiresSameScreenshotAndDOMGeneration()
         throws
     {
@@ -1783,6 +1999,10 @@ final class PlayCoverDriverClientTests: XCTestCase {
         syntheticChrome: Bool = false,
         fullFrame: PlayCoverRuntimeFullFrame? = nil,
         compositor: PlayCoverRuntimeJSONValue? = nil,
+        compositorWindowNumbers: [Int]? = [71, 42],
+        sourceBackingSizes:
+            [PlayCoverRuntimeJSONValue]? = nil,
+        includeSourceBackingSizes: Bool = true,
         snapshotGeneration: Int64 = 20,
         captureGeneration: Int64 = 8,
         source: String = "window-compositor",
@@ -1790,6 +2010,23 @@ final class PlayCoverDriverClientTests: XCTestCase {
             Double(IOSUsePlayDeviceLogicalWidth)
     ) -> PlayCoverRuntimeScreenshotPayload {
         let resolvedFullFrame = fullFrame ?? makeFullFrame()
+        let resolvedSourceBackingSizes =
+            includeSourceBackingSizes
+            ? sourceBackingSizes ?? [
+                .object([
+                    "width": .number(
+                        Double(IOSUsePlayDeviceNativeWidth)
+                    ),
+                    "height": .number(
+                        Double(IOSUsePlayDeviceNativeHeight)
+                    ),
+                ]),
+                .object([
+                    "width": .number(780),
+                    "height": .number(657),
+                ]),
+            ]
+            : nil
         return .init(
             jpegBase64: jpeg.base64EncodedString(),
             pixelWidth: Int(IOSUsePlayDeviceNativeWidth),
@@ -1804,17 +2041,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
             fullFrame: resolvedFullFrame,
             snapshotGeneration: snapshotGeneration,
             captureGeneration: captureGeneration,
-            compositorWindowNumbers: [71, 42],
-            sourceBackingSizes: [
-                .object([
-                    "width": .number(
-                        Double(IOSUsePlayDeviceNativeWidth)
-                    ),
-                    "height": .number(
-                        Double(IOSUsePlayDeviceNativeHeight)
-                    ),
-                ]),
-            ],
+            compositorWindowNumbers: compositorWindowNumbers,
+            sourceBackingSizes: resolvedSourceBackingSizes,
             appKitWindowEvidence: .object([
                 "ready": .bool(true),
             ]),
@@ -1903,6 +2131,13 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "complete": .bool(true),
                 "syntheticChrome": .bool(false),
                 "fullFrame": fullFrameEvidence(fullFrame),
+                "windowCount": .number(2),
+                "visibleUIKitWindowCount": .number(3),
+                "mappedUIKitWindowCount": .number(3),
+                "requestedWindowCount": .number(2),
+                "capturedWindowCount": .number(2),
+                "baseWindowNumber": .number(71),
+                "windows": compositorWindowsEvidence(),
                 "completeness": .object(completeness),
             ]
         for (key, value) in topLevelOverrides {
@@ -1912,6 +2147,58 @@ final class PlayCoverDriverClientTests: XCTestCase {
             evidence.removeValue(forKey: key)
         }
         return .object(evidence)
+    }
+
+    private func compositorWindowsEvidence(
+        windowNumbers: [Int] = [71, 42],
+        mappedCounts: [Int] = [2, 1],
+        uiWindowCounts: [Int] = [2, 1],
+        captureWindowNumbers: [Int] = [71, 42],
+        sourcePixelWidths: [Int] = [1290, 780],
+        sourcePixelHeights: [Int] = [2796, 657]
+    ) -> PlayCoverRuntimeJSONValue {
+        .array(
+            windowNumbers.indices.map { index in
+                let mappedCount = index < mappedCounts.count
+                    ? mappedCounts[index]
+                    : 0
+                let uiWindowCount = index < uiWindowCounts.count
+                    ? uiWindowCounts[index]
+                    : 0
+                let sourcePixelWidth =
+                    index < sourcePixelWidths.count
+                    ? sourcePixelWidths[index]
+                    : 0
+                let sourcePixelHeight =
+                    index < sourcePixelHeights.count
+                    ? sourcePixelHeights[index]
+                    : 0
+                let captureWindowNumber =
+                    index < captureWindowNumbers.count
+                    ? captureWindowNumbers[index]
+                    : 0
+                return .object([
+                    "windowNumber":
+                        .number(Double(windowNumbers[index])),
+                    "mappedUIKitWindowCount":
+                        .number(Double(mappedCount)),
+                    "uiWindows": .array(
+                        Array(
+                            repeating: .object([:]),
+                            count: uiWindowCount
+                        )
+                    ),
+                    "captureGeometry": .object([
+                        "windowNumber":
+                            .number(Double(captureWindowNumber)),
+                        "sourcePixelWidth":
+                            .number(Double(sourcePixelWidth)),
+                        "sourcePixelHeight":
+                            .number(Double(sourcePixelHeight)),
+                    ]),
+                ])
+            }
+        )
     }
 
     private func makeJPEG(

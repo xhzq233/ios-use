@@ -1174,6 +1174,10 @@ final class PlayCoverDriverClient: DriverCommandClient {
         try validateScreenshotCompositorCompleteness(
             compositorEvidence: compositorEvidence
         )
+        try validateScreenshotCompositorInventory(
+            screenshot,
+            compositorEvidence: compositorEvidence
+        )
     }
 
     private static func validateScreenshotCompositorCompleteness(
@@ -1217,6 +1221,134 @@ final class PlayCoverDriverClient: DriverCommandClient {
               }) else {
             throw invalid
         }
+    }
+
+    private static func validateScreenshotCompositorInventory(
+        _ screenshot: PlayCoverRuntimeScreenshotPayload,
+        compositorEvidence:
+            [String: PlayCoverRuntimeJSONValue]
+    ) throws {
+        let invalid = PlayCoverDriverClientError
+            .malformedRuntimePayload(
+                "screenshot compositor window inventory"
+            )
+        guard let windowCount = jsonInteger(
+                  compositorEvidence["windowCount"]
+              ),
+              let visibleUIKitWindowCount = jsonInteger(
+                  compositorEvidence[
+                      "visibleUIKitWindowCount"
+                  ]
+              ),
+              let mappedUIKitWindowCount = jsonInteger(
+                  compositorEvidence[
+                      "mappedUIKitWindowCount"
+                  ]
+              ),
+              let requestedWindowCount = jsonInteger(
+                  compositorEvidence["requestedWindowCount"]
+              ),
+              let capturedWindowCount = jsonInteger(
+                  compositorEvidence["capturedWindowCount"]
+              ),
+              let baseWindowNumber = jsonInteger(
+                  compositorEvidence["baseWindowNumber"]
+              ),
+              windowCount > 0,
+              visibleUIKitWindowCount ==
+                mappedUIKitWindowCount,
+              windowCount == requestedWindowCount,
+              requestedWindowCount == capturedWindowCount,
+              let windowsValue =
+                compositorEvidence["windows"],
+              case .array(let windows) = windowsValue,
+              windows.count == windowCount else {
+            throw invalid
+        }
+
+        var evidenceWindowNumbers: [Int] = []
+        var evidenceMappedUIKitWindowCount = 0
+        var evidenceBackingSizes: [(width: Int, height: Int)] = []
+        for value in windows {
+            guard case .object(let window) = value,
+                  let windowNumber = jsonInteger(
+                      window["windowNumber"]
+                  ),
+                  windowNumber > 0,
+                  windowNumber <= Int(UInt32.max),
+                  let mappedCount = jsonInteger(
+                      window["mappedUIKitWindowCount"]
+                  ),
+                  let uiWindowsValue = window["uiWindows"],
+                  case .array(let uiWindows) = uiWindowsValue,
+                  uiWindows.count == mappedCount,
+                  let captureGeometryValue =
+                    window["captureGeometry"],
+                  case .object(let captureGeometry) =
+                    captureGeometryValue,
+                  let sourcePixelWidth = jsonInteger(
+                      captureGeometry["sourcePixelWidth"]
+                  ),
+                  let sourcePixelHeight = jsonInteger(
+                      captureGeometry["sourcePixelHeight"]
+                  ),
+                  jsonInteger(
+                      captureGeometry["windowNumber"]
+                  ) == windowNumber,
+                  sourcePixelWidth > 0,
+                  sourcePixelHeight > 0 else {
+                throw invalid
+            }
+            evidenceWindowNumbers.append(windowNumber)
+            evidenceBackingSizes.append(
+                (
+                    width: sourcePixelWidth,
+                    height: sourcePixelHeight
+                )
+            )
+            let (mappedTotal, overflow) =
+                evidenceMappedUIKitWindowCount
+                    .addingReportingOverflow(mappedCount)
+            guard !overflow else {
+                throw invalid
+            }
+            evidenceMappedUIKitWindowCount = mappedTotal
+        }
+        guard Set(evidenceWindowNumbers).count == windowCount,
+              evidenceWindowNumbers.contains(baseWindowNumber),
+              evidenceMappedUIKitWindowCount ==
+                mappedUIKitWindowCount,
+              let compositorWindowNumbers =
+                screenshot.compositorWindowNumbers,
+              compositorWindowNumbers == evidenceWindowNumbers,
+              let sourceBackingSizes =
+                screenshot.sourceBackingSizes,
+              sourceBackingSizes.count == windowCount else {
+            throw invalid
+        }
+        for index in sourceBackingSizes.indices {
+            guard case .object(let size) =
+                    sourceBackingSizes[index],
+                  jsonInteger(size["width"]) ==
+                    evidenceBackingSizes[index].width,
+                  jsonInteger(size["height"]) ==
+                    evidenceBackingSizes[index].height else {
+                throw invalid
+            }
+        }
+    }
+
+    private static func jsonInteger(
+        _ value: PlayCoverRuntimeJSONValue?
+    ) -> Int? {
+        guard case .number(let number)? = value,
+              number.isFinite,
+              number >= 0,
+              number.rounded(.towardZero) == number,
+              number <= Double(Int.max) else {
+            return nil
+        }
+        return Int(number)
     }
 
     private static func fullFrameEvidence(
