@@ -658,6 +658,8 @@ public enum PlayCoverUpstreamEngine {
 
     static var fullContentPassObserverForTesting:
         ((FullContentPassKind, URL) -> Void)?
+    static var sliceSHA256ComputationObserverForTesting:
+        ((PlayCoverUpstreamMachOContainer, UInt32) -> Void)?
 
     public static func inspect(appURL: URL) throws -> PlayCoverUpstreamAppInspection {
         try inspect(
@@ -1675,7 +1677,10 @@ public enum PlayCoverUpstreamEngine {
                 try inspectSlice(
                     $0,
                     path: relativePath,
-                    signatureSource: .original(url)
+                    signatureSource: .original(
+                        url,
+                        fileSHA256: fileSHA256
+                    )
                 )
             }
             guard let thinSignature = sliceInspections.first?.signature else {
@@ -1933,7 +1938,7 @@ public enum PlayCoverUpstreamEngine {
     }
 
     private enum SliceSignatureSource {
-        case original(URL)
+        case original(URL, fileSHA256: String)
         case extracted(
             directory: URL,
             fileCreated: ((URL) throws -> Void)?
@@ -2272,8 +2277,9 @@ public enum PlayCoverUpstreamEngine {
             path: signaturePath
         )
         let signature: PlayCoverUpstreamSignature
+        let sliceSHA256: String
         switch signatureSource {
-        case .original(let original):
+        case .original(let original, let fileSHA256):
             guard slice.container == .thin,
                   slice.offset == 0,
                   slice.size == UInt64(data.count) else {
@@ -2286,6 +2292,7 @@ public enum PlayCoverUpstreamEngine {
                 embeddedSignature: embedded,
                 diagnosticPath: signaturePath
             )
+            sliceSHA256 = fileSHA256
         case .extracted(let directory, let fileCreated):
             guard slice.container != .thin else {
                 throw PlayCoverUpstreamError.malformedMachO(
@@ -2300,6 +2307,11 @@ public enum PlayCoverUpstreamEngine {
                 temporaryDirectory: directory,
                 fileCreated: fileCreated
             )
+            sliceSHA256ComputationObserverForTesting?(
+                slice.container,
+                slice.fatIndex
+            )
+            sliceSHA256 = hex(SHA256.hash(data: data))
         }
         return PlayCoverUpstreamMachOSliceInspection(
             fatIndex: slice.fatIndex,
@@ -2323,7 +2335,7 @@ public enum PlayCoverUpstreamEngine {
             rpaths: rpaths,
             loadCommands: commands,
             signature: signature,
-            sliceSHA256: hex(SHA256.hash(data: data)),
+            sliceSHA256: sliceSHA256,
             immutableContentSHA256: hex(
                 SHA256.hash(data: immutableContent)
             )

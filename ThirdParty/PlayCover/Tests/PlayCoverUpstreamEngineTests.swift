@@ -324,6 +324,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let slices = try XCTUnwrap(result.sliceInspections)
         let slice = try XCTUnwrap(slices.first)
         XCTAssertEqual(slices.count, 1)
+        XCTAssertEqual(slice.sliceSHA256, result.fileSHA256)
         XCTAssertEqual(result.signature.isSigned, slice.signature.isSigned)
         XCTAssertEqual(result.signature.isValid, slice.signature.isValid)
         XCTAssertEqual(result.signature.cdHash, slice.signature.cdHash)
@@ -357,6 +358,66 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 }
             )
         }
+    }
+
+    func testSliceSHA256ReusesThinFileHashButComputesFatSliceHash()
+        throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let thinURL = try makeRealIOSExecutable(
+            in: root,
+            name: "ThinDigest"
+        )
+        try codesign(thinURL, entitlements: nil)
+        var computations: [
+            (PlayCoverUpstreamMachOContainer, UInt32)
+        ] = []
+        PlayCoverUpstreamEngine
+            .sliceSHA256ComputationObserverForTesting = {
+                computations.append(($0, $1))
+            }
+        defer {
+            PlayCoverUpstreamEngine
+                .sliceSHA256ComputationObserverForTesting = nil
+        }
+
+        let thinInspection = try PlayCoverUpstreamEngine.inspectMachO(
+            at: thinURL,
+            relativePath: "ThinDigest"
+        )
+        let thinSlice = try XCTUnwrap(
+            thinInspection.sliceInspections?.first
+        )
+        XCTAssertEqual(thinSlice.sliceSHA256, thinInspection.fileSHA256)
+        XCTAssertTrue(computations.isEmpty)
+
+        let fatURL = root.appendingPathComponent("FatDigest")
+        try makeFatMachO(
+            arm64: Data(contentsOf: thinURL)
+        ).write(to: fatURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: fatURL.path
+        )
+        let fatInspection = try PlayCoverUpstreamEngine.inspectMachO(
+            at: fatURL,
+            relativePath: "FatDigest"
+        )
+        let fatSlice = try XCTUnwrap(
+            fatInspection.sliceInspections?.first
+        )
+        XCTAssertEqual(computations.count, 1)
+        XCTAssertEqual(computations.first?.0, .fat)
+        XCTAssertEqual(computations.first?.1, 0)
+        XCTAssertEqual(
+            fatSlice.sliceSHA256,
+            thinInspection.fileSHA256
+        )
+        XCTAssertNotEqual(
+            fatSlice.sliceSHA256,
+            fatInspection.fileSHA256
+        )
     }
 
     func testInspectFatArm64SelectsBoundedSlice() throws {
