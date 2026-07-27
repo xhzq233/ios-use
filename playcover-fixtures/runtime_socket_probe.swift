@@ -10,10 +10,11 @@ enum ProbeFailure: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "usage: runtime_socket_probe.swift <socket> "
+            return "usage: runtime_socket_probe.swift <socket-or-pid> "
                 + "<zero-length|oversized-frame|exact-limit-invalid-json|"
                 + "malformed-json|invalid-utf8|truncated-frame|"
-                + "hello-readiness> [session-id]"
+                + "hello-readiness|identified-ping|process-identity> "
+                + "[session-id]"
         case .pathTooLong:
             return "Runtime socket path exceeds sockaddr_un.sun_path"
         case .systemCall(let name, let code):
@@ -91,36 +92,133 @@ func encodeFrame(_ body: Data) -> Data {
     return withUnsafeBytes(of: &length) { Data($0) } + body
 }
 
+func processStartTimeMicroseconds(for pid: Int32) -> UInt64? {
+    guard pid > 0 else { return nil }
+    var info = proc_bsdinfo()
+    let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.size)
+    let actualSize = proc_pidinfo(
+        pid,
+        PROC_PIDTBSDINFO,
+        0,
+        &info,
+        expectedSize
+    )
+    guard actualSize == expectedSize else { return nil }
+    let seconds = UInt64(info.pbi_start_tvsec)
+    let microseconds = UInt64(info.pbi_start_tvusec)
+    guard microseconds < 1_000_000,
+          seconds <=
+            (UInt64.max - microseconds) / 1_000_000 else {
+        return nil
+    }
+    return seconds * 1_000_000 + microseconds
+}
+
+func processExecutablePath(for pid: Int32) -> String? {
+    guard pid > 0 else { return nil }
+    var buffer = [CChar](
+        repeating: 0,
+        count: Int(MAXPATHLEN) * 4
+    )
+    let count = proc_pidpath(
+        pid,
+        &buffer,
+        UInt32(buffer.count)
+    )
+    guard count > 0 else { return nil }
+    return String(cString: buffer)
+}
+
+func writeJSON(_ object: [String: Any]) throws {
+    let encoded = try JSONSerialization.data(
+        withJSONObject: object,
+        options: [.sortedKeys]
+    )
+    FileHandle.standardOutput.write(encoded)
+    FileHandle.standardOutput.write(Data([0x0a]))
+}
+
+func emitProcessIdentity(_ value: String) throws {
+    guard let pidValue = Int64(value),
+          pidValue > 0,
+          pidValue <= Int64(Int32.max) else {
+        throw ProbeFailure.usage
+    }
+    let pid = Int32(pidValue)
+    let firstExecutable = processExecutablePath(for: pid)
+    let firstBirth = processStartTimeMicroseconds(for: pid)
+    let secondExecutable = processExecutablePath(for: pid)
+    let secondBirth = processStartTimeMicroseconds(for: pid)
+    if let firstExecutable,
+       let firstBirth,
+       firstExecutable == secondExecutable,
+       firstBirth == secondBirth {
+        try writeJSON([
+            "schemaVersion": 1,
+            "mode": "process-identity",
+            "pid": Int(pid),
+            "alive": true,
+            "executablePath": firstExecutable,
+            "processBirthMicroseconds": firstBirth,
+        ])
+        return
+    }
+    let probe = Darwin.kill(pid, 0)
+    let probeError = errno
+    if probe != 0, probeError == ESRCH {
+        try writeJSON([
+            "schemaVersion": 1,
+            "mode": "process-identity",
+            "pid": Int(pid),
+            "alive": false,
+        ])
+        return
+    }
+    throw ProbeFailure.invalidResponse(
+        "process identity was not stable while probing"
+    )
+}
+
 func run() throws {
     guard CommandLine.arguments.count >= 3 else {
         throw ProbeFailure.usage
     }
     let socketPath = CommandLine.arguments[1]
     let mode = CommandLine.arguments[2]
+    if mode == "process-identity" {
+        guard CommandLine.arguments.count == 3 else {
+            throw ProbeFailure.usage
+        }
+        try emitProcessIdentity(socketPath)
+        return
+    }
     let helloReadiness = mode == "hello-readiness"
+    let identifiedPing = mode == "identified-ping"
+    let authenticatedRequest = helloReadiness || identifiedPing
     guard (
-        helloReadiness && CommandLine.arguments.count == 4
+        authenticatedRequest && CommandLine.arguments.count == 4
     ) || (
-        !helloReadiness && CommandLine.arguments.count == 3
+        !authenticatedRequest && CommandLine.arguments.count == 3
     ) else {
         throw ProbeFailure.usage
     }
-    let helloRequestID = helloReadiness ? UUID().uuidString : nil
+    let authenticatedRequestID =
+        authenticatedRequest ? UUID().uuidString : nil
     let expectedCode: String?
     let expectsConnectionClose: Bool
     let request: Data
     switch mode {
-    case "hello-readiness":
-        guard let requestID = helloRequestID else {
+    case "hello-readiness", "identified-ping":
+        guard let requestID = authenticatedRequestID else {
             throw ProbeFailure.invalidResponse(
-                "hello request identity was not initialized"
+                "authenticated request identity was not initialized"
             )
         }
         let object: [String: Any] = [
             "schemaVersion": 3,
             "requestId": requestID,
             "sessionID": CommandLine.arguments[3],
-            "command": "hello",
+            "command": helloReadiness ? "hello" : "ping",
             "arguments": [String: Any](),
         ]
         request = encodeFrame(
@@ -227,12 +325,7 @@ func run() throws {
             "runtimeErrorCode": "connection_closed",
             "runtimeListenerSurvived": true,
         ]
-        let encoded = try JSONSerialization.data(
-            withJSONObject: output,
-            options: [.sortedKeys]
-        )
-        FileHandle.standardOutput.write(encoded)
-        FileHandle.standardOutput.write(Data([0x0a]))
+        try writeJSON(output)
         return
     }
     let header = try readExactly(4, descriptor: descriptor)
@@ -246,20 +339,80 @@ func run() throws {
         Int(responseLength),
         descriptor: descriptor
     )
+    if identifiedPing {
+        guard let object = try JSONSerialization.jsonObject(with: body)
+                as? [String: Any],
+              (object["schemaVersion"] as? NSNumber)?.intValue == 3,
+              object["requestId"] as? String
+                == authenticatedRequestID,
+              object["sessionID"] as? String
+                == CommandLine.arguments[3],
+              (object["ok"] as? NSNumber)?.boolValue == true,
+              let payload = object["payload"] as? [String: Any],
+              (payload["pong"] as? NSNumber)?.boolValue == true,
+              let pidNumber = payload["pid"] as? NSNumber,
+              pidNumber.int64Value > 0,
+              pidNumber.int64Value <= Int64(Int32.max),
+              let bundleIdentifier =
+                payload["bundleIdentifier"] as? String,
+              !bundleIdentifier.isEmpty,
+              let executablePath =
+                payload["executablePath"] as? String,
+              !executablePath.isEmpty else {
+            throw ProbeFailure.invalidResponse(
+                "identified ping envelope is incomplete"
+            )
+        }
+        let pid = Int32(pidNumber.int64Value)
+        guard let processBirthMicroseconds =
+                processStartTimeMicroseconds(for: pid) else {
+            throw ProbeFailure.invalidResponse(
+                "identified Runtime PID has no stable process birth token"
+            )
+        }
+        try writeJSON([
+            "schemaVersion": 1,
+            "mode": mode,
+            "runtimeListenerSurvived": true,
+            "responseBytes": Int(responseLength),
+            "runtimePID": Int(pid),
+            "runtimeBundleIdentifier": bundleIdentifier,
+            "runtimeExecutablePath": executablePath,
+            "processBirthMicroseconds": processBirthMicroseconds,
+        ])
+        return
+    }
     if helloReadiness {
         guard let object = try JSONSerialization.jsonObject(with: body)
                 as? [String: Any],
               (object["schemaVersion"] as? NSNumber)?.intValue == 3,
-              object["requestId"] as? String == helloRequestID,
+              object["requestId"] as? String
+                == authenticatedRequestID,
               object["sessionID"] as? String
                 == CommandLine.arguments[3],
               (object["ok"] as? NSNumber)?.boolValue == true,
               let payload = object["payload"] as? [String: Any],
               payload["stage"] as? String == "ready",
+              let pidNumber = payload["pid"] as? NSNumber,
+              pidNumber.int64Value > 0,
+              pidNumber.int64Value <= Int64(Int32.max),
+              let bundleIdentifier =
+                payload["bundleIdentifier"] as? String,
+              !bundleIdentifier.isEmpty,
+              let executablePath =
+                payload["executablePath"] as? String,
+              !executablePath.isEmpty,
               let observed = payload["observed"] as? [String: Any],
               let appKit = observed["appKit"] as? [String: Any] else {
             throw ProbeFailure.invalidResponse(
                 "hello readiness envelope is incomplete"
+            )
+        }
+        let pid = Int32(pidNumber.int64Value)
+        guard let processBirthMicroseconds =
+                processStartTimeMicroseconds(for: pid) else {
+            throw ProbeFailure.invalidResponse(
+                "hello Runtime PID has no stable process birth token"
             )
         }
         let requiredAppKitKeys: Set<String> = [
@@ -347,6 +500,10 @@ func run() throws {
             "mode": mode,
             "runtimeListenerSurvived": true,
             "responseBytes": Int(responseLength),
+            "runtimePID": Int(pid),
+            "runtimeBundleIdentifier": bundleIdentifier,
+            "runtimeExecutablePath": executablePath,
+            "processBirthMicroseconds": processBirthMicroseconds,
             "readinessAppKitFieldCount": actualKeys.count,
             "statusOnlyAppKitFieldCount":
                 actualKeys.intersection(statusOnlyAppKitKeys).count,
@@ -383,12 +540,7 @@ func run() throws {
         "runtimeErrorCode": expectedCode,
         "runtimeListenerSurvived": true,
     ]
-    let encoded = try JSONSerialization.data(
-        withJSONObject: output,
-        options: [.sortedKeys]
-    )
-    FileHandle.standardOutput.write(encoded)
-    FileHandle.standardOutput.write(Data([0x0a]))
+    try writeJSON(output)
 }
 
 do {

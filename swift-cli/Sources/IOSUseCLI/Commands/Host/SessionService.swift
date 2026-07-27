@@ -218,6 +218,9 @@ public enum SessionService {
                 info: PlayCoverSessionService.makeSessionInfo(from: result),
                 paths: paths
             )
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(.afterDriverLockDurable)
+            #endif
             do {
                 try PlayCoverSessionService
                     .retirePendingLaunchJournalAfterDriverCommit(

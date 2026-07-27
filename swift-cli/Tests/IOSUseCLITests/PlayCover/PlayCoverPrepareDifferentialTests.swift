@@ -768,6 +768,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "swift-cli/Package.resolved",
                 "swift-cli/Package.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverLaunchCrashCut.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverStartTiming.swift",

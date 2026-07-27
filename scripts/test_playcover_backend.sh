@@ -12,13 +12,13 @@ Usage: scripts/test_playcover_backend.sh [--non-live|--live]
 --non-live  Run the hermetic build, analysis, fixture, compositor, vendored
             Swift, release-install, and installed-execution gate. This is
             suitable for hosted CI.
---live      Run the lock-independent isolated Runtime protocol/crash stress
-            gate first, then the versioned unlocked public fixture matrix and
-            generic external-App live gate. The latter requires a private
-            scenario and raw evidence directory supplied by the dedicated
-            Apple-silicon runner. Missing live prerequisites fail with
-            EX_CONFIG (78); they are not reported as a passing or skipped live
-            result.
+--live      Run the independent pending-launch crash/restart gate and the
+            lock-independent isolated Runtime protocol/crash stress gate,
+            then the versioned unlocked public fixture matrix and generic
+            external-App live gate. The latter requires a private scenario and
+            raw evidence directory supplied by the dedicated Apple-silicon
+            runner. Missing live prerequisites fail with EX_CONFIG (78); they
+            are not reported as a passing or skipped live result.
 USAGE
 }
 
@@ -97,6 +97,8 @@ run_non_live() {
 
 run_live() {
   require_apple_silicon_xcode 78
+  echo "[playcover-live] Running pending-launch CLI crash/restart matrix..."
+  bash "$ROOT_DIR/scripts/test_playcover_pending_launch_crash_live.sh" --live
   echo "[playcover-live] Running isolated Runtime protocol/crash stress matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"
   echo "[playcover-live] Running versioned fixture acceptance matrix..."

@@ -571,6 +571,11 @@ enum PlayCoverSessionService {
                     sessionID: sessionID,
                     paths: paths
                 )
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(
+                .afterPendingDriverLockCommitted
+            )
+            #endif
             fallthrough
         case .driverLockCommitted:
             record = try PlayCoverPendingLaunchStore
@@ -579,6 +584,11 @@ enum PlayCoverSessionService {
                     cleanupProof: .driverLockRetired,
                     paths: paths
                 )
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(
+                .afterPendingDriverLockRetired
+            )
+            #endif
         case .confirmedStopped:
             guard record.cleanupProof == .driverLockRetired else {
                 throw PlayCoverPendingLaunchStoreError(
@@ -599,6 +609,9 @@ enum PlayCoverSessionService {
             sessionID: sessionID,
             paths: paths
         )
+        #if DEBUG && canImport(Darwin)
+        PlayCoverLaunchCrashCut.hit(.afterPendingJournalRemoved)
+        #endif
     }
 
     @discardableResult

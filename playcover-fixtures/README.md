@@ -112,4 +112,9 @@ isolated stress gate also proves Runtime-endpoint loss and App-crash cleanup
 without exposing a production kill or unlink command. For the crash case, this
 fixture alone registers a Darwin notification derived from the Runtime
 session ID and sends `SIGKILL` to itself when notified; the host gate never
-signals a PID that could have been recycled.
+signals a PID that could have been recycled. Its bounded `identified-ping` and
+`hello-readiness` results also record the Runtime PID, bundle, executable, and
+a host-observed process-birth token; `process-identity` can recheck that exact
+host identity after stop. A separate crash/restart gate uses these modes to
+bind pre-stop and post-stop evidence to the same process without waiting for
+UI readiness at an earlier launch boundary.

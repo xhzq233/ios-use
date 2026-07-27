@@ -670,6 +670,104 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         )
     }
 
+    func testRestartCompletesEveryDurableDriverLockHandoffPhase()
+        throws
+    {
+        enum HandoffPhase {
+            case owned
+            case driverLockCommitted
+            case confirmedStopped
+        }
+        try [
+            HandoffPhase.owned,
+            .driverLockCommitted,
+            .confirmedStopped,
+        ].forEach { phase in
+            let fixture = try makeFixture()
+            defer {
+                try? FileManager.default.removeItem(at: fixture.root)
+            }
+            _ = try advanceToSubmissionArmed(
+                fixture,
+                bootSessionUUID: UUID().uuidString
+            )
+            let owner = PlayCoverPendingLaunchStore.Owner(
+                pid: 9_451,
+                processBirthMicroseconds: 9_452,
+                source: .authenticatedRuntime
+            )
+            _ = try PlayCoverPendingLaunchStore.markOwned(
+                sessionID: fixture.intent.sessionID,
+                owner: owner,
+                callbackSucceeded: false,
+                paths: fixture.paths
+            )
+            let driver = PlayCoverSessionService.makeSessionInfo(
+                from: makeLaunchResult(
+                    fixture,
+                    owner: owner
+                )
+            )
+            try FileManager.default.createDirectory(
+                atPath: fixture.manifest.preparedAppPath,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try SessionService.writeDriverLock(
+                info: driver,
+                paths: fixture.paths
+            )
+            switch phase {
+            case .owned:
+                break
+            case .driverLockCommitted:
+                _ = try PlayCoverPendingLaunchStore
+                    .markDriverLockCommitted(
+                        sessionID: fixture.intent.sessionID,
+                        paths: fixture.paths
+                    )
+            case .confirmedStopped:
+                _ = try PlayCoverPendingLaunchStore
+                    .markDriverLockCommitted(
+                        sessionID: fixture.intent.sessionID,
+                        paths: fixture.paths
+                    )
+                _ = try PlayCoverPendingLaunchStore
+                    .markConfirmedStopped(
+                        sessionID: fixture.intent.sessionID,
+                        cleanupProof: .driverLockRetired,
+                        paths: fixture.paths
+                    )
+            }
+            PlayCoverPendingLaunchRecovery
+                .ownedProcessStateOverrideForTesting = { pid in
+                    XCTAssertEqual(pid, owner.pid)
+                    return .running(
+                        executablePath:
+                            fixture.manifest.executablePath,
+                        processBirthMicroseconds:
+                            owner.processBirthMicroseconds
+                    )
+                }
+
+            try PlayCoverPendingLaunchCoordinator.recoverBeforeStart(
+                paths: fixture.paths
+            )
+
+            XCTAssertNil(
+                try PlayCoverPendingLaunchStore.load(
+                    paths: fixture.paths
+                )
+            )
+            XCTAssertEqual(
+                try SessionService.readDriverLockInfo(
+                    paths: fixture.paths
+                ),
+                driver
+            )
+        }
+    }
+
     func testMatchingDriverLockWithExitedOwnerCleansInsteadOfHandoff()
         throws {
         let fixture = try makeFixture()

@@ -232,6 +232,7 @@ if ! jq -e '
       "scripts/test_playcover_prepare_differential.sh",
       "swift-cli/Package.resolved",
       "swift-cli/Package.swift",
+      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverLaunchCrashCut.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverService.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverStartTiming.swift",
       "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverExternalPrepareDifferentialTests.swift",

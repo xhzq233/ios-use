@@ -991,6 +991,9 @@ public enum PlayCoverService {
                         pid: identity.pid,
                         stdioLog: stdioLog
                     )
+                    #if DEBUG && canImport(Darwin)
+                    PlayCoverLaunchCrashCut.hit(.afterReadyGate)
+                    #endif
                     launchPhaseTiming.readyGeometryNanoseconds =
                         PlayCoverMonotonicClock.elapsed(
                             since: readyGeometryStarted
@@ -2639,6 +2642,21 @@ public enum PlayCoverService {
                 shouldRetryDurableOwnership: false
             )
         }
+        #if DEBUG && canImport(Darwin)
+        PlayCoverLaunchCrashCut.hit(.beforeOwnerDurable)
+        switch identity.source {
+        case .workspaceCallback:
+            PlayCoverLaunchCrashCut.hit(
+                .beforeCallbackOwnerDurable
+            )
+        case .authenticatedRuntime:
+            PlayCoverLaunchCrashCut.hit(
+                .beforeRuntimeOwnerDurable
+            )
+        case .observedCandidate:
+            break
+        }
+        #endif
         do {
             _ = try PlayCoverPendingLaunchStore.markOwned(
                 sessionID: sessionID,
@@ -2653,6 +2671,21 @@ public enum PlayCoverService {
                 shouldRetryDurableOwnership: true
             )
         }
+        #if DEBUG && canImport(Darwin)
+        PlayCoverLaunchCrashCut.hit(.afterOwnerDurable)
+        switch identity.source {
+        case .workspaceCallback:
+            PlayCoverLaunchCrashCut.hit(
+                .afterCallbackOwnerDurable
+            )
+        case .authenticatedRuntime:
+            PlayCoverLaunchCrashCut.hit(
+                .afterRuntimeOwnerDurable
+            )
+        case .observedCandidate:
+            break
+        }
+        #endif
         do {
             try revalidatePendingLaunchIdentity(identity)
         } catch {
@@ -3173,11 +3206,24 @@ public enum PlayCoverService {
         if let launchAliasRootOverrideForTesting {
             root = launchAliasRootOverrideForTesting.standardizedFileURL
         } else {
+            #if DEBUG && canImport(Darwin)
+            if let crashAliasRoot =
+                    PlayCoverLaunchCrashCut.launchAliasRoot {
+                root = crashAliasRoot
+            } else {
+                root = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(
+                        "Applications/PlayCover",
+                        isDirectory: true
+                    )
+            }
+            #else
             root = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(
-                    "Applications/PlayCover",
-                    isDirectory: true
-                )
+                    .appendingPathComponent(
+                        "Applications/PlayCover",
+                        isDirectory: true
+                    )
+            #endif
         }
         return SessionLaunchAlias(
             rootURL: root,
@@ -4048,6 +4094,11 @@ public enum PlayCoverService {
                     )
                 do {
                     if let pendingLaunchPaths {
+                        #if DEBUG && canImport(Darwin)
+                        PlayCoverLaunchCrashCut.hit(
+                            .beforeTerminalCallbackDurable
+                        )
+                        #endif
                         _ = try PlayCoverPendingLaunchStore
                             .markTerminalCallbackFailure(
                                 sessionID: sessionID,
@@ -4057,6 +4108,11 @@ public enum PlayCoverService {
                                     ),
                                 paths: pendingLaunchPaths
                             )
+                        #if DEBUG && canImport(Darwin)
+                        PlayCoverLaunchCrashCut.hit(
+                            .afterTerminalCallbackDurable
+                        )
+                        #endif
                     }
                     box.set(.failure(callbackError))
                 } catch {
@@ -4083,6 +4139,9 @@ public enum PlayCoverService {
                             .currentBootSessionUUID(),
                     paths: pendingLaunchPaths
                 )
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(.afterSubmissionArmed)
+            #endif
         }
         workspaceOpenSubmitted = true
         if let workspaceOpenOverrideForTesting {
@@ -4110,6 +4169,9 @@ public enum PlayCoverService {
                     since: openDispatchStarted
                 )
         }
+        #if DEBUG && canImport(Darwin)
+        PlayCoverLaunchCrashCut.hit(.afterOpenReturned)
+        #endif
         do {
             try emitLaunchIntegrityEvent(
                 .afterWorkspaceOpenReturnedBeforePostSubmitValidation
