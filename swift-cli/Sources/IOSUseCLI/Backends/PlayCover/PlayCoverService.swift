@@ -3131,7 +3131,7 @@ public enum PlayCoverService {
                     withDestinationPath: entry.destination
                 )
             }
-            try validateSessionLaunchAlias(
+            try syncSessionLaunchAlias(
                 alias,
                 expectedEntries: entries
             )
@@ -3183,13 +3183,21 @@ public enum PlayCoverService {
                 "cannot inspect the session launch alias: errno \(errno)"
             )
         }
-        try validateSessionLaunchAlias(
-            alias,
-            expectedEntries: try launchAliasEntries(
-                manifest: manifest
-            )
+        let expectedEntries = try launchAliasEntries(
+            manifest: manifest
         )
-        try FileManager.default.removeItem(at: alias.bundleURL)
+        let capability = try openSessionLaunchAliasCapability(
+            alias: alias
+        )
+        defer { capability.close() }
+        try validateSessionLaunchAliasCapability(
+            capability,
+            expectedEntries: expectedEntries
+        )
+        try removeSessionLaunchAliasCapability(
+            capability,
+            expectedEntries: expectedEntries
+        )
     }
 
     private static func ensureLaunchAliasRoot(
@@ -3219,6 +3227,9 @@ public enum PlayCoverService {
                     "the launch alias root disappeared after creation"
                 )
             }
+            try syncLaunchAliasDirectory(
+                root.deletingLastPathComponent()
+            )
         }
         try validateLaunchAliasRootStatus(status)
     }
@@ -3242,7 +3253,7 @@ public enum PlayCoverService {
         }
     }
 
-    private static func validateSessionLaunchAlias(
+    private static func syncSessionLaunchAlias(
         _ alias: SessionLaunchAlias,
         expectedEntries: [LaunchAliasEntry]
     ) throws {
@@ -3254,6 +3265,73 @@ public enum PlayCoverService {
             capability,
             expectedEntries: expectedEntries
         )
+        guard Darwin.fsync(capability.aliasDescriptor) == 0 else {
+            throw PlayCoverBackendError.launchFailed(
+                "cannot fsync the session launch alias: errno \(errno)"
+            )
+        }
+        guard Darwin.fsync(capability.rootDescriptor) == 0 else {
+            throw PlayCoverBackendError.launchFailed(
+                "cannot fsync the launch alias parent: errno \(errno)"
+            )
+        }
+    }
+
+    private static func removeSessionLaunchAliasCapability(
+        _ capability: SessionLaunchAliasCapability,
+        expectedEntries: [LaunchAliasEntry]
+    ) throws {
+        for entry in expectedEntries.sorted(by: {
+            $0.name < $1.name
+        }) {
+            guard Darwin.unlinkat(
+                    capability.aliasDescriptor,
+                    entry.name,
+                    0
+                  ) == 0 else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "cannot unlink anchored session launch alias entry "
+                        + "\(entry.name): errno \(errno)"
+                )
+            }
+        }
+        guard Darwin.fsync(capability.aliasDescriptor) == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot fsync the emptied session launch alias: "
+                    + "errno \(errno)"
+            )
+        }
+        var namedStatus = stat()
+        guard fstatat(
+                capability.rootDescriptor,
+                capability.aliasName,
+                &namedStatus,
+                AT_SYMLINK_NOFOLLOW
+              ) == 0,
+              sameDirectoryAuthorityIdentity(
+                capability.aliasStatus,
+                namedStatus
+              ) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "the emptied session launch alias changed before removal"
+            )
+        }
+        guard Darwin.unlinkat(
+                capability.rootDescriptor,
+                capability.aliasName,
+                AT_REMOVEDIR
+              ) == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot remove the anchored session launch alias: "
+                    + "errno \(errno)"
+            )
+        }
+        guard Darwin.fsync(capability.rootDescriptor) == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot fsync the launch alias parent after removal: "
+                    + "errno \(errno)"
+            )
+        }
     }
 
     private static func removePartialSessionLaunchAlias(
@@ -3287,6 +3365,28 @@ public enum PlayCoverService {
             }
         }
         try FileManager.default.removeItem(at: alias.bundleURL)
+        try syncLaunchAliasDirectory(alias.rootURL)
+    }
+
+    private static func syncLaunchAliasDirectory(
+        _ directory: URL
+    ) throws {
+        let descriptor = Darwin.open(
+            directory.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot open the launch alias parent for fsync: "
+                    + "errno \(errno)"
+            )
+        }
+        defer { Darwin.close(descriptor) }
+        guard Darwin.fsync(descriptor) == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot fsync the launch alias parent: errno \(errno)"
+            )
+        }
     }
 
     private static func launchAliasEntries(
