@@ -1284,16 +1284,22 @@ public enum PlayCoverService {
                 "manifest is missing a required executable hash entry"
             )
         }
+        let stableAppURL =
+            try PlayCoverManagedAppService.ownedDirectoryDescriptorPath(
+                appDescriptor,
+                label: "prepared App root"
+            )
         let orderedCodePaths =
             codePaths.filter { $0 != "." }.sorted() + ["."]
         for relative in orderedCodePaths {
-            let url = relative == "."
-                ? app
-                : try recordedURL(app: app, relativePath: relative)
+            if relative != "." {
+                _ = try recordedURL(app: app, relativePath: relative)
+            }
             try emitFastVerifyEvent(.beforeCodeSignature(relative))
             let result = try Shell.runWithResult(
                 "/usr/bin/codesign",
-                arguments: ["--verify", "--strict", url.path]
+                arguments: ["--verify", "--strict", relative],
+                cwd: stableAppURL.path
             )
             guard result.exitCode == 0 else {
                 throw PlayCoverBackendError.cacheTampered(

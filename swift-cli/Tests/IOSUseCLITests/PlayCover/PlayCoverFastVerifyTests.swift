@@ -47,8 +47,9 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             cwd in
             XCTAssertEqual(executable, "/usr/bin/codesign")
             XCTAssertEqual(Array(arguments.prefix(2)), ["--verify", "--strict"])
-            XCTAssertNil(cwd)
+            XCTAssertTrue(cwd?.hasPrefix("/.vol/") == true)
             let path = try XCTUnwrap(arguments.last)
+            XCTAssertFalse(path.hasPrefix("/"))
             calls[path, default: 0] += 1
             return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
         }
@@ -66,10 +67,9 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         let expectedPaths = Set(
             fixture.manifest.inventory.compactMap { entry -> String? in
                 guard entry.codeObjectKind != nil else { return nil }
-                return fixture.app
-                    .appendingPathComponent(entry.relativePath).path
+                return entry.relativePath
             }
-        ).union([fixture.app.path])
+        ).union(["."])
         let expectedCodeRelativePaths = Set(
             fixture.manifest.inventory.compactMap {
                 $0.codeObjectKind == nil ? nil : $0.relativePath
@@ -320,6 +320,85 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             reachedAnchoredHash,
             "replacement should be rejected after anchored verification"
         )
+        #else
+        throw XCTSkip("descriptor verification is Darwin-only")
+        #endif
+    }
+
+    func testCodeSignUsesStableAppVnodeAcrossReplaceAndRestore()
+        throws
+    {
+        #if canImport(Darwin)
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let replacement = fixture.root.appendingPathComponent(
+            "Replacement.app",
+            isDirectory: true
+        )
+        let displaced = fixture.root.appendingPathComponent(
+            "Displaced.app",
+            isDirectory: true
+        )
+        try FileManager.default.copyItem(
+            at: fixture.app,
+            to: replacement
+        )
+        var originalStatus = stat()
+        XCTAssertEqual(lstat(fixture.app.path, &originalStatus), 0)
+        var exercisedABA = false
+        Shell.runResultOverrideForTesting = {
+            executable,
+            arguments,
+            cwd in
+            XCTAssertEqual(executable, "/usr/bin/codesign")
+            XCTAssertEqual(Array(arguments.prefix(2)), ["--verify", "--strict"])
+            let stableRoot = try XCTUnwrap(cwd)
+            XCTAssertTrue(stableRoot.hasPrefix("/.vol/"))
+            let relative = try XCTUnwrap(arguments.last)
+            XCTAssertFalse(relative.hasPrefix("/"))
+            if !exercisedABA {
+                exercisedABA = true
+                guard Darwin.rename(
+                        fixture.app.path,
+                        displaced.path
+                      ) == 0,
+                      Darwin.rename(
+                        replacement.path,
+                        fixture.app.path
+                      ) == 0 else {
+                    throw NSError(
+                        domain: NSPOSIXErrorDomain,
+                        code: Int(errno)
+                    )
+                }
+                var stableStatus = stat()
+                var lexicalStatus = stat()
+                XCTAssertEqual(lstat(stableRoot, &stableStatus), 0)
+                XCTAssertEqual(lstat(fixture.app.path, &lexicalStatus), 0)
+                XCTAssertEqual(stableStatus.st_dev, originalStatus.st_dev)
+                XCTAssertEqual(stableStatus.st_ino, originalStatus.st_ino)
+                XCTAssertNotEqual(lexicalStatus.st_ino, originalStatus.st_ino)
+                guard Darwin.rename(
+                        fixture.app.path,
+                        replacement.path
+                      ) == 0,
+                      Darwin.rename(
+                        displaced.path,
+                        fixture.app.path
+                      ) == 0 else {
+                    throw NSError(
+                        domain: NSPOSIXErrorDomain,
+                        code: Int(errno)
+                    )
+                }
+            }
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        XCTAssertNoThrow(
+            try PlayCoverService.fastVerify(appPath: fixture.app.path)
+        )
+        XCTAssertTrue(exercisedABA)
         #else
         throw XCTSkip("descriptor verification is Darwin-only")
         #endif
