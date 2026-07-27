@@ -356,7 +356,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     }
 
-    func testFailedExplicitLaunchDoesNotReplaceGoodReference()
+    func testFailedExplicitLaunchSelectsVerifiedGeneration()
         throws
     {
         let fixture = try SessionFixture()
@@ -407,8 +407,79 @@ final class PlayCoverSessionTests: XCTestCase {
             try PlayCoverSessionService.readPreparedReference(
                 paths: fixture.paths
             )?.generationKey,
-            good.generationKey
+            selected.generationKey
         )
+    }
+
+    func testFailedExplicitLaunchCreatesSelectorForBareRetry()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let selected = try makeManifest(
+            fixture: fixture,
+            generationKey: String(repeating: "b", count: 64)
+        )
+        try fixture.createManagedApp(manifest: selected)
+        try fixture.createPreparedSidecars(manifest: selected)
+        PlayCoverManagedAppService.readManifestOverrideForTesting = {
+            _ in selected
+        }
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in selected
+        }
+        var launchAttemptCount = 0
+        PlayCoverSessionService.launchOverrideForTesting = {
+            appPath,
+            sessionID,
+            socketPath,
+            _ in
+            XCTAssertEqual(appPath, selected.preparedAppPath)
+            launchAttemptCount += 1
+            if launchAttemptCount == 1 {
+                throw PlayCoverBackendError.launchFailed(
+                    "Runtime hello was not authenticated"
+                )
+            }
+            return self.makeLaunchResult(
+                manifest: selected,
+                sessionID: sessionID,
+                socketPath: socketPath,
+                reused: true
+            )
+        }
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": fixture.root]
+        )
+
+        let failed = cli.run(
+            arguments: [
+                "start",
+                "--playcover",
+                "--app",
+                selected.preparedAppPath,
+            ]
+        )
+
+        XCTAssertEqual(failed.exitCode, 1)
+        XCTAssertTrue(
+            failed.stderr.contains(
+                "Runtime hello was not authenticated"
+            )
+        )
+        XCTAssertEqual(
+            try PlayCoverSessionService.readPreparedReference(
+                paths: fixture.paths
+            )?.generationKey,
+            selected.generationKey
+        )
+
+        let retry = cli.run(arguments: ["start", "--playcover"])
+
+        XCTAssertEqual(retry.exitCode, 0, retry.stderr)
+        XCTAssertTrue(retry.stdout.contains("generation reused:"))
+        XCTAssertTrue(retry.stdout.contains(selected.generationKey))
+        XCTAssertEqual(launchAttemptCount, 2)
     }
 
     func testLastPreparedSymlinkFailsClosed() throws {

@@ -102,19 +102,6 @@ enum PlayCoverSessionService {
         )
     }
 
-    static func recordPrepared(
-        _ result: LaunchResult,
-        paths: IOSUsePaths
-    ) throws {
-        try recordPrepared(
-            appPath: result.appPath,
-            bundleIdentifier: result.bundleIdentifier,
-            executablePath: result.executablePath,
-            generationKey: result.generationKey,
-            paths: paths
-        )
-    }
-
     private static func recordPrepared(
         appPath: String,
         bundleIdentifier: String,
@@ -243,6 +230,11 @@ enum PlayCoverSessionService {
                 "selected generation identity changed before launch"
             )
         }
+        // Bare start selects the most recent successfully prepared and
+        // fast-verified generation. Runtime hello and session commit are a
+        // separate transaction; a failed launch rolls back the App without
+        // making this immutable generation undiscoverable for retry.
+        try recordPrepared(verifiedManifest, paths: paths)
         let launchStarted = PlayCoverMonotonicClock.now()
         let rawResult: LaunchResult
         if let launchOverrideForTesting {
