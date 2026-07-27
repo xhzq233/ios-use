@@ -1446,6 +1446,125 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(signals, [SIGTERM])
     }
 
+    func testRuntimeHelloTimeoutRollbackTreatsPostSIGTERMESRCHAsExit()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "c", count: 64)
+        )
+        let identity = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 42,
+            bundleIdentifier: manifest.bundleIdentifier,
+            bundleURLPath: manifest.preparedAppPath,
+            executablePath: manifest.executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .workspaceCallback
+        )
+        var processProbeCount = 0
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            pid in
+            XCTAssertEqual(pid, identity.pid)
+            processProbeCount += 1
+            switch processProbeCount {
+            case 1:
+                return .running(
+                    executablePath: manifest.executablePath,
+                    processStartTimeMicroseconds: 100
+                )
+            case 2:
+                return .unverifiable(errno: ESRCH)
+            default:
+                XCTFail(
+                    "rollback must finish on post-SIGTERM ESRCH"
+                )
+                return .missing
+            }
+        }
+        var signals: [Int32] = []
+        PlayCoverService.failedLaunchSignalOverrideForTesting = {
+            pid,
+            signal in
+            XCTAssertEqual(pid, identity.pid)
+            signals.append(signal)
+            return 0
+        }
+
+        try PlayCoverService.terminateFailedLaunch(
+            identity: identity,
+            manifest: manifest
+        )
+
+        XCTAssertEqual(processProbeCount, 2)
+        XCTAssertEqual(signals, [SIGTERM])
+    }
+
+    func testRuntimeHelloTimeoutRollbackRejectsPostSIGTERMNonESRCH()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "c", count: 64)
+        )
+        let identity = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 42,
+            bundleIdentifier: manifest.bundleIdentifier,
+            bundleURLPath: manifest.preparedAppPath,
+            executablePath: manifest.executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .workspaceCallback
+        )
+        var processProbeCount = 0
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            pid in
+            XCTAssertEqual(pid, identity.pid)
+            processProbeCount += 1
+            return processProbeCount == 1
+                ? .running(
+                    executablePath: manifest.executablePath,
+                    processStartTimeMicroseconds: 100
+                )
+                : .unverifiable(errno: EPERM)
+        }
+        var signals: [Int32] = []
+        PlayCoverService.failedLaunchSignalOverrideForTesting = {
+            pid,
+            signal in
+            XCTAssertEqual(pid, identity.pid)
+            signals.append(signal)
+            return 0
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverService.terminateFailedLaunch(
+                identity: identity,
+                manifest: manifest
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "rollback cannot verify pid 42: errno \(EPERM)"
+                )
+            )
+        }
+        XCTAssertEqual(processProbeCount, 2)
+        XCTAssertEqual(signals, [SIGTERM])
+    }
+
     func testFailedLaunchRollbackPreservesSameExecutablePIDReuse()
         throws
     {

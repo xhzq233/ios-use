@@ -2020,6 +2020,15 @@ public enum PlayCoverService {
                     return true
                 }
             case .unverifiable(let errorNumber):
+                if errorNumber == ESRCH {
+                    // A termination signal was sent only after the owned
+                    // process matched the exact executable and stable birth
+                    // token. During exit, proc_pidpath can lose that process
+                    // before kill(0) reports it missing. Stop here without
+                    // sending another signal, so PID reuse cannot redirect
+                    // rollback to a replacement process.
+                    return true
+                }
                 throw PlayCoverBackendError.launchFailed(
                     "rollback cannot verify pid \(pid): "
                         + "errno \(errorNumber)"
