@@ -390,6 +390,11 @@ static NSDictionary<NSString *, id> *IOSUseHostGeometry(
         [rawCapture isKindOfClass:NSDictionary.class]
             ? rawCapture
             : @{};
+    id rawSceneScale = window[@"sceneScale"];
+    NSDictionary<NSString *, id> *sceneScale =
+        [rawSceneScale isKindOfClass:NSDictionary.class]
+            ? rawSceneScale
+            : @{};
     BOOL captureDiagnosticsAreComplete =
         IOSUseSocketHasPositiveRectFields(
             capture[@"hostContentCGWindowRect"]
@@ -420,11 +425,35 @@ static NSDictionary<NSString *, id> *IOSUseHostGeometry(
         ),
         @"canvasRect": IOSUseSocketStableRect(window[@"canvasRect"]),
         @"canvasBounds": IOSUseSocketStableRect(window[@"canvasBounds"]),
+        @"renderViewBounds": IOSUseSocketStableRect(
+            window[@"renderViewBounds"]
+        ),
+        @"sceneRenderViewFrame": IOSUseSocketStableRect(
+            window[@"sceneRenderViewFrame"]
+        ),
+        @"sceneRenderViewBounds": IOSUseSocketStableRect(
+            window[@"sceneRenderViewBounds"]
+        ),
+        @"inputRenderViewFrame": IOSUseSocketStableRect(
+            window[@"inputRenderViewFrame"]
+        ),
+        @"inputRenderViewBounds": IOSUseSocketStableRect(
+            window[@"inputRenderViewBounds"]
+        ),
         @"displayScale": IOSUseSocketStableFiniteNumber(
             window[@"displayScale"]
         ),
         @"inverseDisplayScale": IOSUseSocketStableFiniteNumber(
             window[@"inverseDisplayScale"]
+        ),
+        @"idiomScale": IOSUseSocketStableFiniteNumber(
+            sceneScale[@"idiom"]
+        ),
+        @"windowScale": IOSUseSocketStableFiniteNumber(
+            sceneScale[@"windows"]
+        ),
+        @"downscaleWindowIfNecessary": IOSUseSocketStableBool(
+            sceneScale[@"downscaleWindowIfNecessary"]
         ),
         @"opaque": IOSUseSocketStableBool(window[@"opaque"]),
         @"publicTitleBar": IOSUseSocketStableBool(
@@ -489,6 +518,17 @@ static BOOL IOSUseSocketContainsRect(CGRect outer, CGRect inner) {
         CGRectGetMaxY(inner) <= CGRectGetMaxY(outer) + 0.01;
 }
 
+static BOOL IOSUseSocketMatchesPhysicalCanvas(
+    CGRect rect,
+    CGRect canvasRect
+) {
+    const CGFloat tolerance = 0.5;
+    return fabs(rect.origin.x) <= tolerance &&
+        fabs(rect.origin.y) <= tolerance &&
+        fabs(rect.size.width - canvasRect.size.width) <= tolerance &&
+        fabs(rect.size.height - canvasRect.size.height) <= tolerance;
+}
+
 static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
     NSDictionary<NSString *, id> *capture =
         [host[@"capture"] isKindOfClass:NSDictionary.class]
@@ -497,6 +537,11 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
     CGRect frame = CGRectZero;
     CGRect contentBounds = CGRectZero;
     CGRect canvasBounds = CGRectZero;
+    CGRect renderViewBounds = CGRectZero;
+    CGRect sceneRenderViewFrame = CGRectZero;
+    CGRect sceneRenderViewBounds = CGRectZero;
+    CGRect inputRenderViewFrame = CGRectZero;
+    CGRect inputRenderViewBounds = CGRectZero;
     CGRect canvasRect = CGRectZero;
     CGRect hostContentCGWindowRect = CGRectZero;
     CGRect hostCGWindowBounds = CGRectZero;
@@ -504,6 +549,8 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
     CGFloat displayScale = [host[@"displayScale"] doubleValue];
     CGFloat inverseDisplayScale =
         [host[@"inverseDisplayScale"] doubleValue];
+    CGFloat idiomScale = [host[@"idiomScale"] doubleValue];
+    CGFloat windowScale = [host[@"windowScale"] doubleValue];
     NSString *title = [host[@"title"] isKindOfClass:NSString.class]
         ? host[@"title"]
         : @"";
@@ -529,6 +576,26 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
             &contentBounds
         ) &&
         IOSUseSocketRectFromJSON(host[@"canvasBounds"], &canvasBounds) &&
+        IOSUseSocketRectFromJSON(
+            host[@"renderViewBounds"],
+            &renderViewBounds
+        ) &&
+        IOSUseSocketRectFromJSON(
+            host[@"sceneRenderViewFrame"],
+            &sceneRenderViewFrame
+        ) &&
+        IOSUseSocketRectFromJSON(
+            host[@"sceneRenderViewBounds"],
+            &sceneRenderViewBounds
+        ) &&
+        IOSUseSocketRectFromJSON(
+            host[@"inputRenderViewFrame"],
+            &inputRenderViewFrame
+        ) &&
+        IOSUseSocketRectFromJSON(
+            host[@"inputRenderViewBounds"],
+            &inputRenderViewBounds
+        ) &&
         IOSUseSocketRectFromJSON(host[@"canvasRect"], &canvasRect);
     if (!commonReady) {
         return NO;
@@ -549,6 +616,30 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         fabs(canvasBounds.origin.y) <= 0.01 &&
         fabs(canvasBounds.size.width - IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
         fabs(canvasBounds.size.height - IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
+        IOSUseSocketMatchesPhysicalCanvas(
+            renderViewBounds,
+            canvasRect
+        ) &&
+        IOSUseSocketMatchesPhysicalCanvas(
+            sceneRenderViewFrame,
+            canvasRect
+        ) &&
+        IOSUseSocketMatchesPhysicalCanvas(
+            sceneRenderViewBounds,
+            canvasRect
+        ) &&
+        IOSUseSocketMatchesPhysicalCanvas(
+            inputRenderViewFrame,
+            canvasRect
+        ) &&
+        IOSUseSocketMatchesPhysicalCanvas(
+            inputRenderViewBounds,
+            canvasRect
+        ) &&
+        isfinite(idiomScale) && idiomScale > 0 &&
+        isfinite(windowScale) &&
+        fabs(windowScale - displayScale) <= 0.01 &&
+        [host[@"downscaleWindowIfNecessary"] boolValue] &&
         IOSUseSocketContainsRect(contentBounds, canvasRect) &&
         leftMargin >= -0.01 && rightMargin >= -0.01 &&
         bottomMargin >= -0.01 && topMargin >= -0.01 &&

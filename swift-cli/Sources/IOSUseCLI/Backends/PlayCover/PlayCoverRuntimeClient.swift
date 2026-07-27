@@ -121,8 +121,16 @@ struct PlayCoverRuntimeHostGeometry: Codable, Equatable, Sendable {
     let contentBounds: PlayCoverRuntimeFrame
     let canvasRect: PlayCoverRuntimeFrame
     let canvasBounds: PlayCoverRuntimeFrame
+    let renderViewBounds: PlayCoverRuntimeFrame
+    let sceneRenderViewFrame: PlayCoverRuntimeFrame
+    let sceneRenderViewBounds: PlayCoverRuntimeFrame
+    let inputRenderViewFrame: PlayCoverRuntimeFrame
+    let inputRenderViewBounds: PlayCoverRuntimeFrame
     let displayScale: Double
     let inverseDisplayScale: Double
+    let idiomScale: Double
+    let windowScale: Double
+    let downscaleWindowIfNecessary: Bool
     let opaque: Bool
     let publicTitleBar: Bool
     let titleVisible: Bool

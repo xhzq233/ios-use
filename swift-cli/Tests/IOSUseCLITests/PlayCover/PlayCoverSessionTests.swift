@@ -2384,8 +2384,41 @@ final class PlayCoverSessionTests: XCTestCase {
             contentBounds: .init(x: 0, y: 0, width: 322.5, height: 699),
             canvasRect: .init(x: 0, y: 0, width: 322.5, height: 699),
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
+            renderViewBounds: .init(
+                x: 0,
+                y: 0,
+                width: 322.5,
+                height: 699
+            ),
+            sceneRenderViewFrame: .init(
+                x: 0,
+                y: 0,
+                width: 322.5,
+                height: 699
+            ),
+            sceneRenderViewBounds: .init(
+                x: 0,
+                y: 0,
+                width: 322.5,
+                height: 699
+            ),
+            inputRenderViewFrame: .init(
+                x: 0,
+                y: 0,
+                width: 322.5,
+                height: 699
+            ),
+            inputRenderViewBounds: .init(
+                x: 0,
+                y: 0,
+                width: 322.5,
+                height: 699
+            ),
             displayScale: 0.75,
             inverseDisplayScale: 4.0 / 3.0,
+            idiomScale: 1,
+            windowScale: 0.75,
+            downscaleWindowIfNecessary: true,
             opaque: true,
             publicTitleBar: true,
             titleVisible: true,
@@ -2432,8 +2465,17 @@ final class PlayCoverSessionTests: XCTestCase {
             contentBounds: host.contentBounds,
             canvasRect: host.canvasRect,
             canvasBounds: host.canvasBounds,
+            renderViewBounds: host.renderViewBounds,
+            sceneRenderViewFrame: host.sceneRenderViewFrame,
+            sceneRenderViewBounds: host.sceneRenderViewBounds,
+            inputRenderViewFrame: host.inputRenderViewFrame,
+            inputRenderViewBounds: host.inputRenderViewBounds,
             displayScale: host.displayScale,
             inverseDisplayScale: host.inverseDisplayScale,
+            idiomScale: host.idiomScale,
+            windowScale: host.windowScale,
+            downscaleWindowIfNecessary:
+                host.downscaleWindowIfNecessary,
             opaque: host.opaque,
             publicTitleBar: host.publicTitleBar,
             titleVisible: host.titleVisible,

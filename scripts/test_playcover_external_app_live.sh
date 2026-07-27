@@ -349,6 +349,12 @@ assert_status() {
       --arg sourceExecutable "$SOURCE_EXECUTABLE" \
       --arg bundleIdentifier "$LIVE_BUNDLE_ID" \
       --arg title "$EXPECTED_HOST_TITLE" '
+      def physical_canvas($rect; $canvas):
+        ($rect | type) == "object" and
+        (($rect.x | abs) <= 0.5) and
+        (($rect.y | abs) <= 0.5) and
+        ((($rect.width - $canvas.width) | abs) <= 0.5) and
+        ((($rect.height - $canvas.height) | abs) <= 0.5);
       .data.driver as $driver |
       ($driver.runtime) as $runtime |
       ($runtime.diagnostics.runtime.window) as $window |
@@ -415,6 +421,16 @@ assert_status() {
       $window.resizeEdges.shrinking >= 0 and
       (($window.resizeEdges.shrinking % 16) == 15) and
       $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
+      physical_canvas($window.renderViewBounds; $canvas) and
+      physical_canvas($window.sceneRenderViewBounds; $canvas) and
+      physical_canvas($window.sceneRenderViewFrame; $canvas) and
+      physical_canvas($window.inputRenderViewFrame; $canvas) and
+      physical_canvas($window.inputRenderViewBounds; $canvas) and
+      ($window.sceneScale.idiom | type) == "number" and
+      $window.sceneScale.idiom > 0 and
+      (($window.sceneScale.windows - $window.displayScale) | abs) <=
+        0.01 and
+      $window.sceneScale.downscaleWindowIfNecessary == true and
       $window.sceneMinimumSize == {"width":430,"height":932} and
       $window.sceneMaximumSize == {"width":430,"height":932} and
       ($window.displayScale | type) == "number" and

@@ -716,6 +716,19 @@ final class PlayCoverDriverClientTests: XCTestCase {
         hostFrameWidth: Double? = nil,
         canvasWidth: Double? = nil,
         canvasHeight: Double? = nil,
+        renderViewWidth: Double? = nil,
+        renderViewHeight: Double? = nil,
+        sceneRenderViewFrameWidth: Double? = nil,
+        sceneRenderViewFrameHeight: Double? = nil,
+        sceneRenderViewWidth: Double? = nil,
+        sceneRenderViewHeight: Double? = nil,
+        inputRenderViewFrameWidth: Double? = nil,
+        inputRenderViewFrameHeight: Double? = nil,
+        inputRenderViewBoundsWidth: Double? = nil,
+        inputRenderViewBoundsHeight: Double? = nil,
+        idiomScale: Double = 1,
+        windowScale: Double? = nil,
+        downscaleWindowIfNecessary: Bool = true,
         canvasY: Double = 0,
         canvasCGX: Double = 40,
         canvasCGY: Double? = nil
@@ -757,8 +770,41 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 height: resolvedCanvasHeight
             ),
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
+            renderViewBounds: .init(
+                x: 0,
+                y: 0,
+                width: renderViewWidth ?? resolvedCanvasWidth,
+                height: renderViewHeight ?? resolvedCanvasHeight
+            ),
+            sceneRenderViewFrame: .init(
+                x: 0,
+                y: 0,
+                width: sceneRenderViewFrameWidth ?? resolvedCanvasWidth,
+                height: sceneRenderViewFrameHeight ?? resolvedCanvasHeight
+            ),
+            sceneRenderViewBounds: .init(
+                x: 0,
+                y: 0,
+                width: sceneRenderViewWidth ?? resolvedCanvasWidth,
+                height: sceneRenderViewHeight ?? resolvedCanvasHeight
+            ),
+            inputRenderViewFrame: .init(
+                x: 0,
+                y: 0,
+                width: inputRenderViewFrameWidth ?? resolvedCanvasWidth,
+                height: inputRenderViewFrameHeight ?? resolvedCanvasHeight
+            ),
+            inputRenderViewBounds: .init(
+                x: 0,
+                y: 0,
+                width: inputRenderViewBoundsWidth ?? resolvedCanvasWidth,
+                height: inputRenderViewBoundsHeight ?? resolvedCanvasHeight
+            ),
             displayScale: displayScale,
             inverseDisplayScale: resolvedInverseDisplayScale,
+            idiomScale: idiomScale,
+            windowScale: windowScale ?? displayScale,
+            downscaleWindowIfNecessary: downscaleWindowIfNecessary,
             opaque: opaque,
             publicTitleBar: true,
             titleVisible: true,
@@ -988,6 +1034,161 @@ final class PlayCoverDriverClientTests: XCTestCase {
             )
         }
 
+        for host in [
+            makeSimulatorScaleHostGeometry(idiomScale: 0),
+            makeSimulatorScaleHostGeometry(windowScale: 1),
+            makeSimulatorScaleHostGeometry(
+                downscaleWindowIfNecessary: false
+            ),
+        ] {
+            let invalidScale = PlayCoverRuntimeGeometry(
+                logical: missingHost.logical,
+                native: missingHost.native,
+                scale: missingHost.scale,
+                window: missingHost.window,
+                safeArea: missingHost.safeArea,
+                host: host
+            )
+            XCTAssertThrowsError(
+                try PlayCoverDriverClient.validateFixedDevice(
+                    invalidScale,
+                    stage: "ready"
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? PlayCoverDriverClientError,
+                    .runtimeGeometryMismatch(
+                        "simulator-scale host display scale"
+                    )
+                )
+            }
+        }
+
+        let clippedRenderView = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeSimulatorScaleHostGeometry(
+                renderViewWidth: 300,
+                renderViewHeight: 600
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                clippedRenderView,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale physical render-view bounds"
+                )
+            )
+        }
+
+        let clippedSceneRenderViewFrame = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeSimulatorScaleHostGeometry(
+                sceneRenderViewFrameWidth: 300,
+                sceneRenderViewFrameHeight: 600
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                clippedSceneRenderViewFrame,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale physical scene-render frame"
+                )
+            )
+        }
+
+        let clippedSceneRenderView = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeSimulatorScaleHostGeometry(
+                sceneRenderViewWidth: 300,
+                sceneRenderViewHeight: 600
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                clippedSceneRenderView,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale physical scene-render bounds"
+                )
+            )
+        }
+
+        let clippedInputRenderViewFrame = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeSimulatorScaleHostGeometry(
+                inputRenderViewFrameWidth: 300,
+                inputRenderViewFrameHeight: 600
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                clippedInputRenderViewFrame,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale physical input-render frame"
+                )
+            )
+        }
+
+        let clippedInputRenderViewBounds = PlayCoverRuntimeGeometry(
+            logical: missingHost.logical,
+            native: missingHost.native,
+            scale: missingHost.scale,
+            window: missingHost.window,
+            safeArea: missingHost.safeArea,
+            host: makeSimulatorScaleHostGeometry(
+                inputRenderViewBoundsWidth: 300,
+                inputRenderViewBoundsHeight: 600
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                clippedInputRenderViewBounds,
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale physical input-render bounds"
+                )
+            )
+        }
+
         let invalidCapture = PlayCoverRuntimeGeometry(
             logical: missingHost.logical,
             native: missingHost.native,
@@ -1118,7 +1319,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             XCTAssertEqual(
                 error as? PlayCoverDriverClientError,
                 .runtimeGeometryMismatch(
-                    "simulator-scale host canvas layout"
+                    "simulator-scale physical render-view bounds"
                 )
             )
         }
@@ -1141,7 +1342,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
+                "renderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
+                "sceneRenderViewFrame":{"x":0,"y":0,"width":322.5,"height":699},
+                "sceneRenderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
+                "inputRenderViewFrame":{"x":0,"y":0,"width":322.5,"height":699},
+                "inputRenderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
                 "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
+                "idiomScale":1,"windowScale":0.75,
+                "downscaleWindowIfNecessary":true,
                 "opaque":true,
                 "publicTitleBar":true,"titleVisible":true,"resizable":true,
                 "title":"Fixture","titleExpected":"Fixture",
@@ -1186,7 +1394,14 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
+                "renderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
+                "sceneRenderViewFrame":{"x":0,"y":0,"width":322.5,"height":699},
+                "sceneRenderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
+                "inputRenderViewFrame":{"x":0,"y":0,"width":322.5,"height":699},
+                "inputRenderViewBounds":{"x":0,"y":0,"width":322.5,"height":699},
                 "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
+                "idiomScale":1,"windowScale":0.75,
+                "downscaleWindowIfNecessary":true,
                 "opaque":true,
                 "publicTitleBar":true,"titleVisible":true,"resizable":true,
                 "title":"Fixture","titleExpected":"Fixture",
