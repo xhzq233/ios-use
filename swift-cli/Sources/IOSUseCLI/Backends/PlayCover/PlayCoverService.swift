@@ -9,6 +9,46 @@ import AppKit
 import Darwin
 #endif
 
+/// One content-addressed generation identity after its key has been computed
+/// from a source plan or independently validated from immutable metadata.
+///
+/// Construction is file-private so other layers can carry this evidence but
+/// cannot manufacture it from an untrusted manifest.
+struct PlayCoverGenerationIdentity: Equatable, Sendable {
+    let sourceContentHash: String
+    let runtimeBuildHash: String
+    let prepareRevision: String
+    let generationKey: String
+
+    fileprivate init(
+        sourceContentHash: String,
+        runtimeBuildHash: String,
+        prepareRevision: String,
+        generationKey: String
+    ) {
+        self.sourceContentHash = sourceContentHash
+        self.runtimeBuildHash = runtimeBuildHash
+        self.prepareRevision = prepareRevision
+        self.generationKey = generationKey
+    }
+
+    fileprivate init(manifest: PlayCoverPrepareManifest) {
+        self.init(
+            sourceContentHash: manifest.sourceContentHash,
+            runtimeBuildHash: manifest.runtimeBuildHash,
+            prepareRevision: manifest.prepareRevision,
+            generationKey: manifest.generationKey
+        )
+    }
+
+    func matches(_ manifest: PlayCoverPrepareManifest) -> Bool {
+        sourceContentHash == manifest.sourceContentHash
+            && runtimeBuildHash == manifest.runtimeBuildHash
+            && prepareRevision == manifest.prepareRevision
+            && generationKey == manifest.generationKey
+    }
+}
+
 struct PlayCoverUnterminatedLaunchError: Error,
     CustomStringConvertible
 {
@@ -68,6 +108,8 @@ public enum PlayCoverService {
         ((Int32, Int32) -> Int32)?
     static var fastVerifyEventOverrideForTesting:
         ((FastVerifyEvent) throws -> Void)?
+    static var generationKeyComputationObserverForTesting:
+        (() -> Void)?
 
     public static func inspect(
         appPath: String
@@ -126,9 +168,12 @@ public enum PlayCoverService {
         return PlayCoverPreparationPlan(
             source: source,
             runtimeFrameworkPath: runtimePath,
-            runtimeBuildHash: runtimeHash,
-            prepareRevision: revision,
-            generationKey: generationKey
+            generationIdentity: PlayCoverGenerationIdentity(
+                sourceContentHash: source.inspection.sourceContentHash,
+                runtimeBuildHash: runtimeHash,
+                prepareRevision: revision,
+                generationKey: generationKey
+            )
         )
     }
 
@@ -321,10 +366,12 @@ public enum PlayCoverService {
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
-        let manifest = try fastVerifiedManifest(
+        let validated = try fastVerifiedManifest(
             app: app,
-            suppliedManifest: nil
+            suppliedManifest: nil,
+            expectedGenerationIdentity: nil
         )
+        let manifest = validated.manifest
         let upstream: PlayCoverUpstreamAppInspection
         do {
             upstream = try PlayCoverUpstreamEngine.verify(
@@ -374,28 +421,77 @@ public enum PlayCoverService {
     static func fastVerify(
         appPath: String
     ) throws -> PlayCoverPrepareManifest {
+        try fastVerifyEvidence(
+            appPath: appPath,
+            expectedGenerationIdentity: nil
+        ).manifest
+    }
+
+    static func fastVerifyEvidence(
+        appPath: String,
+        expectedGenerationIdentity: PlayCoverGenerationIdentity?
+    ) throws -> PlayCoverValidatedPreparedManifest {
         let app = URL(
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
         return try fastVerifiedManifest(
             app: app,
-            suppliedManifest: nil
+            suppliedManifest: nil,
+            expectedGenerationIdentity: expectedGenerationIdentity
         )
     }
 
     /// Reads and validates only the recorded generation identity. The caller
     /// must run `fastVerify` immediately before launch before trusting it.
     static func readPreparedManifest(
-        appPath: String
+        appPath: String,
+        expectedGenerationIdentity: PlayCoverGenerationIdentity? = nil
     ) throws -> PlayCoverPrepareManifest {
+        try readPreparedManifestEvidence(
+            appPath: appPath,
+            expectedGenerationIdentity:
+                expectedGenerationIdentity
+        ).manifest
+    }
+
+    static func readPreparedManifestEvidence(
+        appPath: String,
+        expectedGenerationIdentity:
+            PlayCoverGenerationIdentity? = nil
+    ) throws -> PlayCoverValidatedPreparedManifest {
         let app = URL(
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
         let manifest = try readManifest(for: app).value
-        try validateManifest(manifest, appURL: app)
-        return manifest
+        let generationIdentity = try validateManifest(
+            manifest,
+            appURL: app,
+            expectedGenerationIdentity: expectedGenerationIdentity
+        )
+        return PlayCoverValidatedPreparedManifest(
+            manifest: manifest,
+            generationIdentity: generationIdentity
+        )
+    }
+
+    /// Test overrides bypass immutable sidecars by design. Keep their
+    /// unchecked identity construction inside this source file so production
+    /// layers cannot manufacture trusted generation evidence.
+    static func uncheckedValidatedPreparedManifestForTesting(
+        _ manifest: PlayCoverPrepareManifest,
+        expectedGenerationIdentity:
+            PlayCoverGenerationIdentity?
+    ) -> PlayCoverValidatedPreparedManifest {
+        PlayCoverValidatedPreparedManifest(
+            manifest: manifest,
+            generationIdentity:
+                expectedGenerationIdentity
+                    ?? PlayCoverGenerationIdentity(
+                        manifest: manifest
+                    )
+        )
     }
 
     static func fastVerifyGeneration(
@@ -408,14 +504,16 @@ public enum PlayCoverService {
         ).standardizedFileURL
         _ = try fastVerifiedManifest(
             app: app,
-            suppliedManifest: suppliedManifest
+            suppliedManifest: suppliedManifest,
+            expectedGenerationIdentity: nil
         )
     }
 
     private static func fastVerifiedManifest(
         app: URL,
-        suppliedManifest: PlayCoverPrepareManifest?
-    ) throws -> PlayCoverPrepareManifest {
+        suppliedManifest: PlayCoverPrepareManifest?,
+        expectedGenerationIdentity: PlayCoverGenerationIdentity?
+    ) throws -> PlayCoverValidatedPreparedManifest {
         try withStableGenerationDescriptor(for: app) {
             generationDescriptor,
             generationURL in
@@ -427,7 +525,12 @@ public enum PlayCoverService {
                 maximumBytes: generationManifestMaximumBytes
             )
             let manifest = manifestEvidence.value
-            try validateManifest(manifest, appURL: app)
+            let generationIdentity = try validateManifest(
+                manifest,
+                appURL: app,
+                expectedGenerationIdentity:
+                    expectedGenerationIdentity
+            )
             if let suppliedManifest,
                suppliedManifest != manifest {
                 throw PlayCoverBackendError.cacheTampered(
@@ -514,7 +617,10 @@ public enum PlayCoverService {
                         "embedded Runtime hash changed"
                     )
                 }
-                return manifest
+                return PlayCoverValidatedPreparedManifest(
+                    manifest: manifest,
+                    generationIdentity: generationIdentity
+                )
             }
         }
     }
@@ -525,9 +631,13 @@ public enum PlayCoverService {
         runtimeSocketPath: String,
         timeout: Double = 15
     ) throws -> PlayCoverLaunchIdentity {
-        let manifest = try fastVerify(appPath: appPath)
+        let validated = try fastVerifyEvidence(
+            appPath: appPath,
+            expectedGenerationIdentity: nil
+        )
         return try launchVerified(
-            manifest: manifest,
+            manifest: validated.manifest,
+            generationIdentity: validated.generationIdentity,
             sessionID: sessionID,
             runtimeSocketPath: runtimeSocketPath,
             timeout: timeout
@@ -536,6 +646,7 @@ public enum PlayCoverService {
 
     static func launchVerified(
         manifest: PlayCoverPrepareManifest,
+        generationIdentity: PlayCoverGenerationIdentity? = nil,
         sessionID: String,
         runtimeSocketPath: String,
         timeout: Double = 15
@@ -555,7 +666,11 @@ public enum PlayCoverService {
             fileURLWithPath: manifest.preparedAppPath,
             isDirectory: true
         ).standardizedFileURL
-        try validateManifest(manifest, appURL: app)
+        _ = try validateManifest(
+            manifest,
+            appURL: app,
+            expectedGenerationIdentity: generationIdentity
+        )
         let expectedRuntimeSocketPath =
             try PlayCoverSessionService.expectedRuntimeSocketPath(
                 sessionID: sessionID,
@@ -823,6 +938,7 @@ public enum PlayCoverService {
         runtimeBuildHash: String,
         prepareRevision: String
     ) -> String {
+        generationKeyComputationObserverForTesting?()
         var hasher = SHA256()
         update(&hasher, sourceContentHash)
         update(&hasher, runtimeBuildHash)
@@ -1101,10 +1217,13 @@ public enum PlayCoverService {
         return machO.fileSHA256
     }
 
-    private static func validateManifest(
+    @discardableResult
+    static func validateManifest(
         _ manifest: PlayCoverPrepareManifest,
-        appURL: URL
-    ) throws {
+        appURL: URL,
+        expectedGenerationIdentity:
+            PlayCoverGenerationIdentity? = nil
+    ) throws -> PlayCoverGenerationIdentity {
         guard manifest.schemaVersion == 3,
               manifest.backend == "playcover-headless",
               manifest.prepareRevision == prepareImplementationRevision,
@@ -1116,15 +1235,10 @@ public enum PlayCoverService {
                 == canonicalPath(appURL.path),
               canonicalPath(manifest.executablePath)
                 == canonicalPath(
-                    appURL.appendingPathComponent(
-                        manifest.executableName
-                    ).path
+                  appURL.appendingPathComponent(
+                      manifest.executableName
+                  ).path
                 ),
-              manifest.generationKey == makeGenerationKey(
-                sourceContentHash: manifest.sourceContentHash,
-                runtimeBuildHash: manifest.runtimeBuildHash,
-                prepareRevision: manifest.prepareRevision
-              ),
               !manifest.sourceInventory.isEmpty,
               !manifest.sourceMachOs.isEmpty,
               Set(manifest.sourceInventory.map(\.relativePath)).count
@@ -1132,9 +1246,30 @@ public enum PlayCoverService {
               Set(manifest.sourceMachOs.map(\.relativePath)).count
                 == manifest.sourceMachOs.count else {
             throw PlayCoverBackendError.verificationFailed(
-                "manifest schema, identity, or generation is invalid"
+                "manifest schema or identity is invalid"
             )
         }
+        let observedGeneration =
+            PlayCoverGenerationIdentity(manifest: manifest)
+        if let expectedGenerationIdentity {
+            guard expectedGenerationIdentity == observedGeneration else {
+                throw PlayCoverBackendError.verificationFailed(
+                    "manifest generation does not match trusted "
+                        + "preparation evidence"
+                )
+            }
+            return expectedGenerationIdentity
+        }
+        guard manifest.generationKey == makeGenerationKey(
+                sourceContentHash: manifest.sourceContentHash,
+                runtimeBuildHash: manifest.runtimeBuildHash,
+                prepareRevision: manifest.prepareRevision
+              ) else {
+            throw PlayCoverBackendError.verificationFailed(
+                "manifest generation key is invalid"
+            )
+        }
+        return observedGeneration
     }
 
     private struct RecordedCodeVerification {

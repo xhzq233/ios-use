@@ -177,9 +177,19 @@ struct PlayCoverPreparationSource: Equatable, Sendable {
 struct PlayCoverPreparationPlan: Equatable, Sendable {
     let source: PlayCoverPreparationSource
     let runtimeFrameworkPath: String
-    let runtimeBuildHash: String
-    let prepareRevision: String
-    let generationKey: String
+    let generationIdentity: PlayCoverGenerationIdentity
+
+    var runtimeBuildHash: String {
+        generationIdentity.runtimeBuildHash
+    }
+
+    var prepareRevision: String {
+        generationIdentity.prepareRevision
+    }
+
+    var generationKey: String {
+        generationIdentity.generationKey
+    }
 }
 
 public struct PlayCoverEntitlementDiff: Codable, Equatable, Sendable {
@@ -273,6 +283,11 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
         self.entitlementDiff = entitlementDiff
         self.completedAt = completedAt
     }
+}
+
+struct PlayCoverValidatedPreparedManifest: Equatable, Sendable {
+    let manifest: PlayCoverPrepareManifest
+    let generationIdentity: PlayCoverGenerationIdentity
 }
 
 struct PlayCoverCompletedGeneration: Codable, Equatable, Sendable {

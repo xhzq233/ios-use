@@ -10,7 +10,91 @@ final class PlayCoverFastVerifyTests: XCTestCase {
     override func tearDown() {
         Shell.runResultOverrideForTesting = nil
         PlayCoverService.fastVerifyEventOverrideForTesting = nil
+        PlayCoverService
+            .generationKeyComputationObserverForTesting = nil
         super.tearDown()
+    }
+
+    func testFastVerifyCarriesOneValidatedGenerationIdentity()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        Shell.runResultOverrideForTesting = {
+            _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+        var computationCount = 0
+        PlayCoverService.generationKeyComputationObserverForTesting = {
+            computationCount += 1
+        }
+
+        let bare = try PlayCoverService.fastVerifyEvidence(
+            appPath: fixture.app.path,
+            expectedGenerationIdentity: nil
+        )
+        XCTAssertEqual(
+            computationCount,
+            1,
+            "a bare selection must independently derive the untrusted "
+                + "disk manifest generation exactly once"
+        )
+        let trusted = bare.generationIdentity
+        computationCount = 0
+
+        let explicit = try PlayCoverService.fastVerifyEvidence(
+            appPath: fixture.app.path,
+            expectedGenerationIdentity: trusted
+        )
+        XCTAssertEqual(explicit.generationIdentity, trusted)
+        XCTAssertEqual(computationCount, 0)
+        XCTAssertNoThrow(
+            try PlayCoverService.validateManifest(
+                explicit.manifest,
+                appURL: fixture.app,
+                expectedGenerationIdentity:
+                    explicit.generationIdentity
+            )
+        )
+        XCTAssertEqual(
+            computationCount,
+            0,
+            "launch-time structural validation must carry the "
+                + "fast-verified identity instead of deriving it again"
+        )
+
+        let differentPlan = try PlayCoverService.makePreparationPlan(
+            source: PlayCoverService.inspectPreparationSource(
+                appPath: fixture.app.path
+            ),
+            runtimeFrameworkPath: fixture.app
+                .appendingPathComponent(
+                    "Frameworks",
+                    isDirectory: true
+                )
+                .appendingPathComponent(
+                    PlayCoverService.runtimeFrameworkName,
+                    isDirectory: true
+                ).path
+        )
+        XCTAssertNotEqual(
+            differentPlan.generationIdentity,
+            trusted
+        )
+        computationCount = 0
+        XCTAssertThrowsError(
+            try PlayCoverService.fastVerifyEvidence(
+                appPath: fixture.app.path,
+                expectedGenerationIdentity:
+                    differentPlan.generationIdentity
+            )
+        )
+        XCTAssertEqual(
+            computationCount,
+            0,
+            "mismatched trusted evidence must fail by field comparison "
+                + "without silently deriving a replacement key"
+        )
     }
 
     func testFastVerifyHashesRequiredExecutablesAndCodesignsSigningOrderOnce()

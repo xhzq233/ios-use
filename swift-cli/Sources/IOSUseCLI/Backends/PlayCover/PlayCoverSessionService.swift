@@ -126,6 +126,7 @@ enum PlayCoverSessionService {
         let bundleIdentifier: String
         let executablePath: String
         let generationKey: String
+        let generationIdentity: PlayCoverGenerationIdentity?
         let expectedManifest: PlayCoverPrepareManifest?
         let reused: Bool
         let timing: PlayCoverStartTiming
@@ -148,6 +149,8 @@ enum PlayCoverSessionService {
                 executablePath:
                     resolution.manifest.executablePath,
                 generationKey: resolution.manifest.generationKey,
+                generationIdentity:
+                    resolution.generationIdentity,
                 expectedManifest: resolution.manifest,
                 reused: resolution.reused,
                 timing: resolution.timing
@@ -173,6 +176,7 @@ enum PlayCoverSessionService {
             bundleIdentifier: reference.bundleIdentifier,
             executablePath: reference.executablePath,
             generationKey: reference.generationKey,
+            generationIdentity: nil,
             expectedManifest: nil,
             reused: true,
             timing: PlayCoverStartTiming(
@@ -209,9 +213,12 @@ enum PlayCoverSessionService {
         )
         var timing = resolved.timing
         let verificationStarted = PlayCoverMonotonicClock.now()
-        let verifiedManifest = try fastVerify(
-            appPath: resolved.appPath
+        let validatedManifest = try fastVerify(
+            appPath: resolved.appPath,
+            expectedGenerationIdentity:
+                resolved.generationIdentity
         )
+        let verifiedManifest = validatedManifest.manifest
         timing.addVerify(
             PlayCoverMonotonicClock.elapsed(
                 since: verificationStarted
@@ -249,6 +256,8 @@ enum PlayCoverSessionService {
             do {
                 identity = try PlayCoverService.launchVerified(
                     manifest: verifiedManifest,
+                    generationIdentity:
+                        validatedManifest.generationIdentity,
                     sessionID: sessionID,
                     runtimeSocketPath: socketPath,
                     timeout: timeout
@@ -542,7 +551,10 @@ enum PlayCoverSessionService {
                     + "identity is incomplete."
             )
         }
-        let manifest = try fastVerify(appPath: appPath)
+        let manifest = try fastVerify(
+            appPath: appPath,
+            expectedGenerationIdentity: nil
+        ).manifest
         guard PlayCoverRuntimeClient.canonicalPath(
             manifest.preparedAppPath
         ) == PlayCoverRuntimeClient.canonicalPath(appPath),
@@ -577,12 +589,23 @@ enum PlayCoverSessionService {
     }
 
     private static func fastVerify(
-        appPath: String
-    ) throws -> PlayCoverPrepareManifest {
+        appPath: String,
+        expectedGenerationIdentity:
+            PlayCoverGenerationIdentity?
+    ) throws -> PlayCoverValidatedPreparedManifest {
         if let fastVerifyOverrideForTesting {
-            return try fastVerifyOverrideForTesting(appPath)
+            return PlayCoverService
+                .uncheckedValidatedPreparedManifestForTesting(
+                    try fastVerifyOverrideForTesting(appPath),
+                    expectedGenerationIdentity:
+                        expectedGenerationIdentity
+                )
         }
-        return try PlayCoverService.fastVerify(appPath: appPath)
+        return try PlayCoverService.fastVerifyEvidence(
+            appPath: appPath,
+            expectedGenerationIdentity:
+                expectedGenerationIdentity
+        )
     }
 
     static func expectedRuntimeSocketPath(

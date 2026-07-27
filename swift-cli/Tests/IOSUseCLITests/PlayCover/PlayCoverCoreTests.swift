@@ -209,25 +209,11 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(plan.runtimeFrameworkPath, runtime.path)
         XCTAssertEqual(plan.runtimeBuildHash.count, 64)
         XCTAssertEqual(
+            plan.generationIdentity.sourceContentHash,
+            plan.source.inspection.sourceContentHash
+        )
+        XCTAssertEqual(
             plan.generationKey,
-            PlayCoverService.makeGenerationKey(
-                sourceContentHash:
-                    plan.source.inspection.sourceContentHash,
-                runtimeBuildHash: plan.runtimeBuildHash,
-                prepareRevision: plan.prepareRevision
-            )
-        )
-
-        let forwardedKey = String(repeating: "f", count: 64)
-        let forwardedPlan = PlayCoverPreparationPlan(
-            source: plan.source,
-            runtimeFrameworkPath: plan.runtimeFrameworkPath,
-            runtimeBuildHash: plan.runtimeBuildHash,
-            prepareRevision: plan.prepareRevision,
-            generationKey: forwardedKey
-        )
-        XCTAssertNotEqual(
-            forwardedKey,
             PlayCoverService.makeGenerationKey(
                 sourceContentHash:
                     plan.source.inspection.sourceContentHash,
@@ -237,10 +223,10 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertNoThrow(
             try PlayCoverService.validatePreparationPlan(
-                forwardedPlan
+                plan
             ),
-            "Service must forward the immutable plan instead of "
-                + "recomputing its generation key or deep-comparing evidence"
+            "Service must forward the immutable computed generation "
+                + "identity without deriving it again"
         )
     }
 

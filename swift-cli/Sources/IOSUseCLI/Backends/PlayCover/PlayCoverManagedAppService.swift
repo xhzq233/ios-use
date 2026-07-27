@@ -40,6 +40,7 @@ enum PlayCoverManagedAppService {
 
     struct Resolution: Equatable, Sendable {
         let manifest: PlayCoverPrepareManifest
+        let generationIdentity: PlayCoverGenerationIdentity
         let reused: Bool
         let timing: PlayCoverStartTiming
     }
@@ -82,9 +83,14 @@ enum PlayCoverManagedAppService {
                         + "different IOS_USE_HOME"
                 )
             }
-            let manifest = try readPreparedManifest(at: canonical)
+            let validated = try readPreparedManifest(
+                at: canonical
+            )
+            let manifest = validated.manifest
             return Resolution(
                 manifest: manifest,
+                generationIdentity:
+                    validated.generationIdentity,
                 reused: true,
                 timing: makeTiming(
                     inspectNanoseconds:
@@ -162,9 +168,12 @@ enum PlayCoverManagedAppService {
                             + "manifest/completed marker"
                     )
                 }
-                let manifest = try readPreparedManifest(
-                    at: layout.app.path
+                let validated = try readPreparedManifest(
+                    at: layout.app.path,
+                    expectedGenerationIdentity:
+                        plan.generationIdentity
                 )
+                let manifest = validated.manifest
                 try validateManagedManifest(
                     manifest,
                     plan: plan,
@@ -172,6 +181,7 @@ enum PlayCoverManagedAppService {
                 )
                 return Resolution(
                     manifest: manifest,
+                    generationIdentity: plan.generationIdentity,
                     reused: true,
                     timing: makeTiming(
                         inspectNanoseconds: inspectNanoseconds,
@@ -357,9 +367,12 @@ enum PlayCoverManagedAppService {
                 #endif
             } catch {
                 if hasCompletePreparedSidecars(at: layout.app.path) {
-                    let winner = try readPreparedManifest(
-                        at: layout.app.path
+                    let validatedWinner = try readPreparedManifest(
+                        at: layout.app.path,
+                        expectedGenerationIdentity:
+                            plan.generationIdentity
                     )
+                    let winner = validatedWinner.manifest
                     try validateManagedManifest(
                         winner,
                         plan: plan,
@@ -367,6 +380,8 @@ enum PlayCoverManagedAppService {
                     )
                     return Resolution(
                         manifest: winner,
+                        generationIdentity:
+                            plan.generationIdentity,
                         reused: true,
                         timing: makeTiming(
                             inspectNanoseconds: inspectNanoseconds,
@@ -384,8 +399,10 @@ enum PlayCoverManagedAppService {
                 paths: paths
             )
             let publishedManifest = try readPreparedManifest(
-                at: layout.app.path
-            )
+                at: layout.app.path,
+                expectedGenerationIdentity:
+                    plan.generationIdentity
+            ).manifest
             guard publishedManifest == manifest else {
                 throw PlayCoverBackendError.cacheTampered(
                     "published generation identity changed after atomic rename"
@@ -393,6 +410,7 @@ enum PlayCoverManagedAppService {
             }
             return Resolution(
                 manifest: manifest,
+                generationIdentity: plan.generationIdentity,
                 reused: false,
                 timing: makeTiming(
                     inspectNanoseconds: inspectNanoseconds,
@@ -508,13 +526,22 @@ enum PlayCoverManagedAppService {
     }
 
     private static func readPreparedManifest(
-        at path: String
-    ) throws -> PlayCoverPrepareManifest {
+        at path: String,
+        expectedGenerationIdentity:
+            PlayCoverGenerationIdentity? = nil
+    ) throws -> PlayCoverValidatedPreparedManifest {
         if let readManifestOverrideForTesting {
-            return try readManifestOverrideForTesting(path)
+            return PlayCoverService
+                .uncheckedValidatedPreparedManifestForTesting(
+                    try readManifestOverrideForTesting(path),
+                    expectedGenerationIdentity:
+                        expectedGenerationIdentity
+                )
         }
-        return try PlayCoverService.readPreparedManifest(
-            appPath: path
+        return try PlayCoverService.readPreparedManifestEvidence(
+            appPath: path,
+            expectedGenerationIdentity:
+                expectedGenerationIdentity
         )
     }
 
