@@ -301,6 +301,35 @@ enum DriverSessionStore {
     }
 
     static func removeDriverLock(paths: IOSUsePaths) throws {
+        #if canImport(Darwin)
+        var status = stat()
+        guard Darwin.lstat(paths.driverLock, &status) == 0 else {
+            if errno == ENOENT || errno == ENOTDIR {
+                return
+            }
+            throw CLIParseError.invalidValue(
+                "Cannot inspect driver.lock before removal: errno \(errno)."
+            )
+        }
+        guard isSafeDriverLock(status) else {
+            throw CLIParseError.invalidValue(
+                "Refusing to remove driver.lock because it is not an "
+                    + "owner-only singly-linked regular file."
+            )
+        }
+        guard Darwin.unlink(paths.driverLock) == 0 else {
+            if errno == ENOENT {
+                return
+            }
+            throw CLIParseError.invalidValue(
+                "Cannot remove driver.lock: errno \(errno)."
+            )
+        }
+        try syncParentDirectory(
+            of: paths.driverLock,
+            label: "driver.lock"
+        )
+        #else
         do {
             try FileManager.default.removeItem(atPath: paths.driverLock)
         } catch {
@@ -309,6 +338,7 @@ enum DriverSessionStore {
             }
             throw error
         }
+        #endif
     }
 
     private static func writePrivateAtomically(
@@ -318,11 +348,10 @@ enum DriverSessionStore {
         #if canImport(Darwin)
         var existing = stat()
         if Darwin.lstat(path, &existing) == 0 {
-            guard (existing.st_mode & mode_t(S_IFMT))
-                    == mode_t(S_IFREG),
-                  existing.st_uid == geteuid() else {
+            guard isSafeDriverLock(existing) else {
                 throw CLIParseError.invalidValue(
-                    "Refusing to replace driver.lock because it is not an owned regular file."
+                    "Refusing to replace driver.lock because it is not an "
+                        + "owner-only singly-linked regular file."
                 )
             }
         } else if errno != ENOENT {
@@ -376,8 +405,8 @@ enum DriverSessionStore {
                 )
             }
         }
-        guard Darwin.fsync(descriptor) == 0,
-              Darwin.fchmod(descriptor, 0o600) == 0 else {
+        guard Darwin.fchmod(descriptor, 0o600) == 0,
+              Darwin.fsync(descriptor) == 0 else {
             throw CLIParseError.invalidValue(
                 "Cannot secure private driver.lock: errno \(errno)."
             )
@@ -388,6 +417,7 @@ enum DriverSessionStore {
             )
         }
         removeTemporary = false
+        try syncParentDirectory(of: path, label: "driver.lock")
         #else
         try data.write(to: URL(fileURLWithPath: path), options: .atomic)
         try FileManager.default.setAttributes(
@@ -396,6 +426,36 @@ enum DriverSessionStore {
         )
         #endif
     }
+
+    #if canImport(Darwin)
+    private static func syncParentDirectory(
+        of path: String,
+        label: String
+    ) throws {
+        let parent = URL(fileURLWithPath: path)
+            .deletingLastPathComponent().path
+        let descriptor = Darwin.open(
+            parent,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw CLIParseError.invalidValue(
+                "Cannot open \(label) parent for fsync: errno \(errno)."
+            )
+        }
+        defer { Darwin.close(descriptor) }
+        var status = stat()
+        guard Darwin.fstat(descriptor, &status) == 0,
+              (status.st_mode & mode_t(S_IFMT))
+                == mode_t(S_IFDIR),
+              status.st_uid == geteuid(),
+              Darwin.fsync(descriptor) == 0 else {
+            throw CLIParseError.invalidValue(
+                "Cannot fsync \(label) parent: errno \(errno)."
+            )
+        }
+    }
+    #endif
 
     private static func canonicalPath(_ path: String) -> String {
         URL(fileURLWithPath: path)
