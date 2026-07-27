@@ -520,12 +520,13 @@ final class PlayCoverCoreTests: XCTestCase {
             PlayCoverService.acceptsOwnedLaunchIdentity(
                 pid: 43,
                 bundleIdentifier: manifest.bundleIdentifier,
-                bundleURLPath: fixture.app.path,
+                bundleURLPath: manifest.preparedAppPath,
                 executablePath: manifest.executablePath,
                 existingPIDs: [],
                 manifest: manifest,
                 launchAliasPath: launchAliasPath
-            )
+            ),
+            "a callback that reports the prepared App cannot grant ownership"
         )
         XCTAssertFalse(
             PlayCoverService.acceptsOwnedLaunchIdentity(
@@ -538,6 +539,178 @@ final class PlayCoverCoreTests: XCTestCase {
                 launchAliasPath: launchAliasPath
             )
         )
+    }
+
+    func testPreparedBundlePathRequiresExactRuntimeAuthentication()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "e", count: 64)
+        )
+        let launchAliasPath = fixture.root
+            .appendingPathComponent("Launch.app").path
+
+        for bundlePath in [
+            launchAliasPath,
+            manifest.preparedAppPath,
+        ] {
+            XCTAssertTrue(
+                PlayCoverService.acceptsRuntimeLaunchCandidateIdentity(
+                    pid: 42,
+                    bundleIdentifier: manifest.bundleIdentifier,
+                    bundleURLPath: bundlePath,
+                    executablePath: manifest.executablePath,
+                    existingPIDs: [41],
+                    manifest: manifest,
+                    launchAliasPath: launchAliasPath
+                ),
+                "LaunchServices may expose either exact bundle spelling"
+            )
+        }
+        XCTAssertFalse(
+            PlayCoverService.acceptsRuntimeLaunchCandidateIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                existingPIDs: [42],
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
+            ),
+            "a pre-existing PID is never challenged or claimed"
+        )
+        XCTAssertFalse(
+            PlayCoverService.acceptsRuntimeLaunchCandidateIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: fixture.app.path,
+                executablePath: manifest.executablePath,
+                existingPIDs: [],
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
+            ),
+            "an unrelated App path is not a Runtime candidate"
+        )
+        XCTAssertTrue(
+            PlayCoverService.runtimeCandidateAllowsLegacyHelloFallback(
+                bundleURLPath: launchAliasPath,
+                launchAliasPath: launchAliasPath
+            )
+        )
+        XCTAssertFalse(
+            PlayCoverService.runtimeCandidateAllowsLegacyHelloFallback(
+                bundleURLPath: manifest.preparedAppPath,
+                launchAliasPath: launchAliasPath
+            ),
+            "a canonical prepared path requires identified ping"
+        )
+
+        let callbackAtAlias =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: launchAliasPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 10,
+                source: .workspaceCallback
+            )
+        let callbackAtPrepared =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 10,
+                source: .workspaceCallback
+            )
+        let observedAtPrepared =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 10,
+                source: .observedCandidate
+            )
+        let authenticatedAtPrepared =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 10,
+                source: .authenticatedRuntime
+            )
+
+        XCTAssertTrue(
+            PlayCoverService.acceptsClaimedLaunchIdentity(
+                callbackAtAlias,
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
+            )
+        )
+        XCTAssertFalse(
+            PlayCoverService.acceptsClaimedLaunchIdentity(
+                callbackAtPrepared,
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
+            ),
+            "a callback alone cannot claim the canonical prepared path"
+        )
+        XCTAssertFalse(
+            PlayCoverService.acceptsClaimedLaunchIdentity(
+                observedAtPrepared,
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
+            ),
+            "polling alone cannot claim the canonical prepared path"
+        )
+        XCTAssertTrue(
+            PlayCoverService.acceptsClaimedLaunchIdentity(
+                authenticatedAtPrepared,
+                manifest: manifest,
+                launchAliasPath: launchAliasPath
+            ),
+            "the exact current Runtime session grants the claim"
+        )
+        XCTAssertEqual(
+            try PlayCoverService.authenticatedRuntimeClaim(
+                from: [observedAtPrepared]
+            ),
+            authenticatedAtPrepared
+        )
+        let secondObserved =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: 43,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 11,
+                source: .observedCandidate
+            )
+        XCTAssertThrowsError(
+            try PlayCoverService.authenticatedRuntimeClaim(
+                from: [observedAtPrepared, secondObserved]
+            )
+        ) { error in
+            guard case .launchFailed(let message) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains(
+                    "multiple App processes authenticated"
+                )
+            )
+        }
     }
 
     func testSessionLaunchAliasUsesPinnedTopLevelSymlinkFarm()
@@ -765,11 +938,13 @@ final class PlayCoverCoreTests: XCTestCase {
                 .appendingPathComponent("Prepared.app").path,
             generationKey: String(repeating: "b", count: 64)
         )
+        let launchAliasPath = fixture.root
+            .appendingPathComponent("Launch.app").path
         let callbackIdentity =
             PlayCoverService.LaunchedApplicationIdentity(
                 pid: 42,
                 bundleIdentifier: manifest.bundleIdentifier,
-                bundleURLPath: manifest.preparedAppPath,
+                bundleURLPath: launchAliasPath,
                 executablePath: manifest.executablePath,
                 processStartTimeMicroseconds: 10,
                 source: .workspaceCallback

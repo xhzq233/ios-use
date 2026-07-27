@@ -137,16 +137,21 @@ exact outcome, and start does not commit the session unless it matches.
 The launch facade is a real `.app` directory whose top-level children are
 symlinks to the immutable prepared App, matching pinned PlayCover's
 `createAlias` shape. Each random session gets a collision-free facade name.
-Neither an NSWorkspace callback nor a newly observed PID grants process
-ownership by itself. The candidate must be new, report that exact session
-facade as its bundle URL, retain the exact prepared executable, and
-authenticate this start's random session and socket through Runtime `hello`;
-only then may rollback or session commit use that PID. Confirmed stop and
-confirmed rollback remove the facade. A facade whose asynchronous open was
-submitted without yielding an owned process remains fail-closed so a late
-LaunchServices completion cannot lose its Bundle resources; the next CLI start
-uses a new session facade. Launch discovery uses the full validated
-`start --timeout` value rather than a shorter hidden deadline.
+An NSWorkspace callback may establish rollback ownership only for a new process
+that reports the exact session facade and prepared executable; it cannot by
+itself commit a session. A newly observed PID grants no ownership. Polling may
+challenge a new process whose bundle URL is either that facade or the canonical
+immutable prepared App, because LaunchServices can expose the latter after
+resolving the facade. The process must retain the exact prepared executable and
+authenticate this start's random session, socket, PID, bundle, and executable
+through Runtime identified ping before a prepared-App path may be claimed.
+Final Runtime `hello` must still pass before session commit.
+Confirmed stop and confirmed rollback remove the facade. A facade whose
+asynchronous open was submitted without yielding an owned process remains
+fail-closed so a late LaunchServices completion cannot lose its Bundle
+resources; the next CLI start uses a new session facade. Launch discovery uses
+the full validated `start --timeout` value rather than a shorter hidden
+deadline.
 
 Each connection carries one four-byte big-endian length-prefixed JSON request:
 

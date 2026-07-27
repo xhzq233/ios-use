@@ -732,19 +732,18 @@ public enum PlayCoverService {
                 launchAlias: &launchAlias,
                 workspaceOpenSubmitted: &workspaceOpenSubmitted
             )
-            launched = identity
             guard let launchAlias,
-                  identity.pid > 0,
-                  identity.bundleIdentifier == manifest.bundleIdentifier,
-                  canonicalPath(identity.bundleURLPath)
-                    == canonicalPath(launchAlias.bundleURL.path),
-                  canonicalPath(identity.executablePath)
-                    == canonicalPath(manifest.executablePath) else {
+                  acceptsClaimedLaunchIdentity(
+                    identity,
+                    manifest: manifest,
+                    launchAliasPath: launchAlias.bundleURL.path
+                  ) else {
                 throw PlayCoverBackendError.launchFailed(
                     "NSWorkspace returned PID/bundle/App/executable identity "
                         + "that does not match the prepared generation"
                 )
             }
+            launched = identity
 
             var lastError: Error?
             while ProcessInfo.processInfo.systemUptime < deadline {
@@ -2636,6 +2635,96 @@ public enum PlayCoverService {
                 == canonicalPath(manifest.executablePath)
     }
 
+    /// Returns whether a newly observed process is safe to challenge with the
+    /// random Runtime session. This does not grant process ownership.
+    ///
+    /// LaunchServices can canonicalize pinned PlayCover's top-level symlink
+    /// facade and report the immutable prepared App as `bundleURL`. The exact
+    /// facade remains accepted, but the prepared path is only a Runtime
+    /// authentication candidate; it cannot be claimed from polling alone.
+    static func acceptsRuntimeLaunchCandidateIdentity(
+        pid: Int32,
+        bundleIdentifier: String,
+        bundleURLPath: String,
+        executablePath: String,
+        existingPIDs: Set<Int32>,
+        manifest: PlayCoverPrepareManifest,
+        launchAliasPath: String
+    ) -> Bool {
+        guard pid > 0,
+              !existingPIDs.contains(pid),
+              bundleIdentifier == manifest.bundleIdentifier,
+              canonicalPath(executablePath)
+                == canonicalPath(manifest.executablePath) else {
+            return false
+        }
+        let bundlePath = canonicalPath(bundleURLPath)
+        return bundlePath == canonicalPath(launchAliasPath)
+            || bundlePath == canonicalPath(manifest.preparedAppPath)
+    }
+
+    /// Revalidates the source-specific bundle identity before the caller gains
+    /// rollback authority. A prepared-App bundle path is valid only after the
+    /// exact process authenticated the current Runtime session.
+    static func acceptsClaimedLaunchIdentity(
+        _ identity: LaunchedApplicationIdentity,
+        manifest: PlayCoverPrepareManifest,
+        launchAliasPath: String
+    ) -> Bool {
+        guard identity.pid > 0,
+              identity.bundleIdentifier == manifest.bundleIdentifier,
+              canonicalPath(identity.executablePath)
+                == canonicalPath(manifest.executablePath) else {
+            return false
+        }
+        let bundlePath = canonicalPath(identity.bundleURLPath)
+        switch identity.source {
+        case .workspaceCallback:
+            return bundlePath == canonicalPath(launchAliasPath)
+        case .authenticatedRuntime:
+            return bundlePath == canonicalPath(launchAliasPath)
+                || bundlePath == canonicalPath(manifest.preparedAppPath)
+        case .observedCandidate:
+            return false
+        }
+    }
+
+    static func runtimeCandidateAllowsLegacyHelloFallback(
+        bundleURLPath: String,
+        launchAliasPath: String
+    ) -> Bool {
+        canonicalPath(bundleURLPath) == canonicalPath(launchAliasPath)
+    }
+
+    static func authenticatedRuntimeClaim(
+        from candidates: [LaunchedApplicationIdentity]
+    ) throws -> LaunchedApplicationIdentity? {
+        guard candidates.count <= 1 else {
+            throw PlayCoverBackendError.launchFailed(
+                "multiple App processes authenticated the same "
+                    + "launch session"
+            )
+        }
+        guard let identity = candidates.first else {
+            return nil
+        }
+        guard identity.source == .observedCandidate else {
+            throw PlayCoverBackendError.launchFailed(
+                "Runtime-authenticated launch claim did not originate "
+                    + "from an observed candidate"
+            )
+        }
+        return LaunchedApplicationIdentity(
+            pid: identity.pid,
+            bundleIdentifier: identity.bundleIdentifier,
+            bundleURLPath: identity.bundleURLPath,
+            executablePath: identity.executablePath,
+            processStartTimeMicroseconds:
+                identity.processStartTimeMicroseconds,
+            source: .authenticatedRuntime
+        )
+    }
+
     static func mayClaimLaunchIdentity(
         _ candidate: LaunchedApplicationIdentity,
         callbackIdentity: LaunchedApplicationIdentity?,
@@ -2791,6 +2880,12 @@ public enum PlayCoverService {
                 )
                 let ping = try runtime.ping()
                 if !ping.hasCompleteIdentity {
+                    guard runtimeCandidateAllowsLegacyHelloFallback(
+                        bundleURLPath: identity.bundleURLPath,
+                        launchAliasPath: alias.bundleURL.path
+                    ) else {
+                        return false
+                    }
                     _ = try runtime.hello()
                 }
                 return true
@@ -2814,7 +2909,7 @@ public enum PlayCoverService {
                         .standardizedFileURL.path,
                       let executablePath = application.executableURL?
                         .standardizedFileURL.path,
-                      acceptsOwnedLaunchIdentity(
+                      acceptsRuntimeLaunchCandidateIdentity(
                         pid: application.processIdentifier,
                         bundleIdentifier: bundleIdentifier,
                         bundleURLPath: bundlePath,
@@ -2845,23 +2940,10 @@ public enum PlayCoverService {
             let provenCandidates = candidates.filter {
                 authenticatesCurrentLaunch($0)
             }
-            if provenCandidates.count == 1,
-               let identity = provenCandidates.first {
-                return LaunchedApplicationIdentity(
-                    pid: identity.pid,
-                    bundleIdentifier: identity.bundleIdentifier,
-                    bundleURLPath: identity.bundleURLPath,
-                    executablePath: identity.executablePath,
-                    processStartTimeMicroseconds:
-                        identity.processStartTimeMicroseconds,
-                    source: .authenticatedRuntime
-                )
-            }
-            if provenCandidates.count > 1 {
-                throw PlayCoverBackendError.launchFailed(
-                    "multiple App processes authenticated the same "
-                        + "launch session"
-                )
+            if let identity = try authenticatedRuntimeClaim(
+                from: provenCandidates
+            ) {
+                return identity
             }
 
             // Check the callback after polling. LaunchServices can report a
