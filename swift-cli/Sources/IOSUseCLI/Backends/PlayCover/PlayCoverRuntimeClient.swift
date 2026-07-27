@@ -120,6 +120,7 @@ struct PlayCoverRuntimeHostGeometry: Codable, Equatable, Sendable {
     let frame: PlayCoverRuntimeFrame
     let contentBounds: PlayCoverRuntimeFrame
     let canvasRect: PlayCoverRuntimeFrame
+    var backingPixelCanvasRect: PlayCoverRuntimeFrame? = nil
     let canvasBounds: PlayCoverRuntimeFrame
     let renderViewBounds: PlayCoverRuntimeFrame
     let sceneRenderViewFrame: PlayCoverRuntimeFrame
@@ -128,6 +129,8 @@ struct PlayCoverRuntimeHostGeometry: Codable, Equatable, Sendable {
     let inputRenderViewBounds: PlayCoverRuntimeFrame
     let displayScale: Double
     let inverseDisplayScale: Double
+    var backingScaleFactor: Double? = nil
+    var halfPixelTolerance: Double? = nil
     let idiomScale: Double
     let windowScale: Double
     let downscaleWindowIfNecessary: Bool

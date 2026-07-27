@@ -1035,12 +1035,18 @@ final class PlayCoverDriverClientTests: XCTestCase {
         captureError: String? = nil,
         displayScale: Double = 0.75,
         inverseDisplayScale: Double? = nil,
+        backingScaleFactor: Double = 2,
+        halfPixelTolerance: Double? = nil,
         opaque: Bool = true,
         contentWidth: Double? = nil,
         contentHeight: Double? = nil,
         hostFrameWidth: Double? = nil,
         canvasWidth: Double? = nil,
         canvasHeight: Double? = nil,
+        backingPixelCanvasX: Double? = nil,
+        backingPixelCanvasY: Double? = nil,
+        backingPixelCanvasWidth: Double? = nil,
+        backingPixelCanvasHeight: Double? = nil,
         renderViewWidth: Double? = nil,
         renderViewHeight: Double? = nil,
         sceneRenderViewFrameWidth: Double? = nil,
@@ -1070,9 +1076,37 @@ final class PlayCoverDriverClientTests: XCTestCase {
             canvasHeight ?? 932 * displayScale
         let resolvedInverseDisplayScale =
             inverseDisplayScale ?? 1 / displayScale
+        let resolvedHalfPixelTolerance =
+            halfPixelTolerance ?? 0.5 / backingScaleFactor
+        let idealCanvasX = 0.0
+        let idealCanvasMaximumX = idealCanvasX + resolvedCanvasWidth
+        let idealCanvasMaximumY = canvasY + resolvedCanvasHeight
+        let resolvedBackingPixelCanvasX =
+            backingPixelCanvasX ??
+            (idealCanvasX * backingScaleFactor).rounded() /
+                backingScaleFactor
+        let resolvedBackingPixelCanvasY =
+            backingPixelCanvasY ??
+            (canvasY * backingScaleFactor).rounded() /
+                backingScaleFactor
+        let resolvedBackingPixelCanvasMaximumX =
+            (idealCanvasMaximumX * backingScaleFactor).rounded() /
+                backingScaleFactor
+        let resolvedBackingPixelCanvasMaximumY =
+            (idealCanvasMaximumY * backingScaleFactor).rounded() /
+                backingScaleFactor
+        let resolvedBackingPixelCanvasWidth =
+            backingPixelCanvasWidth ??
+            resolvedBackingPixelCanvasMaximumX -
+                resolvedBackingPixelCanvasX
+        let resolvedBackingPixelCanvasHeight =
+            backingPixelCanvasHeight ??
+            resolvedBackingPixelCanvasMaximumY -
+                resolvedBackingPixelCanvasY
         let resolvedCanvasCGY = canvasCGY ??
-            38 + resolvedContentHeight - canvasY -
-                resolvedCanvasHeight
+            38 + resolvedContentHeight -
+                resolvedBackingPixelCanvasY -
+                resolvedBackingPixelCanvasHeight
         return .init(
             status: status,
             hostPolicy: hostPolicy,
@@ -1089,10 +1123,16 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 height: resolvedContentHeight
             ),
             canvasRect: .init(
-                x: 0,
+                x: idealCanvasX,
                 y: canvasY,
                 width: resolvedCanvasWidth,
                 height: resolvedCanvasHeight
+            ),
+            backingPixelCanvasRect: .init(
+                x: resolvedBackingPixelCanvasX,
+                y: resolvedBackingPixelCanvasY,
+                width: resolvedBackingPixelCanvasWidth,
+                height: resolvedBackingPixelCanvasHeight
             ),
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
             renderViewBounds: .init(
@@ -1127,6 +1167,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
             ),
             displayScale: displayScale,
             inverseDisplayScale: resolvedInverseDisplayScale,
+            backingScaleFactor: backingScaleFactor,
+            halfPixelTolerance: resolvedHalfPixelTolerance,
             idiomScale: idiomScale,
             windowScale: windowScale ?? 1,
             downscaleWindowIfNecessary: downscaleWindowIfNecessary,
@@ -1154,8 +1196,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 canvasCGWindowRect: .init(
                     x: canvasCGX,
                     y: resolvedCanvasCGY,
-                    width: resolvedCanvasWidth,
-                    height: resolvedCanvasHeight
+                    width: resolvedBackingPixelCanvasWidth,
+                    height: resolvedBackingPixelCanvasHeight
                 ),
                 hostWindowNumber: 17
             )
@@ -1309,6 +1351,158 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 stage: "ready"
             )
         )
+    }
+
+    func testFixedDeviceAcceptsRestoredQuantizedHostAt1xAnd2x()
+        throws
+    {
+        let displayScale = 316.0 / 430.0
+        let idealHeight = 932.0 * displayScale
+        let idealY = (685.0 - idealHeight) / 2
+        for backingScaleFactor in [1.0, 2.0] {
+            let host = makeSimulatorScaleHostGeometry(
+                displayScale: displayScale,
+                backingScaleFactor: backingScaleFactor,
+                contentWidth: 316,
+                contentHeight: 685,
+                canvasWidth: 316,
+                canvasHeight: idealHeight,
+                backingPixelCanvasX: 0,
+                backingPixelCanvasY: 0,
+                backingPixelCanvasWidth: 316,
+                backingPixelCanvasHeight: 685,
+                canvasY: idealY
+            )
+            XCTAssertNoThrow(
+                try PlayCoverDriverClient.validateFixedDevice(
+                    PlayCoverRuntimeGeometry(
+                        logical: makeGeometry().logical,
+                        native: makeGeometry().native,
+                        scale: makeGeometry().scale,
+                        window: makeGeometry().window,
+                        safeArea: makeGeometry().safeArea,
+                        host: host
+                    ),
+                    stage: "ready"
+                ),
+                "restored 316x685 host should pass at \(backingScaleFactor)x"
+            )
+            XCTAssertEqual(host.contentBounds.height, 685)
+            XCTAssertEqual(host.backingPixelCanvasRect?.height, 685)
+            XCTAssertEqual(host.capture.canvasCGWindowRect.height, 685)
+        }
+    }
+
+    func testFixedDeviceRejectsGeometryBeyondHalfBackingPixel()
+        throws
+    {
+        let displayScale = 316.0 / 430.0
+        let idealHeight = 932.0 * displayScale
+        let idealY = (685.0 - idealHeight) / 2
+        let base = makeGeometry()
+        func geometry(canvasCGY: Double) -> PlayCoverRuntimeGeometry {
+            .init(
+                logical: base.logical,
+                native: base.native,
+                scale: base.scale,
+                window: base.window,
+                safeArea: base.safeArea,
+                host: makeSimulatorScaleHostGeometry(
+                    displayScale: displayScale,
+                    backingScaleFactor: 2,
+                    contentWidth: 316,
+                    contentHeight: 685,
+                    canvasWidth: 316,
+                    canvasHeight: idealHeight,
+                    backingPixelCanvasX: 0,
+                    backingPixelCanvasY: 0,
+                    backingPixelCanvasWidth: 316,
+                    backingPixelCanvasHeight: 685,
+                    canvasY: idealY,
+                    canvasCGY: canvasCGY
+                )
+            )
+        }
+        XCTAssertNoThrow(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry(canvasCGY: 38.25),
+                stage: "ready"
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry(canvasCGY: 38.2501),
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale host canvas capture"
+                )
+            )
+        }
+    }
+
+    func testFixedDeviceUsesDerivedLogicalTreeTolerance()
+        throws
+    {
+        let displayScale = 316.0 / 430.0
+        let idealHeight = 932.0 * displayScale
+        let idealY = (685.0 - idealHeight) / 2
+        let logicalTolerance = 0.25 / displayScale
+        let base = makeGeometry()
+        func geometry(renderViewWidth: Double)
+            -> PlayCoverRuntimeGeometry
+        {
+            .init(
+                logical: base.logical,
+                native: base.native,
+                scale: base.scale,
+                window: base.window,
+                safeArea: base.safeArea,
+                host: makeSimulatorScaleHostGeometry(
+                    displayScale: displayScale,
+                    backingScaleFactor: 2,
+                    contentWidth: 316,
+                    contentHeight: 685,
+                    canvasWidth: 316,
+                    canvasHeight: idealHeight,
+                    backingPixelCanvasX: 0,
+                    backingPixelCanvasY: 0,
+                    backingPixelCanvasWidth: 316,
+                    backingPixelCanvasHeight: 685,
+                    renderViewWidth: renderViewWidth,
+                    canvasY: idealY
+                )
+            )
+        }
+
+        XCTAssertNoThrow(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry(
+                    renderViewWidth:
+                        430 + logicalTolerance - 0.000_1
+                ),
+                stage: "ready"
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry(
+                    renderViewWidth:
+                        430 + logicalTolerance + 0.000_1
+                ),
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale logical render-view bounds"
+                )
+            )
+        }
     }
 
     func testFixedDeviceRejectsMissingOrInvalidSimulatorScaleHost()
@@ -1667,6 +1861,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "frame":{"x":40,"y":30,"width":322.5,"height":727},
                 "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
+                "backingPixelCanvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
                 "renderViewBounds":{"x":0,"y":0,"width":430,"height":932},
                 "sceneRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
@@ -1674,6 +1869,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "inputRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
                 "inputRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
                 "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
+                "backingScaleFactor":2,"halfPixelTolerance":0.25,
                 "idiomScale":1,"windowScale":1,
                 "downscaleWindowIfNecessary":false,
                 "opaque":true,
@@ -1695,6 +1891,12 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
         XCTAssertEqual(geometry.host?.status, "configured")
         XCTAssertEqual(geometry.host?.opaque, true)
+        XCTAssertEqual(geometry.host?.backingScaleFactor, 2)
+        XCTAssertEqual(geometry.host?.halfPixelTolerance, 0.25)
+        XCTAssertEqual(
+            geometry.host?.backingPixelCanvasRect?.height,
+            699
+        )
         XCTAssertEqual(geometry.host?.capture.ready, true)
         XCTAssertEqual(geometry.host?.capture.hostWindowNumber, 17)
     }
@@ -1719,6 +1921,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "frame":{"x":40,"y":30,"width":322.5,"height":727},
                 "contentBounds":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasRect":{"x":0,"y":0,"width":322.5,"height":699},
+                "backingPixelCanvasRect":{"x":0,"y":0,"width":322.5,"height":699},
                 "canvasBounds":{"x":0,"y":0,"width":430,"height":932},
                 "renderViewBounds":{"x":0,"y":0,"width":430,"height":932},
                 "sceneRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
@@ -1726,6 +1929,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 "inputRenderViewFrame":{"x":0,"y":0,"width":430,"height":932},
                 "inputRenderViewBounds":{"x":0,"y":0,"width":430,"height":932},
                 "displayScale":0.75,"inverseDisplayScale":1.3333333333333333,
+                "backingScaleFactor":2,"halfPixelTolerance":0.25,
                 "idiomScale":1,"windowScale":1,
                 "downscaleWindowIfNecessary":false,
                 "opaque":true,

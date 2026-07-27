@@ -2409,6 +2409,12 @@ final class PlayCoverSessionTests: XCTestCase {
             frame: .init(x: 40, y: 30, width: 322.5, height: 727),
             contentBounds: .init(x: 0, y: 0, width: 322.5, height: 699),
             canvasRect: .init(x: 0, y: 0, width: 322.5, height: 699),
+            backingPixelCanvasRect: .init(
+                x: 0,
+                y: 0,
+                width: 322.5,
+                height: 699
+            ),
             canvasBounds: .init(x: 0, y: 0, width: 430, height: 932),
             renderViewBounds: .init(
                 x: 0,
@@ -2442,6 +2448,8 @@ final class PlayCoverSessionTests: XCTestCase {
             ),
             displayScale: 0.75,
             inverseDisplayScale: 4.0 / 3.0,
+            backingScaleFactor: 2,
+            halfPixelTolerance: 0.25,
             idiomScale: 1,
             windowScale: 1,
             downscaleWindowIfNecessary: false,
@@ -2490,6 +2498,8 @@ final class PlayCoverSessionTests: XCTestCase {
             frame: host.frame,
             contentBounds: host.contentBounds,
             canvasRect: host.canvasRect,
+            backingPixelCanvasRect:
+                host.backingPixelCanvasRect,
             canvasBounds: host.canvasBounds,
             renderViewBounds: host.renderViewBounds,
             sceneRenderViewFrame: host.sceneRenderViewFrame,
@@ -2498,6 +2508,8 @@ final class PlayCoverSessionTests: XCTestCase {
             inputRenderViewBounds: host.inputRenderViewBounds,
             displayScale: host.displayScale,
             inverseDisplayScale: host.inverseDisplayScale,
+            backingScaleFactor: host.backingScaleFactor,
+            halfPixelTolerance: host.halfPixelTolerance,
             idiomScale: host.idiomScale,
             windowScale: host.windowScale,
             downscaleWindowIfNecessary:

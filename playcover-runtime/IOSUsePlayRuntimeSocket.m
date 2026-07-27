@@ -424,6 +424,9 @@ static NSDictionary<NSString *, id> *IOSUseHostGeometry(
             window[@"hostContentBounds"]
         ),
         @"canvasRect": IOSUseSocketStableRect(window[@"canvasRect"]),
+        @"backingPixelCanvasRect": IOSUseSocketStableRect(
+            window[@"backingPixelCanvasRect"]
+        ),
         @"canvasBounds": IOSUseSocketStableRect(window[@"canvasBounds"]),
         @"renderViewBounds": IOSUseSocketStableRect(
             window[@"renderViewBounds"]
@@ -445,6 +448,12 @@ static NSDictionary<NSString *, id> *IOSUseHostGeometry(
         ),
         @"inverseDisplayScale": IOSUseSocketStableFiniteNumber(
             window[@"inverseDisplayScale"]
+        ),
+        @"backingScaleFactor": IOSUseSocketStableFiniteNumber(
+            window[@"backingScaleFactor"]
+        ),
+        @"halfPixelTolerance": IOSUseSocketStableFiniteNumber(
+            window[@"halfPixelTolerance"]
         ),
         @"idiomScale": IOSUseSocketStableFiniteNumber(
             sceneScale[@"idiom"]
@@ -511,19 +520,33 @@ static BOOL IOSUseSocketRectFromJSON(id value, CGRect *rect) {
     return YES;
 }
 
-static BOOL IOSUseSocketContainsRect(CGRect outer, CGRect inner) {
-    return CGRectGetMinX(inner) >= CGRectGetMinX(outer) - 0.01 &&
-        CGRectGetMinY(inner) >= CGRectGetMinY(outer) - 0.01 &&
-        CGRectGetMaxX(inner) <= CGRectGetMaxX(outer) + 0.01 &&
-        CGRectGetMaxY(inner) <= CGRectGetMaxY(outer) + 0.01;
+static BOOL IOSUseSocketContainsRect(
+    CGRect outer,
+    CGRect inner,
+    CGFloat tolerance
+) {
+    return CGRectGetMinX(inner) >= CGRectGetMinX(outer) - tolerance &&
+        CGRectGetMinY(inner) >= CGRectGetMinY(outer) - tolerance &&
+        CGRectGetMaxX(inner) <= CGRectGetMaxX(outer) + tolerance &&
+        CGRectGetMaxY(inner) <= CGRectGetMaxY(outer) + tolerance;
 }
 
-static BOOL IOSUseSocketMatchesFixedLogicalCanvas(CGRect rect) {
-    const CGFloat tolerance = 0.5;
+static BOOL IOSUseSocketMatchesFixedLogicalCanvas(
+    CGRect rect,
+    CGFloat tolerance
+) {
     return fabs(rect.origin.x) <= tolerance &&
         fabs(rect.origin.y) <= tolerance &&
         fabs(rect.size.width - IOSUsePlayDeviceLogicalWidth) <= tolerance &&
         fabs(rect.size.height - IOSUsePlayDeviceLogicalHeight) <= tolerance;
+}
+
+static BOOL IOSUseSocketBackingAligned(
+    CGFloat value,
+    CGFloat backingScaleFactor
+) {
+    CGFloat pixels = value * backingScaleFactor;
+    return isfinite(pixels) && fabs(pixels - round(pixels)) <= 0.000001;
 }
 
 static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
@@ -540,12 +563,17 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
     CGRect inputRenderViewFrame = CGRectZero;
     CGRect inputRenderViewBounds = CGRectZero;
     CGRect canvasRect = CGRectZero;
+    CGRect backingPixelCanvasRect = CGRectZero;
     CGRect hostContentCGWindowRect = CGRectZero;
     CGRect hostCGWindowBounds = CGRectZero;
     CGRect canvasCGWindowRect = CGRectZero;
     CGFloat displayScale = [host[@"displayScale"] doubleValue];
     CGFloat inverseDisplayScale =
         [host[@"inverseDisplayScale"] doubleValue];
+    CGFloat backingScaleFactor =
+        [host[@"backingScaleFactor"] doubleValue];
+    CGFloat halfPixelTolerance =
+        [host[@"halfPixelTolerance"] doubleValue];
     CGFloat idiomScale = [host[@"idiomScale"] doubleValue];
     CGFloat windowScale = [host[@"windowScale"] doubleValue];
     NSString *title = [host[@"title"] isKindOfClass:NSString.class]
@@ -593,7 +621,11 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
             host[@"inputRenderViewBounds"],
             &inputRenderViewBounds
         ) &&
-        IOSUseSocketRectFromJSON(host[@"canvasRect"], &canvasRect);
+        IOSUseSocketRectFromJSON(host[@"canvasRect"], &canvasRect) &&
+        IOSUseSocketRectFromJSON(
+            host[@"backingPixelCanvasRect"],
+            &backingPixelCanvasRect
+        );
     if (!commonReady) {
         return NO;
     }
@@ -605,35 +637,84 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         CGRectGetMinY(canvasRect) - CGRectGetMinY(contentBounds);
     CGFloat topMargin =
         CGRectGetMaxY(contentBounds) - CGRectGetMaxY(canvasRect);
+    CGFloat logicalTolerance =
+        isfinite(displayScale) && displayScale > 0
+            ? halfPixelTolerance / displayScale
+            : 0;
     return [host[@"opaque"] boolValue] &&
         isfinite(displayScale) && displayScale > 0 &&
+        isfinite(backingScaleFactor) &&
+        backingScaleFactor > 0 && backingScaleFactor <= 4 &&
+        isfinite(halfPixelTolerance) &&
+        fabs(halfPixelTolerance -
+            0.5 / backingScaleFactor) <= 0.000001 &&
+        isfinite(logicalTolerance) && logicalTolerance > 0 &&
+        IOSUseSocketBackingAligned(
+            CGRectGetMinX(backingPixelCanvasRect),
+            backingScaleFactor
+        ) &&
+        IOSUseSocketBackingAligned(
+            CGRectGetMinY(backingPixelCanvasRect),
+            backingScaleFactor
+        ) &&
+        IOSUseSocketBackingAligned(
+            CGRectGetMaxX(backingPixelCanvasRect),
+            backingScaleFactor
+        ) &&
+        IOSUseSocketBackingAligned(
+            CGRectGetMaxY(backingPixelCanvasRect),
+            backingScaleFactor
+        ) &&
         isfinite(inverseDisplayScale) &&
         fabs(displayScale * inverseDisplayScale - 1.0) <= 0.01 &&
-        fabs(canvasBounds.origin.x) <= 0.01 &&
-        fabs(canvasBounds.origin.y) <= 0.01 &&
-        fabs(canvasBounds.size.width - IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
-        fabs(canvasBounds.size.height - IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
-        IOSUseSocketMatchesFixedLogicalCanvas(renderViewBounds) &&
-        IOSUseSocketMatchesFixedLogicalCanvas(sceneRenderViewFrame) &&
-        IOSUseSocketMatchesFixedLogicalCanvas(sceneRenderViewBounds) &&
-        IOSUseSocketMatchesFixedLogicalCanvas(inputRenderViewFrame) &&
-        IOSUseSocketMatchesFixedLogicalCanvas(inputRenderViewBounds) &&
+        fabs(canvasBounds.origin.x) <= logicalTolerance &&
+        fabs(canvasBounds.origin.y) <= logicalTolerance &&
+        fabs(canvasBounds.size.width - IOSUsePlayDeviceLogicalWidth) <=
+            logicalTolerance &&
+        fabs(canvasBounds.size.height - IOSUsePlayDeviceLogicalHeight) <=
+            logicalTolerance &&
+        IOSUseSocketMatchesFixedLogicalCanvas(
+            renderViewBounds,
+            logicalTolerance
+        ) &&
+        IOSUseSocketMatchesFixedLogicalCanvas(
+            sceneRenderViewFrame,
+            logicalTolerance
+        ) &&
+        IOSUseSocketMatchesFixedLogicalCanvas(
+            sceneRenderViewBounds,
+            logicalTolerance
+        ) &&
+        IOSUseSocketMatchesFixedLogicalCanvas(
+            inputRenderViewFrame,
+            logicalTolerance
+        ) &&
+        IOSUseSocketMatchesFixedLogicalCanvas(
+            inputRenderViewBounds,
+            logicalTolerance
+        ) &&
         isfinite(idiomScale) &&
         fabs(idiomScale - 1.0) <= 0.01 &&
         isfinite(windowScale) &&
         fabs(windowScale - 1.0) <= 0.01 &&
         ![host[@"downscaleWindowIfNecessary"] boolValue] &&
-        IOSUseSocketContainsRect(contentBounds, canvasRect) &&
-        leftMargin >= -0.01 && rightMargin >= -0.01 &&
-        bottomMargin >= -0.01 && topMargin >= -0.01 &&
-        leftMargin + rightMargin <= 1.01 &&
-        bottomMargin + topMargin <= 1.01 &&
-        fabs(leftMargin - rightMargin) <= 0.01 &&
-        fabs(bottomMargin - topMargin) <= 0.01 &&
+        IOSUseSocketContainsRect(
+            contentBounds,
+            canvasRect,
+            halfPixelTolerance
+        ) &&
+        leftMargin >= -halfPixelTolerance &&
+        rightMargin >= -halfPixelTolerance &&
+        bottomMargin >= -halfPixelTolerance &&
+        topMargin >= -halfPixelTolerance &&
+        leftMargin + rightMargin <= halfPixelTolerance * 2 &&
+        bottomMargin + topMargin <= halfPixelTolerance * 2 &&
+        fabs(leftMargin - rightMargin) <= halfPixelTolerance &&
+        fabs(bottomMargin - topMargin) <= halfPixelTolerance &&
         fabs(canvasRect.size.width / displayScale -
-            IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
+            IOSUsePlayDeviceLogicalWidth) <= logicalTolerance &&
         fabs(canvasRect.size.height / displayScale -
-            IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
+            IOSUsePlayDeviceLogicalHeight) <= logicalTolerance &&
         IOSUseSocketRectFromJSON(
             capture[@"hostContentCGWindowRect"],
             &hostContentCGWindowRect
@@ -649,30 +730,50 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         [capture[@"ready"] boolValue] &&
         captureErrorIsNull && hostWindowNumber != nil &&
         hostWindowNumber.unsignedLongLongValue > 0 &&
+        fabs(hostCGWindowBounds.size.width - frame.size.width) <=
+            halfPixelTolerance &&
+        fabs(hostCGWindowBounds.size.height - frame.size.height) <=
+            halfPixelTolerance &&
         IOSUseSocketContainsRect(
             hostCGWindowBounds,
-            hostContentCGWindowRect
+            hostContentCGWindowRect,
+            halfPixelTolerance
         ) &&
-        IOSUseSocketContainsRect(hostCGWindowBounds, canvasCGWindowRect) &&
+        IOSUseSocketContainsRect(
+            hostCGWindowBounds,
+            canvasCGWindowRect,
+            halfPixelTolerance
+        ) &&
         fabs(hostContentCGWindowRect.size.width -
-            contentBounds.size.width) <= 0.01 &&
+            contentBounds.size.width) <= halfPixelTolerance &&
         fabs(hostContentCGWindowRect.size.height -
-            contentBounds.size.height) <= 0.01 &&
+            contentBounds.size.height) <= halfPixelTolerance &&
         fabs(
             canvasCGWindowRect.origin.x -
                 (hostContentCGWindowRect.origin.x +
-                    canvasRect.origin.x - contentBounds.origin.x)
-        ) <= 0.01 &&
+                    backingPixelCanvasRect.origin.x -
+                    contentBounds.origin.x)
+        ) <= halfPixelTolerance &&
         fabs(
             canvasCGWindowRect.origin.y -
                 (hostContentCGWindowRect.origin.y +
                     CGRectGetMaxY(contentBounds) -
-                    CGRectGetMaxY(canvasRect))
-        ) <= 0.01 &&
-        fabs(canvasCGWindowRect.size.width / displayScale -
-            IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
-        fabs(canvasCGWindowRect.size.height / displayScale -
-            IOSUsePlayDeviceLogicalHeight) <= 0.01;
+                    CGRectGetMaxY(backingPixelCanvasRect))
+        ) <= halfPixelTolerance &&
+        fabs(canvasCGWindowRect.size.width -
+            backingPixelCanvasRect.size.width) <=
+                halfPixelTolerance &&
+        fabs(canvasCGWindowRect.size.height -
+            backingPixelCanvasRect.size.height) <=
+                halfPixelTolerance &&
+        fabs(CGRectGetMinX(backingPixelCanvasRect) -
+            CGRectGetMinX(canvasRect)) <= halfPixelTolerance &&
+        fabs(CGRectGetMinY(backingPixelCanvasRect) -
+            CGRectGetMinY(canvasRect)) <= halfPixelTolerance &&
+        fabs(CGRectGetMaxX(backingPixelCanvasRect) -
+            CGRectGetMaxX(canvasRect)) <= halfPixelTolerance &&
+        fabs(CGRectGetMaxY(backingPixelCanvasRect) -
+            CGRectGetMaxY(canvasRect)) <= halfPixelTolerance;
 }
 
 /// Capture every UIKit/AppKit field for one response in one main-thread turn.

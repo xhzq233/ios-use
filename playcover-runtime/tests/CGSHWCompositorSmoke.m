@@ -1097,6 +1097,7 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
     NSString *layoutFailure = nil;
     BOOL layoutReady = IOSUsePlayResolveHostCanvasLayout(
         hostContent.bounds,
+        window.backingScaleFactor,
         &layout,
         &layoutFailure
     );
@@ -1150,6 +1151,7 @@ static BOOL RunSimulatorScaleHostCanvasSmoke(
             hostCGBounds,
             canvasCGBounds,
             layout.displayScale,
+            layout.backingScaleFactor,
             &logicalRect,
             &cropEvidence,
             &cropFailure

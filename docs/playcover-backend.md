@@ -63,14 +63,24 @@ aspect policy settles, the Runtime performs one bounded, asynchronous
 bootstrap `setContentSize:` to the already resolved aspect-fit size and
 verifies it on later probes. This touches neither the window position nor
 UIKit bounds, and it is permanently disabled for that host before user resize
-begins.
+begins. System-restored sizes already within half of one physical pixel are
+accepted unchanged; in particular, a restored 316 x 685 content size is not
+normalized.
 
 The content view has no transparent spacer or synthetic chrome. It applies
 only one uniform display scale and origin to the inner render canvas; the
 canvas bounds and UIKit scene remain exactly 430 x 932 points. Input removes
 that origin and applies the inverse scale before target hit testing, while
 title-bar and outside-canvas points are rejected. A host cannot shrink below
-the explicit 0.5x complete-canvas policy.
+the explicit 0.5x complete-canvas policy. One layout records both the ideal
+uniform canvas and its nearest backing-pixel rectangle. Rendering and inverse
+input use the ideal transform; CGWindow projection and capture use the
+backing-pixel rectangle. Runtime and CLI readiness validate their agreement
+with `0.5 / backingScaleFactor` points. A source raster may differ from its
+reported logical extent by at most half a physical pixel, but all four crop
+edges must map exactly onto that source's own pixel grid; an ambiguous edge
+fails closed instead of rounding outward into host decoration or independently
+dropping the first/last row.
 
 The full device frame is the target App's complete 430 x 932 logical rendering.
 The Runtime does not create a fallback system-chrome window or draw synthetic

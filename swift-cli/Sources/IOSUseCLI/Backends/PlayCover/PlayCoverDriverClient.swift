@@ -930,6 +930,45 @@ final class PlayCoverDriverClient: DriverCommandClient {
                     "simulator-scale host diagnostics"
                 )
         }
+        guard let backingPixelCanvasRect =
+                host.backingPixelCanvasRect,
+              let backingScaleFactor = host.backingScaleFactor,
+              let halfPixelTolerance = host.halfPixelTolerance,
+              backingScaleFactor.isFinite,
+              backingScaleFactor > 0,
+              backingScaleFactor <= 4,
+              halfPixelTolerance.isFinite,
+              halfPixelTolerance > 0,
+              host.displayScale.isFinite,
+              host.displayScale > 0,
+              abs(
+                  halfPixelTolerance -
+                      0.5 / backingScaleFactor
+              ) <= 0.000_001 else {
+            throw PlayCoverDriverClientError
+                .runtimeGeometryMismatch(
+                    "simulator-scale host display scale"
+                )
+        }
+        let geometryTolerance = halfPixelTolerance
+        let logicalTolerance =
+            halfPixelTolerance / host.displayScale
+        guard logicalTolerance.isFinite, logicalTolerance > 0 else {
+            throw PlayCoverDriverClientError
+                .runtimeGeometryMismatch(
+                    "simulator-scale host display scale"
+                )
+        }
+        func withinHost(_ lhs: Double, _ rhs: Double) -> Bool {
+            abs(lhs - rhs) <= geometryTolerance
+        }
+        func withinLogical(_ lhs: Double, _ rhs: Double) -> Bool {
+            abs(lhs - rhs) <= logicalTolerance
+        }
+        func backingAligned(_ value: Double) -> Bool {
+            let pixels = value * backingScaleFactor
+            return abs(pixels - pixels.rounded()) <= 0.000_001
+        }
         let expectedCanvasWidth =
             Self.logicalSize.width * host.displayScale
         let expectedCanvasHeight =
@@ -974,62 +1013,114 @@ final class PlayCoverDriverClient: DriverCommandClient {
             ),
             (
                 validHostFrame(host.canvasBounds) &&
-                    approximatelyEqual(host.canvasBounds.x, 0) &&
-                    approximatelyEqual(host.canvasBounds.y, 0) &&
-                    approximatelyEqual(
+                    withinLogical(host.canvasBounds.x, 0) &&
+                    withinLogical(host.canvasBounds.y, 0) &&
+                    withinLogical(
                         host.canvasBounds.width,
                         Self.logicalSize.width
                     ) &&
-                    approximatelyEqual(
+                    withinLogical(
                         host.canvasBounds.height,
                         Self.logicalSize.height
                     ),
                 "simulator-scale fixed canvas bounds"
             ),
             (
-                fixedLogicalCanvasRect(host.renderViewBounds),
+                fixedLogicalCanvasRect(
+                    host.renderViewBounds,
+                    tolerance: logicalTolerance
+                ),
                 "simulator-scale logical render-view bounds"
             ),
             (
-                fixedLogicalCanvasRect(host.sceneRenderViewFrame),
+                fixedLogicalCanvasRect(
+                    host.sceneRenderViewFrame,
+                    tolerance: logicalTolerance
+                ),
                 "simulator-scale logical scene-render frame"
             ),
             (
-                fixedLogicalCanvasRect(host.sceneRenderViewBounds),
+                fixedLogicalCanvasRect(
+                    host.sceneRenderViewBounds,
+                    tolerance: logicalTolerance
+                ),
                 "simulator-scale logical scene-render bounds"
             ),
             (
-                fixedLogicalCanvasRect(host.inputRenderViewFrame),
+                fixedLogicalCanvasRect(
+                    host.inputRenderViewFrame,
+                    tolerance: logicalTolerance
+                ),
                 "simulator-scale logical input-render frame"
             ),
             (
-                fixedLogicalCanvasRect(host.inputRenderViewBounds),
+                fixedLogicalCanvasRect(
+                    host.inputRenderViewBounds,
+                    tolerance: logicalTolerance
+                ),
                 "simulator-scale logical input-render bounds"
             ),
             (
                 validHostFrame(host.frame) &&
                     validHostFrame(host.contentBounds) &&
                     validHostFrame(host.canvasRect) &&
-                    approximatelyEqual(
+                    validHostFrame(backingPixelCanvasRect) &&
+                    backingAligned(backingPixelCanvasRect.x) &&
+                    backingAligned(backingPixelCanvasRect.y) &&
+                    backingAligned(
+                        backingPixelCanvasRect.x +
+                            backingPixelCanvasRect.width
+                    ) &&
+                    backingAligned(
+                        backingPixelCanvasRect.y +
+                            backingPixelCanvasRect.height
+                    ) &&
+                    withinHost(
                         host.canvasRect.width,
                         expectedCanvasWidth
                     ) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.canvasRect.height,
                         expectedCanvasHeight
                     ) &&
                     hostFrameContains(
                         host.contentBounds,
-                        host.canvasRect
+                        host.canvasRect,
+                        tolerance: geometryTolerance
                     ) &&
-                    leftMargin >= -0.01 &&
-                    rightMargin >= -0.01 &&
-                    bottomMargin >= -0.01 &&
-                    topMargin >= -0.01 &&
-                    leftMargin + rightMargin <= 1.01 &&
-                    bottomMargin + topMargin <= 1.01 &&
-                    approximatelyEqual(leftMargin, rightMargin) &&
-                    approximatelyEqual(bottomMargin, topMargin),
+                    leftMargin >= -geometryTolerance &&
+                    rightMargin >= -geometryTolerance &&
+                    bottomMargin >= -geometryTolerance &&
+                    topMargin >= -geometryTolerance &&
+                    leftMargin + rightMargin <=
+                        geometryTolerance * 2 &&
+                    bottomMargin + topMargin <=
+                        geometryTolerance * 2 &&
+                    withinHost(leftMargin, rightMargin) &&
+                    withinHost(bottomMargin, topMargin) &&
+                    hostFrameContains(
+                        host.contentBounds,
+                        backingPixelCanvasRect,
+                        tolerance: geometryTolerance
+                    ) &&
+                    withinHost(
+                        backingPixelCanvasRect.x,
+                        host.canvasRect.x
+                    ) &&
+                    withinHost(
+                        backingPixelCanvasRect.y,
+                        host.canvasRect.y
+                    ) &&
+                    withinHost(
+                        backingPixelCanvasRect.x +
+                            backingPixelCanvasRect.width,
+                        host.canvasRect.x + host.canvasRect.width
+                    ) &&
+                    withinHost(
+                        backingPixelCanvasRect.y +
+                            backingPixelCanvasRect.height,
+                        host.canvasRect.y + host.canvasRect.height
+                    ),
                 "simulator-scale host canvas layout"
             ),
             (
@@ -1038,60 +1129,53 @@ final class PlayCoverDriverClient: DriverCommandClient {
                     validHostFrame(host.capture.hostContentCGWindowRect) &&
                     validHostFrame(host.capture.hostCGWindowBounds) &&
                     validHostFrame(host.capture.canvasCGWindowRect) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.capture.hostCGWindowBounds.width,
                         host.frame.width
                     ) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.capture.hostCGWindowBounds.height,
                         host.frame.height
                     ) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.capture.hostContentCGWindowRect.width,
                         host.contentBounds.width
                     ) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.capture.hostContentCGWindowRect.height,
                         host.contentBounds.height
                     ) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.capture.canvasCGWindowRect.width,
-                        host.canvasRect.width
+                        backingPixelCanvasRect.width
                     ) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.capture.canvasCGWindowRect.height,
-                        host.canvasRect.height
-                    ) &&
-                    approximatelyEqual(
-                        host.capture.canvasCGWindowRect.width /
-                            host.displayScale,
-                        Self.logicalSize.width
-                    ) &&
-                    approximatelyEqual(
-                        host.capture.canvasCGWindowRect.height /
-                            host.displayScale,
-                        Self.logicalSize.height
+                        backingPixelCanvasRect.height
                     ) &&
                     hostFrameContains(
                         host.capture.hostCGWindowBounds,
-                        host.capture.hostContentCGWindowRect
+                        host.capture.hostContentCGWindowRect,
+                        tolerance: geometryTolerance
                     ) &&
                     hostFrameContains(
                         host.capture.hostCGWindowBounds,
-                        host.capture.canvasCGWindowRect
+                        host.capture.canvasCGWindowRect,
+                        tolerance: geometryTolerance
                     ) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.capture.canvasCGWindowRect.x,
                         host.capture.hostContentCGWindowRect.x +
-                            host.canvasRect.x - host.contentBounds.x
+                            backingPixelCanvasRect.x -
+                            host.contentBounds.x
                     ) &&
-                    approximatelyEqual(
+                    withinHost(
                         host.capture.canvasCGWindowRect.y,
                         host.capture.hostContentCGWindowRect.y +
                             (host.contentBounds.y +
                                 host.contentBounds.height -
-                                host.canvasRect.y -
-                                host.canvasRect.height)
+                                backingPixelCanvasRect.y -
+                                backingPixelCanvasRect.height)
                     ),
                 "simulator-scale host canvas capture"
             ),
@@ -1111,9 +1195,9 @@ final class PlayCoverDriverClient: DriverCommandClient {
     }
 
     private static func fixedLogicalCanvasRect(
-        _ frame: PlayCoverRuntimeFrame
+        _ frame: PlayCoverRuntimeFrame,
+        tolerance: Double
     ) -> Bool {
-        let tolerance = 0.5
         return abs(frame.x) <= tolerance &&
             abs(frame.y) <= tolerance &&
             abs(frame.width - logicalSize.width) <= tolerance &&
@@ -1122,9 +1206,9 @@ final class PlayCoverDriverClient: DriverCommandClient {
 
     private static func hostFrameContains(
         _ container: PlayCoverRuntimeFrame,
-        _ candidate: PlayCoverRuntimeFrame
+        _ candidate: PlayCoverRuntimeFrame,
+        tolerance: Double
     ) -> Bool {
-        let tolerance = 0.01
         return candidate.x >= container.x - tolerance &&
             candidate.y >= container.y - tolerance &&
             candidate.x + candidate.width <=

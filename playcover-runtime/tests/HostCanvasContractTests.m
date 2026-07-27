@@ -37,6 +37,7 @@ static BOOL IOSUseHostCanvasTestRequire(BOOL condition, NSString *message) {
 
 static BOOL IOSUseHostCanvasTestLayout(
     CGRect bounds,
+    CGFloat backingScale,
     CGFloat expectedScale,
     CGRect expectedCanvas,
     IOSUsePlayHostCanvasLayout *layout
@@ -45,6 +46,7 @@ static BOOL IOSUseHostCanvasTestLayout(
     IOSUsePlayHostCanvasLayout resolved = {0};
     BOOL ready = IOSUsePlayResolveHostCanvasLayout(
         bounds,
+        backingScale,
         &resolved,
         &failure
     );
@@ -60,6 +62,14 @@ static BOOL IOSUseHostCanvasTestLayout(
         IOSUseHostCanvasTestRectEquals(
             resolved.canvasRect,
             expectedCanvas
+        ) &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            resolved.backingScaleFactor,
+            backingScale
+        ) &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            resolved.halfPixelTolerance,
+            0.5 / backingScale
         ) &&
         IOSUseHostCanvasTestApproximatelyEqual(
             CGRectGetMidX(resolved.canvasRect),
@@ -88,6 +98,7 @@ static BOOL IOSUseHostCanvasTestResizeRounding(void) {
     NSString *failure = nil;
     BOOL ready = IOSUsePlayResolveHostCanvasLayout(
         CGRectMake(0, 0, 400, 867),
+        2,
         &layout,
         &failure
     );
@@ -129,6 +140,7 @@ static BOOL IOSUseHostCanvasTestBootstrapAspectTarget(void) {
     NSString *normalizedFailure = nil;
     BOOL initialReady = IOSUsePlayResolveHostCanvasLayout(
         CGRectMake(0, 0, 422, 916),
+        2,
         &initial,
         &initialFailure
     );
@@ -143,6 +155,7 @@ static BOOL IOSUseHostCanvasTestBootstrapAspectTarget(void) {
     BOOL normalizedReady = initialReady &&
         IOSUsePlayResolveHostCanvasLayout(
             normalizedBounds,
+            2,
             &normalized,
             &normalizedFailure
         );
@@ -395,6 +408,7 @@ static BOOL IOSUseHostCanvasTestCropAtBackingScale(
             sourceBounds,
             canvasBounds,
             1,
+            backingScale,
             &logicalRect,
             &evidence,
             &failure
@@ -457,17 +471,16 @@ static BOOL IOSUseHostCanvasTestCropAtBackingScale(
     );
 }
 
-static BOOL IOSUseHostCanvasTestFractionalCropExcludesDecorations(void) {
+static BOOL IOSUseHostCanvasTestRejectsNonAlignedCrop(void) {
     // At 2x backing, the target canvas starts 0.25pt into the native source:
-    // 38.25pt * 2 == 76.5px.  An outward crop would include red pixel row 76
-    // (and the corresponding left/right edge); the canvas-only contract must
-    // instead crop inward to row 77 and preserve only green target pixels.
+    // 38.25pt * 2 == 76.5px. There is no exact source-pixel boundary, so
+    // accepting this crop could round outward into host decoration.
     CGRect sourceBounds = CGRectMake(10, 20, 431, 971);
     CGRect canvasBounds = CGRectMake(10.25, 58.25, 430, 932);
     CGImageRef source = IOSUseHostCanvasTestCreateRawCapture(
         862,
         1942,
-        CGRectMake(1, 77, 859, 1863)
+        CGRectMake(1, 77, 860, 1864)
     );
     CGRect logicalRect = CGRectNull;
     NSDictionary<NSString *, id> *evidence = nil;
@@ -479,20 +492,174 @@ static BOOL IOSUseHostCanvasTestFractionalCropExcludesDecorations(void) {
             sourceBounds,
             canvasBounds,
             1,
+            2,
+            &logicalRect,
+            &evidence,
+            &failure
+        );
+    BOOL passed = normalized == NULL && evidence == nil &&
+        CGRectIsNull(logicalRect) &&
+        [failure containsString:@"backing-pixel aligned"];
+    if (normalized != NULL) {
+        CGImageRelease(normalized);
+    }
+    if (source != NULL) {
+        CGImageRelease(source);
+    }
+    return IOSUseHostCanvasTestRequire(
+        passed,
+        [NSString stringWithFormat:
+            @"fractional canvas crop did not fail closed: %@",
+            failure ?: @"non-aligned crop accepted"
+        ]
+    );
+}
+
+static BOOL IOSUseHostCanvasTestAcceptsQuantizedSourceExtent(void) {
+    // CGWindow may quantize a logical extent by half of one source pixel and
+    // may place the window at a fractional global point. Cropping is relative
+    // to the returned source raster, so neither condition may reject a
+    // full-source, exactly aligned canvas.
+    CGRect sourceBounds = CGRectMake(10.25, 20.25, 430.25, 932.5);
+    CGFloat displayScale =
+        sourceBounds.size.width / IOSUsePlayDeviceLogicalWidth;
+    CGImageRef source = IOSUseHostCanvasTestCreateRawCapture(
+        860,
+        1865,
+        CGRectMake(0, 0, 860, 1865)
+    );
+    CGRect logicalRect = CGRectNull;
+    NSDictionary<NSString *, id> *evidence = nil;
+    NSString *failure = nil;
+    CGImageRef normalized = source == NULL
+        ? NULL
+        : IOSUsePlayCropAndNormalizeCanvasCapture(
+            source,
+            sourceBounds,
+            sourceBounds,
+            displayScale,
+            2,
             &logicalRect,
             &evidence,
             &failure
         );
     NSDictionary<NSString *, NSNumber *> *sourceCrop =
         evidence[@"sourcePixelCropRect"];
-    BOOL cropEvidenceReady =
-        [evidence[@"canvasOnly"] boolValue] &&
-        [evidence[@"hostDecorationsExcluded"] boolValue] &&
-        [sourceCrop[@"x"] integerValue] == 1 &&
-        [sourceCrop[@"y"] integerValue] == 77 &&
-        [sourceCrop[@"width"] integerValue] == 859 &&
-        [sourceCrop[@"height"] integerValue] == 1863;
-    BOOL pixelsAreCanvasOnly =
+    BOOL passed = normalized != NULL && failure == nil &&
+        IOSUseHostCanvasTestRectEquals(
+            logicalRect,
+            CGRectMake(
+                0,
+                0,
+                IOSUsePlayDeviceLogicalWidth,
+                IOSUsePlayDeviceLogicalHeight
+            )
+        ) &&
+        [sourceCrop[@"x"] integerValue] == 0 &&
+        [sourceCrop[@"y"] integerValue] == 0 &&
+        [sourceCrop[@"width"] integerValue] == 860 &&
+        [sourceCrop[@"height"] integerValue] == 1865 &&
+        IOSUseHostCanvasTestSampleIsGreen(normalized, 0, 0) &&
+        IOSUseHostCanvasTestSampleIsGreen(
+            normalized,
+            IOSUsePlayDeviceNativeWidth - 1,
+            IOSUsePlayDeviceNativeHeight - 1
+        );
+    if (normalized != NULL) {
+        CGImageRelease(normalized);
+    }
+    if (source != NULL) {
+        CGImageRelease(source);
+    }
+    return IOSUseHostCanvasTestRequire(
+        passed,
+        [NSString stringWithFormat:
+            @"half-pixel source quantization was rejected: %@",
+            failure ?: @"unexpected crop result"
+        ]
+    );
+}
+
+static BOOL IOSUseHostCanvasTestRestoredQuantizedWindow(
+    CGFloat backingScale
+) {
+    CGRect contentBounds = CGRectMake(0, 0, 316, 685);
+    IOSUsePlayHostCanvasLayout layout = {0};
+    NSString *layoutFailure = nil;
+    BOOL layoutReady = IOSUsePlayResolveHostCanvasLayout(
+        contentBounds,
+        backingScale,
+        &layout,
+        &layoutFailure
+    );
+    CGFloat expectedScale =
+        contentBounds.size.width / IOSUsePlayDeviceLogicalWidth;
+    CGFloat expectedIdealHeight =
+        IOSUsePlayDeviceLogicalHeight * expectedScale;
+    CGRect expectedPixelCanvas = contentBounds;
+    CGRect hostCGWindowBounds = CGRectMake(40, 10, 316, 713);
+    CGRect hostContentCGWindowRect = CGRectMake(40, 38, 316, 685);
+    CGRect canvasCGWindowRect = CGRectNull;
+    NSString *projectionFailure = nil;
+    BOOL projectionReady = layoutReady &&
+        IOSUsePlayResolveCanvasCGWindowRect(
+            hostContentCGWindowRect,
+            layout,
+            &canvasCGWindowRect,
+            &projectionFailure
+        );
+
+    size_t sourceWidth = (size_t)llround(316 * backingScale);
+    size_t sourceHeight = (size_t)llround(713 * backingScale);
+    size_t titleBarHeight = (size_t)llround(28 * backingScale);
+    size_t contentHeight = (size_t)llround(685 * backingScale);
+    CGImageRef source = IOSUseHostCanvasTestCreateRawCapture(
+        sourceWidth,
+        sourceHeight,
+        CGRectMake(
+            0,
+            titleBarHeight,
+            sourceWidth,
+            contentHeight
+        )
+    );
+    CGRect logicalRect = CGRectNull;
+    NSDictionary<NSString *, id> *evidence = nil;
+    NSString *cropFailure = nil;
+    CGImageRef normalized =
+        source == NULL || !projectionReady
+        ? NULL
+        : IOSUsePlayCropAndNormalizeCanvasCapture(
+            source,
+            hostCGWindowBounds,
+            canvasCGWindowRect,
+            expectedScale,
+            backingScale,
+            &logicalRect,
+            &evidence,
+            &cropFailure
+        );
+    NSDictionary<NSString *, NSNumber *> *sourceCrop =
+        evidence[@"sourcePixelCropRect"];
+    CGPoint inputLogicalPoint = CGPointMake(NAN, NAN);
+    NSString *inputFailure = nil;
+    BOOL inputReady = layoutReady &&
+        IOSUsePlayMapHostContentPointToCanvas(
+            layout,
+            CGPointMake(0, 0),
+            &inputLogicalPoint,
+            &inputFailure
+        );
+    CGRect accessibilityLogicalRect = CGRectNull;
+    NSString *accessibilityFailure = nil;
+    BOOL accessibilityReady = layoutReady &&
+        IOSUsePlayMapHostContentRectToCanvas(
+            layout,
+            contentBounds,
+            &accessibilityLogicalRect,
+            &accessibilityFailure
+        );
+    BOOL edgePixelsAreCanvasOnly =
         IOSUseHostCanvasTestSampleIsGreen(normalized, 0, 0) &&
         IOSUseHostCanvasTestSampleIsGreen(
             normalized,
@@ -508,8 +675,66 @@ static BOOL IOSUseHostCanvasTestFractionalCropExcludesDecorations(void) {
             normalized,
             IOSUsePlayDeviceNativeWidth - 1,
             IOSUsePlayDeviceNativeHeight - 1
+        ) &&
+        IOSUseHostCanvasTestSampleIsGreen(
+            normalized,
+            IOSUsePlayDeviceNativeWidth / 2,
+            0
+        ) &&
+        IOSUseHostCanvasTestSampleIsGreen(
+            normalized,
+            IOSUsePlayDeviceNativeWidth / 2,
+            IOSUsePlayDeviceNativeHeight - 1
+        ) &&
+        IOSUseHostCanvasTestSampleIsGreen(
+            normalized,
+            0,
+            IOSUsePlayDeviceNativeHeight / 2
+        ) &&
+        IOSUseHostCanvasTestSampleIsGreen(
+            normalized,
+            IOSUsePlayDeviceNativeWidth - 1,
+            IOSUsePlayDeviceNativeHeight / 2
         );
-    BOOL passed = normalized != NULL && failure == nil &&
+    BOOL passed = layoutReady && layoutFailure == nil &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            layout.canvasRect.size.height,
+            expectedIdealHeight
+        ) &&
+        IOSUseHostCanvasTestRectEquals(
+            layout.backingPixelCanvasRect,
+            expectedPixelCanvas
+        ) &&
+        projectionReady && projectionFailure == nil &&
+        IOSUseHostCanvasTestRectEquals(
+            canvasCGWindowRect,
+            CGRectMake(40, 38, 316, 685)
+        ) &&
+        normalized != NULL && cropFailure == nil &&
+        [sourceCrop[@"x"] integerValue] == 0 &&
+        [sourceCrop[@"y"] unsignedLongLongValue] == titleBarHeight &&
+        [sourceCrop[@"width"] unsignedLongLongValue] == sourceWidth &&
+        [sourceCrop[@"height"] unsignedLongLongValue] == contentHeight &&
+        edgePixelsAreCanvasOnly &&
+        inputReady && inputFailure == nil &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            inputLogicalPoint.x,
+            0
+        ) &&
+        IOSUseHostCanvasTestApproximatelyEqual(
+            inputLogicalPoint.y,
+            IOSUsePlayDeviceLogicalHeight
+        ) &&
+        accessibilityReady && accessibilityFailure == nil &&
+        IOSUseHostCanvasTestRectEquals(
+            accessibilityLogicalRect,
+            CGRectMake(
+                0,
+                0,
+                IOSUsePlayDeviceLogicalWidth,
+                IOSUsePlayDeviceLogicalHeight
+            )
+        ) &&
         IOSUseHostCanvasTestRectEquals(
             logicalRect,
             CGRectMake(
@@ -518,10 +743,7 @@ static BOOL IOSUseHostCanvasTestFractionalCropExcludesDecorations(void) {
                 IOSUsePlayDeviceLogicalWidth,
                 IOSUsePlayDeviceLogicalHeight
             )
-        ) &&
-        CGImageGetWidth(normalized) == IOSUsePlayDeviceNativeWidth &&
-        CGImageGetHeight(normalized) == IOSUsePlayDeviceNativeHeight &&
-        cropEvidenceReady && pixelsAreCanvasOnly;
+        );
     if (normalized != NULL) {
         CGImageRelease(normalized);
     }
@@ -531,8 +753,59 @@ static BOOL IOSUseHostCanvasTestFractionalCropExcludesDecorations(void) {
     return IOSUseHostCanvasTestRequire(
         passed,
         [NSString stringWithFormat:
-            @"fractional canvas crop leaked decoration or rounded outward: %@",
-            failure ?: @"unexpected crop result"
+            @"restored 316x685 window lost %.0fx backing pixels: %@ / %@ / %@",
+            backingScale,
+            layoutFailure ?: @"layout",
+            projectionFailure ?: @"projection",
+            cropFailure ?: @"crop"
+        ]
+    );
+}
+
+static BOOL IOSUseHostCanvasTestHalfPixelBoundary(void) {
+    IOSUsePlayHostCanvasLayout layout = {0};
+    NSString *layoutFailure = nil;
+    BOOL layoutReady = IOSUsePlayResolveHostCanvasLayout(
+        CGRectMake(0, 0, 316, 685),
+        2,
+        &layout,
+        &layoutFailure
+    );
+    CGRect accepted = CGRectNull;
+    CGRect rejected = CGRectNull;
+    NSString *acceptedFailure = nil;
+    NSString *rejectedFailure = nil;
+    BOOL atBoundaryAccepted = layoutReady &&
+        IOSUsePlayResolveCanvasCGWindowRect(
+            CGRectMake(40, 38, 316, 685.25),
+            layout,
+            &accepted,
+            &acceptedFailure
+        );
+    BOOL overBoundaryRejected = layoutReady &&
+        !IOSUsePlayResolveCanvasCGWindowRect(
+            CGRectMake(40, 38, 316, 685.2501),
+            layout,
+            &rejected,
+            &rejectedFailure
+        );
+    NSString *invalidScaleFailure = nil;
+    BOOL invalidScaleRejected = !IOSUsePlayResolveHostCanvasLayout(
+        CGRectMake(0, 0, 316, 685),
+        0,
+        NULL,
+        &invalidScaleFailure
+    );
+    return IOSUseHostCanvasTestRequire(
+        layoutReady && layoutFailure == nil &&
+            atBoundaryAccepted && acceptedFailure == nil &&
+            overBoundaryRejected && rejectedFailure != nil &&
+            invalidScaleRejected && invalidScaleFailure != nil,
+        [NSString stringWithFormat:
+            @"half-backing-pixel boundary was not fail-closed: %@ / %@ / %@",
+            layoutFailure ?: @"layout",
+            rejectedFailure ?: @"over-boundary accepted",
+            invalidScaleFailure ?: @"invalid backing scale accepted"
         ]
     );
 }
@@ -553,17 +826,20 @@ int main(int argc, const char *argv[]) {
         BOOL unitReady = IOSUseHostCanvasTestLayout(
             CGRectMake(0, 0, 430, 932),
             1,
+            1,
             CGRectMake(0, 0, 430, 932),
             &unitLayout
         );
         BOOL resizeReady = IOSUseHostCanvasTestLayout(
             CGRectMake(0, 0, 645, 1398),
+            2,
             1.5,
             CGRectMake(0, 0, 645, 1398),
             &resizedLayout
         );
         BOOL minimumReady = IOSUseHostCanvasTestLayout(
             CGRectMake(0, 0, 215, 466),
+            1,
             0.5,
             CGRectMake(0, 0, 215, 466),
             &minimumLayout
@@ -575,6 +851,7 @@ int main(int argc, const char *argv[]) {
         NSString *undersizedFailure = nil;
         BOOL undersizedRejected = !IOSUsePlayResolveHostCanvasLayout(
             CGRectMake(0, 0, 214.9, 466),
+            1,
             NULL,
             &undersizedFailure
         ) && undersizedFailure != nil;
@@ -615,6 +892,7 @@ int main(int argc, const char *argv[]) {
                 resizedCanvasCG,
                 resizedCanvasCG,
                 resizedLayout.displayScale,
+                resizedLayout.backingScaleFactor,
                 &fullLogical,
                 &fullLogicalFailure
             ) && IOSUseHostCanvasTestRectEquals(
@@ -662,17 +940,27 @@ int main(int argc, const char *argv[]) {
         BOOL crop1x = IOSUseHostCanvasTestCropAtBackingScale(1);
         BOOL crop2x = IOSUseHostCanvasTestCropAtBackingScale(2);
         BOOL fractionalCrop =
-            IOSUseHostCanvasTestFractionalCropExcludesDecorations();
+            IOSUseHostCanvasTestRejectsNonAlignedCrop();
+        BOOL quantizedSource =
+            IOSUseHostCanvasTestAcceptsQuantizedSourceExtent();
+        BOOL restored1x =
+            IOSUseHostCanvasTestRestoredQuantizedWindow(1);
+        BOOL restored2x =
+            IOSUseHostCanvasTestRestoredQuantizedWindow(2);
+        BOOL halfPixelBoundary =
+            IOSUseHostCanvasTestHalfPixelBoundary();
         BOOL passed = unitReady && resizeReady && minimumReady &&
             resizeRoundingReady && bootstrapAspectReady &&
             undersizedRejected && unitRoundTrip && resizedRoundTrip &&
             outsideRejected && canvasCGReady &&
             fullLogicalReady && accessibilityTransformReady &&
             alertButtonTransformReady && multiScreenTransformReady &&
-            crop1x && crop2x && fractionalCrop;
+            crop1x && crop2x && fractionalCrop &&
+            quantizedSource &&
+            restored1x && restored2x && halfPixelBoundary;
         fprintf(
             stderr,
-            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d bootstrap=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d pass=%d\n",
+            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d bootstrap=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d quantized-source=%d restored1x=%d restored2x=%d half-pixel=%d pass=%d\n",
             unitReady,
             resizeReady,
             minimumReady,
@@ -686,6 +974,10 @@ int main(int argc, const char *argv[]) {
             crop1x,
             crop2x,
             fractionalCrop,
+            quantizedSource,
+            restored1x,
+            restored2x,
+            halfPixelBoundary,
             passed
         );
         return passed ? 0 : 1;

@@ -597,6 +597,35 @@ static BOOL IOSUseBridgeRectApproximatelyEqual(CGRect lhs, CGRect rhs) {
         );
 }
 
+static BOOL IOSUseBridgeRectApproximatelyEqualWithTolerance(
+    CGRect lhs,
+    CGRect rhs,
+    CGFloat tolerance
+) {
+    return isfinite(tolerance) && tolerance >= 0 &&
+        fabs(lhs.origin.x - rhs.origin.x) <= tolerance &&
+        fabs(lhs.origin.y - rhs.origin.y) <= tolerance &&
+        fabs(lhs.size.width - rhs.size.width) <= tolerance &&
+        fabs(lhs.size.height - rhs.size.height) <= tolerance;
+}
+
+static CGFloat IOSUseBridgeBackingScaleFactor(id window) {
+    if (window == nil || ![window respondsToSelector:
+        NSSelectorFromString(@"backingScaleFactor")]) {
+        return 0;
+    }
+    CGFloat backingScaleFactor =
+        ((IOSUseBridgeSendFloat)objc_msgSend)(
+            window,
+            NSSelectorFromString(@"backingScaleFactor")
+        );
+    return isfinite(backingScaleFactor) &&
+        backingScaleFactor > 0 &&
+        backingScaleFactor <= 4
+        ? backingScaleFactor
+        : 0;
+}
+
 static CGSize IOSUseBridgeHostMinimumContentSize(void) {
     return CGSizeMake(
         IOSUsePlayDeviceLogicalWidth *
@@ -2325,6 +2354,7 @@ static BOOL IOSUseBridgeNormalizeBootstrapContentAspect(
     NSString *layoutFailure = nil;
     if (!IOSUsePlayResolveHostCanvasLayout(
             contentBounds,
+            IOSUseBridgeBackingScaleFactor(window),
             &layout,
             &layoutFailure
         )) {
@@ -2337,7 +2367,8 @@ static BOOL IOSUseBridgeNormalizeBootstrapContentAspect(
         contentBounds.size.width - layout.canvasRect.size.width;
     CGFloat verticalRounding =
         contentBounds.size.height - layout.canvasRect.size.height;
-    if (horizontalRounding <= 0.5 && verticalRounding <= 0.5) {
+    if (horizontalRounding <= layout.halfPixelTolerance &&
+        verticalRounding <= layout.halfPixelTolerance) {
         IOSUsePlayBootstrapContentReady = YES;
         return YES;
     }
@@ -2434,6 +2465,7 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
     NSString *layoutFailure = nil;
     if (!IOSUsePlayResolveHostCanvasLayout(
             contentBounds,
+            IOSUseBridgeBackingScaleFactor(window),
             &layout,
             &layoutFailure
         )) {
@@ -2459,9 +2491,10 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
         @"frame"
     );
     BOOL frameReady =
-        IOSUseBridgeRectApproximatelyEqual(
+        IOSUseBridgeRectApproximatelyEqualWithTolerance(
             currentFrame,
-            layout.canvasRect
+            layout.canvasRect,
+            layout.halfPixelTolerance
         ) ||
         IOSUseBridgeSetRect(
             IOSUsePlayScaleView,
@@ -2574,9 +2607,10 @@ static BOOL IOSUseBridgeUpdateHostCanvasLayout(
         !boundsReady || !frameReady ||
         !canvasFrameReady || !canvasBoundsReady ||
         !renderTreeReady ||
-        !IOSUseBridgeRectApproximatelyEqual(
+        !IOSUseBridgeRectApproximatelyEqualWithTolerance(
             resolvedFrame,
-            layout.canvasRect
+            layout.canvasRect,
+            layout.halfPixelTolerance
         ) ||
         !IOSUseBridgeRectApproximatelyEqual(
             resolvedBounds,
@@ -3095,18 +3129,22 @@ static BOOL IOSUseBridgeHostContentCGWindowRect(
         windowLocal
     );
     CGRect resolved = CGRectNull;
+    CGFloat backingScaleFactor =
+        IOSUseBridgeBackingScaleFactor(window);
+    CGFloat geometryTolerance = backingScaleFactor > 0
+        ? 0.5 / backingScaleFactor
+        : 0;
     if (!IOSUseBridgeAppKitScreenRectToCGWindowRect(
             screenRect,
             &resolved
         ) ||
-        !IOSUseBridgeApproximatelyEqual(
-            resolved.size.width,
-            contentBounds.size.width
-        ) ||
-        !IOSUseBridgeApproximatelyEqual(
-            resolved.size.height,
-            contentBounds.size.height
-        )) {
+        geometryTolerance <= 0 ||
+        fabs(
+            resolved.size.width - contentBounds.size.width
+        ) > geometryTolerance ||
+        fabs(
+            resolved.size.height - contentBounds.size.height
+        ) > geometryTolerance) {
         return NO;
     }
     if (contentCGWindowRect != NULL) {
@@ -3156,16 +3194,18 @@ IOSUseBridgeHostCanvasCaptureGeometry(
             &canvasCGWindowRect,
             &canvasFailure
         );
+    CGFloat geometryTolerance =
+        IOSUsePlayCurrentHostCanvasLayout.halfPixelTolerance;
     if (hostMetadata == nil || CGRectIsNull(hostCGWindowBounds) ||
         !canvasReady ||
         CGRectGetMinX(canvasCGWindowRect) <
-            CGRectGetMinX(hostCGWindowBounds) - 0.01 ||
+            CGRectGetMinX(hostCGWindowBounds) - geometryTolerance ||
         CGRectGetMinY(canvasCGWindowRect) <
-            CGRectGetMinY(hostCGWindowBounds) - 0.01 ||
+            CGRectGetMinY(hostCGWindowBounds) - geometryTolerance ||
         CGRectGetMaxX(canvasCGWindowRect) >
-            CGRectGetMaxX(hostCGWindowBounds) + 0.01 ||
+            CGRectGetMaxX(hostCGWindowBounds) + geometryTolerance ||
         CGRectGetMaxY(canvasCGWindowRect) >
-            CGRectGetMaxY(hostCGWindowBounds) + 0.01) {
+            CGRectGetMaxY(hostCGWindowBounds) + geometryTolerance) {
         if (error != NULL) {
             *error = [NSError errorWithDomain:IOSUsePlayWindowErrorDomain
                                          code:8
@@ -3190,10 +3230,19 @@ IOSUseBridgeHostCanvasCaptureGeometry(
         @"canvasRect": IOSUseBridgeRectJSON(
             IOSUsePlayCurrentHostCanvasLayout.canvasRect
         ),
+        @"backingPixelCanvasRect": IOSUseBridgeRectJSON(
+            IOSUsePlayCurrentHostCanvasLayout.backingPixelCanvasRect
+        ),
         @"canvasCGWindowRect": IOSUseBridgeRectJSON(canvasCGWindowRect),
         @"displayScale": @(IOSUsePlayCurrentHostCanvasLayout.displayScale),
         @"inverseDisplayScale": @(
             IOSUsePlayCurrentHostCanvasLayout.inverseDisplayScale
+        ),
+        @"backingScaleFactor": @(
+            IOSUsePlayCurrentHostCanvasLayout.backingScaleFactor
+        ),
+        @"halfPixelTolerance": @(
+            IOSUsePlayCurrentHostCanvasLayout.halfPixelTolerance
         ),
         @"hostWindowNumber": @(
             IOSUseBridgeInteger(window, @"windowNumber")
@@ -3247,6 +3296,7 @@ static CGRect IOSUseBridgeWindowLogicalFrame(
             [windowMetadata[@"boundsValue"] CGRectValue],
             canvasCGWindowRect,
             [canvasGeometry[@"displayScale"] doubleValue],
+            [canvasGeometry[@"backingScaleFactor"] doubleValue],
             &logicalRect,
             NULL
         )) {
@@ -3950,9 +4000,10 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             IOSUseBridgeSceneGeometryStateReady &&
         IOSUsePlaySceneGeometryScene == uiWindow.windowScene;
     BOOL canvasMatchesLayout =
-        IOSUseBridgeRectApproximatelyEqual(
+        IOSUseBridgeRectApproximatelyEqualWithTolerance(
             canvasFrame,
-            IOSUsePlayCurrentHostCanvasLayout.canvasRect
+            IOSUsePlayCurrentHostCanvasLayout.canvasRect,
+            IOSUsePlayCurrentHostCanvasLayout.halfPixelTolerance
         );
     BOOL exact = IOSUseBridgeWindowPolicyIsHost(window) &&
         sceneFixed &&
@@ -4502,6 +4553,13 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         @"hostFrame": IOSUseBridgeRectJSON(frame),
         @"hostContentBounds": IOSUseBridgeRectJSON(bounds),
         @"canvasRect": IOSUseBridgeRectJSON(canvasFrame),
+        @"backingPixelCanvasRect":
+            IOSUsePlayHostCanvasLayoutReady
+                ? IOSUseBridgeRectJSON(
+                    IOSUsePlayCurrentHostCanvasLayout
+                        .backingPixelCanvasRect
+                )
+                : (id)NSNull.null,
         @"canvasBounds": IOSUseBridgeRectJSON(canvasBounds),
         @"renderViewBounds": IOSUseBridgeRectJSON(renderViewBounds),
         @"sceneRenderViewFrame":
@@ -4517,6 +4575,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             : (id)NSNull.null,
         @"inverseDisplayScale": IOSUsePlayHostCanvasLayoutReady
             ? @(IOSUsePlayCurrentHostCanvasLayout.inverseDisplayScale)
+            : (id)NSNull.null,
+        @"halfPixelTolerance": IOSUsePlayHostCanvasLayoutReady
+            ? @(IOSUsePlayCurrentHostCanvasLayout.halfPixelTolerance)
             : (id)NSNull.null,
         @"canvasCapture": canvasCapture ?: (id)@{
             @"error": canvasError.localizedDescription ?: @"unavailable",

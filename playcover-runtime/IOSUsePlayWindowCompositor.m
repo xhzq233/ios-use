@@ -31,6 +31,34 @@ static BOOL IOSUseCompositorFiniteRect(CGRect rect) {
         rect.size.height > 0;
 }
 
+static BOOL IOSUseCompositorValidBackingScale(CGFloat backingScaleFactor) {
+    return isfinite(backingScaleFactor) &&
+        backingScaleFactor > 0 &&
+        backingScaleFactor <= 4;
+}
+
+static CGFloat IOSUseCompositorHalfPixelTolerance(
+    CGFloat backingScaleFactor
+) {
+    return 0.5 / backingScaleFactor;
+}
+
+static CGFloat IOSUseCompositorNearestBackingPoint(
+    CGFloat value,
+    CGFloat backingScaleFactor
+) {
+    return round(value * backingScaleFactor) / backingScaleFactor;
+}
+
+static BOOL IOSUseCompositorApproximatelyEqualWithTolerance(
+    CGFloat lhs,
+    CGFloat rhs,
+    CGFloat tolerance
+) {
+    return isfinite(lhs) && isfinite(rhs) && isfinite(tolerance) &&
+        tolerance >= 0 && fabs(lhs - rhs) <= tolerance;
+}
+
 static BOOL IOSUseCompositorApproximatelyEqual(
     CGFloat lhs,
     CGFloat rhs
@@ -75,6 +103,20 @@ static BOOL IOSUseCompositorContainsRect(
                 IOSUseCompositorGeometryTolerance;
 }
 
+static BOOL IOSUseCompositorContainsRectWithTolerance(
+    CGRect container,
+    CGRect candidate,
+    CGFloat tolerance
+) {
+    return IOSUseCompositorFiniteRect(container) &&
+        IOSUseCompositorFiniteRect(candidate) &&
+        isfinite(tolerance) && tolerance >= 0 &&
+        CGRectGetMinX(candidate) >= CGRectGetMinX(container) - tolerance &&
+        CGRectGetMinY(candidate) >= CGRectGetMinY(container) - tolerance &&
+        CGRectGetMaxX(candidate) <= CGRectGetMaxX(container) + tolerance &&
+        CGRectGetMaxY(candidate) <= CGRectGetMaxY(container) + tolerance;
+}
+
 static BOOL IOSUseCompositorContainsPoint(
     CGRect rect,
     CGPoint point,
@@ -96,44 +138,69 @@ static BOOL IOSUseCompositorContainsPoint(
     return xInside && yInside;
 }
 
-static CGFloat IOSUseCompositorClampNear(
+static CGFloat IOSUseCompositorClampNearWithTolerance(
     CGFloat value,
     CGFloat lower,
-    CGFloat upper
+    CGFloat upper,
+    CGFloat tolerance
 ) {
-    if (fabs(value - lower) <= IOSUseCompositorGeometryTolerance) {
+    if (fabs(value - lower) <= tolerance) {
         return lower;
     }
-    if (fabs(value - upper) <= IOSUseCompositorGeometryTolerance) {
+    if (fabs(value - upper) <= tolerance) {
         return upper;
     }
     return value;
 }
 
+static BOOL IOSUseCompositorExactPixelCoordinate(
+    CGFloat points,
+    CGFloat backingScaleFactor,
+    NSInteger *pixels
+) {
+    CGFloat rawPixels = points * backingScaleFactor;
+    if (!isfinite(rawPixels)) {
+        return NO;
+    }
+    CGFloat roundedPixels = round(rawPixels);
+    if (fabs(rawPixels - roundedPixels) > 0.000001 ||
+        roundedPixels < (CGFloat)NSIntegerMin ||
+        roundedPixels > (CGFloat)NSIntegerMax) {
+        return NO;
+    }
+    if (pixels != NULL) {
+        *pixels = (NSInteger)roundedPixels;
+    }
+    return YES;
+}
+
 BOOL IOSUsePlayResolveHostCanvasLayout(
     CGRect hostContentBounds,
+    CGFloat backingScaleFactor,
     IOSUsePlayHostCanvasLayout *layout,
     NSString **failure
 ) {
     if (failure != NULL) {
         *failure = nil;
     }
-    if (!IOSUseCompositorFiniteRect(hostContentBounds)) {
+    if (!IOSUseCompositorFiniteRect(hostContentBounds) ||
+        !IOSUseCompositorValidBackingScale(backingScaleFactor)) {
         if (failure != NULL) {
-            *failure = @"host content bounds are not finite and non-empty";
+            *failure =
+                @"host content bounds or backing scale are invalid";
         }
         return NO;
     }
+    CGFloat halfPixelTolerance =
+        IOSUseCompositorHalfPixelTolerance(backingScaleFactor);
     CGFloat minimumWidth =
         IOSUsePlayDeviceLogicalWidth *
         IOSUsePlayHostCanvasMinimumDisplayScale;
     CGFloat minimumHeight =
         IOSUsePlayDeviceLogicalHeight *
         IOSUsePlayHostCanvasMinimumDisplayScale;
-    if (hostContentBounds.size.width +
-            IOSUseCompositorGeometryTolerance < minimumWidth ||
-        hostContentBounds.size.height +
-            IOSUseCompositorGeometryTolerance < minimumHeight) {
+    if (hostContentBounds.size.width < minimumWidth ||
+        hostContentBounds.size.height < minimumHeight) {
         if (failure != NULL) {
             *failure = [NSString stringWithFormat:
                 @"host content %.3fx%.3f is smaller than the explicit "
@@ -151,8 +218,7 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         hostContentBounds.size.height / IOSUsePlayDeviceLogicalHeight
     );
     if (!isfinite(displayScale) ||
-        displayScale < IOSUsePlayHostCanvasMinimumDisplayScale -
-            IOSUseCompositorGeometryTolerance) {
+        displayScale < IOSUsePlayHostCanvasMinimumDisplayScale) {
         if (failure != NULL) {
             *failure = @"host canvas display scale is invalid";
         }
@@ -170,14 +236,53 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         canvasSize.width,
         canvasSize.height
     );
-    if (!IOSUseCompositorContainsRect(hostContentBounds, canvasRect) ||
-        !IOSUseCompositorApproximatelyEqual(
-            CGRectGetMidX(canvasRect),
-            CGRectGetMidX(hostContentBounds)
+    CGFloat pixelMinimumX = IOSUseCompositorNearestBackingPoint(
+        CGRectGetMinX(canvasRect),
+        backingScaleFactor
+    );
+    CGFloat pixelMinimumY = IOSUseCompositorNearestBackingPoint(
+        CGRectGetMinY(canvasRect),
+        backingScaleFactor
+    );
+    CGFloat pixelMaximumX = IOSUseCompositorNearestBackingPoint(
+        CGRectGetMaxX(canvasRect),
+        backingScaleFactor
+    );
+    CGFloat pixelMaximumY = IOSUseCompositorNearestBackingPoint(
+        CGRectGetMaxY(canvasRect),
+        backingScaleFactor
+    );
+    CGRect backingPixelCanvasRect = CGRectMake(
+        pixelMinimumX,
+        pixelMinimumY,
+        pixelMaximumX - pixelMinimumX,
+        pixelMaximumY - pixelMinimumY
+    );
+    BOOL pixelCanvasInsideHost =
+        CGRectGetMinX(backingPixelCanvasRect) >=
+            CGRectGetMinX(hostContentBounds) - 0.000001 &&
+        CGRectGetMinY(backingPixelCanvasRect) >=
+            CGRectGetMinY(hostContentBounds) - 0.000001 &&
+        CGRectGetMaxX(backingPixelCanvasRect) <=
+            CGRectGetMaxX(hostContentBounds) + 0.000001 &&
+        CGRectGetMaxY(backingPixelCanvasRect) <=
+            CGRectGetMaxY(hostContentBounds) + 0.000001;
+    if (!IOSUseCompositorContainsRectWithTolerance(
+            hostContentBounds,
+            canvasRect,
+            0.000001
         ) ||
-        !IOSUseCompositorApproximatelyEqual(
+        !IOSUseCompositorFiniteRect(backingPixelCanvasRect) ||
+        !pixelCanvasInsideHost ||
+        !IOSUseCompositorApproximatelyEqualWithTolerance(
+            CGRectGetMidX(canvasRect),
+            CGRectGetMidX(hostContentBounds),
+            halfPixelTolerance
+        ) ||
+        !IOSUseCompositorApproximatelyEqualWithTolerance(
             CGRectGetMidY(canvasRect),
-            CGRectGetMidY(hostContentBounds)
+            CGRectGetMidY(hostContentBounds),
+            halfPixelTolerance
         )) {
         if (failure != NULL) {
             *failure = @"resolved canvas is not centered in the host content";
@@ -188,8 +293,11 @@ BOOL IOSUsePlayResolveHostCanvasLayout(
         *layout = (IOSUsePlayHostCanvasLayout){
             .hostContentBounds = hostContentBounds,
             .canvasRect = canvasRect,
+            .backingPixelCanvasRect = backingPixelCanvasRect,
             .displayScale = displayScale,
             .inverseDisplayScale = 1.0 / displayScale,
+            .backingScaleFactor = backingScaleFactor,
+            .halfPixelTolerance = halfPixelTolerance,
         };
     }
     return YES;
@@ -208,41 +316,63 @@ BOOL IOSUsePlayMapHostContentPointToCanvas(
         !IOSUseCompositorFiniteRect(layout.canvasRect) ||
         !isfinite(layout.displayScale) ||
         layout.displayScale <= 0 ||
-        !IOSUseCompositorContainsPoint(
-            layout.hostContentBounds,
-            hostContentPoint,
-            NO
-        )) {
+        !IOSUseCompositorValidBackingScale(
+            layout.backingScaleFactor
+        ) ||
+        !isfinite(layout.halfPixelTolerance) ||
+        layout.halfPixelTolerance <= 0) {
         if (failure != NULL) {
             *failure = @"host point or host-canvas layout is invalid";
         }
         return NO;
     }
-    if (!IOSUseCompositorContainsPoint(
-            layout.canvasRect,
-            hostContentPoint,
-            NO
-        )) {
+    CGFloat tolerance = layout.halfPixelTolerance;
+    if (hostContentPoint.x <
+            CGRectGetMinX(layout.hostContentBounds) - tolerance ||
+        hostContentPoint.y <
+            CGRectGetMinY(layout.hostContentBounds) - tolerance ||
+        hostContentPoint.x >
+            CGRectGetMaxX(layout.hostContentBounds) + tolerance ||
+        hostContentPoint.y >
+            CGRectGetMaxY(layout.hostContentBounds) + tolerance ||
+        hostContentPoint.x < CGRectGetMinX(layout.canvasRect) - tolerance ||
+        hostContentPoint.y < CGRectGetMinY(layout.canvasRect) - tolerance ||
+        hostContentPoint.x > CGRectGetMaxX(layout.canvasRect) + tolerance ||
+        hostContentPoint.y > CGRectGetMaxY(layout.canvasRect) + tolerance) {
         if (failure != NULL) {
             *failure = @"host point is outside the target canvas";
         }
         return NO;
     }
+    CGPoint clampedHostPoint = CGPointMake(
+        MIN(
+            MAX(hostContentPoint.x, CGRectGetMinX(layout.canvasRect)),
+            CGRectGetMaxX(layout.canvasRect)
+        ),
+        MIN(
+            MAX(hostContentPoint.y, CGRectGetMinY(layout.canvasRect)),
+            CGRectGetMaxY(layout.canvasRect)
+        )
+    );
     CGPoint logical = CGPointMake(
-        (hostContentPoint.x - CGRectGetMinX(layout.canvasRect)) /
+        (clampedHostPoint.x - CGRectGetMinX(layout.canvasRect)) /
             layout.displayScale,
-        (CGRectGetMaxY(layout.canvasRect) - hostContentPoint.y) /
+        (CGRectGetMaxY(layout.canvasRect) - clampedHostPoint.y) /
             layout.displayScale
     );
-    logical.x = IOSUseCompositorClampNear(
+    CGFloat logicalTolerance =
+        layout.halfPixelTolerance / layout.displayScale;
+    logical.x = IOSUseCompositorClampNearWithTolerance(
         logical.x,
         0,
-        IOSUsePlayDeviceLogicalWidth
+        IOSUsePlayDeviceLogicalWidth,
+        logicalTolerance
     );
-    logical.y = IOSUseCompositorClampNear(
+    logical.y = IOSUseCompositorClampNearWithTolerance(
         logical.y,
         0,
-        IOSUsePlayDeviceLogicalHeight
+        IOSUsePlayDeviceLogicalHeight,
+        logicalTolerance
     );
     if (!IOSUseCompositorContainsPoint(
             CGRectMake(
@@ -252,7 +382,7 @@ BOOL IOSUsePlayMapHostContentPointToCanvas(
                 IOSUsePlayDeviceLogicalHeight
             ),
             logical,
-            NO
+            YES
         )) {
         if (failure != NULL) {
             *failure = @"inverse host transform is outside the fixed canvas";
@@ -284,6 +414,9 @@ BOOL IOSUsePlayMapCanvasPointToHostContent(
         !IOSUseCompositorFiniteRect(layout.canvasRect) ||
         !isfinite(layout.displayScale) ||
         layout.displayScale <= 0 ||
+        !IOSUseCompositorValidBackingScale(
+            layout.backingScaleFactor
+        ) ||
         !IOSUseCompositorContainsPoint(
             device,
             canvasLogicalPoint,
@@ -332,44 +465,106 @@ BOOL IOSUsePlayMapHostContentRectToCanvas(
         !IOSUseCompositorFiniteRect(layout.canvasRect) ||
         !IOSUseCompositorFiniteRect(hostContentRect) ||
         !isfinite(layout.displayScale) || layout.displayScale <= 0 ||
-        !IOSUseCompositorContainsRect(
+        !IOSUseCompositorValidBackingScale(layout.backingScaleFactor) ||
+        !isfinite(layout.halfPixelTolerance) ||
+        layout.halfPixelTolerance <= 0) {
+        if (failure != NULL) {
+            *failure = @"host rectangle is outside the target canvas";
+        }
+        return NO;
+    }
+    CGFloat hostTolerance = layout.halfPixelTolerance;
+    if (!IOSUseCompositorContainsRectWithTolerance(
+            layout.hostContentBounds,
+            hostContentRect,
+            hostTolerance
+        ) ||
+        !IOSUseCompositorContainsRectWithTolerance(
             layout.canvasRect,
-            hostContentRect
+            hostContentRect,
+            hostTolerance
         )) {
         if (failure != NULL) {
             *failure = @"host rectangle is outside the target canvas";
         }
         return NO;
     }
+    CGFloat clampedMinimumX = MIN(
+        MAX(CGRectGetMinX(hostContentRect), CGRectGetMinX(layout.canvasRect)),
+        CGRectGetMaxX(layout.canvasRect)
+    );
+    CGFloat clampedMinimumY = MIN(
+        MAX(CGRectGetMinY(hostContentRect), CGRectGetMinY(layout.canvasRect)),
+        CGRectGetMaxY(layout.canvasRect)
+    );
+    CGFloat clampedMaximumX = MIN(
+        MAX(CGRectGetMaxX(hostContentRect), CGRectGetMinX(layout.canvasRect)),
+        CGRectGetMaxX(layout.canvasRect)
+    );
+    CGFloat clampedMaximumY = MIN(
+        MAX(CGRectGetMaxY(hostContentRect), CGRectGetMinY(layout.canvasRect)),
+        CGRectGetMaxY(layout.canvasRect)
+    );
+    CGRect clampedHostRect = CGRectMake(
+        clampedMinimumX,
+        clampedMinimumY,
+        clampedMaximumX - clampedMinimumX,
+        clampedMaximumY - clampedMinimumY
+    );
+    if (!IOSUseCompositorFiniteRect(clampedHostRect)) {
+        if (failure != NULL) {
+            *failure = @"host rectangle has no target canvas area";
+        }
+        return NO;
+    }
     CGRect logical = CGRectMake(
-        (CGRectGetMinX(hostContentRect) -
+        (CGRectGetMinX(clampedHostRect) -
             CGRectGetMinX(layout.canvasRect)) /
             layout.displayScale,
         (CGRectGetMaxY(layout.canvasRect) -
-            CGRectGetMaxY(hostContentRect)) /
+            CGRectGetMaxY(clampedHostRect)) /
             layout.displayScale,
-        hostContentRect.size.width / layout.displayScale,
-        hostContentRect.size.height / layout.displayScale
+        clampedHostRect.size.width / layout.displayScale,
+        clampedHostRect.size.height / layout.displayScale
     );
-    logical.origin.x = IOSUseCompositorClampNear(
+    CGFloat logicalTolerance =
+        layout.halfPixelTolerance / layout.displayScale;
+    CGFloat logicalMaximumX = IOSUseCompositorClampNearWithTolerance(
+        CGRectGetMaxX(logical),
+        0,
+        IOSUsePlayDeviceLogicalWidth,
+        logicalTolerance
+    );
+    CGFloat logicalMaximumY = IOSUseCompositorClampNearWithTolerance(
+        CGRectGetMaxY(logical),
+        0,
+        IOSUsePlayDeviceLogicalHeight,
+        logicalTolerance
+    );
+    logical.origin.x = IOSUseCompositorClampNearWithTolerance(
         logical.origin.x,
         0,
-        IOSUsePlayDeviceLogicalWidth
+        IOSUsePlayDeviceLogicalWidth,
+        logicalTolerance
     );
-    logical.origin.y = IOSUseCompositorClampNear(
+    logical.origin.y = IOSUseCompositorClampNearWithTolerance(
         logical.origin.y,
         0,
-        IOSUsePlayDeviceLogicalHeight
+        IOSUsePlayDeviceLogicalHeight,
+        logicalTolerance
     );
+    logical.size.width = logicalMaximumX - logical.origin.x;
+    logical.size.height = logicalMaximumY - logical.origin.y;
     if (!IOSUseCompositorFiniteRect(logical) ||
-        !IOSUseCompositorContainsRect(
+        !IOSUseCompositorContainsRectWithTolerance(
             CGRectMake(
                 0,
                 0,
                 IOSUsePlayDeviceLogicalWidth,
                 IOSUsePlayDeviceLogicalHeight
             ),
-            logical
+            logical,
+            logicalTolerance
         )) {
         if (failure != NULL) {
             *failure = @"host rectangle inverse transform is outside the fixed canvas";
@@ -394,13 +589,16 @@ BOOL IOSUsePlayResolveCanvasCGWindowRect(
     if (!IOSUseCompositorFiniteRect(hostContentCGWindowRect) ||
         !IOSUseCompositorFiniteRect(layout.hostContentBounds) ||
         !IOSUseCompositorFiniteRect(layout.canvasRect) ||
-        !IOSUseCompositorApproximatelyEqual(
+        !IOSUseCompositorValidBackingScale(layout.backingScaleFactor) ||
+        !IOSUseCompositorApproximatelyEqualWithTolerance(
             hostContentCGWindowRect.size.width,
-            layout.hostContentBounds.size.width
+            layout.hostContentBounds.size.width,
+            layout.halfPixelTolerance
         ) ||
-        !IOSUseCompositorApproximatelyEqual(
+        !IOSUseCompositorApproximatelyEqualWithTolerance(
             hostContentCGWindowRect.size.height,
-            layout.hostContentBounds.size.height
+            layout.hostContentBounds.size.height,
+            layout.halfPixelTolerance
         )) {
         if (failure != NULL) {
             *failure = @"host content CGWindow geometry disagrees with the canvas layout";
@@ -409,15 +607,19 @@ BOOL IOSUsePlayResolveCanvasCGWindowRect(
     }
     CGRect canvas = CGRectMake(
         hostContentCGWindowRect.origin.x +
-            (layout.canvasRect.origin.x -
+            (layout.backingPixelCanvasRect.origin.x -
                 layout.hostContentBounds.origin.x),
         hostContentCGWindowRect.origin.y +
             (CGRectGetMaxY(layout.hostContentBounds) -
-                CGRectGetMaxY(layout.canvasRect)),
-        layout.canvasRect.size.width,
-        layout.canvasRect.size.height
+                CGRectGetMaxY(layout.backingPixelCanvasRect)),
+        layout.backingPixelCanvasRect.size.width,
+        layout.backingPixelCanvasRect.size.height
     );
-    if (!IOSUseCompositorContainsRect(hostContentCGWindowRect, canvas)) {
+    if (!IOSUseCompositorContainsRectWithTolerance(
+            hostContentCGWindowRect,
+            canvas,
+            0.000001
+        )) {
         if (failure != NULL) {
             *failure = @"resolved canvas CGWindow rect is outside host content";
         }
@@ -471,6 +673,7 @@ BOOL IOSUsePlayResolveCGWindowRectInCanvas(
     CGRect sourceCGWindowBounds,
     CGRect canvasCGWindowRect,
     CGFloat displayScale,
+    CGFloat backingScaleFactor,
     CGRect *deviceLogicalRect,
     NSString **failure
 ) {
@@ -484,13 +687,18 @@ BOOL IOSUsePlayResolveCGWindowRectInCanvas(
         !IOSUseCompositorFiniteRect(canvasCGWindowRect) ||
         !isfinite(displayScale) ||
         displayScale <= 0 ||
-        !IOSUseCompositorApproximatelyEqual(
+        !IOSUseCompositorValidBackingScale(backingScaleFactor) ||
+        !IOSUseCompositorApproximatelyEqualWithTolerance(
             canvasCGWindowRect.size.width / displayScale,
-            IOSUsePlayDeviceLogicalWidth
+            IOSUsePlayDeviceLogicalWidth,
+            IOSUseCompositorHalfPixelTolerance(backingScaleFactor) /
+                displayScale
         ) ||
-        !IOSUseCompositorApproximatelyEqual(
+        !IOSUseCompositorApproximatelyEqualWithTolerance(
             canvasCGWindowRect.size.height / displayScale,
-            IOSUsePlayDeviceLogicalHeight
+            IOSUsePlayDeviceLogicalHeight,
+            IOSUseCompositorHalfPixelTolerance(backingScaleFactor) /
+                displayScale
         )) {
         if (failure != NULL) {
             *failure = @"source or fixed canvas CGWindow geometry is invalid";
@@ -503,9 +711,10 @@ BOOL IOSUsePlayResolveCGWindowRectInCanvas(
     );
     if (CGRectIsNull(intersection) ||
         CGRectIsEmpty(intersection) ||
-        !IOSUseCompositorContainsRect(
+        !IOSUseCompositorContainsRectWithTolerance(
             canvasCGWindowRect,
-            intersection
+            intersection,
+            IOSUseCompositorHalfPixelTolerance(backingScaleFactor)
         )) {
         if (failure != NULL) {
             *failure = @"source native window does not intersect the target canvas";
@@ -520,35 +729,45 @@ BOOL IOSUsePlayResolveCGWindowRectInCanvas(
         intersection.size.width / displayScale,
         intersection.size.height / displayScale
     );
-    logical.origin.x = IOSUseCompositorClampNear(
+    CGFloat logicalTolerance =
+        IOSUseCompositorHalfPixelTolerance(backingScaleFactor) /
+            displayScale;
+    CGFloat logicalMaximumX = IOSUseCompositorClampNearWithTolerance(
+        CGRectGetMaxX(logical),
+        0,
+        IOSUsePlayDeviceLogicalWidth,
+        logicalTolerance
+    );
+    CGFloat logicalMaximumY = IOSUseCompositorClampNearWithTolerance(
+        CGRectGetMaxY(logical),
+        0,
+        IOSUsePlayDeviceLogicalHeight,
+        logicalTolerance
+    );
+    logical.origin.x = IOSUseCompositorClampNearWithTolerance(
         logical.origin.x,
         0,
-        IOSUsePlayDeviceLogicalWidth
+        IOSUsePlayDeviceLogicalWidth,
+        logicalTolerance
     );
-    logical.origin.y = IOSUseCompositorClampNear(
+    logical.origin.y = IOSUseCompositorClampNearWithTolerance(
         logical.origin.y,
         0,
-        IOSUsePlayDeviceLogicalHeight
+        IOSUsePlayDeviceLogicalHeight,
+        logicalTolerance
     );
-    logical.size.width = IOSUseCompositorClampNear(
-        logical.size.width,
-        0,
-        IOSUsePlayDeviceLogicalWidth
-    );
-    logical.size.height = IOSUseCompositorClampNear(
-        logical.size.height,
-        0,
-        IOSUsePlayDeviceLogicalHeight
-    );
+    logical.size.width = logicalMaximumX - logical.origin.x;
+    logical.size.height = logicalMaximumY - logical.origin.y;
     if (!IOSUseCompositorFiniteRect(logical) ||
-        !IOSUseCompositorContainsRect(
+        !IOSUseCompositorContainsRectWithTolerance(
             CGRectMake(
                 0,
                 0,
                 IOSUsePlayDeviceLogicalWidth,
                 IOSUsePlayDeviceLogicalHeight
             ),
-            logical
+            logical,
+            logicalTolerance
         )) {
         if (failure != NULL) {
             *failure = @"source intersection resolves outside the fixed canvas";
@@ -566,6 +785,7 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
     CGRect sourceCGWindowBounds,
     CGRect canvasCGWindowRect,
     CGFloat displayScale,
+    CGFloat backingScaleFactor,
     CGRect *deviceLogicalRect,
     NSDictionary<NSString *, id> **evidence,
     NSString **failure
@@ -592,6 +812,7 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
             sourceCGWindowBounds,
             canvasCGWindowRect,
             displayScale,
+            backingScaleFactor,
             &logical,
             &logicalFailure
         )) {
@@ -612,30 +833,58 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
         }
         return NULL;
     }
+    if (fabs(
+            (CGFloat)sourceWidth -
+                sourceCGWindowBounds.size.width * backingScaleFactor
+        ) > 0.500001 ||
+        fabs(
+            (CGFloat)sourceHeight -
+                sourceCGWindowBounds.size.height * backingScaleFactor
+        ) > 0.500001) {
+        if (failure != NULL) {
+            *failure =
+                @"native source pixels disagree with the backing scale";
+        }
+        return NULL;
+    }
     CGFloat sourcePixelsPerPointX =
         (CGFloat)sourceWidth / sourceCGWindowBounds.size.width;
     CGFloat sourcePixelsPerPointY =
         (CGFloat)sourceHeight / sourceCGWindowBounds.size.height;
-    // Crop inward at fractional source-pixel boundaries. Flooring/ceiling
-    // outward would admit a one-pixel strip of title bar, content-area
-    // rounding margin, desktop, or host decoration while claiming
-    // canvas-only evidence.
-    NSInteger minimumX = (NSInteger)ceil(
-        (intersection.origin.x - sourceCGWindowBounds.origin.x) *
-            sourcePixelsPerPointX
-    );
-    NSInteger minimumY = (NSInteger)ceil(
-        (intersection.origin.y - sourceCGWindowBounds.origin.y) *
-            sourcePixelsPerPointY
-    );
-    NSInteger maximumX = (NSInteger)floor(
-        (CGRectGetMaxX(intersection) - sourceCGWindowBounds.origin.x) *
-            sourcePixelsPerPointX
-    );
-    NSInteger maximumY = (NSInteger)floor(
-        (CGRectGetMaxY(intersection) - sourceCGWindowBounds.origin.y) *
-            sourcePixelsPerPointY
-    );
+    NSInteger minimumX = 0;
+    NSInteger minimumY = 0;
+    NSInteger maximumX = 0;
+    NSInteger maximumY = 0;
+    BOOL cropIsPixelAligned =
+        IOSUseCompositorExactPixelCoordinate(
+            intersection.origin.x - sourceCGWindowBounds.origin.x,
+            sourcePixelsPerPointX,
+            &minimumX
+        ) &&
+        IOSUseCompositorExactPixelCoordinate(
+            intersection.origin.y - sourceCGWindowBounds.origin.y,
+            sourcePixelsPerPointY,
+            &minimumY
+        ) &&
+        IOSUseCompositorExactPixelCoordinate(
+            CGRectGetMaxX(intersection) -
+                sourceCGWindowBounds.origin.x,
+            sourcePixelsPerPointX,
+            &maximumX
+        ) &&
+        IOSUseCompositorExactPixelCoordinate(
+            CGRectGetMaxY(intersection) -
+                sourceCGWindowBounds.origin.y,
+            sourcePixelsPerPointY,
+            &maximumY
+        );
+    if (!cropIsPixelAligned) {
+        if (failure != NULL) {
+            *failure =
+                @"canvas crop boundaries are not backing-pixel aligned";
+        }
+        return NULL;
+    }
     if (minimumX < 0 || minimumY < 0 ||
         maximumX > (NSInteger)sourceWidth ||
         maximumY > (NSInteger)sourceHeight ||
@@ -724,6 +973,7 @@ CGImageRef IOSUsePlayCropAndNormalizeCanvasCapture(
             @"normalizedPixelWidth": @(normalizedWidth),
             @"normalizedPixelHeight": @(normalizedHeight),
             @"displayScale": @(displayScale),
+            @"backingScaleFactor": @(backingScaleFactor),
         };
     }
     return normalized;
@@ -939,6 +1189,30 @@ BOOL IOSUsePlayAppKitCGWindowSizesMatch(
         IOSUseCompositorApproximatelyEqual(
             appKitFrame.size.height,
             cgWindowBounds.size.height
+        );
+}
+
+BOOL IOSUsePlayAppKitCGWindowSizesMatchAtBackingScale(
+    CGRect appKitFrame,
+    CGRect cgWindowBounds,
+    CGFloat backingScaleFactor
+) {
+    if (!IOSUseCompositorValidBackingScale(backingScaleFactor)) {
+        return NO;
+    }
+    CGFloat tolerance =
+        IOSUseCompositorHalfPixelTolerance(backingScaleFactor);
+    return IOSUseCompositorFiniteRect(appKitFrame) &&
+        IOSUseCompositorFiniteRect(cgWindowBounds) &&
+        IOSUseCompositorApproximatelyEqualWithTolerance(
+            appKitFrame.size.width,
+            cgWindowBounds.size.width,
+            tolerance
+        ) &&
+        IOSUseCompositorApproximatelyEqualWithTolerance(
+            appKitFrame.size.height,
+            cgWindowBounds.size.height,
+            tolerance
         );
 }
 

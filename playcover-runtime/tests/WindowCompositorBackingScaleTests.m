@@ -424,6 +424,26 @@ int main(void) {
             !IOSUsePlayAppKitCGWindowSizesMatch(
                 CGRectMake(590, 0, 430, 931),
                 CGRectMake(40, 374, 430, 932)
+            ) &&
+            IOSUsePlayAppKitCGWindowSizesMatchAtBackingScale(
+                CGRectMake(590, 0, 430, 932),
+                CGRectMake(40, 374, 430.5, 932),
+                1
+            ) &&
+            !IOSUsePlayAppKitCGWindowSizesMatchAtBackingScale(
+                CGRectMake(590, 0, 430, 932),
+                CGRectMake(40, 374, 430.5001, 932),
+                1
+            ) &&
+            IOSUsePlayAppKitCGWindowSizesMatchAtBackingScale(
+                CGRectMake(590, 0, 430, 932),
+                CGRectMake(40, 374, 430.25, 932),
+                2
+            ) &&
+            !IOSUsePlayAppKitCGWindowSizesMatchAtBackingScale(
+                CGRectMake(590, 0, 430, 932),
+                CGRectMake(40, 374, 430.2501, 932),
+                2
             );
         BOOL passed = scale1Ready &&
             scale2Ready &&

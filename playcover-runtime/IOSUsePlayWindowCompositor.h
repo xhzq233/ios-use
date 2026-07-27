@@ -22,11 +22,17 @@ typedef struct {
 /// logical canvas belongs to UIKit, automation coordinates, and screenshots.
 /// `canvasRect` uses the host content view's bottom-left coordinate system,
 /// while logical points use the device's usual top-left coordinate system.
+/// `canvasRect` is the ideal uniform render transform.
+/// `backingPixelCanvasRect` is the nearest backing-pixel rectangle and is the
+/// authoritative projection/crop boundary.
 typedef struct {
     CGRect hostContentBounds;
     CGRect canvasRect;
+    CGRect backingPixelCanvasRect;
     CGFloat displayScale;
     CGFloat inverseDisplayScale;
+    CGFloat backingScaleFactor;
+    CGFloat halfPixelTolerance;
 } IOSUsePlayHostCanvasLayout;
 
 FOUNDATION_EXPORT CGFloat const IOSUsePlayHostCanvasMinimumDisplayScale;
@@ -36,6 +42,7 @@ FOUNDATION_EXPORT CGFloat const IOSUsePlayHostCanvasMinimumDisplayScale;
 /// its 430x932 local logical bounds.
 FOUNDATION_EXPORT BOOL IOSUsePlayResolveHostCanvasLayout(
     CGRect hostContentBounds,
+    CGFloat backingScaleFactor,
     IOSUsePlayHostCanvasLayout * _Nullable layout,
     NSString * _Nullable * _Nullable failure
 );
@@ -95,6 +102,7 @@ FOUNDATION_EXPORT BOOL IOSUsePlayResolveCGWindowRectInCanvas(
     CGRect sourceCGWindowBounds,
     CGRect canvasCGWindowRect,
     CGFloat displayScale,
+    CGFloat backingScaleFactor,
     CGRect * _Nullable deviceLogicalRect,
     NSString * _Nullable * _Nullable failure
 );
@@ -111,6 +119,7 @@ IOSUsePlayCropAndNormalizeCanvasCapture(
     CGRect sourceCGWindowBounds,
     CGRect canvasCGWindowRect,
     CGFloat displayScale,
+    CGFloat backingScaleFactor,
     CGRect * _Nullable deviceLogicalRect,
     NSDictionary<NSString *, id> * _Nullable * _Nullable evidence,
     NSString * _Nullable * _Nullable failure
@@ -180,6 +189,12 @@ IOSUsePlayCompositeWindowCaptures(
 FOUNDATION_EXPORT BOOL IOSUsePlayAppKitCGWindowSizesMatch(
     CGRect appKitFrame,
     CGRect cgWindowBounds
+);
+
+FOUNDATION_EXPORT BOOL IOSUsePlayAppKitCGWindowSizesMatchAtBackingScale(
+    CGRect appKitFrame,
+    CGRect cgWindowBounds,
+    CGFloat backingScaleFactor
 );
 
 /// Validates that AppKit and CGWindow describe the same-sized base and target

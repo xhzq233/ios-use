@@ -817,13 +817,18 @@ IOSUseScreenshotCollectNativeWindows(
     CGRect resolvedCanvasCGWindowRect = CGRectNull;
     CGFloat resolvedCanvasDisplayScale =
         [canvasGeometry[@"displayScale"] doubleValue];
+    CGFloat resolvedCanvasBackingScale =
+        [canvasGeometry[@"backingScaleFactor"] doubleValue];
     if (canvasGeometry == nil ||
         !IOSUseScreenshotRectFromJSON(
             canvasGeometry[@"canvasCGWindowRect"],
             &resolvedCanvasCGWindowRect
         ) ||
         !isfinite(resolvedCanvasDisplayScale) ||
-        resolvedCanvasDisplayScale <= 0) {
+        resolvedCanvasDisplayScale <= 0 ||
+        !isfinite(resolvedCanvasBackingScale) ||
+        resolvedCanvasBackingScale <= 0 ||
+        resolvedCanvasBackingScale > 4) {
         IOSUseScreenshotSetFailure(
             @"compositor_canvas_geometry_unavailable",
             canvasGeometryError.localizedDescription ?:
@@ -839,6 +844,7 @@ IOSUseScreenshotCollectNativeWindows(
             resolvedCanvasCGWindowRect,
             resolvedCanvasCGWindowRect,
             resolvedCanvasDisplayScale,
+            resolvedCanvasBackingScale,
             &resolvedCanvasDeviceFrame,
             &canvasResolveFailure
         ) ||
@@ -925,9 +931,10 @@ IOSUseScreenshotCollectNativeWindows(
             );
             return nil;
         }
-        if (!IOSUsePlayAppKitCGWindowSizesMatch(
+        if (!IOSUsePlayAppKitCGWindowSizesMatchAtBackingScale(
                 record.frame,
-                cgBounds
+                cgBounds,
+                record.backingScale
             )) {
             IOSUseScreenshotSetFailure(
                 @"compositor_window_geometry_invalid",
@@ -952,6 +959,7 @@ IOSUseScreenshotCollectNativeWindows(
                 cgBounds,
                 resolvedCanvasCGWindowRect,
                 resolvedCanvasDisplayScale,
+                record.backingScale,
                 &deviceLogicalRect,
                 &canvasIntersectionFailure
             );
@@ -1134,9 +1142,10 @@ IOSUseScreenshotCompositorEvidence(
     for (NSUInteger index = 0; index < windows.count; index += 1) {
         IOSUseScreenshotNativeWindow *window = windows[index];
         appKitCGWindowSizesMatch &=
-            IOSUsePlayAppKitCGWindowSizesMatch(
+            IOSUsePlayAppKitCGWindowSizesMatchAtBackingScale(
                 window.frame,
-                window.cgWindowBounds
+                window.cgWindowBounds,
+                window.backingScale
             );
         NSDictionary *geometry = index < sourceEvidence.count
             ? sourceEvidence[index]
@@ -1507,6 +1516,7 @@ static CGImageRef IOSUseScreenshotCaptureFrameOnMain(
                 window.cgWindowBounds,
                 canvasCGWindowRect,
                 canvasDisplayScale,
+                window.backingScale,
                 &croppedLogicalRect,
                 &cropEvidence,
                 &cropFailure
