@@ -346,13 +346,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
         XCTAssertEqual(
             capture.runtimeEvidence?["compositor"],
-            .object([
-                "complete": .bool(true),
-                "syntheticChrome": .bool(false),
-                "fullFrame": fullFrameEvidence(
-                    valid.fullFrame
-                ),
-            ])
+            compositorEvidence(valid.fullFrame)
         )
         XCTAssertEqual(
             capture.runtimeEvidence?["syntheticChrome"],
@@ -476,6 +470,121 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 )
             }
         }
+    }
+
+    func testScreenshotRequiresEveryCompositorCompletenessField()
+        throws
+    {
+        let jpeg = try makeJPEG(
+            width: Int(IOSUsePlayDeviceNativeWidth),
+            height: Int(IOSUsePlayDeviceNativeHeight)
+        )
+        let fullFrame = makeFullFrame()
+        let expected = PlayCoverDriverClientError
+            .malformedRuntimePayload(
+                "screenshot compositor completeness evidence"
+            )
+        let requiredTrue = [
+            "allVisibleUIKitWindowsMapped",
+            "allVisibleNativeWindowsOrdered",
+            "requestedCapturedCountMatch",
+            "baseWindowCoversDevice",
+            "nativeWindowsCroppedToCanvas",
+            "hostDecorationsExcluded",
+            "fullFrameUncropped",
+            "allWindowGeometryInsideDevice",
+            "appKitCGWindowSizesMatch",
+            "cgWindowPlacementAuthoritative",
+            "windowSetStableDuringCapture",
+        ]
+        let requiredFalse = [
+            "syntheticChrome",
+            "safeAreaCropped",
+        ]
+        var invalidEvidence = [
+            compositorEvidence(
+                fullFrame,
+                omittedTopLevelKeys: ["complete"]
+            ),
+            compositorEvidence(
+                fullFrame,
+                topLevelOverrides: ["complete": .bool(false)]
+            ),
+            compositorEvidence(
+                fullFrame,
+                topLevelOverrides: ["completeness": .null]
+            ),
+        ]
+        for key in requiredTrue {
+            invalidEvidence.append(
+                compositorEvidence(
+                    fullFrame,
+                    completenessOverrides: [
+                        key: .bool(false),
+                    ]
+                )
+            )
+            invalidEvidence.append(
+                compositorEvidence(
+                    fullFrame,
+                    omittedCompletenessKeys: [key]
+                )
+            )
+        }
+        for key in requiredFalse {
+            invalidEvidence.append(
+                compositorEvidence(
+                    fullFrame,
+                    completenessOverrides: [
+                        key: .bool(true),
+                    ]
+                )
+            )
+            invalidEvidence.append(
+                compositorEvidence(
+                    fullFrame,
+                    omittedCompletenessKeys: [key]
+                )
+            )
+        }
+        for compositor in invalidEvidence {
+            let client = makeClient(
+                response: makePayload(
+                    capability: .screenshot,
+                    screenshot: makeScreenshot(
+                        jpeg: jpeg,
+                        compositor: compositor
+                    )
+                )
+            )
+            XCTAssertThrowsError(try client.screenshotCapture()) {
+                XCTAssertEqual(
+                    $0 as? PlayCoverDriverClientError,
+                    expected
+                )
+            }
+        }
+
+        let forwardCompatible = compositorEvidence(
+            fullFrame,
+            topLevelOverrides: [
+                "futureTopLevelEvidence": .string("preserved"),
+            ],
+            completenessOverrides: [
+                "futureCompletenessEvidence": .bool(true),
+            ]
+        )
+        XCTAssertNoThrow(
+            try makeClient(
+                response: makePayload(
+                    capability: .screenshot,
+                    screenshot: makeScreenshot(
+                        jpeg: jpeg,
+                        compositor: forwardCompatible
+                    )
+                )
+            ).screenshotCapture()
+        )
     }
 
     func testAtomicEvidenceRequiresSameScreenshotAndDOMGeneration()
@@ -1709,11 +1818,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
             appKitWindowEvidence: .object([
                 "ready": .bool(true),
             ]),
-            compositor: compositor ?? .object([
-                "complete": .bool(true),
-                "syntheticChrome": .bool(false),
-                "fullFrame": fullFrameEvidence(resolvedFullFrame),
-            ])
+            compositor: compositor ??
+                compositorEvidence(resolvedFullFrame)
         )
     }
 
@@ -1759,6 +1865,53 @@ final class PlayCoverDriverClientTests: XCTestCase {
             "safeAreaCropped": .bool(fullFrame.safeAreaCropped),
             "identityMapping": .bool(fullFrame.identityMapping),
         ])
+    }
+
+    private func compositorEvidence(
+        _ fullFrame: PlayCoverRuntimeFullFrame,
+        topLevelOverrides:
+            [String: PlayCoverRuntimeJSONValue] = [:],
+        completenessOverrides:
+            [String: PlayCoverRuntimeJSONValue] = [:],
+        omittedTopLevelKeys: Set<String> = [],
+        omittedCompletenessKeys: Set<String> = []
+    ) -> PlayCoverRuntimeJSONValue {
+        var completeness:
+            [String: PlayCoverRuntimeJSONValue] = [
+                "allVisibleUIKitWindowsMapped": .bool(true),
+                "allVisibleNativeWindowsOrdered": .bool(true),
+                "requestedCapturedCountMatch": .bool(true),
+                "baseWindowCoversDevice": .bool(true),
+                "nativeWindowsCroppedToCanvas": .bool(true),
+                "hostDecorationsExcluded": .bool(true),
+                "syntheticChrome": .bool(false),
+                "fullFrameUncropped": .bool(true),
+                "safeAreaCropped": .bool(false),
+                "allWindowGeometryInsideDevice": .bool(true),
+                "appKitCGWindowSizesMatch": .bool(true),
+                "cgWindowPlacementAuthoritative": .bool(true),
+                "windowSetStableDuringCapture": .bool(true),
+            ]
+        for (key, value) in completenessOverrides {
+            completeness[key] = value
+        }
+        for key in omittedCompletenessKeys {
+            completeness.removeValue(forKey: key)
+        }
+        var evidence:
+            [String: PlayCoverRuntimeJSONValue] = [
+                "complete": .bool(true),
+                "syntheticChrome": .bool(false),
+                "fullFrame": fullFrameEvidence(fullFrame),
+                "completeness": .object(completeness),
+            ]
+        for (key, value) in topLevelOverrides {
+            evidence[key] = value
+        }
+        for key in omittedTopLevelKeys {
+            evidence.removeValue(forKey: key)
+        }
+        return .object(evidence)
     }
 
     private func makeJPEG(

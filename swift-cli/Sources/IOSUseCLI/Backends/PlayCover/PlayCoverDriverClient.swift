@@ -1171,6 +1171,52 @@ final class PlayCoverDriverClient: DriverCommandClient {
                     "screenshot compositor full-frame evidence"
                 )
         }
+        try validateScreenshotCompositorCompleteness(
+            compositorEvidence: compositorEvidence
+        )
+    }
+
+    private static func validateScreenshotCompositorCompleteness(
+        compositorEvidence:
+            [String: PlayCoverRuntimeJSONValue]
+    ) throws {
+        let invalid = PlayCoverDriverClientError
+            .malformedRuntimePayload(
+                "screenshot compositor completeness evidence"
+            )
+        guard compositorEvidence["complete"] == .bool(true),
+              let completenessValue =
+                compositorEvidence["completeness"],
+              case .object(let completeness) =
+                completenessValue else {
+            throw invalid
+        }
+
+        let requiredTrue = [
+            "allVisibleUIKitWindowsMapped",
+            "allVisibleNativeWindowsOrdered",
+            "requestedCapturedCountMatch",
+            "baseWindowCoversDevice",
+            "nativeWindowsCroppedToCanvas",
+            "hostDecorationsExcluded",
+            "fullFrameUncropped",
+            "allWindowGeometryInsideDevice",
+            "appKitCGWindowSizesMatch",
+            "cgWindowPlacementAuthoritative",
+            "windowSetStableDuringCapture",
+        ]
+        let requiredFalse = [
+            "syntheticChrome",
+            "safeAreaCropped",
+        ]
+        guard requiredTrue.allSatisfy({
+                  completeness[$0] == .bool(true)
+              }),
+              requiredFalse.allSatisfy({
+                  completeness[$0] == .bool(false)
+              }) else {
+            throw invalid
+        }
     }
 
     private static func fullFrameEvidence(
