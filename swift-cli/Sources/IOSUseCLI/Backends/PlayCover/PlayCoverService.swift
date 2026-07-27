@@ -368,8 +368,9 @@ public enum PlayCoverService {
 
     /// Reads the immutable generation identity and performs only the bounded
     /// reuse checks: marker/manifest identity, main/Runtime hashes and each
-    /// recorded code-object signature exactly once. It deliberately does not
-    /// enumerate or inspect the App tree.
+    /// independently signed code object in the pinned inside-out signing order
+    /// exactly once. Bundle verification covers its recorded main executable.
+    /// It deliberately does not enumerate or inspect the App tree.
     static func fastVerify(
         appPath: String
     ) throws -> PlayCoverPrepareManifest {
@@ -1240,18 +1241,46 @@ public enum PlayCoverService {
             $0.codeObjectKind == nil ? nil : $0.relativePath
         })
         codePaths.insert(".")
-        let nestedContainers = codePaths.filter {
-            $0 != "."
-                && ($0.hasSuffix(".appex")
-                    || $0.hasSuffix(".framework")
-                    || $0.hasSuffix(".bundle"))
+        let orderedCodePaths = manifest.signingOrder
+        let signaturePaths = Set(orderedCodePaths)
+        let requiredBundlePaths = Set(manifest.inventory.compactMap {
+            entry -> String? in
+            guard entry.kind == "directory",
+                  entry.codeObjectKind?.hasSuffix("Bundle") == true else {
+                return nil
+            }
+            return entry.relativePath
+        }).union(["."])
+        let requiredIndependentPaths = Set(manifest.inventory.compactMap {
+            entry -> String? in
+            guard let codeObjectKind = entry.codeObjectKind,
+                  entry.relativePath != manifest.executableName else {
+                return nil
+            }
+            if codeObjectKind.hasSuffix("Executable"),
+               requiredBundlePaths.contains(where: {
+                   $0 != "."
+                       && entry.relativePath.hasPrefix($0 + "/")
+               }) {
+                return nil
+            }
+            return entry.relativePath
+        }).union(["."])
+        guard orderedCodePaths.last == ".",
+              signaturePaths.count == orderedCodePaths.count,
+              signaturePaths.isSubset(of: codePaths),
+              requiredBundlePaths.isSubset(of: signaturePaths),
+              requiredIndependentPaths.isSubset(of: signaturePaths),
+              !signaturePaths.contains(manifest.executableName) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "manifest signing order is not a valid inside-out plan"
+            )
         }
         let relevantEntries = manifest.inventory.filter { entry in
             if !fast { return true }
             return entry.relativePath == "Info.plist"
                 || requiredHashes.contains(entry.relativePath)
                 || entry.codeObjectKind != nil
-                || nestedContainers.contains(entry.relativePath)
         }
         var appStatus = stat()
         guard fstat(appDescriptor, &appStatus) == 0,
@@ -1289,8 +1318,6 @@ public enum PlayCoverService {
                 appDescriptor,
                 label: "prepared App root"
             )
-        let orderedCodePaths =
-            codePaths.filter { $0 != "." }.sorted() + ["."]
         for relative in orderedCodePaths {
             if relative != "." {
                 _ = try recordedURL(app: app, relativePath: relative)
@@ -1319,6 +1346,21 @@ public enum PlayCoverService {
                 throw PlayCoverBackendError.cacheTampered(
                     "recorded code object changed during signature "
                         + "verification: \(relative)"
+                )
+            }
+        }
+        for relative in codePaths.subtracting(signaturePaths).sorted() {
+            guard
+                let expected = verifiedStatuses[relative],
+                try recordedPathStillHasIdentity(
+                    relative,
+                    appDescriptor: appDescriptor,
+                    expected: expected
+                )
+            else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "recorded code object changed during signature plan: "
+                        + relative
                 )
             }
         }

@@ -13,7 +13,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         super.tearDown()
     }
 
-    func testFastVerifyHashesRequiredExecutablesAndCodesignsCodeObjectsOnce()
+    func testFastVerifyHashesRequiredExecutablesAndCodesignsSigningOrderOnce()
         throws
     {
         let fixture = try FastVerifyFixture()
@@ -64,17 +64,8 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             "Frameworks/\(PlayCoverService.runtimeFrameworkName)"
                 + "/\(PlayCoverService.runtimeExecutableName)",
         ]
-        let expectedPaths = Set(
-            fixture.manifest.inventory.compactMap { entry -> String? in
-                guard entry.codeObjectKind != nil else { return nil }
-                return entry.relativePath
-            }
-        ).union(["."])
-        let expectedCodeRelativePaths = Set(
-            fixture.manifest.inventory.compactMap {
-                $0.codeObjectKind == nil ? nil : $0.relativePath
-            }
-        ).union(["."])
+        let expectedCodeRelativePaths = Set(fixture.manifest.signingOrder)
+        let expectedPaths = expectedCodeRelativePaths
 
         XCTAssertEqual(Set(beforeHashes.keys), expectedHashes)
         XCTAssertEqual(beforeHashes, afterHashes)
@@ -92,6 +83,19 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         XCTAssertTrue(
             beforeSignatures.values.allSatisfy { $0 == 1 },
             "code objects were re-verified: \(beforeSignatures)"
+        )
+        XCTAssertFalse(
+            expectedCodeRelativePaths.contains(
+                fixture.manifest.executableName
+            ),
+            "the root bundle already verifies its main executable"
+        )
+        XCTAssertFalse(
+            expectedCodeRelativePaths.contains(
+                "Frameworks/\(PlayCoverService.runtimeFrameworkName)"
+                    + "/\(PlayCoverService.runtimeExecutableName)"
+            ),
+            "the Runtime bundle already verifies its executable"
         )
     }
 
@@ -187,6 +191,46 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         #else
         throw XCTSkip("descriptor verification is Darwin-only")
         #endif
+    }
+
+    func testFastVerifyRejectsInvalidSigningOrderBeforeCodeSign()
+        throws
+    {
+        let fixture = try FastVerifyFixture(
+            signingOrderOverride: [".", "."]
+        )
+        defer { fixture.remove() }
+        var codeSignCalls = 0
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            codeSignCalls += 1
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertEqual(codeSignCalls, 0)
+    }
+
+    func testFastVerifyRejectsSigningOrderMissingStandaloneCodeObject()
+        throws
+    {
+        let fixture = try FastVerifyFixture(
+            signingOrderOverride: [
+                "Frameworks/FixtureKit.framework",
+                "Frameworks/\(PlayCoverService.runtimeFrameworkName)",
+                ".",
+            ]
+        )
+        defer { fixture.remove() }
+        var codeSignCalls = 0
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            codeSignCalls += 1
+            return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertEqual(codeSignCalls, 0)
     }
 
     func testGenerationReplacementAfterCompletedReadFailsFinalIdentity()
@@ -399,6 +443,70 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             try PlayCoverService.fastVerify(appPath: fixture.app.path)
         )
         XCTAssertTrue(exercisedABA)
+        #else
+        throw XCTSkip("descriptor verification is Darwin-only")
+        #endif
+    }
+
+    func testBundledExecutableIdentityRemainsCoveredWithoutOwnCodeSign()
+        throws
+    {
+        #if canImport(Darwin)
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let frameworkRelative = "Frameworks/FixtureKit.framework"
+        let executableRelative = "\(frameworkRelative)/FixtureKit"
+        let framework = fixture.app.appendingPathComponent(
+            frameworkRelative,
+            isDirectory: true
+        )
+        let executable = fixture.app.appendingPathComponent(
+            executableRelative
+        )
+        let replacement = framework.appendingPathComponent(
+            "ReplacementExecutable"
+        )
+        let displaced = framework.appendingPathComponent(
+            "DisplacedExecutable"
+        )
+        try FileManager.default.copyItem(
+            at: executable,
+            to: replacement
+        )
+        var signaturePaths = Set<String>()
+        var replaced = false
+        PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            if case .beforeCodeSignature(let relative) = event {
+                signaturePaths.insert(relative)
+            }
+            guard event == .afterCodeSignature(frameworkRelative),
+                  !replaced else {
+                return
+            }
+            replaced = true
+            guard Darwin.rename(
+                    executable.path,
+                    displaced.path
+                  ) == 0,
+                  Darwin.rename(
+                    replacement.path,
+                    executable.path
+                  ) == 0 else {
+                throw NSError(
+                    domain: NSPOSIXErrorDomain,
+                    code: Int(errno)
+                )
+            }
+        }
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertTrue(replaced)
+        XCTAssertTrue(signaturePaths.contains(frameworkRelative))
+        XCTAssertFalse(signaturePaths.contains(executableRelative))
         #else
         throw XCTSkip("descriptor verification is Darwin-only")
         #endif
@@ -723,7 +831,7 @@ private struct FastVerifyFixture {
     let manifestURL: URL
     let completedURL: URL
 
-    init() throws {
+    init(signingOrderOverride: [String]? = nil) throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "IOSUsePlayCoverFastVerify-\(UUID().uuidString)",
             isDirectory: true
@@ -786,6 +894,40 @@ private struct FastVerifyFixture {
             [.posixPermissions: 0o755],
             ofItemAtPath: runtime.path
         )
+        let fixtureFramework = app
+            .appendingPathComponent("Frameworks", isDirectory: true)
+            .appendingPathComponent(
+                "FixtureKit.framework",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: fixtureFramework,
+            withIntermediateDirectories: false
+        )
+        let fixtureFrameworkInfo: [String: Any] = [
+            "CFBundleIdentifier": "com.example.fixturekit",
+            "CFBundleExecutable": "FixtureKit",
+        ]
+        try PropertyListSerialization.data(
+            fromPropertyList: fixtureFrameworkInfo,
+            format: .xml,
+            options: 0
+        ).write(to: fixtureFramework.appendingPathComponent("Info.plist"))
+        let fixtureFrameworkExecutable = fixtureFramework
+            .appendingPathComponent("FixtureKit")
+        try Self.makeThinMachO().write(to: fixtureFrameworkExecutable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: fixtureFrameworkExecutable.path
+        )
+        let standaloneDylib = app
+            .appendingPathComponent("Frameworks", isDirectory: true)
+            .appendingPathComponent("Standalone.dylib")
+        try Self.makeThinMachO().write(to: standaloneDylib)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: standaloneDylib.path
+        )
         let prepared = try PlayCoverService.inspect(appPath: app.path)
         let runtimeHash = try Self.fileSHA256(runtime)
         let generationKey = PlayCoverService.makeGenerationKey(
@@ -793,6 +935,16 @@ private struct FastVerifyFixture {
             runtimeBuildHash: runtimeHash,
             prepareRevision: PlayCoverService.prepareImplementationRevision
         )
+        let signingOrder = signingOrderOverride
+            ?? prepared.inventory.compactMap { entry -> String? in
+                guard let codeObjectKind = entry.codeObjectKind,
+                      entry.relativePath
+                        != prepared.mainExecutableRelativePath,
+                      !codeObjectKind.hasSuffix("Executable") else {
+                    return nil
+                }
+                return entry.relativePath
+            }.sorted() + ["."]
         manifest = PlayCoverPrepareManifest(
             sourceAppPath: source.appPath,
             preparedAppPath: app.path,
@@ -808,9 +960,7 @@ private struct FastVerifyFixture {
             runtimeFrameworkName:
                 PlayCoverService.runtimeFrameworkName,
             convertedMachOs: prepared.machOs.map(\.relativePath),
-            signingOrder: prepared.inventory.compactMap {
-                $0.codeObjectKind == nil ? nil : $0.relativePath
-            } + ["."],
+            signingOrder: signingOrder,
             sourceInventory: source.inventory,
             sourceMachOs: source.machOs,
             inventory: prepared.inventory,
