@@ -167,7 +167,9 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
         let handle = try FileHandle(forWritingTo: fixture.manifestURL)
         try handle.truncate(
-            atOffset: UInt64(64 * 1_024 * 1_024 + 1)
+            atOffset: UInt64(
+                PlayCoverService.generationManifestMaximumBytes + 1
+            )
         )
         try handle.close()
         let started = ProcessInfo.processInfo.systemUptime
@@ -178,6 +180,44 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             ProcessInfo.processInfo.systemUptime - started,
             1,
             "oversized sparse metadata should be rejected by fstat"
+        )
+    }
+
+    func testOversizedCompletedMarkerUsesItsSmallerLimit()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let handle = try FileHandle(
+            forWritingTo: fixture.completedURL
+        )
+        try handle.truncate(
+            atOffset: UInt64(
+                PlayCoverService.completedMarkerMaximumBytes + 1
+            )
+        )
+        try handle.close()
+        var events: [PlayCoverService.FastVerifyEvent] = []
+        PlayCoverService.fastVerifyEventOverrideForTesting = {
+            events.append($0)
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertTrue(
+            events.contains(
+                .beforeMetadataOpen(
+                    PlayCoverService.completedFilename
+                )
+            )
+        )
+        XCTAssertFalse(
+            events.contains(
+                .afterMetadataOpen(
+                    PlayCoverService.completedFilename
+                )
+            ),
+            "oversized completed marker should fail its fstat bound"
         )
     }
 

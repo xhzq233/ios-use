@@ -43,6 +43,8 @@ public enum PlayCoverService {
 
     public static let manifestFilename = "manifest.json"
     static let completedFilename = "completed.json"
+    static let generationManifestMaximumBytes = 64 * 1_024 * 1_024
+    static let completedMarkerMaximumBytes = 1_048_576
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
@@ -404,7 +406,8 @@ public enum PlayCoverService {
         try validateManifest(manifest, appURL: app)
         let marker = try readJSON(
             PlayCoverCompletedGeneration.self,
-            from: completedURL(for: app)
+            from: completedURL(for: app),
+            maximumBytes: completedMarkerMaximumBytes
         )
         guard marker.schemaVersion == 2,
               marker.generationKey == manifest.generationKey else {
@@ -1423,7 +1426,8 @@ public enum PlayCoverService {
     ) throws -> PlayCoverPrepareManifest {
         try readJSON(
             PlayCoverPrepareManifest.self,
-            from: manifestURL(for: appURL)
+            from: manifestURL(for: appURL),
+            maximumBytes: generationManifestMaximumBytes
         )
     }
 
@@ -1502,7 +1506,8 @@ public enum PlayCoverService {
 
     private static func readJSON<T: Decodable>(
         _ type: T.Type,
-        from url: URL
+        from url: URL,
+        maximumBytes: Int
     ) throws -> T {
         try emitFastVerifyEvent(
             .beforeMetadataOpen(url.lastPathComponent)
@@ -1532,7 +1537,7 @@ public enum PlayCoverService {
             let data = try PlayCoverManagedAppService.readOwnedRegularFile(
                 parentDescriptor: parentDescriptor,
                 name: url.lastPathComponent,
-                maximumBytes: 64 * 1_024 * 1_024,
+                maximumBytes: maximumBytes,
                 afterOpen: {
                     try emitFastVerifyEvent(
                         .afterMetadataOpen(url.lastPathComponent)
