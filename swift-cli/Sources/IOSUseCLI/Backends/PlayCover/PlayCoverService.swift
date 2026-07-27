@@ -319,9 +319,13 @@ public enum PlayCoverService {
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
-        let manifest = try readManifest(for: app)
+        let manifestEvidence = try readManifest(for: app)
+        let manifest = manifestEvidence.value
         try validateManifest(manifest, appURL: app)
-        try fastVerifyGeneration(appPath: app.path, manifest: manifest)
+        try fastVerifyGeneration(
+            appPath: app.path,
+            manifestEvidence: manifestEvidence
+        )
         let upstream: PlayCoverUpstreamAppInspection
         do {
             upstream = try PlayCoverUpstreamEngine.verify(
@@ -374,9 +378,13 @@ public enum PlayCoverService {
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
-        let manifest = try readManifest(for: app)
+        let manifestEvidence = try readManifest(for: app)
+        let manifest = manifestEvidence.value
         try validateManifest(manifest, appURL: app)
-        try fastVerifyGeneration(appPath: app.path, manifest: manifest)
+        try fastVerifyGeneration(
+            appPath: app.path,
+            manifestEvidence: manifestEvidence
+        )
         return manifest
     }
 
@@ -389,7 +397,7 @@ public enum PlayCoverService {
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
-        let manifest = try readManifest(for: app)
+        let manifest = try readManifest(for: app).value
         try validateManifest(manifest, appURL: app)
         return manifest
     }
@@ -402,7 +410,30 @@ public enum PlayCoverService {
             fileURLWithPath: appPath,
             isDirectory: true
         ).standardizedFileURL
-        let manifest = try suppliedManifest ?? readManifest(for: app)
+        let manifestEvidence: DecodedMetadata<PlayCoverPrepareManifest>
+        if let suppliedManifest {
+            manifestEvidence = DecodedMetadata(
+                value: suppliedManifest,
+                rawData: try canonicalJSON(suppliedManifest)
+            )
+        } else {
+            manifestEvidence = try readManifest(for: app)
+        }
+        try fastVerifyGeneration(
+            appPath: app.path,
+            manifestEvidence: manifestEvidence
+        )
+    }
+
+    private static func fastVerifyGeneration(
+        appPath: String,
+        manifestEvidence: DecodedMetadata<PlayCoverPrepareManifest>
+    ) throws {
+        let app = URL(
+            fileURLWithPath: appPath,
+            isDirectory: true
+        ).standardizedFileURL
+        let manifest = manifestEvidence.value
         try validateManifest(manifest, appURL: app)
         let marker = try readJSON(
             PlayCoverCompletedGeneration.self,
@@ -415,8 +446,8 @@ public enum PlayCoverService {
                 "completed marker identity does not match the manifest"
             )
         }
-        let manifestData = try canonicalJSON(manifest)
-        guard marker.manifestSHA256 == sha256(manifestData) else {
+        guard marker.manifestSHA256
+                == sha256(manifestEvidence.rawData) else {
             throw PlayCoverBackendError.cacheTampered(
                 "manifest hash does not match immutable completed marker"
             )
@@ -1421,10 +1452,15 @@ public enum PlayCoverService {
         return value
     }
 
+    private struct DecodedMetadata<Value> {
+        let value: Value
+        let rawData: Data
+    }
+
     private static func readManifest(
         for appURL: URL
-    ) throws -> PlayCoverPrepareManifest {
-        try readJSON(
+    ) throws -> DecodedMetadata<PlayCoverPrepareManifest> {
+        try readJSONMetadata(
             PlayCoverPrepareManifest.self,
             from: manifestURL(for: appURL),
             maximumBytes: generationManifestMaximumBytes
@@ -1515,6 +1551,18 @@ public enum PlayCoverService {
         from url: URL,
         maximumBytes: Int
     ) throws -> T {
+        try readJSONMetadata(
+            type,
+            from: url,
+            maximumBytes: maximumBytes
+        ).value
+    }
+
+    private static func readJSONMetadata<T: Decodable>(
+        _ type: T.Type,
+        from url: URL,
+        maximumBytes: Int
+    ) throws -> DecodedMetadata<T> {
         try emitFastVerifyEvent(
             .beforeMetadataOpen(url.lastPathComponent)
         )
@@ -1558,9 +1606,12 @@ public enum PlayCoverService {
             try emitFastVerifyEvent(
                 .afterMetadataRead(url.lastPathComponent)
             )
-            return try JSONDecoder().decode(
-                type,
-                from: data
+            return DecodedMetadata(
+                value: try JSONDecoder().decode(
+                    type,
+                    from: data
+                ),
+                rawData: data
             )
         } catch let error as PlayCoverBackendError {
             throw error

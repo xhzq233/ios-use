@@ -151,6 +151,57 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         #endif
     }
 
+    func testManifestByteSealRejectsSemanticallyEquivalentRewrite()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        var codeSignCalls = 0
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            codeSignCalls += 1
+            return Shell.RunResult(
+                stdout: "",
+                stderr: "",
+                exitCode: 0
+            )
+        }
+
+        XCTAssertNoThrow(
+            try PlayCoverService.fastVerify(appPath: fixture.app.path)
+        )
+        XCTAssertGreaterThan(codeSignCalls, 0)
+
+        let canonical = try Data(contentsOf: fixture.manifestURL)
+        let object = try JSONSerialization.jsonObject(with: canonical)
+        let rewritten = try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        XCTAssertNotEqual(rewritten, canonical)
+        let decoded = try JSONDecoder().decode(
+            PlayCoverPrepareManifest.self,
+            from: rewritten
+        )
+        XCTAssertEqual(
+            decoded.generationKey,
+            fixture.manifest.generationKey
+        )
+        try rewritten.write(to: fixture.manifestURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.manifestURL.path
+        )
+        codeSignCalls = 0
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertEqual(
+            codeSignCalls,
+            0,
+            "rewritten manifest reached code signature verification"
+        )
+    }
+
     func testManifestSymlinkFailsClosed() throws {
         let fixture = try FastVerifyFixture()
         defer { fixture.remove() }
