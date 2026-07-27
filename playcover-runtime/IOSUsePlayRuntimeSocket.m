@@ -999,6 +999,11 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
                 NO
             );
         }
+        payload[@"pid"] = @(getpid());
+        payload[@"bundleIdentifier"] =
+            NSBundle.mainBundle.bundleIdentifier ?: @"";
+        payload[@"executablePath"] =
+            NSBundle.mainBundle.executablePath ?: @"";
         payload[@"pong"] = @YES;
     } else if ([command isEqualToString:@"diagnostics"]) {
         if (arguments.count != 0) {

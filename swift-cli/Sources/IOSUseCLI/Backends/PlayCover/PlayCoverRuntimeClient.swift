@@ -490,7 +490,22 @@ struct PlayCoverRuntimeDiagnosticsPayload:
 }
 
 struct PlayCoverRuntimePingPayload: Codable, Equatable, Sendable {
+    let pid: Int32?
+    let bundleIdentifier: String?
+    let executablePath: String?
     let pong: Bool
+
+    var hasCompleteIdentity: Bool {
+        pid != nil &&
+            bundleIdentifier != nil &&
+            executablePath != nil
+    }
+
+    var hasAnyIdentity: Bool {
+        pid != nil ||
+            bundleIdentifier != nil ||
+            executablePath != nil
+    }
 }
 
 struct PlayCoverRuntimeScreenshotResult:
@@ -871,6 +886,24 @@ final class PlayCoverRuntimeClient {
                     "ping acknowledgement is false"
                 )
             }
+            guard payload.hasAnyIdentity else {
+                // Prepared generations from before identified ping remain
+                // launchable through the exact-identity hello fallback.
+                return .ping(payload)
+            }
+            guard payload.hasCompleteIdentity,
+                  let pid = payload.pid,
+                  let bundleIdentifier = payload.bundleIdentifier,
+                  let executablePath = payload.executablePath else {
+                throw PlayCoverRuntimeClientError.malformedResponse(
+                    "ping identity is incomplete"
+                )
+            }
+            try validateIdentity(
+                pid: pid,
+                bundleIdentifier: bundleIdentifier,
+                executablePath: executablePath
+            )
             return .ping(payload)
         case .diagnostics:
             let payload: PlayCoverRuntimeDiagnosticsPayload =
@@ -1491,15 +1524,27 @@ final class PlayCoverRuntimeClient {
     private func validateIdentity(
         _ payload: some PlayCoverRuntimeIdentifiedPayload
     ) throws {
-        guard payload.pid == expectedPID else {
+        try validateIdentity(
+            pid: payload.pid,
+            bundleIdentifier: payload.bundleIdentifier,
+            executablePath: payload.executablePath
+        )
+    }
+
+    private func validateIdentity(
+        pid: Int32,
+        bundleIdentifier: String,
+        executablePath: String
+    ) throws {
+        guard pid == expectedPID else {
             throw PlayCoverRuntimeClientError
                 .responseIdentityMismatch("PID")
         }
-        guard payload.bundleIdentifier == expectedBundleIdentifier else {
+        guard bundleIdentifier == expectedBundleIdentifier else {
             throw PlayCoverRuntimeClientError
                 .responseIdentityMismatch("bundle identifier")
         }
-        guard Self.canonicalPath(payload.executablePath)
+        guard Self.canonicalPath(executablePath)
                 == Self.canonicalPath(expectedExecutablePath) else {
             throw PlayCoverRuntimeClientError
                 .responseIdentityMismatch("executable")

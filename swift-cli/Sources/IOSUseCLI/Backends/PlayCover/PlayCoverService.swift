@@ -1778,7 +1778,7 @@ public enum PlayCoverService {
             _ identity: LaunchedApplicationIdentity
         ) -> Bool {
             do {
-                _ = try PlayCoverRuntimeClient(
+                let runtime = PlayCoverRuntimeClient(
                     socketPath: runtimeSocketPath,
                     sessionID: sessionID,
                     expectedPID: identity.pid,
@@ -1794,7 +1794,11 @@ public enum PlayCoverService {
                                 ProcessInfo.processInfo.systemUptime
                         )
                     )
-                ).hello()
+                )
+                let ping = try runtime.ping()
+                if !ping.hasCompleteIdentity {
+                    _ = try runtime.hello()
+                }
                 return true
             } catch {
                 return false

@@ -194,7 +194,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 )
                 try validate(body)
                 let payload = self.payload(for: command)
-                if ![.hello, .diagnostics].contains(command) {
+                if ![.hello, .ping, .diagnostics].contains(command) {
                     XCTAssertTrue(
                         Set(payload.keys).isDisjoint(
                             with: [
@@ -464,6 +464,106 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     $0 as? PlayCoverRuntimeClientError,
                     expected
                 )
+            }
+            try server.wait()
+        }
+    }
+
+    func testPingValidatesFreshRuntimeIdentity() throws {
+        let cases: [(String, PlayCoverRuntimeClientError)] = [
+            ("pid", .responseIdentityMismatch("PID")),
+            (
+                "bundle",
+                .responseIdentityMismatch("bundle identifier")
+            ),
+            (
+                "executable",
+                .responseIdentityMismatch("executable")
+            ),
+        ]
+        for (mutation, expected) in cases {
+            let fixture = try RuntimeClientFixture()
+            defer { fixture.remove() }
+            let server = try FakeUnixRuntimeServer(
+                socketPath: fixture.socketPath
+            ) { request in
+                let requestID = try XCTUnwrap(
+                    request["requestId"] as? String
+                )
+                var payload = self.payload(for: .ping)
+                switch mutation {
+                case "pid":
+                    payload["pid"] = Int(getpid()) + 1
+                case "bundle":
+                    payload["bundleIdentifier"] = "other.bundle"
+                default:
+                    payload["executablePath"] = "/bin/false"
+                }
+                return .body(try self.successResponse(
+                    requestID: requestID,
+                    payload: payload
+                ))
+            }
+
+            XCTAssertThrowsError(
+                try makeClient(socketPath: fixture.socketPath).ping()
+            ) {
+                XCTAssertEqual(
+                    $0 as? PlayCoverRuntimeClientError,
+                    expected
+                )
+            }
+            try server.wait()
+        }
+    }
+
+    func testPingAcceptsLegacyPayloadButRejectsPartialIdentity()
+        throws
+    {
+        for includedIdentityKey in [
+            nil,
+            "pid",
+            "bundleIdentifier",
+            "executablePath",
+        ] as [String?] {
+            let fixture = try RuntimeClientFixture()
+            defer { fixture.remove() }
+            let server = try FakeUnixRuntimeServer(
+                socketPath: fixture.socketPath
+            ) { request in
+                let requestID = try XCTUnwrap(
+                    request["requestId"] as? String
+                )
+                var payload: [String: Any] = ["pong": true]
+                if let includedIdentityKey {
+                    payload[includedIdentityKey] =
+                        self.payload(for: .ping)[includedIdentityKey]
+                }
+                return .body(try self.successResponse(
+                    requestID: requestID,
+                    payload: payload
+                ))
+            }
+
+            if includedIdentityKey == nil {
+                let ping = try makeClient(
+                    socketPath: fixture.socketPath
+                ).ping()
+                XCTAssertFalse(ping.hasAnyIdentity)
+                XCTAssertFalse(ping.hasCompleteIdentity)
+            } else {
+                XCTAssertThrowsError(
+                    try makeClient(
+                        socketPath: fixture.socketPath
+                    ).ping()
+                ) {
+                    XCTAssertEqual(
+                        $0 as? PlayCoverRuntimeClientError,
+                        .malformedResponse(
+                            "ping identity is incomplete"
+                        )
+                    )
+                }
             }
             try server.wait()
         }
@@ -756,7 +856,15 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
         case .hello:
             return helloPayload()
         case .ping:
-            return ["pong": true]
+            let identity = basePayload()
+            return [
+                "pid": identity["pid"]!,
+                "bundleIdentifier":
+                    identity["bundleIdentifier"]!,
+                "executablePath":
+                    identity["executablePath"]!,
+                "pong": true,
+            ]
         case .diagnostics:
             var payload = basePayload()
             payload["diagnostics"] = [

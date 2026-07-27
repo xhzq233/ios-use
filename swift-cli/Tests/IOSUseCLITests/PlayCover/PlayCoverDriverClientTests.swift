@@ -1795,7 +1795,13 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 )
             )
         case .ping:
-            return .ping(.init(pong: true))
+            return .ping(.init(
+                pid: 4_242,
+                bundleIdentifier: "com.example.runtime",
+                executablePath:
+                    "/tmp/prepared/generation/com.example.runtime.app/Demo",
+                pong: true
+            ))
         case .diagnostics:
             return .diagnostics(
                 .init(
