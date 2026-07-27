@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 MATRIX_VERSION="2"
-MATRIX_SOURCE="$ROOT_DIR/playcover-fixtures/live-matrix-v1.tsv"
+MATRIX_SOURCE="$ROOT_DIR/playcover-fixtures/live-matrix-v2.tsv"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 EVIDENCE_ROOT="${IOS_USE_PLAYCOVER_EVIDENCE_ROOT:-$ROOT_DIR/.ios-use/live-evidence}"
 RUN_DIR="$EVIDENCE_ROOT/playcover-fixture-v${MATRIX_VERSION}/$RUN_ID"
@@ -17,6 +17,8 @@ FRONTMOST_CAPTURED=0
 FOCUS_RESTORE_MANIFESTED=0
 MOUSE_SEQUENCE=0
 EXPECTED_HOST_TITLE=""
+DISPLAY_TOPOLOGY="$RUN_DIR/display-topology.json"
+DISPLAY_SELECTION="$RUN_DIR/display-selection.json"
 
 usage() {
   cat <<'USAGE'
@@ -68,19 +70,81 @@ if ! command -v xcrun >/dev/null 2>&1; then
   echo "[playcover-fixture-live] xcrun is required." >&2
   exit 78
 fi
-console_session_state="$(/usr/sbin/ioreg -n Root -d1)"
-if rg -q '"CGSSessionScreenIsLocked"=Yes' \
-    <<<"$console_session_state"; then
-  echo \
-    "[playcover-fixture-live] An unlocked macOS console session is required." \
-    >&2
-  exit 78
-fi
 if [[
   ! -f "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift"
 ]]; then
   echo \
     "[playcover-fixture-live] AppKit mouse helper is unavailable." \
+    >&2
+  exit 78
+fi
+if ! xcrun swift \
+    "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
+    --screens >"$DISPLAY_TOPOLOGY"; then
+  echo \
+    "[playcover-fixture-live] EX_CONFIG: display topology is unavailable." \
+    >&2
+  exit 78
+fi
+if ! jq -e '
+    .operation == "screens" and
+    .postEventAccessRequired == false and
+    .lockedSessionAllowed == true and
+    ([.screens[] | select(.screenIsMain == true)] | length) == 1 and
+    (.screens as $screens |
+      ($screens | map(.screenDisplayID)) ==
+        ($screens | map(.screenDisplayID) | sort | unique))
+  ' "$DISPLAY_TOPOLOGY" >/dev/null; then
+  echo \
+    "[playcover-fixture-live] EX_CONFIG: topology must expose exactly one main display." \
+    >&2
+  exit 78
+fi
+if ! jq -e '
+    ([.screens[] | select(.screenIsMain == true)][0]) as $main |
+    ([
+      .screens[] |
+      select(
+        .screenIsMain == false and
+        .hasNSScreen == true and
+        .active == true and
+        .online == true and
+        .mirrored == false and
+        (.backingScaleFactor | type) == "number" and
+        .backingScaleFactor != $main.backingScaleFactor and
+        (.visibleFrame.width | type) == "number" and
+        .visibleFrame.width >= 430 and
+        (.visibleFrame.height | type) == "number" and
+        .visibleFrame.height >= 970
+      )
+    ]) as $extended |
+    if (
+      $main.hasNSScreen == true and
+      $main.active == true and
+      $main.online == true and
+      $main.mirrored == false and
+      ($main.backingScaleFactor | type) == "number" and
+      ($extended | length) == 1
+    ) then
+      {
+        main: $main,
+        extended: $extended[0],
+        eligibleExtendedCount: ($extended | length)
+      }
+    else
+      error("display topology is not eligible")
+    end
+  ' "$DISPLAY_TOPOLOGY" >"$DISPLAY_SELECTION"; then
+  echo \
+    "[playcover-fixture-live] EX_CONFIG: exactly one active extended non-main display with different backing scale and sufficient visible frame is required." \
+    >&2
+  exit 78
+fi
+console_session_state="$(/usr/sbin/ioreg -n Root -d1)"
+if rg -q '"CGSSessionScreenIsLocked"=(Yes|true|1)' \
+    <<<"$console_session_state"; then
+  echo \
+    "[playcover-fixture-live] EX_CONFIG: the macOS console session is locked." \
     >&2
   exit 78
 fi
@@ -1297,6 +1361,398 @@ assert_two_uniform_host_resizes() {
   fi
 }
 
+display_matrix_row() {
+  local case_name="$1"
+  /usr/bin/awk -F '\t' -v requested="$case_name" '
+    NR == 1 {
+      if (
+        $1 != "matrixVersion" ||
+        $2 != "case" ||
+        $3 != "targetScreen" ||
+        $4 != "displayScale" ||
+        $5 != "crossDisplay"
+      ) {
+        exit 2
+      }
+      next
+    }
+    $2 == requested {
+      if (found || $1 != "2") {
+        exit 2
+      }
+      print $3 "\t" $4 "\t" $5
+      found = 1
+    }
+    END {
+      if (!found) {
+        exit 2
+      }
+    }
+  ' "$MATRIX_SOURCE"
+}
+
+write_display_move_plan() {
+  local case_name="$1"
+  local target_role="$2"
+  local target_scale="$3"
+  local cross_display="$4"
+  local status_case="$5"
+  jq -e -n \
+    --arg role "$target_role" \
+    --argjson targetScale "$target_scale" \
+    --argjson crossDisplay "$cross_display" \
+    --slurpfile topology "$DISPLAY_SELECTION" \
+    --slurpfile status "$RUN_DIR/${status_case}.stdout" '
+      ($status[0].data.driver) as $driver |
+      ($driver.runtime.diagnostics.runtime.window) as $window |
+      ($window.canvasCapture.hostCGWindowBounds) as $host |
+      ($window.canvasCapture.hostContentCGWindowRect) as $content |
+      ($topology[0][$role]) as $target |
+      ($topology[0].main) as $main |
+      ($target.visibleFrame) as $visible |
+      {
+        x: $visible.x,
+        y: ($main.cgBounds.y + $main.cgBounds.height -
+          $visible.y - $visible.height),
+        width: $visible.width,
+        height: $visible.height
+      } as $visibleCG |
+      ($host.width - $content.width) as $decorationWidth |
+      ($host.height - $content.height) as $decorationHeight |
+      (430 * $targetScale + $decorationWidth) as $targetWidth |
+      (932 * $targetScale + $decorationHeight) as $targetHeight |
+      (($visibleCG.x + (($visibleCG.width - $targetWidth) / 2))) as
+        $targetX |
+      (($visibleCG.y + (($visibleCG.height - $targetHeight) / 2))) as
+        $targetY |
+      if (
+        ($window.windowNumber | type) != "number" or
+        $window.windowNumber <= 0 or
+        ($window.screenDisplayID | type) != "number" or
+        ($targetWidth > $visibleCG.width) or
+        ($targetHeight > $visibleCG.height) or
+        ($content.y - $host.y) <= 4 or
+        ($crossDisplay and
+          $window.screenDisplayID == $target.screenDisplayID) or
+        (($crossDisplay | not) and
+          $window.screenDisplayID != $target.screenDisplayID)
+      ) then
+        error("display move preconditions are not exact")
+      else
+        {
+          targetRole: $role,
+          targetScale: $targetScale,
+          crossDisplay: $crossDisplay,
+          targetScreen: $target,
+          targetVisibleFrameCG: $visibleCG,
+          targetHostSize: {
+            width: $targetWidth,
+            height: $targetHeight
+          },
+          beforeScreenDisplayID: $window.screenDisplayID,
+          expectedWindowNumber: $window.windowNumber,
+          runnerPID: $driver.runnerPid,
+          sessionIdentifier: $driver.sessionIdentifier,
+          generation: $driver.playcoverGenerationKey,
+          drag: {
+            start: {
+              x: ($host.x + ($host.width / 2)),
+              y: ($host.y + (($content.y - $host.y) / 2))
+            },
+            end: {
+              x: ($host.x + ($host.width / 2) + $targetX - $host.x),
+              y: ($host.y + (($content.y - $host.y) / 2) +
+                $targetY - $host.y)
+            }
+          }
+        }
+      end
+    ' >"$RUN_DIR/${case_name}_move_plan.json"
+}
+
+wait_for_display_phase_status() {
+  local case_name="$1"
+  local plan_file="$2"
+  local require_scale="$3"
+  local stdout_file="$RUN_DIR/${case_name}.stdout"
+  local stderr_file="$RUN_DIR/${case_name}.stderr"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$MATRIX_VERSION" \
+    "$case_name" \
+    "status --json (wait for exact display matrix phase)" \
+    "$stdout_file" \
+    "$stderr_file" >>"$MANIFEST"
+  local observed=0
+  local attempt
+  for ((attempt = 1; attempt <= 50; attempt += 1)); do
+    if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" status --json \
+        >"$stdout_file" 2>"$stderr_file" &&
+      jq -e \
+        --argjson requireScale "$require_scale" \
+        --slurpfile plan "$plan_file" '
+          ($plan[0]) as $plan |
+          (.data.driver) as $driver |
+          ($driver.runtime.diagnostics.runtime.window) as $window |
+          $driver.runnerPid == $plan.runnerPID and
+          $driver.sessionIdentifier == $plan.sessionIdentifier and
+          $driver.playcoverGenerationKey == $plan.generation and
+          $window.windowNumber == $plan.expectedWindowNumber and
+          $window.screenDisplayID ==
+            $plan.targetScreen.screenDisplayID and
+          $window.screenIsMain ==
+            $plan.targetScreen.screenIsMain and
+          $window.backingScaleFactor ==
+            $plan.targetScreen.backingScaleFactor and
+          $window.screenVisibleFrame ==
+            $plan.targetScreen.visibleFrame and
+          (($requireScale | not) or
+            (($window.displayScale - $plan.targetScale) | abs) <= 0.01)
+        ' "$stdout_file" >/dev/null; then
+      observed=1
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "$observed" != "1" ]]; then
+    echo \
+      "[playcover-fixture-live] FAIL: $case_name did not preserve exact process/window/display identity" \
+      >&2
+    return 1
+  fi
+  assert_canonical_host_status "$case_name"
+}
+
+run_display_matrix_phase() {
+  local case_name="$1"
+  local target_role
+  local target_scale
+  local cross_display
+  IFS=$'\t' read -r target_role target_scale cross_display < <(
+    display_matrix_row "$case_name"
+  ) || {
+    echo \
+      "[playcover-fixture-live] FAIL: invalid display matrix row $case_name" \
+      >&2
+    return 1
+  }
+  local before_case="${case_name}_before_status"
+  record_case "$before_case" status --json
+  assert_canonical_host_status "$before_case"
+  write_display_move_plan \
+    "$case_name" \
+    "$target_role" \
+    "$target_scale" \
+    "$cross_display" \
+    "$before_case"
+  local move_plan="$RUN_DIR/${case_name}_move_plan.json"
+  if [[ "$cross_display" == "true" ]]; then
+    local move_start_x
+    local move_start_y
+    local move_end_x
+    local move_end_y
+    local runner_pid
+    local window_number
+    read -r \
+      move_start_x move_start_y move_end_x move_end_y \
+      runner_pid window_number < <(
+      jq -r '[
+        .drag.start.x,
+        .drag.start.y,
+        .drag.end.x,
+        .drag.end.y,
+        .runnerPID,
+        .expectedWindowNumber
+      ] | @tsv' "$move_plan"
+    )
+    MOUSE_SEQUENCE="$((MOUSE_SEQUENCE + 1))"
+    local event_token
+    event_token="$(
+      printf '%s%04d%02d' \
+        "$(date +%s)" \
+        "$(( $$ % 10000 ))" \
+        "$MOUSE_SEQUENCE"
+    )"
+    record_host_case \
+      "${case_name}_move_drag" \
+      xcrun swift \
+      "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
+      --drag \
+      "$move_start_x" \
+      "$move_start_y" \
+      "$move_end_x" \
+      "$move_end_y" \
+      "$event_token" \
+      "$runner_pid" \
+      "$window_number"
+    if ! jq -e \
+        --argjson token "$event_token" \
+        --slurpfile plan "$move_plan" '
+          ($plan[0]) as $plan |
+          .operation == "drag" and
+          .token == $token and
+          .targetPID == $plan.runnerPID and
+          .targetWindowNumber == $plan.expectedWindowNumber and
+          .expectedWindowNumber == $plan.expectedWindowNumber and
+          .windowNumberMatched == true and
+          .startDisplayID == $plan.beforeScreenDisplayID and
+          .endDisplayID == $plan.targetScreen.screenDisplayID and
+          .crossDisplayDrag == true and
+          .interpolationEventCount >= 2 and
+          .endPointReached == true
+        ' "$RUN_DIR/${case_name}_move_drag.stdout" >/dev/null; then
+      echo \
+        "[playcover-fixture-live] FAIL: $case_name lacks exact cross-display window drag evidence" \
+        >&2
+      return 1
+    fi
+    wait_for_display_phase_status \
+      "${case_name}_move_status" \
+      "$move_plan" \
+      false
+  else
+    cp "$RUN_DIR/${before_case}.stdout" \
+      "$RUN_DIR/${case_name}_move_status.stdout"
+  fi
+
+  local moved_status="$RUN_DIR/${case_name}_move_status.stdout"
+  local resize_plan="$RUN_DIR/${case_name}_resize_plan.json"
+  jq -e -n \
+    --slurpfile move "$move_plan" \
+    --slurpfile status "$moved_status" '
+      ($move[0]) as $plan |
+      ($status[0].data.driver.runtime.diagnostics.runtime.window) as $window |
+      ($window.canvasCapture.hostCGWindowBounds) as $host |
+      $plan + {
+        beforeResizeHost: $host,
+        drag: {
+          start: {
+            x: ($host.x + $host.width - 2),
+            y: ($host.y + $host.height - 2)
+          },
+          end: {
+            x: ($host.x + $plan.targetHostSize.width - 2),
+            y: ($host.y + $plan.targetHostSize.height - 2)
+          }
+        }
+      }
+    ' >"$resize_plan"
+  local resize_start_x
+  local resize_start_y
+  local resize_end_x
+  local resize_end_y
+  local runner_pid
+  local window_number
+  read -r \
+    resize_start_x resize_start_y resize_end_x resize_end_y \
+    runner_pid window_number < <(
+    jq -r '[
+      .drag.start.x,
+      .drag.start.y,
+      .drag.end.x,
+      .drag.end.y,
+      .runnerPID,
+      .expectedWindowNumber
+    ] | @tsv' "$resize_plan"
+  )
+  MOUSE_SEQUENCE="$((MOUSE_SEQUENCE + 1))"
+  local resize_token
+  resize_token="$(
+    printf '%s%04d%02d' \
+      "$(date +%s)" \
+      "$(( $$ % 10000 ))" \
+      "$MOUSE_SEQUENCE"
+  )"
+  record_host_case \
+    "${case_name}_resize_drag" \
+    xcrun swift \
+    "$ROOT_DIR/playcover-fixtures/appkit_mouse_event.swift" \
+    --drag \
+    "$resize_start_x" \
+    "$resize_start_y" \
+    "$resize_end_x" \
+    "$resize_end_y" \
+    "$resize_token" \
+    "$runner_pid" \
+    "$window_number"
+  if ! jq -e \
+      --argjson token "$resize_token" \
+      --slurpfile plan "$resize_plan" '
+        ($plan[0]) as $plan |
+        .operation == "drag" and
+        .token == $token and
+        .targetPID == $plan.runnerPID and
+        .targetWindowNumber == $plan.expectedWindowNumber and
+        .expectedWindowNumber == $plan.expectedWindowNumber and
+        .windowNumberMatched == true and
+        .startDisplayID == $plan.targetScreen.screenDisplayID and
+        .endDisplayID == $plan.targetScreen.screenDisplayID and
+        .crossDisplayDrag == false and
+        .interpolationEventCount >= 2 and
+        .endPointReached == true
+      ' "$RUN_DIR/${case_name}_resize_drag.stdout" >/dev/null; then
+    echo \
+      "[playcover-fixture-live] FAIL: $case_name lacks exact window resize evidence" \
+      >&2
+    return 1
+  fi
+  wait_for_display_phase_status \
+    "${case_name}_after_status" \
+    "$resize_plan" \
+    true
+}
+
+assert_display_matrix_identity() {
+  if ! jq -e -n \
+      --slurpfile main075 \
+        "$RUN_DIR/host_main_075_after_status.stdout" \
+      --slurpfile extended100 \
+        "$RUN_DIR/host_extended_100_after_status.stdout" \
+      --slurpfile main0875 \
+        "$RUN_DIR/host_main_0875_after_status.stdout" \
+      --slurpfile topology "$DISPLAY_SELECTION" '
+        ($main075[0].data.driver) as $first |
+        ($extended100[0].data.driver) as $second |
+        ($main0875[0].data.driver) as $third |
+        ($first.runtime.diagnostics.runtime.window) as $firstWindow |
+        ($second.runtime.diagnostics.runtime.window) as $secondWindow |
+        ($third.runtime.diagnostics.runtime.window) as $thirdWindow |
+        $first.runnerPid == $second.runnerPid and
+        $second.runnerPid == $third.runnerPid and
+        $first.sessionIdentifier == $second.sessionIdentifier and
+        $second.sessionIdentifier == $third.sessionIdentifier and
+        $first.playcoverGenerationKey == $second.playcoverGenerationKey and
+        $second.playcoverGenerationKey == $third.playcoverGenerationKey and
+        $firstWindow.windowNumber == $secondWindow.windowNumber and
+        $secondWindow.windowNumber == $thirdWindow.windowNumber and
+        $firstWindow.screenDisplayID ==
+          $topology[0].main.screenDisplayID and
+        $secondWindow.screenDisplayID ==
+          $topology[0].extended.screenDisplayID and
+        $thirdWindow.screenDisplayID ==
+          $topology[0].main.screenDisplayID and
+        $firstWindow.screenVisibleFrame ==
+          $topology[0].main.visibleFrame and
+        $secondWindow.screenVisibleFrame ==
+          $topology[0].extended.visibleFrame and
+        $thirdWindow.screenVisibleFrame ==
+          $topology[0].main.visibleFrame and
+        $firstWindow.backingScaleFactor ==
+          $topology[0].main.backingScaleFactor and
+        $secondWindow.backingScaleFactor ==
+          $topology[0].extended.backingScaleFactor and
+        $thirdWindow.backingScaleFactor ==
+          $topology[0].main.backingScaleFactor and
+        (($firstWindow.displayScale - 0.75) | abs) <= 0.01 and
+        (($secondWindow.displayScale - 1.0) | abs) <= 0.01 and
+        (($thirdWindow.displayScale - 0.875) | abs) <= 0.01
+      ' >/dev/null; then
+    echo \
+      "[playcover-fixture-live] FAIL: v2 display matrix changed PID/session/generation/window identity" \
+      >&2
+    return 1
+  fi
+}
+
 assert_dom_unchanged() {
   local before_case="$1"
   local after_case="$2"
@@ -1750,7 +2206,7 @@ for probe in \
   assert_evidence "probe_${probe_case}" "$probe_identifier"
 done
 
-resize_public_host host_resize_first first
+run_display_matrix_phase host_main_075
 click_titlebar_and_assert_app_unchanged
 run_global_mouse_probe \
   resize_first_top_left \
@@ -1761,8 +2217,7 @@ run_global_mouse_probe \
   "Full BR" \
   "fixture.full.bottom-right"
 
-resize_public_host host_resize_second second
-assert_two_uniform_host_resizes
+run_display_matrix_phase host_extended_100
 record_case capture_after_resize capture --duration 500ms --fps 4 \
   --name fixture-live-resized
 capture_after_resize_manifest="$(
@@ -1784,6 +2239,8 @@ run_global_mouse_probe \
   resize_second_bottom_left \
   "Full BL" \
   "fixture.full.bottom-left"
+run_display_matrix_phase host_main_0875
+assert_display_matrix_identity
 
 record_case swipe_fixed swipe --dir forth --distance 300 \
   --dom --json

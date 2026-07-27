@@ -3,6 +3,10 @@ import XCTest
 @testable import PlayCoverUpstream
 
 final class PlayCoverUpstreamEngineTests: XCTestCase {
+    private enum ExpectedFailure: Error {
+        case sliceTemporaryFileObserved
+    }
+
     func testLengthFramedTreeHashDistinguishesAmbiguousTrees() throws {
         let first = try makeApp(executable: makeThinMachO(dependencies: []))
         let second = try makeApp(executable: makeThinMachO(dependencies: []))
@@ -272,6 +276,48 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertEqual(result.sourceContentHash.count, 64)
     }
 
+    func testInspectThinMachOReusesOriginalURLWithoutSliceTemporaryFile()
+        throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = try makeRealIOSExecutable(
+            in: root,
+            name: "ThinNoCopy"
+        )
+        try codesign(executable, entitlements: nil)
+        var temporaryFiles: [URL] = []
+
+        let result = try PlayCoverUpstreamEngine.inspectMachO(
+            at: executable,
+            relativePath: "ThinNoCopy",
+            sliceTemporaryFileCreatedForTesting: {
+                temporaryFiles.append($0)
+            }
+        )
+
+        XCTAssertTrue(temporaryFiles.isEmpty)
+        XCTAssertEqual(result.container, .thin)
+        let slices = try XCTUnwrap(result.sliceInspections)
+        let slice = try XCTUnwrap(slices.first)
+        XCTAssertEqual(slices.count, 1)
+        XCTAssertEqual(result.signature.isSigned, slice.signature.isSigned)
+        XCTAssertEqual(result.signature.isValid, slice.signature.isValid)
+        XCTAssertEqual(result.signature.cdHash, slice.signature.cdHash)
+        XCTAssertEqual(
+            result.signature.entitlementsSHA256,
+            slice.signature.entitlementsSHA256
+        )
+        XCTAssertEqual(
+            result.signature.embeddedSlots,
+            []
+        )
+        XCTAssertFalse(
+            slice.signature.embeddedSlots.isEmpty,
+            "slice evidence must retain parsed embedded-signature evidence"
+        )
+    }
+
     func testInspectFatArm64SelectsBoundedSlice() throws {
         let thin = makeThinMachO(dependencies: [])
         let fixture = try makeApp(executable: makeFatMachO(arm64: thin))
@@ -341,7 +387,12 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let thinURL = try makeRealIOSExecutable(in: root, name: "Thin")
+        try codesign(thinURL, entitlements: nil)
         let thin = try Data(contentsOf: thinURL)
+        let thinInspection = try PlayCoverUpstreamEngine.inspectMachO(
+            at: thinURL,
+            relativePath: "Thin"
+        )
         let runtimeLoadPath =
             "@executable_path/Frameworks/IOSUsePlayRuntime.framework/"
                 + "IOSUsePlayRuntime"
@@ -365,13 +416,59 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 [.posixPermissions: 0o755],
                 ofItemAtPath: url.path
             )
+            var sliceTemporaryFiles: [URL] = []
+            let inspection = try PlayCoverUpstreamEngine.inspectMachO(
+                at: url,
+                relativePath: name,
+                sliceTemporaryFileCreatedForTesting: { temporary in
+                    sliceTemporaryFiles.append(temporary)
+                    XCTAssertTrue(
+                        FileManager.default.fileExists(
+                            atPath: temporary.path
+                        )
+                    )
+                    let filePermissions = try XCTUnwrap(
+                        try FileManager.default.attributesOfItem(
+                            atPath: temporary.path
+                        )[.posixPermissions] as? NSNumber
+                    )
+                    XCTAssertEqual(filePermissions.intValue, 0o700)
+                    let directoryPermissions = try XCTUnwrap(
+                        try FileManager.default.attributesOfItem(
+                            atPath: temporary.deletingLastPathComponent().path
+                        )[.posixPermissions] as? NSNumber
+                    )
+                    XCTAssertEqual(directoryPermissions.intValue, 0o700)
+                }
+            )
             XCTAssertEqual(
-                try PlayCoverUpstreamEngine.inspectMachO(
-                    at: url,
-                    relativePath: name
-                ).container,
+                inspection.container,
                 expectedContainer
             )
+            XCTAssertEqual(sliceTemporaryFiles.count, 1)
+            for temporary in sliceTemporaryFiles {
+                XCTAssertFalse(
+                    FileManager.default.fileExists(
+                        atPath: temporary.deletingLastPathComponent().path
+                    ),
+                    "the per-inspection temporary scope must be removed"
+                )
+            }
+            let slices = try XCTUnwrap(inspection.sliceInspections)
+            let slice = try XCTUnwrap(slices.first)
+            XCTAssertEqual(
+                thinInspection.signature.isSigned,
+                slice.signature.isSigned
+            )
+            XCTAssertEqual(
+                thinInspection.signature.cdHash,
+                slice.signature.cdHash
+            )
+            XCTAssertEqual(
+                thinInspection.signature.entitlementsSHA256,
+                slice.signature.entitlementsSHA256
+            )
+            XCTAssertFalse(slice.signature.embeddedSlots.isEmpty)
 
             let converted = try PlayCoverUpstreamEngine.convertMachO(
                 at: url,
@@ -409,6 +506,92 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     return XCTFail("unexpected error: \(error)")
                 }
             }
+        }
+    }
+
+    func testFatSliceTemporaryScopeCleansAfterInspectionFailure() throws {
+        let fixture = try makeApp(
+            executable: makeFatMachO(
+                arm64: makeThinMachO(dependencies: [])
+            )
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let executable = fixture.app.appendingPathComponent("Fixture")
+        var temporaryDirectory: URL?
+
+        XCTAssertThrowsError(
+            try PlayCoverUpstreamEngine.inspectMachO(
+                at: executable,
+                relativePath: "Fixture",
+                sliceTemporaryFileCreatedForTesting: { temporary in
+                    temporaryDirectory =
+                        temporary.deletingLastPathComponent()
+                    throw ExpectedFailure.sliceTemporaryFileObserved
+                }
+            )
+        ) { error in
+            guard case ExpectedFailure.sliceTemporaryFileObserved =
+                    error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: try XCTUnwrap(temporaryDirectory).path
+            )
+        )
+    }
+
+    func testMultiSliceFatTemporaryScopeCleansAfterLaterFailure() throws {
+        let thin = makeThinMachO(dependencies: [])
+        for (name, executable) in [
+            ("Fat", makeFatMachO(arm64Slices: [thin, thin])),
+            ("Fat64", makeFat64MachO(arm64Slices: [thin, thin])),
+        ] {
+            let fixture = try makeApp(executable: executable)
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let url = fixture.app.appendingPathComponent("Fixture")
+            var temporaryFiles: [URL] = []
+
+            XCTAssertThrowsError(
+                try PlayCoverUpstreamEngine.inspectMachO(
+                    at: url,
+                    relativePath: name,
+                    sliceTemporaryFileCreatedForTesting: { temporary in
+                        temporaryFiles.append(temporary)
+                        if temporaryFiles.count == 2 {
+                            throw ExpectedFailure.sliceTemporaryFileObserved
+                        }
+                    }
+                )
+            ) { error in
+                guard case ExpectedFailure.sliceTemporaryFileObserved =
+                        error else {
+                    return XCTFail("unexpected error: \(error)")
+                }
+            }
+            XCTAssertEqual(temporaryFiles.count, 2)
+            XCTAssertEqual(
+                Set(
+                    temporaryFiles.map {
+                        $0.deletingLastPathComponent().standardizedFileURL
+                    }
+                ).count,
+                1,
+                "all slices must share one per-inspection temporary scope"
+            )
+            for temporary in temporaryFiles {
+                XCTAssertFalse(
+                    FileManager.default.fileExists(atPath: temporary.path)
+                )
+            }
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: try XCTUnwrap(
+                        temporaryFiles.first
+                    ).deletingLastPathComponent().path
+                )
+            )
         }
     }
 
@@ -981,6 +1164,76 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
     }
 
+    func testPrepareRejectsClonedBytesThatWereNotInSourceInspection()
+        throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent(
+            "Source.app",
+            isDirectory: true
+        )
+        try makeIOSAppWithExtension(at: source, root: root)
+        let inspection = try PlayCoverUpstreamEngine.inspect(appURL: source)
+        let runtime = try makeCatalystRuntimeFramework(in: root)
+        let managed = root.appendingPathComponent(
+            "managed",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: managed.appendingPathComponent("prepared"),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let staging = managed.appendingPathComponent(
+            "prepared/Fixture.app",
+            isDirectory: true
+        )
+        let options = PlayCoverUpstreamPrepareOptions(
+            sourceApp: source,
+            stagingApp: staging,
+            runtimeFramework: runtime,
+            managedHome: managed,
+            runtimeSocketPath: managed.appendingPathComponent(
+                "run/s-runtime.sock"
+            ).path,
+            runtimeLoadPath:
+                "@executable_path/Frameworks/"
+                + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime"
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverUpstreamEngine.prepare(
+                options,
+                sourceInspection: inspection,
+                afterSourceCloneForTesting: { cloned in
+                    try Data("different-sealed-resource".utf8).write(
+                        to: cloned.appendingPathComponent(
+                            "PlugIns/Test.appex/asset.dat"
+                        )
+                    )
+                }
+            )
+        ) { error in
+            guard case PlayCoverUpstreamError.sourceMutated(
+                let expected,
+                let actual
+            ) = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertEqual(expected, inspection.sourceContentHash)
+            XCTAssertNotEqual(actual, expected)
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: staging.path),
+            "a clone that fails the plan hash must be rolled back"
+        )
+        XCTAssertEqual(
+            try PlayCoverUpstreamEngine.contentHash(appURL: source),
+            inspection.sourceContentHash
+        )
+    }
+
     private struct AppFixture {
         let root: URL
         let app: URL
@@ -1020,23 +1273,48 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         arm64: Data,
         bigEndian: Bool = true
     ) -> Data {
+        makeFatMachO(
+            arm64Slices: [arm64],
+            bigEndian: bigEndian
+        )
+    }
+
+    private func makeFatMachO(
+        arm64Slices: [Data],
+        bigEndian: Bool = true
+    ) -> Data {
+        precondition(!arm64Slices.isEmpty)
         var result = Data(
             bigEndian
                 ? [0xca, 0xfe, 0xba, 0xbe]
                 : [0xbe, 0xba, 0xfe, 0xca]
         )
-        appendU32(1, to: &result, bigEndian: bigEndian)
-        appendU32(0x0100_000c, to: &result, bigEndian: bigEndian)
-        appendU32(0, to: &result, bigEndian: bigEndian)
-        appendU32(4_096, to: &result, bigEndian: bigEndian)
         appendU32(
-            UInt32(arm64.count),
+            UInt32(arm64Slices.count),
             to: &result,
             bigEndian: bigEndian
         )
-        appendU32(12, to: &result, bigEndian: bigEndian)
-        result.append(Data(repeating: 0, count: 4_096 - result.count))
-        result.append(arm64)
+        var offset = 4_096
+        var offsets: [Int] = []
+        for slice in arm64Slices {
+            offsets.append(offset)
+            appendU32(0x0100_000c, to: &result, bigEndian: bigEndian)
+            appendU32(0, to: &result, bigEndian: bigEndian)
+            appendU32(UInt32(offset), to: &result, bigEndian: bigEndian)
+            appendU32(
+                UInt32(slice.count),
+                to: &result,
+                bigEndian: bigEndian
+            )
+            appendU32(12, to: &result, bigEndian: bigEndian)
+            offset += max(4_096, (slice.count + 4_095) & ~4_095)
+        }
+        for (slice, sliceOffset) in zip(arm64Slices, offsets) {
+            result.append(
+                Data(repeating: 0, count: sliceOffset - result.count)
+            )
+            result.append(slice)
+        }
         return result
     }
 
@@ -1044,24 +1322,49 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         arm64: Data,
         bigEndian: Bool = true
     ) -> Data {
+        makeFat64MachO(
+            arm64Slices: [arm64],
+            bigEndian: bigEndian
+        )
+    }
+
+    private func makeFat64MachO(
+        arm64Slices: [Data],
+        bigEndian: Bool = true
+    ) -> Data {
+        precondition(!arm64Slices.isEmpty)
         var result = Data(
             bigEndian
                 ? [0xca, 0xfe, 0xba, 0xbf]
                 : [0xbf, 0xba, 0xfe, 0xca]
         )
-        appendU32(1, to: &result, bigEndian: bigEndian)
-        appendU32(0x0100_000c, to: &result, bigEndian: bigEndian)
-        appendU32(0, to: &result, bigEndian: bigEndian)
-        appendU64(4_096, to: &result, bigEndian: bigEndian)
-        appendU64(
-            UInt64(arm64.count),
+        appendU32(
+            UInt32(arm64Slices.count),
             to: &result,
             bigEndian: bigEndian
         )
-        appendU32(12, to: &result, bigEndian: bigEndian)
-        appendU32(0, to: &result, bigEndian: bigEndian)
-        result.append(Data(repeating: 0, count: 4_096 - result.count))
-        result.append(arm64)
+        var offset = 4_096
+        var offsets: [Int] = []
+        for slice in arm64Slices {
+            offsets.append(offset)
+            appendU32(0x0100_000c, to: &result, bigEndian: bigEndian)
+            appendU32(0, to: &result, bigEndian: bigEndian)
+            appendU64(UInt64(offset), to: &result, bigEndian: bigEndian)
+            appendU64(
+                UInt64(slice.count),
+                to: &result,
+                bigEndian: bigEndian
+            )
+            appendU32(12, to: &result, bigEndian: bigEndian)
+            appendU32(0, to: &result, bigEndian: bigEndian)
+            offset += max(4_096, (slice.count + 4_095) & ~4_095)
+        }
+        for (slice, sliceOffset) in zip(arm64Slices, offsets) {
+            result.append(
+                Data(repeating: 0, count: sliceOffset - result.count)
+            )
+            result.append(slice)
+        }
         return result
     }
 

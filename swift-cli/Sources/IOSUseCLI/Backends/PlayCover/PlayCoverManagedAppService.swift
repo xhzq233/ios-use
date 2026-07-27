@@ -874,7 +874,8 @@ enum PlayCoverManagedAppService {
     static func readOwnedRegularFile(
         parentDescriptor: Int32,
         name: String,
-        maximumBytes: Int = 1_048_576
+        maximumBytes: Int = 1_048_576,
+        afterOpen: (() throws -> Void)? = nil
     ) throws -> Data {
         guard isSafeRelativeName(name) else {
             throw PlayCoverBackendError.cacheTampered(
@@ -884,7 +885,7 @@ enum PlayCoverManagedAppService {
         let descriptor = Darwin.openat(
             parentDescriptor,
             name,
-            O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
         )
         guard descriptor >= 0 else {
             throw PlayCoverBackendError.cacheTampered(
@@ -903,6 +904,7 @@ enum PlayCoverManagedAppService {
                 "generation metadata is not a bounded owned regular file"
             )
         }
+        try afterOpen?()
         var data = Data(count: Int(status.st_size))
         try data.withUnsafeMutableBytes { buffer in
             guard let base = buffer.baseAddress else {
@@ -926,6 +928,29 @@ enum PlayCoverManagedAppService {
                     "generation metadata could not be read completely"
                 )
             }
+        }
+        var finalDescriptorStatus = stat()
+        var finalPathStatus = stat()
+        guard fstat(descriptor, &finalDescriptorStatus) == 0,
+              fstatat(
+                  parentDescriptor,
+                  name,
+                  &finalPathStatus,
+                  AT_SYMLINK_NOFOLLOW
+              ) == 0,
+              finalDescriptorStatus.st_dev == status.st_dev,
+              finalDescriptorStatus.st_ino == status.st_ino,
+              finalDescriptorStatus.st_mode == status.st_mode,
+              finalDescriptorStatus.st_uid == status.st_uid,
+              finalDescriptorStatus.st_size == status.st_size,
+              finalPathStatus.st_dev == status.st_dev,
+              finalPathStatus.st_ino == status.st_ino,
+              finalPathStatus.st_mode == status.st_mode,
+              finalPathStatus.st_uid == status.st_uid,
+              finalPathStatus.st_size == status.st_size else {
+            throw PlayCoverBackendError.cacheTampered(
+                "generation metadata changed while it was read"
+            )
         }
         return data
     }

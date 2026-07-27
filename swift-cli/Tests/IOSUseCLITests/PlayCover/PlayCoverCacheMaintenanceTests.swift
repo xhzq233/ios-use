@@ -6,6 +6,7 @@ import XCTest
 final class PlayCoverCacheMaintenanceTests: XCTestCase {
     override func tearDown() {
         PlayCoverGenerationPruner.afterProtectedStateForTesting = nil
+        PlayCoverGenerationPruner.afterInventoryForTesting = nil
         super.tearDown()
     }
 
@@ -291,6 +292,287 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         }
     }
 
+    func testPruneQuarantinesEveryCorruptSidecarKindAndFreesTheKey()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let protectedKeys = (1...3).map {
+            String(repeating: String($0), count: 64)
+        }
+        let corruptKeys = (4...9).map {
+            String(repeating: String($0), count: 64)
+        }
+        for (index, key) in (protectedKeys + corruptKeys).enumerated() {
+            try fixture.createGeneration(
+                key: key,
+                completedAt:
+                    "2026-04-\(String(format: "%02d", index + 1))T00:00:00Z"
+            )
+        }
+        try fixture.writeReference(generationKey: protectedKeys[1])
+        try fixture.writeDriverLock(generationKey: protectedKeys[0])
+
+        try fixture.removeSidecar(
+            PlayCoverService.manifestFilename,
+            generationKey: corruptKeys[0]
+        )
+        try fixture.removeSidecar(
+            PlayCoverService.completedFilename,
+            generationKey: corruptKeys[1]
+        )
+        try fixture.writeSidecar(
+            Data(repeating: 0x20, count: 1_048_577),
+            named: PlayCoverService.manifestFilename,
+            generationKey: corruptKeys[2]
+        )
+        try fixture.writeSidecar(
+            Data("not-json".utf8),
+            named: PlayCoverService.manifestFilename,
+            generationKey: corruptKeys[3]
+        )
+        try fixture.writeSidecarJSON(
+            [
+                "schemaVersion": 3,
+                "backend": "playcover-headless",
+                "generationKey": protectedKeys[0],
+                "completedAt": "2026-04-08T00:00:00Z",
+            ],
+            named: PlayCoverService.manifestFilename,
+            generationKey: corruptKeys[4]
+        )
+        try fixture.writeSidecarJSON(
+            [
+                "schemaVersion": 2,
+                "generationKey": protectedKeys[0],
+            ],
+            named: PlayCoverService.completedFilename,
+            generationKey: corruptKeys[5]
+        )
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: protectedKeys[2]
+            )
+
+        XCTAssertEqual(
+            Set(result.removedGenerationKeys),
+            Set(corruptKeys)
+        )
+        for key in corruptKeys {
+            XCTAssertFalse(fixture.generationExists(key))
+            XCTAssertTrue(
+                result.warnings.contains {
+                    $0.contains(key)
+                        && $0.contains("quarantined")
+                }
+            )
+        }
+        for key in protectedKeys {
+            XCTAssertTrue(fixture.generationExists(key))
+        }
+
+        try fixture.createGeneration(
+            key: corruptKeys[0],
+            completedAt: "2026-04-20T00:00:00Z"
+        )
+        XCTAssertTrue(
+            fixture.generationExists(corruptKeys[0]),
+            "quarantine must free the exact generation namespace for prepare"
+        )
+    }
+
+    func testPruneNeverQuarantinesCorruptCurrentReferenceOrActive()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let keys = (1...3).map {
+            String(repeating: String($0), count: 64)
+        }
+        for (index, key) in keys.enumerated() {
+            try fixture.createGeneration(
+                key: key,
+                completedAt:
+                    "2026-03-\(String(format: "%02d", index + 1))T00:00:00Z"
+            )
+        }
+        try fixture.writeReference(generationKey: keys[1])
+        try fixture.writeDriverLock(generationKey: keys[0])
+        for key in keys {
+            try fixture.writeSidecar(
+                Data("corrupt".utf8),
+                named: PlayCoverService.completedFilename,
+                generationKey: key
+            )
+        }
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: keys[2]
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        for key in keys {
+            XCTAssertTrue(fixture.generationExists(key))
+            XCTAssertTrue(
+                result.warnings.contains {
+                    $0.contains("protected corrupt generation \(key)")
+                        && $0.contains("retained")
+                }
+            )
+        }
+    }
+
+    func testPruneDoesNotFollowGenerationSymlinkOrInventoryRace()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let protectedKeys = (1...3).map {
+            String(repeating: String($0), count: 64)
+        }
+        for (index, key) in protectedKeys.enumerated() {
+            try fixture.createGeneration(
+                key: key,
+                completedAt:
+                    "2026-02-\(String(format: "%02d", index + 1))T00:00:00Z"
+            )
+        }
+        try fixture.writeReference(generationKey: protectedKeys[1])
+        try fixture.writeDriverLock(generationKey: protectedKeys[0])
+
+        let external = fixture.root.appendingPathComponent(
+            "external",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: external,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let sentinel = external.appendingPathComponent("sentinel")
+        try Data("keep".utf8).write(to: sentinel)
+
+        let symlinkKey = String(repeating: "4", count: 64)
+        try FileManager.default.createSymbolicLink(
+            at: fixture.generationDirectory(symlinkKey),
+            withDestinationURL: external
+        )
+        let racedKey = String(repeating: "5", count: 64)
+        try fixture.createGeneration(
+            key: racedKey,
+            completedAt: "2026-02-05T00:00:00Z"
+        )
+        try fixture.writeSidecar(
+            Data("corrupt".utf8),
+            named: PlayCoverService.completedFilename,
+            generationKey: racedKey
+        )
+        let displaced = fixture.root.appendingPathComponent(
+            "raced-generation",
+            isDirectory: true
+        )
+        PlayCoverGenerationPruner.afterInventoryForTesting = {
+            PlayCoverGenerationPruner.afterInventoryForTesting = nil
+            try FileManager.default.moveItem(
+                at: fixture.generationDirectory(racedKey),
+                to: displaced
+            )
+            try FileManager.default.createSymbolicLink(
+                at: fixture.generationDirectory(racedKey),
+                withDestinationURL: external
+            )
+        }
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: protectedKeys[2]
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sentinel.path))
+        XCTAssertTrue(fixture.isGenerationSymlink(symlinkKey))
+        XCTAssertTrue(fixture.isGenerationSymlink(racedKey))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: displaced.path))
+        XCTAssertTrue(
+            result.warnings.contains {
+                $0.contains(symlinkKey)
+                    && $0.contains("ownership could not be validated")
+            }
+        )
+        XCTAssertTrue(
+            result.warnings.contains {
+                $0.contains(racedKey)
+                    && $0.contains("identity changed before tombstone")
+            }
+        )
+    }
+
+    func testCorruptGenerationQuarantineUsesABudgetAcrossConsecutiveGC()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let protectedKeys = (1...3).map {
+            String(repeating: String($0), count: 64)
+        }
+        let corruptKeys = Array("456789abcd").map {
+            String(repeating: String($0), count: 64)
+        }
+        for (index, key) in (protectedKeys + corruptKeys).enumerated() {
+            try fixture.createGeneration(
+                key: key,
+                completedAt:
+                    "2026-01-\(String(format: "%02d", index + 1))T00:00:00Z"
+            )
+        }
+        try fixture.writeReference(generationKey: protectedKeys[1])
+        try fixture.writeDriverLock(generationKey: protectedKeys[0])
+        for key in corruptKeys {
+            try fixture.removeSidecar(
+                PlayCoverService.completedFilename,
+                generationKey: key
+            )
+        }
+
+        let first =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: protectedKeys[2]
+            )
+        XCTAssertEqual(
+            first.removedGenerationKeys.count,
+            PlayCoverGenerationPruner.corruptGenerationQuarantineLimit
+        )
+        XCTAssertTrue(
+            first.warnings.contains {
+                $0.contains("quarantine budget 8 was reached")
+                    && $0.contains("2 generation(s) were deferred")
+            }
+        )
+
+        let second =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: protectedKeys[2]
+            )
+        XCTAssertEqual(second.removedGenerationKeys.count, 2)
+        let third =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: protectedKeys[2]
+            )
+        XCTAssertTrue(third.removedGenerationKeys.isEmpty)
+        XCTAssertTrue(third.warnings.isEmpty)
+        for key in corruptKeys {
+            XCTAssertFalse(fixture.generationExists(key))
+        }
+    }
+
     func testPruneKeepsDeletionAnchoredWhenPreparedPathIsSwapped()
         throws {
         let fixture = try CacheMaintenanceFixture()
@@ -544,11 +826,54 @@ private struct CacheMaintenanceFixture {
         )
     }
 
+    func isGenerationSymlink(_ key: String) -> Bool {
+        var status = stat()
+        return lstat(generationDirectory(key).path, &status) == 0
+            && status.st_mode & S_IFMT == S_IFLNK
+    }
+
+    func removeSidecar(
+        _ name: String,
+        generationKey: String
+    ) throws {
+        try FileManager.default.removeItem(
+            at: generationDirectory(generationKey)
+                .appendingPathComponent(name)
+        )
+    }
+
+    func writeSidecar(
+        _ data: Data,
+        named name: String,
+        generationKey: String
+    ) throws {
+        try data.write(
+            to: generationDirectory(generationKey)
+                .appendingPathComponent(name),
+            options: .atomic
+        )
+    }
+
+    func writeSidecarJSON(
+        _ object: [String: Any],
+        named name: String,
+        generationKey: String
+    ) throws {
+        try writeSidecar(
+            JSONSerialization.data(
+                withJSONObject: object,
+                options: [.sortedKeys]
+            ),
+            named: name,
+            generationKey: generationKey
+        )
+    }
+
     func remove() {
         try? FileManager.default.removeItem(at: root)
     }
 
-    private func generationDirectory(_ key: String) -> URL {
+    func generationDirectory(_ key: String) -> URL {
         URL(
             fileURLWithPath: paths.playcoverPrepared,
             isDirectory: true

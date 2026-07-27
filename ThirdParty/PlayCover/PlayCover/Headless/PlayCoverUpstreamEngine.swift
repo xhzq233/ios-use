@@ -788,6 +788,18 @@ public enum PlayCoverUpstreamEngine {
         _ options: PlayCoverUpstreamPrepareOptions,
         sourceInspection source: PlayCoverUpstreamAppInspection
     ) throws -> PlayCoverUpstreamPrepareResult {
+        try prepare(
+            options,
+            sourceInspection: source,
+            afterSourceCloneForTesting: nil
+        )
+    }
+
+    static func prepare(
+        _ options: PlayCoverUpstreamPrepareOptions,
+        sourceInspection source: PlayCoverUpstreamAppInspection,
+        afterSourceCloneForTesting: ((URL) throws -> Void)?
+    ) throws -> PlayCoverUpstreamPrepareResult {
         let optionsSourcePath = options.sourceApp.standardizedFileURL
             .resolvingSymlinksInPath().path
         let inspectedSourcePath = URL(
@@ -866,6 +878,19 @@ public enum PlayCoverUpstreamEngine {
             if rollback {
                 try? FileManager.default.removeItem(at: options.stagingApp)
             }
+        }
+        try afterSourceCloneForTesting?(options.stagingApp)
+        // The source can be rebuilt while `cp -cR` is walking it. Verify the
+        // immutable clone before applying any conversion, injection, or
+        // signing mutation so a transient inspect -> clone -> restore (ABA)
+        // cannot publish bytes that were never represented by the preparation
+        // plan.
+        let clonedSourceHash = try contentHash(appURL: options.stagingApp)
+        guard clonedSourceHash == source.sourceContentHash else {
+            throw PlayCoverUpstreamError.sourceMutated(
+                expected: source.sourceContentHash,
+                actual: clonedSourceHash
+            )
         }
 
         let stagingFrameworks = options.stagingApp
@@ -1263,12 +1288,41 @@ public enum PlayCoverUpstreamEngine {
         at url: URL,
         relativePath: String
     ) throws -> PlayCoverUpstreamMachOInspection {
+        try inspectMachO(
+            at: url,
+            relativePath: relativePath,
+            sliceTemporaryFileCreated: nil
+        )
+    }
+
+    static func inspectMachO(
+        at url: URL,
+        relativePath: String,
+        sliceTemporaryFileCreatedForTesting:
+            @escaping (URL) throws -> Void
+    ) throws -> PlayCoverUpstreamMachOInspection {
+        try inspectMachO(
+            at: url,
+            relativePath: relativePath,
+            sliceTemporaryFileCreated:
+                sliceTemporaryFileCreatedForTesting
+        )
+    }
+
+    private static func inspectMachO(
+        at url: URL,
+        relativePath: String,
+        sliceTemporaryFileCreated:
+            ((URL) throws -> Void)?
+    ) throws -> PlayCoverUpstreamMachOInspection {
         let fullData = try Data(contentsOf: url, options: .alwaysMapped)
         return try inspectMachO(
             fullData,
             fileSHA256: hex(SHA256.hash(data: fullData)),
             at: url,
-            relativePath: relativePath
+            relativePath: relativePath,
+            sliceTemporaryFileCreated:
+                sliceTemporaryFileCreated
         )
     }
 
@@ -1276,7 +1330,9 @@ public enum PlayCoverUpstreamEngine {
         _ fullData: Data,
         fileSHA256: String,
         at url: URL,
-        relativePath: String
+        relativePath: String,
+        sliceTemporaryFileCreated:
+            ((URL) throws -> Void)? = nil
     ) throws -> PlayCoverUpstreamMachOInspection {
         let rawSlices = try machoSlices(fullData, path: relativePath)
         guard let slice = rawSlices.first(where: {
@@ -1534,6 +1590,47 @@ public enum PlayCoverUpstreamEngine {
                 "\(relativePath) load-command byte count is inconsistent"
             )
         }
+        let signature: PlayCoverUpstreamSignature
+        let sliceInspections: [PlayCoverUpstreamMachOSliceInspection]
+        switch slice.container {
+        case .thin:
+            guard rawSlices.count == 1 else {
+                throw PlayCoverUpstreamError.malformedMachO(
+                    "\(relativePath) thin Mach-O exposed multiple slices"
+                )
+            }
+            sliceInspections = try rawSlices.map {
+                try inspectSlice(
+                    $0,
+                    path: relativePath,
+                    signatureSource: .original(url)
+                )
+            }
+            guard let thinSignature = sliceInspections.first?.signature else {
+                throw PlayCoverUpstreamError.malformedMachO(
+                    "\(relativePath) thin Mach-O has no slice evidence"
+                )
+            }
+            signature = topLevelSignatureEvidence(
+                from: thinSignature
+            )
+        case .fat, .fat64:
+            signature = try signatureEvidence(url)
+            sliceInspections =
+                try withSecureSliceTemporaryDirectory { directory in
+                    try rawSlices.map {
+                        try inspectSlice(
+                            $0,
+                            path: relativePath,
+                            signatureSource: .extracted(
+                                directory: directory,
+                                fileCreated:
+                                    sliceTemporaryFileCreated
+                            )
+                        )
+                    }
+                }
+        }
         return PlayCoverUpstreamMachOInspection(
             relativePath: relativePath,
             fileSHA256: fileSHA256,
@@ -1559,10 +1656,8 @@ public enum PlayCoverUpstreamEngine {
             dependencies: dependencies,
             rpaths: rpaths,
             loadCommands: loadCommands,
-            signature: try signatureEvidence(url),
-            sliceInspections: try rawSlices.map {
-                try inspectSlice($0, path: relativePath)
-            }
+            signature: signature,
+            sliceInspections: sliceInspections
         )
     }
 
@@ -1765,9 +1860,18 @@ public enum PlayCoverUpstreamEngine {
         return slices
     }
 
+    private enum SliceSignatureSource {
+        case original(URL)
+        case extracted(
+            directory: URL,
+            fileCreated: ((URL) throws -> Void)?
+        )
+    }
+
     private static func inspectSlice(
         _ slice: Slice,
-        path: String
+        path: String,
+        signatureSource: SliceSignatureSource
     ) throws -> PlayCoverUpstreamMachOSliceInspection {
         let data = slice.data
         let swapped = slice.byteSwapped
@@ -2088,6 +2192,43 @@ public enum PlayCoverUpstreamEngine {
             data,
             Int(immutableStart)..<Int(immutableEnd)
         )
+        let signaturePath = "\(path) slice \(slice.fatIndex)"
+        let embedded = try embeddedSignatureEvidence(
+            data,
+            codeSignatureOffset: codeSignatureOffset,
+            codeSignatureSize: codeSignatureSize,
+            path: signaturePath
+        )
+        let signature: PlayCoverUpstreamSignature
+        switch signatureSource {
+        case .original(let original):
+            guard slice.container == .thin,
+                  slice.offset == 0,
+                  slice.size == UInt64(data.count) else {
+                throw PlayCoverUpstreamError.malformedMachO(
+                    "\(signaturePath) cannot reuse the original file URL"
+                )
+            }
+            signature = try signatureEvidence(
+                original,
+                embeddedSignature: embedded,
+                diagnosticPath: signaturePath
+            )
+        case .extracted(let directory, let fileCreated):
+            guard slice.container != .thin else {
+                throw PlayCoverUpstreamError.malformedMachO(
+                    "\(signaturePath) unexpectedly requested extraction"
+                )
+            }
+            signature = try signatureEvidence(
+                forExtractedSlice: data,
+                embeddedSignature: embedded,
+                fatIndex: slice.fatIndex,
+                path: signaturePath,
+                temporaryDirectory: directory,
+                fileCreated: fileCreated
+            )
+        }
         return PlayCoverUpstreamMachOSliceInspection(
             fatIndex: slice.fatIndex,
             cpuType: cpu,
@@ -2109,12 +2250,7 @@ public enum PlayCoverUpstreamEngine {
             dependencies: dependencies,
             rpaths: rpaths,
             loadCommands: commands,
-            signature: try signatureEvidence(
-                forThinSlice: data,
-                codeSignatureOffset: codeSignatureOffset,
-                codeSignatureSize: codeSignatureSize,
-                path: "\(path) slice \(slice.fatIndex)"
-            ),
+            signature: signature,
             sliceSHA256: hex(SHA256.hash(data: data)),
             immutableContentSHA256: hex(
                 SHA256.hash(data: immutableContent)
@@ -2423,33 +2559,267 @@ public enum PlayCoverUpstreamEngine {
         )
     }
 
-    private static func signatureEvidence(
-        forThinSlice data: Data,
-        codeSignatureOffset: UInt64?,
-        codeSignatureSize: UInt64?,
-        path: String
-    ) throws -> PlayCoverUpstreamSignature {
-        let embedded = try embeddedSignatureEvidence(
-            data,
-            codeSignatureOffset: codeSignatureOffset,
-            codeSignatureSize: codeSignatureSize,
-            path: path
+    private struct SliceTemporaryFile {
+        let url: URL
+        let device: dev_t
+        let inode: ino_t
+    }
+
+    private static func topLevelSignatureEvidence(
+        from slice: PlayCoverUpstreamSignature
+    ) -> PlayCoverUpstreamSignature {
+        PlayCoverUpstreamSignature(
+            isSigned: slice.isSigned,
+            isValid: slice.isValid,
+            cdHash: slice.cdHash,
+            identifier: slice.identifier,
+            teamIdentifier: slice.teamIdentifier,
+            signatureType: slice.signatureType,
+            flags: slice.flags,
+            codeDirectoryVersion: slice.codeDirectoryVersion,
+            codeDirectoryHashes: slice.codeDirectoryHashes,
+            hashChoices: slice.hashChoices,
+            hashType: slice.hashType,
+            pageSize: slice.pageSize,
+            entitlementsPlist: slice.entitlementsPlist
         )
-        let temporary = FileManager.default.temporaryDirectory
+    }
+
+    private static func withSecureSliceTemporaryDirectory<Value>(
+        _ body: (URL) throws -> Value
+    ) throws -> Value {
+        let templatePath = FileManager.default.temporaryDirectory
+            .standardizedFileURL
             .appendingPathComponent(
-                "ios-use-playcover-slice-\(UUID().uuidString)"
+                "ios-use-playcover-slices.XXXXXX",
+                isDirectory: true
+            ).path
+        var template = Array(templatePath.utf8CString)
+        let created = template.withUnsafeMutableBufferPointer { buffer in
+            guard let baseAddress = buffer.baseAddress else {
+                return false
+            }
+            return Darwin.mkdtemp(baseAddress) != nil
+        }
+        guard created else {
+            let errorNumber = errno
+            throw PlayCoverUpstreamError.commandFailed(
+                "create owner-only slice temporary directory: errno "
+                    + "\(errorNumber)"
             )
-        try data.write(to: temporary, options: .atomic)
-        defer { try? FileManager.default.removeItem(at: temporary) }
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: temporary.path
+        }
+        let directory = URL(
+            fileURLWithPath: String(cString: template),
+            isDirectory: true
         )
-        return try signatureEvidence(
-            temporary,
-            embeddedSignature: embedded,
-            diagnosticPath: path
+        var initial = stat()
+        guard lstat(directory.path, &initial) == 0,
+              initial.st_mode & S_IFMT == S_IFDIR,
+              initial.st_uid == geteuid(),
+              initial.st_mode & 0o7777 == 0o700 else {
+            let errorNumber = errno
+            _ = Darwin.rmdir(directory.path)
+            throw PlayCoverUpstreamError.commandFailed(
+                "slice temporary directory is not an owner-only directory"
+                    + " (errno \(errorNumber))"
+            )
+        }
+
+        let result: Result<Value, Error>
+        do {
+            result = .success(try body(directory))
+        } catch {
+            result = .failure(error)
+        }
+
+        var current = stat()
+        let cleanupError: PlayCoverUpstreamError?
+        if lstat(directory.path, &current) != 0 {
+            cleanupError = .commandFailed(
+                "slice temporary directory disappeared before cleanup: "
+                    + "errno \(errno)"
+            )
+        } else if current.st_mode & S_IFMT != S_IFDIR
+                    || current.st_dev != initial.st_dev
+                    || current.st_ino != initial.st_ino
+                    || current.st_uid != initial.st_uid {
+            cleanupError = .commandFailed(
+                "slice temporary directory identity changed before cleanup"
+            )
+        } else if Darwin.rmdir(directory.path) != 0 {
+            cleanupError = .commandFailed(
+                "remove slice temporary directory: errno \(errno)"
+            )
+        } else {
+            cleanupError = nil
+        }
+        if let cleanupError {
+            switch result {
+            case .success:
+                throw cleanupError
+            case .failure(let original):
+                throw PlayCoverUpstreamError.commandFailed(
+                    "slice inspection failed (\(original)); cleanup also "
+                        + "failed (\(cleanupError))"
+                )
+            }
+        }
+        return try result.get()
+    }
+
+    private static func writeSliceTemporaryFile(
+        _ data: Data,
+        fatIndex: UInt32,
+        directory: URL
+    ) throws -> SliceTemporaryFile {
+        let url = directory.appendingPathComponent(
+            "slice-\(fatIndex).macho",
+            isDirectory: false
         )
+        let descriptor = Darwin.open(
+            url.path,
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+            mode_t(0o700)
+        )
+        guard descriptor >= 0 else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "create extracted Mach-O slice: errno \(errno)"
+            )
+        }
+
+        var operationError: Error?
+        do {
+            try data.withUnsafeBytes { buffer in
+                guard let baseAddress = buffer.baseAddress else {
+                    return
+                }
+                var offset = 0
+                while offset < buffer.count {
+                    let count = Darwin.write(
+                        descriptor,
+                        baseAddress.advanced(by: offset),
+                        buffer.count - offset
+                    )
+                    if count > 0 {
+                        offset += count
+                        continue
+                    }
+                    if count < 0, errno == EINTR {
+                        continue
+                    }
+                    let errorNumber = count == 0 ? EIO : errno
+                    throw PlayCoverUpstreamError.commandFailed(
+                        "write extracted Mach-O slice: errno "
+                            + "\(errorNumber)"
+                    )
+                }
+            }
+            guard Darwin.fchmod(descriptor, mode_t(0o700)) == 0 else {
+                throw PlayCoverUpstreamError.commandFailed(
+                    "protect extracted Mach-O slice: errno \(errno)"
+                )
+            }
+        } catch {
+            operationError = error
+        }
+
+        var status = stat()
+        if operationError == nil {
+            guard fstat(descriptor, &status) == 0,
+                  status.st_mode & S_IFMT == S_IFREG,
+                  status.st_uid == geteuid(),
+                  status.st_nlink == 1,
+                  status.st_mode & 0o7777 == 0o700,
+                  status.st_size == off_t(data.count) else {
+                operationError = PlayCoverUpstreamError.commandFailed(
+                    "extracted Mach-O slice identity is invalid"
+                )
+                _ = Darwin.close(descriptor)
+                _ = Darwin.unlink(url.path)
+                throw operationError!
+            }
+        }
+        if Darwin.close(descriptor) != 0, operationError == nil {
+            operationError = PlayCoverUpstreamError.commandFailed(
+                "close extracted Mach-O slice: errno \(errno)"
+            )
+        }
+        if let operationError {
+            _ = Darwin.unlink(url.path)
+            throw operationError
+        }
+        return SliceTemporaryFile(
+            url: url,
+            device: status.st_dev,
+            inode: status.st_ino
+        )
+    }
+
+    private static func unlinkSliceTemporaryFile(
+        _ temporary: SliceTemporaryFile
+    ) -> PlayCoverUpstreamError? {
+        var status = stat()
+        guard lstat(temporary.url.path, &status) == 0 else {
+            return .commandFailed(
+                "inspect extracted Mach-O slice before cleanup: errno "
+                    + "\(errno)"
+            )
+        }
+        guard status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == geteuid(),
+              status.st_dev == temporary.device,
+              status.st_ino == temporary.inode else {
+            return .commandFailed(
+                "extracted Mach-O slice identity changed before cleanup"
+            )
+        }
+        guard Darwin.unlink(temporary.url.path) == 0 else {
+            return .commandFailed(
+                "remove extracted Mach-O slice: errno \(errno)"
+            )
+        }
+        return nil
+    }
+
+    private static func signatureEvidence(
+        forExtractedSlice data: Data,
+        embeddedSignature: EmbeddedSignatureEvidence?,
+        fatIndex: UInt32,
+        path: String,
+        temporaryDirectory: URL,
+        fileCreated: ((URL) throws -> Void)?
+    ) throws -> PlayCoverUpstreamSignature {
+        let temporary = try writeSliceTemporaryFile(
+            data,
+            fatIndex: fatIndex,
+            directory: temporaryDirectory
+        )
+        let result: Result<PlayCoverUpstreamSignature, Error>
+        do {
+            try fileCreated?(temporary.url)
+            result = .success(
+                try signatureEvidence(
+                    temporary.url,
+                    embeddedSignature: embeddedSignature,
+                    diagnosticPath: path
+                )
+            )
+        } catch {
+            result = .failure(error)
+        }
+        let cleanupError = unlinkSliceTemporaryFile(temporary)
+        if let cleanupError {
+            switch result {
+            case .success:
+                throw cleanupError
+            case .failure(let original):
+                throw PlayCoverUpstreamError.commandFailed(
+                    "slice inspection failed (\(original)); cleanup also "
+                        + "failed (\(cleanupError))"
+                )
+            }
+        }
+        return try result.get()
     }
 
     private static func treeSnapshot(

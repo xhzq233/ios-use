@@ -356,6 +356,127 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     }
 
+    func testFailedExplicitLaunchDoesNotReplaceGoodReference()
+        throws
+    {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let good = try makeManifest(fixture: fixture)
+        let selected = try makeManifest(
+            fixture: fixture,
+            generationKey: String(repeating: "b", count: 64)
+        )
+        try fixture.createManagedApp(manifest: good)
+        try fixture.createManagedApp(manifest: selected)
+        try fixture.createPreparedSidecars(manifest: selected)
+        try PlayCoverSessionService.recordPrepared(
+            good,
+            paths: fixture.paths
+        )
+        PlayCoverManagedAppService.readManifestOverrideForTesting = {
+            _ in selected
+        }
+        PlayCoverSessionService.fastVerifyOverrideForTesting = {
+            _ in selected
+        }
+        PlayCoverSessionService.launchOverrideForTesting = {
+            _, _, _, _ in
+            throw PlayCoverBackendError.launchFailed(
+                "Runtime hello was not authenticated"
+            )
+        }
+
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": fixture.root]
+        ).run(
+            arguments: [
+                "start",
+                "--playcover",
+                "--app",
+                selected.preparedAppPath,
+            ]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(
+            result.stderr.contains(
+                "Runtime hello was not authenticated"
+            )
+        )
+        XCTAssertEqual(
+            try PlayCoverSessionService.readPreparedReference(
+                paths: fixture.paths
+            )?.generationKey,
+            good.generationKey
+        )
+    }
+
+    func testLastPreparedSymlinkFailsClosed() throws {
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        let manifest = try makeManifest(fixture: fixture)
+        try PlayCoverSessionService.recordPrepared(
+            manifest,
+            paths: fixture.paths
+        )
+        let reference = URL(
+            fileURLWithPath: fixture.paths.playcoverLastPrepared
+        )
+        let saved = reference.deletingLastPathComponent()
+            .appendingPathComponent("saved-last-prepared")
+        try FileManager.default.moveItem(at: reference, to: saved)
+        try FileManager.default.createSymbolicLink(
+            at: reference,
+            withDestinationURL: saved
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverSessionService.readPreparedReference(
+                paths: fixture.paths
+            )
+        )
+    }
+
+    func testLastPreparedFIFOIsRejectedWithoutBlocking() throws {
+        #if canImport(Darwin)
+        let fixture = try SessionFixture()
+        defer { fixture.remove() }
+        try FileManager.default.createDirectory(
+            atPath: fixture.paths.playcover,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        XCTAssertEqual(
+            mkfifo(fixture.paths.playcoverLastPrepared, 0o600),
+            0
+        )
+        let finished = DispatchSemaphore(value: 0)
+        let result = LockedReferenceResult()
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                _ = try PlayCoverSessionService.readPreparedReference(
+                    paths: fixture.paths
+                )
+                result.set(.success(()))
+            } catch {
+                result.set(.failure(error))
+            }
+            finished.signal()
+        }
+
+        XCTAssertEqual(
+            finished.wait(timeout: .now() + 1),
+            .success,
+            "last-prepared FIFO must fail without waiting for a writer"
+        )
+        guard case .failure? = result.value else {
+            return XCTFail("hostile last-prepared FIFO was accepted")
+        }
+        #else
+        throw XCTSkip("FIFO verification is Darwin-only")
+        #endif
+    }
+
     func testStartRejectsExistingSessionBeforeLaunching() throws {
         let fixture = try SessionFixture()
         defer { fixture.remove() }
@@ -2421,6 +2542,23 @@ final class PlayCoverSessionTests: XCTestCase {
                 "unexpected Runtime request"
             )
         }
+    }
+}
+
+private final class LockedReferenceResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Result<Void, Error>?
+
+    var value: Result<Void, Error>? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func set(_ value: Result<Void, Error>) {
+        lock.lock()
+        storage = value
+        lock.unlock()
     }
 }
 

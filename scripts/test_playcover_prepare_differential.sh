@@ -99,6 +99,7 @@ echo "[playcover-prepare-differential] running pinned Installer headless oracle"
 
 required_tests=(
   testPinnedHeadlessInstallerOracleAndIOSUsePrepareHaveOnlyRecordedDifferences
+  testPinnedOracleUsesCanonicalRelativePathsForSymlinkedSourceAncestor
   testDifferentialGateRejectsUnrecordedAndStaleAllowances
   testAppAndInventoryDifferencesRequireExactAllowances
   testAttestationRejectsUnconstrainedNormalization
@@ -226,11 +227,13 @@ if ! jq -e '
       "ThirdParty/inject/Package.swift",
       "ThirdParty/inject/PROVENANCE.md",
       "scripts/audit_playcover_upstreams.sh",
+      "scripts/test_playcover_external_prepare_differential.sh",
       "scripts/test_playcover_prepare_differential.sh",
       "swift-cli/Package.resolved",
       "swift-cli/Package.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverService.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverStartTiming.swift",
+      "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverExternalPrepareDifferentialTests.swift",
       "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverPrepareDifferentialTests.swift"
     ] | sort) and
     .normalization.mode ==

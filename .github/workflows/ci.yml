@@ -70,6 +70,7 @@ jobs:
           done
           bash scripts/test_install.sh
           bash scripts/test_playcover_packaging_contract.sh
+          bash scripts/test_playcover_live_workflow_contract.sh
           node --check scripts/benchmark.js
           node --check scripts/ios_use_test_simulator.js
           node --check scripts/test_simulator_commands.mjs
@@ -143,8 +144,9 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_playcover_live }}
     runs-on: [self-hosted, macOS, arm64, playcover-live]
     env:
-      IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR: ${{ github.workspace }}/playcover-live-attestation
-      IOS_USE_PLAYCOVER_LIVE_EVIDENCE_SCHEMA: "1"
+      IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR: ${{ runner.temp }}/ios-use-playcover-live-attestation-${{ github.run_id }}
+      IOS_USE_PLAYCOVER_LIVE_RUN_DIR: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}
+      IOS_USE_PLAYCOVER_LIVE_EVIDENCE_SCHEMA: "2"
     steps:
       - uses: actions/checkout@v4
 
@@ -156,27 +158,29 @@ jobs:
             echo "live_evidence_id is required for a live run." >&2
             exit 64
           fi
-          mkdir -p "$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR"
+          mkdir -p \
+            "$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR" \
+            "$IOS_USE_PLAYCOVER_LIVE_RUN_DIR"
           {
             echo "schema=$IOS_USE_PLAYCOVER_LIVE_EVIDENCE_SCHEMA"
             echo "evidence_id=$LIVE_EVIDENCE_ID"
             echo "commit=$GITHUB_SHA"
             echo "workflow_run_id=$GITHUB_RUN_ID"
-          } > "$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR/run-metadata.txt"
+          } > "$IOS_USE_PLAYCOVER_LIVE_RUN_DIR/run-metadata.txt"
 
       - name: Run configured external-App live evidence entry
         shell: bash
         run: |
           set -o pipefail
           bash scripts/test_playcover_backend.sh --live 2>&1 |
-            tee "$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR/run.log"
+            tee "$IOS_USE_PLAYCOVER_LIVE_RUN_DIR/run.log"
 
       - name: Require same-commit redacted attestation
         run: |
-          attestation="$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR/external-app-live-v1.json"
+          attestation="$IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR/external-app-live-v2.json"
           jq -e \
             --arg commit "$GITHUB_SHA" '
-              .schemaVersion == 1 and
+              .schemaVersion == 2 and
               .backend == "playcover" and
               .gate == "external-app-live" and
               .result == "pass" and
@@ -184,14 +188,37 @@ jobs:
               .treeClean == true and
               .cycleCount == 20 and
               .uniqueSessionCount == 20 and
-              .sourceExecutableUnchanged == true
+              .sourceExecutableUnchanged == true and
+              .displayMatrix.version == 2 and
+              .displayMatrix.eligibleExtendedDisplayCount == 1 and
+              .displayMatrix.backingScaleDiffers == true and
+              .displayMatrix.exactWindowNumberRequired == true and
+              .displayMatrix.processSessionGenerationWindowIdentityPreserved ==
+                true and
+              .displayMatrix.phases == [
+                {
+                  "target": "main",
+                  "displayScale": 0.75,
+                  "crossDisplay": false
+                },
+                {
+                  "target": "extended",
+                  "displayScale": 1,
+                  "crossDisplay": true
+                },
+                {
+                  "target": "main",
+                  "displayScale": 0.875,
+                  "crossDisplay": true
+                }
+              ]
             ' "$attestation" >/dev/null
 
       - name: Upload immutable redacted live attestation
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playcover-live-attestation-v1-${{ github.sha }}-${{ github.run_id }}
-          path: playcover-live-attestation/
+          name: playcover-live-attestation-v2-${{ github.sha }}-${{ github.run_id }}
+          path: ${{ env.IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR }}/external-app-live-v2.json
           if-no-files-found: error
           retention-days: 30

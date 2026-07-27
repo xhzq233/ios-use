@@ -364,6 +364,30 @@ static NSInteger IOSUseBridgeInteger(
         : 0;
 }
 
+static CGDirectDisplayID IOSUseBridgeDisplayIDForScreen(id screen) {
+    SEL deviceDescriptionSelector =
+        NSSelectorFromString(@"deviceDescription");
+    if (screen == nil ||
+        ![screen respondsToSelector:deviceDescriptionSelector]) {
+        return kCGNullDirectDisplay;
+    }
+    id rawDescription = ((IOSUseBridgeSendID)objc_msgSend)(
+        screen,
+        deviceDescriptionSelector
+    );
+    if (![rawDescription isKindOfClass:NSDictionary.class]) {
+        return kCGNullDirectDisplay;
+    }
+    id rawDisplayID =
+        ((NSDictionary *)rawDescription)[@"NSScreenNumber"];
+    if (![rawDisplayID isKindOfClass:NSNumber.class] ||
+        [rawDisplayID unsignedLongLongValue] == 0 ||
+        [rawDisplayID unsignedLongLongValue] > UINT32_MAX) {
+        return kCGNullDirectDisplay;
+    }
+    return (CGDirectDisplayID)[rawDisplayID unsignedIntValue];
+}
+
 static NSDictionary<
     NSNumber *,
     NSDictionary<NSString *, id> *
@@ -4060,6 +4084,11 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             NSSelectorFromString(@"screen")
         )
         : nil;
+    CGDirectDisplayID screenDisplayID =
+        IOSUseBridgeDisplayIDForScreen(windowScreen);
+    BOOL screenIsMain =
+        screenDisplayID != kCGNullDirectDisplay &&
+        CGDisplayIsMain(screenDisplayID) != 0;
     UISceneSizeRestrictions *restrictions =
         uiWindow.windowScene.sizeRestrictions;
     CGFloat backingScale = [window respondsToSelector:
@@ -4133,6 +4162,8 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         @"screenVisibleFrame": IOSUseBridgeRectJSON(
             IOSUseBridgeRect(windowScreen, @"visibleFrame")
         ),
+        @"screenDisplayID": @(screenDisplayID),
+        @"screenIsMain": @(screenIsMain),
         @"cgVisibleFrame": IOSUseBridgeRectJSON(
             IOSUseBridgeVisibleFrameInCGCoordinates(window)
         ),

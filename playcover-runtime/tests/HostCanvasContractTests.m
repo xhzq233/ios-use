@@ -202,6 +202,59 @@ static BOOL IOSUseHostCanvasTestRoundTrip(
     );
 }
 
+static BOOL IOSUseHostCanvasTestDisplayCoordinateTransforms(void) {
+    CGRect mainDisplayBounds = CGRectMake(0, 0, 1440, 900);
+    CGRect aboveMain = CGRectNull;
+    CGRect belowAndLeft = CGRectNull;
+    CGRect mainDisplay = CGRectNull;
+    NSString *aboveFailure = nil;
+    NSString *belowFailure = nil;
+    NSString *mainFailure = nil;
+    BOOL aboveReady =
+        IOSUsePlayResolveAppKitScreenRectInCGWindowCoordinates(
+            CGRectMake(100, 950, 200, 100),
+            mainDisplayBounds,
+            &aboveMain,
+            &aboveFailure
+        );
+    BOOL belowReady =
+        IOSUsePlayResolveAppKitScreenRectInCGWindowCoordinates(
+            CGRectMake(-1280, -900, 1280, 800),
+            mainDisplayBounds,
+            &belowAndLeft,
+            &belowFailure
+        );
+    BOOL mainReady =
+        IOSUsePlayResolveAppKitScreenRectInCGWindowCoordinates(
+            CGRectMake(0, 0, 1440, 900),
+            mainDisplayBounds,
+            &mainDisplay,
+            &mainFailure
+        );
+    BOOL passed = aboveReady && belowReady && mainReady &&
+        IOSUseHostCanvasTestRectEquals(
+            aboveMain,
+            CGRectMake(100, -150, 200, 100)
+        ) &&
+        IOSUseHostCanvasTestRectEquals(
+            belowAndLeft,
+            CGRectMake(-1280, 1000, 1280, 800)
+        ) &&
+        IOSUseHostCanvasTestRectEquals(
+            mainDisplay,
+            mainDisplayBounds
+        );
+    return IOSUseHostCanvasTestRequire(
+        passed,
+        [NSString stringWithFormat:
+            @"multi-display AppKit/CG coordinate transforms failed: %@ / %@ / %@",
+            aboveFailure ?: @"above geometry",
+            belowFailure ?: @"below geometry",
+            mainFailure ?: @"main geometry"
+        ]
+    );
+}
+
 static CGImageRef IOSUseHostCanvasTestCreateRawCapture(
     size_t sourceWidth,
     size_t sourceHeight,
@@ -604,19 +657,8 @@ int main(int argc, const char *argv[]) {
                 alertButtonLogicalRect,
                 CGRectMake(100, 230, 60, 30)
             );
-        CGRect secondaryAppKitScreenRect = CGRectMake(100, 950, 200, 100);
-        CGRect secondaryCGWindowRect = CGRectNull;
-        NSString *secondaryDisplayFailure = nil;
         BOOL multiScreenTransformReady =
-            IOSUsePlayResolveAppKitScreenRectInCGWindowCoordinates(
-                secondaryAppKitScreenRect,
-                CGRectMake(0, 0, 1440, 900),
-                &secondaryCGWindowRect,
-                &secondaryDisplayFailure
-            ) && IOSUseHostCanvasTestRectEquals(
-                secondaryCGWindowRect,
-                CGRectMake(100, -150, 200, 100)
-        );
+            IOSUseHostCanvasTestDisplayCoordinateTransforms();
         BOOL crop1x = IOSUseHostCanvasTestCropAtBackingScale(1);
         BOOL crop2x = IOSUseHostCanvasTestCropAtBackingScale(2);
         BOOL fractionalCrop =

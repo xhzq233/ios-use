@@ -31,12 +31,22 @@ struct PlayCoverUnterminatedLaunchError: Error,
 }
 
 public enum PlayCoverService {
+    enum FastVerifyEvent: Equatable {
+        case beforeMetadataOpen(String)
+        case afterMetadataOpen(String)
+        case afterMetadataRead(String)
+        case beforeFileHash(String)
+        case afterFileHash(String)
+        case beforeCodeSignature(String)
+        case afterCodeSignature(String)
+    }
+
     public static let manifestFilename = "manifest.json"
     static let completedFilename = "completed.json"
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v9+playcover-"
+        "ios-use-headless-v10+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
@@ -44,7 +54,16 @@ public enum PlayCoverService {
         + PlayCoverUpstreamEngine.defaultRulesRevision
 
     static var failedLaunchTerminatorOverrideForTesting:
-        ((Int32, PlayCoverPrepareManifest) throws -> Void)?
+        ((
+            LaunchedApplicationIdentity,
+            PlayCoverPrepareManifest
+        ) throws -> Void)?
+    static var failedLaunchProcessStateOverrideForTesting:
+        ((Int32) -> FailedLaunchProcessState)?
+    static var failedLaunchSignalOverrideForTesting:
+        ((Int32, Int32) -> Int32)?
+    static var fastVerifyEventOverrideForTesting:
+        ((FastVerifyEvent) throws -> Void)?
 
     public static func inspect(
         appPath: String
@@ -339,8 +358,9 @@ public enum PlayCoverService {
     }
 
     /// Reads the immutable generation identity and performs only the bounded
-    /// reuse checks: marker/manifest identity, main/Runtime hashes and three
-    /// signatures. It deliberately does not enumerate or inspect the App tree.
+    /// reuse checks: marker/manifest identity, main/Runtime hashes and each
+    /// recorded code-object signature exactly once. It deliberately does not
+    /// enumerate or inspect the App tree.
     static func fastVerify(
         appPath: String
     ) throws -> PlayCoverPrepareManifest {
@@ -403,13 +423,6 @@ public enum PlayCoverService {
             )
         }
         let executable = URL(fileURLWithPath: manifest.executablePath)
-        let actualExecutableHash = try fileSHA256(executable)
-        guard FileManager.default.isExecutableFile(atPath: executable.path),
-              marker.executableSHA256 == actualExecutableHash else {
-            throw PlayCoverBackendError.cacheTampered(
-                "prepared executable hash changed"
-            )
-        }
         let runtime = app
             .appendingPathComponent("Frameworks", isDirectory: true)
             .appendingPathComponent(
@@ -417,36 +430,40 @@ public enum PlayCoverService {
                 isDirectory: true
             )
             .appendingPathComponent(runtimeExecutableName)
-        let actualRuntimeHash = try fileSHA256(runtime)
-        guard FileManager.default.isExecutableFile(atPath: runtime.path),
-              marker.runtimeSHA256 == actualRuntimeHash else {
+        let executableRelativePath = try recordedRelativePath(
+            executable,
+            in: app
+        )
+        let runtimeRelativePath = try recordedRelativePath(runtime, in: app)
+        let verification = try verifyRecordedCodeObjects(
+            app: app,
+            manifest: manifest,
+            fast: true,
+            requiredHashes: [
+                executableRelativePath,
+                runtimeRelativePath,
+            ]
+        )
+        guard
+            let actualExecutableHash =
+                verification.fileSHA256[executableRelativePath],
+            verification.executablePaths.contains(executableRelativePath),
+            marker.executableSHA256 == actualExecutableHash
+        else {
+            throw PlayCoverBackendError.cacheTampered(
+                "prepared executable hash changed"
+            )
+        }
+        guard
+            let actualRuntimeHash =
+                verification.fileSHA256[runtimeRelativePath],
+            verification.executablePaths.contains(runtimeRelativePath),
+            marker.runtimeSHA256 == actualRuntimeHash
+        else {
             throw PlayCoverBackendError.cacheTampered(
                 "embedded Runtime hash changed"
             )
         }
-        for (url, label) in [
-            (executable, "main executable"),
-            (runtime, "embedded Runtime"),
-            (app, "outer App"),
-        ] {
-            let result = try Shell.runWithResult(
-                "/usr/bin/codesign",
-                arguments: ["--verify", "--strict", url.path]
-            )
-            guard result.exitCode == 0 else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "\(label) signature is invalid: "
-                        + result.stderr.trimmingCharacters(
-                            in: .whitespacesAndNewlines
-                        )
-                )
-            }
-        }
-        try verifyRecordedCodeObjects(
-            app: app,
-            manifest: manifest,
-            fast: true
-        )
     }
 
     public static func launch(
@@ -585,7 +602,7 @@ public enum PlayCoverService {
             if let launched {
                 do {
                     try terminateFailedLaunch(
-                        pid: launched.pid,
+                        identity: launched,
                         manifest: manifest
                     )
                 } catch let rollbackError {
@@ -1029,14 +1046,22 @@ public enum PlayCoverService {
         }
     }
 
+    private struct RecordedCodeVerification {
+        let fileSHA256: [String: String]
+        let executablePaths: Set<String>
+    }
+
+    @discardableResult
     private static func verifyRecordedCodeObjects(
         app: URL,
         manifest: PlayCoverPrepareManifest,
-        fast: Bool
-    ) throws {
-        let codePaths = Set(manifest.inventory.compactMap {
+        fast: Bool,
+        requiredHashes: Set<String> = []
+    ) throws -> RecordedCodeVerification {
+        var codePaths = Set(manifest.inventory.compactMap {
             $0.codeObjectKind == nil ? nil : $0.relativePath
         })
+        codePaths.insert(".")
         let nestedContainers = codePaths.filter {
             $0 != "."
                 && ($0.hasSuffix(".appex")
@@ -1045,65 +1070,59 @@ public enum PlayCoverService {
         }
         let relevantEntries = manifest.inventory.filter { entry in
             if !fast { return true }
-            if entry.relativePath == "Info.plist"
-                || manifest.machOs.contains(where: {
-                    $0.relativePath == entry.relativePath
-                }) {
-                return true
-            }
-            return nestedContainers.contains(where: {
-                entry.relativePath == $0
-                    || entry.relativePath.hasPrefix($0 + "/")
-            })
+            return entry.relativePath == "Info.plist"
+                || requiredHashes.contains(entry.relativePath)
+                || entry.codeObjectKind != nil
+                || nestedContainers.contains(entry.relativePath)
         }
-        for entry in relevantEntries {
-            let url = try recordedURL(
-                app: app,
-                relativePath: entry.relativePath
+        let appDescriptor = Darwin.open(
+            app.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard appDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot open the prepared App root: errno \(errno)"
             )
-            var status = stat()
-            guard lstat(url.path, &status) == 0 else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "recorded path is missing: \(entry.relativePath)"
-                )
+        }
+        defer { Darwin.close(appDescriptor) }
+        var appStatus = stat()
+        guard fstat(appDescriptor, &appStatus) == 0,
+              appStatus.st_mode & S_IFMT == S_IFDIR else {
+            throw PlayCoverBackendError.cacheTampered(
+                "prepared App root is not a stable directory"
+            )
+        }
+        var verifiedStatuses: [String: stat] = [".": appStatus]
+        var hashes: [String: String] = [:]
+        var executablePaths = Set<String>()
+        for entry in relevantEntries {
+            let result = try verifyRecordedEntry(
+                entry,
+                appDescriptor: appDescriptor,
+                hashContents: !fast
+                    || requiredHashes.contains(entry.relativePath)
+            )
+            verifiedStatuses[entry.relativePath] = result.status
+            if let hash = result.sha256 {
+                hashes[entry.relativePath] = hash
             }
-            let actualKind: String
-            switch status.st_mode & S_IFMT {
-            case S_IFDIR: actualKind = "directory"
-            case S_IFREG: actualKind = "regularFile"
-            case S_IFLNK: actualKind = "symbolicLink"
-            default: actualKind = "other"
-            }
-            guard actualKind == entry.kind,
-                  UInt16(status.st_mode & 0o7777)
-                    == entry.posixPermissions else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "recorded path kind/permissions changed: "
-                        + entry.relativePath
-                )
-            }
-            if entry.kind == "regularFile" {
-                guard UInt64(status.st_size) == entry.size,
-                      try fileSHA256(url) == entry.sha256 else {
-                    throw PlayCoverBackendError.cacheTampered(
-                        "recorded file changed: \(entry.relativePath)"
-                    )
-                }
-            } else if entry.kind == "symbolicLink" {
-                guard try FileManager.default
-                    .destinationOfSymbolicLink(atPath: url.path)
-                        == entry.symbolicLinkDestination else {
-                    throw PlayCoverBackendError.cacheTampered(
-                        "recorded symbolic link changed: "
-                            + entry.relativePath
-                    )
-                }
+            if result.status.st_mode & S_IFMT == S_IFREG,
+               result.status.st_mode & 0o111 != 0 {
+                executablePaths.insert(entry.relativePath)
             }
         }
-        for relative in codePaths.sorted() {
+        guard requiredHashes.isSubset(of: Set(hashes.keys)) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "manifest is missing a required executable hash entry"
+            )
+        }
+        let orderedCodePaths =
+            codePaths.filter { $0 != "." }.sorted() + ["."]
+        for relative in orderedCodePaths {
             let url = relative == "."
                 ? app
                 : try recordedURL(app: app, relativePath: relative)
+            try emitFastVerifyEvent(.beforeCodeSignature(relative))
             let result = try Shell.runWithResult(
                 "/usr/bin/codesign",
                 arguments: ["--verify", "--strict", url.path]
@@ -1114,7 +1133,259 @@ public enum PlayCoverService {
                         + "(\(relative)): \(result.stderr)"
                 )
             }
+            try emitFastVerifyEvent(.afterCodeSignature(relative))
+            guard
+                let expected = verifiedStatuses[relative],
+                try recordedPathStillHasIdentity(
+                    relative,
+                    appDescriptor: appDescriptor,
+                    expected: expected
+                )
+            else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "recorded code object changed during signature "
+                        + "verification: \(relative)"
+                )
+            }
         }
+        return RecordedCodeVerification(
+            fileSHA256: hashes,
+            executablePaths: executablePaths
+        )
+    }
+
+    private struct RecordedEntryVerification {
+        let status: stat
+        let sha256: String?
+    }
+
+    private static func verifyRecordedEntry(
+        _ entry: PlayCoverInventoryEntry,
+        appDescriptor: Int32,
+        hashContents: Bool
+    ) throws -> RecordedEntryVerification {
+        try withRecordedParentDescriptor(
+            appDescriptor: appDescriptor,
+            relativePath: entry.relativePath
+        ) { parentDescriptor, name in
+            var pathStatus = stat()
+            guard fstatat(
+                parentDescriptor,
+                name,
+                &pathStatus,
+                AT_SYMLINK_NOFOLLOW
+            ) == 0 else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "recorded path is missing: \(entry.relativePath)"
+                )
+            }
+            let actualKind: String
+            switch pathStatus.st_mode & S_IFMT {
+            case S_IFDIR: actualKind = "directory"
+            case S_IFREG: actualKind = "regularFile"
+            case S_IFLNK: actualKind = "symbolicLink"
+            default: actualKind = "other"
+            }
+            guard actualKind == entry.kind,
+                  pathStatus.st_uid == geteuid(),
+                  UInt16(pathStatus.st_mode & 0o7777)
+                    == entry.posixPermissions else {
+                throw PlayCoverBackendError.cacheTampered(
+                    "recorded path kind/owner/permissions changed: "
+                        + entry.relativePath
+                )
+            }
+            if entry.kind == "regularFile" {
+                let descriptor = Darwin.openat(
+                    parentDescriptor,
+                    name,
+                    O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+                )
+                guard descriptor >= 0 else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "cannot open recorded file without following links: "
+                            + "\(entry.relativePath), errno \(errno)"
+                    )
+                }
+                defer { Darwin.close(descriptor) }
+                var openedStatus = stat()
+                guard fstat(descriptor, &openedStatus) == 0,
+                      sameRecordedIdentity(pathStatus, openedStatus),
+                      openedStatus.st_mode & S_IFMT == S_IFREG,
+                      openedStatus.st_size >= 0,
+                      UInt64(openedStatus.st_size) == entry.size else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "recorded file changed before it could be read: "
+                            + entry.relativePath
+                    )
+                }
+                let hash: String?
+                if hashContents {
+                    try emitFastVerifyEvent(
+                        .beforeFileHash(entry.relativePath)
+                    )
+                    hash = try fileSHA256(descriptor: descriptor)
+                    try emitFastVerifyEvent(
+                        .afterFileHash(entry.relativePath)
+                    )
+                } else {
+                    hash = nil
+                }
+                var finalStatus = stat()
+                guard fstat(descriptor, &finalStatus) == 0,
+                      sameRecordedIdentity(openedStatus, finalStatus),
+                      finalStatus.st_size == openedStatus.st_size else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "recorded file changed while it was read: "
+                            + entry.relativePath
+                    )
+                }
+                if hashContents, hash != entry.sha256 {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "recorded file changed: \(entry.relativePath)"
+                    )
+                }
+                return RecordedEntryVerification(
+                    status: finalStatus,
+                    sha256: hash
+                )
+            }
+            if entry.kind == "symbolicLink" {
+                var buffer = [CChar](
+                    repeating: 0,
+                    count: Int(PATH_MAX) + 1
+                )
+                let count = Darwin.readlinkat(
+                    parentDescriptor,
+                    name,
+                    &buffer,
+                    buffer.count - 1
+                )
+                guard count >= 0, count < buffer.count - 1 else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "recorded symbolic link cannot be read safely: "
+                            + entry.relativePath
+                    )
+                }
+                buffer[Int(count)] = 0
+                guard String(cString: buffer)
+                        == entry.symbolicLinkDestination else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "recorded symbolic link changed: "
+                            + entry.relativePath
+                    )
+                }
+            }
+            return RecordedEntryVerification(
+                status: pathStatus,
+                sha256: nil
+            )
+        }
+    }
+
+    private static func withRecordedParentDescriptor<T>(
+        appDescriptor: Int32,
+        relativePath: String,
+        _ body: (Int32, String) throws -> T
+    ) throws -> T {
+        let parts = relativePath.split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        )
+        guard !parts.isEmpty,
+              parts.allSatisfy({
+                  !$0.isEmpty && $0 != "." && $0 != ".."
+              }) else {
+            throw PlayCoverBackendError.cacheTampered(
+                "manifest contains unsafe relative path: \(relativePath)"
+            )
+        }
+        var ownedDescriptors: [Int32] = []
+        defer {
+            for descriptor in ownedDescriptors.reversed() {
+                Darwin.close(descriptor)
+            }
+        }
+        var parentDescriptor = appDescriptor
+        if parts.count > 1 {
+            for part in parts.dropLast() {
+                let descriptor = Darwin.openat(
+                    parentDescriptor,
+                    String(part),
+                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                )
+                guard descriptor >= 0 else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "recorded parent is not an anchored directory "
+                            + "(\(relativePath)): errno \(errno)"
+                    )
+                }
+                var status = stat()
+                guard fstat(descriptor, &status) == 0,
+                      status.st_mode & S_IFMT == S_IFDIR,
+                      status.st_uid == geteuid() else {
+                    Darwin.close(descriptor)
+                    throw PlayCoverBackendError.cacheTampered(
+                        "recorded parent is not an owned directory: "
+                            + relativePath
+                    )
+                }
+                ownedDescriptors.append(descriptor)
+                parentDescriptor = descriptor
+            }
+        }
+        return try body(parentDescriptor, String(parts[parts.count - 1]))
+    }
+
+    private static func recordedPathStillHasIdentity(
+        _ relativePath: String,
+        appDescriptor: Int32,
+        expected: stat
+    ) throws -> Bool {
+        if relativePath == "." {
+            var actual = stat()
+            return fstat(appDescriptor, &actual) == 0
+                && sameRecordedIdentity(expected, actual)
+        }
+        return try withRecordedParentDescriptor(
+            appDescriptor: appDescriptor,
+            relativePath: relativePath
+        ) { parentDescriptor, name in
+            var actual = stat()
+            return fstatat(
+                parentDescriptor,
+                name,
+                &actual,
+                AT_SYMLINK_NOFOLLOW
+            ) == 0 && sameRecordedIdentity(expected, actual)
+        }
+    }
+
+    private static func sameRecordedIdentity(
+        _ lhs: stat,
+        _ rhs: stat
+    ) -> Bool {
+        lhs.st_dev == rhs.st_dev
+            && lhs.st_ino == rhs.st_ino
+            && lhs.st_mode == rhs.st_mode
+            && lhs.st_uid == rhs.st_uid
+            && lhs.st_size == rhs.st_size
+    }
+
+    private static func recordedRelativePath(
+        _ url: URL,
+        in app: URL
+    ) throws -> String {
+        let root = app.resolvingSymlinksInPath().standardizedFileURL.path
+        let value = url.resolvingSymlinksInPath().standardizedFileURL.path
+        guard value.hasPrefix(root + "/") else {
+            throw PlayCoverBackendError.cacheTampered(
+                "recorded path escaped the prepared App: \(url.path)"
+            )
+        }
+        let relative = String(value.dropFirst(root.count + 1))
+        _ = try recordedURL(app: app, relativePath: relative)
+        return relative
     }
 
     private static func recordedURL(
@@ -1225,26 +1496,52 @@ public enum PlayCoverService {
         _ type: T.Type,
         from url: URL
     ) throws -> T {
-        do {
-            let values = try url.resourceValues(
-                forKeys: [
-                    .isRegularFileKey,
-                    .isSymbolicLinkKey,
-                    .fileSizeKey,
-                ]
+        try emitFastVerifyEvent(
+            .beforeMetadataOpen(url.lastPathComponent)
+        )
+        let parent = url.deletingLastPathComponent()
+        let parentDescriptor = Darwin.open(
+            parent.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard parentDescriptor >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot open generation metadata directory without "
+                    + "following links: \(parent.path), errno \(errno)"
             )
-            guard values.isRegularFile == true,
-                  values.isSymbolicLink != true,
-                  let size = values.fileSize,
-                  size > 0,
-                  size <= 64 * 1_024 * 1_024 else {
+        }
+        defer { Darwin.close(parentDescriptor) }
+        var parentStatus = stat()
+        guard fstat(parentDescriptor, &parentStatus) == 0,
+              parentStatus.st_mode & S_IFMT == S_IFDIR,
+              parentStatus.st_uid == geteuid(),
+              parentStatus.st_mode & 0o077 == 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "generation metadata directory is not owner-only"
+            )
+        }
+        do {
+            let data = try PlayCoverManagedAppService.readOwnedRegularFile(
+                parentDescriptor: parentDescriptor,
+                name: url.lastPathComponent,
+                maximumBytes: 64 * 1_024 * 1_024,
+                afterOpen: {
+                    try emitFastVerifyEvent(
+                        .afterMetadataOpen(url.lastPathComponent)
+                    )
+                }
+            )
+            guard !data.isEmpty else {
                 throw PlayCoverBackendError.cacheTampered(
-                    "\(url.lastPathComponent) is not an immutable regular file"
+                    "\(url.lastPathComponent) is empty"
                 )
             }
+            try emitFastVerifyEvent(
+                .afterMetadataRead(url.lastPathComponent)
+            )
             return try JSONDecoder().decode(
                 type,
-                from: Data(contentsOf: url)
+                from: data
             )
         } catch let error as PlayCoverBackendError {
             throw error
@@ -1253,6 +1550,12 @@ public enum PlayCoverService {
                 "cannot decode \(url.path): \(error)"
             )
         }
+    }
+
+    private static func emitFastVerifyEvent(
+        _ event: FastVerifyEvent
+    ) throws {
+        try fastVerifyEventOverrideForTesting?(event)
     }
 
     private static func writeAtomically(
@@ -1278,11 +1581,28 @@ public enum PlayCoverService {
         }
     }
 
-    private struct LaunchedApplicationIdentity {
+    enum LaunchIdentitySource: Equatable {
+        case workspaceCallback
+        case authenticatedRuntime
+        case observedCandidate
+    }
+
+    struct LaunchedApplicationIdentity: Equatable {
         let pid: Int32
         let bundleIdentifier: String
         let bundleURLPath: String
         let executablePath: String
+        let processStartTimeMicroseconds: UInt64?
+        let source: LaunchIdentitySource
+    }
+
+    enum FailedLaunchProcessState: Equatable {
+        case running(
+            executablePath: String,
+            processStartTimeMicroseconds: UInt64?
+        )
+        case missing
+        case unverifiable(errno: Int32)
     }
 
     private final class LaunchBox: @unchecked Sendable {
@@ -1319,6 +1639,22 @@ public enum PlayCoverService {
                 == canonicalPath(manifest.executablePath)
     }
 
+    static func mayClaimLaunchIdentity(
+        _ candidate: LaunchedApplicationIdentity,
+        callbackIdentity: LaunchedApplicationIdentity?,
+        runtimeAuthenticated: Bool
+    ) -> Bool {
+        if runtimeAuthenticated {
+            return true
+        }
+        guard candidate.source == .workspaceCallback,
+              let callbackIdentity,
+              callbackIdentity.source == .workspaceCallback else {
+            return false
+        }
+        return candidate == callbackIdentity
+    }
+
     private static func launchPreparedApplication(
         manifest: PlayCoverPrepareManifest,
         sessionID: String,
@@ -1330,6 +1666,11 @@ public enum PlayCoverService {
         configuration.activates = true
         configuration.addsToRecentItems = false
         configuration.promptsUserIfNeeded = false
+        // Give this invocation its own callback process even if Finder or
+        // another NSWorkspace client launches the same bundle concurrently.
+        // Poll-only candidates remain unowned until they authenticate the
+        // random Runtime session below.
+        configuration.createsNewApplicationInstance = true
         configuration.environment = launchConfigurationEnvironment(
             sessionID: sessionID,
             runtimeSocketPath: runtimeSocketPath,
@@ -1388,7 +1729,12 @@ public enum PlayCoverService {
                             pid: application.processIdentifier,
                             bundleIdentifier: bundleIdentifier,
                             bundleURLPath: bundlePath,
-                            executablePath: executablePath
+                            executablePath: executablePath,
+                            processStartTimeMicroseconds:
+                                processStartTimeMicroseconds(
+                                    for: application.processIdentifier
+                                ),
+                            source: .workspaceCallback
                         )
                     )
                 )
@@ -1465,20 +1811,33 @@ public enum PlayCoverService {
                     pid: application.processIdentifier,
                     bundleIdentifier: bundleIdentifier,
                     bundleURLPath: bundlePath,
-                    executablePath: executablePath
+                    executablePath: executablePath,
+                    processStartTimeMicroseconds:
+                        processStartTimeMicroseconds(
+                            for: application.processIdentifier
+                        ),
+                    source: .observedCandidate
                 )
             }
             // A process that merely appeared after the initial snapshot may
             // have been launched concurrently by Finder or another
-            // NSWorkspace client. Neither polling nor callback success grants
-            // rollback ownership until that exact PID authenticates this
-            // invocation's session/socket identity.
+            // NSWorkspace client. A poll-only candidate never grants rollback
+            // ownership until that exact PID authenticates this invocation's
+            // random session/socket identity.
             let provenCandidates = candidates.filter {
                 authenticatesCurrentLaunch($0)
             }
             if provenCandidates.count == 1,
                let identity = provenCandidates.first {
-                return identity
+                return LaunchedApplicationIdentity(
+                    pid: identity.pid,
+                    bundleIdentifier: identity.bundleIdentifier,
+                    bundleURLPath: identity.bundleURLPath,
+                    executablePath: identity.executablePath,
+                    processStartTimeMicroseconds:
+                        identity.processStartTimeMicroseconds,
+                    source: .authenticatedRuntime
+                )
             }
             if provenCandidates.count > 1 {
                 throw PlayCoverBackendError.launchFailed(
@@ -1493,7 +1852,11 @@ public enum PlayCoverService {
             if let value = box.get() {
                 switch value {
                 case .success(let identity):
-                    if authenticatesCurrentLaunch(identity) {
+                    if mayClaimLaunchIdentity(
+                        identity,
+                        callbackIdentity: identity,
+                        runtimeAuthenticated: false
+                    ) {
                         return identity
                     }
                 case .failure(let error):
@@ -1542,36 +1905,53 @@ public enum PlayCoverService {
     }
 
     static func terminateFailedLaunch(
-        pid: Int32,
+        identity: LaunchedApplicationIdentity,
         manifest: PlayCoverPrepareManifest
     ) throws {
         if let failedLaunchTerminatorOverrideForTesting {
-            try failedLaunchTerminatorOverrideForTesting(pid, manifest)
+            try failedLaunchTerminatorOverrideForTesting(
+                identity,
+                manifest
+            )
             return
         }
-        guard let executable =
-                PlayCoverRuntimeClient.executablePath(for: pid) else {
-            #if canImport(Darwin)
-            let probe = Darwin.kill(pid, 0)
-            let probeError = errno
-            guard probe != 0, probeError == ESRCH else {
-                throw PlayCoverBackendError.launchFailed(
-                    "rollback cannot verify pid \(pid): "
-                        + "proc_pidpath unavailable and kill(0) "
-                        + "returned \(probe), errno \(probeError)"
-                )
+        let pid = identity.pid
+        guard identity.source == .workspaceCallback
+                || identity.source == .authenticatedRuntime else {
+            throw PlayCoverBackendError.launchFailed(
+                "rollback refuses a process not owned by the "
+                    + "NSWorkspace callback or authenticated Runtime"
+            )
+        }
+        guard let expectedProcessStart =
+                identity.processStartTimeMicroseconds else {
+            throw PlayCoverBackendError.launchFailed(
+                "rollback cannot verify pid \(pid): the owned launch "
+                    + "has no stable process birth token"
+            )
+        }
+        switch failedLaunchProcessState(pid) {
+        case .missing:
+            return
+        case .unverifiable(let errorNumber):
+            throw PlayCoverBackendError.launchFailed(
+                "rollback cannot verify pid \(pid): errno "
+                    + "\(errorNumber)"
+            )
+        case .running(
+            let executable,
+            let currentProcessStart
+        ):
+            guard canonicalPath(executable)
+                    == canonicalPath(manifest.executablePath),
+                  currentProcessStart == expectedProcessStart else {
+                // The owned App exited and the PID was reused. This also
+                // handles same-executable reuse, which path-only checks miss.
+                return
             }
-            #endif
-            return
-        }
-        guard canonicalPath(executable)
-                == canonicalPath(manifest.executablePath) else {
-            // The launched App already exited and the PID was reused.
-            // Never signal the replacement process.
-            return
         }
         #if canImport(Darwin)
-        let termResult = Darwin.kill(pid, SIGTERM)
+        let termResult = sendFailedLaunchSignal(pid, SIGTERM)
         let termError = errno
         if termResult != 0, termError == ESRCH {
             return
@@ -1584,11 +1964,13 @@ public enum PlayCoverService {
         if try waitForExactProcessExit(
             pid: pid,
             expectedExecutablePath: manifest.executablePath,
+            expectedProcessStartTimeMicroseconds:
+                expectedProcessStart,
             timeout: 2
         ) {
             return
         }
-        let killResult = Darwin.kill(pid, SIGKILL)
+        let killResult = sendFailedLaunchSignal(pid, SIGKILL)
         let killError = errno
         if killResult != 0, killError == ESRCH {
             return
@@ -1601,6 +1983,8 @@ public enum PlayCoverService {
         guard try waitForExactProcessExit(
             pid: pid,
             expectedExecutablePath: manifest.executablePath,
+            expectedProcessStartTimeMicroseconds:
+                expectedProcessStart,
             timeout: 2
         ) else {
             throw PlayCoverBackendError.launchFailed(
@@ -1614,31 +1998,32 @@ public enum PlayCoverService {
     private static func waitForExactProcessExit(
         pid: Int32,
         expectedExecutablePath: String,
+        expectedProcessStartTimeMicroseconds: UInt64,
         timeout: Double
     ) throws -> Bool {
         #if canImport(Darwin)
         let deadline =
             ProcessInfo.processInfo.systemUptime + timeout
         repeat {
-            if let executable =
-                    PlayCoverRuntimeClient.executablePath(for: pid) {
+            switch failedLaunchProcessState(pid) {
+            case .missing:
+                return true
+            case .running(
+                let executable,
+                let processStartTimeMicroseconds
+            ):
                 if canonicalPath(executable)
-                    != canonicalPath(expectedExecutablePath) {
+                    != canonicalPath(expectedExecutablePath)
+                    || processStartTimeMicroseconds
+                        != expectedProcessStartTimeMicroseconds {
                     // The exact process exited and its PID was reused.
                     return true
                 }
-            } else {
-                let probe = Darwin.kill(pid, 0)
-                let probeError = errno
-                if probe != 0, probeError == ESRCH {
-                    return true
-                }
-                if probe != 0 {
-                    throw PlayCoverBackendError.launchFailed(
-                        "rollback cannot verify pid \(pid): "
-                            + "errno \(probeError)"
-                    )
-                }
+            case .unverifiable(let errorNumber):
+                throw PlayCoverBackendError.launchFailed(
+                    "rollback cannot verify pid \(pid): "
+                        + "errno \(errorNumber)"
+                )
             }
             if ProcessInfo.processInfo.systemUptime >= deadline {
                 return false
@@ -1647,6 +2032,46 @@ public enum PlayCoverService {
         } while true
         #else
         return true
+        #endif
+    }
+
+    private static func failedLaunchProcessState(
+        _ pid: Int32
+    ) -> FailedLaunchProcessState {
+        if let failedLaunchProcessStateOverrideForTesting {
+            return failedLaunchProcessStateOverrideForTesting(pid)
+        }
+        if let executable =
+                PlayCoverRuntimeClient.executablePath(for: pid) {
+            return .running(
+                executablePath: executable,
+                processStartTimeMicroseconds:
+                    processStartTimeMicroseconds(for: pid)
+            )
+        }
+        #if canImport(Darwin)
+        let probe = Darwin.kill(pid, 0)
+        let probeError = errno
+        if probe != 0, probeError == ESRCH {
+            return .missing
+        }
+        return .unverifiable(errno: probeError)
+        #else
+        return .missing
+        #endif
+    }
+
+    private static func sendFailedLaunchSignal(
+        _ pid: Int32,
+        _ signal: Int32
+    ) -> Int32 {
+        if let failedLaunchSignalOverrideForTesting {
+            return failedLaunchSignalOverrideForTesting(pid, signal)
+        }
+        #if canImport(Darwin)
+        return Darwin.kill(pid, signal)
+        #else
+        return -1
         #endif
     }
 
@@ -1727,6 +2152,34 @@ public enum PlayCoverService {
         while let data = try handle.read(upToCount: 1_048_576),
               !data.isEmpty {
             hasher.update(data: data)
+        }
+        return hex(hasher.finalize())
+    }
+
+    private static func fileSHA256(
+        descriptor: Int32
+    ) throws -> String {
+        var hasher = SHA256()
+        var buffer = [UInt8](repeating: 0, count: 1_048_576)
+        while true {
+            let count = Darwin.read(
+                descriptor,
+                &buffer,
+                buffer.count
+            )
+            if count > 0 {
+                hasher.update(data: Data(buffer[0..<count]))
+                continue
+            }
+            if count == 0 {
+                break
+            }
+            if errno == EINTR {
+                continue
+            }
+            throw PlayCoverBackendError.cacheTampered(
+                "recorded file could not be hashed: errno \(errno)"
+            )
         }
         return hex(hasher.finalize())
     }

@@ -93,13 +93,42 @@ enum PlayCoverSessionService {
         _ manifest: PlayCoverPrepareManifest,
         paths: IOSUsePaths
     ) throws {
+        try recordPrepared(
+            appPath: manifest.preparedAppPath,
+            bundleIdentifier: manifest.bundleIdentifier,
+            executablePath: manifest.executablePath,
+            generationKey: manifest.generationKey,
+            paths: paths
+        )
+    }
+
+    static func recordPrepared(
+        _ result: LaunchResult,
+        paths: IOSUsePaths
+    ) throws {
+        try recordPrepared(
+            appPath: result.appPath,
+            bundleIdentifier: result.bundleIdentifier,
+            executablePath: result.executablePath,
+            generationKey: result.generationKey,
+            paths: paths
+        )
+    }
+
+    private static func recordPrepared(
+        appPath: String,
+        bundleIdentifier: String,
+        executablePath: String,
+        generationKey: String,
+        paths: IOSUsePaths
+    ) throws {
         try writeReference(
             PreparedReference(
                 schemaVersion: 3,
-                appPath: manifest.preparedAppPath,
-                bundleIdentifier: manifest.bundleIdentifier,
-                executablePath: manifest.executablePath,
-                generationKey: manifest.generationKey
+                appPath: appPath,
+                bundleIdentifier: bundleIdentifier,
+                executablePath: executablePath,
+                generationKey: generationKey
             ),
             paths: paths
         )
@@ -214,8 +243,6 @@ enum PlayCoverSessionService {
                 "selected generation identity changed before launch"
             )
         }
-        try recordPrepared(verifiedManifest, paths: paths)
-
         let launchStarted = PlayCoverMonotonicClock.now()
         let rawResult: LaunchResult
         if let launchOverrideForTesting {
@@ -708,18 +735,63 @@ enum PlayCoverSessionService {
     static func readPreparedReference(
         paths: IOSUsePaths
     ) throws -> PreparedReference? {
+        #if canImport(Darwin)
+        let playcoverDescriptor = Darwin.open(
+            paths.playcover,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        if playcoverDescriptor < 0, errno == ENOENT {
+            return nil
+        }
+        guard playcoverDescriptor >= 0 else {
+            throw PlayCoverBackendError.launchFailed(
+                "cannot open the PlayCover state directory without "
+                    + "following links: errno \(errno)"
+            )
+        }
+        defer { Darwin.close(playcoverDescriptor) }
+        var directoryStatus = stat()
+        guard fstat(playcoverDescriptor, &directoryStatus) == 0,
+              directoryStatus.st_mode & S_IFMT == S_IFDIR,
+              directoryStatus.st_uid == geteuid(),
+              directoryStatus.st_mode & 0o077 == 0 else {
+            throw PlayCoverBackendError.launchFailed(
+                "PlayCover state directory is not owner-only"
+            )
+        }
+        let filename = URL(
+            fileURLWithPath: paths.playcoverLastPrepared
+        ).lastPathComponent
+        var referenceStatus = stat()
+        if fstatat(
+            playcoverDescriptor,
+            filename,
+            &referenceStatus,
+            AT_SYMLINK_NOFOLLOW
+        ) != 0, errno == ENOENT {
+            return nil
+        }
+        #else
         guard FileManager.default.fileExists(
             atPath: paths.playcoverLastPrepared
         ) else {
             return nil
         }
+        #endif
         do {
+            #if canImport(Darwin)
+            let data =
+                try PlayCoverManagedAppService.readOwnedRegularFile(
+                    parentDescriptor: playcoverDescriptor,
+                    name: filename
+                )
+            #else
             let data = try Data(
                 contentsOf: URL(
-                    fileURLWithPath:
-                        paths.playcoverLastPrepared
+                    fileURLWithPath: paths.playcoverLastPrepared
                 )
             )
+            #endif
             let reference = try JSONDecoder().decode(
                 PreparedReference.self,
                 from: data

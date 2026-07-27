@@ -82,6 +82,64 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         )
     }
 
+    func testPinnedOracleUsesCanonicalRelativePathsForSymlinkedSourceAncestor()
+        async throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-differential-symlink-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = try makeSourceFixture(in: root)
+        let sourceParent = source
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let aliasParent = root.appendingPathComponent(
+            "source-parent-alias",
+            isDirectory: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: aliasParent,
+            withDestinationURL: sourceParent
+        )
+        let aliasedSource = aliasParent.appendingPathComponent(
+            "Source/Fixture.app",
+            isDirectory: true
+        )
+        let managedHome = root.appendingPathComponent(
+            "pinned-home",
+            isDirectory: true
+        )
+        try makePrivateDirectory(managedHome)
+        let staging = managedHome.appendingPathComponent(
+            "prepared/Pinned.app",
+            isDirectory: true
+        )
+
+        let result = try await PlayCoverPinnedPrimitiveCharacterization.prepare(
+            PlayCoverPinnedPrimitivePrepareOptions(
+                sourceApp: aliasedSource,
+                stagingApp: staging,
+                managedHome: managedHome
+            )
+        )
+
+        XCTAssertEqual(
+            Set(result.convertedMachOs),
+            Set(result.sourceBefore.machOs.map(\.relativePath))
+        )
+        XCTAssertEqual(
+            result.sourceBefore.sourceContentHash,
+            result.sourceHashAfterPrepare
+        )
+    }
+
     func testPinnedHeadlessInstallerOracleAndIOSUsePrepareHaveOnlyRecordedDifferences()
         async throws
     {
@@ -1160,7 +1218,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             }
             XCTAssertTrue(
                 messages.contains(
-                    "hermetic attestation requires constrained normalization"
+                    "differential attestation requires constrained normalization"
                 )
             )
         }

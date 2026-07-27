@@ -8,6 +8,8 @@ import Darwin
 final class PlayCoverCoreTests: XCTestCase {
     override func tearDown() {
         PlayCoverService.failedLaunchTerminatorOverrideForTesting = nil
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = nil
+        PlayCoverService.failedLaunchSignalOverrideForTesting = nil
         PlayCoverManagedAppService.inspectOverrideForTesting = nil
         PlayCoverManagedAppService.verifyOverrideForTesting = nil
         PlayCoverManagedAppService.readManifestOverrideForTesting = nil
@@ -369,6 +371,64 @@ final class PlayCoverCoreTests: XCTestCase {
                 existingPIDs: [],
                 manifest: manifest
             )
+        )
+    }
+
+    func testConcurrentFinderCandidateNeedsCallbackOrRuntimeIdentity()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "b", count: 64)
+        )
+        let callbackIdentity =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: 42,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 10,
+                source: .workspaceCallback
+            )
+        let finderCandidate =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: 43,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 11,
+                source: .observedCandidate
+            )
+
+        XCTAssertTrue(
+            PlayCoverService.mayClaimLaunchIdentity(
+                callbackIdentity,
+                callbackIdentity: callbackIdentity,
+                runtimeAuthenticated: false
+            )
+        )
+        XCTAssertFalse(
+            PlayCoverService.mayClaimLaunchIdentity(
+                finderCandidate,
+                callbackIdentity: callbackIdentity,
+                runtimeAuthenticated: false
+            ),
+            "a concurrent exact Finder launch is not owned by polling"
+        )
+        XCTAssertTrue(
+            PlayCoverService.mayClaimLaunchIdentity(
+                finderCandidate,
+                callbackIdentity: callbackIdentity,
+                runtimeAuthenticated: true
+            ),
+            "the random Runtime session may authenticate a slow callback"
         )
     }
 
@@ -1315,6 +1375,152 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
+    func testRuntimeHelloTimeoutRollsBackExactCallbackProcess()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "c", count: 64)
+        )
+        let identity = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 42,
+            bundleIdentifier: manifest.bundleIdentifier,
+            bundleURLPath: manifest.preparedAppPath,
+            executablePath: manifest.executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .workspaceCallback
+        )
+        var running = true
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            pid in
+            XCTAssertEqual(pid, identity.pid)
+            return running
+                ? .running(
+                    executablePath: manifest.executablePath,
+                    processStartTimeMicroseconds: 100
+                )
+                : .missing
+        }
+        var signals: [Int32] = []
+        PlayCoverService.failedLaunchSignalOverrideForTesting = {
+            pid,
+            signal in
+            XCTAssertEqual(pid, identity.pid)
+            signals.append(signal)
+            running = false
+            return 0
+        }
+
+        try PlayCoverService.terminateFailedLaunch(
+            identity: identity,
+            manifest: manifest
+        )
+
+        XCTAssertEqual(signals, [SIGTERM])
+    }
+
+    func testFailedLaunchRollbackPreservesSameExecutablePIDReuse()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "d", count: 64)
+        )
+        let identity = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 42,
+            bundleIdentifier: manifest.bundleIdentifier,
+            bundleURLPath: manifest.preparedAppPath,
+            executablePath: manifest.executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .workspaceCallback
+        )
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            _ in .running(
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 101
+            )
+        }
+        var signalCount = 0
+        PlayCoverService.failedLaunchSignalOverrideForTesting = {
+            _,
+            _ in
+            signalCount += 1
+            return 0
+        }
+
+        try PlayCoverService.terminateFailedLaunch(
+            identity: identity,
+            manifest: manifest
+        )
+
+        XCTAssertEqual(signalCount, 0)
+    }
+
+    func testFailedLaunchRollbackRefusesUnownedConcurrentCandidate()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.root
+                .appendingPathComponent("Prepared.app").path,
+            generationKey: String(repeating: "e", count: 64)
+        )
+        let candidate = PlayCoverService.LaunchedApplicationIdentity(
+            pid: 43,
+            bundleIdentifier: manifest.bundleIdentifier,
+            bundleURLPath: manifest.preparedAppPath,
+            executablePath: manifest.executablePath,
+            processStartTimeMicroseconds: 100,
+            source: .observedCandidate
+        )
+        PlayCoverService.failedLaunchProcessStateOverrideForTesting = {
+            _ in .running(
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 100
+            )
+        }
+        var signalCount = 0
+        PlayCoverService.failedLaunchSignalOverrideForTesting = {
+            _,
+            _ in
+            signalCount += 1
+            return 0
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverService.terminateFailedLaunch(
+                identity: candidate,
+                manifest: manifest
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "not owned by the NSWorkspace callback"
+                )
+            )
+        }
+        XCTAssertEqual(signalCount, 0)
+    }
+
     func testFailedLaunchRollbackEscalatesToKillAndWaitsForExit()
         throws
     {
@@ -1361,9 +1567,21 @@ final class PlayCoverCoreTests: XCTestCase {
             }
         }
         usleep(100_000)
+        let processStart = try XCTUnwrap(
+            PlayCoverService.processStartTimeMicroseconds(
+                for: process.processIdentifier
+            )
+        )
 
         try PlayCoverService.terminateFailedLaunch(
-            pid: process.processIdentifier,
+            identity: PlayCoverService.LaunchedApplicationIdentity(
+                pid: process.processIdentifier,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: processStart,
+                source: .workspaceCallback
+            ),
             manifest: manifest
         )
         process.waitUntilExit()

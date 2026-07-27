@@ -210,6 +210,14 @@ public enum SessionService {
                 info: PlayCoverSessionService.makeSessionInfo(from: result),
                 paths: paths
             )
+            // A bare start means "reuse the most recent successfully launched
+            // generation", not merely the most recently verified selection.
+            // Publish this reference only after Runtime hello and the active
+            // session lock have both committed.
+            try PlayCoverSessionService.recordPrepared(
+                result,
+                paths: paths
+            )
             let cacheDisposition = result.reused ? "reused" : "prepared"
             let pruning =
                 PlayCoverGenerationPruner.pruneAfterSuccessfulStart(

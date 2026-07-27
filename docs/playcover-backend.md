@@ -254,10 +254,14 @@ last-prepared generation, and three most recent inactive complete generations.
 It removes only exact transaction-owned `.staging-<hash>-<UUID>` and
 `.gc-<hash>-<UUID>` leftovers plus eligible complete generations after an
 anchored tombstone rename. Recursive deletion is no-follow, owner checked, and
-confined to the prepared filesystem device. Foreign, incomplete, malformed,
-mounted, or symbolic-link entries fail closed; generation metadata must also
-be a single-link regular file. Malformed session/reference state skips
-deletion.
+confined to the prepared filesystem device. Foreign, mounted, or
+symbolic-link generation entries fail closed. After anchored ownership and
+64-hex namespace validation, generations with missing, oversized, malformed,
+or mismatched manifest/completed sidecars are quarantined with an explicit
+warning and a bounded per-start budget, so later collection can recover the
+same content key. Current, active-session, and last-prepared generations are
+never quarantined. Generation metadata must be a single-link regular file;
+malformed session/reference state skips all deletion.
 
 ## Runtime Distribution
 
@@ -347,7 +351,16 @@ The run directory and attestation candidate are exclusively created and the
 final is a no-clobber hard link; it does not rely on `ditto` preserving a Unix
 socket in the archived home.
 These process-local checks remain additive: they do not replace the unlocked
-real cursor, corner-drag, backing-scale, popup, and mouse/touch matrix.
+real cursor, popup, and mouse/touch matrix. The version-2 live display matrix
+requires exactly one main display and one eligible active, online,
+non-mirrored extended display with an NSScreen and a different backing scale;
+missing hardware or a locked console is an `EX_CONFIG` (78) failure. The same
+PID, session, prepared generation, and AppKit window number must survive
+exact-window interpolated title-bar drags main → extended → main. Each phase
+binds Runtime diagnostics to the selected screen ID, backing scale, and visible
+frame while requiring host display scales 0.75, 1.0, and 0.875 respectively.
+Only the redacted external-App schema-v2 attestation is eligible for CI upload;
+raw topology and UI evidence remain runner-private.
 
 ## Upstream Provenance
 

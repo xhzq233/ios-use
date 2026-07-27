@@ -182,13 +182,21 @@ public enum PlayCoverPinnedPrimitiveCharacterization {
         executedPinnedSymbols.append("Installer.saveEntitlements")
         let installerMachOs = try Installer.resolveValidMachOs(sourceBaseApp)
         executedPinnedSymbols.append("Installer.resolveValidMachOs")
-        let relativePaths = installerMachOs.map {
-            relativePath($0, in: options.sourceApp)
+        let relativePaths = try installerMachOs.map {
+            try relativePath($0, in: options.sourceApp)
         }
         let sourcePaths = Set(source.machOs.map(\.relativePath))
         guard Set(relativePaths) == sourcePaths else {
+            let installerOnly = Set(relativePaths)
+                .subtracting(sourcePaths)
+                .sorted()
+            let inspectionOnly = sourcePaths
+                .subtracting(relativePaths)
+                .sorted()
             throw PlayCoverUpstreamError.verificationFailed(
-                "pinned Installer enumeration and neutral inspection disagree"
+                "pinned Installer enumeration and neutral inspection "
+                    + "disagree; installer-only=\(installerOnly); "
+                    + "inspection-only=\(inspectionOnly)"
             )
         }
         for relative in relativePaths {
@@ -481,10 +489,23 @@ public enum PlayCoverPinnedPrimitiveCharacterization {
         }
     }
 
-    private static func relativePath(_ url: URL, in root: URL) -> String {
-        let rootPath = root.standardizedFileURL.path
-        let path = url.standardizedFileURL.path
-        return String(path.dropFirst(rootPath.count + 1))
+    private static func relativePath(
+        _ url: URL,
+        in root: URL
+    ) throws -> String {
+        guard
+            let canonicalRoot = playCoverCanonicalExistingURL(root)?.path,
+            let canonicalURL = playCoverCanonicalExistingURL(url)?.path,
+            canonicalURL.hasPrefix(canonicalRoot + "/")
+        else {
+            throw PlayCoverUpstreamError.verificationFailed(
+                "pinned Installer Mach-O escaped its canonical source App: "
+                    + url.path
+            )
+        }
+        return String(
+            canonicalURL.dropFirst(canonicalRoot.count + 1)
+        )
     }
 }
 
@@ -598,6 +619,29 @@ public struct PlayCoverDifferentialNormalization: Sendable {
         pinnedManagedHome: URL,
         iosUseManagedHome: URL
     ) throws -> Self {
+        try managedPaths(
+            pinnedManagedHome: pinnedManagedHome,
+            iosUseManagedHome: iosUseManagedHome,
+            mode: .hermeticFixtureManagedPathsV1
+        )
+    }
+
+    public static func externalApp(
+        pinnedManagedHome: URL,
+        iosUseManagedHome: URL
+    ) throws -> Self {
+        try managedPaths(
+            pinnedManagedHome: pinnedManagedHome,
+            iosUseManagedHome: iosUseManagedHome,
+            mode: .externalAppManagedPathsV1
+        )
+    }
+
+    private static func managedPaths(
+        pinnedManagedHome: URL,
+        iosUseManagedHome: URL,
+        mode: PlayCoverDifferentialNormalizationMode
+    ) throws -> Self {
         let pinnedPaths = try managedHomePaths(
             pinnedManagedHome,
             name: "pinned"
@@ -632,7 +676,7 @@ public struct PlayCoverDifferentialNormalization: Sendable {
             pinnedManagedHome: pinnedPaths,
             iosUseManagedHome: iosUsePaths,
             evidence: PlayCoverDifferentialNormalizationEvidence(
-                mode: .hermeticFixtureManagedPathsV1,
+                mode: mode,
                 pinnedManagedHomeLexicalSHA256:
                     sha256(pinnedPaths.lexical),
                 pinnedManagedHomeCanonicalSHA256:
@@ -735,6 +779,8 @@ public enum PlayCoverDifferentialNormalizationMode:
 {
     case hermeticFixtureManagedPathsV1 =
         "hermetic-fixture-managed-paths-v1"
+    case externalAppManagedPathsV1 =
+        "external-app-managed-paths-v1"
 }
 
 public struct PlayCoverDifferentialNormalizationEvidence:
@@ -1094,6 +1140,7 @@ public enum PlayCoverDifferentialAttestationScope:
     String, Codable, Equatable, Sendable
 {
     case hermeticFixture = "hermetic-fixture"
+    case externalApp = "external-app"
 }
 
 public struct PlayCoverDifferentialSourceEvidence:
@@ -1232,6 +1279,7 @@ public enum PlayCoverDifferentialGateError:
         allowanceIDs: [String]
     )
     case staleAllowances([String])
+    case duplicateDifferences([String])
     case invalidBaselines([String])
     case missingBaseline(side: PlayCoverDifferentialSide, path: String)
     case baselineMismatch(
@@ -1255,6 +1303,9 @@ public enum PlayCoverDifferentialGateError:
         case .staleAllowances(let identifiers):
             return "stale PlayCover prepare allowances: "
                 + identifiers.joined(separator: ", ")
+        case .duplicateDifferences(let selectors):
+            return "duplicate PlayCover prepare differences: "
+                + selectors.joined(separator: ", ")
         case .invalidBaselines(let messages):
             return "invalid PlayCover object baselines: "
                 + messages.joined(separator: "; ")
@@ -1342,7 +1393,7 @@ public enum PlayCoverPrepareDifferentialGate {
         }
         guard let normalizationEvidence = normalization.evidence else {
             identityErrors.append(
-                "hermetic attestation requires constrained normalization"
+                "differential attestation requires constrained normalization"
             )
             throw PlayCoverDifferentialAttestationError.invalidIdentity(
                 identityErrors.sorted()
@@ -1355,8 +1406,12 @@ public enum PlayCoverPrepareDifferentialGate {
             normalizationEvidence.iosUseManagedHomeCanonicalSHA256,
             normalizationEvidence.pinnedPlayToolsLoadPathSHA256,
         ]
-        if normalizationEvidence.mode
-            != .hermeticFixtureManagedPathsV1
+        let expectedNormalizationMode:
+            PlayCoverDifferentialNormalizationMode =
+                scope == .hermeticFixture
+                    ? .hermeticFixtureManagedPathsV1
+                    : .externalAppManagedPathsV1
+        if normalizationEvidence.mode != expectedNormalizationMode
             || normalizationEvidence.managedHomeReplacement
                 != "<MANAGED_HOME>"
             || normalizationEvidence.playToolsReplacement != "<PLAYTOOLS>"
@@ -1364,7 +1419,7 @@ public enum PlayCoverPrepareDifferentialGate {
                 !isLowercaseSHA256($0)
             }) {
             identityErrors.append(
-                "hermetic normalization evidence is invalid"
+                "differential normalization evidence is invalid"
             )
         }
         guard
@@ -1372,7 +1427,7 @@ public enum PlayCoverPrepareDifferentialGate {
             let iosUseManagedHome = normalization.iosUseManagedHome
         else {
             identityErrors.append(
-                "hermetic normalization has no bound managed homes"
+                "differential normalization has no bound managed homes"
             )
             throw PlayCoverDifferentialAttestationError.invalidIdentity(
                 identityErrors.sorted()
@@ -1661,6 +1716,22 @@ public enum PlayCoverPrepareDifferentialGate {
             normalization: normalization
         )
         let actual = analysis.differences
+        let actualSelectors = actual.map {
+            "\($0.relativePath)\u{0}\($0.field)"
+        }
+        let duplicateSelectors = Dictionary(
+            grouping: actualSelectors,
+            by: { $0 }
+        ).filter {
+            $0.value.count > 1
+        }.keys.map {
+            $0.replacingOccurrences(of: "\u{0}", with: " ")
+        }.sorted()
+        guard duplicateSelectors.isEmpty else {
+            throw PlayCoverDifferentialGateError.duplicateDifferences(
+                duplicateSelectors
+            )
+        }
         var consumed: Set<String> = []
         var consumedAllowances:
             [PlayCoverDifferentialConsumedAllowanceEvidence] = []
@@ -1698,6 +1769,12 @@ public enum PlayCoverPrepareDifferentialGate {
         }.sorted()
         guard stale.isEmpty else {
             throw PlayCoverDifferentialGateError.staleAllowances(stale)
+        }
+        guard consumedAllowances.count == actual.count,
+              consumed.count == allowances.count else {
+            throw PlayCoverDifferentialGateError.invalidAllowances([
+                "allowance consumption is not a one-to-one mapping",
+            ])
         }
         let consumedBaselines = oneSidedBaselines.filter {
             analysis.consumedBaselineIDs.contains($0.id)
@@ -3327,11 +3404,14 @@ public enum PlayCoverPrepareDifferentialGate {
             "ThirdParty/inject/Package.swift",
             "ThirdParty/inject/PROVENANCE.md",
             "scripts/audit_playcover_upstreams.sh",
+            "scripts/test_playcover_external_prepare_differential.sh",
             "scripts/test_playcover_prepare_differential.sh",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverService.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverStartTiming.swift",
+            "swift-cli/Tests/IOSUseCLITests/PlayCover/"
+                + "PlayCoverExternalPrepareDifferentialTests.swift",
             "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                 + "PlayCoverPrepareDifferentialTests.swift",
             "swift-cli/Package.resolved",
