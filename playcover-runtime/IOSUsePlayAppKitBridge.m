@@ -78,6 +78,32 @@ typedef CFArrayRef _Nullable (*IOSUseBridgeCGWindowListCopyWindowInfo)(
     CGWindowID
 );
 
+#if defined(IOS_USE_PLAY_APPKIT_BRIDGE_TESTING)
+typedef NSArray * _Nullable
+    (*IOSUseBridgeNativeAlertWindowsProvider)(void);
+static IOSUseBridgeCGWindowListCopyWindowInfo
+    IOSUseBridgeCGWindowListCopyWindowInfoForTesting;
+static IOSUseBridgeNativeAlertWindowsProvider
+    IOSUseBridgeNativeAlertWindowsProviderForTesting;
+
+void IOSUsePlayAppKitBridgeSetCGWindowListCopyWindowInfoForTesting(
+    IOSUseBridgeCGWindowListCopyWindowInfo copyWindowInfo
+);
+void IOSUsePlayAppKitBridgeSetNativeAlertWindowsProviderForTesting(
+    IOSUseBridgeNativeAlertWindowsProvider windowsProvider
+);
+NSDictionary<NSNumber *, NSDictionary<NSString *, id> *> * _Nullable
+IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting(void);
+NSDictionary<NSString *, id> * _Nullable
+IOSUsePlayAppKitBridgeSelectVisibleNativeAlertForTesting(
+    NSArray * _Nullable windows,
+    NSDictionary<
+        NSNumber *,
+        NSDictionary<NSString *, id> *
+    > * _Nullable cgMetadata
+);
+#endif
+
 static NSString *const IOSUsePlayWindowErrorDomain =
     @"io.ios-use.play-runtime.window";
 static NSString *const IOSUsePlayNativeAlertErrorDomain =
@@ -396,15 +422,24 @@ static NSDictionary<
     NSNumber *,
     NSDictionary<NSString *, id> *
 > *IOSUseBridgeOwnOnscreenCGWindowMetadata(void) {
-    static IOSUseBridgeCGWindowListCopyWindowInfo copyWindowInfo;
+    IOSUseBridgeCGWindowListCopyWindowInfo copyWindowInfo = NULL;
+#if defined(IOS_USE_PLAY_APPKIT_BRIDGE_TESTING)
+    copyWindowInfo =
+        IOSUseBridgeCGWindowListCopyWindowInfoForTesting;
+#endif
+    static IOSUseBridgeCGWindowListCopyWindowInfo
+        systemCopyWindowInfo;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        copyWindowInfo =
+        systemCopyWindowInfo =
             (IOSUseBridgeCGWindowListCopyWindowInfo)dlsym(
                 RTLD_DEFAULT,
                 "CGWindowListCopyWindowInfo"
             );
     });
+    if (copyWindowInfo == NULL) {
+        copyWindowInfo = systemCopyWindowInfo;
+    }
     if (copyWindowInfo == NULL) {
         return nil;
     }
@@ -474,6 +509,20 @@ static NSDictionary<
     }
     return metadata;
 }
+
+#if defined(IOS_USE_PLAY_APPKIT_BRIDGE_TESTING)
+void IOSUsePlayAppKitBridgeSetCGWindowListCopyWindowInfoForTesting(
+    IOSUseBridgeCGWindowListCopyWindowInfo copyWindowInfo
+) {
+    IOSUseBridgeCGWindowListCopyWindowInfoForTesting =
+        copyWindowInfo;
+}
+
+NSDictionary<NSNumber *, NSDictionary<NSString *, id> *> * _Nullable
+IOSUsePlayAppKitBridgeCopyOwnOnscreenCGWindowMetadataForTesting(void) {
+    return IOSUseBridgeOwnOnscreenCGWindowMetadata();
+}
+#endif
 
 static NSDictionary<NSString *, id> *
 IOSUseBridgeExactOnscreenCGWindowMetadata(
@@ -2740,8 +2789,12 @@ IOSUseBridgeWindowInventory(void) {
     return result;
 }
 
-static NSDictionary<NSString *, id> *
-IOSUseBridgeVisibleNativeAlertSelection(void) {
+static NSArray *IOSUseBridgeNativeAlertWindows(void) {
+#if defined(IOS_USE_PLAY_APPKIT_BRIDGE_TESTING)
+    if (IOSUseBridgeNativeAlertWindowsProviderForTesting != NULL) {
+        return IOSUseBridgeNativeAlertWindowsProviderForTesting();
+    }
+#endif
     id application = IOSUseBridgeApplication();
     id windows = [application respondsToSelector:
         NSSelectorFromString(@"windows")]
@@ -2750,14 +2803,21 @@ IOSUseBridgeVisibleNativeAlertSelection(void) {
             NSSelectorFromString(@"windows")
         )
         : nil;
-    if (![windows isKindOfClass:NSArray.class]) {
-        return nil;
-    }
+    return [windows isKindOfClass:NSArray.class]
+        ? windows
+        : nil;
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
+    NSArray *windows,
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
-    > *cgMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
-    if (cgMetadata == nil) {
+    > *cgMetadata
+) {
+    if (![windows isKindOfClass:NSArray.class] ||
+        cgMetadata == nil) {
         return nil;
     }
     NSMutableArray<NSDictionary<NSString *, id> *> *candidates =
@@ -2831,6 +2891,55 @@ IOSUseBridgeVisibleNativeAlertSelection(void) {
     }];
     return candidates.firstObject;
 }
+
+static NSDictionary<NSString *, id> *
+IOSUseBridgeVisibleNativeAlertSelectionWithCGWindowMetadata(
+    NSDictionary<
+        NSNumber *,
+        NSDictionary<NSString *, id> *
+    > *cgMetadata
+) {
+    return IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
+        IOSUseBridgeNativeAlertWindows(),
+        cgMetadata
+    );
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseBridgeVisibleNativeAlertSelection(void) {
+    NSArray *windows = IOSUseBridgeNativeAlertWindows();
+    NSDictionary<
+        NSNumber *,
+        NSDictionary<NSString *, id> *
+    > *cgMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    return IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
+        windows,
+        cgMetadata
+    );
+}
+
+#if defined(IOS_USE_PLAY_APPKIT_BRIDGE_TESTING)
+void IOSUsePlayAppKitBridgeSetNativeAlertWindowsProviderForTesting(
+    IOSUseBridgeNativeAlertWindowsProvider windowsProvider
+) {
+    IOSUseBridgeNativeAlertWindowsProviderForTesting =
+        windowsProvider;
+}
+
+NSDictionary<NSString *, id> * _Nullable
+IOSUsePlayAppKitBridgeSelectVisibleNativeAlertForTesting(
+    NSArray * _Nullable windows,
+    NSDictionary<
+        NSNumber *,
+        NSDictionary<NSString *, id> *
+    > * _Nullable cgMetadata
+) {
+    return IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
+        windows,
+        cgMetadata
+    );
+}
+#endif
 
 /// A launch-time system panel can legitimately appear before UIKit has
 /// connected its first scene.  It cannot participate in target automation:
@@ -4528,7 +4637,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     // action never trusts this observational snapshot.
     NSDictionary<NSString *, id> *nativeAlertSelection =
         includeStatusOnlyFields
-            ? IOSUseBridgeVisibleNativeAlertSelection()
+            ? IOSUseBridgeVisibleNativeAlertSelectionWithCGWindowMetadata(
+                cgWindowMetadata
+            )
             : nil;
     id nativeAlertWindow = nativeAlertSelection[@"window"];
     CGRect nativeAlertFrame = nativeAlertSelection == nil

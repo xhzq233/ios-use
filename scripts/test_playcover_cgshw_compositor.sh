@@ -58,8 +58,32 @@ xcrun clang \
 
 "$IOS_USE_SMOKE_TEMP/HostCanvasContractTests"
 
+IOS_USE_MACOS_SDK="$(xcrun --sdk macosx --show-sdk-path)"
+xcrun --sdk macosx clang \
+  -target arm64-apple-ios13.1-macabi \
+  -D IOS_USE_PLAY_APPKIT_BRIDGE_TESTING \
+  -fobjc-arc \
+  -fblocks \
+  -fmodules \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -iframework "$IOS_USE_MACOS_SDK/System/iOSSupport/System/Library/Frameworks" \
+  -F "$IOS_USE_MACOS_SDK/System/iOSSupport/System/Library/Frameworks" \
+  -framework Foundation \
+  -framework CoreGraphics \
+  -framework UIKit \
+  -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
+  -I "$IOS_USE_REPO_ROOT/swift-cli/Sources/IOSUsePlayDevice/include" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayWindowCompositor.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayAppKitBridge.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/AppKitBridgeSnapshotTests.m" \
+  -o "$IOS_USE_SMOKE_TEMP/AppKitBridgeSnapshotTests"
+
+"$IOS_USE_SMOKE_TEMP/AppKitBridgeSnapshotTests"
+
 if [ "$IOS_USE_DETERMINISTIC_ONLY" = "true" ]; then
-  echo "[cgshw-smoke] PASS deterministic compositor contracts"
+  echo "[cgshw-smoke] PASS deterministic compositor and bridge contracts"
   exit 0
 fi
 
