@@ -4,6 +4,8 @@ import Darwin
 #endif
 
 enum DriverSessionStore {
+    static let maximumDriverLockBytes = 1_048_576
+
     static func clear(paths: IOSUsePaths) {
         clearDriverLock(paths: paths)
     }
@@ -13,10 +15,11 @@ enum DriverSessionStore {
     }
 
     static func readInfo(paths: IOSUsePaths) throws -> SessionService.Info? {
-        guard FileManager.default.fileExists(atPath: paths.driverLock) else {
+        guard let data = try readPrivateDriverLock(
+            at: paths.driverLock
+        ) else {
             return nil
         }
-        let data = try Data(contentsOf: URL(fileURLWithPath: paths.driverLock))
         guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw CLIParseError.invalidValue("Invalid driver.lock: expected JSON object.")
         }
@@ -108,6 +111,126 @@ enum DriverSessionStore {
         }
         return info
     }
+
+    private static func readPrivateDriverLock(
+        at path: String
+    ) throws -> Data? {
+        #if canImport(Darwin)
+        let descriptor = Darwin.open(
+            path,
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            if errno == ENOENT || errno == ENOTDIR {
+                return nil
+            }
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: cannot open private state without "
+                    + "following links (errno \(errno))."
+            )
+        }
+        defer { Darwin.close(descriptor) }
+
+        var initial = stat()
+        guard fstat(descriptor, &initial) == 0,
+              isSafeDriverLock(initial) else {
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: expected an owner-only bounded "
+                    + "regular file."
+            )
+        }
+
+        var data = Data(count: Int(initial.st_size))
+        try data.withUnsafeMutableBytes { buffer in
+            guard let baseAddress = buffer.baseAddress else {
+                return
+            }
+            var offset = 0
+            while offset < buffer.count {
+                let count = Darwin.read(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    buffer.count - offset
+                )
+                if count > 0 {
+                    offset += count
+                    continue
+                }
+                if count < 0, errno == EINTR {
+                    continue
+                }
+                throw CLIParseError.invalidValue(
+                    "Invalid driver.lock: could not read private state "
+                        + "completely."
+                )
+            }
+        }
+
+        var finalDescriptor = stat()
+        var finalPath = stat()
+        guard fstat(descriptor, &finalDescriptor) == 0,
+              Darwin.lstat(path, &finalPath) == 0,
+              isSafeDriverLock(finalDescriptor),
+              isSafeDriverLock(finalPath),
+              sameDriverLockIdentity(initial, finalDescriptor),
+              sameDriverLockIdentity(initial, finalPath) else {
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: private state changed while it "
+                    + "was read."
+            )
+        }
+        return data
+        #else
+        guard FileManager.default.fileExists(atPath: path) else {
+            return nil
+        }
+        let handle = try FileHandle(
+            forReadingFrom: URL(fileURLWithPath: path)
+        )
+        defer { try? handle.close() }
+        let data = try handle.read(
+            upToCount: maximumDriverLockBytes + 1
+        ) ?? Data()
+        guard data.count <= maximumDriverLockBytes else {
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: expected a bounded regular file."
+            )
+        }
+        return data
+        #endif
+    }
+
+    #if canImport(Darwin)
+    private static func isSafeDriverLock(_ status: stat) -> Bool {
+        (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
+            && status.st_uid == geteuid()
+            && status.st_nlink == 1
+            && (status.st_mode & 0o077) == 0
+            && status.st_size >= 0
+            && status.st_size <= Int64(maximumDriverLockBytes)
+    }
+
+    private static func sameDriverLockIdentity(
+        _ expected: stat,
+        _ actual: stat
+    ) -> Bool {
+        actual.st_dev == expected.st_dev
+            && actual.st_ino == expected.st_ino
+            && actual.st_mode == expected.st_mode
+            && actual.st_uid == expected.st_uid
+            && actual.st_gid == expected.st_gid
+            && actual.st_nlink == expected.st_nlink
+            && actual.st_size == expected.st_size
+            && actual.st_mtimespec.tv_sec
+                == expected.st_mtimespec.tv_sec
+            && actual.st_mtimespec.tv_nsec
+                == expected.st_mtimespec.tv_nsec
+            && actual.st_ctimespec.tv_sec
+                == expected.st_ctimespec.tv_sec
+            && actual.st_ctimespec.tv_nsec
+                == expected.st_ctimespec.tv_nsec
+    }
+    #endif
 
     static func requireInfo(paths: IOSUsePaths) throws -> SessionService.Info {
         guard let info = try readInfo(paths: paths) else {

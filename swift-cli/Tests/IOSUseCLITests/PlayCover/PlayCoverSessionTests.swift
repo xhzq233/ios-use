@@ -1423,6 +1423,10 @@ final class PlayCoverSessionTests: XCTestCase {
                 fileURLWithPath: fixture.paths.driverLock
             )
         )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.paths.driverLock
+        )
         var deviceLookupCount = 0
         DeviceService.listDevicesOverrideForTesting = { _, _ in
             deviceLookupCount += 1
