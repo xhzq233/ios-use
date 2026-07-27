@@ -734,7 +734,11 @@ public enum PlayCoverService {
                         expectedPID: identity.pid,
                         expectedBundleIdentifier: manifest.bundleIdentifier,
                         expectedExecutablePath: manifest.executablePath,
-                        timeoutSeconds: min(0.25, remaining)
+                        // A Runtime hello can wait behind App startup on its
+                        // main queue. Keep exactly one ready probe in flight:
+                        // short client deadlines would close the connection,
+                        // retry, and leave stale hello frames in Runtime FIFO.
+                        timeoutSeconds: remaining
                     ).hello()
                     let hello = try validateHello(
                         payload,
