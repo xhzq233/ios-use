@@ -47,6 +47,15 @@ FOUNDATION_EXPORT BOOL IOSUsePlayResolveHostCanvasLayout(
     NSString * _Nullable * _Nullable failure
 );
 
+/// Returns whether every ideal canvas edge is within one half backing pixel
+/// of the host content edge. AppKit may restore an integral-point content
+/// size whose total surplus exceeds one half pixel even though each centered
+/// edge is still a valid nearest-pixel projection.
+FOUNDATION_EXPORT BOOL IOSUsePlayHostCanvasFitsPixelQuantizedContent(
+    IOSUsePlayHostCanvasLayout layout,
+    NSString * _Nullable * _Nullable failure
+);
+
 /// Converts between AppKit host-content coordinates (bottom-left) and the
 /// fixed target logical coordinates (top-left). Points outside the canvas are
 /// not target hit tests.

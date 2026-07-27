@@ -576,12 +576,51 @@ static BOOL IOSUseSocketContainsRect(
 
 static BOOL IOSUseSocketMatchesFixedLogicalCanvas(
     CGRect rect,
-    CGFloat tolerance
+    CGFloat originTolerance,
+    CGFloat sizeTolerance
 ) {
-    return fabs(rect.origin.x) <= tolerance &&
-        fabs(rect.origin.y) <= tolerance &&
-        fabs(rect.size.width - IOSUsePlayDeviceLogicalWidth) <= tolerance &&
-        fabs(rect.size.height - IOSUsePlayDeviceLogicalHeight) <= tolerance;
+    return fabs(rect.origin.x) <= originTolerance &&
+        fabs(rect.origin.y) <= originTolerance &&
+        fabs(rect.size.width - IOSUsePlayDeviceLogicalWidth) <=
+            sizeTolerance &&
+        fabs(rect.size.height - IOSUsePlayDeviceLogicalHeight) <=
+            sizeTolerance;
+}
+
+static BOOL IOSUseSocketMatchesPixelQuantizedPrivateCanvas(
+    CGRect rect,
+    CGFloat originTolerance,
+    CGFloat positiveWidthTolerance,
+    CGFloat positiveHeightTolerance
+) {
+    CGFloat widthDelta =
+        rect.size.width - IOSUsePlayDeviceLogicalWidth;
+    CGFloat heightDelta =
+        rect.size.height - IOSUsePlayDeviceLogicalHeight;
+    CGFloat maximumXDelta =
+        CGRectGetMaxX(rect) - IOSUsePlayDeviceLogicalWidth;
+    CGFloat maximumYDelta =
+        CGRectGetMaxY(rect) - IOSUsePlayDeviceLogicalHeight;
+    return fabs(rect.origin.x) <= originTolerance &&
+        fabs(rect.origin.y) <= originTolerance &&
+        widthDelta >= -originTolerance &&
+        widthDelta <= positiveWidthTolerance + 0.000001 &&
+        heightDelta >= -originTolerance &&
+        heightDelta <= positiveHeightTolerance + 0.000001 &&
+        maximumXDelta >= -originTolerance &&
+        maximumXDelta <= positiveWidthTolerance + 0.000001 &&
+        maximumYDelta >= -originTolerance &&
+        maximumYDelta <= positiveHeightTolerance + 0.000001;
+}
+
+static BOOL IOSUseSocketRectsApproximatelyEqual(
+    CGRect lhs,
+    CGRect rhs
+) {
+    return fabs(lhs.origin.x - rhs.origin.x) <= 0.01 &&
+        fabs(lhs.origin.y - rhs.origin.y) <= 0.01 &&
+        fabs(lhs.size.width - rhs.size.width) <= 0.01 &&
+        fabs(lhs.size.height - rhs.size.height) <= 0.01;
 }
 
 static BOOL IOSUseSocketBackingAligned(
@@ -684,6 +723,30 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         isfinite(displayScale) && displayScale > 0
             ? halfPixelTolerance / displayScale
             : 0;
+    CGFloat logicalEdgeTolerance = logicalTolerance;
+    CGFloat horizontalSurplus =
+        MAX(0, leftMargin + rightMargin);
+    CGFloat verticalSurplus =
+        MAX(0, bottomMargin + topMargin);
+    // UIKitMacHelper may project both centered subpixel edge margins into one
+    // positive private render-view extent. Derive each axis from the actual
+    // host surplus, bound it by the same two half-pixel edges, and keep
+    // origins/undersize at the single-edge tolerance. Input still consumes
+    // the ideal canvas transform rather than this raster extent.
+    CGFloat privateWidthTolerance = MAX(
+        logicalEdgeTolerance,
+        MIN(
+            horizontalSurplus / displayScale,
+            logicalEdgeTolerance * 2
+        )
+    );
+    CGFloat privateHeightTolerance = MAX(
+        logicalEdgeTolerance,
+        MIN(
+            verticalSurplus / displayScale,
+            logicalEdgeTolerance * 2
+        )
+    );
     return [host[@"opaque"] boolValue] &&
         isfinite(displayScale) && displayScale > 0 &&
         isfinite(backingScaleFactor) &&
@@ -710,31 +773,52 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
         ) &&
         isfinite(inverseDisplayScale) &&
         fabs(displayScale * inverseDisplayScale - 1.0) <= 0.01 &&
-        fabs(canvasBounds.origin.x) <= logicalTolerance &&
-        fabs(canvasBounds.origin.y) <= logicalTolerance &&
+        fabs(canvasBounds.origin.x) <= logicalEdgeTolerance &&
+        fabs(canvasBounds.origin.y) <= logicalEdgeTolerance &&
         fabs(canvasBounds.size.width - IOSUsePlayDeviceLogicalWidth) <=
-            logicalTolerance &&
+            logicalEdgeTolerance &&
         fabs(canvasBounds.size.height - IOSUsePlayDeviceLogicalHeight) <=
-            logicalTolerance &&
+            logicalEdgeTolerance &&
         IOSUseSocketMatchesFixedLogicalCanvas(
             renderViewBounds,
-            logicalTolerance
+            logicalEdgeTolerance,
+            logicalEdgeTolerance
         ) &&
-        IOSUseSocketMatchesFixedLogicalCanvas(
+        IOSUseSocketMatchesPixelQuantizedPrivateCanvas(
             sceneRenderViewFrame,
-            logicalTolerance
+            logicalEdgeTolerance,
+            privateWidthTolerance,
+            privateHeightTolerance
         ) &&
-        IOSUseSocketMatchesFixedLogicalCanvas(
+        IOSUseSocketMatchesPixelQuantizedPrivateCanvas(
             sceneRenderViewBounds,
-            logicalTolerance
+            logicalEdgeTolerance,
+            privateWidthTolerance,
+            privateHeightTolerance
         ) &&
-        IOSUseSocketMatchesFixedLogicalCanvas(
+        IOSUseSocketMatchesPixelQuantizedPrivateCanvas(
             inputRenderViewFrame,
-            logicalTolerance
+            logicalEdgeTolerance,
+            privateWidthTolerance,
+            privateHeightTolerance
         ) &&
-        IOSUseSocketMatchesFixedLogicalCanvas(
+        IOSUseSocketMatchesPixelQuantizedPrivateCanvas(
             inputRenderViewBounds,
-            logicalTolerance
+            logicalEdgeTolerance,
+            privateWidthTolerance,
+            privateHeightTolerance
+        ) &&
+        IOSUseSocketRectsApproximatelyEqual(
+            sceneRenderViewFrame,
+            sceneRenderViewBounds
+        ) &&
+        IOSUseSocketRectsApproximatelyEqual(
+            sceneRenderViewFrame,
+            inputRenderViewFrame
+        ) &&
+        IOSUseSocketRectsApproximatelyEqual(
+            sceneRenderViewFrame,
+            inputRenderViewBounds
         ) &&
         isfinite(idiomScale) &&
         fabs(idiomScale - 1.0) <= 0.01 &&

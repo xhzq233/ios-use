@@ -2363,12 +2363,10 @@ static BOOL IOSUseBridgeNormalizeBootstrapContentAspect(
         }
         return NO;
     }
-    CGFloat horizontalRounding =
-        contentBounds.size.width - layout.canvasRect.size.width;
-    CGFloat verticalRounding =
-        contentBounds.size.height - layout.canvasRect.size.height;
-    if (horizontalRounding <= layout.halfPixelTolerance &&
-        verticalRounding <= layout.halfPixelTolerance) {
+    if (IOSUsePlayHostCanvasFitsPixelQuantizedContent(
+            layout,
+            NULL
+        )) {
         IOSUsePlayBootstrapContentReady = YES;
         return YES;
     }

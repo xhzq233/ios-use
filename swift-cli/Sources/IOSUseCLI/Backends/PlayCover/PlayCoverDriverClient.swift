@@ -959,11 +959,12 @@ final class PlayCoverDriverClient: DriverCommandClient {
                     "simulator-scale host display scale"
                 )
         }
+        let logicalEdgeTolerance = logicalTolerance
         func withinHost(_ lhs: Double, _ rhs: Double) -> Bool {
             abs(lhs - rhs) <= geometryTolerance
         }
         func withinLogical(_ lhs: Double, _ rhs: Double) -> Bool {
-            abs(lhs - rhs) <= logicalTolerance
+            abs(lhs - rhs) <= logicalEdgeTolerance
         }
         func backingAligned(_ value: Double) -> Bool {
             let pixels = value * backingScaleFactor
@@ -983,6 +984,52 @@ final class PlayCoverDriverClient: DriverCommandClient {
         let topMargin =
             host.contentBounds.y + host.contentBounds.height -
                 host.canvasRect.y - host.canvasRect.height
+        let horizontalSurplus = max(0, leftMargin + rightMargin)
+        let verticalSurplus = max(0, bottomMargin + topMargin)
+        // UIKitMacHelper can fold both centered subpixel edge margins into
+        // one positive private render-view extent. Derive each axis from the
+        // actual host surplus, bound it by those same two half-pixel edges,
+        // and keep origins/undersize at one-edge tolerance. Input still uses
+        // the ideal canvas transform rather than this raster extent.
+        let privateWidthTolerance = max(
+            logicalEdgeTolerance,
+            min(
+                horizontalSurplus / host.displayScale,
+                logicalEdgeTolerance * 2
+            )
+        )
+        let privateHeightTolerance = max(
+            logicalEdgeTolerance,
+            min(
+                verticalSurplus / host.displayScale,
+                logicalEdgeTolerance * 2
+            )
+        )
+        let privateRenderRects = [
+            host.sceneRenderViewFrame,
+            host.sceneRenderViewBounds,
+            host.inputRenderViewFrame,
+            host.inputRenderViewBounds,
+        ]
+        let privateRenderRectsAgree =
+            privateRenderRects.dropFirst().allSatisfy {
+                approximatelyEqual(
+                    $0.x,
+                    privateRenderRects[0].x
+                ) &&
+                    approximatelyEqual(
+                        $0.y,
+                        privateRenderRects[0].y
+                    ) &&
+                    approximatelyEqual(
+                        $0.width,
+                        privateRenderRects[0].width
+                    ) &&
+                    approximatelyEqual(
+                        $0.height,
+                        privateRenderRects[0].height
+                    )
+            }
         let checks: [(Bool, String)] = [
             (
                 host.status == "configured" && host.hostPolicy,
@@ -1013,8 +1060,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
             ),
             (
                 validHostFrame(host.canvasBounds) &&
-                    withinLogical(host.canvasBounds.x, 0) &&
-                    withinLogical(host.canvasBounds.y, 0) &&
+                    abs(host.canvasBounds.x) <= logicalEdgeTolerance &&
+                    abs(host.canvasBounds.y) <= logicalEdgeTolerance &&
                     withinLogical(
                         host.canvasBounds.width,
                         Self.logicalSize.width
@@ -1033,32 +1080,44 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 "simulator-scale logical render-view bounds"
             ),
             (
-                fixedLogicalCanvasRect(
+                pixelQuantizedPrivateCanvasRect(
                     host.sceneRenderViewFrame,
-                    tolerance: logicalTolerance
+                    originTolerance: logicalEdgeTolerance,
+                    positiveWidthTolerance: privateWidthTolerance,
+                    positiveHeightTolerance: privateHeightTolerance
                 ),
                 "simulator-scale logical scene-render frame"
             ),
             (
-                fixedLogicalCanvasRect(
+                pixelQuantizedPrivateCanvasRect(
                     host.sceneRenderViewBounds,
-                    tolerance: logicalTolerance
+                    originTolerance: logicalEdgeTolerance,
+                    positiveWidthTolerance: privateWidthTolerance,
+                    positiveHeightTolerance: privateHeightTolerance
                 ),
                 "simulator-scale logical scene-render bounds"
             ),
             (
-                fixedLogicalCanvasRect(
+                pixelQuantizedPrivateCanvasRect(
                     host.inputRenderViewFrame,
-                    tolerance: logicalTolerance
+                    originTolerance: logicalEdgeTolerance,
+                    positiveWidthTolerance: privateWidthTolerance,
+                    positiveHeightTolerance: privateHeightTolerance
                 ),
                 "simulator-scale logical input-render frame"
             ),
             (
-                fixedLogicalCanvasRect(
+                pixelQuantizedPrivateCanvasRect(
                     host.inputRenderViewBounds,
-                    tolerance: logicalTolerance
+                    originTolerance: logicalEdgeTolerance,
+                    positiveWidthTolerance: privateWidthTolerance,
+                    positiveHeightTolerance: privateHeightTolerance
                 ),
                 "simulator-scale logical input-render bounds"
+            ),
+            (
+                privateRenderRectsAgree,
+                "simulator-scale private render-view consistency"
             ),
             (
                 validHostFrame(host.frame) &&
@@ -1202,6 +1261,30 @@ final class PlayCoverDriverClient: DriverCommandClient {
             abs(frame.y) <= tolerance &&
             abs(frame.width - logicalSize.width) <= tolerance &&
             abs(frame.height - logicalSize.height) <= tolerance
+    }
+
+    private static func pixelQuantizedPrivateCanvasRect(
+        _ frame: PlayCoverRuntimeFrame,
+        originTolerance: Double,
+        positiveWidthTolerance: Double,
+        positiveHeightTolerance: Double
+    ) -> Bool {
+        let widthDelta = frame.width - logicalSize.width
+        let heightDelta = frame.height - logicalSize.height
+        let maximumXDelta =
+            frame.x + frame.width - logicalSize.width
+        let maximumYDelta =
+            frame.y + frame.height - logicalSize.height
+        return abs(frame.x) <= originTolerance &&
+            abs(frame.y) <= originTolerance &&
+            widthDelta >= -originTolerance &&
+            widthDelta <= positiveWidthTolerance + 0.000_001 &&
+            heightDelta >= -originTolerance &&
+            heightDelta <= positiveHeightTolerance + 0.000_001 &&
+            maximumXDelta >= -originTolerance &&
+            maximumXDelta <= positiveWidthTolerance + 0.000_001 &&
+            maximumYDelta >= -originTolerance &&
+            maximumYDelta <= positiveHeightTolerance + 0.000_001
     }
 
     private static func hostFrameContains(

@@ -135,9 +135,16 @@ static BOOL IOSUseHostCanvasTestResizeRounding(void) {
 
 static BOOL IOSUseHostCanvasTestBootstrapAspectTarget(void) {
     IOSUsePlayHostCanvasLayout initial = {0};
+    IOSUsePlayHostCanvasLayout restored = {0};
     IOSUsePlayHostCanvasLayout normalized = {0};
     NSString *initialFailure = nil;
+    NSString *initialQuantizationFailure = nil;
+    NSString *restoredFailure = nil;
+    NSString *restoredQuantizationFailure = nil;
+    NSString *lowScaleFailure = nil;
+    NSString *lowScaleQuantizationFailure = nil;
     NSString *normalizedFailure = nil;
+    NSString *normalizedQuantizationFailure = nil;
     BOOL initialReady = IOSUsePlayResolveHostCanvasLayout(
         CGRectMake(0, 0, 422, 916),
         2,
@@ -146,6 +153,36 @@ static BOOL IOSUseHostCanvasTestBootstrapAspectTarget(void) {
     );
     CGFloat verticalSurplus =
         916.0 - initial.canvasRect.size.height;
+    BOOL initialRequiresNormalization = initialReady &&
+        !IOSUsePlayHostCanvasFitsPixelQuantizedContent(
+            initial,
+            &initialQuantizationFailure
+        );
+    BOOL restoredReady = IOSUsePlayResolveHostCanvasLayout(
+        CGRectMake(0, 0, 422, 915),
+        2,
+        &restored,
+        &restoredFailure
+    );
+    CGFloat restoredVerticalSurplus =
+        915.0 - restored.canvasRect.size.height;
+    BOOL restoredIsPixelQuantized = restoredReady &&
+        IOSUsePlayHostCanvasFitsPixelQuantizedContent(
+            restored,
+            &restoredQuantizationFailure
+        );
+    IOSUsePlayHostCanvasLayout lowScale = {0};
+    BOOL lowScaleReady = IOSUsePlayResolveHostCanvasLayout(
+        CGRectMake(0, 0, 218, 473),
+        2,
+        &lowScale,
+        &lowScaleFailure
+    );
+    BOOL lowScaleIsPixelQuantized = lowScaleReady &&
+        IOSUsePlayHostCanvasFitsPixelQuantizedContent(
+            lowScale,
+            &lowScaleQuantizationFailure
+        );
     CGRect normalizedBounds = CGRectMake(
         0,
         0,
@@ -159,9 +196,27 @@ static BOOL IOSUseHostCanvasTestBootstrapAspectTarget(void) {
             &normalized,
             &normalizedFailure
         );
+    BOOL normalizedIsPixelQuantized = normalizedReady &&
+        IOSUsePlayHostCanvasFitsPixelQuantizedContent(
+            normalized,
+            &normalizedQuantizationFailure
+        );
     BOOL passed = initialReady && initialFailure == nil &&
         verticalSurplus > 0.5 &&
+        initialRequiresNormalization &&
+        initialQuantizationFailure != nil &&
+        restoredReady && restoredFailure == nil &&
+        restoredVerticalSurplus > restored.halfPixelTolerance &&
+        restoredVerticalSurplus <=
+            restored.halfPixelTolerance * 2 &&
+        restoredIsPixelQuantized &&
+        restoredQuantizationFailure == nil &&
+        lowScaleReady && lowScaleFailure == nil &&
+        lowScaleIsPixelQuantized &&
+        lowScaleQuantizationFailure == nil &&
         normalizedReady && normalizedFailure == nil &&
+        normalizedIsPixelQuantized &&
+        normalizedQuantizationFailure == nil &&
         IOSUseHostCanvasTestRectEquals(
             normalized.canvasRect,
             normalizedBounds
@@ -173,8 +228,11 @@ static BOOL IOSUseHostCanvasTestBootstrapAspectTarget(void) {
     return IOSUseHostCanvasTestRequire(
         passed,
         [NSString stringWithFormat:
-            @"422x916 bootstrap aspect target was not gap-free: %@ / %@",
+            @"2x bootstrap/restored aspect quantization was invalid: "
+             "%@ / %@ / %@ / %@",
             initialFailure ?: @"initial geometry",
+            initialQuantizationFailure ?: @"initial accepted",
+            restoredFailure ?: @"restored geometry",
             normalizedFailure ?: @"normalized geometry"
         ]
     );
@@ -580,10 +638,66 @@ static BOOL IOSUseHostCanvasTestAcceptsQuantizedSourceExtent(void) {
     );
 }
 
+static BOOL IOSUseHostCanvasTestDoesNotStretchMissingEdgePixel(void) {
+    CGRect canvasBounds = CGRectMake(0, 0, 430, 932);
+    CGRect sourceBounds = CGRectMake(0, 0, 429.5, 932);
+    CGImageRef source = IOSUseHostCanvasTestCreateRawCapture(
+        859,
+        1864,
+        CGRectMake(0, 0, 859, 1864)
+    );
+    CGRect logicalRect = CGRectNull;
+    NSDictionary<NSString *, id> *evidence = nil;
+    NSString *failure = nil;
+    CGImageRef normalized = source == NULL
+        ? NULL
+        : IOSUsePlayCropAndNormalizeCanvasCapture(
+            source,
+            sourceBounds,
+            canvasBounds,
+            1,
+            2,
+            &logicalRect,
+            &evidence,
+            &failure
+        );
+    NSDictionary<NSString *, NSNumber *> *sourceCrop =
+        evidence[@"sourcePixelCropRect"];
+    BOOL passed = normalized != NULL && failure == nil &&
+        IOSUseHostCanvasTestRectEquals(
+            logicalRect,
+            CGRectMake(0, 0, 429.5, 932)
+        ) &&
+        CGImageGetWidth(normalized) == 1289 &&
+        CGImageGetHeight(normalized) == IOSUsePlayDeviceNativeHeight &&
+        [sourceCrop[@"width"] integerValue] == 859 &&
+        [sourceCrop[@"height"] integerValue] == 1864;
+    if (normalized != NULL) {
+        CGImageRelease(normalized);
+    }
+    if (source != NULL) {
+        CGImageRelease(source);
+    }
+    return IOSUseHostCanvasTestRequire(
+        passed,
+        [NSString stringWithFormat:
+            @"one missing backing pixel was stretched to a full frame: %@",
+            failure ?: @"unexpected full-frame result"
+        ]
+    );
+}
+
 static BOOL IOSUseHostCanvasTestRestoredQuantizedWindow(
+    CGFloat contentWidthPoints,
+    CGFloat contentHeightPoints,
     CGFloat backingScale
 ) {
-    CGRect contentBounds = CGRectMake(0, 0, 316, 685);
+    CGRect contentBounds = CGRectMake(
+        0,
+        0,
+        contentWidthPoints,
+        contentHeightPoints
+    );
     IOSUsePlayHostCanvasLayout layout = {0};
     NSString *layoutFailure = nil;
     BOOL layoutReady = IOSUsePlayResolveHostCanvasLayout(
@@ -597,8 +711,19 @@ static BOOL IOSUseHostCanvasTestRestoredQuantizedWindow(
     CGFloat expectedIdealHeight =
         IOSUsePlayDeviceLogicalHeight * expectedScale;
     CGRect expectedPixelCanvas = contentBounds;
-    CGRect hostCGWindowBounds = CGRectMake(40, 10, 316, 713);
-    CGRect hostContentCGWindowRect = CGRectMake(40, 38, 316, 685);
+    CGFloat hostHeight = contentHeightPoints + 28;
+    CGRect hostCGWindowBounds = CGRectMake(
+        40,
+        10,
+        contentWidthPoints,
+        hostHeight
+    );
+    CGRect hostContentCGWindowRect = CGRectMake(
+        40,
+        38,
+        contentWidthPoints,
+        contentHeightPoints
+    );
     CGRect canvasCGWindowRect = CGRectNull;
     NSString *projectionFailure = nil;
     BOOL projectionReady = layoutReady &&
@@ -609,10 +734,13 @@ static BOOL IOSUseHostCanvasTestRestoredQuantizedWindow(
             &projectionFailure
         );
 
-    size_t sourceWidth = (size_t)llround(316 * backingScale);
-    size_t sourceHeight = (size_t)llround(713 * backingScale);
+    size_t sourceWidth =
+        (size_t)llround(contentWidthPoints * backingScale);
+    size_t sourceHeight =
+        (size_t)llround(hostHeight * backingScale);
     size_t titleBarHeight = (size_t)llround(28 * backingScale);
-    size_t contentHeight = (size_t)llround(685 * backingScale);
+    size_t contentHeight =
+        (size_t)llround(contentHeightPoints * backingScale);
     CGImageRef source = IOSUseHostCanvasTestCreateRawCapture(
         sourceWidth,
         sourceHeight,
@@ -708,7 +836,7 @@ static BOOL IOSUseHostCanvasTestRestoredQuantizedWindow(
         projectionReady && projectionFailure == nil &&
         IOSUseHostCanvasTestRectEquals(
             canvasCGWindowRect,
-            CGRectMake(40, 38, 316, 685)
+            hostContentCGWindowRect
         ) &&
         normalized != NULL && cropFailure == nil &&
         [sourceCrop[@"x"] integerValue] == 0 &&
@@ -753,7 +881,10 @@ static BOOL IOSUseHostCanvasTestRestoredQuantizedWindow(
     return IOSUseHostCanvasTestRequire(
         passed,
         [NSString stringWithFormat:
-            @"restored 316x685 window lost %.0fx backing pixels: %@ / %@ / %@",
+            @"restored %.0fx%.0f window lost %.0fx backing pixels: "
+             "%@ / %@ / %@",
+            contentWidthPoints,
+            contentHeightPoints,
             backingScale,
             layoutFailure ?: @"layout",
             projectionFailure ?: @"projection",
@@ -943,10 +1074,32 @@ int main(int argc, const char *argv[]) {
             IOSUseHostCanvasTestRejectsNonAlignedCrop();
         BOOL quantizedSource =
             IOSUseHostCanvasTestAcceptsQuantizedSourceExtent();
+        BOOL missingEdgePixel =
+            IOSUseHostCanvasTestDoesNotStretchMissingEdgePixel();
         BOOL restored1x =
-            IOSUseHostCanvasTestRestoredQuantizedWindow(1);
+            IOSUseHostCanvasTestRestoredQuantizedWindow(
+                316,
+                685,
+                1
+            );
         BOOL restored2x =
-            IOSUseHostCanvasTestRestoredQuantizedWindow(2);
+            IOSUseHostCanvasTestRestoredQuantizedWindow(
+                316,
+                685,
+                2
+            );
+        BOOL restored422x915 =
+            IOSUseHostCanvasTestRestoredQuantizedWindow(
+                422,
+                915,
+                2
+            );
+        BOOL restored218x473 =
+            IOSUseHostCanvasTestRestoredQuantizedWindow(
+                218,
+                473,
+                2
+            );
         BOOL halfPixelBoundary =
             IOSUseHostCanvasTestHalfPixelBoundary();
         BOOL passed = unitReady && resizeReady && minimumReady &&
@@ -956,11 +1109,12 @@ int main(int argc, const char *argv[]) {
             fullLogicalReady && accessibilityTransformReady &&
             alertButtonTransformReady && multiScreenTransformReady &&
             crop1x && crop2x && fractionalCrop &&
-            quantizedSource &&
-            restored1x && restored2x && halfPixelBoundary;
+            quantizedSource && missingEdgePixel &&
+            restored1x && restored2x && restored422x915 &&
+            restored218x473 && halfPixelBoundary;
         fprintf(
             stderr,
-            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d bootstrap=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d quantized-source=%d restored1x=%d restored2x=%d half-pixel=%d pass=%d\n",
+            "[host-canvas-contract] scale1=%d resize=%d min=%d rounding=%d bootstrap=%d outside=%d cg=%d ax=%d alert=%d multiscreen=%d crop1x=%d crop2x=%d fractional=%d quantized-source=%d missing-edge=%d restored1x=%d restored2x=%d restored422x915=%d restored218x473=%d half-pixel=%d pass=%d\n",
             unitReady,
             resizeReady,
             minimumReady,
@@ -975,8 +1129,11 @@ int main(int argc, const char *argv[]) {
             crop2x,
             fractionalCrop,
             quantizedSource,
+            missingEdgePixel,
             restored1x,
             restored2x,
+            restored422x915,
+            restored218x473,
             halfPixelBoundary,
             passed
         );

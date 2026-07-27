@@ -349,12 +349,40 @@ assert_status() {
       --arg sourceExecutable "$SOURCE_EXECUTABLE" \
       --arg bundleIdentifier "$LIVE_BUNDLE_ID" \
       --arg title "$EXPECTED_HOST_TITLE" '
-      def logical_canvas($rect):
+      def scalar_max($lhs; $rhs):
+        if $lhs > $rhs then $lhs else $rhs end;
+      def scalar_min($lhs; $rhs):
+        if $lhs < $rhs then $lhs else $rhs end;
+      def fixed_logical_canvas($rect; $tolerance):
         ($rect | type) == "object" and
-        (($rect.x | abs) <= 0.5) and
-        (($rect.y | abs) <= 0.5) and
-        ((($rect.width - 430) | abs) <= 0.5) and
-        ((($rect.height - 932) | abs) <= 0.5);
+        (($rect.x | abs) <= $tolerance) and
+        (($rect.y | abs) <= $tolerance) and
+        ((($rect.width - 430) | abs) <= $tolerance) and
+        ((($rect.height - 932) | abs) <= $tolerance);
+      def private_logical_canvas(
+        $rect;
+        $originTolerance;
+        $widthTolerance;
+        $heightTolerance
+      ):
+        ($rect | type) == "object" and
+        (($rect.x | abs) <= $originTolerance) and
+        (($rect.y | abs) <= $originTolerance) and
+        ($rect.width - 430 >= -$originTolerance) and
+        ($rect.width - 430 <= $widthTolerance + 0.000001) and
+        ($rect.height - 932 >= -$originTolerance) and
+        ($rect.height - 932 <= $heightTolerance + 0.000001) and
+        ($rect.x + $rect.width - 430 >= -$originTolerance) and
+        ($rect.x + $rect.width - 430 <=
+          $widthTolerance + 0.000001) and
+        ($rect.y + $rect.height - 932 >= -$originTolerance) and
+        ($rect.y + $rect.height - 932 <=
+          $heightTolerance + 0.000001);
+      def rects_agree($lhs; $rhs):
+        (($lhs.x - $rhs.x) | abs) <= 0.01 and
+        (($lhs.y - $rhs.y) | abs) <= 0.01 and
+        (($lhs.width - $rhs.width) | abs) <= 0.01 and
+        (($lhs.height - $rhs.height) | abs) <= 0.01;
       .data.driver as $driver |
       ($driver.runtime) as $runtime |
       ($runtime.diagnostics.runtime.window) as $window |
@@ -363,6 +391,31 @@ assert_status() {
       ($window.canvasRect) as $canvas |
       ($capture.hostContentCGWindowRect) as $hostCG |
       ($capture.canvasCGWindowRect) as $canvasCG |
+      ($window.halfPixelTolerance / $window.displayScale) as
+        $logicalEdgeTolerance |
+      ($logicalEdgeTolerance * 2) as $logicalExtentTolerance |
+      ($canvas.x - $host.x) as $leftMargin |
+      ($host.x + $host.width - $canvas.x - $canvas.width) as
+        $rightMargin |
+      ($canvas.y - $host.y) as $bottomMargin |
+      ($host.y + $host.height - $canvas.y - $canvas.height) as
+        $topMargin |
+      scalar_max(
+        $logicalEdgeTolerance;
+        scalar_min(
+          scalar_max(0; $leftMargin + $rightMargin) /
+            $window.displayScale;
+          $logicalExtentTolerance
+        )
+      ) as $privateWidthTolerance |
+      scalar_max(
+        $logicalEdgeTolerance;
+        scalar_min(
+          scalar_max(0; $bottomMargin + $topMargin) /
+            $window.displayScale;
+          $logicalExtentTolerance
+        )
+      ) as $privateHeightTolerance |
       $driver.playcoverAppPath != $sourceApp and
       ($driver.playcoverAppPath |
         contains("/playcover/prepared/" + $generation + "/")) and
@@ -421,11 +474,46 @@ assert_status() {
       $window.resizeEdges.shrinking >= 0 and
       (($window.resizeEdges.shrinking % 16) == 15) and
       $window.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
-      logical_canvas($window.renderViewBounds) and
-      logical_canvas($window.sceneRenderViewBounds) and
-      logical_canvas($window.sceneRenderViewFrame) and
-      logical_canvas($window.inputRenderViewFrame) and
-      logical_canvas($window.inputRenderViewBounds) and
+      fixed_logical_canvas(
+        $window.renderViewBounds;
+        $logicalEdgeTolerance
+      ) and
+      private_logical_canvas(
+        $window.sceneRenderViewBounds;
+        $logicalEdgeTolerance;
+        $privateWidthTolerance;
+        $privateHeightTolerance
+      ) and
+      private_logical_canvas(
+        $window.sceneRenderViewFrame;
+        $logicalEdgeTolerance;
+        $privateWidthTolerance;
+        $privateHeightTolerance
+      ) and
+      private_logical_canvas(
+        $window.inputRenderViewFrame;
+        $logicalEdgeTolerance;
+        $privateWidthTolerance;
+        $privateHeightTolerance
+      ) and
+      private_logical_canvas(
+        $window.inputRenderViewBounds;
+        $logicalEdgeTolerance;
+        $privateWidthTolerance;
+        $privateHeightTolerance
+      ) and
+      rects_agree(
+        $window.sceneRenderViewFrame;
+        $window.sceneRenderViewBounds
+      ) and
+      rects_agree(
+        $window.sceneRenderViewFrame;
+        $window.inputRenderViewFrame
+      ) and
+      rects_agree(
+        $window.sceneRenderViewFrame;
+        $window.inputRenderViewBounds
+      ) and
       ($window.sceneScale.idiom | type) == "number" and
       (($window.sceneScale.idiom - 1) | abs) <= 0.01 and
       (($window.sceneScale.windows - 1) | abs) <= 0.01 and
@@ -434,6 +522,12 @@ assert_status() {
       $window.sceneMaximumSize == {"width":430,"height":932} and
       ($window.displayScale | type) == "number" and
       $window.displayScale > 0 and
+      ($window.backingScaleFactor | type) == "number" and
+      $window.backingScaleFactor > 0 and
+      $window.backingScaleFactor <= 4 and
+      ($window.halfPixelTolerance | type) == "number" and
+      (($window.halfPixelTolerance -
+        (0.5 / $window.backingScaleFactor)) | abs) <= 0.000001 and
       ($window.inverseDisplayScale | type) == "number" and
       (($window.displayScale * $window.inverseDisplayScale - 1) | abs) <=
         0.0001 and
@@ -441,23 +535,39 @@ assert_status() {
       ($canvas | type) == "object" and
       ($hostCG | type) == "object" and
       ($canvasCG | type) == "object" and
-      (($canvas.width / $window.displayScale - 430) | abs) <= 0.5 and
-      (($canvas.height / $window.displayScale - 932) | abs) <= 0.5 and
-      (($canvasCG.width / $window.displayScale - 430) | abs) <= 0.5 and
-      (($canvasCG.height / $window.displayScale - 932) | abs) <= 0.5 and
-      (($canvasCG.width - $canvas.width) | abs) <= 0.5 and
-      (($canvasCG.height - $canvas.height) | abs) <= 0.5 and
-      (($canvas.x - $host.x) | abs) <= 0.5 and
-      (($canvas.y - $host.y) | abs) <= 0.5 and
-      (($canvas.width - $host.width) | abs) <= 0.5 and
-      (($canvas.height - $host.height) | abs) <= 0.5 and
-      (($canvasCG.x - ($hostCG.x + $canvas.x - $host.x)) | abs) <= 0.5 and
+      (($canvas.width / $window.displayScale - 430) | abs) <=
+        $logicalExtentTolerance and
+      (($canvas.height / $window.displayScale - 932) | abs) <=
+        $logicalExtentTolerance and
+      (($canvasCG.width / $window.displayScale - 430) | abs) <=
+        $logicalExtentTolerance and
+      (($canvasCG.height / $window.displayScale - 932) | abs) <=
+        $logicalExtentTolerance and
+      (($canvasCG.width - $canvas.width) | abs) <=
+        ($window.halfPixelTolerance * 2) and
+      (($canvasCG.height - $canvas.height) | abs) <=
+        ($window.halfPixelTolerance * 2) and
+      (($canvas.x - $host.x) | abs) <=
+        $window.halfPixelTolerance and
+      (($canvas.y - $host.y) | abs) <=
+        $window.halfPixelTolerance and
+      (($canvas.width - $host.width) | abs) <=
+        ($window.halfPixelTolerance * 2) and
+      (($canvas.height - $host.height) | abs) <=
+        ($window.halfPixelTolerance * 2) and
+      (($canvasCG.x - ($hostCG.x + $canvas.x - $host.x)) | abs) <=
+        $window.halfPixelTolerance and
       (($canvasCG.y - ($hostCG.y + $host.y + $host.height -
-        $canvas.y - $canvas.height)) | abs) <= 0.5 and
-      (($canvasCG.x - $hostCG.x) | abs) <= 0.5 and
-      (($canvasCG.y - $hostCG.y) | abs) <= 0.5 and
-      (($canvasCG.width - $hostCG.width) | abs) <= 0.5 and
-      (($canvasCG.height - $hostCG.height) | abs) <= 0.5
+        $canvas.y - $canvas.height)) | abs) <=
+        $window.halfPixelTolerance and
+      (($canvasCG.x - $hostCG.x) | abs) <=
+        $window.halfPixelTolerance and
+      (($canvasCG.y - $hostCG.y) | abs) <=
+        $window.halfPixelTolerance and
+      (($canvasCG.width - $hostCG.width) | abs) <=
+        ($window.halfPixelTolerance * 2) and
+      (($canvasCG.height - $hostCG.height) | abs) <=
+        ($window.halfPixelTolerance * 2)
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name does not prove the exact healthy external App/AppKit session"
   fi

@@ -1057,6 +1057,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
         inputRenderViewFrameHeight: Double? = nil,
         inputRenderViewBoundsWidth: Double? = nil,
         inputRenderViewBoundsHeight: Double? = nil,
+        privateRenderOriginX: Double = 0,
+        privateRenderOriginY: Double = 0,
         idiomScale: Double = 1,
         windowScale: Double? = nil,
         downscaleWindowIfNecessary: Bool = false,
@@ -1142,26 +1144,26 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 height: renderViewHeight ?? 932
             ),
             sceneRenderViewFrame: .init(
-                x: 0,
-                y: 0,
+                x: privateRenderOriginX,
+                y: privateRenderOriginY,
                 width: sceneRenderViewFrameWidth ?? 430,
                 height: sceneRenderViewFrameHeight ?? 932
             ),
             sceneRenderViewBounds: .init(
-                x: 0,
-                y: 0,
+                x: privateRenderOriginX,
+                y: privateRenderOriginY,
                 width: sceneRenderViewWidth ?? 430,
                 height: sceneRenderViewHeight ?? 932
             ),
             inputRenderViewFrame: .init(
-                x: 0,
-                y: 0,
+                x: privateRenderOriginX,
+                y: privateRenderOriginY,
                 width: inputRenderViewFrameWidth ?? 430,
                 height: inputRenderViewFrameHeight ?? 932
             ),
             inputRenderViewBounds: .init(
-                x: 0,
-                y: 0,
+                x: privateRenderOriginX,
+                y: privateRenderOriginY,
                 width: inputRenderViewBoundsWidth ?? 430,
                 height: inputRenderViewBoundsHeight ?? 932
             ),
@@ -1311,10 +1313,16 @@ final class PlayCoverDriverClientTests: XCTestCase {
         let base = makeGeometry()
         let displayScale = 422.0 / 430.0
         let canvasHeight = 932.0 * displayScale
-        func geometry(contentHeight: Double)
+        func geometry(
+            contentHeight: Double,
+            privateRenderHeight: Double? = nil,
+            privateRenderOriginY: Double = 0
+        )
             -> PlayCoverRuntimeGeometry
         {
             let canvasY = (contentHeight - canvasHeight) / 2
+            let resolvedPrivateRenderHeight =
+                privateRenderHeight ?? contentHeight / displayScale
             return PlayCoverRuntimeGeometry(
                 logical: base.logical,
                 native: base.native,
@@ -1323,10 +1331,20 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 safeArea: base.safeArea,
                 host: makeSimulatorScaleHostGeometry(
                     displayScale: displayScale,
+                    backingScaleFactor: 2,
                     contentWidth: 422,
                     contentHeight: contentHeight,
                     canvasWidth: 422,
                     canvasHeight: canvasHeight,
+                    sceneRenderViewFrameHeight:
+                        resolvedPrivateRenderHeight,
+                    sceneRenderViewHeight:
+                        resolvedPrivateRenderHeight,
+                    inputRenderViewFrameHeight:
+                        resolvedPrivateRenderHeight,
+                    inputRenderViewBoundsHeight:
+                        resolvedPrivateRenderHeight,
+                    privateRenderOriginY: privateRenderOriginY,
                     canvasY: canvasY
                 )
             )
@@ -1334,7 +1352,10 @@ final class PlayCoverDriverClientTests: XCTestCase {
 
         XCTAssertThrowsError(
             try PlayCoverDriverClient.validateFixedDevice(
-                geometry(contentHeight: 916),
+                geometry(
+                    contentHeight: 916,
+                    privateRenderHeight: 932
+                ),
                 stage: "ready"
             )
         ) { error in
@@ -1348,6 +1369,84 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertNoThrow(
             try PlayCoverDriverClient.validateFixedDevice(
                 geometry(contentHeight: 915),
+                stage: "ready"
+            )
+        )
+        XCTAssertEqual(
+            geometry(contentHeight: 915).host?.halfPixelTolerance,
+            0.25
+        )
+        let restoredPrivateHeight = 915.0 / displayScale
+        XCTAssertGreaterThan(
+            restoredPrivateHeight - 932,
+            0.25 / displayScale
+        )
+        XCTAssertLessThanOrEqual(
+            restoredPrivateHeight - 932,
+            0.5
+        )
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry(
+                    contentHeight: 915,
+                    privateRenderHeight:
+                        restoredPrivateHeight + 0.000_1
+                ),
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale logical scene-render frame"
+                )
+            )
+        }
+        let logicalEdgeTolerance = 0.25 / displayScale
+        XCTAssertThrowsError(
+            try PlayCoverDriverClient.validateFixedDevice(
+                geometry(
+                    contentHeight: 915,
+                    privateRenderHeight: restoredPrivateHeight,
+                    privateRenderOriginY: logicalEdgeTolerance
+                ),
+                stage: "ready"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverDriverClientError,
+                .runtimeGeometryMismatch(
+                    "simulator-scale logical scene-render frame"
+                )
+            )
+        }
+        let lowScale = 218.0 / 430.0
+        let lowScaleCanvasHeight = 932.0 * lowScale
+        let lowScalePrivateHeight = 473.0 / lowScale
+        let lowScaleGeometry = PlayCoverRuntimeGeometry(
+            logical: base.logical,
+            native: base.native,
+            scale: base.scale,
+            window: base.window,
+            safeArea: base.safeArea,
+            host: makeSimulatorScaleHostGeometry(
+                displayScale: lowScale,
+                backingScaleFactor: 2,
+                contentWidth: 218,
+                contentHeight: 473,
+                canvasWidth: 218,
+                canvasHeight: lowScaleCanvasHeight,
+                sceneRenderViewFrameHeight: lowScalePrivateHeight,
+                sceneRenderViewHeight: lowScalePrivateHeight,
+                inputRenderViewFrameHeight: lowScalePrivateHeight,
+                inputRenderViewBoundsHeight: lowScalePrivateHeight,
+                canvasY: (473 - lowScaleCanvasHeight) / 2
+            )
+        )
+        XCTAssertGreaterThan(lowScalePrivateHeight - 932, 0.5)
+        XCTAssertNoThrow(
+            try PlayCoverDriverClient.validateFixedDevice(
+                lowScaleGeometry,
                 stage: "ready"
             )
         )
