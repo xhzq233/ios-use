@@ -3485,6 +3485,22 @@ IOSUseBridgeNativeAlertActionInventory(id alertWindow) {
     return result;
 }
 
+static NSArray<NSDictionary<NSString *, id> *> *
+IOSUseBridgePublicNativeAlertActions(id alertWindow) {
+    NSArray<NSDictionary<NSString *, id> *> *inventory =
+        IOSUseBridgeNativeAlertActionInventory(alertWindow);
+    NSMutableArray<NSDictionary<NSString *, id> *> *publicInventory =
+        [NSMutableArray arrayWithCapacity:inventory.count];
+    for (NSDictionary<NSString *, id> *entry in inventory) {
+        [publicInventory addObject:@{
+            @"index": entry[@"index"],
+            @"label": entry[@"label"],
+            @"frame": entry[@"frame"],
+        }];
+    }
+    return publicInventory;
+}
+
 static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     if (alertWindow == nil) {
         return @"";
@@ -4217,18 +4233,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     NSParameterAssert(NSThread.isMainThread);
     NSDictionary<NSString *, id> *selection =
         IOSUseBridgeVisibleNativeAlertSelection();
-    NSArray<NSDictionary<NSString *, id> *> *inventory =
-        IOSUseBridgeNativeAlertActionInventory(selection[@"window"]);
-    NSMutableArray<NSDictionary<NSString *, id> *> *publicInventory =
-        [NSMutableArray arrayWithCapacity:inventory.count];
-    for (NSDictionary<NSString *, id> *entry in inventory) {
-        [publicInventory addObject:@{
-            @"index": entry[@"index"],
-            @"label": entry[@"label"],
-            @"frame": entry[@"frame"],
-        }];
-    }
-    return publicInventory;
+    return IOSUseBridgePublicNativeAlertActions(
+        selection[@"window"]
+    );
 }
 
 + (NSDictionary<NSString *, id> *)
@@ -4444,11 +4451,23 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         frame,
         &expectedCGWindowBounds
     );
-    CGRect nativeAlertFrame = [self nativeAlertFrame];
-    BOOL nativeAlertVisible = [self hasVisibleNativeAlert];
-    NSString *nativeAlertText = [self nativeAlertText];
+    // Keep one diagnostics response on one fresh alert selection. Public
+    // automation accessors intentionally continue to re-select so a later
+    // action never trusts this observational snapshot.
+    NSDictionary<NSString *, id> *nativeAlertSelection =
+        IOSUseBridgeVisibleNativeAlertSelection();
+    id nativeAlertWindow = nativeAlertSelection[@"window"];
+    CGRect nativeAlertFrame = nativeAlertSelection == nil
+        ? CGRectNull
+        : IOSUseBridgeWindowLogicalFrame(
+            nativeAlertWindow,
+            nativeAlertSelection[@"cgMetadata"]
+        );
+    BOOL nativeAlertVisible = nativeAlertSelection != nil;
+    NSString *nativeAlertText =
+        IOSUseBridgeNativeAlertText(nativeAlertWindow);
     NSArray<NSDictionary<NSString *, id> *> *nativeAlertActions =
-        [self nativeAlertActions];
+        IOSUseBridgePublicNativeAlertActions(nativeAlertWindow);
     NSDictionary<NSString *, id> *bootstrapNativeAlert =
         IOSUseBridgeBootstrapNativeAlertDiagnostics();
     NSUInteger growingResizeEdges = 0;
