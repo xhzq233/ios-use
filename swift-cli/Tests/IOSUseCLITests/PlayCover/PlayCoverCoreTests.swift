@@ -461,17 +461,140 @@ final class PlayCoverCoreTests: XCTestCase {
                 expected: expected
             )
         )
-        XCTAssertTrue(
-            PlayCoverService.runtimeHelloFailureIsTerminal(
-                PlayCoverBackendError.stdioLogFailed(
-                    "exact identity mismatch"
-                )
+    }
+
+    func testRuntimeHelloFailureTaxonomyClassifiesEveryRuntimeClientError() {
+        func details(
+            retryable: Bool,
+            fatal: Bool
+        ) -> PlayCoverRuntimeErrorDetails {
+            PlayCoverRuntimeErrorDetails(
+                category: "startup",
+                phase: "hello",
+                retryable: retryable,
+                fatal: fatal,
+                target: nil,
+                candidateCount: 0,
+                candidates: [],
+                suggestions: []
             )
-        )
+        }
+        func remote(
+            _ details: PlayCoverRuntimeErrorDetails?
+        ) -> PlayCoverRuntimeClientError {
+            .remoteError(
+                code: "runtime_not_ready",
+                message: "Runtime is not ready",
+                details: details
+            )
+        }
+
+        let retryable: [PlayCoverRuntimeClientError] = [
+            .socketCreateFailed(errno: EMFILE),
+            .socketOptionFailed(
+                option: "SO_NOSIGPIPE",
+                errno: ENOPROTOOPT
+            ),
+            .connectFailed(errno: ECONNREFUSED),
+            .writeFailed(errno: EPIPE),
+            .readFailed(errno: EIO),
+            .timeout(operation: "read response header"),
+            .unexpectedEOF(
+                operation: "read response body",
+                expectedBytes: 10,
+                receivedBytes: 3
+            ),
+            remote(details(retryable: true, fatal: false)),
+        ]
+        for error in retryable {
+            XCTAssertFalse(
+                PlayCoverService.runtimeHelloFailureIsTerminal(error),
+                "\(error)"
+            )
+        }
+
+        let terminal: [PlayCoverRuntimeClientError] = [
+            .invalidSocketPath(.empty),
+            .invalidSocketPath(.containsNUL),
+            .invalidSocketPath(
+                .tooLong(actualUTF8Bytes: 105, maximumUTF8Bytes: 104)
+            ),
+            .invalidTimeout,
+            .peerCredentialFailed(errno: EACCES),
+            .peerUIDMismatch(expected: 501, actual: 502),
+            .peerPIDCredentialFailed(errno: EACCES),
+            .peerPIDMismatch(expected: 41, actual: 42),
+            .processExecutableLookupFailed(pid: 42),
+            .processExecutableMismatch,
+            .requestEncodingFailed,
+            .requestFrameTooLarge(
+                actualBytes: 65,
+                maximumBytes: 64
+            ),
+            .emptyResponseFrame,
+            .responseFrameTooLarge(
+                actualBytes: 65,
+                maximumBytes: 64
+            ),
+            .responseIsNotUTF8,
+            .responseDecodingFailed,
+            .unsupportedSchemaVersion(4),
+            .requestIDMismatch,
+            .sessionIDMismatch,
+            .responseIdentityMismatch("PID"),
+            .malformedResponse("hello response type mismatch"),
+            remote(nil),
+            remote(details(retryable: false, fatal: false)),
+            remote(details(retryable: true, fatal: true)),
+            remote(details(retryable: false, fatal: true)),
+        ]
+        for error in terminal {
+            XCTAssertTrue(
+                PlayCoverService.runtimeHelloFailureIsTerminal(error),
+                "\(error)"
+            )
+        }
+    }
+
+    func testRuntimeHelloFailureTaxonomyClassifiesBackendAndUnknownErrors() {
         XCTAssertFalse(
             PlayCoverService.runtimeHelloFailureIsTerminal(
                 PlayCoverBackendError.launchFailed(
                     "window is not ready"
+                )
+            )
+        )
+
+        let terminal: [PlayCoverBackendError] = [
+            .invalidApp("fixture"),
+            .unsupportedMachO("fixture"),
+            .malformedMachO("fixture"),
+            .encryptedMachO("fixture"),
+            .duplicateRuntimeLoad("fixture"),
+            .machOTransformFailed("fixture"),
+            .entitlementFailed("fixture"),
+            .codeSigningFailed("fixture"),
+            .outputExists("fixture"),
+            .missingRuntime("fixture"),
+            .prepareFailed("fixture"),
+            .verificationFailed("fixture"),
+            .cacheTampered("fixture"),
+            .stdioLogFailed("exact identity mismatch"),
+            .launchTimedOut("fixture"),
+            .terminateFailed("fixture"),
+            .capabilityUnavailable("fixture"),
+        ]
+        for error in terminal {
+            XCTAssertTrue(
+                PlayCoverService.runtimeHelloFailureIsTerminal(error),
+                "\(error)"
+            )
+        }
+        XCTAssertTrue(
+            PlayCoverService.runtimeHelloFailureIsTerminal(
+                NSError(
+                    domain: "PlayCoverCoreTests.UnknownHelloFailure",
+                    code: 1
                 )
             )
         )

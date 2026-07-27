@@ -1279,13 +1279,80 @@ public enum PlayCoverService {
     static func runtimeHelloFailureIsTerminal(
         _ error: Error
     ) -> Bool {
-        guard let backendError = error as? PlayCoverBackendError,
-              case .stdioLogFailed = backendError else {
-            return false
+        if let runtimeError = error as? PlayCoverRuntimeClientError {
+            switch runtimeError {
+            case .socketCreateFailed,
+                 .socketOptionFailed,
+                 .connectFailed,
+                 .writeFailed,
+                 .readFailed,
+                 .timeout,
+                 .unexpectedEOF:
+                // Runtime startup can transiently leave its endpoint absent
+                // or interrupt the one in-flight hello. Retry only these
+                // transport failures inside the existing launch deadline.
+                return false
+            case .remoteError(_, _, let details):
+                // A Runtime owns the semantics of its typed failure. It must
+                // explicitly mark the failure both retryable and non-fatal.
+                return !(
+                    details?.retryable == true
+                        && details?.fatal == false
+                )
+            case .invalidSocketPath,
+                 .invalidTimeout,
+                 .peerCredentialFailed,
+                 .peerUIDMismatch,
+                 .peerPIDCredentialFailed,
+                 .peerPIDMismatch,
+                 .processExecutableLookupFailed,
+                 .processExecutableMismatch,
+                 .requestEncodingFailed,
+                 .requestFrameTooLarge,
+                 .emptyResponseFrame,
+                 .responseFrameTooLarge,
+                 .responseIsNotUTF8,
+                 .responseDecodingFailed,
+                 .unsupportedSchemaVersion,
+                 .requestIDMismatch,
+                 .sessionIDMismatch,
+                 .responseIdentityMismatch,
+                 .malformedResponse:
+                return true
+            }
         }
-        // Constructor stdio state is immutable. Repeating hello cannot repair
-        // a missing, failed, or mismatched exact log identity.
-        return true
+        guard let backendError = error as? PlayCoverBackendError else {
+            // Do not silently turn an unclassified programming or system
+            // failure into a retry loop.
+            return true
+        }
+        switch backendError {
+        case .launchFailed:
+            // Hello identity/geometry can still converge while the App is
+            // entering its ready state.
+            return false
+        case .stdioLogFailed:
+            // Constructor stdio state is immutable. Repeating hello cannot
+            // repair a missing, failed, or mismatched exact log identity.
+            return true
+        case .invalidApp,
+             .unsupportedMachO,
+             .malformedMachO,
+             .encryptedMachO,
+             .duplicateRuntimeLoad,
+             .machOTransformFailed,
+             .entitlementFailed,
+             .codeSigningFailed,
+             .outputExists,
+             .missingRuntime,
+             .prepareFailed,
+             .verificationFailed,
+             .cacheTampered,
+             .launchTimedOut,
+             .terminateFailed,
+             .capabilityUnavailable:
+            return true
+        }
     }
 
     private static func writeGenerationSidecars(
