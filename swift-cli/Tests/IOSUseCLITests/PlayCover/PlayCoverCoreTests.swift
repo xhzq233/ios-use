@@ -584,6 +584,69 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertTrue(leftovers.isEmpty)
     }
 
+    func testManagedPathAcceptsEquivalentPrivateTmpAlias()
+        throws
+    {
+        let lexicalHome = URL(
+            fileURLWithPath:
+                "/tmp/IOSUsePlayCoverAlias-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let privateHome = URL(
+            fileURLWithPath: "/private" + lexicalHome.path,
+            isDirectory: true
+        )
+        defer {
+            try? FileManager.default.removeItem(at: lexicalHome)
+        }
+        try FileManager.default.createDirectory(
+            at: privateHome.appendingPathComponent(
+                "playcover/prepared",
+                isDirectory: true
+            ),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": privateHome.path]
+        )
+        let generation = String(repeating: "7", count: 64)
+        let notYetCreatedApp = privateHome
+            .appendingPathComponent(
+                "playcover/prepared/\(generation)",
+                isDirectory: true
+            )
+            .appendingPathComponent(
+                "com.example.fixture.app",
+                isDirectory: true
+            )
+
+        XCTAssertNoThrow(
+            try PlayCoverService.requireManagedPath(
+                notYetCreatedApp,
+                paths: paths,
+                operation: "staging"
+            )
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverService.requireManagedPath(
+                privateHome.appendingPathComponent(
+                    "outside.app",
+                    isDirectory: true
+                ),
+                paths: paths,
+                operation: "staging"
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "path must be below IOS_USE_HOME"
+                )
+            )
+        }
+    }
+
     func testConcurrentGenerationPublishHasOneWinnerAndOneReuse()
         throws
     {

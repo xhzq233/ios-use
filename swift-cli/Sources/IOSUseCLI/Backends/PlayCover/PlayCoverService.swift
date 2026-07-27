@@ -1441,16 +1441,22 @@ public enum PlayCoverService {
             .appendingPathComponent(completedFilename)
     }
 
-    private static func requireManagedPath(
+    static func requireManagedPath(
         _ url: URL,
         paths: IOSUsePaths,
         operation: String
     ) throws {
-        let managed = URL(
+        let managedLexical = URL(
             fileURLWithPath: paths.playcoverPrepared,
             isDirectory: true
         ).standardizedFileURL.path
-        let candidate = url.standardizedFileURL.path
+        let candidateLexical = url.standardizedFileURL.path
+        // Foundation normalizes an existing `/private/tmp/.../prepared`
+        // directory to `/tmp/.../prepared`, while a not-yet-created generation
+        // below it may retain the `/private/tmp` spelling. Canonicalize the
+        // existing prefix of both paths before comparing containment.
+        let managed = canonicalizingExistingPrefix(managedLexical)
+        let candidate = canonicalizingExistingPrefix(candidateLexical)
         guard candidate.hasPrefix(managed + "/") else {
             throw PlayCoverBackendError.prepareFailed(
                 "\(operation) path must be below IOS_USE_HOME managed "
@@ -1458,7 +1464,7 @@ public enum PlayCoverService {
             )
         }
         var current = URL(fileURLWithPath: "/", isDirectory: true)
-        for component in URL(fileURLWithPath: candidate)
+        for component in URL(fileURLWithPath: candidateLexical)
             .pathComponents.dropFirst() {
             current.appendPathComponent(component)
             var status = stat()
@@ -2239,6 +2245,29 @@ public enum PlayCoverService {
             .standardizedFileURL
             .resolvingSymlinksInPath()
             .path
+    }
+
+    private static func canonicalizingExistingPrefix(
+        _ path: String
+    ) -> String {
+        var existing = URL(fileURLWithPath: path).standardizedFileURL
+        var suffix: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path),
+              existing.path != "/" {
+            suffix.insert(existing.lastPathComponent, at: 0)
+            existing.deleteLastPathComponent()
+        }
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let resolved = existing.path.withCString {
+            Darwin.realpath($0, &buffer)
+        }
+        var result = resolved == nil
+            ? existing.path
+            : String(cString: buffer)
+        for component in suffix {
+            result = (result as NSString).appendingPathComponent(component)
+        }
+        return result
     }
 
     private static func managedHomePath(
