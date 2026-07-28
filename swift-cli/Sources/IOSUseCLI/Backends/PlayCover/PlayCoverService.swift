@@ -4308,6 +4308,18 @@ public enum PlayCoverService {
             }
         }
         while ProcessInfo.processInfo.systemUptime < deadline {
+            // A successful callback is published only after any required
+            // exact-owner durability. Consume it before the bounded candidate
+            // ping; a callback failure must still allow Runtime rescue.
+            if case .success(let identity)? = box.get(),
+               mayClaimLaunchIdentity(
+                   identity,
+                   callbackIdentity: identity,
+                   runtimeAuthenticated: false
+               ) {
+                return identity
+            }
+
             // A large UIKit App can create its RunningBoard process and bind
             // the injected Runtime socket before NSWorkspace invokes its
             // completion handler. Resolve that newly-created, exact managed
