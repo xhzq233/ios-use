@@ -86,8 +86,8 @@ Local patches are intentionally limited to:
   `codesign --deep` there), while retaining pinned `--deep` behavior solely in
   the independent differential oracle;
 - owner-selected Unix-socket, stdio-log, and canonical lowercase `playchain`
-  sandbox/storage rules shared by headless KeyCover and the Runtime, and
-  recorded in the entitlement diff;
+  owner-only sandbox/storage rules shared by headless KeyCover and the Runtime,
+  and recorded in the entitlement diff;
 - adding an empty `UILaunchScreen` only when both modern and storyboard launch
   declarations are absent, preventing Catalyst's legacy 320 x 480 canvas while
   preserving all existing launch-screen and scene keys;

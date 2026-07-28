@@ -228,6 +228,12 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             ),
             ["playchain"]
         )
+        XCTAssertEqual(
+            try FileManager.default.attributesOfItem(
+                atPath: firstPlayChain.path
+            )[.posixPermissions] as? NSNumber,
+            NSNumber(value: 0o700)
+        )
         defer {
             _ = try? PlayCoverHeadlessKeyCover.configure(
                 managedHome: firstHome

@@ -15,7 +15,11 @@ struct KeyCover {
 
         if !FileManager.default.fileExists(atPath: playChainDir.path) {
             do {
-                try FileManager.default.createDirectory(at: playChainDir, withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(
+                    at: playChainDir,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
             } catch {
                 Log.shared.error(error)
             }
