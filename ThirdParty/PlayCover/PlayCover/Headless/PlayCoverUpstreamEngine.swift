@@ -1000,17 +1000,9 @@ public enum PlayCoverUpstreamEngine {
             &phaseTimings.convertNanoseconds,
             since: injectionStarted
         )
-        let postInjection = try inspectMachO(
-            at: mainExecutable,
-            relativePath: source.mainExecutableRelativePath
-        )
-        guard postInjection.dependencies.filter({
-            $0 == options.runtimeLoadPath
-        }).count == 1 else {
-            throw PlayCoverUpstreamError.verificationFailed(
-                "main executable does not have exactly one Runtime load command"
-            )
-        }
+        // The final prepared-App inspection below is authoritative and rejects
+        // a missing, duplicated, or basename-shadowed Runtime load command
+        // before the private staging generation can be published.
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
             ofItemAtPath: mainExecutable.path
