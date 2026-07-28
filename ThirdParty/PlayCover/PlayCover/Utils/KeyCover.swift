@@ -11,7 +11,7 @@ import Security
 struct KeyCover {
     static var shared = KeyCover()
     static var playChainPath: URL {
-        let playChainDir = PlayTools.playCoverContainer.appendingPathComponent("PlayChain")
+        let playChainDir = PlayTools.playCoverContainer.appendingPathComponent("playchain")
 
         if !FileManager.default.fileExists(atPath: playChainDir.path) {
             do {

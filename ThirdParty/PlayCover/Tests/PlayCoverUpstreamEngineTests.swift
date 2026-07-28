@@ -212,8 +212,21 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let bundleID = "com.example.keycover.\(UUID().uuidString)"
         let payload = Data("persistent-playchain".utf8)
 
-        _ = try PlayCoverHeadlessKeyCover.configure(
+        let firstPlayChain = try PlayCoverHeadlessKeyCover.configure(
             managedHome: firstHome
+        )
+        XCTAssertEqual(
+            firstPlayChain.path,
+            firstHome
+                .appendingPathComponent("playcover", isDirectory: true)
+                .appendingPathComponent("playchain", isDirectory: true)
+                .path
+        )
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(
+                atPath: firstPlayChain.deletingLastPathComponent().path
+            ),
+            ["playchain"]
         )
         defer {
             _ = try? PlayCoverHeadlessKeyCover.configure(
