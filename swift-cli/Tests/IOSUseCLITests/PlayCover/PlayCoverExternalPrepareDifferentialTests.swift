@@ -1374,7 +1374,9 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         let result = try Shell.runWithResult(
             "/bin/cp",
             arguments: [
-                "-cR",
+                // The wrapper's umask protects the private work root, but the
+                // snapshot itself must retain every source inventory mode.
+                "-cRp",
                 source.path,
                 destination.path,
             ]
