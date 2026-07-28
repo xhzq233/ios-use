@@ -518,13 +518,32 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
             )
         )
 
-        let record = try PlayCoverPendingLaunchStore.createIntent(
+        var record = try PlayCoverPendingLaunchStore.createIntent(
             fixture.intent,
+            paths: fixture.paths
+        )
+        let aliasSourceApp = URL(
+            fileURLWithPath: fixture.appPath,
+            isDirectory: true
+        ).standardizedFileURL
+        let inventory = fixture.inventory.map {
+            PlayCoverPendingLaunchStore.AliasEntry(
+                name: $0.name,
+                destination: aliasSourceApp
+                    .appendingPathComponent($0.name).path
+            )
+        }
+        record = try PlayCoverPendingLaunchStore.markAliasReady(
+            sessionID: fixture.sessionID,
+            device: 42,
+            inode: 84,
+            inventory: inventory,
             paths: fixture.paths
         )
 
         XCTAssertEqual(record.appPath, fixture.appPath)
         XCTAssertEqual(record.executablePath, fixture.executablePath)
+        XCTAssertEqual(record.aliasInventory, inventory)
         XCTAssertEqual(
             try PlayCoverPendingLaunchStore.load(
                 paths: fixture.paths

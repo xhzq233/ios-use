@@ -1097,14 +1097,16 @@ enum PlayCoverPendingLaunchStore {
                 "façade identity/inventory is incomplete"
             )
         }
+        let aliasSourceApp = URL(
+            fileURLWithPath: record.appPath,
+            isDirectory: true
+        ).standardizedFileURL
         var names = Set<String>()
         for entry in inventory {
             guard isSafeName(entry.name),
                   names.insert(entry.name).inserted,
-                  entry.destination == URL(
-                    fileURLWithPath: record.appPath,
-                    isDirectory: true
-                  ).appendingPathComponent(entry.name).path else {
+                  entry.destination == aliasSourceApp
+                    .appendingPathComponent(entry.name).path else {
                 throw storeError(
                     "façade inventory is unsafe or mismatched"
                 )
