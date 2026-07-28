@@ -39,26 +39,7 @@ done
 CURRENT_UID="$EUID"
 
 canonical_existing() {
-  local path="$1"
-  local parent
-  local name
-  local canonical_parent
-  if [[ -d "$path" ]]; then
-    (
-      cd "$path" 2>/dev/null &&
-        /bin/pwd -P
-    )
-    return
-  fi
-  parent="${path%/*}"
-  name="${path##*/}"
-  [[ "$parent" != "$path" ]] || return 1
-  [[ -n "$parent" ]] || parent="/"
-  canonical_parent="$(
-    cd "$parent" 2>/dev/null &&
-      /bin/pwd -P
-  )" || return 1
-  printf '%s/%s\n' "$canonical_parent" "$name"
+  /bin/realpath "$1" 2>/dev/null
 }
 
 require_canonical_directory() {
@@ -103,6 +84,20 @@ require_owned_regular_600() {
     "$mode" == "600" &&
     "$links" == "1"
   ]] || fail_case "PCAP-HOST-SETUP"
+}
+
+require_owned_socket() {
+  local path="$1"
+  local owner
+  local links
+  [[ -S "$path" && ! -L "$path" ]] ||
+    fail_case "PCAP-HOST-POSTCONDITIONS"
+  owner="$(/usr/bin/stat -f '%u' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-HOST-POSTCONDITIONS"
+  links="$(/usr/bin/stat -f '%l' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-HOST-POSTCONDITIONS"
+  [[ "$owner" == "$CURRENT_UID" && "$links" == "1" ]] ||
+    fail_case "PCAP-HOST-POSTCONDITIONS"
 }
 
 require_owned_nonwritable_directory() {
@@ -217,51 +212,7 @@ case "$AUDIT_TEMP_ROOT/" in
     fail_case "PCAP-TEMP"
     ;;
 esac
-
-RUN_FILE=""
-RUN_SOCKET=""
-LOG_FILE=""
-DATABASE=""
-STATE_SENTINEL=""
-STATE_CREATE=""
-PREPARED_SENTINEL=""
-PREPARED_CREATE=""
-LOGS_SOCKET=""
-PLAYCHAIN_SOCKET=""
-ESCAPE_LINK=""
-
-cleanup() {
-  local exit_status=$?
-  trap - EXIT
-  for artifact in \
-    "$RUN_FILE" \
-    "$RUN_SOCKET" \
-    "$LOG_FILE" \
-    "$DATABASE" \
-    "${DATABASE:+$DATABASE-wal}" \
-    "${DATABASE:+$DATABASE-shm}" \
-    "${DATABASE:+$DATABASE-journal}" \
-    "$STATE_SENTINEL" \
-    "$STATE_CREATE" \
-    "$PREPARED_SENTINEL" \
-    "$PREPARED_CREATE" \
-    "$LOGS_SOCKET" \
-    "$PLAYCHAIN_SOCKET" \
-    "$ESCAPE_LINK"; do
-    if [[ -n "$artifact" && ( -e "$artifact" || -L "$artifact" ) ]]; then
-      /bin/rm -f -- "$artifact" >/dev/null 2>&1 || true
-    fi
-  done
-  if [[
-    "$AUDIT_TEMP_ROOT" == /private/tmp/ios-use-pcap.* &&
-    -d "$AUDIT_TEMP_ROOT" &&
-    ! -L "$AUDIT_TEMP_ROOT"
-  ]]; then
-    /bin/rm -rf -- "$AUDIT_TEMP_ROOT" >/dev/null 2>&1 || true
-  fi
-  exit "$exit_status"
-}
-trap cleanup EXIT
+printf 'PCAP-EVIDENCE-ROOT %s\n' "$AUDIT_TEMP_ROOT"
 
 PROBE_SOURCE="$(
   cd "$(dirname "$0")" &&
@@ -273,6 +224,11 @@ UNSIGNED_PROBE="$AUDIT_TEMP_ROOT/probe-unsigned"
 SIGNED_PROBE="$AUDIT_TEMP_ROOT/probe-signed"
 ORIGINAL_ENTITLEMENTS="$AUDIT_TEMP_ROOT/original-entitlements.plist"
 PROBE_ENTITLEMENTS="$AUDIT_TEMP_ROOT/probe-entitlements.plist"
+CLANG_LOG="$AUDIT_TEMP_ROOT/clang.log"
+PREPARED_ENTITLEMENTS_LOG="$AUDIT_TEMP_ROOT/prepared-entitlements.log"
+PROBE_SIGN_STDOUT="$AUDIT_TEMP_ROOT/probe-sign.stdout"
+PROBE_SIGN_STDERR="$AUDIT_TEMP_ROOT/probe-sign.stderr"
+PROBE_ENTITLEMENTS_LOG="$AUDIT_TEMP_ROOT/probe-entitlements.log"
 
 /usr/bin/xcrun clang \
   -std=c17 \
@@ -283,17 +239,18 @@ PROBE_ENTITLEMENTS="$AUDIT_TEMP_ROOT/probe-entitlements.plist"
   -framework CoreFoundation \
   -lsqlite3 \
   -o "$UNSIGNED_PROBE" \
-  >"$AUDIT_TEMP_ROOT/clang.log" 2>&1 ||
+  >"$CLANG_LOG" 2>&1 ||
   fail_case "PCAP-PROBE-BUILD"
 /bin/cp "$UNSIGNED_PROBE" "$SIGNED_PROBE" >/dev/null 2>&1 ||
   fail_case "PCAP-PROBE-BUILD"
 
 /usr/bin/codesign \
   --display \
-  --entitlements :- \
+  --entitlements - \
+  --xml \
   "$MAIN_EXECUTABLE" \
   >"$ORIGINAL_ENTITLEMENTS" \
-  2>"$AUDIT_TEMP_ROOT/prepared-entitlements.log" ||
+  2>"$PREPARED_ENTITLEMENTS_LOG" ||
   fail_case "PCAP-ENTITLEMENTS-EXPORT"
 /usr/bin/plutil -lint "$ORIGINAL_ENTITLEMENTS" >/dev/null 2>&1 ||
   fail_case "PCAP-ENTITLEMENTS-EXPORT"
@@ -304,8 +261,8 @@ PROBE_ENTITLEMENTS="$AUDIT_TEMP_ROOT/probe-entitlements.plist"
   --entitlements "$ORIGINAL_ENTITLEMENTS" \
   --generate-entitlement-der \
   "$SIGNED_PROBE" \
-  >"$AUDIT_TEMP_ROOT/probe-sign.stdout" \
-  2>"$AUDIT_TEMP_ROOT/probe-sign.stderr" ||
+  >"$PROBE_SIGN_STDOUT" \
+  2>"$PROBE_SIGN_STDERR" ||
   fail_case "PCAP-PROBE-SIGNATURE"
 /usr/bin/codesign \
   --verify \
@@ -315,10 +272,11 @@ PROBE_ENTITLEMENTS="$AUDIT_TEMP_ROOT/probe-entitlements.plist"
   fail_case "PCAP-PROBE-SIGNATURE"
 /usr/bin/codesign \
   --display \
-  --entitlements :- \
+  --entitlements - \
+  --xml \
   "$SIGNED_PROBE" \
   >"$PROBE_ENTITLEMENTS" \
-  2>"$AUDIT_TEMP_ROOT/probe-entitlements.log" ||
+  2>"$PROBE_ENTITLEMENTS_LOG" ||
   fail_case "PCAP-PROBE-SIGNATURE"
 "$UNSIGNED_PROBE" \
   compare-entitlements \
@@ -327,15 +285,45 @@ PROBE_ENTITLEMENTS="$AUDIT_TEMP_ROOT/probe-entitlements.plist"
   fail_case "PCAP-ENTITLEMENTS-EQUAL"
 printf '%s PASS\n' "PCAP-PROBE-SIGNATURE"
 
-TOKEN="${AUDIT_TEMP_ROOT##*.}"
-RUN_FILE="$RUN_DIR/.pcap-file-$TOKEN"
-RUN_SOCKET="$RUN_DIR/.pcap-run-$TOKEN.sock"
-DATABASE="$PLAYCHAIN_DIR/.pcap-$TOKEN.sqlite3"
-STATE_CREATE="$STATE_DIR/.pcap-create-$TOKEN"
-PREPARED_CREATE="$PREPARED_ROOT/.pcap-create-$TOKEN"
-LOGS_SOCKET="$LOGS_DIR/.pcap-bind-$TOKEN.sock"
-PLAYCHAIN_SOCKET="$PLAYCHAIN_DIR/.pcap-bind-$TOKEN.sock"
-ESCAPE_LINK="$RUN_DIR/.pcap-escape-$TOKEN"
+RUN_AUDIT_DIR="$(
+  /usr/bin/mktemp -d "$RUN_DIR/.pcap-audit.XXXXXX" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+LOGS_AUDIT_DIR="$(
+  /usr/bin/mktemp -d "$LOGS_DIR/.pcap-audit.XXXXXX" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+PLAYCHAIN_AUDIT_DIR="$(
+  /usr/bin/mktemp -d "$PLAYCHAIN_DIR/.pcap-audit.XXXXXX" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+STATE_AUDIT_DIR="$(
+  /usr/bin/mktemp -d "$STATE_DIR/.pcap-audit.XXXXXX" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+PREPARED_AUDIT_DIR="$(
+  /usr/bin/mktemp -d "$PREPARED_ROOT/.pcap-audit.XXXXXX" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+/bin/chmod 700 \
+  "$RUN_AUDIT_DIR" \
+  "$LOGS_AUDIT_DIR" \
+  "$PLAYCHAIN_AUDIT_DIR" \
+  "$STATE_AUDIT_DIR" \
+  "$PREPARED_AUDIT_DIR" >/dev/null 2>&1 ||
+  fail_case "PCAP-HOST-SETUP"
+for audit_directory in \
+  "$RUN_AUDIT_DIR" \
+  "$LOGS_AUDIT_DIR" \
+  "$PLAYCHAIN_AUDIT_DIR" \
+  "$STATE_AUDIT_DIR" \
+  "$PREPARED_AUDIT_DIR"; do
+  require_owner_directory_700 "$audit_directory"
+done
+
+RUN_FILE="$RUN_AUDIT_DIR/file"
+RUN_SOCKET="$RUN_AUDIT_DIR/run.sock"
+DATABASE="$PLAYCHAIN_AUDIT_DIR/capability.sqlite3"
+STATE_CREATE="$STATE_AUDIT_DIR/create"
+PREPARED_CREATE="$PREPARED_AUDIT_DIR/create"
+LOGS_SOCKET="$LOGS_AUDIT_DIR/bind.sock"
+PLAYCHAIN_SOCKET="$PLAYCHAIN_AUDIT_DIR/bind.sock"
+ESCAPE_LINK="$RUN_AUDIT_DIR/escape"
 for absent in \
   "$RUN_FILE" \
   "$RUN_SOCKET" \
@@ -359,15 +347,15 @@ done
 
 STATE_SENTINEL="$(
   /usr/bin/mktemp \
-    "$STATE_DIR/.pcap-state.XXXXXX" 2>/dev/null
+    "$STATE_AUDIT_DIR/sentinel.XXXXXX" 2>/dev/null
 )" || fail_case "PCAP-HOST-SETUP"
 PREPARED_SENTINEL="$(
   /usr/bin/mktemp \
-    "$PREPARED_ROOT/.pcap-prepared.XXXXXX" 2>/dev/null
+    "$PREPARED_AUDIT_DIR/sentinel.XXXXXX" 2>/dev/null
 )" || fail_case "PCAP-HOST-SETUP"
 LOG_FILE="$(
   /usr/bin/mktemp \
-    "$LOGS_DIR/.pcap-log.XXXXXX" 2>/dev/null
+    "$LOGS_AUDIT_DIR/log.XXXXXX" 2>/dev/null
 )" || fail_case "PCAP-HOST-SETUP"
 EXTERNAL_VICTIM="$AUDIT_TEMP_ROOT/external-victim"
 STATE_EXPECTED="$AUDIT_TEMP_ROOT/state-expected"
@@ -416,6 +404,10 @@ require_owned_regular_600 "$EXTERNAL_VICTIM"
 /bin/ln -s "$EXTERNAL_VICTIM" "$ESCAPE_LINK" >/dev/null 2>&1 ||
   fail_case "PCAP-HOST-SETUP"
 [[ -L "$ESCAPE_LINK" ]] ||
+  fail_case "PCAP-HOST-SETUP"
+/usr/bin/cmp -s "$ESCAPE_LINK" "$VICTIM_EXPECTED" ||
+  fail_case "PCAP-HOST-SETUP"
+: >>"$ESCAPE_LINK" ||
   fail_case "PCAP-HOST-SETUP"
 
 LOG_DEVICE="$(/usr/bin/stat -f '%d' "$LOG_FILE" 2>/dev/null)" ||
@@ -497,12 +489,19 @@ require_owned_regular_600 "$EXTERNAL_VICTIM"
 ]] || fail_case "PCAP-HOST-POSTCONDITIONS"
 /usr/bin/cmp -s "$EXTERNAL_VICTIM" "$VICTIM_EXPECTED" ||
   fail_case "PCAP-HOST-POSTCONDITIONS"
+[[ -L "$ESCAPE_LINK" ]] ||
+  fail_case "PCAP-HOST-POSTCONDITIONS"
+/usr/bin/cmp -s "$ESCAPE_LINK" "$VICTIM_EXPECTED" ||
+  fail_case "PCAP-HOST-POSTCONDITIONS"
+require_owned_socket "$RUN_SOCKET"
+require_owned_regular_600 "$DATABASE"
+for sqlite_artifact in "$DATABASE-wal" "$DATABASE-shm"; do
+  if [[ -e "$sqlite_artifact" || -L "$sqlite_artifact" ]]; then
+    require_owned_regular_600 "$sqlite_artifact"
+  fi
+done
 for absent in \
   "$RUN_FILE" \
-  "$RUN_SOCKET" \
-  "$DATABASE" \
-  "$DATABASE-wal" \
-  "$DATABASE-shm" \
   "$DATABASE-journal" \
   "$STATE_CREATE" \
   "$PREPARED_CREATE" \

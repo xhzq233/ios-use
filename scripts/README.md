@@ -100,9 +100,14 @@ same-user, non-symlink, mode-0700 directories; the App must be a direct child
 of the lowercase 64-hex generation. The gate verifies the prepared App and its
 real main executable, signs only a fresh temporary probe with the exported
 entitlement plist, re-exports and compares the two entitlement dictionaries,
-then executes the signed probe directly. It reports fixed case IDs only,
-unlinks only its uniquely named files and sockets, removes only its guarded
-temporary build root, and never removes the caller's App or managed home.
+then executes the signed probe directly. Use a disposable, isolated managed
+home: the gate creates unique mode-0700 audit directories under its managed
+`run`, `logs`, `playchain`, `state`, and `prepared` directories and retains
+them for inspection. It also prints `PCAP-EVIDENCE-ROOT <absolute-path>` and
+retains that owner-only temporary root. Only `PCAP-RUN-FILE` unlinks its
+exclusively created file while its descriptor remains open; sockets, SQLite
+artifacts, negative-case residue, host fixtures, and probe build evidence are
+never recursively cleaned up by this gate.
 
 Run the full UI replay only when needed:
 

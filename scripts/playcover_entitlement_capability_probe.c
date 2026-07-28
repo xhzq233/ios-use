@@ -94,26 +94,102 @@ static int same_file(const struct stat *left, const struct stat *right) {
         left->st_ino == right->st_ino;
 }
 
+static int is_owned_single_link(
+    const struct stat *status,
+    mode_t expected_type
+) {
+    return
+        (status->st_mode & S_IFMT) == expected_type &&
+        status->st_uid == geteuid() &&
+        status->st_nlink == 1;
+}
+
+static int capture_owned_descriptor(
+    int descriptor,
+    mode_t expected_type,
+    struct stat *result
+) {
+    return
+        fstat(descriptor, result) == 0 &&
+        is_owned_single_link(result, expected_type)
+        ? 0
+        : -1;
+}
+
+static int capture_owned_path(
+    const char *path,
+    mode_t expected_type,
+    struct stat *result
+) {
+    return
+        lstat(path, result) == 0 &&
+        is_owned_single_link(result, expected_type)
+        ? 0
+        : -1;
+}
+
+static int path_matches(
+    const char *path,
+    const struct stat *expected,
+    mode_t expected_type
+) {
+    struct stat observed;
+    return
+        capture_owned_path(path, expected_type, &observed) == 0 &&
+        same_file(expected, &observed)
+        ? 0
+        : -1;
+}
+
+static int path_is_absent(const char *path) {
+    struct stat status;
+    errno = 0;
+    return lstat(path, &status) != 0 && errno == ENOENT ? 0 : -1;
+}
+
+static int path_is_absent_or_matches(
+    const char *path,
+    const struct stat *expected,
+    mode_t expected_type
+) {
+    return
+        path_is_absent(path) == 0 ||
+        path_matches(path, expected, expected_type) == 0
+        ? 0
+        : -1;
+}
+
 static int run_file_case(const char *path) {
     static const char first[] = "run-create-write";
     static const char second[] = "-read-unlink";
     char observed[sizeof(first) + sizeof(second) - 2];
+    struct stat created;
+    struct stat status;
+    int tracked = 0;
     int descriptor = open(
         path,
         O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC,
         0600
     );
     int passed = descriptor >= 0;
-    struct stat status;
-    if (
-        passed &&
-        (
+    if (descriptor >= 0) {
+        if (
+            capture_owned_descriptor(descriptor, S_IFREG, &created) == 0
+        ) {
+            tracked = 1;
+        } else {
+            passed = 0;
+        }
+        if (
+            !tracked ||
             fchmod(descriptor, 0600) != 0 ||
             fstat(descriptor, &status) != 0 ||
-            !is_owned_regular(&status, 0600)
-        )
-    ) {
-        passed = 0;
+            !is_owned_regular(&status, 0600) ||
+            !same_file(&created, &status) ||
+            path_matches(path, &created, S_IFREG) != 0
+        ) {
+            passed = 0;
+        }
     }
     if (
         passed &&
@@ -131,14 +207,16 @@ static int run_file_case(const char *path) {
     ) {
         passed = 0;
     }
+    if (descriptor >= 0 && tracked) {
+        if (
+            path_matches(path, &created, S_IFREG) != 0 ||
+            unlink(path) != 0 ||
+            path_is_absent(path) != 0
+        ) {
+            passed = 0;
+        }
+    }
     if (descriptor >= 0 && close(descriptor) != 0) {
-        passed = 0;
-    }
-    if (unlink(path) != 0) {
-        passed = 0;
-    }
-    errno = 0;
-    if (lstat(path, &status) == 0 || errno != ENOENT) {
         passed = 0;
     }
     return report("PCAP-RUN-FILE", passed);
@@ -171,12 +249,16 @@ static int bind_socket(
     int bind_errno = errno;
     int passed;
     if (should_succeed) {
-        passed = bound == 0 && listen(descriptor, 1) == 0;
+        passed = bound == 0;
     } else {
         passed = bound != 0 && bind_errno == expected_errno;
     }
-    if (bound == 0 || access(path, F_OK) == 0) {
-        if (unlink(path) != 0) {
+    if (bound == 0) {
+        struct stat created;
+        if (capture_owned_path(path, S_IFSOCK, &created) != 0) {
+            passed = 0;
+        }
+        if (should_succeed && listen(descriptor, 1) != 0) {
             passed = 0;
         }
     }
@@ -258,6 +340,33 @@ static int sqlite_expect_value(sqlite3 *database) {
     return passed ? 0 : -1;
 }
 
+static int sqlite_expect_text(
+    sqlite3 *database,
+    const char *sql,
+    const char *expected
+) {
+    sqlite3_stmt *statement = NULL;
+    int passed =
+        sqlite3_prepare_v2(
+            database,
+            sql,
+            -1,
+            &statement,
+            NULL
+        ) == SQLITE_OK &&
+        sqlite3_step(statement) == SQLITE_ROW;
+    if (passed) {
+        const unsigned char *value = sqlite3_column_text(statement, 0);
+        passed = value != NULL &&
+            strcmp((const char *)value, expected) == 0 &&
+            sqlite3_step(statement) == SQLITE_DONE;
+    }
+    if (statement != NULL && sqlite3_finalize(statement) != SQLITE_OK) {
+        passed = 0;
+    }
+    return passed ? 0 : -1;
+}
+
 static int append_suffix(
     char *output,
     size_t output_size,
@@ -268,16 +377,15 @@ static int append_suffix(
     return length > 0 && (size_t)length < output_size ? 0 : -1;
 }
 
-static void remove_sqlite_artifacts(
-    const char *database_path,
-    const char *wal_path,
-    const char *shm_path,
-    const char *journal_path
-) {
-    (void)unlink(journal_path);
-    (void)unlink(shm_path);
-    (void)unlink(wal_path);
-    (void)unlink(database_path);
+static int close_database(sqlite3 **database) {
+    if (*database == NULL) {
+        return 0;
+    }
+    if (sqlite3_close(*database) != SQLITE_OK) {
+        return -1;
+    }
+    *database = NULL;
+    return 0;
 }
 
 static int sqlite_case(const char *database_path) {
@@ -301,18 +409,76 @@ static int sqlite_case(const char *database_path) {
     sqlite3 *reader = NULL;
     sqlite3 *reopened = NULL;
     sqlite3_stmt *statement = NULL;
-    int passed =
+    struct stat database_created;
+    struct stat database_status;
+    struct stat wal_status;
+    struct stat shm_status;
+    int database_tracked = 0;
+    int wal_tracked = 0;
+    int shm_tracked = 0;
+
+    int reservation = open(
+        database_path,
+        O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC,
+        0600
+    );
+    int passed = reservation >= 0;
+    if (reservation >= 0) {
+        if (
+            capture_owned_descriptor(
+                reservation,
+                S_IFREG,
+                &database_created
+            ) == 0
+        ) {
+            database_tracked = 1;
+        } else {
+            passed = 0;
+        }
+        if (
+            !database_tracked ||
+            fchmod(reservation, 0600) != 0 ||
+            fstat(reservation, &database_status) != 0 ||
+            !is_owned_regular(&database_status, 0600) ||
+            !same_file(&database_created, &database_status) ||
+            path_matches(
+                database_path,
+                &database_created,
+                S_IFREG
+            ) != 0
+        ) {
+            passed = 0;
+        }
+        if (close(reservation) != 0) {
+            passed = 0;
+        }
+    }
+    if (
+        passed &&
+        (
+            path_is_absent(wal_path) != 0 ||
+            path_is_absent(shm_path) != 0 ||
+            path_is_absent(journal_path) != 0
+        )
+    ) {
+        passed = 0;
+    }
+    if (
+        passed &&
         sqlite3_open_v2(
             database_path,
             &writer,
-            SQLITE_OPEN_CREATE |
-                SQLITE_OPEN_READWRITE |
-                SQLITE_OPEN_FULLMUTEX,
+            SQLITE_OPEN_READWRITE |
+                SQLITE_OPEN_FULLMUTEX |
+                SQLITE_OPEN_NOFOLLOW,
             NULL
-        ) == SQLITE_OK;
+        ) != SQLITE_OK
+    ) {
+        passed = 0;
+    }
     if (
         passed &&
-        sqlite_execute(writer, "PRAGMA journal_mode=WAL") != 0
+        sqlite_expect_text(writer, "PRAGMA journal_mode=WAL", "wal") != 0
     ) {
         passed = 0;
     }
@@ -347,35 +513,45 @@ static int sqlite_case(const char *database_path) {
         ) == SQLITE_OK &&
         sqlite3_step(statement) == SQLITE_DONE
     ) {
-        if (sqlite3_finalize(statement) != SQLITE_OK) {
-            passed = 0;
-        }
-        statement = NULL;
     } else {
         passed = 0;
     }
     if (statement != NULL) {
-        (void)sqlite3_finalize(statement);
+        if (sqlite3_finalize(statement) != SQLITE_OK) {
+            passed = 0;
+        }
         statement = NULL;
     }
     if (passed && sqlite_execute(writer, "COMMIT") != 0) {
         passed = 0;
     }
 
-    struct stat database_status;
-    struct stat wal_status;
-    struct stat shm_status;
     if (
-        passed &&
+        writer != NULL &&
         (
             lstat(database_path, &database_status) != 0 ||
             !is_owned_regular(&database_status, 0600) ||
-            lstat(wal_path, &wal_status) != 0 ||
-            !is_owned_regular(&wal_status, 0600) ||
-            lstat(shm_path, &shm_status) != 0 ||
-            !is_owned_regular(&shm_status, 0600)
+            !same_file(&database_created, &database_status)
         )
     ) {
+        passed = 0;
+    }
+    if (
+        writer != NULL &&
+        capture_owned_path(wal_path, S_IFREG, &wal_status) == 0 &&
+        is_owned_regular(&wal_status, 0600)
+    ) {
+        wal_tracked = 1;
+    } else if (writer != NULL) {
+        passed = 0;
+    }
+    if (
+        writer != NULL &&
+        capture_owned_path(shm_path, S_IFREG, &shm_status) == 0 &&
+        is_owned_regular(&shm_status, 0600)
+    ) {
+        shm_tracked = 1;
+    } else if (writer != NULL) {
         passed = 0;
     }
     if (
@@ -384,7 +560,9 @@ static int sqlite_case(const char *database_path) {
             sqlite3_open_v2(
                 database_path,
                 &reader,
-                SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+                SQLITE_OPEN_READONLY |
+                    SQLITE_OPEN_FULLMUTEX |
+                    SQLITE_OPEN_NOFOLLOW,
                 NULL
             ) != SQLITE_OK ||
             sqlite_expect_value(reader) != 0
@@ -392,14 +570,12 @@ static int sqlite_case(const char *database_path) {
     ) {
         passed = 0;
     }
-    if (reader != NULL && sqlite3_close(reader) != SQLITE_OK) {
+    if (close_database(&reader) != 0) {
         passed = 0;
     }
-    reader = NULL;
-    if (writer != NULL && sqlite3_close(writer) != SQLITE_OK) {
+    if (close_database(&writer) != 0) {
         passed = 0;
     }
-    writer = NULL;
 
     if (
         passed &&
@@ -407,7 +583,9 @@ static int sqlite_case(const char *database_path) {
             sqlite3_open_v2(
                 database_path,
                 &reopened,
-                SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX,
+                SQLITE_OPEN_READONLY |
+                    SQLITE_OPEN_FULLMUTEX |
+                    SQLITE_OPEN_NOFOLLOW,
                 NULL
             ) != SQLITE_OK ||
             sqlite_expect_value(reopened) != 0
@@ -415,46 +593,75 @@ static int sqlite_case(const char *database_path) {
     ) {
         passed = 0;
     }
-    if (reopened != NULL && sqlite3_close(reopened) != SQLITE_OK) {
+    if (close_database(&reopened) != 0) {
         passed = 0;
     }
-    reopened = NULL;
 
     if (statement != NULL) {
-        (void)sqlite3_finalize(statement);
+        if (sqlite3_finalize(statement) != SQLITE_OK) {
+            passed = 0;
+        }
+        statement = NULL;
     }
-    if (reader != NULL) {
-        (void)sqlite3_close(reader);
+
+    int retained_evidence_valid =
+        reader == NULL &&
+        writer == NULL &&
+        reopened == NULL;
+    if (
+        retained_evidence_valid &&
+        (
+            !database_tracked ||
+            path_matches(
+                database_path,
+                &database_created,
+                S_IFREG
+            ) != 0
+        )
+    ) {
+        retained_evidence_valid = 0;
     }
-    if (writer != NULL) {
-        (void)sqlite3_close(writer);
+    if (
+        retained_evidence_valid &&
+        wal_tracked &&
+        path_is_absent_or_matches(
+            wal_path,
+            &wal_status,
+            S_IFREG
+        ) != 0
+    ) {
+        retained_evidence_valid = 0;
     }
-    if (reopened != NULL) {
-        (void)sqlite3_close(reopened);
+    if (
+        retained_evidence_valid &&
+        shm_tracked &&
+        path_is_absent_or_matches(
+            shm_path,
+            &shm_status,
+            S_IFREG
+        ) != 0
+    ) {
+        retained_evidence_valid = 0;
     }
-    remove_sqlite_artifacts(
-        database_path,
-        wal_path,
-        shm_path,
-        journal_path
-    );
+    if (
+        path_is_absent(journal_path) != 0
+    ) {
+        retained_evidence_valid = 0;
+    }
+    passed = passed && retained_evidence_valid;
     return report("PCAP-PLAYCHAIN-SQLITE", passed);
 }
 
 static int expect_open_eperm(
     const char *path,
     int flags,
-    mode_t mode,
-    int remove_on_success
+    mode_t mode
 ) {
     errno = 0;
     int descriptor = open(path, flags, mode);
     int open_errno = errno;
     if (descriptor >= 0) {
         (void)close(descriptor);
-        if (remove_on_success) {
-            (void)unlink(path);
-        }
         return -1;
     }
     return open_errno == EPERM ? 0 : -1;
@@ -469,20 +676,17 @@ static int denied_directory_case(
         expect_open_eperm(
             sentinel,
             O_RDONLY | O_NOFOLLOW | O_CLOEXEC,
-            0,
             0
         ) == 0 &&
         expect_open_eperm(
             sentinel,
             O_WRONLY | O_APPEND | O_NOFOLLOW | O_CLOEXEC,
-            0,
             0
         ) == 0 &&
         expect_open_eperm(
             create_path,
             O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-            0600,
-            1
+            0600
         ) == 0;
     return report(case_id, passed);
 }
@@ -509,9 +713,9 @@ static int symlink_escape_case(const char *path) {
     }
     int passed =
         read_descriptor < 0 &&
-        (read_errno == EPERM || read_errno == EACCES) &&
+        read_errno == EPERM &&
         write_descriptor < 0 &&
-        (write_errno == EPERM || write_errno == EACCES);
+        write_errno == EPERM;
     return report("PCAP-DENY-SYMLINK-ESCAPE", passed);
 }
 
