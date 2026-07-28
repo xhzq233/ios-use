@@ -3040,13 +3040,6 @@ static NSArray<NSString *> *IOSUseDOMTraitsForNode(
     return traits;
 }
 
-static BOOL IOSUseDOMRectsApproximatelyEqual(CGRect lhs, CGRect rhs) {
-    return fabs(lhs.origin.x - rhs.origin.x) <= 0.5 &&
-        fabs(lhs.origin.y - rhs.origin.y) <= 0.5 &&
-        fabs(lhs.size.width - rhs.size.width) <= 0.5 &&
-        fabs(lhs.size.height - rhs.size.height) <= 0.5;
-}
-
 static NSArray<IOSUseCleanNode *> *IOSUseDOMSortedCleanNodes(
     NSArray<IOSUseCleanNode *> *nodes
 ) {
@@ -3123,7 +3116,10 @@ static NSArray<IOSUseCleanNode *> *IOSUseDOMCleanNode(IOSUseDOMNode *node) {
         if (node.elementType == child.source.elementType &&
             node.hasRect == child.source.hasRect &&
             (!node.hasRect ||
-             IOSUseDOMRectsApproximatelyEqual(node.rect, child.source.rect)) &&
+             IOSUseDOMFramesMatchWithinTolerance(
+                 node.rect,
+                 child.source.rect
+             )) &&
             sameLabel) {
             IOSUseCleanNode *merged = [IOSUseCleanNode new];
             merged.source = node;
