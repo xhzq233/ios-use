@@ -1426,6 +1426,147 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         }
     }
 
+    func testPrepareResultDifferencesRejectsPrimitiveBeforeComparison()
+        throws
+    {
+        let inspection = makeAppInspection(machOs: [])
+        let baselineInspection = makeInspection(
+            path: "Fixture",
+            dependencies: [],
+            signature: PlayCoverUpstreamSignature(
+                isSigned: true,
+                isValid: true,
+                entitlementsPlist: nil
+            )
+        )
+        let staleBaseline = PlayCoverDifferentialObjectBaseline(
+            id: "must-not-reach-inspection-comparator",
+            side: .iosUse,
+            relativePath: "Fixture",
+            inspection: baselineInspection,
+            sourceSHA256: baselineInspection.fileSHA256,
+            provenance: "producer guard ordering fixture"
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverPrepareDifferentialGate.differences(
+                pinnedResult: makePinnedPrepareResult(
+                    source: inspection,
+                    prepared: inspection,
+                    producer: .primitiveCharacterization
+                ),
+                iosUseResult: makeIOSUsePrepareResult(
+                    source: inspection,
+                    prepared: inspection
+                ),
+                oneSidedBaselines: [staleBaseline]
+            )
+        ) {
+            guard case PlayCoverDifferentialAttestationError
+                    .invalidIdentity(let messages) = $0 else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertEqual(
+                messages,
+                [
+                    "pinned prepare result was not produced by the full "
+                        + "PlayTools Installer oracle",
+                ]
+            )
+        }
+    }
+
+    func testPrepareResultDifferencesMatchInspectionOverloadInOrder()
+        throws
+    {
+        let signature = PlayCoverUpstreamSignature(
+            isSigned: true,
+            isValid: true,
+            entitlementsPlist: nil
+        )
+        let pinned = makeAppInspection(
+            machOs: [
+                makeInspection(
+                    path: "Fixture",
+                    dependencies: ["pinned"],
+                    signature: signature
+                ),
+            ],
+            infoPlistSHA256: String(repeating: "1", count: 64)
+        )
+        let iosUse = makeAppInspection(
+            machOs: [
+                makeInspection(
+                    path: "Fixture",
+                    dependencies: ["ios-use"],
+                    signature: signature
+                ),
+            ],
+            infoPlistSHA256: String(repeating: "2", count: 64)
+        )
+
+        let inspectionDifferences =
+            try PlayCoverPrepareDifferentialGate.differences(
+                pinned: pinned,
+                iosUse: iosUse
+            )
+        let prepareResultDifferences =
+            try PlayCoverPrepareDifferentialGate.differences(
+                pinnedResult: makePinnedPrepareResult(
+                    source: pinned,
+                    prepared: pinned
+                ),
+                iosUseResult: makeIOSUsePrepareResult(
+                    source: pinned,
+                    prepared: iosUse
+                )
+            )
+
+        XCTAssertEqual(prepareResultDifferences, inspectionDifferences)
+        XCTAssertEqual(
+            prepareResultDifferences.map(\.field),
+            [
+                "app.infoPlistSHA256",
+                "slices[cpu=16777228,subtype=0,occurrence=0]."
+                    + "dependencies",
+            ]
+        )
+    }
+
+    func testDifferentialDifferenceCodableRoundTripIsStable() throws {
+        let differences = [
+            PlayCoverDifferentialDifference(
+                relativePath: ".",
+                field: "app.infoPlistSHA256",
+                pinnedValue: "pinned",
+                iosUseValue: "ios-use"
+            ),
+            PlayCoverDifferentialDifference(
+                relativePath: "Frameworks/Runtime",
+                field: "object.presence",
+                pinnedValue: nil,
+                iosUseValue: "present"
+            ),
+            PlayCoverDifferentialDifference(
+                relativePath: "PlugIns/Plugin",
+                field: "object.presence",
+                pinnedValue: "present",
+                iosUseValue: nil
+            ),
+        ]
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+
+        let encoded = try encoder.encode(differences)
+        let decoded = try JSONDecoder().decode(
+            [PlayCoverDifferentialDifference].self,
+            from: encoded
+        )
+
+        XCTAssertEqual(decoded, differences)
+        XCTAssertEqual(try encoder.encode(decoded), encoded)
+    }
+
     func testHermeticNormalizationDoesNotInventPrivateAlias() throws {
         let root = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(

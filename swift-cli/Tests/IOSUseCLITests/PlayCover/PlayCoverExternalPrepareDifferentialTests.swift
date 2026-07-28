@@ -117,6 +117,39 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         let differential: PlayCoverDifferentialAttestation
     }
 
+    private struct ExternalCharacterizationReport: Codable, Equatable {
+        let schemaVersion: Int
+        let kind: String
+        let disposition: String
+        let repositoryCommit: String
+        let source: SourceProfile
+        let sourceState: OriginalSourceEvidence
+        let runtime: RuntimeProfile
+        let playTools: PlayToolsProfile
+        let revisions: RevisionProfile
+        let inputs: InputTreeEvidence
+        let pinnedOutputSHA256: String
+        let iosUseOutputSHA256: String
+        let normalizationMode: String
+        let differences: [PlayCoverDifferentialDifference]
+    }
+
+    private struct ExternalComparison {
+        let originalBefore: PlayCoverUpstreamAppInspection
+        let snapshotBefore: PlayCoverUpstreamAppInspection
+        let pinnedResult: PlayCoverPinnedPrimitivePrepareResult
+        let iosUseResult: PlayCoverUpstreamPrepareResult
+        let runtimeInputTreeSHA256: String
+        let runtimeInputExecutableSHA256: String
+        let playToolsInputTreeSHA256: String
+        let runtimeSignedProjectionTreeSHA256: String
+        let runtimeSignedProjectionExecutableSHA256: String
+        let pluginSignedProjectionTreeSHA256: String
+        let pluginSignedProjectionExecutableSHA256: String
+        let baselines: [PlayCoverDifferentialObjectBaseline]
+        let normalization: PlayCoverDifferentialNormalization
+    }
+
     private enum ProfileError: Error, CustomStringConvertible {
         case invalid(String)
 
@@ -213,11 +246,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
               !scenario.bundleIdentifier.isEmpty else {
             throw ProfileError.invalid("scenario identity is incomplete")
         }
-        let source = URL(
-            fileURLWithPath: scenario.appPath,
-            isDirectory: true
-        ).standardizedFileURL
-
         let profileData = try boundedRegularFile(
             profileURL,
             maximumBytes: 16 * 1_024 * 1_024
@@ -259,272 +287,83 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             )
         }
 
-        let originalBefore = try PlayCoverUpstreamEngine.inspect(
-            appURL: source
-        )
-        guard originalBefore.bundleIdentifier
-                == scenario.bundleIdentifier else {
-            throw ProfileError.invalid(
-                "scenario bundle identifier does not match source App"
-            )
-        }
-        try requireSourceProfile(profile.source, matches: originalBefore)
-
-        let runtimeInputTreeSHA256 =
-            try PlayCoverService.runtimeBuildHash(
-                frameworkPath: runtime.path
-            )
-        let runtimeInputExecutable =
-            runtime.appendingPathComponent(
-                executableSuffix(
-                    from: profile.runtime.outputExecutableRelativePath,
-                    below: profile.runtime.outputFrameworkRelativePath
+        let comparison = try await prepareExternalComparison(
+            scenario: scenario,
+            runtime: runtime,
+            playTools: playTools,
+            requestedWorkRoot: requestedWorkRoot,
+            runtimeExecutableRelativePath:
+                profile.runtime.outputExecutableRelativePath,
+            pluginExecutableRelativePath:
+                profile.playTools.outputPluginExecutableRelativePath,
+            pinnedBaselineProvenance:
+                "external profile \(profileSHA256); pinned "
+                + "PlayTools full-tree projection",
+            iosUseBaselineProvenance:
+                "external profile \(profileSHA256); fresh Runtime "
+                + "full-tree projection",
+            keepWorkOnFailure: environment[
+                "IOS_USE_PLAYCOVER_EXTERNAL_DIFFERENTIAL_KEEP_WORK"
+            ] == "1",
+            validateInput: {
+                original,
+                runtimeTree,
+                runtimeExecutable,
+                playToolsTree in
+                try self.requireSourceProfile(
+                    profile.source,
+                    matches: original
                 )
-            )
-        let runtimeInputExecutableSHA256 =
-            try PlayCoverUpstreamEngine.inspectMachO(
-                at: runtimeInputExecutable,
-                relativePath:
-                    profile.runtime.outputExecutableRelativePath
-            ).fileSHA256
-        let playToolsInputTreeSHA256 =
-            try PlayCoverUpstreamEngine.contentHash(appURL: playTools)
-        guard runtimeInputTreeSHA256
-                == profile.runtime.inputTreeSHA256,
-              runtimeInputExecutableSHA256
-                == profile.runtime.inputExecutableSHA256,
-              playToolsInputTreeSHA256
-                == profile.playTools.inputTreeSHA256 else {
-            throw ProfileError.invalid(
-                "Runtime or PlayTools full input tree changed"
-            )
-        }
-
-        try FileManager.default.createDirectory(
-            at: requestedWorkRoot,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: 0o700]
+                guard runtimeTree
+                        == profile.runtime.inputTreeSHA256,
+                      runtimeExecutable
+                        == profile.runtime.inputExecutableSHA256,
+                      playToolsTree
+                        == profile.playTools.inputTreeSHA256 else {
+                    throw ProfileError.invalid(
+                        "Runtime or PlayTools full input tree changed"
+                    )
+                }
+            },
+            validateProjection: {
+                runtimeExecutable,
+                runtimeTree,
+                pluginExecutable,
+                pluginTree in
+                guard runtimeExecutable
+                        == profile.runtime
+                            .signedProjectionExecutableSHA256,
+                      runtimeTree
+                        == profile.runtime
+                            .signedProjectionTreeSHA256,
+                      pluginExecutable
+                        == profile.playTools
+                            .signedPluginExecutableSHA256,
+                      pluginTree
+                        == profile.playTools.signedPluginTreeSHA256 else {
+                    throw ProfileError.invalid(
+                        "independent one-sided projection changed"
+                    )
+                }
+            }
         )
-        let workRoot = requestedWorkRoot.resolvingSymlinksInPath()
         defer {
             if environment[
                 "IOS_USE_PLAYCOVER_EXTERNAL_DIFFERENTIAL_KEEP_WORK"
             ] != "1" {
-                try? FileManager.default.removeItem(at: workRoot)
+                try? FileManager.default.removeItem(
+                    at: requestedWorkRoot.resolvingSymlinksInPath()
+                )
             }
         }
-        let sourceSnapshot = workRoot.appendingPathComponent(
-            "source-snapshot/Source.app",
-            isDirectory: true
-        )
-        try cloneTree(source, to: sourceSnapshot)
-        let snapshotInspection =
-            try PlayCoverUpstreamEngine.inspect(appURL: sourceSnapshot)
-        try requireEquivalentInput(
-            originalBefore,
-            snapshotInspection
-        )
-
-        let pinnedHome = try makePrivateDirectory(
-            workRoot.appendingPathComponent(
-                "pinned-home",
-                isDirectory: true
-            )
-        )
-        let iosUseHome = try makePrivateDirectory(
-            workRoot.appendingPathComponent(
-                "ios-use-home",
-                isDirectory: true
-            )
-        )
-        let baselineRoot = try makePrivateDirectory(
-            workRoot.appendingPathComponent(
-                "baselines",
-                isDirectory: true
-            )
-        )
-
-        let pinnedOutput = pinnedHome.appendingPathComponent(
-            "prepared/Pinned.app",
-            isDirectory: true
-        )
-        let pinned = try await PlayCoverPinnedHeadlessInstallerOracle.prepare(
-            PlayCoverPinnedPrimitivePrepareOptions(
-                sourceApp: sourceSnapshot,
-                stagingApp: pinnedOutput,
-                managedHome: pinnedHome,
-                bundledPlayToolsFramework: playTools
-            )
-        )
-
-        let paths = IOSUsePaths.resolve(
-            environment: ["IOS_USE_HOME": iosUseHome.path]
-        )
-        let candidateParent = URL(
-            fileURLWithPath: paths.playcoverPrepared,
-            isDirectory: true
-        ).appendingPathComponent("differential", isDirectory: true)
-        try FileManager.default.createDirectory(
-            at: candidateParent,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        let iosUseOutput = candidateParent.appendingPathComponent(
-            "IOSUse.app",
-            isDirectory: true
-        )
-        let plan = try PlayCoverService.makePreparationPlan(
-            source: PlayCoverService.inspectPreparationSource(
-                appPath: sourceSnapshot.path
-            ),
-            runtimeFrameworkPath: runtime.path
-        )
-        guard plan.runtimeBuildHash == runtimeInputTreeSHA256 else {
-            throw ProfileError.invalid(
-                "preparation plan did not bind the reviewed Runtime tree"
-            )
-        }
-        let preparedArtifact = try PlayCoverService.prepareMeasured(
-            plan: plan,
-            outputAppPath: iosUseOutput.path,
-            paths: paths
-        )
-        let iosUseResult = try XCTUnwrap(preparedArtifact.upstreamResult)
-        let iosUse = try PlayCoverUpstreamEngine.inspect(
-            appURL: iosUseOutput
-        )
-        XCTAssertEqual(iosUseResult.prepared, iosUse)
-
-        let runtimeBaselineFramework =
-            baselineRoot.appendingPathComponent(
-                "IOSUsePlayRuntime.framework",
-                isDirectory: true
-            )
-        try FileManager.default.copyItem(
-            at: runtime,
-            to: runtimeBaselineFramework
-        )
-        try Shell.signMacho(runtimeBaselineFramework)
-        let pluginBaselineBundle = baselineRoot.appendingPathComponent(
-            "AKInterface.bundle",
-            isDirectory: true
-        )
-        try FileManager.default.copyItem(
-            at: playTools.appendingPathComponent(
-                "PlugIns/AKInterface.bundle"
-            ),
-            to: pluginBaselineBundle
-        )
-        try Shell.signMacho(pluginBaselineBundle)
-
-        let runtimeBaselineExecutable =
-            runtimeBaselineFramework.appendingPathComponent(
-                executableSuffix(
-                    from: profile.runtime.outputExecutableRelativePath,
-                    below: profile.runtime.outputFrameworkRelativePath
-                )
-            )
-        let pluginBaselineExecutable =
-            pluginBaselineBundle.appendingPathComponent(
-                executableSuffix(
-                    from:
-                        profile.playTools.outputPluginExecutableRelativePath,
-                    below: profile.playTools.outputPluginRelativePath
-                )
-            )
-        let runtimeInspection =
-            try PlayCoverUpstreamEngine.inspectMachO(
-                at: runtimeBaselineExecutable,
-                relativePath:
-                    profile.runtime.outputExecutableRelativePath
-            )
-        let pluginInspection =
-            try PlayCoverUpstreamEngine.inspectMachO(
-                at: pluginBaselineExecutable,
-                relativePath:
-                    profile.playTools.outputPluginExecutableRelativePath
-            )
-        let runtimeSignedProjectionTreeSHA256 =
-            try PlayCoverUpstreamEngine.contentHash(
-                appURL: runtimeBaselineFramework
-            )
-        let pluginSignedProjectionTreeSHA256 =
-            try PlayCoverUpstreamEngine.contentHash(
-                appURL: pluginBaselineBundle
-            )
-        guard
-            runtimeInspection.fileSHA256
-                == profile.runtime.signedProjectionExecutableSHA256,
-            runtimeSignedProjectionTreeSHA256
-                == profile.runtime.signedProjectionTreeSHA256,
-            pluginInspection.fileSHA256
-                == profile.playTools.signedPluginExecutableSHA256,
-            pluginSignedProjectionTreeSHA256
-                == profile.playTools.signedPluginTreeSHA256
-        else {
-            throw ProfileError.invalid(
-                "independent one-sided projection changed"
-            )
-        }
-
-        let actualRuntimeFramework = iosUseOutput.appendingPathComponent(
-            profile.runtime.outputFrameworkRelativePath,
-            isDirectory: true
-        )
-        let actualPluginBundle = pinnedOutput.appendingPathComponent(
-            profile.playTools.outputPluginRelativePath,
-            isDirectory: true
-        )
-        guard
-            try PlayCoverUpstreamEngine.contentHash(
-                appURL: actualRuntimeFramework
-            ) == runtimeSignedProjectionTreeSHA256,
-            try PlayCoverUpstreamEngine.contentHash(
-                appURL: actualPluginBundle
-            ) == pluginSignedProjectionTreeSHA256
-        else {
-            throw ProfileError.invalid(
-                "prepared one-sided tree is not its reviewed projection"
-            )
-        }
-
-        let baselines = [
-            PlayCoverDifferentialObjectBaseline(
-                id: "external-pinned-akinterface-input",
-                side: .pinned,
-                relativePath:
-                    profile.playTools.outputPluginExecutableRelativePath,
-                inspection: pluginInspection,
-                sourceSHA256: pluginInspection.fileSHA256,
-                provenance:
-                    "external profile \(profileSHA256); pinned "
-                    + "PlayTools full-tree projection"
-            ),
-            PlayCoverDifferentialObjectBaseline(
-                id: "external-ios-use-runtime-input",
-                side: .iosUse,
-                relativePath:
-                    profile.runtime.outputExecutableRelativePath,
-                inspection: runtimeInspection,
-                sourceSHA256: runtimeInspection.fileSHA256,
-                provenance:
-                    "external profile \(profileSHA256); fresh Runtime "
-                    + "full-tree projection"
-            ),
-        ]
-        let normalization =
-            try PlayCoverDifferentialNormalization.externalApp(
-                pinnedManagedHome: pinnedHome,
-                iosUseManagedHome: iosUseHome
-            )
         let allowances = profile.allowances.map {
             $0.allowance()
         }
         let differences = try PlayCoverPrepareDifferentialGate.differences(
-            pinned: pinned.prepared,
-            iosUse: iosUse,
-            oneSidedBaselines: baselines,
-            normalization: normalization
+            pinned: comparison.pinnedResult.prepared,
+            iosUse: comparison.iosUseResult.prepared,
+            oneSidedBaselines: comparison.baselines,
+            normalization: comparison.normalization
         )
         try requireExactSelectorBijection(
             differences: differences,
@@ -533,12 +372,15 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         let differential = try PlayCoverPrepareDifferentialGate.attest(
             scope: .externalApp,
             repositoryRoot: repository,
-            sourceApp: sourceSnapshot,
-            pinnedResult: pinned,
-            iosUseResult: iosUseResult,
+            sourceApp: URL(
+                fileURLWithPath: comparison.snapshotBefore.appPath,
+                isDirectory: true
+            ),
+            pinnedResult: comparison.pinnedResult,
+            iosUseResult: comparison.iosUseResult,
             allowances: allowances,
-            oneSidedBaselines: baselines,
-            normalization: normalization
+            oneSidedBaselines: comparison.baselines,
+            normalization: comparison.normalization
         )
         guard differential.consumedAllowances.count == allowances.count,
               differential.consumedAllowances.count == differences.count,
@@ -550,22 +392,11 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             )
         }
 
-        let originalAfter = try PlayCoverUpstreamEngine.inspect(
-            appURL: source
+        let recheck = try recheckExternalInputs(
+            comparison,
+            runtime: runtime,
+            playTools: playTools
         )
-        try requireEquivalentInput(originalBefore, originalAfter)
-        let runtimeAfter =
-            try PlayCoverService.runtimeBuildHash(
-                frameworkPath: runtime.path
-            )
-        let playToolsAfter =
-            try PlayCoverUpstreamEngine.contentHash(appURL: playTools)
-        guard runtimeAfter == runtimeInputTreeSHA256,
-              playToolsAfter == playToolsInputTreeSHA256 else {
-            throw ProfileError.invalid(
-                "Runtime or PlayTools input changed during prepare"
-            )
-        }
 
         let attestation = ExternalAttestation(
             schemaVersion: 1,
@@ -575,20 +406,23 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             profileSHA256: profileSHA256,
             originalSource: OriginalSourceEvidence(
                 scenarioSHA256: scenarioSHA256,
-                inputContentSHA256: originalBefore.sourceContentHash,
+                inputContentSHA256:
+                    comparison.originalBefore.sourceContentHash,
                 snapshotContentSHA256:
-                    snapshotInspection.sourceContentHash,
+                    comparison.snapshotBefore.sourceContentHash,
                 recomputedAfterPrepareSHA256:
-                    originalAfter.sourceContentHash,
+                    recheck.sourceContentHash,
                 unchanged: true
             ),
             inputs: InputTreeEvidence(
-                runtimeInputTreeSHA256: runtimeInputTreeSHA256,
+                runtimeInputTreeSHA256:
+                    comparison.runtimeInputTreeSHA256,
                 runtimeSignedProjectionTreeSHA256:
-                    runtimeSignedProjectionTreeSHA256,
-                playToolsInputTreeSHA256: playToolsInputTreeSHA256,
+                    comparison.runtimeSignedProjectionTreeSHA256,
+                playToolsInputTreeSHA256:
+                    comparison.playToolsInputTreeSHA256,
                 playToolsSignedPluginTreeSHA256:
-                    pluginSignedProjectionTreeSHA256,
+                    comparison.pluginSignedProjectionTreeSHA256,
                 runtimeUnchanged: true,
                 playToolsUnchanged: true
             ),
@@ -607,6 +441,236 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: attestationURL.path
+        )
+    }
+
+    func testConfiguredExternalAppWritesDiagnosticCharacterization()
+        async throws
+    {
+        let environment = ProcessInfo.processInfo.environment
+        let required = [
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_SCENARIO",
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_RUNTIME",
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_PLAYTOOLS",
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_WORK_ROOT",
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_REPORT",
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_COMMIT",
+        ]
+        guard required.allSatisfy({
+            environment[$0]?.isEmpty == false
+        }) else {
+            throw XCTSkip(
+                "external-App characterization inputs are intentionally "
+                    + "explicit"
+            )
+        }
+
+        let scenarioURL = try configuredURL(
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_SCENARIO",
+            environment: environment,
+            isDirectory: false
+        )
+        let runtime = try configuredURL(
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_RUNTIME",
+            environment: environment,
+            isDirectory: true
+        )
+        let playTools = try configuredURL(
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_PLAYTOOLS",
+            environment: environment,
+            isDirectory: true
+        )
+        let requestedWorkRoot = try configuredURL(
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_WORK_ROOT",
+            environment: environment,
+            isDirectory: true
+        )
+        let reportURL = try configuredURL(
+            "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_REPORT",
+            environment: environment,
+            isDirectory: false
+        )
+        let repository = repositoryRoot()
+        try requireOutsideRepository(
+            requestedWorkRoot,
+            repositoryRoot: repository,
+            label: "work root"
+        )
+        try requireOutsideRepository(
+            reportURL,
+            repositoryRoot: repository,
+            label: "report"
+        )
+        guard !FileManager.default.fileExists(
+            atPath: requestedWorkRoot.path
+        ), !FileManager.default.fileExists(atPath: reportURL.path) else {
+            throw ProfileError.invalid(
+                "work root and report must be fresh paths"
+            )
+        }
+
+        let scenarioData = try boundedRegularFile(
+            scenarioURL,
+            maximumBytes: 1_048_576
+        )
+        let scenarioSHA256 = sha256(scenarioData)
+        let scenario = try JSONDecoder().decode(
+            Scenario.self,
+            from: scenarioData
+        )
+        guard scenario.schemaVersion == 1,
+              scenario.appPath.hasPrefix("/"),
+              !scenario.bundleIdentifier.isEmpty else {
+            throw ProfileError.invalid("scenario identity is incomplete")
+        }
+        let commit = try XCTUnwrap(
+            environment[
+                "IOS_USE_PLAYCOVER_EXTERNAL_CHARACTERIZATION_COMMIT"
+            ]
+        )
+        guard isLowercaseHex(commit, count: 40) else {
+            throw ProfileError.invalid(
+                "repository commit is not lowercase 40-digit Git identity"
+            )
+        }
+        let currentCommit = try Shell.run(
+            print: false,
+            "/usr/bin/git",
+            "-C",
+            repository.path,
+            "rev-parse",
+            "HEAD"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard commit == currentCommit else {
+            throw ProfileError.invalid(
+                "repository commit does not identify the current checkout"
+            )
+        }
+
+        let comparison = try await prepareExternalComparison(
+            scenario: scenario,
+            runtime: runtime,
+            playTools: playTools,
+            requestedWorkRoot: requestedWorkRoot,
+            runtimeExecutableRelativePath:
+                "Frameworks/IOSUsePlayRuntime.framework/"
+                    + "Versions/A/IOSUsePlayRuntime",
+            pluginExecutableRelativePath:
+                "PlugIns/AKInterface.bundle/Contents/MacOS/AKInterface",
+            pinnedBaselineProvenance:
+                "supplied PlayTools full-tree signed projection",
+            iosUseBaselineProvenance:
+                "supplied Runtime full-tree signed projection",
+            validateInput: { _, _, _, _ in },
+            validateProjection: { _, _, _, _ in }
+        )
+        defer {
+            try? FileManager.default.removeItem(
+                at: requestedWorkRoot.resolvingSymlinksInPath()
+            )
+        }
+        let differences =
+            try PlayCoverPrepareDifferentialGate.differences(
+                pinnedResult: comparison.pinnedResult,
+                iosUseResult: comparison.iosUseResult,
+                oneSidedBaselines: comparison.baselines,
+                normalization: comparison.normalization
+            )
+        let recheck = try recheckExternalInputs(
+            comparison,
+            runtime: runtime,
+            playTools: playTools
+        )
+
+        let report = ExternalCharacterizationReport(
+            schemaVersion: 1,
+            kind: "playcover-external-prepare-characterization",
+            disposition: "diagnostic-only",
+            repositoryCommit: commit,
+            source: try sourceIdentity(
+                comparison.originalBefore
+            ),
+            sourceState: OriginalSourceEvidence(
+                scenarioSHA256: scenarioSHA256,
+                inputContentSHA256:
+                    comparison.originalBefore.sourceContentHash,
+                snapshotContentSHA256:
+                    comparison.snapshotBefore.sourceContentHash,
+                recomputedAfterPrepareSHA256:
+                    recheck.sourceContentHash,
+                unchanged: true
+            ),
+            runtime: RuntimeProfile(
+                inputTreeSHA256:
+                    comparison.runtimeInputTreeSHA256,
+                inputExecutableSHA256:
+                    comparison.runtimeInputExecutableSHA256,
+                signedProjectionTreeSHA256:
+                    comparison.runtimeSignedProjectionTreeSHA256,
+                signedProjectionExecutableSHA256:
+                    comparison
+                        .runtimeSignedProjectionExecutableSHA256,
+                outputFrameworkRelativePath:
+                    "Frameworks/IOSUsePlayRuntime.framework",
+                outputExecutableRelativePath:
+                    "Frameworks/IOSUsePlayRuntime.framework/"
+                        + "Versions/A/IOSUsePlayRuntime"
+            ),
+            playTools: PlayToolsProfile(
+                inputTreeSHA256:
+                    comparison.playToolsInputTreeSHA256,
+                signedPluginTreeSHA256:
+                    comparison.pluginSignedProjectionTreeSHA256,
+                signedPluginExecutableSHA256:
+                    comparison.pluginSignedProjectionExecutableSHA256,
+                outputPluginRelativePath:
+                    "PlugIns/AKInterface.bundle",
+                outputPluginExecutableRelativePath:
+                    "PlugIns/AKInterface.bundle/"
+                        + "Contents/MacOS/AKInterface"
+            ),
+            revisions: RevisionProfile(
+                playCover:
+                    PlayCoverPinnedHeadlessInstallerOracle
+                        .playCoverRevision,
+                inject: PlayCoverUpstreamEngine.injectRevision,
+                rules: PlayCoverUpstreamEngine
+                    .defaultRulesRevision,
+                prepare:
+                    PlayCoverService.prepareImplementationRevision
+            ),
+            inputs: InputTreeEvidence(
+                runtimeInputTreeSHA256:
+                    comparison.runtimeInputTreeSHA256,
+                runtimeSignedProjectionTreeSHA256:
+                    comparison.runtimeSignedProjectionTreeSHA256,
+                playToolsInputTreeSHA256:
+                    comparison.playToolsInputTreeSHA256,
+                playToolsSignedPluginTreeSHA256:
+                    comparison.pluginSignedProjectionTreeSHA256,
+                runtimeUnchanged: true,
+                playToolsUnchanged: true
+            ),
+            pinnedOutputSHA256:
+                comparison.pinnedResult.prepared.sourceContentHash,
+            iosUseOutputSHA256:
+                comparison.iosUseResult.prepared.sourceContentHash,
+            normalizationMode: "external-app-managed-paths-v1",
+            differences: differences
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [
+            .prettyPrinted,
+            .sortedKeys,
+            .withoutEscapingSlashes,
+        ]
+        try encoder.encode(report).write(
+            to: reportURL,
+            options: .withoutOverwriting
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: reportURL.path
         )
     }
 
@@ -694,6 +758,346 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 profile: minimalProfile(allowances: [allowance])
             )
         )
+    }
+
+    private func prepareExternalComparison(
+        scenario: Scenario,
+        runtime: URL,
+        playTools: URL,
+        requestedWorkRoot: URL,
+        runtimeExecutableRelativePath: String,
+        pluginExecutableRelativePath: String,
+        pinnedBaselineProvenance: String,
+        iosUseBaselineProvenance: String,
+        keepWorkOnFailure: Bool = false,
+        validateInput: (
+            PlayCoverUpstreamAppInspection,
+            String,
+            String,
+            String
+        ) throws -> Void,
+        validateProjection: (
+            String,
+            String,
+            String,
+            String
+        ) throws -> Void
+    ) async throws -> ExternalComparison {
+        let runtimeFrameworkRelativePath =
+            "Frameworks/IOSUsePlayRuntime.framework"
+        let pluginBundleRelativePath = "PlugIns/AKInterface.bundle"
+        let source = URL(
+            fileURLWithPath: scenario.appPath,
+            isDirectory: true
+        ).standardizedFileURL
+        let originalBefore = try PlayCoverUpstreamEngine.inspect(
+            appURL: source
+        )
+        guard originalBefore.bundleIdentifier
+                == scenario.bundleIdentifier else {
+            throw ProfileError.invalid(
+                "scenario bundle identifier does not match source App"
+            )
+        }
+        let runtimeInputTreeSHA256 =
+            try PlayCoverService.runtimeBuildHash(
+                frameworkPath: runtime.path
+            )
+        let runtimeInputExecutable = runtime.appendingPathComponent(
+            executableSuffix(
+                from: runtimeExecutableRelativePath,
+                below: runtimeFrameworkRelativePath
+            )
+        )
+        let runtimeInputExecutableSHA256 =
+            try PlayCoverUpstreamEngine.inspectMachO(
+                at: runtimeInputExecutable,
+                relativePath: runtimeExecutableRelativePath
+            ).fileSHA256
+        let playToolsInputTreeSHA256 =
+            try PlayCoverUpstreamEngine.contentHash(appURL: playTools)
+        try validateInput(
+            originalBefore,
+            runtimeInputTreeSHA256,
+            runtimeInputExecutableSHA256,
+            playToolsInputTreeSHA256
+        )
+
+        try FileManager.default.createDirectory(
+            at: requestedWorkRoot,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let workRoot = requestedWorkRoot.resolvingSymlinksInPath()
+        var completed = false
+        defer {
+            if !completed, !keepWorkOnFailure {
+                try? FileManager.default.removeItem(at: workRoot)
+            }
+        }
+        let sourceSnapshot = workRoot.appendingPathComponent(
+            "source-snapshot/Source.app",
+            isDirectory: true
+        )
+        try cloneTree(source, to: sourceSnapshot)
+        let snapshotBefore =
+            try PlayCoverUpstreamEngine.inspect(appURL: sourceSnapshot)
+        try requireEquivalentInput(originalBefore, snapshotBefore)
+
+        let pinnedHome = try makePrivateDirectory(
+            workRoot.appendingPathComponent(
+                "pinned-home",
+                isDirectory: true
+            )
+        )
+        let iosUseHome = try makePrivateDirectory(
+            workRoot.appendingPathComponent(
+                "ios-use-home",
+                isDirectory: true
+            )
+        )
+        let baselineRoot = try makePrivateDirectory(
+            workRoot.appendingPathComponent(
+                "baselines",
+                isDirectory: true
+            )
+        )
+        guard pinnedHome.resolvingSymlinksInPath()
+                != iosUseHome.resolvingSymlinksInPath() else {
+            throw ProfileError.invalid(
+                "managed homes must be fresh and distinct"
+            )
+        }
+
+        let pinnedOutput = pinnedHome.appendingPathComponent(
+            "prepared/Pinned.app",
+            isDirectory: true
+        )
+        let pinnedResult =
+            try await PlayCoverPinnedHeadlessInstallerOracle.prepare(
+                PlayCoverPinnedPrimitivePrepareOptions(
+                    sourceApp: sourceSnapshot,
+                    stagingApp: pinnedOutput,
+                    managedHome: pinnedHome,
+                    bundledPlayToolsFramework: playTools
+                )
+            )
+
+        let iosUsePaths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": iosUseHome.path]
+        )
+        let candidateParent = URL(
+            fileURLWithPath: iosUsePaths.playcoverPrepared,
+            isDirectory: true
+        ).appendingPathComponent("differential", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: candidateParent,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let iosUseOutput = candidateParent.appendingPathComponent(
+            "IOSUse.app",
+            isDirectory: true
+        )
+        let inspectedSource =
+            try PlayCoverService.inspectPreparationSource(
+                appPath: sourceSnapshot.path
+            )
+        let plan = try PlayCoverService.makePreparationPlan(
+            source: inspectedSource,
+            runtimeFrameworkPath: runtime.path
+        )
+        guard plan.runtimeBuildHash == runtimeInputTreeSHA256 else {
+            throw ProfileError.invalid(
+                "preparation plan did not bind the supplied Runtime tree"
+            )
+        }
+        let measured = try PlayCoverService.prepareMeasured(
+            plan: plan,
+            outputAppPath: iosUseOutput.path,
+            paths: iosUsePaths
+        )
+        let iosUseResult = try XCTUnwrap(measured.upstreamResult)
+        let recomputedIOSUse = try PlayCoverUpstreamEngine.inspect(
+            appURL: iosUseOutput
+        )
+        XCTAssertEqual(iosUseResult.prepared, recomputedIOSUse)
+
+        let runtimeBaselineFramework =
+            baselineRoot.appendingPathComponent(
+                "IOSUsePlayRuntime.framework",
+                isDirectory: true
+            )
+        try FileManager.default.copyItem(
+            at: runtime,
+            to: runtimeBaselineFramework
+        )
+        try Shell.signMacho(runtimeBaselineFramework)
+        let pluginBaselineBundle = baselineRoot.appendingPathComponent(
+            "AKInterface.bundle",
+            isDirectory: true
+        )
+        try FileManager.default.copyItem(
+            at: playTools.appendingPathComponent(
+                "PlugIns/AKInterface.bundle"
+            ),
+            to: pluginBaselineBundle
+        )
+        try Shell.signMacho(pluginBaselineBundle)
+
+        let runtimeInspection =
+            try PlayCoverUpstreamEngine.inspectMachO(
+                at: runtimeBaselineFramework.appendingPathComponent(
+                    executableSuffix(
+                        from: runtimeExecutableRelativePath,
+                        below: runtimeFrameworkRelativePath
+                    )
+                ),
+                relativePath: runtimeExecutableRelativePath
+            )
+        let pluginInspection =
+            try PlayCoverUpstreamEngine.inspectMachO(
+                at: pluginBaselineBundle.appendingPathComponent(
+                    executableSuffix(
+                        from: pluginExecutableRelativePath,
+                        below: pluginBundleRelativePath
+                    )
+                ),
+                relativePath: pluginExecutableRelativePath
+            )
+        let runtimeSignedProjectionTreeSHA256 =
+            try PlayCoverUpstreamEngine.contentHash(
+                appURL: runtimeBaselineFramework
+            )
+        let pluginSignedProjectionTreeSHA256 =
+            try PlayCoverUpstreamEngine.contentHash(
+                appURL: pluginBaselineBundle
+            )
+        try validateProjection(
+            runtimeInspection.fileSHA256,
+            runtimeSignedProjectionTreeSHA256,
+            pluginInspection.fileSHA256,
+            pluginSignedProjectionTreeSHA256
+        )
+
+        guard
+            try PlayCoverUpstreamEngine.contentHash(
+                appURL: iosUseOutput.appendingPathComponent(
+                    runtimeFrameworkRelativePath,
+                    isDirectory: true
+                )
+            ) == runtimeSignedProjectionTreeSHA256,
+            try PlayCoverUpstreamEngine.contentHash(
+                appURL: pinnedOutput.appendingPathComponent(
+                    pluginBundleRelativePath,
+                    isDirectory: true
+                )
+            ) == pluginSignedProjectionTreeSHA256
+        else {
+            throw ProfileError.invalid(
+                "prepared one-sided tree is not its supplied projection"
+            )
+        }
+
+        let baselines = [
+            PlayCoverDifferentialObjectBaseline(
+                id: "external-pinned-akinterface-input",
+                side: .pinned,
+                relativePath: pluginExecutableRelativePath,
+                inspection: pluginInspection,
+                sourceSHA256: pluginInspection.fileSHA256,
+                provenance: pinnedBaselineProvenance
+            ),
+            PlayCoverDifferentialObjectBaseline(
+                id: "external-ios-use-runtime-input",
+                side: .iosUse,
+                relativePath: runtimeExecutableRelativePath,
+                inspection: runtimeInspection,
+                sourceSHA256: runtimeInspection.fileSHA256,
+                provenance: iosUseBaselineProvenance
+            ),
+        ]
+        let normalization =
+            try PlayCoverDifferentialNormalization.externalApp(
+                pinnedManagedHome: pinnedHome,
+                iosUseManagedHome: iosUseHome
+        )
+        completed = true
+        return ExternalComparison(
+            originalBefore: originalBefore,
+            snapshotBefore: snapshotBefore,
+            pinnedResult: pinnedResult,
+            iosUseResult: iosUseResult,
+            runtimeInputTreeSHA256: runtimeInputTreeSHA256,
+            runtimeInputExecutableSHA256:
+                runtimeInputExecutableSHA256,
+            playToolsInputTreeSHA256: playToolsInputTreeSHA256,
+            runtimeSignedProjectionTreeSHA256:
+                runtimeSignedProjectionTreeSHA256,
+            runtimeSignedProjectionExecutableSHA256:
+                runtimeInspection.fileSHA256,
+            pluginSignedProjectionTreeSHA256:
+                pluginSignedProjectionTreeSHA256,
+            pluginSignedProjectionExecutableSHA256:
+                pluginInspection.fileSHA256,
+            baselines: baselines,
+            normalization: normalization
+        )
+    }
+
+    private func recheckExternalInputs(
+        _ comparison: ExternalComparison,
+        runtime: URL,
+        playTools: URL
+    ) throws -> PlayCoverUpstreamAppInspection {
+        let originalAfter = try PlayCoverUpstreamEngine.inspect(
+            appURL: URL(
+                fileURLWithPath: comparison.originalBefore.appPath,
+                isDirectory: true
+            )
+        )
+        let snapshotAfter = try PlayCoverUpstreamEngine.inspect(
+            appURL: URL(
+                fileURLWithPath: comparison.snapshotBefore.appPath,
+                isDirectory: true
+            )
+        )
+        try requireEquivalentInput(
+            comparison.originalBefore,
+            originalAfter
+        )
+        try requireEquivalentInput(
+            comparison.snapshotBefore,
+            snapshotAfter
+        )
+        guard
+            comparison.pinnedResult.sourceBefore
+                == comparison.snapshotBefore,
+            comparison.iosUseResult.sourceBefore
+                == comparison.snapshotBefore,
+            comparison.pinnedResult.sourceHashAfterPrepare
+                == comparison.snapshotBefore.sourceContentHash,
+            comparison.iosUseResult.sourceHashAfterPrepare
+                == comparison.snapshotBefore.sourceContentHash
+        else {
+            throw ProfileError.invalid(
+                "prepare results did not preserve the fresh source snapshot"
+            )
+        }
+        let runtimeAfter =
+            try PlayCoverService.runtimeBuildHash(
+                frameworkPath: runtime.path
+            )
+        let playToolsAfter =
+            try PlayCoverUpstreamEngine.contentHash(appURL: playTools)
+        guard runtimeAfter == comparison.runtimeInputTreeSHA256,
+              playToolsAfter
+                == comparison.playToolsInputTreeSHA256 else {
+            throw ProfileError.invalid(
+                "Runtime or PlayTools input changed during prepare"
+            )
+        }
+        return originalAfter
     }
 
     private func validate(_ profile: ExternalProfile) throws {
@@ -786,6 +1190,17 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         _ profile: SourceProfile,
         matches inspection: PlayCoverUpstreamAppInspection
     ) throws {
+        guard profile == (try sourceIdentity(inspection)) else {
+            throw ProfileError.invalid(
+                "source App no longer matches its reviewed full-tree "
+                    + "selector identity"
+            )
+        }
+    }
+
+    private func sourceIdentity(
+        _ inspection: PlayCoverUpstreamAppInspection
+    ) throws -> SourceProfile {
         let main = try XCTUnwrap(
             inspection.machOs.first {
                 $0.relativePath
@@ -797,23 +1212,19 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         let objectSelectors = inspection.machOs
             .map(\.relativePath).sorted()
         let sliceSelectors = allSliceSelectors(in: inspection)
-        guard profile.contentSHA256 == inspection.sourceContentHash,
-              profile.executableSHA256 == main.fileSHA256,
-              profile.bundleIdentifier == inspection.bundleIdentifier,
-              profile.mainExecutableRelativePath
-                == inspection.mainExecutableRelativePath,
-              profile.inventorySelectorsSHA256
-                == digest(inventorySelectors),
-              profile.objectSelectorsSHA256 == digest(objectSelectors),
-              profile.sliceSelectorsSHA256 == digest(sliceSelectors),
-              profile.inventoryCount == inventorySelectors.count,
-              profile.objectCount == objectSelectors.count,
-              profile.sliceCount == sliceSelectors.count else {
-            throw ProfileError.invalid(
-                "source App no longer matches its reviewed full-tree "
-                    + "selector identity"
-            )
-        }
+        return SourceProfile(
+            contentSHA256: inspection.sourceContentHash,
+            executableSHA256: main.fileSHA256,
+            bundleIdentifier: inspection.bundleIdentifier,
+            mainExecutableRelativePath:
+                inspection.mainExecutableRelativePath,
+            inventorySelectorsSHA256: digest(inventorySelectors),
+            objectSelectorsSHA256: digest(objectSelectors),
+            sliceSelectorsSHA256: digest(sliceSelectors),
+            inventoryCount: inventorySelectors.count,
+            objectCount: objectSelectors.count,
+            sliceCount: sliceSelectors.count
+        )
     }
 
     private func requireEquivalentInput(

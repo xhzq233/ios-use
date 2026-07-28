@@ -298,6 +298,20 @@ explicitly scoped
 baseline/allowance configuration and is not inferred from the live UI
 scenario.
 
+External-App characterization is a separate diagnostic-only operation. It
+clones a fresh source snapshot, uses disjoint fresh managed homes, runs the
+full pinned PlayTools Installer oracle and the real
+`PlayCoverService.inspectPreparationSource` → plan → `prepareMeasured` →
+typed upstream-result path, and supplies signed Runtime/AKInterface one-sided
+baselines plus external managed-path normalization to the raw differential
+analyzer. It verifies that the original source, snapshot, Runtime, and
+PlayTools trees remain unchanged. The owner-only no-overwrite report records
+typed input identities, producer revisions, output hashes, and raw
+differences with kind `playcover-external-prepare-characterization` and
+disposition `diagnostic-only`. It does not call the enforcing or attesting
+APIs and contains no generated review explanations, symbols, or acceptance
+decision.
+
 One owner-only cross-process operation lock serializes every backend's start
 and stop mutation within an `IOS_USE_HOME`, including PlayCover prepare
 publication, session commit, and cache collection. After a successful start,

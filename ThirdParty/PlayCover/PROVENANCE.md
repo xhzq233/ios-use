@@ -265,3 +265,16 @@ re-inspected, and the pinned result must carry the full-PlayTools Installer
 oracle producer identity. Managed-path normalization accepts only actual
 lexical/canonical roots and their exact descendants; it does not invent
 `/private` aliases or collapse sibling path prefixes.
+
+The configured external-App characterization entrypoint uses the same full
+PlayTools Installer oracle, a fresh source snapshot, disjoint managed homes,
+signed Runtime/AKInterface one-sided baselines, and external managed-path
+normalization. Its ios-use side is produced only through the real service
+inspection, preparation plan, measured prepare, and typed upstream result.
+The typed raw-difference overload rejects any pinned result not produced by
+the full oracle, then delegates to the analyzer without enforcing or
+attesting. The resulting owner-only, no-overwrite JSON is explicitly
+`diagnostic-only`: it records source selector identity, Runtime/PlayTools
+input and signed-projection identity, producer revisions, output hashes, and
+raw differences, but no generated review explanations, symbols, or
+acceptance decision.

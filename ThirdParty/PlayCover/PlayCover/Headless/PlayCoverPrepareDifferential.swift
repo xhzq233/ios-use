@@ -12,7 +12,7 @@ import MachO
 import injection
 
 private let playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 =
-    "3883d91694ded76c944e5f277c5a1a2004e594b20f5cde57909afaff6d874e0a"
+    "59b8392933536b1ee12e0652b0cc7aec1a672d196e617066926d782a26deb71d"
 
 private func playCoverCanonicalExistingURL(_ url: URL) -> URL? {
     guard let resolved = realpath(url.standardizedFileURL.path, nil) else {
@@ -509,7 +509,9 @@ public enum PlayCoverPinnedPrimitiveCharacterization {
     }
 }
 
-public struct PlayCoverDifferentialDifference: Equatable, Sendable {
+public struct PlayCoverDifferentialDifference:
+    Codable, Equatable, Sendable
+{
     public let relativePath: String
     public let field: String
     public let pinnedValue: String?
@@ -1678,6 +1680,26 @@ public enum PlayCoverPrepareDifferentialGate {
             selectorCoverage: report.selectorCoverage,
             consumedAllowances: report.consumedAllowances,
             consumedBaselines: report.consumedBaselines
+        )
+    }
+
+    public static func differences(
+        pinnedResult: PlayCoverPinnedPrimitivePrepareResult,
+        iosUseResult: PlayCoverUpstreamPrepareResult,
+        oneSidedBaselines: [PlayCoverDifferentialObjectBaseline] = [],
+        normalization: PlayCoverDifferentialNormalization = .init()
+    ) throws -> [PlayCoverDifferentialDifference] {
+        guard pinnedResult.producer == .fullPlayToolsInstallerOracle else {
+            throw PlayCoverDifferentialAttestationError.invalidIdentity([
+                "pinned prepare result was not produced by the full "
+                    + "PlayTools Installer oracle",
+            ])
+        }
+        return try differences(
+            pinned: pinnedResult.prepared,
+            iosUse: iosUseResult.prepared,
+            oneSidedBaselines: oneSidedBaselines,
+            normalization: normalization
         )
     }
 
