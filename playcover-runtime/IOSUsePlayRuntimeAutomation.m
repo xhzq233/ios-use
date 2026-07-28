@@ -432,16 +432,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationElementJSON(
     };
 }
 
-static __attribute__((unused))
-NSDictionary<NSString *, id> *IOSUseAutomationCandidateSummary(
-    IOSUseAutomationCandidate *candidate
-) {
-    return @{
-        @"element": IOSUseAutomationElementJSON(candidate),
-        @"rejectedBy": @[],
-    };
-}
-
 static BOOL IOSUseAutomationTargetValid(
     NSDictionary<NSString *, id> *target
 ) {
@@ -484,7 +474,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationFreshDOM(
     );
 }
 
-static __attribute__((unused))
+static
 IOSUseAutomationCandidate *IOSUseAutomationCandidateFromElement(
     NSDictionary<NSString *, id> *element
 ) {
@@ -568,7 +558,7 @@ static BOOL IOSUseAutomationElementHasTraits(
     return YES;
 }
 
-static __attribute__((unused))
+static
 NSArray<NSDictionary<NSString *, id> *> *
 IOSUseAutomationSelectElements(
     NSDictionary<NSString *, id> *dom,
@@ -740,7 +730,6 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
         *generation =
             [dom[@"snapshotGeneration"] unsignedLongLongValue];
     }
-    NSArray<IOSUseAutomationCandidate *> *snapshot = @[];
     NSDictionary *explicitPoint = target[@"point"];
     CGPoint resolvedPoint = CGPointZero;
     IOSUseAutomationCandidate *selected = nil;
@@ -881,34 +870,26 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
         return nil;
     }
     if (selected == nil) {
-        for (IOSUseAutomationCandidate *candidate in snapshot) {
-            if (candidate.object == resolvedHit) {
-                selected = candidate;
-                break;
-            }
-        }
-        if (selected == nil) {
-            selected = [[IOSUseAutomationCandidate alloc] init];
-            selected.object = resolvedHit;
-            selected.nodeID = [NSString stringWithFormat:
-                @"%llu-%p",
-                *generation,
-                resolvedHit
-            ];
-            selected.label =
-                resolvedHit.accessibilityLabel ?: @"";
-            selected.value =
-                IOSUseAutomationString(resolvedHit.accessibilityValue);
-            selected.identifier =
-                resolvedHit.accessibilityIdentifier ?: @"";
-            selected.hint = resolvedHit.accessibilityHint ?: @"";
-            selected.className =
-                NSStringFromClass(resolvedHit.class);
-            selected.frame =
-                [resolvedHit convertRect:resolvedHit.bounds toView:nil];
-            selected.path = @"hit-test";
-            selected.generation = *generation;
-        }
+        selected = [[IOSUseAutomationCandidate alloc] init];
+        selected.object = resolvedHit;
+        selected.nodeID = [NSString stringWithFormat:
+            @"%llu-%p",
+            *generation,
+            resolvedHit
+        ];
+        selected.label =
+            resolvedHit.accessibilityLabel ?: @"";
+        selected.value =
+            IOSUseAutomationString(resolvedHit.accessibilityValue);
+        selected.identifier =
+            resolvedHit.accessibilityIdentifier ?: @"";
+        selected.hint = resolvedHit.accessibilityHint ?: @"";
+        selected.className =
+            NSStringFromClass(resolvedHit.class);
+        selected.frame =
+            [resolvedHit convertRect:resolvedHit.bounds toView:nil];
+        selected.path = @"hit-test";
+        selected.generation = *generation;
     }
     if (point != NULL) {
         *point = resolvedPoint;
@@ -920,32 +901,6 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
         *hitView = resolvedHit;
     }
     return selected;
-}
-
-static __attribute__((unused))
-IOSUseAutomationCandidate *IOSUseAutomationResolve(
-    NSDictionary<NSString *, id> *target,
-    CGPoint *point,
-    UIWindow **window,
-    UIView **hitView,
-    unsigned long long *generation,
-    NSDictionary<NSString *, id> **commandError
-) {
-    NSDictionary<NSString *, id> *dom =
-        IOSUseAutomationFreshDOM(commandError);
-    if (dom == nil) {
-        return nil;
-    }
-    return IOSUseAutomationResolveWithDOM(
-        target,
-        dom,
-        NO,
-        point,
-        window,
-        hitView,
-        generation,
-        commandError
-    );
 }
 
 static void IOSUseAutomationPump(NSTimeInterval duration) {
