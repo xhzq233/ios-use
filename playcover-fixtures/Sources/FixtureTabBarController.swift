@@ -26,14 +26,21 @@ final class FixtureTabBarController: UITabBarController {
         let swiftUIViewController = FixtureHostingController(
             rootView: SwiftUIFixtureView()
         )
+        let uikitViewController = UIKitFixtureViewController(
+            sceneGeneration: sceneGeneration
+        )
+        uikitViewController.navigationItem.title = "UIKit Fixture"
+        let uikitNavigationController = UINavigationController(
+            rootViewController: uikitViewController
+        )
+        uikitNavigationController.navigationBar.accessibilityIdentifier =
+            "fixture.uikit.navigation-bar"
         // UIHostingController is transparent on Mac Catalyst, so give the
         // fixture content an explicit light surface.
         swiftUIViewController.view.backgroundColor = .systemBackground
         viewControllers = [
             tab(
-                UIKitFixtureViewController(
-                    sceneGeneration: sceneGeneration
-                ),
+                uikitNavigationController,
                 title: "UIKit",
                 symbol: "rectangle.3.group",
                 identifier: "fixture.tab.uikit"
@@ -81,8 +88,7 @@ final class FixtureTabBarController: UITabBarController {
     @objc private func fullScreenBottomProbeTapped(_ sender: UIButton) {
         guard
             let identifier = sender.accessibilityIdentifier,
-            let fixture =
-                viewControllers?.first as? UIKitFixtureViewController
+            let fixture = uikitFixtureViewController
         else {
             return
         }
@@ -168,8 +174,7 @@ final class FixtureTabBarController: UITabBarController {
             return
         }
         lastGeometryDescription = description
-        (viewControllers?.first as? UIKitFixtureViewController)?
-            .updateGeometryDescription(description)
+        uikitFixtureViewController?.updateGeometryDescription(description)
 
         let payload: [String: Any] = [
             "logicalWidth": screen.bounds.width,
@@ -198,6 +203,17 @@ final class FixtureTabBarController: UITabBarController {
             to: documents.appendingPathComponent("geometry.json"),
             options: .atomic
         )
+    }
+
+    private var uikitFixtureViewController: UIKitFixtureViewController? {
+        guard
+            let navigationController =
+                viewControllers?.first as? UINavigationController
+        else {
+            return nil
+        }
+        return navigationController.viewControllers.first
+            as? UIKitFixtureViewController
     }
 }
 
