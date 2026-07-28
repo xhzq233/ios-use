@@ -9,6 +9,7 @@
 #import <objc/runtime.h>
 #import "CoreGraphics/CoreGraphics.h"
 #import "UIKit/UIKit.h"
+#import "IOSUsePlayDevice.h"
 #import "IOSUsePlaySwiftBridge.h"
 #import "PTFakeMetaTouch.h"
 #import <VideoSubscriberAccount/VideoSubscriberAccount.h>
@@ -126,8 +127,21 @@ __attribute__((visibility("hidden")))
 
 
 
-- (long long) hook_orientation {
-    return 0;
+- (UIDeviceOrientation)iosUsePlayDeviceOrientation {
+    return (UIDeviceOrientation)IOSUsePlayDeviceOrientation;
+}
+
+- (UIUserInterfaceIdiom)iosUsePlayUserInterfaceIdiom {
+    return (UIUserInterfaceIdiom)IOSUsePlayDeviceUserInterfaceIdiom;
+}
+
+- (NSString *)iosUsePlayDeviceModel {
+    return [NSString stringWithUTF8String:IOSUsePlayDeviceModel()];
+}
+
+- (NSString *)iosUsePlayDeviceLocalizedModel {
+    return [NSString
+        stringWithUTF8String:IOSUsePlayDeviceLocalizedModel()];
 }
 
 - (double) hook_nativeScale {
@@ -210,12 +224,6 @@ __attribute__((visibility("hidden")))
     }
 }
 
-// Hook for UIUserInterfaceIdiom
-
-// - (long long) hook_userInterfaceIdiom {
-//     return UIUserInterfaceIdiomPad;
-// }
-
 bool menuWasCreated = false;
 - (id) initWithRootMenuHook:(id)rootMenu {
     self = [self initWithRootMenuHook:rootMenu];
@@ -275,8 +283,6 @@ bool menuWasCreated = false;
                 [objc_getClass("FBSSceneSettings") swizzleInstanceMethod:@selector(bounds) withMethod:@selector(hook_boundsDefault)];
                 [objc_getClass("FBSDisplayMode") swizzleInstanceMethod:@selector(size) withMethod:@selector(hook_sizeDelfault)];
                 
-                // Fixes Apple mess at MacOS 13.2
-                [objc_getClass("UIDevice") swizzleInstanceMethod:@selector(orientation) withMethod:@selector(hook_orientation)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(nativeBounds) withMethod:@selector(hook_nativeBoundsDefault)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(nativeScale) withMethod:@selector(hook_nativeScale)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(scale) withMethod:@selector(hook_scale)];
@@ -289,7 +295,6 @@ bool menuWasCreated = false;
                 [objc_getClass("FBSSceneSettings") swizzleInstanceMethod:@selector(bounds) withMethod:@selector(hook_bounds)];
                 [objc_getClass("FBSDisplayMode") swizzleInstanceMethod:@selector(size) withMethod:@selector(hook_size)];
                 
-                [objc_getClass("UIDevice") swizzleInstanceMethod:@selector(orientation) withMethod:@selector(hook_orientation)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(nativeBounds) withMethod:@selector(hook_nativeBounds)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(nativeScale) withMethod:@selector(hook_nativeScale)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(scale) withMethod:@selector(hook_scale)];   
@@ -313,7 +318,6 @@ bool menuWasCreated = false;
                     [objc_getClass("FBSSceneSettings") swizzleInstanceMethod:@selector(bounds) withMethod:@selector(hook_boundsDefault)];
                     [objc_getClass("FBSDisplayMode") swizzleInstanceMethod:@selector(size) withMethod:@selector(hook_sizeDelfault)];
                 }
-                [objc_getClass("UIDevice") swizzleInstanceMethod:@selector(orientation) withMethod:@selector(hook_orientation)];
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(nativeBounds) withMethod:@selector(hook_nativeBoundsDefault)];
                 
                 [objc_getClass("UIScreen") swizzleInstanceMethod:@selector(nativeScale) withMethod:@selector(hook_nativeScale)];
@@ -334,9 +338,21 @@ bool menuWasCreated = false;
     
     [objc_getClass("_UIMenuBuilder") swizzleInstanceMethod:sel_getUid("initWithRootMenu:") withMethod:@selector(initWithRootMenuHook:)];
     [objc_getClass("IOSViewController") swizzleInstanceMethod:@selector(prefersPointerLocked) withMethod:@selector(hook_prefersPointerLocked)];
-    // Set idiom to iPad
-    // [objc_getClass("UIDevice") swizzleInstanceMethod:@selector(userInterfaceIdiom) withMethod:@selector(hook_userInterfaceIdiom)];
-    // [objc_getClass("UITraitCollection") swizzleInstanceMethod:@selector(userInterfaceIdiom) withMethod:@selector(hook_userInterfaceIdiom)];
+    [objc_getClass("UIDevice")
+        swizzleInstanceMethod:@selector(orientation)
+        withMethod:@selector(iosUsePlayDeviceOrientation)];
+    [objc_getClass("UIDevice")
+        swizzleInstanceMethod:@selector(userInterfaceIdiom)
+        withMethod:@selector(iosUsePlayUserInterfaceIdiom)];
+    [objc_getClass("UIDevice")
+        swizzleInstanceMethod:@selector(model)
+        withMethod:@selector(iosUsePlayDeviceModel)];
+    [objc_getClass("UIDevice")
+        swizzleInstanceMethod:@selector(localizedModel)
+        withMethod:@selector(iosUsePlayDeviceLocalizedModel)];
+    [objc_getClass("UITraitCollection")
+        swizzleInstanceMethod:@selector(userInterfaceIdiom)
+        withMethod:@selector(iosUsePlayUserInterfaceIdiom)];
 
     [objc_getClass("VSSubscriptionRegistrationCenter") swizzleInstanceMethod:@selector(setCurrentSubscription:) withMethod:@selector(hook_setCurrentSubscription:)];
 

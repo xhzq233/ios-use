@@ -105,6 +105,23 @@ xcrun --sdk macosx clang \
 
 "$IOS_USE_SMOKE_TEMP/SafeAreaCompatibilityContractTests"
 
+xcrun --sdk macosx clang \
+  -target arm64-apple-ios13.1-macabi \
+  -fobjc-arc \
+  -fmodules \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -iframework "$IOS_USE_MACOS_SDK/System/iOSSupport/System/Library/Frameworks" \
+  -F "$IOS_USE_MACOS_SDK/System/iOSSupport/System/Library/Frameworks" \
+  -framework Foundation \
+  -framework UIKit \
+  -I "$IOS_USE_REPO_ROOT/swift-cli/Sources/IOSUsePlayDevice/include" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/DeviceIdentityContractTests.m" \
+  -o "$IOS_USE_SMOKE_TEMP/DeviceIdentityContractTests"
+
+"$IOS_USE_SMOKE_TEMP/DeviceIdentityContractTests"
+
 if rg -n \
   '\[\[[^]]*(UIWindow|UIView)[^]]*alloc|DynamicIsland|HomeIndicator|NSTimer|drawRect:|additionalSafeAreaInsets[[:space:]]*=' \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlaySafeAreaCompatibility.m"

@@ -934,6 +934,35 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
         UIView *rootView = keyWindow.rootViewController.view;
         UIEdgeInsets safeArea =
             rootView == nil ? UIEdgeInsetsZero : rootView.safeAreaInsets;
+        UIDevice *device = UIDevice.currentDevice;
+        UIUserInterfaceIdiom deviceIdiom = device.userInterfaceIdiom;
+        UIUserInterfaceIdiom traitIdiom =
+            keyWindow == nil
+                ? UIUserInterfaceIdiomUnspecified
+                : keyWindow.traitCollection.userInterfaceIdiom;
+        UIDeviceOrientation deviceOrientation = device.orientation;
+        UIInterfaceOrientation sceneOrientation =
+            keyWindow.windowScene == nil
+                ? UIInterfaceOrientationUnknown
+                : keyWindow.windowScene.interfaceOrientation;
+        NSString *deviceModel = device.model ?: @"";
+        NSString *localizedDeviceModel = device.localizedModel ?: @"";
+        BOOL deviceIdentityReady =
+            [deviceModel isEqualToString:
+                [NSString stringWithUTF8String:
+                    IOSUsePlayDeviceModel()]] &&
+            [localizedDeviceModel isEqualToString:
+                [NSString stringWithUTF8String:
+                    IOSUsePlayDeviceLocalizedModel()]] &&
+            deviceIdiom ==
+                (UIUserInterfaceIdiom)
+                    IOSUsePlayDeviceUserInterfaceIdiom &&
+            traitIdiom ==
+                (UIUserInterfaceIdiom)
+                    IOSUsePlayDeviceUserInterfaceIdiom &&
+            deviceOrientation ==
+                (UIDeviceOrientation)IOSUsePlayDeviceOrientation &&
+            sceneOrientation == UIInterfaceOrientationPortrait;
         hooks = IOSUsePlayRuntimeHookDiagnostics(scope);
         NSDictionary<NSString *, id> *hostGeometry =
             IOSUseHostGeometry(hooks);
@@ -993,6 +1022,15 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                         @"bottom": @(safeArea.bottom),
                         @"right": @(safeArea.right),
                     },
+            @"deviceIdentity": @{
+                @"model": deviceModel,
+                @"localizedModel": localizedDeviceModel,
+                @"deviceUserInterfaceIdiom": @(deviceIdiom),
+                @"traitUserInterfaceIdiom": @(traitIdiom),
+                @"deviceOrientation": @(deviceOrientation),
+                @"sceneInterfaceOrientation": @(sceneOrientation),
+                @"ready": @(deviceIdentityReady),
+            },
             @"appKit": hooks[@"window"] ?: @{},
         };
         BOOL exact =
@@ -1009,12 +1047,15 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                 IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
             fabs(windowBounds.size.height -
                 IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
+            deviceIdentityReady &&
             [hooks[@"configurationStage"]
                 isEqualToString:@"window-configured"] &&
             IOSUseHostGeometryReady(hostGeometry);
         NSString *configurationStage = hooks[@"configurationStage"];
         stage = exact
             ? @"ready"
+            : !deviceIdentityReady
+                ? @"device-identity-mismatch"
             : [configurationStage isEqualToString:@"window-configured"]
                 ? @"host-geometry-mismatch"
                 : configurationStage ?: @"geometry-mismatch";
