@@ -206,7 +206,10 @@ final class PlayCoverCoreTests: XCTestCase {
         let runtimeExecutable = runtime.appendingPathComponent(
             PlayCoverService.runtimeExecutableName
         )
-        try Data("runtime-build".utf8).write(to: runtimeExecutable)
+        try makeThinMachO(
+            encrypted: false,
+            platform: 6
+        ).write(to: runtimeExecutable)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
             ofItemAtPath: runtimeExecutable.path
@@ -227,6 +230,10 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertEqual(plan.runtimeFrameworkPath, runtime.path)
         XCTAssertEqual(plan.runtimeBuildHash.count, 64)
+        XCTAssertEqual(
+            plan.runtimeEvidence.mainExecutableRelativePath,
+            PlayCoverService.runtimeExecutableName
+        )
         XCTAssertEqual(
             plan.generationIdentity.sourceContentHash,
             plan.source.inspection.sourceContentHash
@@ -2047,7 +2054,10 @@ final class PlayCoverCoreTests: XCTestCase {
         let runtimeExecutable = runtime.appendingPathComponent(
             PlayCoverService.runtimeExecutableName
         )
-        try Data("runtime".utf8).write(to: runtimeExecutable)
+        try makeThinMachO(
+            encrypted: false,
+            platform: 6
+        ).write(to: runtimeExecutable)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
             ofItemAtPath: runtimeExecutable.path
@@ -3192,7 +3202,10 @@ final class PlayCoverCoreTests: XCTestCase {
                 PlayCoverService.runtimeExecutableName
             )
             if !FileManager.default.fileExists(atPath: executable.path) {
-                try Data("runtime".utf8).write(to: executable)
+                try self.makeThinMachO(
+                    encrypted: false,
+                    platform: 6
+                ).write(to: executable)
                 try FileManager.default.setAttributes(
                     [.posixPermissions: 0o755],
                     ofItemAtPath: executable.path
@@ -3355,7 +3368,10 @@ final class PlayCoverCoreTests: XCTestCase {
     }
     #endif
 
-    private func makeThinMachO(encrypted: Bool) -> Data {
+    private func makeThinMachO(
+        encrypted: Bool,
+        platform: UInt32 = 2
+    ) -> Data {
         var commands: [Data] = []
         var segment = Data()
         appendU32(0x19, to: &segment)
@@ -3371,7 +3387,7 @@ final class PlayCoverCoreTests: XCTestCase {
         var build = Data()
         appendU32(0x32, to: &build)
         appendU32(24, to: &build)
-        appendU32(2, to: &build)
+        appendU32(platform, to: &build)
         appendU32(0x0011_0000, to: &build)
         appendU32(0x0011_0400, to: &build)
         appendU32(0, to: &build)

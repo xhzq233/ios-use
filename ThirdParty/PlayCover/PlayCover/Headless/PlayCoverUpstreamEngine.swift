@@ -562,6 +562,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
     public let runtimeLoadPath: String
     public let playSignActive: Bool
     public let expectedRuntimeBuildHash: String?
+    public let expectedRuntimeEvidence: PlayCoverUpstreamRuntimeEvidence?
 
     public init(
         sourceApp: URL,
@@ -572,7 +573,8 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         runtimeSocketPath: String,
         runtimeLoadPath: String,
         playSignActive: Bool = false,
-        expectedRuntimeBuildHash: String? = nil
+        expectedRuntimeBuildHash: String? = nil,
+        expectedRuntimeEvidence: PlayCoverUpstreamRuntimeEvidence? = nil
     ) {
         self.sourceApp = sourceApp
         self.stagingApp = stagingApp
@@ -583,6 +585,26 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         self.runtimeLoadPath = runtimeLoadPath
         self.playSignActive = playSignActive
         self.expectedRuntimeBuildHash = expectedRuntimeBuildHash
+        self.expectedRuntimeEvidence = expectedRuntimeEvidence
+    }
+}
+
+public struct PlayCoverUpstreamRuntimeEvidence: Equatable, Sendable {
+    public let frameworkPath: String
+    public let buildHash: String
+    public let mainExecutableRelativePath: String
+    public let mainExecutable: PlayCoverUpstreamMachOInspection
+
+    init(
+        frameworkPath: String,
+        buildHash: String,
+        mainExecutableRelativePath: String,
+        mainExecutable: PlayCoverUpstreamMachOInspection
+    ) {
+        self.frameworkPath = frameworkPath
+        self.buildHash = buildHash
+        self.mainExecutableRelativePath = mainExecutableRelativePath
+        self.mainExecutable = mainExecutable
     }
 }
 
@@ -669,6 +691,7 @@ public enum PlayCoverUpstreamEngine {
         ((PlayCoverUpstreamMachOContainer, UInt32) -> Void)?
     static var codeSignatureObserverForTesting:
         ((CodeSignatureObservationKind, URL) -> Void)?
+    static var machOInspectionObserverForTesting: ((URL) -> Void)?
 
     public static func inspect(appURL: URL) throws -> PlayCoverUpstreamAppInspection {
         try inspect(
@@ -869,7 +892,14 @@ public enum PlayCoverUpstreamEngine {
         var phaseTimings = PrepareTimingAccumulator()
         try validateManagedStaging(options, source: source)
 
-        try validateRuntimeFramework(options.runtimeFramework)
+        let expectedRuntimeBuildHash =
+            options.expectedRuntimeBuildHash
+                ?? options.expectedRuntimeEvidence?.buildHash
+        try validateRuntimeFramework(
+            options.runtimeFramework,
+            expectedBuildHash: expectedRuntimeBuildHash,
+            evidence: options.expectedRuntimeEvidence
+        )
         let managedPlayCover = options.managedHome
             .appendingPathComponent("playcover", isDirectory: true)
         try PlayTools.configureManagedContainer(managedPlayCover)
@@ -1054,7 +1084,7 @@ public enum PlayCoverUpstreamEngine {
         let prepared = try verifyPrepared(
             appURL: options.stagingApp,
             runtimeLoadPath: options.runtimeLoadPath,
-            expectedRuntimeBuildHash: options.expectedRuntimeBuildHash,
+            expectedRuntimeBuildHash: expectedRuntimeBuildHash,
             embeddedRuntimeFrameworkRelativePath:
                 embeddedRuntimeRelativePath,
             signingOrder: signing,
@@ -1121,6 +1151,12 @@ public enum PlayCoverUpstreamEngine {
         )
         var inspection = result.inspection
         if let expectedRuntimeBuildHash {
+            guard let embeddedRuntimeFrameworkRelativePath else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "embedded Runtime framework path is absent from the "
+                        + "preparation plan"
+                )
+            }
             guard let actualRuntimeBuildHash = result.nestedBuildHash else {
                 throw PlayCoverUpstreamError.verificationFailed(
                     "embedded Runtime framework is absent from the final "
@@ -1133,6 +1169,30 @@ public enum PlayCoverUpstreamEngine {
                         + "preparation plan: expected "
                         + "\(expectedRuntimeBuildHash), got "
                         + actualRuntimeBuildHash
+                )
+            }
+            let runtimeExecutableName = URL(
+                fileURLWithPath: embeddedRuntimeFrameworkRelativePath
+            ).deletingPathExtension().lastPathComponent
+            let runtimeExecutableRelativePath =
+                "\(embeddedRuntimeFrameworkRelativePath)/"
+                    + runtimeExecutableName
+            let runtimeMachOs = inspection.machOs.filter {
+                $0.relativePath == runtimeExecutableRelativePath
+            }
+            guard runtimeMachOs.count == 1,
+                  let runtimeMachO = runtimeMachOs.first else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "embedded Runtime main executable is missing or "
+                        + "duplicated: \(runtimeExecutableRelativePath)"
+                )
+            }
+            guard runtimeMachO.platform == platformMacCatalyst,
+                  !runtimeMachO.encrypted else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "embedded Runtime must be a uniquely identified, "
+                        + "unencrypted arm64 Mac Catalyst binary: "
+                        + runtimeExecutableRelativePath
                 )
             }
         }
@@ -1433,12 +1493,85 @@ public enum PlayCoverUpstreamEngine {
     }
 
     public static func runtimeBuildHash(frameworkURL: URL) throws -> String {
+        try runtimeBuildSnapshot(
+            frameworkURL: frameworkURL,
+            mainExecutableRelativePath: nil,
+            validateContainment: false
+        ).buildHash
+    }
+
+    public static func runtimeEvidence(
+        frameworkURL: URL
+    ) throws -> PlayCoverUpstreamRuntimeEvidence {
+        let root = frameworkURL.standardizedFileURL
+        guard root.pathExtension == "framework" else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "Runtime is not a framework directory: \(root.path)"
+            )
+        }
+        let executableRelativePath =
+            root.deletingPathExtension().lastPathComponent
+        let executableURL = root.appendingPathComponent(
+            executableRelativePath
+        )
+        let snapshot = try runtimeBuildSnapshot(
+            frameworkURL: root,
+            mainExecutableRelativePath: executableRelativePath,
+            validateContainment: true
+        )
+        guard FileManager.default.isExecutableFile(
+                  atPath: executableURL.path
+              ) else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "Runtime framework executable is missing: "
+                    + executableURL.path
+            )
+        }
+        guard let executableData = snapshot.mainExecutableData,
+              let executableSHA256 = snapshot.mainExecutableSHA256 else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "Runtime framework executable is missing: "
+                    + root.appendingPathComponent(
+                        executableRelativePath
+                    ).path
+            )
+        }
+        let inspection = try inspectMachO(
+            executableData,
+            fileSHA256: executableSHA256,
+            at: executableURL,
+            relativePath: executableRelativePath
+        )
+        return PlayCoverUpstreamRuntimeEvidence(
+            frameworkPath: root.resolvingSymlinksInPath().path,
+            buildHash: snapshot.buildHash,
+            mainExecutableRelativePath: executableRelativePath,
+            mainExecutable: inspection
+        )
+    }
+
+    private static func runtimeBuildSnapshot(
+        frameworkURL: URL,
+        mainExecutableRelativePath: String?,
+        validateContainment: Bool
+    ) throws -> (
+        buildHash: String,
+        mainExecutableData: Data?,
+        mainExecutableSHA256: String?
+    ) {
         // FileManager may enumerate `/tmp` and `/var` through their canonical
         // `/private/...` aliases. Anchor enumeration and relative paths to the
         // canonical framework root so an unchanged copy has the same build
         // identity regardless of which lexical alias the caller supplied.
-        let root = frameworkURL.standardizedFileURL
-            .resolvingSymlinksInPath()
+        let lexicalRoot = frameworkURL.standardizedFileURL
+        if validateContainment {
+            try requireNoSymlinkComponents(
+                lexicalRoot,
+                label: "Runtime framework",
+                allowMissingLeaf: false
+            )
+        }
+        let root = lexicalRoot.resolvingSymlinksInPath()
         var directory: ObjCBool = false
         guard FileManager.default.fileExists(
                   atPath: root.path,
@@ -1450,6 +1583,7 @@ public enum PlayCoverUpstreamEngine {
             )
         }
         fullContentPassObserverForTesting?(.runtimeBuildHash, root)
+        let canonicalRoot = root.standardizedFileURL.path
         let keys: Set<URLResourceKey> = [
             .isDirectoryKey,
             .isRegularFileKey,
@@ -1478,6 +1612,24 @@ public enum PlayCoverUpstreamEngine {
             } else {
                 kind = "other"
             }
+            if validateContainment, kind == "symlink" {
+                let destination = try FileManager.default
+                    .destinationOfSymbolicLink(atPath: url.path)
+                guard !destination.hasPrefix("/") else {
+                    throw PlayCoverUpstreamError.invalidApp(
+                        "Runtime framework absolute symbolic link is not "
+                            + "clone-safe: \(url.path)"
+                    )
+                }
+                let resolved = url.resolvingSymlinksInPath()
+                    .standardizedFileURL.path
+                guard resolved == canonicalRoot
+                        || resolved.hasPrefix(canonicalRoot + "/") else {
+                    throw PlayCoverUpstreamError.invalidApp(
+                        "Runtime framework symbolic-link escape: \(url.path)"
+                    )
+                }
+            }
             entries.append(
                 (
                     try relativePath(url, in: root),
@@ -1495,7 +1647,13 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
+        let mainExecutableCanonicalPath = mainExecutableRelativePath.map {
+            root.appendingPathComponent($0)
+                .resolvingSymlinksInPath().standardizedFileURL.path
+        }
         var hasher = SHA256()
+        var mainExecutableData: Data?
+        var mainExecutableSHA256: String?
         for (relative, url, kind, permissions, size) in entries.sorted(by: {
             $0.0.utf8.lexicographicallyPrecedes($1.0.utf8)
         }) {
@@ -1505,11 +1663,26 @@ public enum PlayCoverUpstreamEngine {
             update(&hasher, String(size))
             if kind == "file" {
                 updateLength(&hasher, size)
-                let handle = try FileHandle(forReadingFrom: url)
-                defer { try? handle.close() }
-                while let data = try handle.read(upToCount: 1_048_576),
-                      !data.isEmpty {
-                    hasher.update(data: data)
+                var retainedData = url.resolvingSymlinksInPath()
+                    .standardizedFileURL.path == mainExecutableCanonicalPath
+                    ? Data()
+                    : nil
+                var fileHasher = SHA256()
+                do {
+                    let handle = try FileHandle(forReadingFrom: url)
+                    defer { try? handle.close() }
+                    while let data = try handle.read(upToCount: 1_048_576),
+                          !data.isEmpty {
+                        hasher.update(data: data)
+                        if retainedData != nil {
+                            retainedData?.append(data)
+                            fileHasher.update(data: data)
+                        }
+                    }
+                }
+                if let retainedData {
+                    mainExecutableData = retainedData
+                    mainExecutableSHA256 = hex(fileHasher.finalize())
                 }
             } else if kind == "symlink" {
                 update(
@@ -1520,7 +1693,11 @@ public enum PlayCoverUpstreamEngine {
                 )
             }
         }
-        return hex(hasher.finalize())
+        return (
+            hex(hasher.finalize()),
+            mainExecutableData,
+            mainExecutableSHA256
+        )
     }
 
     private struct Slice {
@@ -1641,6 +1818,7 @@ public enum PlayCoverUpstreamEngine {
         sliceTemporaryFileCreated:
             ((URL) throws -> Void)? = nil
     ) throws -> PlayCoverUpstreamMachOInspection {
+        machOInspectionObserverForTesting?(url)
         let rawSlices = try machoSlices(fullData, path: relativePath)
         guard let slice = rawSlices.first(where: {
             $0.cpuType == cpuTypeArm64
@@ -4026,7 +4204,47 @@ public enum PlayCoverUpstreamEngine {
         }
     }
 
-    private static func validateRuntimeFramework(_ url: URL) throws {
+    private static func validateRuntimeFramework(
+        _ url: URL,
+        expectedBuildHash: String?,
+        evidence: PlayCoverUpstreamRuntimeEvidence?
+    ) throws {
+        if let evidence {
+            let canonicalPath = url.standardizedFileURL
+                .resolvingSymlinksInPath().path
+            let name = url.deletingPathExtension().lastPathComponent
+            guard url.pathExtension == "framework",
+                  evidence.frameworkPath == canonicalPath else {
+                throw PlayCoverUpstreamError.invalidApp(
+                    "Runtime evidence path does not match framework: "
+                        + "expected \(canonicalPath), got "
+                        + evidence.frameworkPath
+                )
+            }
+            guard evidence.mainExecutableRelativePath == name,
+                  evidence.mainExecutable.relativePath == name else {
+                throw PlayCoverUpstreamError.invalidApp(
+                    "Runtime evidence main executable does not match "
+                        + "framework layout"
+                )
+            }
+            if let expectedBuildHash {
+                guard evidence.buildHash == expectedBuildHash else {
+                    throw PlayCoverUpstreamError.invalidApp(
+                        "Runtime evidence build hash does not match the "
+                            + "preparation plan"
+                    )
+                }
+            }
+            guard evidence.mainExecutable.platform == platformMacCatalyst,
+                  !evidence.mainExecutable.encrypted else {
+                throw PlayCoverUpstreamError.invalidApp(
+                    "Runtime must be an unencrypted arm64 Mac Catalyst "
+                        + "binary"
+                )
+            }
+            return
+        }
         try requireNoSymlinkComponents(
             url,
             label: "Runtime framework",

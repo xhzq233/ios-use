@@ -5,6 +5,8 @@ import XCTest
 final class PlayCoverUpstreamEngineTests: XCTestCase {
     override func tearDown() {
         PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
+        PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
+        PlayCoverUpstreamEngine.machOInspectionObserverForTesting = nil
         PlayCoverUpstreamEngine
             .validatedTreeMetadataEnumerationObserverForTesting = nil
         super.tearDown()
@@ -570,6 +572,109 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         }
     }
 
+    func testPrepareUsesRuntimeEvidenceOnceAndFinalVerifyRejectsMutation()
+        throws
+    {
+        let fixture = try makeSignedIOSAppFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try makeCatalystRuntimeFramework(in: fixture.root)
+        let runtimeExecutable = runtime.appendingPathComponent(
+            "IOSUsePlayRuntime"
+        )
+        let managed = fixture.root.appendingPathComponent(
+            "managed",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: managed.appendingPathComponent(
+                "prepared",
+                isDirectory: true
+            ),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let staging = managed.appendingPathComponent(
+            "prepared/Fixture.app",
+            isDirectory: true
+        )
+        var originalRuntimeInspections = 0
+        PlayCoverUpstreamEngine.machOInspectionObserverForTesting = {
+            if $0.standardizedFileURL.path
+                == runtimeExecutable.standardizedFileURL.path {
+                originalRuntimeInspections += 1
+            }
+        }
+        var runtimeContentPasses = 0
+        var finalInspectionStarted = false
+        PlayCoverUpstreamEngine.fullContentPassObserverForTesting = {
+            kind,
+            url in
+            if kind == .runtimeBuildHash,
+               url.standardizedFileURL.path
+                == runtime.resolvingSymlinksInPath().path {
+                runtimeContentPasses += 1
+            }
+            if kind == .appInspection,
+               url.standardizedFileURL.path
+                == staging.standardizedFileURL.path {
+                finalInspectionStarted = true
+            }
+        }
+        let evidence = try PlayCoverUpstreamEngine.runtimeEvidence(
+            frameworkURL: runtime
+        )
+        XCTAssertEqual(evidence.buildHash.count, 64)
+        let source = try PlayCoverUpstreamEngine.inspect(appURL: fixture.app)
+        XCTAssertThrowsError(
+            try PlayCoverUpstreamEngine.prepare(
+                PlayCoverUpstreamPrepareOptions(
+                    sourceApp: fixture.app,
+                    stagingApp: staging,
+                    runtimeFramework: runtime,
+                    managedHome: managed,
+                    runtimeSocketPath: managed.appendingPathComponent(
+                        "run/s-runtime.sock"
+                    ).path,
+                    runtimeLoadPath:
+                        "@executable_path/Frameworks/"
+                        + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                    expectedRuntimeEvidence: evidence
+                ),
+                sourceInspection: source,
+                afterSourceCloneForTesting: { _ in
+                    try FileManager.default.removeItem(
+                        at: runtimeExecutable
+                    )
+                    try FileManager.default.copyItem(
+                        at: URL(fileURLWithPath: "/bin/echo"),
+                        to: runtimeExecutable
+                    )
+                }
+            )
+        ) { error in
+            guard case PlayCoverUpstreamError.verificationFailed(
+                let message
+            ) = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("embedded Runtime build hash"),
+                message
+            )
+        }
+        XCTAssertTrue(finalInspectionStarted)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: staging.path),
+            "invalid Runtime must roll private staging back"
+        )
+        XCTAssertEqual(originalRuntimeInspections, 1)
+        XCTAssertEqual(
+            runtimeContentPasses,
+            1,
+            "the plan and prepare must share one Runtime content pass"
+        )
+    }
+
     private struct InspectionFixture {
         let root: URL
         let app: URL
@@ -643,6 +748,109 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             )
         }
         return InspectionFixture(root: root, app: app)
+    }
+
+    private func makeSignedIOSAppFixture() throws -> InspectionFixture {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverUpstreamPrepare-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        let app = root.appendingPathComponent(
+            "Fixture.app",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: app,
+            withIntermediateDirectories: true
+        )
+        try PropertyListSerialization.data(
+            fromPropertyList: [
+                "CFBundleIdentifier": "com.example.upstream-prepare",
+                "CFBundleExecutable": "Fixture",
+                "CFBundlePackageType": "APPL",
+                "MinimumOSVersion": "17.0",
+            ],
+            format: .xml,
+            options: 0
+        ).write(to: app.appendingPathComponent("Info.plist"))
+        let source = root.appendingPathComponent("Fixture.c")
+        try Data("int main(void) { return 0; }\n".utf8).write(to: source)
+        let sdk = try Shell.run(
+            print: false,
+            "/usr/bin/xcrun",
+            "--sdk",
+            "iphoneos",
+            "--show-sdk-path"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try Shell.run(
+            print: false,
+            "/usr/bin/xcrun",
+            "--sdk",
+            "iphoneos",
+            "clang",
+            "-target",
+            "arm64-apple-ios17.0",
+            "-isysroot",
+            sdk,
+            "-Wl,-headerpad,0x4000",
+            source.path,
+            "-o",
+            app.appendingPathComponent("Fixture").path
+        )
+        try Shell.signMacho(app)
+        return InspectionFixture(root: root, app: app)
+    }
+
+    private func makeCatalystRuntimeFramework(in root: URL) throws -> URL {
+        let framework = root.appendingPathComponent(
+            "IOSUsePlayRuntime.framework",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: framework,
+            withIntermediateDirectories: true
+        )
+        try PropertyListSerialization.data(
+            fromPropertyList: [
+                "CFBundleIdentifier": "com.example.IOSUsePlayRuntime",
+                "CFBundleExecutable": "IOSUsePlayRuntime",
+                "CFBundlePackageType": "FMWK",
+            ],
+            format: .xml,
+            options: 0
+        ).write(to: framework.appendingPathComponent("Info.plist"))
+        let source = root.appendingPathComponent("Runtime.c")
+        try Data(
+            "int ios_use_runtime_fixture(void) { return 1; }\n".utf8
+        ).write(to: source)
+        let output = framework.appendingPathComponent("IOSUsePlayRuntime")
+        let sdk = try Shell.run(
+            print: false,
+            "/usr/bin/xcrun",
+            "--sdk",
+            "macosx",
+            "--show-sdk-path"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try Shell.run(
+            print: false,
+            "/usr/bin/xcrun",
+            "--sdk",
+            "macosx",
+            "clang",
+            "-target",
+            "arm64-apple-ios17.0-macabi",
+            "-isysroot",
+            sdk,
+            "-dynamiclib",
+            "-Wl,-install_name,@rpath/IOSUsePlayRuntime.framework/"
+                + "IOSUsePlayRuntime",
+            source.path,
+            "-o",
+            output.path
+        )
+        try Shell.signMacho(output)
+        return framework
     }
 
     private func makeThinMachO(

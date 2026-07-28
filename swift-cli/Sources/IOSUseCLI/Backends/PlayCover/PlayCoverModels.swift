@@ -177,6 +177,7 @@ struct PlayCoverPreparationSource: Equatable, Sendable {
 struct PlayCoverPreparationPlan: Equatable, Sendable {
     let source: PlayCoverPreparationSource
     let runtimeFrameworkPath: String
+    let runtimeEvidence: PlayCoverUpstreamRuntimeEvidence
     let generationIdentity: PlayCoverGenerationIdentity
 
     var runtimeBuildHash: String {

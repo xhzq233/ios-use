@@ -171,9 +171,10 @@ public enum PlayCoverService {
             fileURLWithPath: runtimeFrameworkPath,
             isDirectory: true
         ).standardizedFileURL.path
-        let runtimeHash = try runtimeBuildHash(
+        let runtimeEvidence = try runtimeEvidence(
             frameworkPath: runtimePath
         )
+        let runtimeHash = runtimeEvidence.buildHash
         let revision = prepareImplementationRevision
         let generationKey: String
         if let generationKeyOverride {
@@ -192,6 +193,7 @@ public enum PlayCoverService {
         return PlayCoverPreparationPlan(
             source: source,
             runtimeFrameworkPath: runtimePath,
+            runtimeEvidence: runtimeEvidence,
             generationIdentity: PlayCoverGenerationIdentity(
                 sourceContentHash: source.inspection.sourceContentHash,
                 runtimeBuildHash: runtimeHash,
@@ -310,7 +312,8 @@ public enum PlayCoverService {
                     managedHome: canonicalManagedHome,
                     runtimeSocketPath: sandboxSocket,
                     runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
-                    expectedRuntimeBuildHash: plan.runtimeBuildHash
+                    expectedRuntimeBuildHash: plan.runtimeBuildHash,
+                    expectedRuntimeEvidence: plan.runtimeEvidence
                 ),
                 sourceInspection: plan.source.upstreamInspection
             )
@@ -369,11 +372,19 @@ public enum PlayCoverService {
         let upstreamSourcePath = canonicalPath(
             plan.source.upstreamInspection.appPath
         )
+        let runtimePath = canonicalPath(plan.runtimeFrameworkPath)
+        let runtimeEvidence = plan.runtimeEvidence
         guard plan.prepareRevision == prepareImplementationRevision,
               isSHA256(sourceHash),
               upstreamSourceHash == sourceHash,
               sourcePath == upstreamSourcePath,
               isSHA256(plan.runtimeBuildHash),
+              runtimeEvidence.frameworkPath == runtimePath,
+              runtimeEvidence.buildHash == plan.runtimeBuildHash,
+              runtimeEvidence.mainExecutableRelativePath
+                == runtimeExecutableName,
+              runtimeEvidence.mainExecutable.relativePath
+                == runtimeExecutableName,
               isSHA256(plan.generationKey) else {
             throw PlayCoverBackendError.prepareFailed(
                 "preparation plan identity is invalid"
@@ -1250,6 +1261,31 @@ public enum PlayCoverService {
         }
         do {
             return try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: root
+            )
+        } catch PlayCoverUpstreamError.invalidApp(let message) {
+            throw PlayCoverBackendError.missingRuntime(message)
+        }
+    }
+
+    private static func runtimeEvidence(
+        frameworkPath: String
+    ) throws -> PlayCoverUpstreamRuntimeEvidence {
+        let root = URL(
+            fileURLWithPath: frameworkPath,
+            isDirectory: true
+        ).standardizedFileURL
+        var directory: ObjCBool = false
+        guard root.lastPathComponent == runtimeFrameworkName,
+              FileManager.default.fileExists(
+                atPath: root.path,
+                isDirectory: &directory
+              ),
+              directory.boolValue else {
+            throw PlayCoverBackendError.missingRuntime(root.path)
+        }
+        do {
+            return try PlayCoverUpstreamEngine.runtimeEvidence(
                 frameworkURL: root
             )
         } catch PlayCoverUpstreamError.invalidApp(let message) {
