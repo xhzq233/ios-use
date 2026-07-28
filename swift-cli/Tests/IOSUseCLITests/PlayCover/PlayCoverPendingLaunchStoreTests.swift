@@ -464,6 +464,22 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
             )
         )
 
+        badIntent = PlayCoverPendingLaunchStore.Intent(
+            sessionID: fixture.intent.sessionID,
+            runtimeSocketPath: fixture.intent.runtimeSocketPath,
+            generationKey: fixture.intent.generationKey,
+            appPath: fixture.appPath + "/../Fixture.app",
+            bundleIdentifier: fixture.intent.bundleIdentifier,
+            executablePath: fixture.intent.executablePath,
+            aliasPath: fixture.intent.aliasPath
+        )
+        XCTAssertThrowsError(
+            try PlayCoverPendingLaunchStore.createIntent(
+                badIntent,
+                paths: fixture.paths
+            )
+        )
+
         _ = try PlayCoverPendingLaunchStore.createIntent(
             fixture.intent,
             paths: fixture.paths
@@ -477,6 +493,45 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
                 paths: fixture.paths
             )
         )
+    }
+
+    func testPrivateTmpIdentityRemainsValidAfterPathsExist()
+        throws {
+        #if canImport(Darwin)
+        let root = try makeTemporaryRoot(
+            templatePath: "/private/tmp/iu-pending-XXXXXX"
+        )
+        let fixture = try makeFixture(root: root)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try FileManager.default.createDirectory(
+            at: URL(
+                fileURLWithPath: fixture.appPath,
+                isDirectory: true
+            ),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try Data().write(
+            to: URL(
+                fileURLWithPath: fixture.executablePath,
+                isDirectory: false
+            )
+        )
+
+        let record = try PlayCoverPendingLaunchStore.createIntent(
+            fixture.intent,
+            paths: fixture.paths
+        )
+
+        XCTAssertEqual(record.appPath, fixture.appPath)
+        XCTAssertEqual(record.executablePath, fixture.executablePath)
+        XCTAssertEqual(
+            try PlayCoverPendingLaunchStore.load(
+                paths: fixture.paths
+            ),
+            record
+        )
+        #endif
     }
 
     func testUnsafeManagedDirectoryDoesNotLookLikeNoPendingLaunch()
@@ -495,8 +550,14 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         )
     }
 
-    private func makeFixture() throws -> Fixture {
-        let root = try makeTemporaryRoot()
+    private func makeFixture(root explicitRoot: URL? = nil)
+        throws -> Fixture {
+        let root: URL
+        if let explicitRoot {
+            root = explicitRoot
+        } else {
+            root = try makeTemporaryRoot()
+        }
         let paths = IOSUsePaths.resolve(
             environment: ["IOS_USE_HOME": root.path]
         )
@@ -555,9 +616,11 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         )
     }
 
-    private func makeTemporaryRoot() throws -> URL {
+    private func makeTemporaryRoot(
+        templatePath: String = "/tmp/iu-pending-XXXXXX"
+    ) throws -> URL {
         #if canImport(Darwin)
-        var template = Array("/tmp/iu-pending-XXXXXX".utf8CString)
+        var template = Array(templatePath.utf8CString)
         guard let pointer = Darwin.mkdtemp(&template) else {
             throw NSError(
                 domain: NSPOSIXErrorDomain,

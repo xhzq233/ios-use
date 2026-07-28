@@ -1017,26 +1017,20 @@ enum PlayCoverPendingLaunchStore {
                 "Runtime socket does not match sessionID"
             )
         }
-        let app = URL(
-            fileURLWithPath: record.appPath,
-            isDirectory: true
-        ).standardizedFileURL
-        let prepared = URL(
-            fileURLWithPath: paths.playcoverPrepared,
-            isDirectory: true
-        ).standardizedFileURL
-        let executable = URL(
-            fileURLWithPath: record.executablePath,
-            isDirectory: false
-        ).standardizedFileURL
-        guard app.pathExtension == "app",
-              record.appPath == app.path,
-              record.executablePath == executable.path,
-              app.deletingLastPathComponent().lastPathComponent
-                == record.generationKey,
-              app.deletingLastPathComponent()
-                .deletingLastPathComponent().path == prepared.path,
-              executable.path.hasPrefix(app.path + "/") else {
+        guard let prepared = lexicalPathComponents(
+                  paths.playcoverPrepared
+              ),
+              let app = lexicalPathComponents(record.appPath),
+              let executable = lexicalPathComponents(
+                  record.executablePath
+              ),
+              app.count == prepared.count + 2,
+              app.starts(with: prepared),
+              app[prepared.count] == record.generationKey,
+              app.last?.count ?? 0 > 4,
+              app.last?.hasSuffix(".app") == true,
+              executable.count > app.count,
+              executable.starts(with: app) else {
             throw storeError(
                 "journal App/executable does not identify its managed "
                     + "generation"
@@ -1053,6 +1047,30 @@ enum PlayCoverPendingLaunchStore {
         try validateAliasEvidence(record)
         try validateSubmissionEvidence(record)
         try validatePhase(record)
+    }
+
+    private static func lexicalPathComponents(
+        _ path: String
+    ) -> [String]? {
+        guard path.hasPrefix("/"),
+              !path.utf8.contains(0) else {
+            return nil
+        }
+        let components = path.split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        )
+        guard components.first?.isEmpty == true else {
+            return nil
+        }
+        let tail = components.dropFirst()
+        guard !tail.isEmpty,
+              tail.allSatisfy({
+                  !$0.isEmpty && $0 != "." && $0 != ".."
+              }) else {
+            return nil
+        }
+        return tail.map(String.init)
     }
 
     private static func validateAliasEvidence(
