@@ -1635,8 +1635,6 @@ stop_current_identity_once "$MAIN_HOME" baseline-driver
 remove_home "$MAIN_HOME"
 MAIN_HOME=""
 
-run_after_open_returned_sampling
-
 MAIN_HOME="$(make_home)"
 echo "[playcover-pending-crash] Running beforeOwnerDurable"
 run_before_owner_case
@@ -1687,6 +1685,10 @@ assert_pending_status_matches_journal \
 printf '%s\n' \
   "pre-submission fail-closed only; excluded from recovery/cut PASS" \
   >"$RUN_DIR/afterSubmissionArmed.scope"
+
+# This submitted-open sample can legitimately require a reboot before the
+# current-boot submissionArmed journal is safe to retire, so run it last.
+run_after_open_returned_sampling
 
 assert_repository_unchanged
 SUCCESS=1
