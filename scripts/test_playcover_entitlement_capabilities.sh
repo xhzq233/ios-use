@@ -1,0 +1,515 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+fail_case() {
+  printf '%s FAIL\n' "$1" >&2
+  exit 1
+}
+
+PREPARED_APP=""
+MANAGED_HOME=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --prepared-app)
+      [[ -z "$PREPARED_APP" && $# -ge 2 ]] ||
+        fail_case "PCAP-CONFIG-ARGS"
+      PREPARED_APP="$2"
+      shift 2
+      ;;
+    --managed-home)
+      [[ -z "$MANAGED_HOME" && $# -ge 2 ]] ||
+        fail_case "PCAP-CONFIG-ARGS"
+      MANAGED_HOME="$2"
+      shift 2
+      ;;
+    *)
+      fail_case "PCAP-CONFIG-ARGS"
+      ;;
+  esac
+done
+
+[[ -n "$PREPARED_APP" && -n "$MANAGED_HOME" ]] ||
+  fail_case "PCAP-CONFIG-ARGS"
+[[ "$PREPARED_APP" == /* && "$MANAGED_HOME" == /* ]] ||
+  fail_case "PCAP-CONFIG-ABSOLUTE"
+[[ "$(/usr/bin/uname -s)" == "Darwin" ]] ||
+  fail_case "PCAP-CONFIG-HOST"
+
+CURRENT_UID="$EUID"
+
+canonical_existing() {
+  local path="$1"
+  local parent
+  local name
+  local canonical_parent
+  if [[ -d "$path" ]]; then
+    (
+      cd "$path" 2>/dev/null &&
+        /bin/pwd -P
+    )
+    return
+  fi
+  parent="${path%/*}"
+  name="${path##*/}"
+  [[ "$parent" != "$path" ]] || return 1
+  [[ -n "$parent" ]] || parent="/"
+  canonical_parent="$(
+    cd "$parent" 2>/dev/null &&
+      /bin/pwd -P
+  )" || return 1
+  printf '%s/%s\n' "$canonical_parent" "$name"
+}
+
+require_canonical_directory() {
+  local path="$1"
+  local canonical
+  [[ -d "$path" && ! -L "$path" ]] ||
+    fail_case "PCAP-CONFIG-DIRECTORY"
+  canonical="$(canonical_existing "$path")" ||
+    fail_case "PCAP-CONFIG-DIRECTORY"
+  [[ "$canonical" == "$path" ]] ||
+    fail_case "PCAP-CONFIG-SYMLINK"
+}
+
+require_owner_directory_700() {
+  local path="$1"
+  local owner
+  local mode
+  require_canonical_directory "$path"
+  owner="$(/usr/bin/stat -f '%u' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-CONFIG-DIRECTORY"
+  mode="$(/usr/bin/stat -f '%Lp' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-CONFIG-DIRECTORY"
+  [[ "$owner" == "$CURRENT_UID" && "$mode" == "700" ]] ||
+    fail_case "PCAP-CONFIG-OWNER-MODE"
+}
+
+require_owned_regular_600() {
+  local path="$1"
+  local owner
+  local mode
+  local links
+  [[ -f "$path" && ! -L "$path" ]] ||
+    fail_case "PCAP-HOST-SETUP"
+  owner="$(/usr/bin/stat -f '%u' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-HOST-SETUP"
+  mode="$(/usr/bin/stat -f '%Lp' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-HOST-SETUP"
+  links="$(/usr/bin/stat -f '%l' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-HOST-SETUP"
+  [[
+    "$owner" == "$CURRENT_UID" &&
+    "$mode" == "600" &&
+    "$links" == "1"
+  ]] || fail_case "PCAP-HOST-SETUP"
+}
+
+require_owned_nonwritable_directory() {
+  local path="$1"
+  local canonical
+  local owner
+  local mode
+  [[ -d "$path" && ! -L "$path" ]] ||
+    fail_case "PCAP-CONFIG-PREPARED"
+  canonical="$(canonical_existing "$path")" ||
+    fail_case "PCAP-CONFIG-PREPARED"
+  [[ "$canonical" == "$path" ]] ||
+    fail_case "PCAP-CONFIG-SYMLINK"
+  owner="$(/usr/bin/stat -f '%u' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-CONFIG-PREPARED"
+  mode="$(/usr/bin/stat -f '%Lp' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-CONFIG-PREPARED"
+  [[ "$owner" == "$CURRENT_UID" ]] ||
+    fail_case "PCAP-CONFIG-OWNER-MODE"
+  (( (8#$mode & 0022) == 0 )) ||
+    fail_case "PCAP-CONFIG-OWNER-MODE"
+}
+
+require_owned_regular() {
+  local path="$1"
+  local canonical
+  local owner
+  [[ -f "$path" && ! -L "$path" ]] ||
+    fail_case "PCAP-CONFIG-PREPARED"
+  canonical="$(canonical_existing "$path")" ||
+    fail_case "PCAP-CONFIG-PREPARED"
+  [[ "$canonical" == "$path" ]] ||
+    fail_case "PCAP-CONFIG-SYMLINK"
+  owner="$(/usr/bin/stat -f '%u' "$path" 2>/dev/null)" ||
+    fail_case "PCAP-CONFIG-PREPARED"
+  [[ "$owner" == "$CURRENT_UID" ]] ||
+    fail_case "PCAP-CONFIG-OWNER-MODE"
+}
+
+require_owner_directory_700 "$MANAGED_HOME"
+
+STATE_DIR="$MANAGED_HOME/state"
+PLAYCOVER_DIR="$MANAGED_HOME/playcover"
+RUN_DIR="$PLAYCOVER_DIR/run"
+LOGS_DIR="$PLAYCOVER_DIR/logs"
+PLAYCHAIN_DIR="$PLAYCOVER_DIR/playchain"
+PREPARED_ROOT="$PLAYCOVER_DIR/prepared"
+
+for directory in \
+  "$STATE_DIR" \
+  "$PLAYCOVER_DIR" \
+  "$RUN_DIR" \
+  "$LOGS_DIR" \
+  "$PLAYCHAIN_DIR" \
+  "$PREPARED_ROOT"; do
+  require_owner_directory_700 "$directory"
+done
+
+require_owned_nonwritable_directory "$PREPARED_APP"
+[[ "$PREPARED_APP" == *.app ]] ||
+  fail_case "PCAP-CONFIG-PREPARED"
+
+GENERATION_DIR="${PREPARED_APP%/*}"
+GENERATION_KEY="${GENERATION_DIR##*/}"
+[[
+  "${GENERATION_DIR%/*}" == "$PREPARED_ROOT" &&
+  "$GENERATION_KEY" =~ ^[0-9a-f]{64}$
+]] || fail_case "PCAP-CONFIG-PREPARED"
+require_owner_directory_700 "$GENERATION_DIR"
+
+/usr/bin/codesign \
+  --verify \
+  --deep \
+  --strict \
+  --verbose=2 \
+  "$PREPARED_APP" >/dev/null 2>&1 ||
+  fail_case "PCAP-PREPARED-SIGNATURE"
+
+INFO_PLIST="$PREPARED_APP/Contents/Info.plist"
+require_owned_regular "$INFO_PLIST"
+EXECUTABLE_NAME="$(
+  /usr/bin/plutil \
+    -extract CFBundleExecutable raw \
+    -o - \
+    "$INFO_PLIST" 2>/dev/null
+)" || fail_case "PCAP-CONFIG-PREPARED"
+case "$EXECUTABLE_NAME" in
+  ""|"."|".."|*/*|*$'\n'*|*$'\r'*)
+    fail_case "PCAP-CONFIG-PREPARED"
+    ;;
+esac
+MAIN_EXECUTABLE="$PREPARED_APP/Contents/MacOS/$EXECUTABLE_NAME"
+require_owned_regular "$MAIN_EXECUTABLE"
+[[ -x "$MAIN_EXECUTABLE" ]] ||
+  fail_case "PCAP-CONFIG-PREPARED"
+/usr/bin/codesign \
+  --verify \
+  --strict \
+  --verbose=2 \
+  "$MAIN_EXECUTABLE" >/dev/null 2>&1 ||
+  fail_case "PCAP-PREPARED-SIGNATURE"
+printf '%s PASS\n' "PCAP-PREPARED-SIGNATURE"
+
+AUDIT_TEMP_ROOT="$(
+  /usr/bin/mktemp -d \
+    /private/tmp/ios-use-pcap.XXXXXX 2>/dev/null
+)" || fail_case "PCAP-TEMP"
+/bin/chmod 700 "$AUDIT_TEMP_ROOT" >/dev/null 2>&1 ||
+  fail_case "PCAP-TEMP"
+case "$AUDIT_TEMP_ROOT/" in
+  "$MANAGED_HOME/"*)
+    fail_case "PCAP-TEMP"
+    ;;
+esac
+
+RUN_FILE=""
+RUN_SOCKET=""
+LOG_FILE=""
+DATABASE=""
+STATE_SENTINEL=""
+STATE_CREATE=""
+PREPARED_SENTINEL=""
+PREPARED_CREATE=""
+LOGS_SOCKET=""
+PLAYCHAIN_SOCKET=""
+ESCAPE_LINK=""
+
+cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  for artifact in \
+    "$RUN_FILE" \
+    "$RUN_SOCKET" \
+    "$LOG_FILE" \
+    "$DATABASE" \
+    "${DATABASE:+$DATABASE-wal}" \
+    "${DATABASE:+$DATABASE-shm}" \
+    "${DATABASE:+$DATABASE-journal}" \
+    "$STATE_SENTINEL" \
+    "$STATE_CREATE" \
+    "$PREPARED_SENTINEL" \
+    "$PREPARED_CREATE" \
+    "$LOGS_SOCKET" \
+    "$PLAYCHAIN_SOCKET" \
+    "$ESCAPE_LINK"; do
+    if [[ -n "$artifact" && ( -e "$artifact" || -L "$artifact" ) ]]; then
+      /bin/rm -f -- "$artifact" >/dev/null 2>&1 || true
+    fi
+  done
+  if [[
+    "$AUDIT_TEMP_ROOT" == /private/tmp/ios-use-pcap.* &&
+    -d "$AUDIT_TEMP_ROOT" &&
+    ! -L "$AUDIT_TEMP_ROOT"
+  ]]; then
+    /bin/rm -rf -- "$AUDIT_TEMP_ROOT" >/dev/null 2>&1 || true
+  fi
+  exit "$exit_status"
+}
+trap cleanup EXIT
+
+PROBE_SOURCE="$(
+  cd "$(dirname "$0")" &&
+    /bin/pwd -P
+)/playcover_entitlement_capability_probe.c"
+[[ -f "$PROBE_SOURCE" && ! -L "$PROBE_SOURCE" ]] ||
+  fail_case "PCAP-PROBE-BUILD"
+UNSIGNED_PROBE="$AUDIT_TEMP_ROOT/probe-unsigned"
+SIGNED_PROBE="$AUDIT_TEMP_ROOT/probe-signed"
+ORIGINAL_ENTITLEMENTS="$AUDIT_TEMP_ROOT/original-entitlements.plist"
+PROBE_ENTITLEMENTS="$AUDIT_TEMP_ROOT/probe-entitlements.plist"
+
+/usr/bin/xcrun clang \
+  -std=c17 \
+  -Wall \
+  -Wextra \
+  -Werror \
+  "$PROBE_SOURCE" \
+  -framework CoreFoundation \
+  -lsqlite3 \
+  -o "$UNSIGNED_PROBE" \
+  >"$AUDIT_TEMP_ROOT/clang.log" 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/bin/cp "$UNSIGNED_PROBE" "$SIGNED_PROBE" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+
+/usr/bin/codesign \
+  --display \
+  --entitlements :- \
+  "$MAIN_EXECUTABLE" \
+  >"$ORIGINAL_ENTITLEMENTS" \
+  2>"$AUDIT_TEMP_ROOT/prepared-entitlements.log" ||
+  fail_case "PCAP-ENTITLEMENTS-EXPORT"
+/usr/bin/plutil -lint "$ORIGINAL_ENTITLEMENTS" >/dev/null 2>&1 ||
+  fail_case "PCAP-ENTITLEMENTS-EXPORT"
+
+/usr/bin/codesign \
+  --force \
+  --sign - \
+  --entitlements "$ORIGINAL_ENTITLEMENTS" \
+  --generate-entitlement-der \
+  "$SIGNED_PROBE" \
+  >"$AUDIT_TEMP_ROOT/probe-sign.stdout" \
+  2>"$AUDIT_TEMP_ROOT/probe-sign.stderr" ||
+  fail_case "PCAP-PROBE-SIGNATURE"
+/usr/bin/codesign \
+  --verify \
+  --strict \
+  --verbose=2 \
+  "$SIGNED_PROBE" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-SIGNATURE"
+/usr/bin/codesign \
+  --display \
+  --entitlements :- \
+  "$SIGNED_PROBE" \
+  >"$PROBE_ENTITLEMENTS" \
+  2>"$AUDIT_TEMP_ROOT/probe-entitlements.log" ||
+  fail_case "PCAP-PROBE-SIGNATURE"
+"$UNSIGNED_PROBE" \
+  compare-entitlements \
+  "$ORIGINAL_ENTITLEMENTS" \
+  "$PROBE_ENTITLEMENTS" ||
+  fail_case "PCAP-ENTITLEMENTS-EQUAL"
+printf '%s PASS\n' "PCAP-PROBE-SIGNATURE"
+
+TOKEN="${AUDIT_TEMP_ROOT##*.}"
+RUN_FILE="$RUN_DIR/.pcap-file-$TOKEN"
+RUN_SOCKET="$RUN_DIR/.pcap-run-$TOKEN.sock"
+DATABASE="$PLAYCHAIN_DIR/.pcap-$TOKEN.sqlite3"
+STATE_CREATE="$STATE_DIR/.pcap-create-$TOKEN"
+PREPARED_CREATE="$PREPARED_ROOT/.pcap-create-$TOKEN"
+LOGS_SOCKET="$LOGS_DIR/.pcap-bind-$TOKEN.sock"
+PLAYCHAIN_SOCKET="$PLAYCHAIN_DIR/.pcap-bind-$TOKEN.sock"
+ESCAPE_LINK="$RUN_DIR/.pcap-escape-$TOKEN"
+for absent in \
+  "$RUN_FILE" \
+  "$RUN_SOCKET" \
+  "$DATABASE" \
+  "$DATABASE-wal" \
+  "$DATABASE-shm" \
+  "$DATABASE-journal" \
+  "$STATE_CREATE" \
+  "$PREPARED_CREATE" \
+  "$LOGS_SOCKET" \
+  "$PLAYCHAIN_SOCKET" \
+  "$ESCAPE_LINK"; do
+  [[ ! -e "$absent" && ! -L "$absent" ]] ||
+    fail_case "PCAP-HOST-SETUP"
+done
+[[
+  ${#RUN_SOCKET} -lt 104 &&
+  ${#LOGS_SOCKET} -lt 104 &&
+  ${#PLAYCHAIN_SOCKET} -lt 104
+]] || fail_case "PCAP-CONFIG-SOCKET-LENGTH"
+
+STATE_SENTINEL="$(
+  /usr/bin/mktemp \
+    "$STATE_DIR/.pcap-state.XXXXXX" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+PREPARED_SENTINEL="$(
+  /usr/bin/mktemp \
+    "$PREPARED_ROOT/.pcap-prepared.XXXXXX" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+LOG_FILE="$(
+  /usr/bin/mktemp \
+    "$LOGS_DIR/.pcap-log.XXXXXX" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+EXTERNAL_VICTIM="$AUDIT_TEMP_ROOT/external-victim"
+STATE_EXPECTED="$AUDIT_TEMP_ROOT/state-expected"
+PREPARED_EXPECTED="$AUDIT_TEMP_ROOT/prepared-expected"
+LOG_EXPECTED="$AUDIT_TEMP_ROOT/log-expected"
+VICTIM_EXPECTED="$AUDIT_TEMP_ROOT/victim-expected"
+
+printf '%s\n%s\n' \
+  "state-host-read" \
+  "state-host-write" >"$STATE_SENTINEL"
+printf '%s\n%s\n' \
+  "state-host-read" \
+  "state-host-write" >"$STATE_EXPECTED"
+printf '%s\n%s\n' \
+  "prepared-host-read" \
+  "prepared-host-write" >"$PREPARED_SENTINEL"
+printf '%s\n%s\n' \
+  "prepared-host-read" \
+  "prepared-host-write" >"$PREPARED_EXPECTED"
+printf '%s\n' "host-log-seed" >"$LOG_FILE"
+printf '%s\n%s\n' \
+  "host-log-seed" \
+  "probe-append" >"$LOG_EXPECTED"
+printf '%s\n' "external-victim-unchanged" >"$EXTERNAL_VICTIM"
+printf '%s\n' "external-victim-unchanged" >"$VICTIM_EXPECTED"
+/bin/chmod 600 \
+  "$STATE_SENTINEL" \
+  "$PREPARED_SENTINEL" \
+  "$LOG_FILE" \
+  "$EXTERNAL_VICTIM" >/dev/null 2>&1 ||
+  fail_case "PCAP-HOST-SETUP"
+require_owned_regular_600 "$STATE_SENTINEL"
+require_owned_regular_600 "$PREPARED_SENTINEL"
+require_owned_regular_600 "$LOG_FILE"
+require_owned_regular_600 "$EXTERNAL_VICTIM"
+[[
+  -r "$STATE_SENTINEL" &&
+  -w "$STATE_SENTINEL" &&
+  -r "$PREPARED_SENTINEL" &&
+  -w "$PREPARED_SENTINEL"
+]] || fail_case "PCAP-HOST-SETUP"
+/usr/bin/cmp -s "$STATE_SENTINEL" "$STATE_EXPECTED" ||
+  fail_case "PCAP-HOST-SETUP"
+/usr/bin/cmp -s "$PREPARED_SENTINEL" "$PREPARED_EXPECTED" ||
+  fail_case "PCAP-HOST-SETUP"
+/bin/ln -s "$EXTERNAL_VICTIM" "$ESCAPE_LINK" >/dev/null 2>&1 ||
+  fail_case "PCAP-HOST-SETUP"
+[[ -L "$ESCAPE_LINK" ]] ||
+  fail_case "PCAP-HOST-SETUP"
+
+LOG_DEVICE="$(/usr/bin/stat -f '%d' "$LOG_FILE" 2>/dev/null)" ||
+  fail_case "PCAP-HOST-SETUP"
+LOG_INODE="$(/usr/bin/stat -f '%i' "$LOG_FILE" 2>/dev/null)" ||
+  fail_case "PCAP-HOST-SETUP"
+STATE_DEVICE="$(/usr/bin/stat -f '%d' "$STATE_SENTINEL" 2>/dev/null)" ||
+  fail_case "PCAP-HOST-SETUP"
+STATE_INODE="$(/usr/bin/stat -f '%i' "$STATE_SENTINEL" 2>/dev/null)" ||
+  fail_case "PCAP-HOST-SETUP"
+PREPARED_DEVICE="$(
+  /usr/bin/stat -f '%d' "$PREPARED_SENTINEL" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+PREPARED_INODE="$(
+  /usr/bin/stat -f '%i' "$PREPARED_SENTINEL" 2>/dev/null
+)" || fail_case "PCAP-HOST-SETUP"
+VICTIM_DEVICE="$(/usr/bin/stat -f '%d' "$EXTERNAL_VICTIM" 2>/dev/null)" ||
+  fail_case "PCAP-HOST-SETUP"
+VICTIM_INODE="$(/usr/bin/stat -f '%i' "$EXTERNAL_VICTIM" 2>/dev/null)" ||
+  fail_case "PCAP-HOST-SETUP"
+printf '%s PASS\n' "PCAP-HOST-SETUP"
+
+set +e
+"$SIGNED_PROBE" run \
+  "$RUN_FILE" \
+  "$RUN_SOCKET" \
+  "$LOG_FILE" \
+  "$LOG_DEVICE" \
+  "$LOG_INODE" \
+  "$DATABASE" \
+  "$STATE_SENTINEL" \
+  "$STATE_CREATE" \
+  "$PREPARED_SENTINEL" \
+  "$PREPARED_CREATE" \
+  "$LOGS_SOCKET" \
+  "$PLAYCHAIN_SOCKET" \
+  "$ESCAPE_LINK"
+PROBE_STATUS=$?
+set -e
+[[ "$PROBE_STATUS" -eq 0 ]] ||
+  fail_case "PCAP-PROBE-EXEC"
+
+require_owned_regular_600 "$LOG_FILE"
+[[
+  "$(/usr/bin/stat -f '%d' "$LOG_FILE" 2>/dev/null)" == "$LOG_DEVICE" &&
+  "$(/usr/bin/stat -f '%i' "$LOG_FILE" 2>/dev/null)" == "$LOG_INODE"
+]] || fail_case "PCAP-HOST-POSTCONDITIONS"
+/usr/bin/cmp -s "$LOG_FILE" "$LOG_EXPECTED" ||
+  fail_case "PCAP-HOST-POSTCONDITIONS"
+
+check_sentinel_postcondition() {
+  local sentinel_path="$1"
+  local sentinel_device="$2"
+  local sentinel_inode="$3"
+  local sentinel_expected="$4"
+  require_owned_regular_600 "$sentinel_path"
+  [[
+    "$(/usr/bin/stat -f '%d' "$sentinel_path" 2>/dev/null)" == "$sentinel_device" &&
+    "$(/usr/bin/stat -f '%i' "$sentinel_path" 2>/dev/null)" == "$sentinel_inode"
+  ]] || fail_case "PCAP-HOST-POSTCONDITIONS"
+  /usr/bin/cmp -s "$sentinel_path" "$sentinel_expected" ||
+    fail_case "PCAP-HOST-POSTCONDITIONS"
+}
+check_sentinel_postcondition \
+  "$STATE_SENTINEL" \
+  "$STATE_DEVICE" \
+  "$STATE_INODE" \
+  "$STATE_EXPECTED"
+check_sentinel_postcondition \
+  "$PREPARED_SENTINEL" \
+  "$PREPARED_DEVICE" \
+  "$PREPARED_INODE" \
+  "$PREPARED_EXPECTED"
+
+require_owned_regular_600 "$EXTERNAL_VICTIM"
+[[
+  "$(/usr/bin/stat -f '%d' "$EXTERNAL_VICTIM" 2>/dev/null)" == "$VICTIM_DEVICE" &&
+  "$(/usr/bin/stat -f '%i' "$EXTERNAL_VICTIM" 2>/dev/null)" == "$VICTIM_INODE"
+]] || fail_case "PCAP-HOST-POSTCONDITIONS"
+/usr/bin/cmp -s "$EXTERNAL_VICTIM" "$VICTIM_EXPECTED" ||
+  fail_case "PCAP-HOST-POSTCONDITIONS"
+for absent in \
+  "$RUN_FILE" \
+  "$RUN_SOCKET" \
+  "$DATABASE" \
+  "$DATABASE-wal" \
+  "$DATABASE-shm" \
+  "$DATABASE-journal" \
+  "$STATE_CREATE" \
+  "$PREPARED_CREATE" \
+  "$LOGS_SOCKET" \
+  "$PLAYCHAIN_SOCKET"; do
+  [[ ! -e "$absent" && ! -L "$absent" ]] ||
+    fail_case "PCAP-HOST-POSTCONDITIONS"
+done
+printf '%s PASS\n' "PCAP-HOST-POSTCONDITIONS"
+printf '%s PASS\n' "PCAP-AUDIT"

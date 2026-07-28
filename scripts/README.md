@@ -40,6 +40,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/test_playcover_live_workflow_contract.sh` | Locked-safe live-workflow contract: compiles and exercises the AppKit display/mouse helper without posting events, then runs negative cases proving that the exact three-phase display matrix remains versioned, attestation/run metadata/logs stay under runner-temporary directories outside the checkout, and CI may upload only the redacted `external-app-live-v2.json` file. |
 | `scripts/test_playcover_pending_launch_crash_live.sh --live` | Clean-HEAD public-fixture gate that materializes committed HEAD and builds the debug CLI, Runtime, and fixture in fresh owner-only scratch paths outside the checkout. It uses an isolated `/tmp` alias root, `_exit(86)` cuts, independent CLI processes, exact PID/birth/executable/Runtime-socket evidence, and machine-envelope assertions for the post-open, generic pre/post-owner, ready, durable `driver.lock`, and three journal-retirement boundaries, plus the deliberately unresolved pre-open `submissionArmed` state. It proves unresolved-open blocking, exact-owner recovery, generation retention, and a fresh start after safe cleanup for that explicit set. It does not attest production installed-layout callback ordering or independently crash the terminal-failure/source-specific callback branches; their store/ordering semantics remain covered only by focused tests until a real independent-process gate is added. |
 | `scripts/test_playcover_prepare_differential.sh` | Run the hermetic pinned Installer-vs-ios-use prepare differential suite in an isolated SwiftPM scratch directory and publish its fixture-only schema-v1 attestation without replacing existing evidence. It binds an embedded 40-file source-closure digest to the loaded XCTest image's exact device/inode and content hash; it does not consume a private live UI scenario. |
+| `scripts/test_playcover_entitlement_capabilities.sh --prepared-app <App.app> --managed-home <path>` | Test-only manual gate that copies the exact signed entitlements from an existing managed prepared App's main executable onto a standalone probe, verifies semantic entitlement equality, and directly exercises the narrowly scoped Runtime filesystem, AF_UNIX, log, and lowercase PlayChain SQLite capabilities without `sandbox-exec`. |
 | `scripts/test_playcover_runtime_stdio.sh` | Compiles the production early-constructor stdio redirector with a small harness and proves exact device/inode capture plus fail-closed rejection of missing identity, replacement, symlink, broad mode, and multiple-link files. |
 | `scripts/characterize_playcover_external_prepare.sh --scenario <path> --runtime <path> --playtools <path> --work-root <path> --report <path> --commit <sha>` | Collect a diagnostic-only external-App prepare report from the full pinned PlayTools Installer oracle and the real ios-use service prepare path. Every input is mandatory; the clean committed HEAD, fresh absolute work/report paths outside the checkout, cleared environment, fixed XCTest, owner-only report, and no-overwrite publication are enforced. The report contains observed typed identities and raw differences only. |
 | `scripts/test_playcover_external_prepare_characterization_contract.sh` | Negative contract for the diagnostic entrypoint: missing/duplicate inputs, relative or existing paths, checkout-confined work/report paths, mismatched or dirty HEAD, the fixed filtered XCTest, and recursive rejection of conclusion/configuration vocabulary in report keys and values. |
@@ -73,6 +74,26 @@ committed HEAD; ignored local build output is permitted, but tracked, staged,
 or untracked non-ignored changes are not. Its report is observation input for
 manual review only and cannot be converted into allowances by either
 entrypoint.
+
+The signed entitlement capability audit consumes an already prepared App and
+does not add a public CLI command or produce an attestation:
+
+```bash
+bash scripts/test_playcover_entitlement_capabilities.sh \
+  --prepared-app "$CAP_HOME/playcover/prepared/<64hex>/<App>.app" \
+  --managed-home "$CAP_HOME"
+```
+
+Both arguments must be canonical absolute paths. The managed home, its
+`state`, `playcover`, `run`, `logs`, lowercase `playchain`, and `prepared`
+directories, plus the selected generation directory, must already be
+same-user, non-symlink, mode-0700 directories; the App must be a direct child
+of the lowercase 64-hex generation. The gate verifies the prepared App and its
+real main executable, signs only a fresh temporary probe with the exported
+entitlement plist, re-exports and compares the two entitlement dictionaries,
+then executes the signed probe directly. It reports fixed case IDs only,
+unlinks only its uniquely named files and sockets, removes only its guarded
+temporary build root, and never removes the caller's App or managed home.
 
 Run the full UI replay only when needed:
 
