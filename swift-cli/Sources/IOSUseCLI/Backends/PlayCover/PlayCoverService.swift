@@ -614,14 +614,6 @@ public enum PlayCoverService {
                     "manifest hash does not match immutable completed marker"
                 )
             }
-            guard marker.inventorySHA256
-                    == sha256(try canonicalJSON(manifest.inventory)),
-                  marker.machoSealSHA256
-                    == sha256(try canonicalJSON(manifest.machOs)) else {
-                throw PlayCoverBackendError.cacheTampered(
-                    "completed inventory/Mach-O seal does not match manifest"
-                )
-            }
             let executable = URL(fileURLWithPath: manifest.executablePath)
             let runtime = app
                 .appendingPathComponent("Frameworks", isDirectory: true)

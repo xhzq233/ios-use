@@ -955,6 +955,58 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
     }
 
+    func testFastVerifyIgnoresLegacyArraySealsWhenRawManifestSealMatches()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let original = try JSONDecoder().decode(
+            PlayCoverCompletedGeneration.self,
+            from: Data(contentsOf: fixture.completedURL)
+        )
+        let completed = PlayCoverCompletedGeneration(
+            schemaVersion: original.schemaVersion,
+            generationKey: original.generationKey,
+            manifestSHA256: original.manifestSHA256,
+            inventorySHA256: String(repeating: "a", count: 64),
+            machoSealSHA256: String(repeating: "b", count: 64),
+            executableSHA256: original.executableSHA256,
+            runtimeSHA256: original.runtimeSHA256
+        )
+        XCTAssertNotEqual(
+            completed.inventorySHA256,
+            original.inventorySHA256
+        )
+        XCTAssertNotEqual(
+            completed.machoSealSHA256,
+            original.machoSealSHA256
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(completed).write(
+            to: fixture.completedURL,
+            options: .atomic
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.completedURL.path
+        )
+        var codeSignCalls = 0
+        Shell.runResultOverrideForTesting = { _, _, _ in
+            codeSignCalls += 1
+            return Shell.RunResult(
+                stdout: "",
+                stderr: "",
+                exitCode: 0
+            )
+        }
+
+        XCTAssertNoThrow(
+            try PlayCoverService.fastVerify(appPath: fixture.app.path)
+        )
+        XCTAssertGreaterThan(codeSignCalls, 0)
+    }
+
     func testManifestSymlinkFailsClosed() throws {
         let fixture = try FastVerifyFixture()
         defer { fixture.remove() }
