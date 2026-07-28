@@ -1177,8 +1177,26 @@ public enum PlayCoverUpstreamEngine {
             let runtimeExecutableRelativePath =
                 "\(embeddedRuntimeFrameworkRelativePath)/"
                     + runtimeExecutableName
-            let runtimeMachOs = inspection.machOs.filter {
+            let runtimeExecutableEntries = inspection.inventory.filter {
                 $0.relativePath == runtimeExecutableRelativePath
+            }
+            guard runtimeExecutableEntries.count == 1,
+                  let runtimeExecutableEntry =
+                    runtimeExecutableEntries.first,
+                  runtimeExecutableEntry.kind == .regularFile
+                    || runtimeExecutableEntry.kind == .symbolicLink else {
+                throw PlayCoverUpstreamError.verificationFailed(
+                    "embedded Runtime logical executable is missing: "
+                        + runtimeExecutableRelativePath
+                )
+            }
+            let runtimeFrameworkPrefix =
+                embeddedRuntimeFrameworkRelativePath + "/"
+            let runtimeMachOs = inspection.machOs.filter {
+                $0.relativePath.hasPrefix(runtimeFrameworkPrefix)
+                    && URL(
+                        fileURLWithPath: $0.relativePath
+                    ).lastPathComponent == runtimeExecutableName
             }
             guard runtimeMachOs.count == 1,
                   let runtimeMachO = runtimeMachOs.first else {

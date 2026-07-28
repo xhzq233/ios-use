@@ -675,6 +675,68 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
     }
 
+    func testPrepareAcceptsVersionedRuntimeExecutableSymlink() throws {
+        let fixture = try makeSignedIOSAppFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = try makeCatalystRuntimeFramework(
+            in: fixture.root,
+            versioned: true
+        )
+        let managed = fixture.root.appendingPathComponent(
+            "managed",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: managed.appendingPathComponent(
+                "prepared",
+                isDirectory: true
+            ),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let staging = managed.appendingPathComponent(
+            "prepared/Fixture.app",
+            isDirectory: true
+        )
+        let evidence = try PlayCoverUpstreamEngine.runtimeEvidence(
+            frameworkURL: runtime
+        )
+        let source = try PlayCoverUpstreamEngine.inspect(appURL: fixture.app)
+
+        let result = try PlayCoverUpstreamEngine.prepare(
+            PlayCoverUpstreamPrepareOptions(
+                sourceApp: fixture.app,
+                stagingApp: staging,
+                runtimeFramework: runtime,
+                managedHome: managed,
+                runtimeSocketPath: managed.appendingPathComponent(
+                    "run/s-runtime.sock"
+                ).path,
+                runtimeLoadPath:
+                    "@executable_path/Frameworks/"
+                    + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                expectedRuntimeEvidence: evidence
+            ),
+            sourceInspection: source
+        )
+
+        let runtimePrefix =
+            "Frameworks/IOSUsePlayRuntime.framework/"
+        let runtimeMachOs = result.prepared.machOs.filter {
+            $0.relativePath.hasPrefix(runtimePrefix)
+                && URL(
+                    fileURLWithPath: $0.relativePath
+                ).lastPathComponent == "IOSUsePlayRuntime"
+        }
+        XCTAssertEqual(
+            runtimeMachOs.map(\.relativePath),
+            [
+                runtimePrefix
+                    + "Versions/A/IOSUsePlayRuntime",
+            ]
+        )
+    }
+
     private struct InspectionFixture {
         let root: URL
         let app: URL
@@ -802,7 +864,10 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         return InspectionFixture(root: root, app: app)
     }
 
-    private func makeCatalystRuntimeFramework(in root: URL) throws -> URL {
+    private func makeCatalystRuntimeFramework(
+        in root: URL,
+        versioned: Bool = false
+    ) throws -> URL {
         let framework = root.appendingPathComponent(
             "IOSUsePlayRuntime.framework",
             isDirectory: true
@@ -811,6 +876,30 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             at: framework,
             withIntermediateDirectories: true
         )
+        let resources: URL
+        let output: URL
+        if versioned {
+            let version = framework.appendingPathComponent(
+                "Versions/A",
+                isDirectory: true
+            )
+            resources = version.appendingPathComponent(
+                "Resources",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: resources,
+                withIntermediateDirectories: true
+            )
+            output = version.appendingPathComponent(
+                "IOSUsePlayRuntime"
+            )
+        } else {
+            resources = framework
+            output = framework.appendingPathComponent(
+                "IOSUsePlayRuntime"
+            )
+        }
         try PropertyListSerialization.data(
             fromPropertyList: [
                 "CFBundleIdentifier": "com.example.IOSUsePlayRuntime",
@@ -819,12 +908,11 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             ],
             format: .xml,
             options: 0
-        ).write(to: framework.appendingPathComponent("Info.plist"))
+        ).write(to: resources.appendingPathComponent("Info.plist"))
         let source = root.appendingPathComponent("Runtime.c")
         try Data(
             "int ios_use_runtime_fixture(void) { return 1; }\n".utf8
         ).write(to: source)
-        let output = framework.appendingPathComponent("IOSUsePlayRuntime")
         let sdk = try Shell.run(
             print: false,
             "/usr/bin/xcrun",
@@ -849,7 +937,30 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "-o",
             output.path
         )
-        try Shell.signMacho(output)
+        if versioned {
+            try FileManager.default.createSymbolicLink(
+                atPath: framework.appendingPathComponent(
+                    "Versions/Current"
+                ).path,
+                withDestinationPath: "A"
+            )
+            try FileManager.default.createSymbolicLink(
+                atPath: framework.appendingPathComponent(
+                    "IOSUsePlayRuntime"
+                ).path,
+                withDestinationPath:
+                    "Versions/Current/IOSUsePlayRuntime"
+            )
+            try FileManager.default.createSymbolicLink(
+                atPath: framework.appendingPathComponent(
+                    "Resources"
+                ).path,
+                withDestinationPath: "Versions/Current/Resources"
+            )
+            try Shell.signMacho(framework)
+        } else {
+            try Shell.signMacho(output)
+        }
         return framework
     }
 
