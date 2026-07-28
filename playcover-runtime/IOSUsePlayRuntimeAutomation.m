@@ -1511,13 +1511,15 @@ static BOOL IOSUseAutomationPlaceTap(
             }
             return YES;
         }
-        CGPoint placed = CGPointZero;
-        if (!IOSUseAutomationHitTestPoint(
-                requested,
-                window,
-                hitView,
-                &placed
-            )) {
+        if (point == NULL ||
+            window == NULL ||
+            hitView == NULL ||
+            *window == nil ||
+            *hitView == nil ||
+            candidate.object != *hitView ||
+            candidate.generation !=
+                [dom[@"snapshotGeneration"]
+                    unsignedLongLongValue]) {
             if (commandError != NULL) {
                 *commandError = IOSUseAutomationError(
                     @"element_not_hittable",
@@ -1530,9 +1532,6 @@ static BOOL IOSUseAutomationPlaceTap(
                 );
             }
             return NO;
-        }
-        if (point != NULL) {
-            *point = placed;
         }
         return YES;
     }

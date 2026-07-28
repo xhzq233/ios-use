@@ -2780,7 +2780,84 @@ record_case scene_replace tap "Replace Scene Window" \
   --dom --json
 assert_evidence scene_replace 'Scene 2'
 
-record_case swiftui_tab tap "SwiftUI" --dom --json
+record_case absolute_bottom_tab_focus input --tap "Fixture Input" \
+  --content "absolute-bottom-tab-focus" --delete 99 \
+  --dom 100ms --json
+assert_json absolute_bottom_tab_focus '
+  .data.finalState.phase == "inserted" and
+  (.data.finalState.firstResponderClass | type) == "string" and
+  (.data.finalState.firstResponderClass | length) > 0 and
+  ([
+    .data.postDom.elements[] |
+    select(
+      .identifier == "fixture.uikit.input" and
+      .state.visible == true and
+      .state.focused == true
+    )
+  ] | length) == 1 and
+  ([
+    .data.postDom.elements[] |
+    select(
+      .identifier == "fixture.tab.swiftui" and
+      .state.visible == true
+    )
+  ] | length) == 1
+'
+absolute_bottom_tab_generation="$(
+  jq -er '.data.postDom.snapshotGeneration' \
+    "$RUN_DIR/absolute_bottom_tab_focus.stdout"
+)"
+absolute_bottom_tab_x="$(
+  jq -er '
+    [.data.postDom.elements[] |
+      select(
+        .identifier == "fixture.tab.swiftui" and
+        .state.visible == true
+      )][0].frame |
+    .[0] + (.[2] * 0.5)
+  ' "$RUN_DIR/absolute_bottom_tab_focus.stdout"
+)"
+absolute_bottom_tab_y="$(
+  jq -er '
+    [.data.postDom.elements[] |
+      select(
+        .identifier == "fixture.tab.swiftui" and
+        .state.visible == true
+      )][0].frame |
+    .[1] + (.[3] * 0.1)
+  ' "$RUN_DIR/absolute_bottom_tab_focus.stdout"
+)"
+record_case swiftui_tab tap \
+  "$absolute_bottom_tab_x,$absolute_bottom_tab_y" \
+  --dom 100ms --json
+if ! jq -e \
+    --argjson x "$absolute_bottom_tab_x" \
+    --argjson y "$absolute_bottom_tab_y" \
+    --argjson generation "$absolute_bottom_tab_generation" '
+      .data.finalState.phase == "ended" and
+      ((.data.finalState.point[0] - $x) | fabs) < 0.001 and
+      ((.data.finalState.point[1] - $y) | fabs) < 0.001 and
+      .data.element.snapshotGeneration == ($generation + 2) and
+      .data.postDom.snapshotGeneration == ($generation + 3) and
+      ([
+        .data.postDom.elements[] |
+        select(
+          .identifier == "fixture.tab.swiftui" and
+          .state.selected == true
+        )
+      ] | length) == 1 and
+      any(
+        .data.postDom.elements[];
+        .identifier == "fixture.swiftui.heading" and
+        .state.visible == true
+      ) and
+      all(.data.postDom.elements[]; .state.focused != true)
+    ' "$RUN_DIR/swiftui_tab.stdout" >/dev/null; then
+  echo \
+    "[playcover-fixture-live] FAIL: absolute bottom-tab tap did not release focus and re-resolve from a fresh DOM" \
+    >&2
+  exit 1
+fi
 assert_evidence swiftui_tab 'SwiftUI Fixture'
 record_case swiftui_increment tap "SwiftUI Increment" \
   --dom --json
