@@ -3284,6 +3284,43 @@ static BOOL IOSUseDOMFlattenCleanNode(
     return YES;
 }
 
+static void IOSUseDOMPruneIdentityRecords(
+    NSArray<IOSUseCleanNode *> *elements,
+    unsigned long long generation
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"DOM identity registries are main-only"
+    );
+    NSMutableSet<NSString *> *retainedNodeIDs =
+        [NSMutableSet setWithCapacity:elements.count];
+    for (IOSUseCleanNode *element in elements) {
+        NSString *nodeID = element.source.nodeID;
+        if (nodeID.length > 0) {
+            [retainedNodeIDs addObject:nodeID];
+        }
+    }
+
+    if (IOSUseDOMLiveIdentityGeneration == generation) {
+        for (NSString *nodeID in
+             IOSUseDOMLiveIdentityRecords.allKeys) {
+            if (![retainedNodeIDs containsObject:nodeID]) {
+                [IOSUseDOMLiveIdentityRecords
+                    removeObjectForKey:nodeID];
+            }
+        }
+    }
+    if (IOSUseDOMWebBridgeGeneration == generation) {
+        for (NSString *nodeID in
+             IOSUseDOMWebBridgeRecords.allKeys) {
+            if (![retainedNodeIDs containsObject:nodeID]) {
+                [IOSUseDOMWebBridgeRecords
+                    removeObjectForKey:nodeID];
+            }
+        }
+    }
+}
+
 static NSArray<UIWindow *> *IOSUseDOMActiveWindows(void) {
     UIApplication *application = UIApplication.sharedApplication;
     NSMutableArray<UIWindowScene *> *scenes = [NSMutableArray array];
@@ -3489,6 +3526,10 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
             return nil;
         }
     }
+    IOSUseDOMPruneIdentityRecords(
+        elements,
+        context.generation
+    );
 
     IOSUseDOMSnapshot *snapshot = [IOSUseDOMSnapshot new];
     snapshot.application = application;
