@@ -1,4 +1,5 @@
 import Foundation
+import IOSUsePlayDevice
 import XCTest
 #if canImport(Darwin)
 import Darwin
@@ -608,6 +609,185 @@ final class PlayCoverCoreTests: XCTestCase {
                 )
             )
         )
+    }
+
+    func testAuthenticatedHelloSeparatesFixedGeometryFromReadiness()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.app.path,
+            generationKey: String(repeating: "a", count: 64)
+        )
+        let pid: Int32 = 42
+        let logicalWidth = Double(IOSUsePlayDeviceLogicalWidth)
+        let logicalHeight = Double(IOSUsePlayDeviceLogicalHeight)
+        let nativeWidth = Double(IOSUsePlayDeviceNativeWidth)
+        let nativeHeight = Double(IOSUsePlayDeviceNativeHeight)
+        let scale = Double(IOSUsePlayDeviceScale)
+
+        func geometry(
+            logicalWidth: Double = Double(
+                IOSUsePlayDeviceLogicalWidth
+            ),
+            logicalHeight: Double = Double(
+                IOSUsePlayDeviceLogicalHeight
+            ),
+            nativeWidth: Double = Double(
+                IOSUsePlayDeviceNativeWidth
+            ),
+            nativeHeight: Double = Double(
+                IOSUsePlayDeviceNativeHeight
+            ),
+            scale: Double = Double(IOSUsePlayDeviceScale),
+            windowWidth: Double = Double(
+                IOSUsePlayDeviceLogicalWidth
+            ),
+            windowHeight: Double = Double(
+                IOSUsePlayDeviceLogicalHeight
+            )
+        ) -> PlayCoverRuntimeGeometry {
+            PlayCoverRuntimeGeometry(
+                logical: .init(
+                    width: logicalWidth,
+                    height: logicalHeight
+                ),
+                native: .init(
+                    width: nativeWidth,
+                    height: nativeHeight
+                ),
+                scale: scale,
+                window: .init(
+                    width: windowWidth,
+                    height: windowHeight
+                ),
+                safeArea: .init(
+                    top: 0,
+                    left: 0,
+                    bottom: 0,
+                    right: 0
+                ),
+                host: nil
+            )
+        }
+
+        func payload(
+            geometry: PlayCoverRuntimeGeometry,
+            stage: String = "ready"
+        ) -> PlayCoverRuntimeHelloPayload {
+            PlayCoverRuntimeHelloPayload(
+                pid: pid,
+                bundleIdentifier: manifest.bundleIdentifier,
+                executablePath: manifest.executablePath,
+                capabilities: ["hello"],
+                geometry: geometry,
+                stage: stage,
+                observed: [:]
+            )
+        }
+
+        let fixedMismatches: [
+            (String, PlayCoverRuntimeGeometry)
+        ] = [
+            (
+                "logical",
+                geometry(logicalWidth: logicalWidth + 0.02)
+            ),
+            (
+                "native",
+                geometry(nativeWidth: nativeWidth + 0.02)
+            ),
+            (
+                "scale",
+                geometry(scale: scale + 0.02)
+            ),
+        ]
+        for (name, mismatchedGeometry) in fixedMismatches {
+            XCTAssertThrowsError(
+                try PlayCoverService.validateHello(
+                    payload(geometry: mismatchedGeometry),
+                    sessionID: "geometry-session",
+                    manifest: manifest,
+                    pid: pid,
+                    stdioLog: nil
+                ),
+                name
+            ) { error in
+                guard case .verificationFailed =
+                        error as? PlayCoverBackendError else {
+                    return XCTFail("\(name): unexpected error \(error)")
+                }
+                XCTAssertTrue(
+                    PlayCoverService.runtimeHelloFailureIsTerminal(error),
+                    name
+                )
+            }
+        }
+
+        XCTAssertNoThrow(
+            try PlayCoverService.validateHello(
+                payload(
+                    geometry: geometry(
+                        logicalWidth: logicalWidth + 0.005,
+                        logicalHeight: logicalHeight - 0.005,
+                        nativeWidth: nativeWidth + 0.005,
+                        nativeHeight: nativeHeight - 0.005,
+                        scale: scale + 0.005,
+                        windowWidth: logicalWidth - 0.005,
+                        windowHeight: logicalHeight + 0.005
+                    )
+                ),
+                sessionID: "geometry-session",
+                manifest: manifest,
+                pid: pid,
+                stdioLog: nil
+            ),
+            "fixed geometry uses the Runtime socket's 0.01 tolerance"
+        )
+
+        let transientReadiness: [
+            (String, String, PlayCoverRuntimeGeometry)
+        ] = [
+            (
+                "waiting stage and zero window",
+                "waiting-for-window",
+                geometry(windowWidth: 0, windowHeight: 0)
+            ),
+            (
+                "unstable window",
+                "ready",
+                geometry(windowWidth: logicalWidth - 1)
+            ),
+        ]
+        for (name, stage, transientGeometry) in transientReadiness {
+            XCTAssertThrowsError(
+                try PlayCoverService.validateHello(
+                    payload(
+                        geometry: transientGeometry,
+                        stage: stage
+                    ),
+                    sessionID: "geometry-session",
+                    manifest: manifest,
+                    pid: pid,
+                    stdioLog: nil
+                ),
+                name
+            ) { error in
+                guard case .launchFailed =
+                        error as? PlayCoverBackendError else {
+                    return XCTFail("\(name): unexpected error \(error)")
+                }
+                XCTAssertFalse(
+                    PlayCoverService.runtimeHelloFailureIsTerminal(error),
+                    name
+                )
+            }
+        }
     }
 
     func testLaunchIdentityMustBeNewAndMatchPreparedGeneration()

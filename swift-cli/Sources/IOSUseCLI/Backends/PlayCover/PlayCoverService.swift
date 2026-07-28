@@ -1324,7 +1324,7 @@ public enum PlayCoverService {
         return result
     }
 
-    private static func validateHello(
+    static func validateHello(
         _ payload: PlayCoverRuntimeHelloPayload,
         sessionID: String,
         manifest: PlayCoverPrepareManifest,
@@ -1344,15 +1344,54 @@ public enum PlayCoverService {
         guard payload.pid == pid,
               payload.bundleIdentifier == manifest.bundleIdentifier,
               canonicalPath(payload.executablePath)
-                == canonicalPath(manifest.executablePath),
-              payload.stage == "ready",
-              geometry.logical.width == expectedLogicalWidth,
-              geometry.logical.height == expectedLogicalHeight,
-              geometry.native.width == expectedNativeWidth,
-              geometry.native.height == expectedNativeHeight,
-              geometry.scale == expectedScale,
-              geometry.window.width == expectedLogicalWidth,
-              geometry.window.height == expectedLogicalHeight else {
+                == canonicalPath(manifest.executablePath) else {
+            throw PlayCoverBackendError.verificationFailed(
+                "authenticated Runtime hello identity does not match "
+                    + "the launched prepared generation"
+            )
+        }
+        guard runtimeGeometryApproximatelyEqual(
+                  geometry.logical.width,
+                  expectedLogicalWidth
+              ),
+              runtimeGeometryApproximatelyEqual(
+                  geometry.logical.height,
+                  expectedLogicalHeight
+              ),
+              runtimeGeometryApproximatelyEqual(
+                  geometry.native.width,
+                  expectedNativeWidth
+              ),
+              runtimeGeometryApproximatelyEqual(
+                  geometry.native.height,
+                  expectedNativeHeight
+              ),
+              runtimeGeometryApproximatelyEqual(
+                  geometry.scale,
+                  expectedScale
+              ) else {
+            throw PlayCoverBackendError.verificationFailed(
+                "authenticated Runtime hello fixed-device geometry "
+                    + "mismatch: logical=\(geometry.logical.width)x"
+                    + "\(geometry.logical.height), native="
+                    + "\(geometry.native.width)x"
+                    + "\(geometry.native.height), scale="
+                    + "\(geometry.scale); expected="
+                    + "\(expectedLogicalWidth)x"
+                    + "\(expectedLogicalHeight)@\(expectedScale)x "
+                    + "(\(expectedNativeWidth)x"
+                    + "\(expectedNativeHeight) native)"
+            )
+        }
+        guard payload.stage == "ready",
+              runtimeGeometryApproximatelyEqual(
+                  geometry.window.width,
+                  expectedLogicalWidth
+              ),
+              runtimeGeometryApproximatelyEqual(
+                  geometry.window.height,
+                  expectedLogicalHeight
+              ) else {
             var hostSummary = "host=missing"
             if let host = geometry.host {
                 hostSummary = [
@@ -1408,7 +1447,7 @@ public enum PlayCoverService {
                 "sceneGeometryFailure=\(sceneGeometryFailure)",
             ].joined(separator: "; ")
             throw PlayCoverBackendError.launchFailed(
-                "Runtime hello identity/geometry is not the fixed "
+                "Runtime hello stage/window is not ready for the fixed "
                     + "\(IOSUsePlayDeviceLogicalWidth)x"
                     + "\(IOSUsePlayDeviceLogicalHeight)@"
                     + "\(IOSUsePlayDeviceScale)x contract: "
@@ -1431,6 +1470,13 @@ public enum PlayCoverService {
             stage: payload.stage,
             capabilities: payload.capabilities
         )
+    }
+
+    private static func runtimeGeometryApproximatelyEqual(
+        _ lhs: Double,
+        _ rhs: Double
+    ) -> Bool {
+        abs(lhs - rhs) <= 0.01
     }
 
     static func validateStdio(
@@ -1530,8 +1576,9 @@ public enum PlayCoverService {
         }
         switch backendError {
         case .launchFailed:
-            // Hello identity/geometry can still converge while the App is
-            // entering its ready state.
+            // Hello stage/window readiness can still converge while the App
+            // is entering its ready state. Authenticated fixed-device
+            // geometry mismatches use verificationFailed and are terminal.
             return false
         case .stdioLogFailed:
             // Constructor stdio state is immutable. Repeating hello cannot
