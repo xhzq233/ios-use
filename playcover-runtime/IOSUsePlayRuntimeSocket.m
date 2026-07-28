@@ -302,6 +302,7 @@ static NSArray<NSString *> *IOSUseCapabilities(void) {
         @"swipe",
         @"input",
         @"dismissAlert",
+        @"dismissAlertByLabel",
         @"open",
     ];
 }
@@ -1346,6 +1347,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
             @"swipe",
             @"input",
             @"dismissAlert",
+            @"dismissAlertByLabel",
             @"open",
         ] containsObject:command]
     ) {
@@ -1373,7 +1375,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
         return IOSUseBasicErrorEnvelope(
             requestID,
             @"unsupported_command",
-            @"Runtime supports hello, ping, diagnostics, screenshot, dom, waitFor, tap, longPress, swipe, input, dismissAlert, and open",
+            @"Runtime supports hello, ping, diagnostics, screenshot, dom, waitFor, tap, longPress, swipe, input, dismissAlert, dismissAlertByLabel, and open",
             @"protocol",
             @"dispatch",
             NO

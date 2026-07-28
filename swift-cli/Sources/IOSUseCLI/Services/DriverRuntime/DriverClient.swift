@@ -65,6 +65,7 @@ protocol DriverCommandClient: AnyObject {
     func terminateApp(bundleId: String) throws
     func home() throws
     func dismissAlert(index: Int?) throws -> ForyAlertPayload
+    func dismissAlert(index: Int?, label: String?) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
@@ -134,6 +135,15 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
+    func dismissAlert(index: Int?, label: String?) throws -> ForyAlertPayload {
+        guard label == nil else {
+            throw CLIParseError.invalidValue(
+                "the active driver does not support dismissAlert --label"
+            )
+        }
+        return try dismissAlert(index: index)
+    }
+
     func input(
         tap: ForyTarget?,
         content: String,
@@ -542,7 +552,34 @@ final class DriverClient: DriverCommandClient {
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
-        try send(DismissAlertCommand.self, args: ForyDismissAlertArgs(index: index.map(Int32.init) ?? IOSUseProtocol.XCConstants.defaultAlertButtonIndex))
+        try dismissAlert(index: index, label: nil)
+    }
+
+    func dismissAlert(index: Int?, label: String?) throws -> ForyAlertPayload {
+        if let label {
+            return try send(
+                DismissAlertByLabelCommand.self,
+                args: ForyDismissAlertByLabelArgs(label: label)
+            )
+        }
+        let wireIndex: Int32
+        if let index {
+            guard let exactIndex = Int32(exactly: index) else {
+                throw CLIParseError.invalidValue(
+                    "dismissAlert --index is out of Int32 range for the active driver"
+                )
+            }
+            wireIndex = exactIndex
+        } else {
+            wireIndex =
+                IOSUseProtocol.XCConstants.defaultAlertButtonIndex
+        }
+        return try send(
+            DismissAlertCommand.self,
+            args: ForyDismissAlertArgs(
+                index: wireIndex
+            )
+        )
     }
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {

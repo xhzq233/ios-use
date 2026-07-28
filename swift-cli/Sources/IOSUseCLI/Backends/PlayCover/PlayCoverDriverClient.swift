@@ -393,12 +393,39 @@ final class PlayCoverDriverClient: DriverCommandClient {
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
-        guard case .dismissAlert(let payload) = try request(
-            .dismissAlert,
-            arguments: .dismissAlert(
-                PlayCoverRuntimeDismissAlertArguments(index: index)
+        try dismissAlert(index: index, label: nil)
+    }
+
+    func dismissAlert(
+        index: Int?,
+        label: String?
+    ) throws -> ForyAlertPayload {
+        let response: PlayCoverRuntimeResponsePayload
+        if let label {
+            response = try request(
+                .dismissAlertByLabel,
+                arguments: .dismissAlertByLabel(
+                    PlayCoverRuntimeDismissAlertByLabelArguments(
+                        label: label
+                    )
+                )
             )
-        ) else {
+        } else {
+            response = try request(
+                .dismissAlert,
+                arguments: .dismissAlert(
+                    PlayCoverRuntimeDismissAlertArguments(
+                        index: index
+                    )
+                )
+            )
+        }
+        let payload: PlayCoverRuntimeAlertPayload
+        switch response {
+        case .dismissAlert(let result),
+             .dismissAlertByLabel(let result):
+            payload = result
+        default:
             throw PlayCoverDriverClientError
                 .malformedRuntimePayload(
                     "dismissAlert response type"

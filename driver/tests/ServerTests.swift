@@ -96,6 +96,28 @@ final class ServerTests: XCTestCase {
         }
     }
 
+    func testDismissAlertByLabelInvocationKeepsExactLabel()
+        throws
+    {
+        let args = ForyDismissAlertByLabelArgs(
+            label: "Allow Full Access"
+        )
+        let payload = try ForyRegistry.create().serialize(args)
+        let invocation = try CommandInvocation(
+            name: .dismissAlertByLabel,
+            payload: payload,
+            codec: Codec.Context()
+        )
+
+        guard case .dismissAlertByLabel(let decoded) =
+                invocation.arguments else {
+            return XCTFail(
+                "expected dismissAlertByLabel arguments"
+            )
+        }
+        XCTAssertEqual(decoded.label, "Allow Full Access")
+    }
+
     func testSecondConnectionIsAcceptedWhileFirstConnectionStaysOpen() throws {
         DriverServer.shared.stop()
         let port = try Self.freePort()

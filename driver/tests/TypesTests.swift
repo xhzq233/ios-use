@@ -129,7 +129,8 @@ final class TypesTests: XCTestCase {
         let cmds: [Command] = [
             .activateApp, .terminateApp, .screenshot,
             .home, .dom, .tap, .longPress, .input, .swipe, .waitFor,
-            .proxyCAPush, .dismissAlert, .waitAppForeground,
+            .proxyCAPush, .dismissAlert, .dismissAlertByLabel,
+            .waitAppForeground,
         ]
         for cmd in cmds {
             XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")
@@ -703,6 +704,40 @@ final class TypesTests: XCTestCase {
     func testResolveButtonIndex_OutOfBounds_FallsBackToLast() {
         XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: 5), 1)
         XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: -1), 1)
+    }
+
+    func testResolveButtonLabelIndex_RequiresOneExactMatch() {
+        XCTAssertEqual(
+            AlertCommands.resolveButtonLabelIndex(
+                buttonLabels: ["Cancel", "Allow Full Access"],
+                requestedLabel: "Allow Full Access"
+            ),
+            1
+        )
+        XCTAssertNil(
+            AlertCommands.resolveButtonLabelIndex(
+                buttonLabels: ["Allow", "Allow"],
+                requestedLabel: "Allow"
+            )
+        )
+        XCTAssertNil(
+            AlertCommands.resolveButtonLabelIndex(
+                buttonLabels: ["Allow Full Access"],
+                requestedLabel: "Allow"
+            )
+        )
+        XCTAssertNil(
+            AlertCommands.resolveButtonLabelIndex(
+                buttonLabels: ["Allow"],
+                requestedLabel: "allow"
+            )
+        )
+        XCTAssertNil(
+            AlertCommands.resolveButtonLabelIndex(
+                buttonLabels: ["Allow"],
+                requestedLabel: "Allow "
+            )
+        )
     }
 
     // MARK: - rawFindInSnapshot

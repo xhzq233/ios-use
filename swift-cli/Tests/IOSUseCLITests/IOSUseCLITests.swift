@@ -2856,9 +2856,10 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(commands.contains("dom"))
         XCTAssertTrue(commands.contains("waitFor"))
         XCTAssertTrue(commands.contains("dismissAlert"))
+        XCTAssertTrue(commands.contains("dismissAlertByLabel"))
         XCTAssertTrue(commands.contains("waitAppForeground"))
         XCTAssertFalse(commands.contains("health"))
-        XCTAssertEqual(commands.count, 13)
+        XCTAssertEqual(commands.count, 14)
     }
 
     func testDriverCommandMetadataBindsArgsAndPayloadTypes() {

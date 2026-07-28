@@ -2728,6 +2728,44 @@ assert_json alert_tap_confirm '
 '
 assert_evidence alert_tap_confirm 'Alert Confirmed'
 
+record_case alert_show_label tap "Show Alert" --json
+alert_missing_stdout="$RUN_DIR/alert_label_missing.stdout"
+alert_missing_stderr="$RUN_DIR/alert_label_missing.stderr"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$MATRIX_VERSION" \
+  "alert_label_missing" \
+  'dismissAlert --label Missing --json (expected exact-label failure)' \
+  "$alert_missing_stdout" \
+  "$alert_missing_stderr" >>"$MANIFEST"
+if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+    dismissAlert --label "Missing" --json \
+    >"$alert_missing_stdout" 2>"$alert_missing_stderr"; then
+  echo \
+    "[playcover-fixture-live] FAIL: missing alert label fell back to another action" \
+    >&2
+  exit 1
+fi
+assert_failure_json alert_label_missing '
+  .ok == false and
+  .error.category == "lookup" and
+  .error.code == "alert_action_not_found" and
+  .error.phase == "lookup"
+'
+record_case alert_label_missing_still_visible status --json
+assert_json alert_label_missing_still_visible '
+  .data.driver.runtime.observed.appKit.nativeAlert as $alert |
+  $alert.visible == 1 and
+  ([ $alert.actions[].label ] | sort) == ["Cancel","Confirm"]
+'
+record_case alert_label dismissAlert --label "Confirm" --json
+assert_json alert_label '
+  .data.dismissed == true and
+  .data.button == "Confirm" and
+  .data.reason == "label"
+'
+record_case alert_label_gone waitFor "Fixture Alert" \
+  --gone --timeout 10s --json
+
 record_case alert_show_default tap "Show Alert" --json
 record_case alert_default dismissAlert --json
 assert_evidence alert_default \

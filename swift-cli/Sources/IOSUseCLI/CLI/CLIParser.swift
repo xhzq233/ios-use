@@ -660,13 +660,38 @@ public enum CLIParser {
 
     private static func parseDismissAlert(_ parser: inout ArgumentParser) throws -> DriverAction {
         var index: Int?
+        var label: String?
         while let arg = parser.consume() {
             switch arg {
-            case "--index": index = try parseNonNegativeIntStrict(parser.valueAllowingLeadingDash(for: arg), label: arg)
+            case "--index":
+                index = try parseNonNegativeIntStrict(
+                    parser.valueAllowingLeadingDash(for: arg),
+                    label: arg
+                )
+            case "--label":
+                guard label == nil else {
+                    throw CLIParseError.invalidValue(
+                        "dismissAlert --label can only be provided once"
+                    )
+                }
+                let value = try parser.value(for: arg)
+                guard !value.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty else {
+                    throw CLIParseError.invalidValue(
+                        "--label must not be empty"
+                    )
+                }
+                label = value
             default: throw CLIParseError.unknownOption(arg)
             }
         }
-        return .dismissAlert(index: index)
+        guard index == nil || label == nil else {
+            throw CLIParseError.invalidValue(
+                "dismissAlert --index cannot be combined with --label"
+            )
+        }
+        return .dismissAlert(index: index, label: label)
     }
 
     private static func parseOSLog(_ parser: inout ArgumentParser) throws -> OSLogOptions {

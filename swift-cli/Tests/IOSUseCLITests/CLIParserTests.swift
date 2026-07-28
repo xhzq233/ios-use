@@ -323,7 +323,7 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["dismissAlert"]),
-            .driver(.dismissAlert(index: nil))
+            .driver(.dismissAlert(index: nil, label: nil))
         )
 
         XCTAssertEqual(
@@ -399,7 +399,32 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["dismissAlert", "--index", "0"]),
-            .driver(.dismissAlert(index: 0))
+            .driver(.dismissAlert(index: 0, label: nil))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse([
+                "dismissAlert",
+                "--index",
+                "0",
+                "--index",
+                "2147483648",
+            ]),
+            .driver(.dismissAlert(index: 2_147_483_648, label: nil))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse([
+                "dismissAlert",
+                "--label",
+                "Allow Full Access",
+            ]),
+            .driver(
+                .dismissAlert(
+                    index: nil,
+                    label: "Allow Full Access"
+                )
+            )
         )
 
         XCTAssertEqual(
@@ -629,6 +654,66 @@ final class CLIParserTests: XCTestCase {
         }
         XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--index", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--index must be non-negative"))
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "dismissAlert",
+                "--index",
+                "0",
+                "--label",
+                "Allow",
+            ])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue(
+                    "dismissAlert --index cannot be combined with --label"
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "dismissAlert",
+                "--label",
+                "Allow",
+                "--index",
+                "0",
+            ])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue(
+                    "dismissAlert --index cannot be combined with --label"
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "dismissAlert",
+                "--label",
+                "   ",
+            ])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--label must not be empty")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "dismissAlert",
+                "--label",
+                "Allow",
+                "--label",
+                "Cancel",
+            ])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue(
+                    "dismissAlert --label can only be provided once"
+                )
+            )
         }
         XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--dom", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--dom must be non-negative"))

@@ -265,7 +265,7 @@ public enum DriverAction: Equatable, Sendable {
     case activateApp(bundleId: String)
     case terminateApp(bundleId: String)
     case home
-    case dismissAlert(index: Int?)
+    case dismissAlert(index: Int?, label: String?)
 
     public var name: String {
         switch self {

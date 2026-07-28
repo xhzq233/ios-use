@@ -183,7 +183,23 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             (
                 .dismissAlert,
                 .dismissAlert(.init(index: 1)),
-                { XCTAssertEqual($0["index"] as? Int, 1) }
+                {
+                    XCTAssertEqual($0["index"] as? Int, 1)
+                    XCTAssertNil($0["label"])
+                }
+            ),
+            (
+                .dismissAlertByLabel,
+                .dismissAlertByLabel(.init(
+                    label: "Allow Full Access"
+                )),
+                {
+                    XCTAssertNil($0["index"])
+                    XCTAssertEqual(
+                        $0["label"] as? String,
+                        "Allow Full Access"
+                    )
+                }
             ),
             (
                 .open,
@@ -947,6 +963,15 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     "reason": "button",
                 ],
             ]
+        case .dismissAlertByLabel:
+            return [
+                "dismissAlertByLabel": [
+                    "dismissed": true,
+                    "text": "Notice",
+                    "button": "OK",
+                    "reason": "label",
+                ],
+            ]
         case .open:
             return [
                 "open": [
@@ -1144,6 +1169,7 @@ private extension PlayCoverRuntimeCommand {
         .swipe,
         .input,
         .dismissAlert,
+        .dismissAlertByLabel,
         .open,
     ]
 }

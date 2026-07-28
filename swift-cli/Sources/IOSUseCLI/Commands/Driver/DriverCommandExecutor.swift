@@ -218,8 +218,18 @@ enum DriverCommandExecutor {
             ok = true
             return DriverCommandResult(stdout: "Pressed Home\n", payload: nil)
 
-        case .dismissAlert(let index):
-            let payload = try requiredPayload(clientRunner { .alert(try $0.dismissAlert(index: index)) }, as: ForyAlertPayload.self)
+        case .dismissAlert(let index, let label):
+            let payload = try requiredPayload(
+                clientRunner {
+                    .alert(
+                        try $0.dismissAlert(
+                            index: index,
+                            label: label
+                        )
+                    )
+                },
+                as: ForyAlertPayload.self
+            )
             ok = true
             return DriverCommandResult(stdout: DriverOutput.formatAlert(payload), payload: .alert(payload))
         }

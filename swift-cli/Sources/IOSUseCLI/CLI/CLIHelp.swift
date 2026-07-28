@@ -336,9 +336,10 @@ enum CLIHelp {
             """
         case "dismissAlert":
             return driverHelp(
-                usage: "ios-use dismissAlert [--index <index>]",
+                usage: "ios-use dismissAlert [--label <label> | --index <index>]",
                 summary: "Dismiss a system alert.",
                 options: [
+                    "--label <label>  Exact visible button label; fails if absent or ambiguous",
                     "--index <index>  Zero-based visible button index; omitted selects the last button",
                 ]
             )

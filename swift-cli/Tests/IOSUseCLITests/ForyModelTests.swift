@@ -101,6 +101,21 @@ final class ForyModelTests: XCTestCase {
         XCTAssertTrue(decoded.enter)
     }
 
+    func testDismissAlertByLabelArgsRoundTripExactLabel() throws {
+        let fory = ForyRegistry.create()
+        let encoded = try fory.serialize(
+            ForyDismissAlertByLabelArgs(
+                label: "Allow Full Access"
+            )
+        )
+        let decoded = try fory.deserialize(
+            encoded,
+            as: ForyDismissAlertByLabelArgs.self
+        )
+
+        XCTAssertEqual(decoded.label, "Allow Full Access")
+    }
+
     func testForyRegistryCanSerializeProxyCAPushArgs() throws {
         let fory = ForyRegistry.create()
         let encoded = try fory.serialize(ForyProxyCAPushArgs(caBase64: "abc123"))

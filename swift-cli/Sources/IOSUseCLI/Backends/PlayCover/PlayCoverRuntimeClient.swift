@@ -13,6 +13,7 @@ enum PlayCoverRuntimeCommand: String, Codable, Sendable {
     case swipe
     case input
     case dismissAlert
+    case dismissAlertByLabel
     case open
 }
 
@@ -231,6 +232,22 @@ struct PlayCoverRuntimeInputArguments: Codable, Equatable, Sendable {
 
 struct PlayCoverRuntimeDismissAlertArguments: Codable, Equatable, Sendable {
     let index: Int?
+
+    init(index: Int?) {
+        self.index = index
+    }
+}
+
+struct PlayCoverRuntimeDismissAlertByLabelArguments:
+    Codable,
+    Equatable,
+    Sendable
+{
+    let label: String
+
+    init(label: String) {
+        self.label = label
+    }
 }
 
 struct PlayCoverRuntimeOpenArguments: Codable, Equatable, Sendable {
@@ -246,6 +263,9 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
     case swipe(PlayCoverRuntimeSwipeArguments)
     case input(PlayCoverRuntimeInputArguments)
     case dismissAlert(PlayCoverRuntimeDismissAlertArguments)
+    case dismissAlertByLabel(
+        PlayCoverRuntimeDismissAlertByLabelArguments
+    )
     case open(PlayCoverRuntimeOpenArguments)
 
     func encode(to encoder: Encoder) throws {
@@ -265,6 +285,8 @@ enum PlayCoverRuntimeRequestArguments: Encodable, Equatable, Sendable {
         case .input(let arguments):
             try arguments.encode(to: encoder)
         case .dismissAlert(let arguments):
+            try arguments.encode(to: encoder)
+        case .dismissAlertByLabel(let arguments):
             try arguments.encode(to: encoder)
         case .open(let arguments):
             try arguments.encode(to: encoder)
@@ -563,6 +585,10 @@ private struct PlayCoverRuntimeAlertResult: Codable {
     let dismissAlert: PlayCoverRuntimeAlertPayload
 }
 
+private struct PlayCoverRuntimeAlertByLabelResult: Codable {
+    let dismissAlertByLabel: PlayCoverRuntimeAlertPayload
+}
+
 private struct PlayCoverRuntimeOpenResult: Codable {
     let open: PlayCoverRuntimeOpenPayload
 }
@@ -579,6 +605,7 @@ enum PlayCoverRuntimeResponsePayload: Equatable, Sendable {
     case swipe(PlayCoverRuntimeSwipePayload)
     case input(PlayCoverRuntimeActionPayload)
     case dismissAlert(PlayCoverRuntimeAlertPayload)
+    case dismissAlertByLabel(PlayCoverRuntimeAlertPayload)
     case open(PlayCoverRuntimeOpenPayload)
 }
 
@@ -870,6 +897,21 @@ final class PlayCoverRuntimeClient {
         return payload
     }
 
+    func dismissAlertByLabel(
+        _ arguments: PlayCoverRuntimeDismissAlertByLabelArguments
+    ) throws -> PlayCoverRuntimeAlertPayload {
+        guard case .dismissAlertByLabel(let payload) =
+                try request(
+                    .dismissAlertByLabel,
+                    arguments: .dismissAlertByLabel(arguments)
+                ) else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "dismissAlertByLabel response type mismatch"
+            )
+        }
+        return payload
+    }
+
     func open(
         _ arguments: PlayCoverRuntimeOpenArguments
     ) throws -> PlayCoverRuntimeOpenPayload {
@@ -960,6 +1002,12 @@ final class PlayCoverRuntimeClient {
             let payload: PlayCoverRuntimeAlertResult =
                 try performRequest(command, arguments: arguments)
             return .dismissAlert(payload.dismissAlert)
+        case .dismissAlertByLabel:
+            let payload: PlayCoverRuntimeAlertByLabelResult =
+                try performRequest(command, arguments: arguments)
+            return .dismissAlertByLabel(
+                payload.dismissAlertByLabel
+            )
         case .open:
             let payload: PlayCoverRuntimeOpenResult =
                 try performRequest(command, arguments: arguments)

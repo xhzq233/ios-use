@@ -311,6 +311,7 @@ public enum DriverCommand: String, CaseIterable, Sendable {
     case swipe
     case waitFor
     case dismissAlert
+    case dismissAlertByLabel
     case waitAppForeground
 }
 
@@ -389,6 +390,12 @@ public enum DismissAlertCommand: DriverCommandBinding {
     public static let command = DriverCommand.dismissAlert
 }
 
+public enum DismissAlertByLabelCommand: DriverCommandBinding {
+    public typealias Args = ForyDismissAlertByLabelArgs
+    public typealias Payload = ForyAlertPayload
+    public static let command = DriverCommand.dismissAlertByLabel
+}
+
 public enum WaitAppForegroundCommand: DriverCommandBinding {
     public typealias Args = ForyWaitAppForegroundArgs
     public typealias Payload = ForyWaitAppForegroundPayload
@@ -428,6 +435,8 @@ public extension DriverCommand {
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyWaitForArgs.self), payloadTypeName: String(describing: ForyWaitForPayload.self), mutatesUI: false)
         case .dismissAlert:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyDismissAlertArgs.self), payloadTypeName: String(describing: ForyAlertPayload.self), mutatesUI: true)
+        case .dismissAlertByLabel:
+            DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyDismissAlertByLabelArgs.self), payloadTypeName: String(describing: ForyAlertPayload.self), mutatesUI: true)
         case .waitAppForeground:
             DriverCommandMetadata(command: self, argsTypeName: String(describing: ForyWaitAppForegroundArgs.self), payloadTypeName: String(describing: ForyWaitAppForegroundPayload.self), mutatesUI: false)
         }

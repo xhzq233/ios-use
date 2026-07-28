@@ -80,21 +80,23 @@ static BOOL IOSUseAutomationFinitePoint(CGPoint point) {
         point.y <= IOSUsePlayDeviceLogicalHeight;
 }
 
-static NSDictionary<NSString *, id> *IOSUseAutomationError(
+static NSDictionary<NSString *, id> *
+IOSUseAutomationErrorWithCandidateCount(
     NSString *code,
     NSString *message,
     NSString *category,
     NSString *phase,
     BOOL retryable,
     NSDictionary<NSString *, id> * _Nullable target,
-    NSArray<NSDictionary<NSString *, id> *> *candidates
+    NSArray<NSDictionary<NSString *, id> *> *candidates,
+    NSUInteger candidateCount
 ) {
     NSMutableDictionary<NSString *, id> *details = [@{
         @"category": category,
         @"phase": phase,
         @"retryable": @(retryable),
         @"fatal": @NO,
-        @"candidateCount": @(candidates.count),
+        @"candidateCount": @(candidateCount),
         @"candidates": candidates,
         @"suggestions": @[],
     } mutableCopy];
@@ -106,6 +108,27 @@ static NSDictionary<NSString *, id> *IOSUseAutomationError(
         @"message": message,
         @"details": details,
     };
+}
+
+static NSDictionary<NSString *, id> *IOSUseAutomationError(
+    NSString *code,
+    NSString *message,
+    NSString *category,
+    NSString *phase,
+    BOOL retryable,
+    NSDictionary<NSString *, id> * _Nullable target,
+    NSArray<NSDictionary<NSString *, id> *> *candidates
+) {
+    return IOSUseAutomationErrorWithCandidateCount(
+        code,
+        message,
+        category,
+        phase,
+        retryable,
+        target,
+        candidates,
+        candidates.count
+    );
 }
 
 static NSDictionary<NSString *, id> *
@@ -3465,8 +3488,37 @@ static void IOSUseAutomationCollectControls(
 
 static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
     NSDictionary<NSString *, id> *arguments,
+    BOOL labelOnly,
     NSDictionary<NSString *, id> **commandError
 ) {
+    id rawIndex = arguments[@"index"];
+    id rawLabel = arguments[@"label"];
+    NSString *requestedLabel = nil;
+    if (labelOnly) {
+        NSSet<NSString *> *providedKeys =
+            [NSSet setWithArray:arguments.allKeys];
+        if (![providedKeys
+                isEqualToSet:[NSSet setWithObject:@"label"]] ||
+            ![rawLabel isKindOfClass:NSString.class] ||
+            [(NSString *)rawLabel
+                stringByTrimmingCharactersInSet:
+                    NSCharacterSet.whitespaceAndNewlineCharacterSet]
+                    .length == 0) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"invalid_arguments",
+                    @"dismissAlertByLabel requires exactly one non-empty string label",
+                    @"validation",
+                    @"validation",
+                    NO,
+                    nil,
+                    @[]
+                );
+            }
+            return nil;
+        }
+        requestedLabel = (NSString *)rawLabel;
+    }
     BOOL nativeAlertCandidateVisible =
         [IOSUsePlayAppKitBridge
             hasVisibleNativeAlertCandidate];
@@ -3517,11 +3569,54 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
     if (nativeActions.count > 0) {
         NSString *nativeAlertText =
             [IOSUsePlayAppKitBridge nativeAlertText];
-        NSInteger nativeIndex = arguments[@"index"] == nil
-            ? (NSInteger)nativeActions.count - 1
-            : [arguments[@"index"] integerValue];
-        if (arguments[@"index"] != nil &&
-            (!IOSUseAutomationIsNumber(arguments[@"index"]) ||
+        NSInteger nativeIndex = NSNotFound;
+        if (requestedLabel != nil) {
+            NSMutableIndexSet *matches =
+                [NSMutableIndexSet indexSet];
+            [nativeActions
+                enumerateObjectsUsingBlock:^(
+                    NSDictionary<NSString *, id> *action,
+                    NSUInteger index,
+                    BOOL *stop
+                ) {
+                    (void)stop;
+                    if ([action[@"label"]
+                            isEqualToString:requestedLabel]) {
+                        [matches addIndex:index];
+                    }
+                }];
+            if (matches.count != 1) {
+                if (commandError != NULL) {
+                    *commandError =
+                        IOSUseAutomationErrorWithCandidateCount(
+                        matches.count == 0
+                            ? @"alert_action_not_found"
+                            : @"alert_action_ambiguous",
+                        matches.count == 0
+                            ? @"no visible native alert action has the exact requested label"
+                            : @"multiple visible native alert actions have the exact requested label",
+                        @"lookup",
+                        @"lookup",
+                        YES,
+                        @{
+                            @"label": requestedLabel,
+                            @"traits": @"Button",
+                        },
+                        @[],
+                        matches.count
+                    );
+                }
+                return nil;
+            }
+            nativeIndex = (NSInteger)matches.firstIndex;
+        } else {
+            nativeIndex = rawIndex == nil
+                ? (NSInteger)nativeActions.count - 1
+                : [rawIndex integerValue];
+        }
+        if (requestedLabel == nil &&
+            rawIndex != nil &&
+            (!IOSUseAutomationIsNumber(rawIndex) ||
              nativeIndex < 0 ||
              nativeIndex >= (NSInteger)nativeActions.count)) {
             if (commandError != NULL) {
@@ -3611,9 +3706,11 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                     @"dismissed": @YES,
                     @"text": nativeAlertText,
                     @"button": nativeAction[@"label"],
-                    @"reason": arguments[@"index"] == nil
-                        ? @"default"
-                        : @"index",
+                    @"reason": requestedLabel != nil
+                        ? @"label"
+                        : (rawIndex == nil
+                            ? @"default"
+                            : @"index"),
                     @"nativeAlertDelivery": nativeDelivery,
                     @"finalState": @{
                         @"point": @{
@@ -3661,11 +3758,51 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
         }
         return nil;
     }
-    NSInteger index = arguments[@"index"] == nil
-        ? NSNotFound
-        : [arguments[@"index"] integerValue];
-    if (arguments[@"index"] != nil &&
-        (!IOSUseAutomationIsNumber(arguments[@"index"]) ||
+    NSInteger index = NSNotFound;
+    if (requestedLabel != nil) {
+        NSMutableIndexSet *matches =
+            [NSMutableIndexSet indexSet];
+        [alert.actions
+            enumerateObjectsUsingBlock:^(
+                UIAlertAction *action,
+                NSUInteger actionIndex,
+                BOOL *stop
+            ) {
+                (void)stop;
+                if ([action.title isEqualToString:requestedLabel]) {
+                    [matches addIndex:actionIndex];
+                }
+            }];
+        if (matches.count != 1) {
+            if (commandError != NULL) {
+                *commandError =
+                    IOSUseAutomationErrorWithCandidateCount(
+                    matches.count == 0
+                        ? @"alert_action_not_found"
+                        : @"alert_action_ambiguous",
+                    matches.count == 0
+                        ? @"no visible alert action has the exact requested label"
+                        : @"multiple visible alert actions have the exact requested label",
+                    @"lookup",
+                    @"lookup",
+                    YES,
+                    @{
+                        @"label": requestedLabel,
+                        @"traits": @"Button",
+                    },
+                    @[],
+                    matches.count
+                );
+            }
+            return nil;
+        }
+        index = (NSInteger)matches.firstIndex;
+    } else if (rawIndex != nil) {
+        index = [rawIndex integerValue];
+    }
+    if (requestedLabel == nil &&
+        rawIndex != nil &&
+        (!IOSUseAutomationIsNumber(rawIndex) ||
          index < 0 ||
          index >= (NSInteger)alert.actions.count)) {
         if (commandError != NULL) {
@@ -3687,12 +3824,48 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
     UIAlertAction *action = alert.actions[(NSUInteger)index];
     NSMutableArray<UIControl *> *controls = [NSMutableArray array];
     IOSUseAutomationCollectControls(alert.view, controls);
+    NSMutableArray<UIControl *> *matchingControls =
+        [NSMutableArray array];
     UIControl *selectedControl = nil;
     for (UIControl *control in controls) {
-        if ([control.accessibilityLabel isEqualToString:action.title]) {
-            selectedControl = control;
-            break;
+        if (![control.accessibilityLabel
+                isEqualToString:action.title]) {
+            continue;
         }
+        if (requestedLabel != nil) {
+            if (control.enabled &&
+                control.userInteractionEnabled) {
+                [matchingControls addObject:control];
+            }
+        } else if (selectedControl == nil) {
+            selectedControl = control;
+        }
+    }
+    if (requestedLabel != nil) {
+        selectedControl = matchingControls.firstObject;
+    }
+    if (requestedLabel != nil && matchingControls.count != 1) {
+        if (commandError != NULL) {
+            *commandError =
+                IOSUseAutomationErrorWithCandidateCount(
+                matchingControls.count == 0
+                    ? @"alert_action_not_found"
+                    : @"alert_action_ambiguous",
+                matchingControls.count == 0
+                    ? @"the exact alert action has no enabled live UIControl"
+                    : @"the exact alert action maps to multiple enabled live UIControls",
+                @"interaction",
+                @"hit-test",
+                YES,
+                @{
+                    @"label": requestedLabel,
+                    @"traits": @"Button",
+                },
+                @[],
+                matchingControls.count
+            );
+        }
+        return nil;
     }
     if (selectedControl == nil) {
         if (commandError != NULL) {
@@ -3770,9 +3943,11 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
         @"dismissed": @YES,
         @"text": alert.message ?: alert.title ?: @"",
         @"button": action.title ?: @"",
-        @"reason": arguments[@"index"] == nil
-            ? @"default"
-            : @"index",
+        @"reason": requestedLabel != nil
+            ? @"label"
+            : (rawIndex == nil
+                ? @"default"
+                : @"index"),
         @"hitView": IOSUseAutomationHitViewJSON(hitView),
         @"finalState": @{
             @"point": @{
@@ -3932,9 +4107,15 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
                 );
             } else if ([command isEqualToString:@"input"]) {
                 result = IOSUseAutomationInput(arguments, &blockError);
-            } else if ([command isEqualToString:@"dismissAlert"]) {
+            } else if (
+                [command isEqualToString:@"dismissAlert"] ||
+                [command
+                    isEqualToString:@"dismissAlertByLabel"]
+            ) {
                 result = IOSUseAutomationDismissAlert(
                     arguments,
+                    [command
+                        isEqualToString:@"dismissAlertByLabel"],
                     &blockError
                 );
             } else if ([command isEqualToString:@"open"]) {

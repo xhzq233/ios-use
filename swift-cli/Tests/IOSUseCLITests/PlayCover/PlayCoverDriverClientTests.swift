@@ -93,6 +93,18 @@ final class PlayCoverDriverClientTests: XCTestCase {
                         finalState: self.makeFinalState()
                     )
                 )
+            case .dismissAlertByLabel:
+                return self.makePayload(
+                    capability: command,
+                    dismissAlertByLabel: .init(
+                        dismissed: true,
+                        text: "Allow access?",
+                        button: "Allow",
+                        reason: "label",
+                        hitView: self.makeHitView(),
+                        finalState: self.makeFinalState()
+                    )
+                )
             case .open:
                 return self.makePayload(
                     capability: command,
@@ -248,6 +260,63 @@ final class PlayCoverDriverClientTests: XCTestCase {
             return XCTFail("missing open arguments")
         }
         XCTAssertEqual(openArgs.url, "demo://route")
+    }
+
+    func testDismissAlertForwardsExactLabelWithoutIndex() throws {
+        var captured:
+            PlayCoverRuntimeDismissAlertByLabelArguments?
+        let client = PlayCoverDriverClient(
+            session: makeSession()
+        ) { command, arguments, _ in
+            XCTAssertEqual(command, .dismissAlertByLabel)
+            guard case .dismissAlertByLabel(let dismiss) = arguments
+            else {
+                XCTFail("missing dismissAlert arguments")
+                return self.makePayload(capability: command)
+            }
+            captured = dismiss
+            return self.makePayload(
+                capability: command,
+                dismissAlertByLabel: .init(
+                    dismissed: true,
+                    text: "Photo Access",
+                    button: "Allow Full Access",
+                    reason: "label",
+                    hitView: nil,
+                    finalState: nil
+                )
+            )
+        }
+
+        let result = try client.dismissAlert(
+            index: nil,
+            label: "Allow Full Access"
+        )
+
+        XCTAssertEqual(captured?.label, "Allow Full Access")
+        XCTAssertEqual(result.button, "Allow Full Access")
+    }
+
+    func testDismissAlertLabelNeverFallsBackToLegacyCommand() {
+        var commands: [PlayCoverRuntimeCommand] = []
+        let client = PlayCoverDriverClient(
+            session: makeSession()
+        ) { command, _, _ in
+            commands.append(command)
+            throw PlayCoverRuntimeClientError.remoteError(
+                code: "unsupported_command",
+                message: "unsupported",
+                details: nil
+            )
+        }
+
+        XCTAssertThrowsError(
+            try client.dismissAlert(
+                index: nil,
+                label: "Allow Full Access"
+            )
+        )
+        XCTAssertEqual(commands, [.dismissAlertByLabel])
     }
 
     func testTapPreservesAbsentRatioForRuntimePlacement() throws {
@@ -2110,6 +2179,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
         swipe: PlayCoverRuntimeSwipePayload? = nil,
         input: PlayCoverRuntimeActionPayload? = nil,
         dismissAlert: PlayCoverRuntimeAlertPayload? = nil,
+        dismissAlertByLabel:
+            PlayCoverRuntimeAlertPayload? = nil,
         open: PlayCoverRuntimeOpenPayload? = nil
     ) -> PlayCoverRuntimeResponsePayload {
         switch capability {
@@ -2197,6 +2268,15 @@ final class PlayCoverDriverClientTests: XCTestCase {
                 )
             }
             return .dismissAlert(dismissAlert)
+        case .dismissAlertByLabel:
+            guard let dismissAlertByLabel else {
+                preconditionFailure(
+                    "missing dismissAlertByLabel test payload"
+                )
+            }
+            return .dismissAlertByLabel(
+                dismissAlertByLabel
+            )
         case .open:
             guard let open else {
                 preconditionFailure("missing open test payload")

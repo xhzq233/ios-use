@@ -672,6 +672,15 @@ public struct ForyDismissAlertArgs {
 }
 
 @ForyStruct
+public struct ForyDismissAlertByLabelArgs {
+    public var label: String = ""
+
+    public init(label: String = "") {
+        self.label = label
+    }
+}
+
+@ForyStruct
 public struct ForyProxyCAPushArgs {
     public var caBase64: String = ""
 
@@ -768,6 +777,7 @@ public enum ForyRegistry {
         try! fory.register(ForyLongPressArgs.self, name: "ForyLongPressArgs")
         try! fory.register(ForySwipeArgs.self, name: "ForySwipeArgs")
         try! fory.register(ForyDismissAlertArgs.self, name: "ForyDismissAlertArgs")
+        try! fory.register(ForyDismissAlertByLabelArgs.self, name: "ForyDismissAlertByLabelArgs")
         try! fory.register(ForyProxyCAPushArgs.self, name: "ForyProxyCAPushArgs")
         try! fory.register(ForyWaitAppForegroundArgs.self, name: "ForyWaitAppForegroundArgs")
         try! fory.register(ForyWaitAppForegroundPayload.self, name: "ForyWaitAppForegroundPayload")
