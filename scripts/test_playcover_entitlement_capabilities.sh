@@ -176,7 +176,27 @@ require_owner_directory_700 "$GENERATION_DIR"
   "$PREPARED_APP" >/dev/null 2>&1 ||
   fail_case "PCAP-PREPARED-SIGNATURE"
 
-INFO_PLIST="$PREPARED_APP/Contents/Info.plist"
+IOS_INFO_PLIST="$PREPARED_APP/Info.plist"
+MAC_INFO_PLIST="$PREPARED_APP/Contents/Info.plist"
+if [[
+  -f "$IOS_INFO_PLIST" &&
+  ! -L "$IOS_INFO_PLIST" &&
+  ! -e "$MAC_INFO_PLIST" &&
+  ! -L "$MAC_INFO_PLIST"
+]]; then
+  INFO_PLIST="$IOS_INFO_PLIST"
+  EXECUTABLE_ROOT="$PREPARED_APP"
+elif [[
+  -f "$MAC_INFO_PLIST" &&
+  ! -L "$MAC_INFO_PLIST" &&
+  ! -e "$IOS_INFO_PLIST" &&
+  ! -L "$IOS_INFO_PLIST"
+]]; then
+  INFO_PLIST="$MAC_INFO_PLIST"
+  EXECUTABLE_ROOT="$PREPARED_APP/Contents/MacOS"
+else
+  fail_case "PCAP-CONFIG-PREPARED"
+fi
 require_owned_regular "$INFO_PLIST"
 EXECUTABLE_NAME="$(
   /usr/bin/plutil \
@@ -189,7 +209,7 @@ case "$EXECUTABLE_NAME" in
     fail_case "PCAP-CONFIG-PREPARED"
     ;;
 esac
-MAIN_EXECUTABLE="$PREPARED_APP/Contents/MacOS/$EXECUTABLE_NAME"
+MAIN_EXECUTABLE="$EXECUTABLE_ROOT/$EXECUTABLE_NAME"
 require_owned_regular "$MAIN_EXECUTABLE"
 [[ -x "$MAIN_EXECUTABLE" ]] ||
   fail_case "PCAP-CONFIG-PREPARED"
