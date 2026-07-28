@@ -1,4 +1,5 @@
 import MetalKit
+import Photos
 import SwiftUI
 import UIKit
 import WebKit
@@ -251,6 +252,7 @@ final class UIKitFixtureViewController:
     private let sceneStatusLabel = UILabel()
     private let inputStatusLabel = UILabel()
     private let popupStatusLabel = UILabel()
+    private let photoAccessStatusLabel = UILabel()
     private let windowOverlayButton = UIButton(type: .system)
     private let sceneGeneration: Int
     private var count = 0
@@ -367,6 +369,29 @@ final class UIKitFixtureViewController:
         targetRow.axis = .horizontal
         targetRow.distribution = .fillEqually
 
+        let requestPhotoAccess = UIButton(type: .system)
+        requestPhotoAccess.setTitle(
+            "Request Photo Access",
+            for: .normal
+        )
+        requestPhotoAccess.accessibilityIdentifier =
+            "fixture.uikit.photo-access"
+        requestPhotoAccess.addTarget(
+            self,
+            action: #selector(requestPhotoAccessTapped),
+            for: .touchUpInside
+        )
+
+        photoAccessStatusLabel.text =
+            "Photo Access \(PHPhotoLibrary.authorizationStatus().rawValue)"
+        photoAccessStatusLabel.font = .monospacedSystemFont(
+            ofSize: 12,
+            weight: .medium
+        )
+        photoAccessStatusLabel.textAlignment = .center
+        photoAccessStatusLabel.accessibilityIdentifier =
+            "fixture.uikit.photo-access-status"
+
         let showAlert = UIButton(type: .system)
         showAlert.setTitle("Show Alert", for: .normal)
         showAlert.accessibilityIdentifier = "fixture.uikit.alert"
@@ -460,6 +485,8 @@ final class UIKitFixtureViewController:
                 incrementButton,
                 windowOverlayButton,
                 targetRow,
+                requestPhotoAccess,
+                photoAccessStatusLabel,
                 showAlert,
                 showPopup,
                 popupStatusLabel,
@@ -575,6 +602,17 @@ final class UIKitFixtureViewController:
     @objc private func incrementCount() {
         count += 1
         countLabel.text = "Count \(count)"
+    }
+
+    @objc private func requestPhotoAccessTapped() {
+        photoAccessStatusLabel.text =
+            "Photo Access requesting"
+        PHPhotoLibrary.requestAuthorization { [weak self] status in
+            DispatchQueue.main.async {
+                self?.photoAccessStatusLabel.text =
+                    "Photo Access \(status.rawValue)"
+            }
+        }
     }
 
     @objc private func showWindowOverlay() {

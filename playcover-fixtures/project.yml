@@ -24,6 +24,10 @@ targets:
             UIWindowSceneSessionRoleApplication:
               - UISceneConfigurationName: Default Configuration
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
+        NSPhotoLibraryAddUsageDescription: >-
+          Allow the ios-use fixture to verify photo-library permission alerts.
+        NSPhotoLibraryUsageDescription: >-
+          Allow the ios-use fixture to verify photo-library permission alerts.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -37,6 +41,8 @@ targets:
         CODE_SIGNING_ALLOWED: NO
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGN_IDENTITY: ""
+    dependencies:
+      - sdk: Photos.framework
 
 schemes:
   IOSUsePlayFixture:

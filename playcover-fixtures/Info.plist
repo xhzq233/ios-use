@@ -29,6 +29,10 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Allow the ios-use fixture to verify photo-library permission alerts.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Allow the ios-use fixture to verify photo-library permission alerts.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
