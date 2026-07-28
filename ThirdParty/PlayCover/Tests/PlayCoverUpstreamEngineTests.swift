@@ -222,6 +222,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             KeyCover.shared.restorePersistedKey()
             KeyCoverPassword.shared.removeKeyCoverPassword()
         }
+        KeyCoverPreferences.shared.keyCoverEnabled =
+            .userProvidedPassword
         KeyCoverPassword.shared.setKeyCoverPassword("fixture-secret")
         let firstKey = KeyCoverKey(appBundleID: bundleID)
         try payload.write(to: firstKey.decryptedKeyDB)
@@ -275,6 +277,56 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     appBundleID: bundleID
                 ).encryptedKeyDB.path
             )
+        )
+    }
+
+    func testHeadlessKeyCoverLeavesStorageUntouchedWhenDisabled() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appendingPathComponent("disabled-home")
+        try FileManager.default.createDirectory(
+            at: home,
+            withIntermediateDirectories: true
+        )
+        let bundleID =
+            "com.example.keycover.disabled.\(UUID().uuidString)"
+        _ = try PlayCoverHeadlessKeyCover.configure(
+            managedHome: home
+        )
+        KeyCoverPreferences.shared.keyCoverEnabled = .disabled
+        let key = KeyCoverKey(appBundleID: bundleID)
+        let payload = Data("plain-playchain".utf8)
+        try payload.write(to: key.decryptedKeyDB)
+
+        try PlayCoverHeadlessKeyCover.lock(
+            bundleIdentifier: bundleID,
+            managedHome: home
+        )
+
+        XCTAssertEqual(
+            try Data(contentsOf: key.decryptedKeyDB),
+            payload
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: key.encryptedKeyDB.path
+            )
+        )
+
+        let encryptedPayload = Data("encrypted-playchain".utf8)
+        try encryptedPayload.write(to: key.encryptedKeyDB)
+        try PlayCoverHeadlessKeyCover.unlock(
+            bundleIdentifier: bundleID,
+            managedHome: home
+        )
+
+        XCTAssertEqual(
+            try Data(contentsOf: key.decryptedKeyDB),
+            payload
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: key.encryptedKeyDB),
+            encryptedPayload
         )
     }
 

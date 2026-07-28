@@ -138,7 +138,7 @@ The rest of `PlayApp` is corresponding source but is deliberately not linked:
 | --- | --- |
 | `init`, display-name alias URLs, `hasAlias`, Finder/cache/delete helpers | They load keymap/Discord state or mutate/delete the installed/source App. ios-use prepares only a managed clone and derives a collision-free session alias name instead of reusing global display names. |
 | `launch`, `runAppExec`, `isInfoPlistSigned`, timeout assertions | ios-use owns launch/PID/session/UDS identity and termination. It opens its session-scoped pinned-shape alias through `NSWorkspace`, but does not link PlayCover's second lifecycle owner or display-sleep loop. |
-| `unlockKeyCover` / `lockKeyCover` UI branch | The methods depend on `NSAlert` and mutable GUI settings. The headless KeyCover/PlayChain primitives are invoked from the managed prepare/session boundary without modal UI. |
+| `unlockKeyCover` / `lockKeyCover` UI branch | The methods depend on `NSAlert` and mutable GUI settings. The headless KeyCover/PlayChain primitives are invoked from the managed prepare/session boundary without modal UI and retain the pinned enabled guard, so the default-disabled CLI leaves a newly created plain PlayChain database unchanged. |
 | `prohibitedToPlay`, `maliciousProhibited`, and their deletion/cache branch | These are PlayCover product policy and GUI recovery behavior, not conversion or signing semantics. In particular, deleting an input conflicts with ios-use's source-immutability contract. |
 
 `Package.swift` therefore names `Model/PlayApp.swift` and
@@ -256,7 +256,7 @@ scripts/test_playcover_prepare_differential.sh
 
 The gate runs in an isolated SwiftPM scratch directory and publishes a
 schema-v1 attestation only after every exact allowance and one-sided baseline
-is consumed. Its producer closure is a fixed 39-file list whose normalized
+is consumed. Its producer closure is a fixed 40-file list whose normalized
 SHA-256 is embedded into the executing test binary at build time and checked
 against source snapshots at both ends of attestation. The binary digest is read
 through an open descriptor whose device/inode must match the vnode backing the

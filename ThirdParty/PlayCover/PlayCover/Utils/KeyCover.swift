@@ -313,6 +313,9 @@ struct PlayAppHeadlessLifecycle {
     let bundleIdentifier: String
 
     func unlockKeyCover() throws {
+        guard KeyCover.shared.isKeyCoverEnabled() else {
+            return
+        }
         KeyCover.shared.restorePersistedKey()
         let key = KeyCoverKey(appBundleID: bundleIdentifier)
         if key.chainEncryptionStatus {
@@ -327,6 +330,9 @@ struct PlayAppHeadlessLifecycle {
     }
 
     func lockKeyCover() throws {
+        guard KeyCover.shared.isKeyCoverEnabled() else {
+            return
+        }
         KeyCover.shared.restorePersistedKey()
         defer {
             KeyCover.shared.keyCoverPlainTextKey = nil
