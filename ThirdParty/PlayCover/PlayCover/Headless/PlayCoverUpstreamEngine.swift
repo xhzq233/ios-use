@@ -663,6 +663,8 @@ public enum PlayCoverUpstreamEngine {
 
     static var fullContentPassObserverForTesting:
         ((FullContentPassKind, URL) -> Void)?
+    static var validatedTreeMetadataEnumerationObserverForTesting:
+        ((URL) -> Void)?
     static var sliceSHA256ComputationObserverForTesting:
         ((PlayCoverUpstreamMachOContainer, UInt32) -> Void)?
     static var codeSignatureObserverForTesting:
@@ -694,7 +696,7 @@ public enum PlayCoverUpstreamEngine {
                 "path is not an existing .app directory: \(app.path)"
             )
         }
-        try validateTreeContainment(
+        let validatedMetadata = try validatedTreeMetadata(
             root: app,
             label: "source App",
             rejectRootSymlink: true
@@ -736,6 +738,7 @@ public enum PlayCoverUpstreamEngine {
 
         let snapshot = try treeSnapshot(
             appURL: app,
+            validatedMetadata: validatedMetadata,
             preloadedRegularFileData: ["Info.plist": infoData],
             inspectMachOs: true,
             nestedBuildHashRoot: nestedBuildHashRoot,
@@ -1414,13 +1417,14 @@ public enum PlayCoverUpstreamEngine {
 
     public static func contentHash(appURL: URL) throws -> String {
         let app = appURL.standardizedFileURL
-        try validateTreeContainment(
+        let validatedMetadata = try validatedTreeMetadata(
             root: app,
             label: "App content hash",
             rejectRootSymlink: true
         )
         return try treeSnapshot(
             appURL: app,
+            validatedMetadata: validatedMetadata,
             preloadedRegularFileData: [:],
             inspectMachOs: false,
             collectFileHashes: false,
@@ -1538,6 +1542,10 @@ public enum PlayCoverUpstreamEngine {
         let size: UInt64?
         let posixPermissions: UInt16?
         let symbolicLinkDestination: String?
+    }
+
+    private struct ValidatedTreeMetadata {
+        let inventory: [InventoryMetadata]
     }
 
     private struct RegularFileSnapshot {
@@ -3137,6 +3145,7 @@ public enum PlayCoverUpstreamEngine {
 
     private static func treeSnapshot(
         appURL: URL,
+        validatedMetadata: ValidatedTreeMetadata,
         preloadedRegularFileData: [String: Data],
         inspectMachOs: Bool,
         collectFileHashes: Bool = true,
@@ -3145,55 +3154,7 @@ public enum PlayCoverUpstreamEngine {
         passKind: FullContentPassKind
     ) throws -> TreeSnapshot {
         fullContentPassObserverForTesting?(passKind, appURL)
-        let keys: [URLResourceKey] = [
-            .isDirectoryKey,
-            .isRegularFileKey,
-            .isSymbolicLinkKey,
-            .fileSizeKey,
-        ]
-        guard let enumerator = FileManager.default.enumerator(
-            at: appURL,
-            includingPropertiesForKeys: keys,
-            options: []
-        ) else {
-            throw PlayCoverUpstreamError.invalidApp(
-                "cannot enumerate \(appURL.path)"
-            )
-        }
-        var metadata: [InventoryMetadata] = []
-        for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: Set(keys))
-            let kind: PlayCoverUpstreamFileKind
-            if values.isSymbolicLink == true {
-                kind = .symbolicLink
-            } else if values.isDirectory == true {
-                kind = .directory
-            } else if values.isRegularFile == true {
-                kind = .regularFile
-            } else {
-                kind = .other
-            }
-            let attrs = try? FileManager.default.attributesOfItem(
-                atPath: url.path
-            )
-            let permissions = (attrs?[.posixPermissions] as? NSNumber)
-                .map { UInt16(truncating: $0) }
-            let relative = try relativePath(url, in: appURL)
-            metadata.append(
-                InventoryMetadata(
-                    url: url,
-                    relativePath: relative,
-                    kind: kind,
-                    size: values.fileSize.map { UInt64($0) },
-                    posixPermissions: permissions,
-                    symbolicLinkDestination: kind == .symbolicLink
-                        ? try FileManager.default.destinationOfSymbolicLink(
-                            atPath: url.path
-                        )
-                        : nil
-                )
-            )
-        }
+        let metadata = validatedMetadata.inventory
 
         var hasher = SHA256()
         var nestedHasher: SHA256? =
@@ -4219,6 +4180,93 @@ public enum PlayCoverUpstreamEngine {
                 )
             }
         }
+    }
+
+    private static func validatedTreeMetadata(
+        root: URL,
+        label: String,
+        rejectRootSymlink: Bool
+    ) throws -> ValidatedTreeMetadata {
+        if rejectRootSymlink {
+            try requireNoSymlinkComponents(
+                root,
+                label: label,
+                allowMissingLeaf: false
+            )
+        }
+        let canonicalRoot = root.resolvingSymlinksInPath()
+            .standardizedFileURL.path
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+        ]
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: Array(keys),
+            options: []
+        ) else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "cannot enumerate \(label): \(root.path)"
+            )
+        }
+        validatedTreeMetadataEnumerationObserverForTesting?(root)
+        var inventory: [InventoryMetadata] = []
+        for case let entry as URL in enumerator {
+            let values = try entry.resourceValues(forKeys: keys)
+            let kind: PlayCoverUpstreamFileKind
+            if values.isSymbolicLink == true {
+                kind = .symbolicLink
+            } else if values.isDirectory == true {
+                kind = .directory
+            } else if values.isRegularFile == true {
+                kind = .regularFile
+            } else {
+                kind = .other
+            }
+
+            let destination: String?
+            if kind == .symbolicLink {
+                let value = try FileManager.default
+                    .destinationOfSymbolicLink(atPath: entry.path)
+                guard !value.hasPrefix("/") else {
+                    throw PlayCoverUpstreamError.invalidApp(
+                        "\(label) absolute symbolic link is not clone-safe: "
+                            + entry.path
+                    )
+                }
+                let resolved = entry.resolvingSymlinksInPath()
+                    .standardizedFileURL.path
+                guard resolved == canonicalRoot
+                        || resolved.hasPrefix(canonicalRoot + "/") else {
+                    throw PlayCoverUpstreamError.invalidApp(
+                        "\(label) symbolic-link escape: \(entry.path)"
+                    )
+                }
+                destination = value
+            } else {
+                destination = nil
+            }
+
+            let attributes = try? FileManager.default.attributesOfItem(
+                atPath: entry.path
+            )
+            let permissions = (
+                attributes?[.posixPermissions] as? NSNumber
+            ).map { UInt16(truncating: $0) }
+            inventory.append(
+                InventoryMetadata(
+                    url: entry,
+                    relativePath: try relativePath(entry, in: root),
+                    kind: kind,
+                    size: values.fileSize.map { UInt64($0) },
+                    posixPermissions: permissions,
+                    symbolicLinkDestination: destination
+                )
+            )
+        }
+        return ValidatedTreeMetadata(inventory: inventory)
     }
 
     private static func requireNoSymlinkComponents(

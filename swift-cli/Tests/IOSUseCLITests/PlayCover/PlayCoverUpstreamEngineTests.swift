@@ -5,6 +5,8 @@ import XCTest
 final class PlayCoverUpstreamEngineTests: XCTestCase {
     override func tearDown() {
         PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
+        PlayCoverUpstreamEngine
+            .validatedTreeMetadataEnumerationObserverForTesting = nil
         super.tearDown()
     }
 
@@ -192,6 +194,65 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         XCTAssertEqual(try Data(contentsOf: thinURL), thinBytesBefore)
         XCTAssertEqual(try Data(contentsOf: fatURL), fatBytesBefore)
+    }
+
+    func testAppInspectionEnumeratesValidatedTreeMetadataOnce() throws {
+        let fixture = try makeInspectionFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var enumeratedRoots: [URL] = []
+        PlayCoverUpstreamEngine
+            .validatedTreeMetadataEnumerationObserverForTesting = {
+                enumeratedRoots.append($0)
+            }
+
+        _ = try PlayCoverUpstreamEngine.inspect(appURL: fixture.app)
+
+        XCTAssertEqual(
+            enumeratedRoots.map(\.standardizedFileURL.path),
+            [fixture.app.standardizedFileURL.path]
+        )
+    }
+
+    func testSymlinkEscapePrecedesMissingOrCorruptInfoPlist() throws {
+        for infoState in ["missing", "corrupt"] {
+            let fixture = try makeInspectionFixture()
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+            let infoURL = fixture.app.appendingPathComponent("Info.plist")
+            if infoState == "missing" {
+                try FileManager.default.removeItem(at: infoURL)
+            } else {
+                try Data("not a plist".utf8).write(to: infoURL)
+            }
+            let external = fixture.root.appendingPathComponent("External")
+            try Data("external".utf8).write(to: external)
+            let link = fixture.app.appendingPathComponent("UnrelatedAlias")
+            try FileManager.default.createSymbolicLink(
+                atPath: link.path,
+                withDestinationPath: "../External"
+            )
+
+            XCTAssertThrowsError(
+                try PlayCoverUpstreamEngine.inspect(appURL: fixture.app),
+                infoState
+            ) { error in
+                guard case PlayCoverUpstreamError.invalidApp(let message) =
+                    error else {
+                    return XCTFail("unexpected error: \(error)")
+                }
+                XCTAssertTrue(
+                    message.hasPrefix(
+                        "source App symbolic-link escape: "
+                    ),
+                    message
+                )
+                XCTAssertTrue(
+                    message.hasSuffix(
+                        "/Fixture.app/\(link.lastPathComponent)"
+                    ),
+                    message
+                )
+            }
+        }
     }
 
     func testInspectAcceptsCodesignSelectedAlternateCodeDirectory()
