@@ -241,7 +241,11 @@ PROBE_SOURCE="$(
 [[ -f "$PROBE_SOURCE" && ! -L "$PROBE_SOURCE" ]] ||
   fail_case "PCAP-PROBE-BUILD"
 UNSIGNED_PROBE="$AUDIT_TEMP_ROOT/probe-unsigned"
-SIGNED_PROBE="$AUDIT_TEMP_ROOT/probe-signed"
+PROBE_APP="$AUDIT_TEMP_ROOT/IOSUseCapabilityProbe.app"
+PROBE_CONTENTS="$PROBE_APP/Contents"
+PROBE_MACOS="$PROBE_CONTENTS/MacOS"
+PROBE_INFO="$PROBE_CONTENTS/Info.plist"
+SIGNED_PROBE="$PROBE_MACOS/IOSUseCapabilityProbe"
 ORIGINAL_ENTITLEMENTS="$AUDIT_TEMP_ROOT/original-entitlements.plist"
 PROBE_ENTITLEMENTS="$AUDIT_TEMP_ROOT/probe-entitlements.plist"
 CLANG_LOG="$AUDIT_TEMP_ROOT/clang.log"
@@ -261,7 +265,46 @@ PROBE_ENTITLEMENTS_LOG="$AUDIT_TEMP_ROOT/probe-entitlements.log"
   -o "$UNSIGNED_PROBE" \
   >"$CLANG_LOG" 2>&1 ||
   fail_case "PCAP-PROBE-BUILD"
+/bin/mkdir -p "$PROBE_MACOS" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
 /bin/cp "$UNSIGNED_PROBE" "$SIGNED_PROBE" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/usr/bin/plutil -create xml1 "$PROBE_INFO" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/usr/bin/plutil \
+  -insert CFBundleExecutable \
+  -string "IOSUseCapabilityProbe" \
+  "$PROBE_INFO" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/usr/bin/plutil \
+  -insert CFBundleIdentifier \
+  -string "com.iosuse.playcover.capability-probe" \
+  "$PROBE_INFO" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/usr/bin/plutil \
+  -insert CFBundleInfoDictionaryVersion \
+  -string "6.0" \
+  "$PROBE_INFO" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/usr/bin/plutil \
+  -insert CFBundleName \
+  -string "IOSUseCapabilityProbe" \
+  "$PROBE_INFO" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/usr/bin/plutil \
+  -insert CFBundlePackageType \
+  -string "APPL" \
+  "$PROBE_INFO" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/usr/bin/plutil \
+  -insert CFBundleVersion \
+  -string "1" \
+  "$PROBE_INFO" >/dev/null 2>&1 ||
+  fail_case "PCAP-PROBE-BUILD"
+/usr/bin/plutil \
+  -insert LSBackgroundOnly \
+  -bool true \
+  "$PROBE_INFO" >/dev/null 2>&1 ||
   fail_case "PCAP-PROBE-BUILD"
 
 /usr/bin/codesign \
@@ -280,9 +323,15 @@ PROBE_ENTITLEMENTS_LOG="$AUDIT_TEMP_ROOT/probe-entitlements.log"
   --sign - \
   --entitlements "$ORIGINAL_ENTITLEMENTS" \
   --generate-entitlement-der \
-  "$SIGNED_PROBE" \
+  "$PROBE_APP" \
   >"$PROBE_SIGN_STDOUT" \
   2>"$PROBE_SIGN_STDERR" ||
+  fail_case "PCAP-PROBE-SIGNATURE"
+/usr/bin/codesign \
+  --verify \
+  --strict \
+  --verbose=2 \
+  "$PROBE_APP" >/dev/null 2>&1 ||
   fail_case "PCAP-PROBE-SIGNATURE"
 /usr/bin/codesign \
   --verify \
