@@ -1295,6 +1295,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         ] = []
         var finalInspectionPath: String?
         var finalInspectionStarted = false
+        var stagedMainInspectionPhases: [Bool] = []
         var finalSignatureObservations: [
             (
                 kind: PlayCoverUpstreamEngine.CodeSignatureObservationKind,
@@ -1313,6 +1314,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         defer {
             PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
             PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
+            PlayCoverUpstreamEngine.machOInspectionObserverForTesting = nil
         }
         let sourceInspection = try PlayCoverUpstreamEngine.inspect(
             appURL: source
@@ -1341,6 +1343,14 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             isDirectory: true
         )
         finalInspectionPath = staging.path
+        let stagedMainPath = staging
+            .appendingPathComponent("Fixture").standardizedFileURL.path
+        PlayCoverUpstreamEngine.machOInspectionObserverForTesting = { url in
+            guard url.standardizedFileURL.path == stagedMainPath else {
+                return
+            }
+            stagedMainInspectionPhases.append(finalInspectionStarted)
+        }
         PlayCoverUpstreamEngine.codeSignatureObserverForTesting = {
             kind,
             url in
@@ -1369,6 +1379,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
         PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
+        PlayCoverUpstreamEngine.machOInspectionObserverForTesting = nil
 
         XCTAssertEqual(
             contentPasses.map(\.kind),
@@ -1386,6 +1397,12 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             runtime.resolvingSymlinksInPath().path
         )
         XCTAssertEqual(contentPasses[2].path, staging.path)
+        XCTAssertEqual(
+            stagedMainInspectionPhases,
+            [true],
+            "cold prepare must inspect the staged main only as part of the "
+                + "authoritative final prepared-App inspection"
+        )
 
         XCTAssertEqual(
             try Data(contentsOf: sourceExecutable),
@@ -1519,6 +1536,123 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "--strict",
             staging.path
         )
+    }
+
+    func testPrepareRejectsPlannedRuntimeDuplicateByExactPathAndBasename()
+        throws
+    {
+        let runtimeLoadPath =
+            "@executable_path/Frameworks/IOSUsePlayRuntime.framework/"
+                + "IOSUsePlayRuntime"
+        defer {
+            PlayCoverUpstreamEngine.machOInspectionObserverForTesting = nil
+        }
+        for (index, dependency) in [
+            runtimeLoadPath,
+            "@rpath/Elsewhere/IOSUsePlayRuntime",
+        ].enumerated() {
+            let root = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let source = root.appendingPathComponent(
+                "Source-\(index).app",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: source,
+                withIntermediateDirectories: false
+            )
+            try plistData([
+                "CFBundleIdentifier": "com.example.duplicate.\(index)",
+                "CFBundleExecutable": "Fixture",
+                "CFBundlePackageType": "APPL",
+                "MinimumOSVersion": "17.0",
+            ]).write(to: source.appendingPathComponent("Info.plist"))
+            let executable = try makeRealIOSExecutable(
+                in: root,
+                name: "Fixture"
+            )
+            try FileManager.default.moveItem(
+                at: executable,
+                to: source.appendingPathComponent("Fixture")
+            )
+            _ = try run(
+                "/usr/bin/install_name_tool",
+                [
+                    "-change",
+                    "/usr/lib/libSystem.B.dylib",
+                    dependency,
+                    source.appendingPathComponent("Fixture").path,
+                ]
+            )
+            try codesign(source, entitlements: nil)
+            let sourceInspection = try PlayCoverUpstreamEngine.inspect(
+                appURL: source
+            )
+            XCTAssertTrue(
+                sourceInspection.machOs.first {
+                    $0.relativePath == "Fixture"
+                }?.dependencies.contains(dependency) == true
+            )
+
+            let runtime = try makeCatalystRuntimeFramework(in: root)
+            try codesign(runtime, entitlements: nil)
+            let managed = root.appendingPathComponent(
+                "managed-\(index)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: managed.appendingPathComponent("prepared"),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            let staging = managed.appendingPathComponent(
+                "prepared/Fixture.app",
+                isDirectory: true
+            )
+            let stagedMainPath = staging
+                .appendingPathComponent("Fixture").standardizedFileURL.path
+            var stagedMainInspections = 0
+            PlayCoverUpstreamEngine.machOInspectionObserverForTesting = {
+                url in
+                if url.standardizedFileURL.path == stagedMainPath {
+                    stagedMainInspections += 1
+                }
+            }
+
+            XCTAssertThrowsError(
+                try PlayCoverUpstreamEngine.prepare(
+                    PlayCoverUpstreamPrepareOptions(
+                        sourceApp: source,
+                        stagingApp: staging,
+                        runtimeFramework: runtime,
+                        managedHome: managed,
+                        runtimeSocketPath: managed.appendingPathComponent(
+                            "run/s-runtime.sock"
+                        ).path,
+                        runtimeLoadPath: runtimeLoadPath
+                    ),
+                    sourceInspection: sourceInspection
+                )
+            ) { error in
+                guard case PlayCoverUpstreamError.duplicateRuntimeLoad(
+                    let rejected
+                ) = error else {
+                    return XCTFail("unexpected error: \(error)")
+                }
+                XCTAssertEqual(rejected, dependency)
+            }
+            PlayCoverUpstreamEngine.machOInspectionObserverForTesting = nil
+            XCTAssertEqual(
+                stagedMainInspections,
+                0,
+                "prepare must reject the planned source dependency before "
+                    + "re-inspecting or injecting the staged main"
+            )
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: staging.path),
+                "duplicate Runtime rejection must roll staging back"
+            )
+        }
     }
 
     func testDeferredMainSignatureFailsClosedWhenRootSealChanges()

@@ -1016,12 +1016,20 @@ public enum PlayCoverUpstreamEngine {
 
         let mainExecutable = options.stagingApp
             .appendingPathComponent(source.mainExecutableRelativePath)
-        let preInjection = try inspectMachO(
-            at: mainExecutable,
-            relativePath: source.mainExecutableRelativePath
-        )
+        // Pinned conversion changes dependency spelling only for
+        // @rpath/libswiftUIKit.dylib, whose basename remains unchanged.
+        // The exact-or-basename duplicate predicate is therefore stable in
+        // the source plan and does not require re-inspecting the staged main.
+        guard let plannedMain = sourceByPath[
+            source.mainExecutableRelativePath
+        ] else {
+            throw PlayCoverUpstreamError.verificationFailed(
+                "planned main executable is absent from source inspection: "
+                    + source.mainExecutableRelativePath
+            )
+        }
         try rejectRuntimeDuplicate(
-            in: preInjection,
+            in: plannedMain,
             runtimeLoadPath: options.runtimeLoadPath
         )
         let injectionStarted = monotonicTimestamp()

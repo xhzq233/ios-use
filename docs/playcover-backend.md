@@ -259,8 +259,11 @@ source inspection, Runtime hash, prepare revision, and generation key. Managed
 selection, prepare, and the pinned upstream engine consume that same evidence;
 the copied Runtime is checked against the recorded hash before signing. Source
 inventory, per-file SHA-256, framed tree hash, and Mach-O identification share
-one content pass. A second source content pass remains only at the end of cold
-prepare to reject a concurrently changed build.
+one content pass. Cold prepare performs three deliberate full-content passes:
+the source App inspection, the original Runtime build hash, and the
+authoritative final prepared-App inspection. It does not re-read the live
+source after cloning; callers must provide a completed source build that stays
+byte-stable through publication.
 
 Each successful start prints a single `PlayCover timing:` line covering
 `inspect`, `clone`, `convert`, `sign`, `verify`, `launch`, and `total`.
