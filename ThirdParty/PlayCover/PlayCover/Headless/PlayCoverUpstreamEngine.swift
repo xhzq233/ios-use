@@ -3637,15 +3637,17 @@ public enum PlayCoverUpstreamEngine {
             let managed = canonicalizingExistingPrefix(
                 managedHome.standardizedFileURL.path
             )
-            let playChain = (managed as NSString)
-                .appendingPathComponent("playcover/PlayChain")
+            let logs = (managed as NSString)
+                .appendingPathComponent("playcover/logs")
+            let playchain = (managed as NSString)
+                .appendingPathComponent("playcover/playchain")
             finalSandbox.append(
                 "(allow file-read* file-write* file-read-metadata "
-                    + "(subpath \"\(sandboxEscape(managed))\"))"
+                    + "(subpath \"\(sandboxEscape(logs))\"))"
             )
             finalSandbox.append(
                 "(allow file-read* file-write* file-read-metadata "
-                    + "(subpath \"\(sandboxEscape(playChain))\"))"
+                    + "(subpath \"\(sandboxEscape(playchain))\"))"
             )
         }
         final["com.apple.security.temporary-exception.sbpl"] = finalSandbox

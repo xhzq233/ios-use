@@ -2135,9 +2135,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             "(allow network-bind (subpath "
                 + "\"<MANAGED_HOME>/playcover/run\"))",
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"<MANAGED_HOME>\"))",
+                + "(subpath \"<MANAGED_HOME>/playcover/logs\"))",
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"<MANAGED_HOME>/playcover/PlayChain\"))",
+                + "(subpath \"<MANAGED_HOME>/playcover/playchain\"))",
         ]
         func exactExpectation(
             _ value: String?
@@ -2184,8 +2184,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                         + "f4fe3f102713c62d"
                 ),
                 .exact(
-                    "bd75e59e2503ecfb9f94c2a74d0078ad14af6fa8dcd4bb5"
-                        + "a628faf785fad5e85"
+                    "2064f369b862fddce34bb86cc4d498f61c2bbfc10e21be23"
+                        + "826ff7434f2a562e"
                 ),
                 "The root signature carries the same separately reviewed "
                     + "entitlement dictionaries as the main executable.",
@@ -2199,9 +2199,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "com.apple.security.temporary-exception.sbpl",
                 .exact(entitlementStringArray(pinnedSandbox)),
                 .exact(entitlementStringArray(iosUseSandbox)),
-                "The direct Runtime socket and managed PlayChain require the "
-                    + "same four ios-use-only rules reviewed on the main "
-                    + "executable signature.",
+                "The Runtime socket, stdio logs, and managed playchain store "
+                    + "require the same four narrowly scoped ios-use-only "
+                    + "rules reviewed on the main executable signature.",
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),
@@ -2210,7 +2210,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Fixture",
                 "inventory.size",
                 .exact("90096"),
-                .exact("91824"),
+                .exact("91840"),
                 "The exact signed main executable sizes are also recorded by "
                     + "the inventory comparator.",
                 pinnedSign,
@@ -2467,7 +2467,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "Fixture",
                 arm64 + "size",
                 .exact("90096"),
-                .exact("91824"),
+                .exact("91840"),
                 "The pinned PlayTools path and --deep entitlement signature "
                     + "produce a different signed thin-slice size.",
                 "PlayTools.installInIPA + \(pinnedSign)",
@@ -2499,10 +2499,10 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
                         + "vmaddr=4295032832;vmsize=32768;fileoff=65536;"
-                        + "filesize=26288;maxprot=1;initprot=1;sections=0;"
+                        + "filesize=26304;maxprot=1;initprot=1;sections=0;"
                         + "flags=0;sha256="
-                        + "9f0db39d2e7f7bbd542923bec31766fea83b697ef99e129c0"
-                        + "7cbbfb406e92208"
+                        + "96dd7435df20f04d5106c851ded0a839a96b3f5682b32031"
+                        + "e31ba4a16e7ea56f"
                 ),
                 "Different signature payload sizes change only the __LINKEDIT "
                     + "segment extent.",
@@ -2521,9 +2521,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 ),
                 .exact(
                     "cmd=0x0000001d;size=16;semantic=dataoff=65840;"
-                        + "datasize=25984;sha256="
-                        + "21de3d7e64c8e726e82709dd8241b76421ada099338c264f2"
-                        + "697a38563f80d50"
+                        + "datasize=26000;sha256="
+                        + "c2d641ecd20dfd4a18030574c4d109d1bc91c7fa1d0581c4"
+                        + "a7476a2b5a210d4f"
                 ),
                 "Pinned --deep and ios-use inside-out signing encode different "
                     + "entitlement payload sizes in LC_CODE_SIGNATURE.",
@@ -2588,8 +2588,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "com.apple.security.temporary-exception.sbpl",
                 .exact(entitlementStringArray(pinnedSandbox)),
                 .exact(entitlementStringArray(iosUseSandbox)),
-                "ios-use appends owner-home file and AF_UNIX bind rules required "
-                    + "by the direct Runtime socket and PlayChain.",
+                "ios-use appends narrowly scoped file and AF_UNIX bind rules "
+                    + "for the Runtime socket, stdio logs, and playchain store.",
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),
@@ -2598,9 +2598,31 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.length",
                 pinned: "6241",
-                iosUse: "7969",
+                iosUse: "7999",
                 reason: "The distinct canonical entitlement payloads have "
                     + "different complete SuperBlob lengths."
+            ),
+            signatureEvidenceAllowance(
+                "main-superblob-padding-size",
+                path: "Fixture",
+                field: "superBlob.paddingSize",
+                pinned: "18015",
+                iosUse: "18001",
+                reason: "The narrowed entitlement blobs change the exact "
+                    + "zero-padding extent within LC_CODE_SIGNATURE."
+            ),
+            signatureEvidenceAllowance(
+                "main-superblob-padding-hash",
+                path: "Fixture",
+                field: "superBlob.paddingSHA256",
+                pinned:
+                    "6374cf23aba8af727e5ee1206e3f182abcbebb2a88ed922cf9"
+                        + "eee069b43f438d",
+                iosUse:
+                    "851078db51f091a336ba8118ea6771521e75380bcd6ec173a"
+                        + "e2d1695ce5c6409",
+                reason: "The exact zero-padding lengths have distinct "
+                    + "reviewed SHA-256 digests."
             ),
             signatureEvidenceAllowance(
                 "main-superblob-structure",
@@ -2610,8 +2632,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "bfc22c32540b50c222c8c857a3bced4edb396770e1e472cc"
                         + "c80314f59dfccfcb",
                 iosUse:
-                    "9c696f32d870c04857eb33bb0e59e5d3da2154c6044a7be1"
-                        + "c1fdb1b3eb9d99ed",
+                    "abd5398063b16e1eae96a017f21ef5e8d123a1eb3f0ee46a"
+                        + "97cb868a55b4283a",
                 reason: "The exact slot offsets and envelope layout follow "
                     + "the two different entitlement blob sizes."
             ),
@@ -2639,8 +2661,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0ba86751c7eeb8616eb14d560b4c7e8f8903e101854520f9"
                         + "6edc1c95db87781f",
                 iosUse:
-                    "db0a6717fd6d5592540f0989fd74dbdf7df42bb80e8887c39"
-                        + "3c0d9effd759742",
+                    "c3f3ac1bd0864a89275c243bcad2cd05b9c62e2b52fd7b01"
+                        + "cf93fda64e7cac02",
                 reason: "Code slot zero contains the deliberately different "
                     + "injected load command and signature extent."
             ),
@@ -2649,7 +2671,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=5,occurrence=0].length",
                 pinned: "2986",
-                iosUse: "3884",
+                iosUse: "3899",
                 reason: "The compared canonical XML entitlement dictionaries "
                     + "serialize to these exact blob lengths."
             ),
@@ -2662,8 +2684,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0a7652ac0273840acb038840ead73854a58f76340105fc1210"
                         + "ea7a67033c7aea",
                 iosUse:
-                    "3f18e655ddc17d07e9e4ffd771dd6b02038bfa91b3f964967"
-                        + "068c94c0a47a362",
+                    "004f449b1b2d53b1596e3e3689497a2d283e57f26d0c5110"
+                        + "ecb2294ba4cb365a",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full XML entitlement blobs must match "
                     + "these exact encodings."
@@ -2673,7 +2695,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].offset",
                 pinned: "3931",
-                iosUse: "4829",
+                iosUse: "4844",
                 reason: "The DER slot starts immediately after the different "
                     + "XML entitlement blob."
             ),
@@ -2682,7 +2704,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].length",
                 pinned: "2302",
-                iosUse: "3132",
+                iosUse: "3147",
                 reason: "The decoded and parity-checked DER entitlement "
                     + "dictionaries have these exact encoded lengths."
             ),
@@ -2695,8 +2717,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0c0a0d9d9d91d53004e2d343aedba1b4f6110cea9783bacc"
                         + "6c2fe2ddcce8e08f",
                 iosUse:
-                    "69ab921a7ad11599dc961ebc273cde53a828ac157bc958561"
-                        + "b6cd6e4ffe1d03e",
+                    "ac04e97b6443b14d2240d16065f92108bc784050820c70b9"
+                        + "f9351858e6e6fa7c",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full DER entitlement blobs must match "
                     + "these exact encodings."
@@ -2706,7 +2728,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.slots[type=65536,occurrence=0].offset",
                 pinned: "6233",
-                iosUse: "7961",
+                iosUse: "7991",
                 reason: "The empty ad-hoc CMS wrapper follows the exact XML "
                     + "and DER entitlement slot extents."
             ),
@@ -2718,8 +2740,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0fefbbc83136bf80b28853dd1c249300f56c34cad6e06600"
                         + "f4fe3f102713c62d",
                 iosUse:
-                    "bd75e59e2503ecfb9f94c2a74d0078ad14af6fa8dcd4bb5"
-                        + "a628faf785fad5e85",
+                    "2064f369b862fddce34bb86cc4d498f61c2bbfc10e21be23"
+                        + "826ff7434f2a562e",
                 reason: "DER decoding matches each side's separately allowed "
                     + "canonical XML entitlement dictionary."
             ),
@@ -2745,11 +2767,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                         + "f4fe3f102713c62d"
                 ),
                 .exact(
-                    "bd75e59e2503ecfb9f94c2a74d0078ad14af6fa8dcd4bb5"
-                        + "a628faf785fad5e85"
+                    "2064f369b862fddce34bb86cc4d498f61c2bbfc10e21be23"
+                        + "826ff7434f2a562e"
                 ),
-                "The ios-use Runtime socket/managed-home rules intentionally "
-                    + "change the signed main entitlement payload.",
+                "The ios-use Runtime socket, stdio-log, and playchain rules "
+                    + "intentionally change the signed main entitlement payload.",
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),

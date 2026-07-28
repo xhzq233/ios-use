@@ -123,7 +123,7 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v12+playcover-"
+        "ios-use-headless-v13+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision

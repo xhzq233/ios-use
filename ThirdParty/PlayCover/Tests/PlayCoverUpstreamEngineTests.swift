@@ -1049,22 +1049,34 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         let canonicalRoot = "/private\(lexicalRoot.path)"
         XCTAssertTrue(canonicalRoot.hasPrefix("/private/tmp/"))
-        let iosUseRules = sandbox.filter {
-            $0.contains(
-                "(allow file-read* file-write* file-read-metadata"
-            )
-        }
-        XCTAssertTrue(iosUseRules.contains {
-            $0.contains(canonicalRoot)
-        })
-        XCTAssertFalse(iosUseRules.contains {
+        let expectedIOSUseRules = [
+            "(allow file-read* file-write* file-read-metadata "
+                + "(subpath \"\(canonicalRoot)/playcover/run\"))",
+            "(allow network-bind (subpath \""
+                + "\(canonicalRoot)/playcover/run\"))",
+            "(allow file-read* file-write* file-read-metadata "
+                + "(subpath \"\(canonicalRoot)/playcover/logs\"))",
+            "(allow file-read* file-write* file-read-metadata "
+                + "(subpath \"\(canonicalRoot)/playcover/playchain\"))",
+        ]
+        let actualIOSUseRules = Array(
+            sandbox.suffix(expectedIOSUseRules.count)
+        )
+        XCTAssertEqual(
+            actualIOSUseRules,
+            expectedIOSUseRules
+        )
+        XCTAssertFalse(actualIOSUseRules.contains {
             $0.contains(
                 "(subpath \"\(lexicalRoot.path)"
             )
         })
-        XCTAssertTrue(sandbox.contains {
-            $0 == "(allow network-bind (subpath \""
-                + "\(canonicalRoot)/playcover/run\"))"
+        XCTAssertFalse(actualIOSUseRules.contains {
+            $0 == "(allow file-read* file-write* file-read-metadata "
+                + "(subpath \"\(canonicalRoot)\"))"
+        })
+        XCTAssertFalse(actualIOSUseRules.contains {
+            $0.contains("\(canonicalRoot)/playcover/PlayChain")
         })
     }
 

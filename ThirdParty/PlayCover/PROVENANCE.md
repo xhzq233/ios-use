@@ -85,7 +85,8 @@ Local patches are intentionally limited to:
 - explicit inside-out ad-hoc signing in the ios-use production path (never
   `codesign --deep` there), while retaining pinned `--deep` behavior solely in
   the independent differential oracle;
-- owner-selected Unix-socket sandbox rules recorded in the entitlement diff;
+- owner-selected Unix-socket, stdio-log, and PlayChain sandbox rules recorded
+  in the entitlement diff;
 - adding an empty `UILaunchScreen` only when both modern and storyboard launch
   declarations are absent, preventing Catalyst's legacy 320 x 480 canvas while
   preserving all existing launch-screen and scene keys;
@@ -128,7 +129,7 @@ adapter call sites:
 
 | Pinned `PlayApp.sign` symbol | Headless preservation / strengthening |
 | --- | --- |
-| `Entitlements.composeEntitlements(self)` | Both paths call the vendored `Entitlements.composeEntitlements` directly on the staged `BaseApp`. Explicit `discordActivityEnabled`, `bypass`, `playSignActive`, and managed-home inputs replace GUI `AppSettings` reads. Production keeps the pinned rule that source entitlements are overlaid only when PlaySign is active, then appends only the managed Runtime socket/PlayChain sandbox rules. The manifest records every key removed from the source by the pinned non-PlaySign composition. |
+| `Entitlements.composeEntitlements(self)` | Both paths call the vendored `Entitlements.composeEntitlements` directly on the staged `BaseApp`. Explicit `discordActivityEnabled`, `bypass`, `playSignActive`, and managed-home inputs replace GUI `AppSettings` reads. Production keeps the pinned rule that source entitlements are overlaid only when PlaySign is active, then appends file access for the exact managed `playcover/run`, `playcover/logs`, and lowercase `playcover/playchain` directories plus AF_UNIX bind access only for `playcover/run`; it does not grant the target App the whole managed home. The manifest records every key removed from the source by the pinned non-PlaySign composition. |
 | `conf.store(tmpEnts)` | Both paths serialize the resulting dictionary to an owner-private temporary plist before codesign. The pinned oracle uses its reference plist; production writes the final composed data immediately before each entitlement-bearing sign and removes it with `defer`. |
 | `Shell.signAppWith(executable, entitlements: tmpEnts)` | The pinned oracle calls `Shell.signAppWithPinnedOracle` with the exact upstream root target and `--deep` arguments. Production deterministically reproduces the resulting code-object state inside-out: every child is ad-hoc signed without restoring source entitlements, each child is verified, and the root `.` is signed last with the final composed entitlements before the whole order is re-verified. |
 
