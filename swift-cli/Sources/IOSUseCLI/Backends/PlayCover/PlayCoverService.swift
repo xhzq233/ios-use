@@ -72,6 +72,8 @@ struct PlayCoverUnterminatedLaunchError: Error,
 }
 
 public enum PlayCoverService {
+    private static let upstreamStandardOutputLock = NSLock()
+
     enum FastVerifyEvent: Equatable {
         case afterGenerationOpen
         case afterPreparedAppOpen
@@ -302,23 +304,25 @@ public enum PlayCoverService {
             ).path
         let upstream: PlayCoverUpstreamPrepareResult
         do {
-            upstream = try PlayCoverUpstreamEngine.prepare(
-                PlayCoverUpstreamPrepareOptions(
-                    sourceApp: URL(
-                        fileURLWithPath: source.appPath,
-                        isDirectory: true
+            upstream = try withSuppressedUpstreamStandardOutput {
+                try PlayCoverUpstreamEngine.prepare(
+                    PlayCoverUpstreamPrepareOptions(
+                        sourceApp: URL(
+                            fileURLWithPath: source.appPath,
+                            isDirectory: true
+                        ),
+                        stagingApp: stagingURL,
+                        managedStagingApp: stagingIdentityURL,
+                        runtimeFramework: runtimeURL,
+                        managedHome: canonicalManagedHome,
+                        runtimeSocketPath: sandboxSocket,
+                        runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
+                        expectedRuntimeBuildHash: plan.runtimeBuildHash,
+                        expectedRuntimeEvidence: plan.runtimeEvidence
                     ),
-                    stagingApp: stagingURL,
-                    managedStagingApp: stagingIdentityURL,
-                    runtimeFramework: runtimeURL,
-                    managedHome: canonicalManagedHome,
-                    runtimeSocketPath: sandboxSocket,
-                    runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
-                    expectedRuntimeBuildHash: plan.runtimeBuildHash,
-                    expectedRuntimeEvidence: plan.runtimeEvidence
-                ),
-                sourceInspection: plan.source.upstreamInspection
-            )
+                    sourceInspection: plan.source.upstreamInspection
+                )
+            }
         } catch let error as PlayCoverUpstreamError {
             throw PlayCoverMachO.map(error)
         }
@@ -360,6 +364,70 @@ public enum PlayCoverService {
             phaseTimings: upstream.phaseTimings,
             upstreamResult: upstream
         )
+    }
+
+    private static func withSuppressedUpstreamStandardOutput<T>(
+        _ body: () throws -> T
+    ) throws -> T {
+#if canImport(Darwin)
+        // Pinned PlayCover helpers synchronously print progress from this
+        // prepare stack. Serialize the process-wide descriptor swap and flush
+        // while fd 1 still points at the sink so buffered text cannot trail
+        // the CLI result written after this method returns.
+        upstreamStandardOutputLock.lock()
+        defer { upstreamStandardOutputLock.unlock() }
+
+        func isolationFailure(
+            _ operation: String,
+            errno errorNumber: Int32
+        ) -> PlayCoverBackendError {
+            .prepareFailed(
+                "\(operation): errno \(errorNumber)"
+            )
+        }
+        guard fflush(stdout) == 0 else {
+            throw isolationFailure("pinned prepare stdout pre-flush failed",
+                                   errno: errno)
+        }
+        let savedOutput = Darwin.fcntl(
+            STDOUT_FILENO,
+            F_DUPFD_CLOEXEC,
+            STDERR_FILENO + 1
+        )
+        guard savedOutput >= 0 else {
+            throw isolationFailure("pinned prepare stdout preserve failed",
+                                   errno: errno)
+        }
+        defer { Darwin.close(savedOutput) }
+        let nullOutput = Darwin.open("/dev/null", O_WRONLY | O_CLOEXEC)
+        guard nullOutput >= 0 else {
+            throw isolationFailure("pinned prepare stdout sink failed",
+                                   errno: errno)
+        }
+        defer { Darwin.close(nullOutput) }
+        guard Darwin.dup2(nullOutput, STDOUT_FILENO) >= 0 else {
+            throw isolationFailure("pinned prepare stdout redirect failed",
+                                   errno: errno)
+        }
+
+        let result = Result<T, Error> { try body() }
+        let flushStatus = fflush(stdout)
+        let flushError = errno
+        let restoreStatus = Darwin.dup2(savedOutput, STDOUT_FILENO)
+        let restoreError = errno
+
+        guard restoreStatus >= 0 else {
+            throw isolationFailure("pinned prepare stdout restore failed",
+                                   errno: restoreError)
+        }
+        guard flushStatus == 0 else {
+            throw isolationFailure("pinned prepare stdout final flush failed",
+                                   errno: flushError)
+        }
+        return try result.get()
+#else
+        return try body()
+#endif
     }
 
     static func validatePreparationPlan(
