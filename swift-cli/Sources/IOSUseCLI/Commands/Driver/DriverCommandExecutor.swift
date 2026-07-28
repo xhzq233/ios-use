@@ -315,16 +315,20 @@ enum DriverCommandExecutor {
         offsetRatio: String?,
         traits: String?,
         cindex: Int32?
-    ) throws -> (target: ForyTarget, offset: ForyPoint?, ratio: ForyPoint) {
+    ) throws -> (target: ForyTarget, offset: ForyPoint?, ratio: ForyPoint?) {
         let foryTarget = try resolveTarget(target, traits: traits, cindex: cindex)
         if foryTarget.point != nil && (offset != nil || offsetRatio != nil) {
             throw CLIParseError.invalidValue("offset requires element label, not absolute point")
         }
         let offsetPoint = try offset.map { try pointPair($0, emptyDefault: 0) }
         let ratioPoint = try offsetPoint == nil
-            ? (offsetRatio.map { try pointPair($0, emptyDefault: IOSUseProtocol.defaultTargetRatio) }
-                ?? ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio))
-            : ForyPoint(x: IOSUseProtocol.defaultTargetRatio, y: IOSUseProtocol.defaultTargetRatio)
+            ? offsetRatio.map {
+                try pointPair(
+                    $0,
+                    emptyDefault: IOSUseProtocol.defaultTargetRatio
+                )
+            }
+            : nil
         return (foryTarget, offsetPoint, ratioPoint)
     }
 

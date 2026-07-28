@@ -2808,6 +2808,42 @@ static NSArray *IOSUseBridgeNativeAlertWindows(void) {
         : nil;
 }
 
+static BOOL IOSUseBridgeWindowLooksLikeNativeAlertCandidate(
+    id window
+) {
+    if (!IOSUseBridgeBool(window, @"isVisible") ||
+        IOSUseBridgeInteger(window, @"windowNumber") <= 0) {
+        return NO;
+    }
+    id contentView = [window respondsToSelector:
+        NSSelectorFromString(@"contentView")]
+        ? ((IOSUseBridgeSendID)objc_msgSend)(
+            window,
+            NSSelectorFromString(@"contentView")
+        )
+        : nil;
+    NSString *windowClass =
+        NSStringFromClass([window class]) ?: @"";
+    NSString *contentClass =
+        NSStringFromClass([contentView class]) ?: @"";
+    return [windowClass containsString:@"AlertPanel"] &&
+        [contentClass containsString:@"AlertContent"];
+}
+
+static BOOL IOSUseBridgeHasVisibleNativeAlertCandidateInWindows(
+    NSArray *windows
+) {
+    if (![windows isKindOfClass:NSArray.class]) {
+        return NO;
+    }
+    for (id window in windows) {
+        if (IOSUseBridgeWindowLooksLikeNativeAlertCandidate(window)) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static NSDictionary<NSString *, id> *
 IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
     NSArray *windows,
@@ -2825,23 +2861,9 @@ IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
     NSMutableSet<NSNumber *> *windowNumbers =
         [NSMutableSet set];
     for (id window in (NSArray *)windows) {
-        if (!IOSUseBridgeBool(window, @"isVisible") ||
-            IOSUseBridgeInteger(window, @"windowNumber") <= 0) {
-            continue;
-        }
-        id contentView = [window respondsToSelector:
-            NSSelectorFromString(@"contentView")]
-            ? ((IOSUseBridgeSendID)objc_msgSend)(
-                window,
-                NSSelectorFromString(@"contentView")
-            )
-            : nil;
-        NSString *windowClass =
-            NSStringFromClass([window class]) ?: @"";
-        NSString *contentClass =
-            NSStringFromClass([contentView class]) ?: @"";
-        if (![windowClass containsString:@"AlertPanel"] ||
-            ![contentClass containsString:@"AlertContent"]) {
+        if (!IOSUseBridgeWindowLooksLikeNativeAlertCandidate(
+                window
+            )) {
             continue;
         }
         NSDictionary<NSString *, id> *exactMetadata =
@@ -2937,6 +2959,14 @@ IOSUsePlayAppKitBridgeSelectVisibleNativeAlertForTesting(
     return IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
         windows,
         cgMetadata
+    );
+}
+
+BOOL IOSUsePlayAppKitBridgeHasVisibleNativeAlertCandidateForTesting(
+    NSArray * _Nullable windows
+) {
+    return IOSUseBridgeHasVisibleNativeAlertCandidateInWindows(
+        windows
     );
 }
 #endif
@@ -4247,6 +4277,13 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         (id)menuClass,
         @"setMenuBarVisible:",
         visible
+    );
+}
+
++ (BOOL)hasVisibleNativeAlertCandidate {
+    NSParameterAssert(NSThread.isMainThread);
+    return IOSUseBridgeHasVisibleNativeAlertCandidateInWindows(
+        IOSUseBridgeNativeAlertWindows()
     );
 }
 

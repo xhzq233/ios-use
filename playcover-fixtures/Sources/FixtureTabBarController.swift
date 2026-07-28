@@ -212,11 +212,21 @@ private enum UIKitPopupSemantics {
     static let resultLabel = "UIKit Popup Result"
 }
 
+private final class FixtureWindowOverlay: UIWindow {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard let hit = super.hitTest(point, with: event) else {
+            return nil
+        }
+        return hit === self || hit === rootViewController?.view ? nil : hit
+    }
+}
+
 final class UIKitFixtureViewController:
     UIViewController,
     UIScrollViewDelegate
 {
     private let countLabel = UILabel()
+    private let incrementButton = UIButton(type: .system)
     private let geometryLabel = UILabel()
     private let probeStatusLabel = UILabel()
     private let urlStatusLabel = UILabel()
@@ -225,11 +235,14 @@ final class UIKitFixtureViewController:
     private let sceneStatusLabel = UILabel()
     private let inputStatusLabel = UILabel()
     private let popupStatusLabel = UILabel()
+    private let windowOverlayButton = UIButton(type: .system)
     private let sceneGeneration: Int
     private var count = 0
     private var inputReturnCount = 0
     private var popupConfirmationCount = 0
     private var popupOverlay: UIControl?
+    private var windowOverlay: FixtureWindowOverlay?
+    private var nextWindowOverlayMode = 0
 
     init(sceneGeneration: Int) {
         self.sceneGeneration = sceneGeneration
@@ -301,14 +314,42 @@ final class UIKitFixtureViewController:
         inputStatusLabel.accessibilityIdentifier =
             "fixture.uikit.input-status"
 
-        let increment = UIButton(type: .system)
-        increment.setTitle("Increment", for: .normal)
-        increment.accessibilityIdentifier = "fixture.uikit.increment"
-        increment.addTarget(self, action: #selector(incrementCount), for: .touchUpInside)
+        incrementButton.setTitle("Increment", for: .normal)
+        incrementButton.accessibilityIdentifier =
+            "fixture.uikit.increment"
+        incrementButton.addTarget(
+            self,
+            action: #selector(incrementCount),
+            for: .touchUpInside
+        )
+
+        windowOverlayButton.setTitle(
+            "Show Window Overlay",
+            for: .normal
+        )
+        windowOverlayButton.accessibilityIdentifier =
+            "fixture.uikit.window-overlay.show"
+        windowOverlayButton.accessibilityValue = "none"
+        windowOverlayButton.addTarget(
+            self,
+            action: #selector(showWindowOverlay),
+            for: .touchUpInside
+        )
 
         let noOp = UIButton(type: .system)
         noOp.setTitle("No-op Target", for: .normal)
         noOp.accessibilityIdentifier = "fixture.uikit.no-op"
+
+        let disabled = UIButton(type: .system)
+        disabled.setTitle("Disabled Target", for: .normal)
+        disabled.accessibilityIdentifier = "fixture.uikit.disabled"
+        disabled.isEnabled = false
+
+        let targetRow = UIStackView(
+            arrangedSubviews: [noOp, disabled]
+        )
+        targetRow.axis = .horizontal
+        targetRow.distribution = .fillEqually
 
         let showAlert = UIButton(type: .system)
         showAlert.setTitle("Show Alert", for: .normal)
@@ -400,8 +441,9 @@ final class UIKitFixtureViewController:
                 longPressStatusLabel,
                 sceneStatusLabel,
                 countLabel,
-                increment,
-                noOp,
+                incrementButton,
+                windowOverlayButton,
+                targetRow,
                 showAlert,
                 showPopup,
                 popupStatusLabel,
@@ -425,6 +467,16 @@ final class UIKitFixtureViewController:
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scrollView)
         scrollView.addSubview(stack)
+
+        let incrementCenterOverlay = UIControl()
+        incrementCenterOverlay.isAccessibilityElement = true
+        incrementCenterOverlay.accessibilityLabel =
+            "Increment Center Overlay"
+        incrementCenterOverlay.accessibilityIdentifier =
+            "fixture.uikit.increment-center-overlay"
+        incrementCenterOverlay.translatesAutoresizingMaskIntoConstraints =
+            false
+        view.addSubview(incrementCenterOverlay)
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(
@@ -459,6 +511,19 @@ final class UIKitFixtureViewController:
                 equalTo: scrollView.frameLayoutGuide.widthAnchor,
                 constant: -56
             ),
+            incrementCenterOverlay.centerXAnchor.constraint(
+                equalTo: incrementButton.centerXAnchor
+            ),
+            incrementCenterOverlay.centerYAnchor.constraint(
+                equalTo: incrementButton.centerYAnchor
+            ),
+            incrementCenterOverlay.widthAnchor.constraint(
+                equalTo: incrementButton.widthAnchor,
+                multiplier: 0.4
+            ),
+            incrementCenterOverlay.heightAnchor.constraint(
+                equalTo: incrementButton.heightAnchor
+            ),
         ])
 
         addScreenProbe(
@@ -487,11 +552,105 @@ final class UIKitFixtureViewController:
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        windowOverlay?.isHidden = true
+        windowOverlay?.rootViewController = nil
     }
 
     @objc private func incrementCount() {
         count += 1
         countLabel.text = "Count \(count)"
+    }
+
+    @objc private func showWindowOverlay() {
+        dismissWindowOverlay()
+        guard
+            let hostWindow = view.window,
+            let windowScene = hostWindow.windowScene
+        else {
+            windowOverlayButton.accessibilityValue = "unavailable"
+            return
+        }
+
+        let mode = nextWindowOverlayMode
+        nextWindowOverlayMode = (mode + 1) % 3
+        let states = [
+            "same-level",
+            "higher-level",
+            "passthrough higher-level",
+        ]
+        let coverLabels = [
+            "Same-Level Non-Key Window Cover",
+            "Higher-Level Non-Key Window Cover",
+            "Passthrough Higher-Level Window Cover",
+        ]
+        let passthrough = mode == 2
+        hostWindow.layoutIfNeeded()
+        let overlay = FixtureWindowOverlay(windowScene: windowScene)
+        overlay.frame = hostWindow.frame
+        overlay.backgroundColor = .clear
+        overlay.isOpaque = false
+        overlay.windowLevel = mode == 0
+            ? hostWindow.windowLevel
+            : UIWindow.Level(
+                rawValue: hostWindow.windowLevel.rawValue + 1
+            )
+
+        let rootViewController = UIViewController()
+        rootViewController.view.backgroundColor = .clear
+        overlay.rootViewController = rootViewController
+
+        let rawTargetFrame = overlay.convert(
+            incrementButton.bounds,
+            from: incrementButton
+        )
+        let targetFrame = rawTargetFrame
+            .insetBy(dx: -8, dy: -8)
+            .intersection(overlay.bounds)
+        guard !targetFrame.isNull, !targetFrame.isEmpty else {
+            overlay.rootViewController = nil
+            windowOverlayButton.accessibilityValue = "invalid target frame"
+            return
+        }
+
+        let cover = UIControl(frame: targetFrame)
+        cover.isAccessibilityElement = true
+        cover.accessibilityIdentifier =
+            "fixture.uikit.window-overlay.cover"
+        cover.accessibilityLabel = coverLabels[mode]
+        cover.isUserInteractionEnabled = !passthrough
+        rootViewController.view.addSubview(cover)
+
+        let dismiss = UIButton(type: .system)
+        dismiss.setTitle("Dismiss Window Overlay", for: .normal)
+        dismiss.backgroundColor = .systemBackground
+        dismiss.accessibilityIdentifier =
+            "fixture.uikit.window-overlay.dismiss"
+        dismiss.addTarget(
+            self,
+            action: #selector(dismissWindowOverlay),
+            for: .touchUpInside
+        )
+        let bounds = overlay.bounds
+        dismiss.frame = CGRect(
+            x: bounds.minX + 16,
+            y: min(targetFrame.maxY + 8, bounds.maxY - 52),
+            width: bounds.width - 32,
+            height: 36
+        )
+        rootViewController.view.addSubview(dismiss)
+
+        windowOverlay = overlay
+        overlay.isHidden = false
+        windowOverlayButton.accessibilityValue =
+            "\(states[mode]) visible " +
+            (overlay.isKeyWindow ? "key" : "non-key")
+    }
+
+    @objc private func dismissWindowOverlay() {
+        windowOverlay?.isHidden = true
+        windowOverlay?.rootViewController = nil
+        windowOverlay = nil
+        windowOverlayButton.accessibilityValue = "none"
     }
 
     func updateGeometryDescription(_ description: String) {
@@ -863,6 +1022,19 @@ private struct SwiftUIFixtureView: View {
     @State private var count = 0
     @State private var input = ""
     @State private var submitCount = 0
+    @State private var overlapMode = 0
+    @State private var overlapCount = 0
+
+    private var overlapState: String {
+        switch overlapMode {
+        case 1:
+            return "enabled"
+        case 2:
+            return "disabled"
+        default:
+            return "none"
+        }
+    }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -871,10 +1043,38 @@ private struct SwiftUIFixtureView: View {
                 .accessibilityIdentifier("fixture.swiftui.heading")
             Text("SwiftUI Count \(count)")
                 .accessibilityIdentifier("fixture.swiftui.count")
-            Button("SwiftUI Increment") {
-                count += 1
+            ZStack {
+                Button("SwiftUI Increment") {
+                    count += 1
+                }
+                .frame(width: 180, height: 44)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier(
+                    "fixture.swiftui.increment"
+                )
+                if overlapMode != 0 {
+                    Button("SwiftUI Increment Overlay") {
+                        overlapCount += 1
+                    }
+                    .frame(width: 180, height: 44)
+                    .contentShape(Rectangle())
+                    .disabled(overlapMode == 2)
+                    .accessibilityIdentifier(
+                        "fixture.swiftui.increment-overlay"
+                    )
+                }
             }
-            .accessibilityIdentifier("fixture.swiftui.increment")
+            Button("Advance SwiftUI Overlay") {
+                overlapMode = (overlapMode + 1) % 3
+            }
+            .accessibilityIdentifier(
+                "fixture.swiftui.overlay.advance"
+            )
+            .accessibilityValue(overlapState)
+            Text("SwiftUI Overlay Count \(overlapCount)")
+                .accessibilityIdentifier(
+                    "fixture.swiftui.overlay.count"
+                )
             TextField("SwiftUI Input", text: $input)
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("fixture.swiftui.input")

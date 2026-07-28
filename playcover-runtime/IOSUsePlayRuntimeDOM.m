@@ -86,6 +86,8 @@ typedef CGRect (*IOSUseDOMSendRect)(id, SEL);
 @property(nonatomic) NSUInteger totalStringBytes;
 @property(nonatomic) NSUInteger nextNodeOrdinal;
 @property(nonatomic) unsigned long long generation;
+@property(nonatomic, copy)
+    NSArray<NSDictionary<NSString *, id> *> *nativeAlertActions;
 @property(nonatomic, copy, nullable) NSString *failureMessage;
 @end
 
@@ -142,11 +144,70 @@ typedef CGRect (*IOSUseDOMSendRect)(id, SEL);
 @implementation IOSUseDOMWebBridgeRecord
 @end
 
+@interface IOSUseDOMLiveIdentityRecord : NSObject
+@property(nonatomic, weak, nullable) id object;
+@property(nonatomic, weak, nullable) UIView *interactionView;
+@property(nonatomic, weak, nullable) UIView *rawViewAncestor;
+@property(nonatomic, weak, nullable) UIView *snapshotSuperview;
+@property(nonatomic, weak, nullable) UIWindow *snapshotWindow;
+@property(nonatomic, weak, nullable) id snapshotAccessibilityContainer;
+@property(nonatomic, copy, nullable) NSString *nativeAlertActionLabel;
+@property(nonatomic) CGRect nativeAlertActionFrame;
+@property(nonatomic) NSInteger nativeAlertActionIndex;
+@property(nonatomic, copy, nullable) NSString *semanticLabel;
+@property(nonatomic, copy, nullable) NSString *identifier;
+@property(nonatomic) CGRect frame;
+@property(nonatomic) NSInteger elementType;
+@property(nonatomic) unsigned long long accessibilityTraits;
+@property(nonatomic) BOOL controlEnabled;
+@property(nonatomic) NSUInteger kind;
+@property(nonatomic) unsigned long long generation;
+@end
+
+@implementation IOSUseDOMLiveIdentityRecord
+@end
+
 static NSMutableDictionary<
     NSString *,
     IOSUseDOMWebBridgeRecord *
 > *IOSUseDOMWebBridgeRecords;
 static unsigned long long IOSUseDOMWebBridgeGeneration;
+static NSMutableDictionary<
+    NSString *,
+    IOSUseDOMLiveIdentityRecord *
+> *IOSUseDOMLiveIdentityRecords;
+static unsigned long long IOSUseDOMLiveIdentityGeneration;
+
+typedef NS_ENUM(NSUInteger, IOSUseDOMLiveIdentityKind) {
+    IOSUseDOMLiveIdentityKindGeneric = 0,
+    IOSUseDOMLiveIdentityKindWebProxy = 1,
+    IOSUseDOMLiveIdentityKindAppKitProxy = 2,
+    IOSUseDOMLiveIdentityKindNativeAlertMirror = 3,
+};
+
+static BOOL IOSUseDOMObjectBelongsToNativeAlertMirror(
+    id object,
+    UIView * _Nullable rawViewAncestor
+);
+static BOOL IOSUseDOMObjectHasNativeAlertMirrorShape(
+    id object,
+    UIView * _Nullable rawViewAncestor
+);
+static CGRect IOSUseDOMNativeAlertActionFrame(id value);
+static NSDictionary<NSString *, id> * _Nullable
+IOSUseDOMExactNativeAlertAction(
+    IOSUseDOMLiveIdentityKind kind,
+    NSInteger elementType,
+    NSString *label,
+    CGRect frame,
+    NSArray<NSDictionary<NSString *, id> *> * _Nullable actions
+);
+static BOOL IOSUseDOMFramesMatchWithinTolerance(
+    CGRect left,
+    CGRect right
+);
+static BOOL IOSUseDOMViewIsActuallyVisibleInWindow(UIView *view);
+static CGRect IOSUseDOMObjectRect(id object);
 
 @interface IOSUseDOMSnapshotRequest : NSObject
 @property(nonatomic) CFAbsoluteTime expiresAt;
@@ -1288,14 +1349,7 @@ BOOL IOSUsePlayRuntimeIsWebAccessibilityElement(
         NSThread.isMainThread,
         @"Web accessibility provenance is main-only"
     );
-    return [element isKindOfClass:NSDictionary.class] &&
-        [element[@"class"]
-            isEqualToString:
-                NSStringFromClass(
-                    IOSUseDOMWebAccessibilityElement.class
-                )] &&
-        [element[@"nodeID"] isKindOfClass:NSString.class] &&
-        IOSUseDOMIsInteger(element[@"snapshotGeneration"]);
+    return IOSUseDOMWebBridgeRecordForElement(element) != nil;
 }
 
 static BOOL IOSUseDOMWebFrameMatches(
@@ -1536,6 +1590,454 @@ static void IOSUseDOMResetWebBridgeRecords(
     IOSUseDOMWebBridgeGeneration = generation;
 }
 
+static void IOSUseDOMResetLiveIdentityRecords(
+    unsigned long long generation
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"DOM live identity registry is main-only"
+    );
+    IOSUseDOMLiveIdentityRecords = [NSMutableDictionary dictionary];
+    IOSUseDOMLiveIdentityGeneration = generation;
+}
+
+static UIView * _Nullable IOSUseDOMNormalizedInteractionView(
+    UIView * _Nullable view
+) {
+    UIView *nearestOwner = nil;
+    for (UIView *candidate = view;
+         candidate != nil;
+         candidate = candidate.superview) {
+        if (candidate.hidden ||
+            candidate.alpha <= 0.01 ||
+            candidate.accessibilityElementsHidden) {
+            return nil;
+        }
+        if ([candidate isKindOfClass:UIControl.class] &&
+            ![(UIControl *)candidate isEnabled]) {
+            return nil;
+        }
+        if (!candidate.userInteractionEnabled) {
+            if (candidate == view &&
+                ![candidate isKindOfClass:UIControl.class]) {
+                continue;
+            }
+            return nil;
+        }
+        if (nearestOwner == nil &&
+            ![candidate isKindOfClass:UIWindow.class]) {
+            nearestOwner = candidate;
+        }
+        if ([candidate isKindOfClass:UIWindow.class]) {
+            break;
+        }
+    }
+    return nearestOwner;
+}
+
+static UIView * _Nullable IOSUseDOMInteractionView(
+    id object,
+    UIView * _Nullable rawViewAncestor
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"DOM interaction owner resolution is main-only"
+    );
+    if ([object isKindOfClass:UIView.class]) {
+        return IOSUseDOMNormalizedInteractionView(object);
+    }
+    NSHashTable<id> *visited = [NSHashTable hashTableWithOptions:
+        NSPointerFunctionsObjectPointerPersonality |
+        NSPointerFunctionsStrongMemory];
+    id current = object;
+    for (NSUInteger depth = 0;
+         current != nil && depth < IOSUseDOMMaximumDepth;
+         depth += 1) {
+        if ([visited containsObject:current]) {
+            break;
+        }
+        [visited addObject:current];
+        id container = IOSUseDOMObjectValue(
+            current,
+            NSSelectorFromString(@"accessibilityContainer")
+        );
+        if (container == nil || container == current) {
+            break;
+        }
+        if ([container isKindOfClass:UIView.class]) {
+            return IOSUseDOMNormalizedInteractionView(container);
+        }
+        current = container;
+    }
+    return IOSUseDOMNormalizedInteractionView(rawViewAncestor);
+}
+
+static NSString * _Nullable IOSUseDOMIdentityString(id value) {
+    IOSUseDOMCaptureContext *context =
+        [IOSUseDOMCaptureContext new];
+    return IOSUseDOMBoundedString(value, context);
+}
+
+static NSString * _Nullable IOSUseDOMCurrentSemanticLabel(
+    id object
+) {
+    NSString *identifier = IOSUseDOMIdentityString(
+        IOSUseDOMObjectValue(
+            object,
+            NSSelectorFromString(@"accessibilityIdentifier")
+        )
+    );
+    NSString *label = IOSUseDOMIdentityString(
+        IOSUseDOMObjectValue(
+            object,
+            NSSelectorFromString(@"accessibilityLabel")
+        )
+    );
+    id visibleLabelObject = nil;
+    if ([object isKindOfClass:UILabel.class]) {
+        visibleLabelObject = [(UILabel *)object text];
+    } else if ([object isKindOfClass:UIButton.class]) {
+        visibleLabelObject = [(UIButton *)object currentTitle];
+    } else if ([object isKindOfClass:UITextField.class]) {
+        visibleLabelObject = [(UITextField *)object placeholder];
+    } else if ([object isKindOfClass:UISearchBar.class]) {
+        visibleLabelObject = [(UISearchBar *)object placeholder];
+    }
+    NSString *visibleLabel =
+        IOSUseDOMIdentityString(visibleLabelObject);
+    if (visibleLabel.length > 0 &&
+        (label.length == 0 ||
+         [label isEqualToString:identifier])) {
+        label = visibleLabel;
+    }
+    return label.length > 0 ? label : identifier;
+}
+
+static BOOL IOSUseDOMNullableStringsEqual(
+    NSString * _Nullable left,
+    NSString * _Nullable right
+) {
+    return left == right || [left isEqualToString:right];
+}
+
+static void IOSUseDOMRegisterLiveIdentity(
+    IOSUseDOMNode *node,
+    id object,
+    UIView * _Nullable rawViewAncestor,
+    IOSUseDOMCaptureContext *context
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"DOM live identity registry is main-only"
+    );
+    if (node == nil ||
+        object == nil ||
+        node.nodeID.length == 0 ||
+        node.generation != IOSUseDOMLiveIdentityGeneration ||
+        IOSUseDOMLiveIdentityRecords.count >=
+            IOSUseDOMMaximumVisitedNodeCount) {
+        return;
+    }
+    IOSUseDOMLiveIdentityRecord *record =
+        [IOSUseDOMLiveIdentityRecord new];
+    record.object = object;
+    record.rawViewAncestor = rawViewAncestor;
+    record.interactionView = IOSUseDOMInteractionView(
+        object,
+        rawViewAncestor
+    );
+    record.snapshotSuperview =
+        [object isKindOfClass:UIView.class]
+            ? [(UIView *)object superview]
+            : nil;
+    record.snapshotAccessibilityContainer =
+        [object isKindOfClass:UIView.class]
+            ? nil
+            : IOSUseDOMObjectValue(
+                object,
+                NSSelectorFromString(@"accessibilityContainer")
+            );
+    record.snapshotWindow =
+        record.interactionView.window ?:
+        ([object isKindOfClass:UIView.class]
+            ? [(UIView *)object window]
+            : rawViewAncestor.window);
+    if ([object isKindOfClass:
+            IOSUseDOMWebAccessibilityElement.class]) {
+        record.kind = IOSUseDOMLiveIdentityKindWebProxy;
+    } else if ([object isKindOfClass:
+                   IOSUseDOMAppKitAccessibilityElement.class]) {
+        record.kind = IOSUseDOMLiveIdentityKindAppKitProxy;
+    } else if (context.nativeAlertActions.count > 0 &&
+               IOSUseDOMObjectHasNativeAlertMirrorShape(
+                   object,
+                   rawViewAncestor
+               )) {
+        record.kind = IOSUseDOMLiveIdentityKindNativeAlertMirror;
+    } else {
+        record.kind = IOSUseDOMLiveIdentityKindGeneric;
+    }
+    record.frame = node.rect;
+    record.elementType = node.elementType;
+    record.semanticLabel = node.label;
+    record.identifier = node.identifier;
+    record.accessibilityTraits =
+        IOSUseDOMAccessibilityTraits(object);
+    record.controlEnabled =
+        ![object isKindOfClass:UIControl.class] ||
+        [(UIControl *)object isEnabled];
+    record.nativeAlertActionFrame = CGRectNull;
+    record.nativeAlertActionIndex = NSNotFound;
+    NSDictionary<NSString *, id> *nativeAlertAction =
+        IOSUseDOMExactNativeAlertAction(
+            (IOSUseDOMLiveIdentityKind)record.kind,
+            node.elementType,
+            node.label,
+            node.rect,
+            context.nativeAlertActions
+        );
+    if (nativeAlertAction != nil) {
+        record.nativeAlertActionLabel =
+            nativeAlertAction[@"label"];
+        record.nativeAlertActionFrame =
+            IOSUseDOMNativeAlertActionFrame(
+                nativeAlertAction[@"frame"]
+            );
+        record.nativeAlertActionIndex =
+            [nativeAlertAction[@"index"] integerValue];
+    }
+    record.generation = node.generation;
+    IOSUseDOMLiveIdentityRecords[node.nodeID] = record;
+}
+
+BOOL IOSUsePlayRuntimeDOMResolveLiveIdentity(
+    NSDictionary<NSString *, id> *element,
+    id _Nullable *object,
+    UIView * _Nullable *interactionView,
+    NSString * _Nullable *nativeAlertActionLabel
+) {
+    NSCAssert(
+        NSThread.isMainThread,
+        @"DOM live identity lookup is main-only"
+    );
+    if (![element isKindOfClass:NSDictionary.class] ||
+        ![element[@"nodeID"] isKindOfClass:NSString.class] ||
+        !IOSUseDOMIsInteger(element[@"snapshotGeneration"])) {
+        return NO;
+    }
+    unsigned long long generation =
+        [element[@"snapshotGeneration"] unsignedLongLongValue];
+    if (generation == 0 ||
+        generation != IOSUseDOMLiveIdentityGeneration) {
+        return NO;
+    }
+    IOSUseDOMLiveIdentityRecord *record =
+        IOSUseDOMLiveIdentityRecords[element[@"nodeID"]];
+    if (record == nil || record.generation != generation) {
+        return NO;
+    }
+    NSDictionary<NSString *, id> *frame = element[@"frame"];
+    if (![frame isKindOfClass:NSDictionary.class] ||
+        !IOSUseDOMIsNumber(frame[@"x"]) ||
+        !IOSUseDOMIsNumber(frame[@"y"]) ||
+        !IOSUseDOMIsNumber(frame[@"width"]) ||
+        !IOSUseDOMIsNumber(frame[@"height"])) {
+        return NO;
+    }
+    CGRect serializedFrame = CGRectMake(
+        [frame[@"x"] doubleValue],
+        [frame[@"y"] doubleValue],
+        [frame[@"width"] doubleValue],
+        [frame[@"height"] doubleValue]
+    );
+    if (fabs(serializedFrame.origin.x - record.frame.origin.x) >
+            0.001 ||
+        fabs(serializedFrame.origin.y - record.frame.origin.y) >
+            0.001 ||
+        fabs(serializedFrame.size.width - record.frame.size.width) >
+            0.001 ||
+        fabs(serializedFrame.size.height - record.frame.size.height) >
+            0.001) {
+        return NO;
+    }
+    if (!IOSUseDOMIsInteger(element[@"elementType"]) ||
+        [element[@"elementType"] integerValue] !=
+            record.elementType) {
+        return NO;
+    }
+    NSString *serializedIdentifier =
+        [element[@"identifier"] isKindOfClass:NSString.class]
+            ? element[@"identifier"]
+            : nil;
+    if (!IOSUseDOMNullableStringsEqual(
+            serializedIdentifier,
+            record.identifier ?: @""
+        )) {
+        return NO;
+    }
+
+    id liveObject = record.object;
+    UIView *recordedInteractionView = record.interactionView;
+    IOSUseDOMLiveIdentityKind kind =
+        (IOSUseDOMLiveIdentityKind)record.kind;
+    NSDictionary<NSString *, id> *currentNativeAction =
+        IOSUseDOMExactNativeAlertAction(
+            kind,
+            record.elementType,
+            [element[@"label"] isKindOfClass:NSString.class]
+                ? element[@"label"]
+                : @"",
+            serializedFrame,
+            nil
+        );
+    NSString *currentNativeActionLabel =
+        currentNativeAction[@"label"];
+    if (record.nativeAlertActionLabel.length > 0) {
+        if (![currentNativeActionLabel
+                isEqualToString:
+                    record.nativeAlertActionLabel] ||
+            !IOSUseDOMFramesMatchWithinTolerance(
+                IOSUseDOMNativeAlertActionFrame(
+                    currentNativeAction[@"frame"]
+                ),
+                record.nativeAlertActionFrame
+            ) ||
+            [currentNativeAction[@"index"] integerValue] !=
+                record.nativeAlertActionIndex) {
+            return NO;
+        }
+    } else {
+        currentNativeActionLabel = nil;
+    }
+
+    if (kind == IOSUseDOMLiveIdentityKindAppKitProxy) {
+        if (record.nativeAlertActionLabel.length == 0) {
+            return NO;
+        }
+    } else if (kind == IOSUseDOMLiveIdentityKindWebProxy) {
+        if (recordedInteractionView == nil ||
+            recordedInteractionView.window == nil ||
+            recordedInteractionView.window !=
+                record.snapshotWindow ||
+            IOSUseDOMNormalizedInteractionView(
+                recordedInteractionView
+            ) != recordedInteractionView) {
+            return NO;
+        }
+    } else {
+        if (liveObject == nil) {
+            return NO;
+        }
+        NSString *currentIdentifier = IOSUseDOMIdentityString(
+            IOSUseDOMObjectValue(
+                liveObject,
+                NSSelectorFromString(
+                    @"accessibilityIdentifier"
+                )
+            )
+        );
+        if (!IOSUseDOMNullableStringsEqual(
+                currentIdentifier,
+                record.identifier
+            ) ||
+            !IOSUseDOMNullableStringsEqual(
+                IOSUseDOMCurrentSemanticLabel(liveObject),
+                record.semanticLabel
+            ) ||
+            IOSUseDOMAccessibilityTraits(liveObject) !=
+                record.accessibilityTraits ||
+            ([liveObject isKindOfClass:UIControl.class] &&
+             [(UIControl *)liveObject isEnabled] !=
+                record.controlEnabled)) {
+            return NO;
+        }
+        if (kind ==
+                IOSUseDOMLiveIdentityKindNativeAlertMirror &&
+            !IOSUseDOMObjectBelongsToNativeAlertMirror(
+                liveObject,
+                record.rawViewAncestor
+            )) {
+            return NO;
+        }
+        UIView *currentInteractionView =
+            IOSUseDOMInteractionView(
+                liveObject,
+                record.rawViewAncestor
+            );
+        if (currentInteractionView != recordedInteractionView) {
+            return NO;
+        }
+        UIWindow *currentWindow =
+            currentInteractionView.window ?:
+            ([liveObject isKindOfClass:UIView.class]
+                ? [(UIView *)liveObject window]
+                : record.rawViewAncestor.window);
+        if (currentWindow == nil ||
+            currentWindow != record.snapshotWindow) {
+            return NO;
+        }
+        if ([liveObject isKindOfClass:UIView.class]) {
+            UIView *liveView = liveObject;
+            if (liveView.window == nil ||
+                liveView.superview !=
+                    record.snapshotSuperview ||
+                (recordedInteractionView != nil &&
+                 liveView.window !=
+                    recordedInteractionView.window)) {
+                return NO;
+            }
+        } else {
+            id currentContainer = IOSUseDOMObjectValue(
+                liveObject,
+                NSSelectorFromString(
+                    @"accessibilityContainer"
+                )
+            );
+            if (currentContainer == nil ||
+                currentContainer !=
+                record.snapshotAccessibilityContainer) {
+                return NO;
+            }
+        }
+        if (recordedInteractionView != nil) {
+            if (recordedInteractionView.window == nil) {
+                return NO;
+            }
+        } else if (record.rawViewAncestor == nil ||
+                   record.rawViewAncestor.window == nil) {
+            return NO;
+        }
+        UIView *visibilityView =
+            [liveObject isKindOfClass:UIView.class]
+                ? liveObject
+                : (recordedInteractionView ?:
+                    record.rawViewAncestor);
+        if (visibilityView == nil ||
+            !IOSUseDOMViewIsActuallyVisibleInWindow(
+                visibilityView
+            )) {
+            return NO;
+        }
+        if (kind == IOSUseDOMLiveIdentityKindGeneric &&
+            !IOSUseDOMFramesMatchWithinTolerance(
+                IOSUseDOMObjectRect(liveObject),
+                record.frame
+            )) {
+            return NO;
+        }
+    }
+    if (object != NULL) {
+        *object = liveObject;
+    }
+    if (interactionView != NULL) {
+        *interactionView = recordedInteractionView;
+    }
+    if (nativeAlertActionLabel != NULL) {
+        *nativeAlertActionLabel = currentNativeActionLabel;
+    }
+    return YES;
+}
+
 static void IOSUseDOMRegisterWebBridgeElement(
     IOSUseDOMWebAccessibilityElement *proxy,
     IOSUseDOMNode *node
@@ -1723,47 +2225,220 @@ static BOOL IOSUseDOMViewIsActuallyVisibleInWindow(UIView *view) {
         );
 }
 
-static BOOL IOSUseDOMIsNativeAlertMirrorRoot(id object) {
+static BOOL IOSUseDOMIsNativeAlertMirrorRootShape(id object) {
     if (![object isKindOfClass:UIView.class]) {
         return NO;
     }
     NSString *className = NSStringFromClass([object class]) ?: @"";
     return [className containsString:@"UIAlertController"] &&
-        [className containsString:@"MacView"] &&
+        [className containsString:@"MacView"];
+}
+
+static BOOL IOSUseDOMIsNativeAlertMirrorRoot(id object) {
+    return IOSUseDOMIsNativeAlertMirrorRootShape(object) &&
         [IOSUsePlayAppKitBridge hasVisibleNativeAlert];
+}
+
+static BOOL IOSUseDOMViewHasNativeAlertMirrorShape(
+    UIView * _Nullable view
+) {
+    for (UIView *candidate = view;
+         candidate != nil;
+         candidate = candidate.superview) {
+        if (IOSUseDOMIsNativeAlertMirrorRootShape(candidate)) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+static BOOL IOSUseDOMObjectHasNativeAlertMirrorShape(
+    id object,
+    UIView * _Nullable rawViewAncestor
+) {
+    if ([object isKindOfClass:UIView.class] &&
+        IOSUseDOMViewHasNativeAlertMirrorShape(object)) {
+        return YES;
+    }
+    NSHashTable<id> *visited = [NSHashTable
+        hashTableWithOptions:
+            NSPointerFunctionsObjectPointerPersonality |
+            NSPointerFunctionsStrongMemory];
+    id current = object;
+    for (NSUInteger depth = 0;
+         current != nil && depth < IOSUseDOMMaximumDepth;
+         depth += 1) {
+        if ([visited containsObject:current]) {
+            break;
+        }
+        [visited addObject:current];
+        id container = IOSUseDOMObjectValue(
+            current,
+            NSSelectorFromString(@"accessibilityContainer")
+        );
+        if (container == nil || container == current) {
+            break;
+        }
+        if ([container isKindOfClass:UIView.class]) {
+            return IOSUseDOMViewHasNativeAlertMirrorShape(
+                container
+            );
+        }
+        current = container;
+    }
+    return IOSUseDOMViewHasNativeAlertMirrorShape(
+        rawViewAncestor
+    );
+}
+
+static BOOL IOSUseDOMObjectBelongsToNativeAlertMirror(
+    id object,
+    UIView * _Nullable rawViewAncestor
+) {
+    return IOSUseDOMObjectHasNativeAlertMirrorShape(
+        object,
+        rawViewAncestor
+    ) && [IOSUsePlayAppKitBridge hasVisibleNativeAlert];
+}
+
+static CGRect IOSUseDOMNativeAlertActionFrame(id value) {
+    if (![value isKindOfClass:NSDictionary.class] ||
+        !IOSUseDOMIsNumber(value[@"x"]) ||
+        !IOSUseDOMIsNumber(value[@"y"]) ||
+        !IOSUseDOMIsNumber(value[@"width"]) ||
+        !IOSUseDOMIsNumber(value[@"height"])) {
+        return CGRectNull;
+    }
+    CGRect frame = CGRectMake(
+        [value[@"x"] doubleValue],
+        [value[@"y"] doubleValue],
+        [value[@"width"] doubleValue],
+        [value[@"height"] doubleValue]
+    );
+    return IOSUseDOMRectHasArea(frame) ? frame : CGRectNull;
+}
+
+static BOOL IOSUseDOMFramesMatchWithinTolerance(
+    CGRect left,
+    CGRect right
+) {
+    const CGFloat tolerance = 0.5;
+    return IOSUseDOMRectHasArea(left) &&
+        IOSUseDOMRectHasArea(right) &&
+        fabs(left.origin.x - right.origin.x) <= tolerance &&
+        fabs(left.origin.y - right.origin.y) <= tolerance &&
+        fabs(left.size.width - right.size.width) <= tolerance &&
+        fabs(left.size.height - right.size.height) <= tolerance;
+}
+
+static BOOL IOSUseDOMNativeAlertActionContainsProxyFrame(
+    CGRect actionFrame,
+    CGRect proxyFrame
+) {
+    const CGFloat tolerance = 0.5;
+    const CGFloat maximumInset = 5.5;
+    if (!IOSUseDOMRectHasArea(actionFrame) ||
+        !IOSUseDOMRectHasArea(proxyFrame) ||
+        fabs(CGRectGetMidX(actionFrame) -
+             CGRectGetMidX(proxyFrame)) > tolerance ||
+        fabs(CGRectGetMidY(actionFrame) -
+             CGRectGetMidY(proxyFrame)) > tolerance) {
+        return NO;
+    }
+    CGFloat leftInset =
+        CGRectGetMinX(proxyFrame) - CGRectGetMinX(actionFrame);
+    CGFloat topInset =
+        CGRectGetMinY(proxyFrame) - CGRectGetMinY(actionFrame);
+    CGFloat rightInset =
+        CGRectGetMaxX(actionFrame) - CGRectGetMaxX(proxyFrame);
+    CGFloat bottomInset =
+        CGRectGetMaxY(actionFrame) - CGRectGetMaxY(proxyFrame);
+    return leftInset >= -tolerance &&
+        leftInset <= maximumInset &&
+        topInset >= -tolerance &&
+        topInset <= maximumInset &&
+        rightInset >= -tolerance &&
+        rightInset <= maximumInset &&
+        bottomInset >= -tolerance &&
+        bottomInset <= maximumInset;
+}
+
+static NSDictionary<NSString *, id> * _Nullable
+IOSUseDOMExactNativeAlertAction(
+    IOSUseDOMLiveIdentityKind kind,
+    NSInteger elementType,
+    NSString *label,
+    CGRect frame,
+    NSArray<NSDictionary<NSString *, id> *> * _Nullable actions
+) {
+    if ((kind != IOSUseDOMLiveIdentityKindAppKitProxy &&
+         kind != IOSUseDOMLiveIdentityKindNativeAlertMirror) ||
+        elementType != 9 ||
+        label.length == 0) {
+        return nil;
+    }
+    if (actions == nil) {
+        if (![IOSUsePlayAppKitBridge
+                hasVisibleNativeAlertCandidate]) {
+            return nil;
+        }
+        actions = [IOSUsePlayAppKitBridge nativeAlertActions];
+    }
+    NSDictionary<NSString *, id> *matchedAction = nil;
+    for (NSDictionary<NSString *, id> *action in actions) {
+        CGRect actionFrame =
+            IOSUseDOMNativeAlertActionFrame(action[@"frame"]);
+        if (![action[@"label"] isKindOfClass:NSString.class] ||
+            ![action[@"label"] isEqualToString:label] ||
+            !(IOSUseDOMFramesMatchWithinTolerance(
+                  actionFrame,
+                  frame
+              ) ||
+              (kind == IOSUseDOMLiveIdentityKindAppKitProxy &&
+               IOSUseDOMNativeAlertActionContainsProxyFrame(
+                   actionFrame,
+                   frame
+               )))) {
+            continue;
+        }
+        if (matchedAction != nil) {
+            return nil;
+        }
+        matchedAction = action;
+    }
+    return matchedAction;
 }
 
 static CGRect IOSUseDOMNativeAlertAdjustedRect(
     id object,
     NSString *label,
-    CGRect fallback
+    CGRect fallback,
+    UIView * _Nullable rawViewAncestor,
+    NSArray<NSDictionary<NSString *, id> *> *nativeAlertActions
 ) {
     if (IOSUseDOMIsNativeAlertMirrorRoot(object)) {
         CGRect panelFrame = [IOSUsePlayAppKitBridge nativeAlertFrame];
         return CGRectIsNull(panelFrame) ? fallback : panelFrame;
     }
     if (label.length == 0 ||
-        ![IOSUsePlayAppKitBridge hasVisibleNativeAlert]) {
+        nativeAlertActions.count == 0 ||
+        !IOSUseDOMObjectHasNativeAlertMirrorShape(
+            object,
+            rawViewAncestor
+        )) {
         return fallback;
     }
     for (NSDictionary<NSString *, id> *action in
-         [IOSUsePlayAppKitBridge nativeAlertActions]) {
+         nativeAlertActions) {
         if (![action[@"label"] isEqualToString:label]) {
             continue;
         }
-        NSDictionary<NSString *, id> *frame = action[@"frame"];
-        if (!IOSUseDOMIsNumber(frame[@"x"]) ||
-            !IOSUseDOMIsNumber(frame[@"y"]) ||
-            !IOSUseDOMIsNumber(frame[@"width"]) ||
-            !IOSUseDOMIsNumber(frame[@"height"])) {
+        CGRect actionFrame =
+            IOSUseDOMNativeAlertActionFrame(action[@"frame"]);
+        if (CGRectIsNull(actionFrame)) {
             return fallback;
         }
-        return CGRectMake(
-            [frame[@"x"] doubleValue],
-            [frame[@"y"] doubleValue],
-            [frame[@"width"] doubleValue],
-            [frame[@"height"] doubleValue]
-        );
+        return actionFrame;
     }
     return fallback;
 }
@@ -2009,6 +2684,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     BOOL ancestorVisible,
     BOOL ancestorDisabled,
     CGRect ancestorClip,
+    UIView * _Nullable rawViewAncestor,
     IOSUseDOMCaptureContext *context
 ) {
     if (context.failureMessage != nil || object == nil) {
@@ -2139,7 +2815,9 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     CGRect rect = IOSUseDOMNativeAlertAdjustedRect(
         object,
         label,
-        IOSUseDOMObjectRect(object)
+        IOSUseDOMObjectRect(object),
+        rawViewAncestor,
+        context.nativeAlertActions
     );
     BOOL hasRect = IOSUseDOMRectHasArea(rect);
     CGRect effectiveClip = ancestorClip;
@@ -2167,6 +2845,9 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
     }
     NSMutableArray<IOSUseDOMNode *> *children =
         [NSMutableArray arrayWithCapacity:childObjects.count];
+    UIView *nearestRawView = [object isKindOfClass:UIView.class]
+        ? object
+        : rawViewAncestor;
     for (id childObject in childObjects) {
         IOSUseDOMNode *child = IOSUseDOMBuildNode(
             childObject,
@@ -2174,6 +2855,7 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
             hierarchyVisible,
             disabled,
             effectiveClip,
+            nearestRawView,
             context
         );
         if (context.failureMessage != nil) {
@@ -2211,6 +2893,12 @@ static IOSUseDOMNode * _Nullable IOSUseDOMBuildNode(
         object,
         label,
         value
+    );
+    IOSUseDOMRegisterLiveIdentity(
+        node,
+        object,
+        rawViewAncestor,
+        context
     );
     if ([object
             isKindOfClass:
@@ -2631,8 +3319,9 @@ static NSArray<UIWindow *> *IOSUseDOMActiveWindows(void) {
         NSPointerFunctionsStrongMemory];
     NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
     for (UIWindowScene *scene in scenes) {
+        NSArray<UIWindow *> *originalWindows = scene.windows;
         NSArray<UIWindow *> *sceneWindows =
-            [scene.windows sortedArrayUsingComparator:
+            [originalWindows sortedArrayUsingComparator:
                 ^NSComparisonResult(UIWindow *lhs, UIWindow *rhs) {
                     if (lhs.windowLevel > rhs.windowLevel) {
                         return NSOrderedAscending;
@@ -2640,10 +3329,17 @@ static NSArray<UIWindow *> *IOSUseDOMActiveWindows(void) {
                     if (lhs.windowLevel < rhs.windowLevel) {
                         return NSOrderedDescending;
                     }
-                    if (lhs.isKeyWindow != rhs.isKeyWindow) {
-                        return lhs.isKeyWindow
-                            ? NSOrderedAscending
-                            : NSOrderedDescending;
+                    NSUInteger lhsIndex =
+                        [originalWindows
+                            indexOfObjectIdenticalTo:lhs];
+                    NSUInteger rhsIndex =
+                        [originalWindows
+                            indexOfObjectIdenticalTo:rhs];
+                    if (lhsIndex > rhsIndex) {
+                        return NSOrderedAscending;
+                    }
+                    if (lhsIndex < rhsIndex) {
+                        return NSOrderedDescending;
                     }
                     return NSOrderedSame;
                 }];
@@ -2694,7 +3390,12 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
         NSPointerFunctionsObjectPointerPersonality |
         NSPointerFunctionsStrongMemory];
     context.generation = atomic_fetch_add(&IOSUseDOMGeneration, 1) + 1;
+    context.nativeAlertActions =
+        [IOSUsePlayAppKitBridge hasVisibleNativeAlertCandidate]
+            ? [IOSUsePlayAppKitBridge nativeAlertActions]
+            : @[];
     IOSUseDOMResetWebBridgeRecords(context.generation);
+    IOSUseDOMResetLiveIdentityRecords(context.generation);
 
     NSMutableArray<IOSUseDOMNode *> *rawRoots =
         [NSMutableArray arrayWithCapacity:windows.count];
@@ -2705,6 +3406,7 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
             YES,
             NO,
             screenBounds,
+            nil,
             context
         );
         if (context.failureMessage != nil) {
@@ -2748,6 +3450,7 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
             YES,
             NO,
             screenBounds,
+            nil,
             context
         );
         if (context.failureMessage != nil) {
@@ -2766,8 +3469,6 @@ static IOSUseDOMSnapshot * _Nullable IOSUseDOMBuildSnapshotOnMain(
     for (IOSUseDOMNode *root in rawRoots) {
         [cleanRoots addObjectsFromArray:IOSUseDOMCleanNode(root)];
     }
-    cleanRoots =
-        [IOSUseDOMSortedCleanNodes(cleanRoots) mutableCopy];
     NSString *application =
         NSBundle.mainBundle.bundleIdentifier ?: @"";
     if (!IOSUseDOMAssignAutoLabels(

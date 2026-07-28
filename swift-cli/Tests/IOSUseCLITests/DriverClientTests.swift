@@ -197,6 +197,34 @@ final class DriverClientTests: XCTestCase {
         XCTAssertTrue(args.waitQuiescence)
     }
 
+    func testDeviceTapMaterializesAbsentRatioAtForyBoundary() throws {
+        let fory = ForyRegistry.create()
+        let payload = try fory.serialize(ForyElementPayload())
+        let server = try FakeDriverServer(
+            responses: [ForyResponseFrame(ok: true, payload: payload)]
+        )
+        defer { server.stop() }
+        let client = DriverClient(port: UInt16(server.port))
+        defer { client.close() }
+
+        _ = try client.tap(
+            target: ForyTarget(label: "Continue"),
+            traits: nil,
+            cindex: nil,
+            offset: nil,
+            ratio: nil
+        )
+
+        let request = try XCTUnwrap(server.requestFrames.first)
+        XCTAssertEqual(request.command, DriverCommand.tap.rawValue)
+        let args = try fory.deserialize(
+            request.payload,
+            as: ForyTapArgs.self
+        )
+        XCTAssertEqual(args.ratio.x, 0.5)
+        XCTAssertEqual(args.ratio.y, 0.5)
+    }
+
     func testClientSerializesWaitAppForegroundAndUsesSharedDeadlineBudget() throws {
         let fory = ForyRegistry.create()
         let responsePayload = try fory.serialize(ForyWaitAppForegroundPayload(

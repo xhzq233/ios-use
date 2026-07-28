@@ -378,7 +378,7 @@ private extension NSLock {
 private final class EvidenceDriverClient: DriverCommandClient {
     typealias DomHandler = (Bool, Bool, Bool) throws -> ForyDomPayload
     typealias ScreenshotHandler = () throws -> ScreenshotCapture
-    typealias TapHandler = (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload
+    typealias TapHandler = (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws -> ForyElementPayload
 
     private let domHandler: DomHandler
     private let screenshotHandler: ScreenshotHandler
@@ -412,7 +412,7 @@ private final class EvidenceDriverClient: DriverCommandClient {
         try screenshotHandler()
     }
 
-    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload {
         try tapHandler(target, traits, cindex, offset, ratio)
     }
 

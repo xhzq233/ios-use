@@ -36,6 +36,10 @@ IOSUsePlayAppKitBridgeSelectVisibleNativeAlertForTesting(
         NSDictionary<NSString *, id> *
     > * _Nullable cgMetadata
 );
+extern BOOL
+IOSUsePlayAppKitBridgeHasVisibleNativeAlertCandidateForTesting(
+    NSArray * _Nullable windows
+);
 
 typedef NS_ENUM(NSUInteger, IOSUseBridgeSnapshotFixtureMode) {
     IOSUseBridgeSnapshotFixtureModeEmpty,
@@ -257,6 +261,18 @@ static BOOL IOSUseBridgeSnapshotTestCallerMetadataSelection(void) {
             metadata
         );
     BOOL passed = IOSUseBridgeSnapshotRequire(
+        IOSUsePlayAppKitBridgeHasVisibleNativeAlertCandidateForTesting(
+            @[back, front]
+        ),
+        @"visible native alert candidates were not detected before exact CGWindow selection"
+    );
+    passed &= IOSUseBridgeSnapshotRequire(
+        !IOSUsePlayAppKitBridgeHasVisibleNativeAlertCandidateForTesting(
+            @[]
+        ),
+        @"an empty AppKit window inventory reported an alert candidate"
+    );
+    passed &= IOSUseBridgeSnapshotRequire(
         selection[@"window"] == front &&
             selection[@"cgMetadata"] == metadata &&
             [selection[@"windowNumber"] unsignedIntegerValue] == 52,

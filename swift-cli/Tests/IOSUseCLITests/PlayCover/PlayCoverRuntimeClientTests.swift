@@ -8,6 +8,43 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
     private let sessionID = "session-v3"
     private let bundleIdentifier = "com.example.runtime"
 
+    func testTapEncodingOmitsAbsentSemanticRatio() throws {
+        let arguments = PlayCoverRuntimeTapArguments(
+            target: .init(label: "Continue"),
+            offset: nil,
+            ratio: nil
+        )
+
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(arguments)
+            ) as? [String: Any]
+        )
+        XCTAssertNil(object["offset"])
+        XCTAssertNil(object["ratio"])
+
+        let explicit = PlayCoverRuntimeTapArguments(
+            target: .init(label: "Continue"),
+            offset: nil,
+            ratio: .init(x: 0.5, y: 0.5)
+        )
+        let explicitObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(explicit)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(
+            (explicitObject["ratio"] as? [String: Any])?["x"]
+                as? Double,
+            0.5
+        )
+        XCTAssertEqual(
+            (explicitObject["ratio"] as? [String: Any])?["y"]
+                as? Double,
+            0.5
+        )
+    }
+
     func testEveryCommandUsesExactV3SingleSessionEnvelopeAndTypedPayload()
         throws
     {

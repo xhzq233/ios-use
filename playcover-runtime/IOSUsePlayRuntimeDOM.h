@@ -49,6 +49,18 @@ IOSUsePlayRuntimeIsWebAccessibilityElement(
     NSDictionary<NSString *, id> *element
 );
 
+/// Resolves the exact weak live identity recorded while building the current
+/// fresh DOM generation. The registry is main-thread-only, is replaced for
+/// every fresh snapshot, and never serializes object addresses. Either output
+/// may be nil when its weak object has already gone away.
+FOUNDATION_EXPORT BOOL
+IOSUsePlayRuntimeDOMResolveLiveIdentity(
+    NSDictionary<NSString *, id> *element,
+    id _Nullable * _Nullable object,
+    UIView * _Nullable * _Nullable interactionView,
+    NSString * _Nullable * _Nullable nativeAlertActionLabel
+);
+
 /// Revalidates and performs one bounded accessibility action against the
 /// exact bridged element from a fresh Runtime DOM snapshot. The bridge owns
 /// its JavaScript and accepts neither caller scripts nor CSS/XPath selectors.

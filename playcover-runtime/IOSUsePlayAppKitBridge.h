@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)isMainScreenEqualToFirst;
 + (BOOL)isFullscreen;
 + (void)setMenuBarVisible:(BOOL)visible;
++ (BOOL)hasVisibleNativeAlertCandidate;
 + (BOOL)hasVisibleNativeAlert;
 + (CGRect)nativeAlertFrame;
 + (NSString *)nativeAlertText;

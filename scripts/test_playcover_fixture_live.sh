@@ -414,6 +414,204 @@ assert_json() {
   fi
 }
 
+assert_failure_json() {
+  local case_name="$1"
+  local expression="$2"
+  local suffix
+  for suffix in stdout stderr; do
+    if jq -e "$expression" \
+        "$RUN_DIR/${case_name}.${suffix}" >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  echo \
+    "[playcover-fixture-live] FAIL: $case_name failure JSON contract failed" \
+    >&2
+  echo "[playcover-fixture-live] Evidence retained at $RUN_DIR" >&2
+  return 1
+}
+
+assert_window_overlay_dom() {
+  local case_name="$1"
+  local expected_state="$2"
+  local expected_count="$3"
+  local expected_cover_label="${4:-}"
+  local expected_cover_count=0
+  if [[ -n "$expected_cover_label" ]]; then
+    expected_cover_count=1
+  fi
+  if ! jq -e \
+      --arg state "$expected_state" \
+      --arg count "Count $expected_count" \
+      --arg cover "$expected_cover_label" \
+      --argjson coverCount "$expected_cover_count" '
+        .ok == true and
+        (.data.elements as $elements |
+          ([
+            $elements[] |
+            select(
+              .identifier ==
+                "fixture.uikit.window-overlay.show" and
+              .value == $state
+            )
+          ] | length) == 1 and
+          ([
+            $elements[] |
+            select(
+              .identifier == "fixture.uikit.count" and
+              .label == $count
+            )
+          ] | length) == 1 and
+          ([
+            $elements[] |
+            select(
+              .identifier ==
+                "fixture.uikit.window-overlay.cover"
+            )
+          ] | length) == $coverCount and
+          ($coverCount == 0 or
+            ([
+              $elements[] |
+              select(
+                .identifier ==
+                  "fixture.uikit.window-overlay.cover" and
+                .label == $cover
+              )
+            ] | length) == 1) and
+          ([
+            $elements[] |
+            select(
+              .identifier ==
+                "fixture.uikit.window-overlay.dismiss"
+            )
+          ] | length) == $coverCount)
+      ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
+    echo \
+      "[playcover-fixture-live] FAIL: $case_name window overlay DOM state is invalid" \
+      >&2
+    echo "[playcover-fixture-live] Evidence retained at $RUN_DIR" >&2
+    return 1
+  fi
+}
+
+assert_semantic_tap_blocked_by_window() {
+  local case_name="$1"
+  local expected_state="$2"
+  local expected_count="$3"
+  local expected_cover_label="$4"
+  local stdout_file="$RUN_DIR/${case_name}.stdout"
+  local stderr_file="$RUN_DIR/${case_name}.stderr"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$MATRIX_VERSION" \
+    "$case_name" \
+    'tap Increment --json (expected element_not_hittable at hit-test)' \
+    "$stdout_file" \
+    "$stderr_file" >>"$MANIFEST"
+  if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+      tap "Increment" --json \
+      >"$stdout_file" 2>"$stderr_file"; then
+    echo \
+      "[playcover-fixture-live] FAIL: $case_name delivered through a blocking UIWindow" \
+      >&2
+    return 1
+  fi
+  assert_failure_json "$case_name" '
+    .ok == false and
+    .error.category == "interaction" and
+    .error.code == "element_not_hittable" and
+    .error.phase == "hit-test"
+  '
+
+  local post_case="${case_name}_post_dom"
+  record_case "$post_case" dom --json
+  assert_window_overlay_dom \
+    "$post_case" \
+    "$expected_state" \
+    "$expected_count" \
+    "$expected_cover_label"
+}
+
+assert_swiftui_overlap_blocks_increment() {
+  local case_name="$1"
+  local expected_state="$2"
+  local expected_enabled="$3"
+  local stdout_file="$RUN_DIR/${case_name}.stdout"
+  local stderr_file="$RUN_DIR/${case_name}.stderr"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$MATRIX_VERSION" \
+    "$case_name" \
+    'tap SwiftUI Increment --json (expected overlapping semantic failure)' \
+    "$stdout_file" \
+    "$stderr_file" >>"$MANIFEST"
+  if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+      tap "SwiftUI Increment" --json \
+      >"$stdout_file" 2>"$stderr_file"; then
+    echo \
+      "[playcover-fixture-live] FAIL: $case_name delivered through an overlapping SwiftUI node" \
+      >&2
+    return 1
+  fi
+  assert_failure_json "$case_name" '
+    .ok == false and
+    .error.category == "interaction" and
+    .error.code == "element_not_hittable" and
+    .error.phase == "hit-test"
+  '
+
+  local post_case="${case_name}_post_dom"
+  record_case "$post_case" dom --json
+  assert_json "$post_case" "
+    .data.elements as \\$elements |
+    ([ \\$elements[] |
+       select(
+         .identifier == \"fixture.swiftui.overlay.advance\" and
+         .value == \"$expected_state\"
+       ) ] | length) == 1 and
+    ([ \\$elements[] |
+       select(
+         .identifier == \"fixture.swiftui.increment-overlay\" and
+         .state.enabled == $expected_enabled
+       ) ] | length) == 1 and
+    ([ \\$elements[] |
+       select(
+         .identifier == \"fixture.swiftui.count\" and
+         .label == \"SwiftUI Count 1\"
+       ) ] | length) == 1 and
+    ([ \\$elements[] |
+       select(
+         .identifier == \"fixture.swiftui.overlay.count\" and
+         .label == \"SwiftUI Overlay Count 0\"
+       ) ] | length) == 1
+  "
+}
+
+assert_native_alert_blocks_command() {
+  local case_name="$1"
+  local expected_phase="$2"
+  shift 2
+  local stdout_file="$RUN_DIR/${case_name}.stdout"
+  local stderr_file="$RUN_DIR/${case_name}.stderr"
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$MATRIX_VERSION" \
+    "$case_name" \
+    "$*" \
+    "$stdout_file" \
+    "$stderr_file" >>"$MANIFEST"
+  if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+      "$@" --json >"$stdout_file" 2>"$stderr_file"; then
+    echo \
+      "[playcover-fixture-live] FAIL: $case_name mutated through a visible native alert" \
+      >&2
+    return 1
+  fi
+  assert_failure_json "$case_name" "
+    .ok == false and
+    .error.category == \"interaction\" and
+    .error.code == \"element_not_hittable\" and
+    .error.phase == \"$expected_phase\"
+  "
+}
+
 expected_host_title_for_app() {
   local app_path="$1"
   local info_path="$app_path/Info.plist"
@@ -2267,10 +2465,137 @@ fi
 record_case tap tap "Increment" --dom --json
 assert_evidence tap 'Count 1'
 
+record_case tap_explicit_exposed tap "Increment" \
+  --offset-ratio 0.1,0.5 --dom --json
+assert_evidence tap_explicit_exposed 'Count 2'
+
+record_case tap_offset_top_left tap "Increment" \
+  --offset 4,4 --dom --json
+assert_evidence tap_offset_top_left 'Count 3'
+
+covered_stdout="$RUN_DIR/tap_explicit_covered.stdout"
+covered_stderr="$RUN_DIR/tap_explicit_covered.stderr"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$MATRIX_VERSION" \
+  "tap_explicit_covered" \
+  'tap Increment --offset-ratio 0.5,0.5 --json (expected element_not_hittable)' \
+  "$covered_stdout" \
+  "$covered_stderr" >>"$MANIFEST"
+if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+    tap "Increment" --offset-ratio 0.5,0.5 --json \
+    >"$covered_stdout" 2>"$covered_stderr"; then
+  echo \
+    "[playcover-fixture-live] FAIL: covered explicit ratio was relocated" \
+    >&2
+  exit 1
+fi
+assert_failure_json tap_explicit_covered '
+  .ok == false and
+  .error.code == "element_not_hittable" and
+  .error.phase == "hit-test"
+'
+record_case tap_covered_post_dom dom --json
+assert_evidence tap_covered_post_dom 'Count 3'
+
 record_case no_op tap "No-op Target" --json
 assert_json no_op '
   .data.element.label == "No-op Target"
 '
+
+disabled_stdout="$RUN_DIR/disabled_target.stdout"
+disabled_stderr="$RUN_DIR/disabled_target.stderr"
+printf '%s\t%s\t%s\t%s\t%s\n' \
+  "$MATRIX_VERSION" \
+  "disabled_target" \
+  'tap Disabled Target --json (expected element_not_hittable)' \
+  "$disabled_stdout" \
+  "$disabled_stderr" >>"$MANIFEST"
+if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+    tap "Disabled Target" --json \
+    >"$disabled_stdout" 2>"$disabled_stderr"; then
+  echo \
+    "[playcover-fixture-live] FAIL: disabled target reported successful delivery" \
+    >&2
+  exit 1
+fi
+assert_failure_json disabled_target '
+  .ok == false and
+  .error.code == "element_not_hittable" and
+  .error.phase == "identity"
+'
+
+record_case window_overlay_same_show \
+  tap "Show Window Overlay" --json
+record_case window_overlay_same_visible dom --json
+assert_window_overlay_dom \
+  window_overlay_same_visible \
+  "same-level visible non-key" \
+  3 \
+  "Same-Level Non-Key Window Cover"
+assert_semantic_tap_blocked_by_window \
+  window_overlay_same_blocked \
+  "same-level visible non-key" \
+  3 \
+  "Same-Level Non-Key Window Cover"
+record_case window_overlay_same_dismiss \
+  tap "Dismiss Window Overlay" --json
+record_case window_overlay_same_dismissed dom --json
+assert_window_overlay_dom \
+  window_overlay_same_dismissed "none" 3
+
+record_case window_overlay_high_show \
+  tap "Show Window Overlay" --json
+record_case window_overlay_high_visible dom --json
+assert_window_overlay_dom \
+  window_overlay_high_visible \
+  "higher-level visible non-key" \
+  3 \
+  "Higher-Level Non-Key Window Cover"
+assert_semantic_tap_blocked_by_window \
+  window_overlay_high_blocked \
+  "higher-level visible non-key" \
+  3 \
+  "Higher-Level Non-Key Window Cover"
+record_case window_overlay_high_dismiss \
+  tap "Dismiss Window Overlay" --json
+record_case window_overlay_high_dismissed dom --json
+assert_window_overlay_dom \
+  window_overlay_high_dismissed "none" 3
+
+record_case window_overlay_passthrough_show \
+  tap "Show Window Overlay" --json
+record_case window_overlay_passthrough_visible dom --json
+assert_window_overlay_dom \
+  window_overlay_passthrough_visible \
+  "passthrough higher-level visible non-key" \
+  3 \
+  "Passthrough Higher-Level Window Cover"
+record_case window_overlay_passthrough_tap \
+  tap "Increment" --dom --json
+assert_json window_overlay_passthrough_tap '
+  .data.element.identifier == "fixture.uikit.increment" and
+  (.data.postDom.elements as $elements |
+    ([
+      $elements[] |
+      select(
+        .identifier == "fixture.uikit.count" and
+        .label == "Count 4"
+      )
+    ] | length) == 1 and
+    ([
+      $elements[] |
+      select(
+        .identifier ==
+          "fixture.uikit.window-overlay.show" and
+        .value == "passthrough higher-level visible non-key"
+      )
+    ] | length) == 1)
+'
+record_case window_overlay_passthrough_dismiss \
+  tap "Dismiss Window Overlay" --json
+record_case window_overlay_passthrough_dismissed dom --json
+assert_window_overlay_dom \
+  window_overlay_passthrough_dismissed "none" 4
 
 record_case longpress longpress "Long Press Target" \
   --duration 500ms --dom --json
@@ -2363,6 +2688,19 @@ record_case alert_dom dom --json
 assert_evidence alert_dom 'Fixture Alert'
 assert_evidence alert_dom 'Confirm'
 assert_evidence alert_dom 'Cancel'
+assert_native_alert_blocks_command \
+  alert_underlay_tap identity tap "Increment"
+assert_native_alert_blocks_command \
+  alert_absolute_outside hit-test tap 10,10
+assert_native_alert_blocks_command \
+  alert_underlay_longpress identity \
+  longpress "Long Press Target" --duration 100ms
+assert_native_alert_blocks_command \
+  alert_underlay_swipe identity \
+  swipe --from "Increment" --dir forth --distance 50
+assert_native_alert_blocks_command \
+  alert_underlay_input identity \
+  input --tap "Fixture Input" --content blocked
 record_case alert_tap_confirm tap "Confirm" --dom --json
 assert_json alert_tap_confirm '
   .data.finalState.phase == "native-ended" and
@@ -2465,6 +2803,34 @@ assert_json swiftui_increment '
       select(.identifier == $identifier)
     ] | length == 1
   )
+'
+record_case swiftui_overlap_enabled_show \
+  tap "Advance SwiftUI Overlay" --dom --json
+assert_swiftui_overlap_blocks_increment \
+  swiftui_overlap_enabled_blocked enabled true
+
+record_case swiftui_overlap_disabled_show \
+  tap "Advance SwiftUI Overlay" --dom --json
+assert_swiftui_overlap_blocks_increment \
+  swiftui_overlap_disabled_blocked disabled false
+
+record_case swiftui_overlap_clear \
+  tap "Advance SwiftUI Overlay" --dom --json
+assert_json swiftui_overlap_clear '
+  .data.postDom.elements as $elements |
+  ([
+    $elements[] |
+    select(
+      .identifier == "fixture.swiftui.overlay.advance" and
+      .value == "none"
+    )
+  ] | length) == 1 and
+  ([
+    $elements[] |
+    select(
+      .identifier == "fixture.swiftui.increment-overlay"
+    )
+  ] | length) == 0
 '
 record_case swiftui_input input --tap "SwiftUI Input" \
   --content "swift" --enter --dom --json

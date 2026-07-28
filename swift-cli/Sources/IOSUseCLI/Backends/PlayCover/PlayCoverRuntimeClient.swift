@@ -194,7 +194,7 @@ struct PlayCoverRuntimeWaitForArguments: Codable, Equatable, Sendable {
 struct PlayCoverRuntimeTapArguments: Codable, Equatable, Sendable {
     let target: PlayCoverRuntimeTarget
     let offset: PlayCoverRuntimePoint?
-    let ratio: PlayCoverRuntimePoint
+    let ratio: PlayCoverRuntimePoint?
 }
 
 struct PlayCoverRuntimeLongPressArguments: Codable, Equatable, Sendable {

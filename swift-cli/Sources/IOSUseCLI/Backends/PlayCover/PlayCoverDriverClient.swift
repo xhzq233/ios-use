@@ -216,7 +216,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
         traits: String?,
         cindex: Int32?,
         offset: ForyPoint?,
-        ratio: ForyPoint
+        ratio: ForyPoint?
     ) throws -> ForyElementPayload {
         guard case .tap(let payload) = try request(
             .tap,
@@ -228,7 +228,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                         cindex: cindex
                     ),
                     offset: offset.map(mapPoint),
-                    ratio: mapPoint(ratio)
+                    ratio: ratio.map(mapPoint)
                 )
             )
         ) else {

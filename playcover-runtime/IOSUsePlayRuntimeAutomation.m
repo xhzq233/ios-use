@@ -14,6 +14,7 @@ static const NSTimeInterval IOSUseAutomationMainTimeout = 40.0;
 
 typedef BOOL (*IOSUseAutomationSendBool)(id, SEL);
 typedef unsigned long long (*IOSUseAutomationSendTraits)(id, SEL);
+typedef CGPoint (*IOSUseAutomationSendPoint)(id, SEL);
 typedef BOOL (*IOSUseAutomationOpenURLModern)(
     id,
     SEL,
@@ -39,6 +40,8 @@ static NSString *const IOSUseAutomationDeferredFinalizeKey =
 
 @interface IOSUseAutomationCandidate : NSObject
 @property(nonatomic, strong) id object;
+@property(nonatomic, strong, nullable) UIView *interactionView;
+@property(nonatomic, copy, nullable) NSString *nativeAlertActionLabel;
 @property(nonatomic, weak, nullable) id parent;
 @property(nonatomic, copy) NSString *nodeID;
 @property(nonatomic, copy) NSString *label;
@@ -60,6 +63,10 @@ static NSString *const IOSUseAutomationDeferredFinalizeKey =
 @end
 
 static UIResponder *IOSUseAutomationCurrentFirstResponder(void);
+static BOOL IOSUseAutomationDOMHasVisibleUIKitAlertMirror(
+    NSDictionary<NSString *, id> *dom
+);
+static BOOL IOSUseAutomationRectHasArea(CGRect rect);
 
 static BOOL IOSUseAutomationIsNumber(id value) {
     return [value isKindOfClass:NSNumber.class] &&
@@ -226,8 +233,9 @@ static NSArray<UIWindow *> *IOSUseAutomationWindows(void) {
             NSPointerFunctionsStrongMemory];
     NSMutableArray<UIWindow *> *windows = [NSMutableArray array];
     for (UIWindowScene *scene in scenes) {
+        NSArray<UIWindow *> *originalWindows = scene.windows;
         NSArray<UIWindow *> *sceneWindows =
-            [scene.windows sortedArrayUsingComparator:
+            [originalWindows sortedArrayUsingComparator:
                 ^NSComparisonResult(UIWindow *left, UIWindow *right) {
                     if (left.windowLevel > right.windowLevel) {
                         return NSOrderedAscending;
@@ -235,10 +243,17 @@ static NSArray<UIWindow *> *IOSUseAutomationWindows(void) {
                     if (left.windowLevel < right.windowLevel) {
                         return NSOrderedDescending;
                     }
-                    if (left.isKeyWindow != right.isKeyWindow) {
-                        return left.isKeyWindow
-                            ? NSOrderedAscending
-                            : NSOrderedDescending;
+                    NSUInteger leftIndex =
+                        [originalWindows
+                            indexOfObjectIdenticalTo:left];
+                    NSUInteger rightIndex =
+                        [originalWindows
+                            indexOfObjectIdenticalTo:right];
+                    if (leftIndex > rightIndex) {
+                        return NSOrderedAscending;
+                    }
+                    if (leftIndex < rightIndex) {
+                        return NSOrderedDescending;
                     }
                     return NSOrderedSame;
                 }];
@@ -684,6 +699,7 @@ IOSUseAutomationSelectElements(
 static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
     NSDictionary<NSString *, id> *target,
     NSDictionary<NSString *, id> *dom,
+    BOOL deferSemanticTapPlacement,
     CGPoint *point,
     UIWindow **window,
     UIView **hitView,
@@ -780,8 +796,39 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
             CGRectGetMidX(frame),
             CGRectGetMidY(frame)
         );
+        if (deferSemanticTapPlacement) {
+            id liveObject = nil;
+            UIView *interactionView = nil;
+            NSString *nativeAlertActionLabel = nil;
+            if (!IOSUsePlayRuntimeDOMResolveLiveIdentity(
+                    selected.serialized,
+                    &liveObject,
+                    &interactionView,
+                    &nativeAlertActionLabel
+                )) {
+                if (commandError != NULL) {
+                    *commandError = IOSUseAutomationError(
+                        @"element_stale",
+                        @"fresh semantic target has no current live identity",
+                        @"interaction",
+                        @"identity",
+                        YES,
+                        target,
+                        @[]
+                    );
+                }
+                return nil;
+            }
+            selected.object = liveObject;
+            selected.interactionView = interactionView;
+            selected.nativeAlertActionLabel =
+                nativeAlertActionLabel;
+        }
     }
-    if (!IOSUseAutomationFinitePoint(resolvedPoint)) {
+    BOOL placementDeferred =
+        deferSemanticTapPlacement && explicitPoint == nil;
+    if (!placementDeferred &&
+        !IOSUseAutomationFinitePoint(resolvedPoint)) {
         if (commandError != NULL) {
             *commandError = IOSUseAutomationError(
                 @"invalid_target_point",
@@ -800,6 +847,12 @@ static IOSUseAutomationCandidate *IOSUseAutomationResolveWithDOM(
     }
     UIWindow *resolvedWindow = nil;
     UIView *resolvedHit = nil;
+    if (placementDeferred) {
+        if (point != NULL) {
+            *point = resolvedPoint;
+        }
+        return selected;
+    }
     for (UIWindow *candidateWindow in IOSUseAutomationWindows()) {
         CGPoint candidatePoint =
             [candidateWindow convertPoint:resolvedPoint
@@ -886,6 +939,7 @@ IOSUseAutomationCandidate *IOSUseAutomationResolve(
     return IOSUseAutomationResolveWithDOM(
         target,
         dom,
+        NO,
         point,
         window,
         hitView,
@@ -1049,24 +1103,753 @@ static CGRect IOSUseAutomationFrameDictionaryRect(id value) {
     );
 }
 
-static NSDictionary<NSString *, id> *
-IOSUseAutomationNativeAlertAction(
-    NSString *label,
-    CGPoint point
+static BOOL IOSUseAutomationFramesMatchWithinTolerance(
+    CGRect left,
+    CGRect right
 ) {
+    const CGFloat tolerance = 0.5;
+    return !CGRectIsNull(left) &&
+        !CGRectIsNull(right) &&
+        fabs(left.origin.x - right.origin.x) <= tolerance &&
+        fabs(left.origin.y - right.origin.y) <= tolerance &&
+        fabs(left.size.width - right.size.width) <= tolerance &&
+        fabs(left.size.height - right.size.height) <= tolerance;
+}
+
+static BOOL IOSUseAutomationNativeAlertActionContainsProxyFrame(
+    CGRect actionFrame,
+    CGRect proxyFrame
+) {
+    const CGFloat tolerance = 0.5;
+    const CGFloat maximumInset = 5.5;
+    if (!IOSUseAutomationRectHasArea(actionFrame) ||
+        !IOSUseAutomationRectHasArea(proxyFrame) ||
+        fabs(CGRectGetMidX(actionFrame) -
+             CGRectGetMidX(proxyFrame)) > tolerance ||
+        fabs(CGRectGetMidY(actionFrame) -
+             CGRectGetMidY(proxyFrame)) > tolerance) {
+        return NO;
+    }
+    CGFloat leftInset =
+        CGRectGetMinX(proxyFrame) - CGRectGetMinX(actionFrame);
+    CGFloat topInset =
+        CGRectGetMinY(proxyFrame) - CGRectGetMinY(actionFrame);
+    CGFloat rightInset =
+        CGRectGetMaxX(actionFrame) - CGRectGetMaxX(proxyFrame);
+    CGFloat bottomInset =
+        CGRectGetMaxY(actionFrame) - CGRectGetMaxY(proxyFrame);
+    return leftInset >= -tolerance &&
+        leftInset <= maximumInset &&
+        topInset >= -tolerance &&
+        topInset <= maximumInset &&
+        rightInset >= -tolerance &&
+        rightInset <= maximumInset &&
+        bottomInset >= -tolerance &&
+        bottomInset <= maximumInset;
+}
+
+static NSDictionary<NSString *, id> * _Nullable
+IOSUseAutomationExactNativeAlertAction(
+    NSString *label,
+    CGRect frame
+) {
+    if (label.length == 0 ||
+        ![IOSUsePlayAppKitBridge hasVisibleNativeAlert]) {
+        return nil;
+    }
+    NSDictionary<NSString *, id> *matched = nil;
     for (NSDictionary<NSString *, id> *action in
          [IOSUsePlayAppKitBridge nativeAlertActions]) {
-        if (label.length > 0 &&
-            [action[@"label"] isEqualToString:label]) {
-            return action;
+        CGRect actionFrame =
+            IOSUseAutomationFrameDictionaryRect(action[@"frame"]);
+        if (![action[@"label"] isEqualToString:label] ||
+            !(IOSUseAutomationFramesMatchWithinTolerance(
+                  actionFrame,
+                  frame
+              ) ||
+              IOSUseAutomationNativeAlertActionContainsProxyFrame(
+                  actionFrame,
+                  frame
+              ))) {
+            continue;
         }
+        if (matched != nil) {
+            return nil;
+        }
+        matched = action;
+    }
+    return matched;
+}
+
+static NSDictionary<NSString *, id> * _Nullable
+IOSUseAutomationNativeAlertActionAtPoint(CGPoint point) {
+    if (![IOSUsePlayAppKitBridge hasVisibleNativeAlert]) {
+        return nil;
+    }
+    NSDictionary<NSString *, id> *matched = nil;
+    for (NSDictionary<NSString *, id> *action in
+         [IOSUsePlayAppKitBridge nativeAlertActions]) {
         CGRect frame =
             IOSUseAutomationFrameDictionaryRect(action[@"frame"]);
-        if (!CGRectIsNull(frame) && CGRectContainsPoint(frame, point)) {
-            return action;
+        CGRect unambiguousFrame = CGRectInset(frame, 0.5, 0.5);
+        if (CGRectIsNull(frame) ||
+            unambiguousFrame.size.width <= 0 ||
+            unambiguousFrame.size.height <= 0 ||
+            !CGRectContainsPoint(unambiguousFrame, point)) {
+            continue;
+        }
+        if (matched != nil) {
+            return nil;
+        }
+        matched = action;
+    }
+    return matched;
+}
+
+static BOOL IOSUseAutomationRectHasArea(CGRect rect) {
+    return !CGRectIsNull(rect) &&
+        !CGRectIsInfinite(rect) &&
+        isfinite(rect.origin.x) &&
+        isfinite(rect.origin.y) &&
+        isfinite(rect.size.width) &&
+        isfinite(rect.size.height) &&
+        rect.size.width > 0 &&
+        rect.size.height > 0;
+}
+
+static CGPoint IOSUseAutomationActivationPoint(id object) {
+    SEL selector = @selector(accessibilityActivationPoint);
+    if (object == nil || ![object respondsToSelector:selector]) {
+        return CGPointMake(NAN, NAN);
+    }
+    @try {
+        return ((IOSUseAutomationSendPoint)objc_msgSend)(
+            object,
+            selector
+        );
+    } @catch (__unused NSException *exception) {
+        return CGPointMake(NAN, NAN);
+    }
+}
+
+static void IOSUseAutomationAppendUniquePoint(
+    NSMutableArray<NSValue *> *points,
+    CGPoint point
+) {
+    if (!IOSUseAutomationFinitePoint(point)) {
+        return;
+    }
+    for (NSValue *value in points) {
+        CGPoint existing = value.CGPointValue;
+        if (fabs(existing.x - point.x) < 0.001 &&
+            fabs(existing.y - point.y) < 0.001) {
+            return;
         }
     }
-    return nil;
+    [points addObject:[NSValue valueWithCGPoint:point]];
+}
+
+static BOOL IOSUseAutomationHitMatchesInteractionOwner(
+    UIWindow *hitWindow,
+    UIView *hitView,
+    UIView *interactionView
+) {
+    if (hitWindow == nil ||
+        hitView == nil ||
+        interactionView == nil ||
+        [interactionView isKindOfClass:UIWindow.class] ||
+        interactionView.window == nil ||
+        hitWindow != interactionView.window) {
+        return NO;
+    }
+    return hitView == interactionView ||
+        [hitView isDescendantOfView:interactionView];
+}
+
+static CGRect IOSUseAutomationElementFrame(
+    NSDictionary<NSString *, id> *element
+) {
+    return IOSUseAutomationFrameDictionaryRect(element[@"frame"]);
+}
+
+static BOOL IOSUseAutomationElementIsActionable(
+    NSDictionary<NSString *, id> *element
+) {
+    switch ([element[@"elementType"] integerValue]) {
+        case 9:  // Button
+        case 20: // Key
+        case 33: // Slider
+        case 37: // SegmentedControl
+        case 38: // Picker
+        case 39: // PickerWheel
+        case 40: // Switch
+        case 41: // Toggle
+        case 42: // Link
+        case 45: // Input
+        case 49: // Input
+        case 50: // SecureInput
+        case 51: // DatePicker
+        case 52: // TextView
+        case 75: // Cell
+            return YES;
+        default:
+            return NO;
+    }
+}
+
+static BOOL IOSUseAutomationViewsShareInteractionDomain(
+    UIView *left,
+    UIView *right
+) {
+    if (left == nil ||
+        right == nil ||
+        left.window == nil ||
+        right.window == nil ||
+        left.window != right.window) {
+        return NO;
+    }
+    return left == right ||
+        [left isDescendantOfView:right] ||
+        [right isDescendantOfView:left];
+}
+
+static BOOL IOSUseAutomationSemanticPointIsUnambiguous(
+    NSDictionary<NSString *, id> *dom,
+    IOSUseAutomationCandidate *candidate,
+    CGPoint requestedPoint
+) {
+    if (![dom isKindOfClass:NSDictionary.class] ||
+        ![dom[@"elements"] isKindOfClass:NSArray.class] ||
+        [dom[@"snapshotGeneration"] unsignedLongLongValue] !=
+            candidate.generation) {
+        return NO;
+    }
+    CGRect unambiguousTargetFrame =
+        CGRectInset(candidate.frame, 0.5, 0.5);
+    if (unambiguousTargetFrame.size.width <= 0 ||
+        unambiguousTargetFrame.size.height <= 0 ||
+        !CGRectContainsPoint(
+            unambiguousTargetFrame,
+            requestedPoint
+        )) {
+        return NO;
+    }
+    if (IOSUsePlayRuntimeIsWebAccessibilityElement(
+            candidate.serialized
+        ) ||
+        candidate.nativeAlertActionLabel.length > 0) {
+        return YES;
+    }
+    for (NSDictionary<NSString *, id> *element in dom[@"elements"]) {
+        if (![element isKindOfClass:NSDictionary.class] ||
+            [element[@"nodeID"]
+                isEqualToString:candidate.nodeID] ||
+            [element[@"snapshotGeneration"]
+                unsignedLongLongValue] != candidate.generation ||
+            ![element[@"state"][@"visible"] boolValue] ||
+            !IOSUseAutomationElementIsActionable(element)) {
+            continue;
+        }
+        CGRect otherFrame = IOSUseAutomationElementFrame(element);
+        if (CGRectIsNull(otherFrame) ||
+            !CGRectContainsPoint(otherFrame, requestedPoint)) {
+            continue;
+        }
+        id otherObject = nil;
+        UIView *otherInteractionView = nil;
+        NSString *otherNativeActionLabel = nil;
+        if (!IOSUsePlayRuntimeDOMResolveLiveIdentity(
+                element,
+                &otherObject,
+                &otherInteractionView,
+                &otherNativeActionLabel
+            )) {
+            return NO;
+        }
+        (void)otherObject;
+        if (otherNativeActionLabel.length > 0) {
+            return NO;
+        }
+        if (otherInteractionView == nil) {
+            return NO;
+        }
+        if (IOSUseAutomationViewsShareInteractionDomain(
+                candidate.interactionView,
+                otherInteractionView
+            )) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static BOOL IOSUseAutomationTapTargetPreflight(
+    NSDictionary<NSString *, id> *arguments,
+    NSDictionary<NSString *, id> *target,
+    IOSUseAutomationCandidate *candidate,
+    NSDictionary<NSString *, id> **commandError
+) {
+    if (target[@"point"] != nil) {
+        return YES;
+    }
+    if ([candidate.serialized[@"state"]
+            isKindOfClass:NSDictionary.class] &&
+        [candidate.serialized[@"state"][@"enabled"]
+            isKindOfClass:NSNumber.class] &&
+        ![candidate.serialized[@"state"][@"enabled"] boolValue]) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"element_not_hittable",
+                @"fresh semantic target is disabled",
+                @"interaction",
+                @"identity",
+                NO,
+                target,
+                @[]
+            );
+        }
+        return NO;
+    }
+    if (!IOSUseAutomationRectHasArea(candidate.frame)) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"element_not_hittable",
+                @"fresh semantic target has no finite live frame",
+                @"interaction",
+                @"hit-test",
+                YES,
+                target,
+                @[]
+            );
+        }
+        return NO;
+    }
+    NSDictionary *offset = arguments[@"offset"];
+    if (offset != nil &&
+        (![offset isKindOfClass:NSDictionary.class] ||
+         !IOSUseAutomationIsNumber(offset[@"x"]) ||
+         !IOSUseAutomationIsNumber(offset[@"y"]) ||
+         !isfinite([offset[@"x"] doubleValue]) ||
+         !isfinite([offset[@"y"] doubleValue]))) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"invalid_arguments",
+                @"tap offset must contain finite numeric x and y",
+                @"validation",
+                @"validation",
+                NO,
+                target,
+                @[]
+            );
+        }
+        return NO;
+    }
+    NSDictionary *ratio = arguments[@"ratio"];
+    if (offset == nil &&
+        ratio != nil &&
+        (![ratio isKindOfClass:NSDictionary.class] ||
+         !IOSUseAutomationIsNumber(ratio[@"x"]) ||
+         !IOSUseAutomationIsNumber(ratio[@"y"]) ||
+         !isfinite([ratio[@"x"] doubleValue]) ||
+         !isfinite([ratio[@"y"] doubleValue]))) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"invalid_arguments",
+                @"tap ratio must contain finite numeric x and y",
+                @"validation",
+                @"validation",
+                NO,
+                target,
+                @[]
+            );
+        }
+        return NO;
+    }
+    return YES;
+}
+
+static BOOL IOSUseAutomationPlaceTap(
+    NSDictionary<NSString *, id> *arguments,
+    NSDictionary<NSString *, id> *target,
+    IOSUseAutomationCandidate *candidate,
+    NSDictionary<NSString *, id> *dom,
+    CGPoint *point,
+    UIWindow **window,
+    UIView **hitView,
+    NSDictionary<NSString *, id> **commandError
+) {
+    BOOL nativeAlertCandidateVisible =
+        [IOSUsePlayAppKitBridge
+            hasVisibleNativeAlertCandidate];
+    BOOL exactNativeAlertVisible =
+        [IOSUsePlayAppKitBridge hasVisibleNativeAlert];
+    if ((nativeAlertCandidateVisible ||
+         IOSUseAutomationDOMHasVisibleUIKitAlertMirror(dom)) &&
+        !exactNativeAlertVisible) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"element_not_hittable",
+                @"the visible native alert mirror could not be bound to one exact AppKit panel and action geometry",
+                @"interaction",
+                @"identity",
+                YES,
+                target,
+                @[]
+            );
+        }
+        return NO;
+    }
+    NSDictionary *explicitPoint = target[@"point"];
+    if (explicitPoint != nil) {
+        CGPoint requested = CGPointMake(
+            [explicitPoint[@"x"] doubleValue],
+            [explicitPoint[@"y"] doubleValue]
+        );
+        if (exactNativeAlertVisible) {
+            NSDictionary<NSString *, id> *nativeAction =
+                IOSUseAutomationNativeAlertActionAtPoint(requested);
+            if (nativeAction == nil) {
+                if (commandError != NULL) {
+                    *commandError = IOSUseAutomationError(
+                        @"element_not_hittable",
+                        @"absolute tap is blocked by the visible native alert and does not identify exactly one action",
+                        @"interaction",
+                        @"hit-test",
+                        YES,
+                        target,
+                        @[]
+                    );
+                }
+                return NO;
+            }
+            CGRect actionFrame =
+                IOSUseAutomationFrameDictionaryRect(
+                    nativeAction[@"frame"]
+                );
+            candidate.serialized = nil;
+            candidate.object = nil;
+            candidate.interactionView = nil;
+            candidate.parent = nil;
+            candidate.nodeID = @"";
+            candidate.nativeAlertActionLabel =
+                nativeAction[@"label"];
+            candidate.label = nativeAction[@"label"] ?: @"";
+            candidate.value = @"";
+            candidate.identifier = @"";
+            candidate.hint = @"";
+            candidate.className =
+                @"IOSUseDOMAppKitAccessibilityElement";
+            candidate.frame = actionFrame;
+            candidate.depth = 0;
+            candidate.index = 0;
+            candidate.path = @"";
+            candidate.zOrder = 0;
+            candidate.generation = 0;
+            if (point != NULL) {
+                *point = requested;
+            }
+            if (window != NULL) {
+                *window = nil;
+            }
+            if (hitView != NULL) {
+                *hitView = nil;
+            }
+            return YES;
+        }
+        CGPoint placed = CGPointZero;
+        if (!IOSUseAutomationHitTestPoint(
+                requested,
+                window,
+                hitView,
+                &placed
+            )) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"element_not_hittable",
+                    @"absolute tap point has no live hit-test view",
+                    @"interaction",
+                    @"hit-test",
+                    YES,
+                    target,
+                    @[]
+                );
+            }
+            return NO;
+        }
+        if (point != NULL) {
+            *point = placed;
+        }
+        return YES;
+    }
+
+    if (!IOSUseAutomationTapTargetPreflight(
+            arguments,
+            target,
+            candidate,
+            commandError
+        )) {
+        return NO;
+    }
+
+    CGRect frame = candidate.frame;
+    NSDictionary *offset = arguments[@"offset"];
+    NSDictionary *ratio = arguments[@"ratio"];
+
+    if (exactNativeAlertVisible) {
+        NSDictionary<NSString *, id> *nativeAction =
+            IOSUseAutomationExactNativeAlertAction(
+                candidate.nativeAlertActionLabel,
+                frame
+            );
+        if (nativeAction == nil) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"element_not_hittable",
+                    @"semantic tap is blocked by the visible native alert and the target is not its exact current action proxy",
+                    @"interaction",
+                    @"identity",
+                    YES,
+                    target,
+                    @[]
+                );
+            }
+            return NO;
+        }
+        CGPoint requested = CGPointMake(
+            CGRectGetMidX(frame),
+            CGRectGetMidY(frame)
+        );
+        if (offset != nil) {
+            requested = CGPointMake(
+                CGRectGetMinX(frame) +
+                    [offset[@"x"] doubleValue],
+                CGRectGetMinY(frame) +
+                    [offset[@"y"] doubleValue]
+            );
+        } else if (ratio != nil) {
+            requested = CGPointMake(
+                CGRectGetMinX(frame) +
+                    frame.size.width *
+                        [ratio[@"x"] doubleValue],
+                CGRectGetMinY(frame) +
+                    frame.size.height *
+                        [ratio[@"y"] doubleValue]
+            );
+        }
+        CGRect actionFrame =
+            IOSUseAutomationFrameDictionaryRect(
+                nativeAction[@"frame"]
+            );
+        CGRect unambiguousFrame =
+            CGRectInset(actionFrame, 0.5, 0.5);
+        if (unambiguousFrame.size.width <= 0 ||
+            unambiguousFrame.size.height <= 0 ||
+            !CGRectContainsPoint(unambiguousFrame, requested)) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"element_not_hittable",
+                    @"native alert tap placement is outside the exact current action frame",
+                    @"interaction",
+                    @"hit-test",
+                    YES,
+                    target,
+                    @[]
+                );
+            }
+            return NO;
+        }
+        if (point != NULL) {
+            *point = requested;
+        }
+        if (window != NULL) {
+            *window = nil;
+        }
+        if (hitView != NULL) {
+            *hitView = nil;
+        }
+        return YES;
+    }
+
+    UIView *interactionView = candidate.interactionView;
+    if (interactionView == nil ||
+        [interactionView isKindOfClass:UIWindow.class]) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"element_not_hittable",
+                @"fresh semantic target has no bounded live interaction owner",
+                @"interaction",
+                @"identity",
+                YES,
+                target,
+                @[]
+            );
+        }
+        return NO;
+    }
+
+    if (offset != nil || ratio != nil) {
+        CGPoint requested = offset != nil
+            ? CGPointMake(
+                CGRectGetMinX(frame) + [offset[@"x"] doubleValue],
+                CGRectGetMinY(frame) + [offset[@"y"] doubleValue]
+            )
+            : CGPointMake(
+                CGRectGetMinX(frame) +
+                    frame.size.width * [ratio[@"x"] doubleValue],
+                CGRectGetMinY(frame) +
+                    frame.size.height * [ratio[@"y"] doubleValue]
+            );
+        UIWindow *placedWindow = nil;
+        UIView *placedHit = nil;
+        CGPoint placed = CGPointZero;
+        BOOL hasHit = IOSUseAutomationHitTestPoint(
+            requested,
+            &placedWindow,
+            &placedHit,
+            &placed
+        );
+        if (!hasHit ||
+            !IOSUseAutomationHitMatchesInteractionOwner(
+                placedWindow,
+                placedHit,
+                interactionView
+            ) ||
+            !IOSUseAutomationSemanticPointIsUnambiguous(
+                dom,
+                candidate,
+                requested
+            )) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"element_not_hittable",
+                    @"explicit tap placement is not owned by the fresh semantic target",
+                    @"interaction",
+                    @"hit-test",
+                    YES,
+                    target,
+                    @[]
+                );
+            }
+            return NO;
+        }
+        if (point != NULL) {
+            *point = placed;
+        }
+        if (window != NULL) {
+            *window = placedWindow;
+        }
+        if (hitView != NULL) {
+            *hitView = placedHit;
+        }
+        return YES;
+    }
+
+    CGRect logicalScreen = CGRectMake(
+        0,
+        0,
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceLogicalHeight
+    );
+    CGRect visibleFrame = CGRectIntersection(frame, logicalScreen);
+    if (!IOSUseAutomationRectHasArea(visibleFrame)) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"element_not_hittable",
+                @"fresh semantic target does not intersect the logical screen",
+                @"interaction",
+                @"hit-test",
+                YES,
+                target,
+                @[]
+            );
+        }
+        return NO;
+    }
+    NSMutableArray<NSValue *> *searchPoints =
+        [NSMutableArray arrayWithCapacity:27];
+    IOSUseAutomationAppendUniquePoint(
+        searchPoints,
+        CGPointMake(
+            CGRectGetMidX(visibleFrame),
+            CGRectGetMidY(visibleFrame)
+        )
+    );
+    CGPoint activationPoint =
+        IOSUseAutomationActivationPoint(candidate.object);
+    if (CGRectContainsPoint(visibleFrame, activationPoint)) {
+        IOSUseAutomationAppendUniquePoint(
+            searchPoints,
+            activationPoint
+        );
+    }
+    const CGFloat ratios[] = {0.5, 0.25, 0.75, 0.1, 0.9};
+    for (NSUInteger yIndex = 0;
+         yIndex < sizeof(ratios) / sizeof(ratios[0]);
+         yIndex += 1) {
+        for (NSUInteger xIndex = 0;
+             xIndex < sizeof(ratios) / sizeof(ratios[0]);
+             xIndex += 1) {
+            IOSUseAutomationAppendUniquePoint(
+                searchPoints,
+                CGPointMake(
+                    CGRectGetMinX(visibleFrame) +
+                        visibleFrame.size.width * ratios[xIndex],
+                    CGRectGetMinY(visibleFrame) +
+                        visibleFrame.size.height * ratios[yIndex]
+                )
+            );
+        }
+    }
+    for (NSValue *value in searchPoints) {
+        CGPoint requested = value.CGPointValue;
+        UIWindow *placedWindow = nil;
+        UIView *placedHit = nil;
+        CGPoint placed = CGPointZero;
+        if (!IOSUseAutomationHitTestPoint(
+                requested,
+                &placedWindow,
+                &placedHit,
+                &placed
+            )) {
+            continue;
+        }
+        if (!IOSUseAutomationHitMatchesInteractionOwner(
+                placedWindow,
+                placedHit,
+                interactionView
+            )) {
+            continue;
+        }
+        if (!IOSUseAutomationSemanticPointIsUnambiguous(
+                dom,
+                candidate,
+                requested
+            )) {
+            continue;
+        }
+        if (point != NULL) {
+            *point = placed;
+        }
+        if (window != NULL) {
+            *window = placedWindow;
+        }
+        if (hitView != NULL) {
+            *hitView = placedHit;
+        }
+        return YES;
+    }
+    if (commandError != NULL) {
+        *commandError = IOSUseAutomationError(
+            @"element_not_hittable",
+            @"fresh semantic target has no exposed owned hit-test point",
+            @"interaction",
+            @"hit-test",
+            YES,
+            target,
+            @[]
+        );
+    }
+    return NO;
 }
 
 static BOOL IOSUseAutomationDOMHasVisibleUIKitAlertMirror(
@@ -1077,6 +1860,7 @@ static BOOL IOSUseAutomationDOMHasVisibleUIKitAlertMirror(
         NSDictionary<NSString *, id> *state = element[@"state"];
         if ([className isKindOfClass:NSString.class] &&
             [className containsString:@"UIAlertController"] &&
+            [className containsString:@"MacView"] &&
             [state[@"visible"] boolValue]) {
             return YES;
         }
@@ -1113,6 +1897,30 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDeliveryResult(
     return result;
 }
 
+static BOOL IOSUseAutomationUnsupportedTouchBlockedByNativeAlert(
+    NSDictionary<NSString *, id> *dom,
+    NSDictionary<NSString *, id> * _Nullable target,
+    NSDictionary<NSString *, id> **commandError
+) {
+    if (![IOSUsePlayAppKitBridge
+            hasVisibleNativeAlertCandidate] &&
+        !IOSUseAutomationDOMHasVisibleUIKitAlertMirror(dom)) {
+        return NO;
+    }
+    if (commandError != NULL) {
+        *commandError = IOSUseAutomationError(
+            @"element_not_hittable",
+            @"a visible native alert blocks this touch command; use tap or dismissAlert on one exact alert action",
+            @"interaction",
+            @"identity",
+            YES,
+            target,
+            @[]
+        );
+    }
+    return YES;
+}
+
 static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
     NSString *command,
     NSDictionary<NSString *, id> *arguments,
@@ -1135,10 +1943,19 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         }
         return nil;
     }
+    if (![command isEqualToString:@"tap"] &&
+        IOSUseAutomationUnsupportedTouchBlockedByNativeAlert(
+            preDOM,
+            target,
+            commandError
+        )) {
+        return nil;
+    }
     IOSUseAutomationCandidate *candidate =
         IOSUseAutomationResolveWithDOM(
         target,
         preDOM,
+        [command isEqualToString:@"tap"],
         &point,
         &window,
         &hitView,
@@ -1149,8 +1966,28 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         return nil;
     }
     NSDictionary<NSString *, id> *focusTransition = nil;
-    if ([command isEqualToString:@"tap"] &&
-        IOSUseAutomationIsBottomInteraction(hitView)) {
+    BOOL isTap = [command isEqualToString:@"tap"];
+    BOOL nativeAlertBlocksPreTouch =
+        [IOSUsePlayAppKitBridge
+            hasVisibleNativeAlertCandidate] ||
+        IOSUseAutomationDOMHasVisibleUIKitAlertMirror(preDOM);
+    if (isTap &&
+        !nativeAlertBlocksPreTouch &&
+        !IOSUseAutomationTapTargetPreflight(
+            arguments,
+            target,
+            candidate,
+            commandError
+        )) {
+        return nil;
+    }
+    UIView *bottomInteraction =
+        candidate.interactionView ?: hitView;
+    if (isTap &&
+        !nativeAlertBlocksPreTouch &&
+        IOSUseAutomationIsBottomInteraction(
+            bottomInteraction
+        )) {
         UIResponder *focused =
             IOSUseAutomationCurrentFirstResponder();
         NSString *beforeClass = focused == nil
@@ -1160,7 +1997,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         BOOL focusReleased = NO;
         if (IOSUseAutomationBottomTouchRequiresFocusRelease(
                 focused,
-                hitView
+                bottomInteraction
             )) {
             requested = [focused resignFirstResponder];
             for (UIWindow *candidateWindow in
@@ -1238,6 +2075,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             candidate = IOSUseAutomationResolveWithDOM(
                 target,
                 preDOM,
+                YES,
                 &point,
                 &window,
                 &hitView,
@@ -1249,87 +2087,26 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
             }
         }
     }
+    if ([command isEqualToString:@"tap"] &&
+        !IOSUseAutomationPlaceTap(
+            arguments,
+            target,
+            candidate,
+            preDOM,
+            &point,
+            &window,
+            &hitView,
+            commandError
+        )) {
+        return nil;
+    }
     if ([command isEqualToString:@"tap"]) {
-        NSDictionary *offset = arguments[@"offset"];
-        NSDictionary *ratio = arguments[@"ratio"];
-        // Absolute coordinates are already expressed in the fixed logical
-        // device space. Applying the element-relative default ratio again
-        // would move the point to the center of the hit-tested view.
-        if (ratio != nil && target[@"point"] == nil) {
-            if (!IOSUseAutomationIsNumber(ratio[@"x"]) ||
-                !IOSUseAutomationIsNumber(ratio[@"y"])) {
-                if (commandError != NULL) {
-                    *commandError = IOSUseAutomationError(
-                        @"invalid_arguments",
-                        @"tap ratio must contain numeric x and y",
-                        @"validation",
-                        @"validation",
-                        NO,
-                        target,
-                        @[]
-                    );
-                }
-                return nil;
-            }
-            CGRect frame = candidate.frame;
-            point = CGPointMake(
-                frame.origin.x +
-                    frame.size.width * [ratio[@"x"] doubleValue],
-                frame.origin.y +
-                    frame.size.height * [ratio[@"y"] doubleValue]
-            );
-        }
-        if (offset != nil) {
-            if (!IOSUseAutomationIsNumber(offset[@"x"]) ||
-                !IOSUseAutomationIsNumber(offset[@"y"])) {
-                if (commandError != NULL) {
-                    *commandError = IOSUseAutomationError(
-                        @"invalid_arguments",
-                        @"tap offset must contain numeric x and y",
-                        @"validation",
-                        @"validation",
-                        NO,
-                        target,
-                        @[]
-                    );
-                }
-                return nil;
-            }
-            point.x += [offset[@"x"] doubleValue];
-            point.y += [offset[@"y"] doubleValue];
-        }
-        CGPoint adjustedPoint = CGPointZero;
-        if (!IOSUseAutomationHitTestPoint(
-                point,
-                &window,
-                &hitView,
-                &adjustedPoint
-            )) {
-            if (commandError != NULL) {
-                *commandError = IOSUseAutomationError(
-                    @"element_not_hittable",
-                    @"tap ratio/offset resolved outside a live hit-test view",
-                    @"interaction",
-                    @"hit-test",
-                    YES,
-                    target,
-                    @[]
-                );
-            }
-            return nil;
-        }
-        point = adjustedPoint;
-        NSDictionary<NSString *, id> *nativeAlertAction =
-            IOSUseAutomationNativeAlertAction(
-                candidate.label,
-                point
-            );
-        if (nativeAlertAction != nil) {
+        if (candidate.nativeAlertActionLabel.length > 0) {
             NSError *nativeError = nil;
             NSDictionary<NSString *, id> *nativeDelivery =
                 [IOSUsePlayAppKitBridge
                     performNativeAlertActionWithLabel:
-                        nativeAlertAction[@"label"]
+                        candidate.nativeAlertActionLabel
                     error:&nativeError];
             if (nativeDelivery == nil) {
                 if (commandError != NULL) {
@@ -1351,7 +2128,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                     NSDictionary<NSString *, id> **deferredError
                 ) {
                     if ([IOSUsePlayAppKitBridge
-                            hasVisibleNativeAlert]) {
+                            hasVisibleNativeAlertCandidate]) {
                         if (deferredError != NULL) {
                             *deferredError =
                                 IOSUseAutomationError(
@@ -1577,6 +2354,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
         toCandidate = IOSUseAutomationResolveWithDOM(
             toTarget,
             preDOM,
+            NO,
             &endPoint,
             &endWindow,
             &endHitView,
@@ -2072,6 +2850,13 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
         }
         return nil;
     }
+    if (IOSUseAutomationUnsupportedTouchBlockedByNativeAlert(
+            preDOM,
+            target,
+            commandError
+        )) {
+        return nil;
+    }
     generation =
         [preDOM[@"snapshotGeneration"] unsignedLongLongValue];
     if (target != nil) {
@@ -2079,6 +2864,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
         candidate = IOSUseAutomationResolveWithDOM(
             target,
             preDOM,
+            NO,
             &point,
             &window,
             &hitView,
@@ -2727,8 +3513,53 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
     NSDictionary<NSString *, id> *arguments,
     NSDictionary<NSString *, id> **commandError
 ) {
+    BOOL nativeAlertCandidateVisible =
+        [IOSUsePlayAppKitBridge
+            hasVisibleNativeAlertCandidate];
     NSArray<NSDictionary<NSString *, id> *> *nativeActions =
         [IOSUsePlayAppKitBridge nativeAlertActions];
+    if (nativeAlertCandidateVisible &&
+        nativeActions.count == 0) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationError(
+                @"alert_not_dismissed",
+                @"a visible native alert candidate could not be bound to one exact panel and action list",
+                @"interaction",
+                @"identity",
+                YES,
+                nil,
+                @[]
+            );
+        }
+        return nil;
+    }
+    if (nativeActions.count == 0) {
+        NSDictionary<NSString *, id> *snapshotError = nil;
+        NSDictionary<NSString *, id> *freshDOM =
+            IOSUseAutomationFreshDOM(&snapshotError);
+        if (freshDOM == nil) {
+            if (commandError != NULL) {
+                *commandError = snapshotError;
+            }
+            return nil;
+        }
+        if (IOSUseAutomationDOMHasVisibleUIKitAlertMirror(
+                freshDOM
+            )) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"alert_not_dismissed",
+                    @"a visible native alert mirror could not be bound to one exact AppKit panel and action list",
+                    @"interaction",
+                    @"identity",
+                    YES,
+                    nil,
+                    @[]
+                );
+            }
+            return nil;
+        }
+    }
     if (nativeActions.count > 0) {
         NSString *nativeAlertText =
             [IOSUsePlayAppKitBridge nativeAlertText];
@@ -2787,7 +3618,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
             ^NSDictionary<NSString *, id> *(
                 NSDictionary<NSString *, id> **deferredError
             ) {
-                if ([IOSUsePlayAppKitBridge hasVisibleNativeAlert]) {
+                if ([IOSUsePlayAppKitBridge
+                        hasVisibleNativeAlertCandidate]) {
                     if (deferredError != NULL) {
                         *deferredError = IOSUseAutomationError(
                             @"alert_not_dismissed",

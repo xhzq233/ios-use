@@ -49,7 +49,7 @@ protocol DriverCommandClient: AnyObject {
     func waitFor(label: String, timeout: Double?, traits: String?, cindex: Int32?, gone: Bool, matchMode: IOSUseWaitForMatchMode) throws -> ForyWaitForPayload
     func screenshot() throws -> Data
     func screenshotCapture() throws -> ScreenshotCapture
-    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32?) throws -> ForyElementPayload
     func input(tap: ForyTarget?, content: String) throws -> ForyElementPayload
     func input(
@@ -434,8 +434,22 @@ final class DriverClient: DriverCommandClient {
         return ScreenshotCapture(jpeg: decoded.jpeg, logicalSize: logicalSize, scale: scale)
     }
 
-    func tap(target: ForyTarget, traits: String?, cindex: Int32? = nil, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
-        try send(TapCommand.self, args: ForyTapArgs(target: target.withLookup(traits: traits, cindex: cindex), offset: offset, ratio: ratio))
+    func tap(target: ForyTarget, traits: String?, cindex: Int32? = nil, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload {
+        let deviceRatio = ratio ?? ForyPoint(
+            x: IOSUseProtocol.defaultTargetRatio,
+            y: IOSUseProtocol.defaultTargetRatio
+        )
+        return try send(
+            TapCommand.self,
+            args: ForyTapArgs(
+                target: target.withLookup(
+                    traits: traits,
+                    cindex: cindex
+                ),
+                offset: offset,
+                ratio: deviceRatio
+            )
+        )
     }
 
     func longPress(target: ForyTarget, durationMs: Int?, traits: String?, cindex: Int32? = nil) throws -> ForyElementPayload {

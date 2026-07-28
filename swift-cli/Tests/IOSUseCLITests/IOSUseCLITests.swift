@@ -93,6 +93,39 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(swipe.stderr.isEmpty)
     }
 
+    func testTapResolutionPreservesSemanticPlacementIntent() throws {
+        let bare = try DriverCommandExecutor.resolveTapParams(
+            "Continue",
+            offset: nil,
+            offsetRatio: nil,
+            traits: nil,
+            cindex: nil
+        )
+        XCTAssertNil(bare.offset)
+        XCTAssertNil(bare.ratio)
+
+        let explicitCenter = try DriverCommandExecutor.resolveTapParams(
+            "Continue",
+            offset: nil,
+            offsetRatio: "0.5,0.5",
+            traits: nil,
+            cindex: nil
+        )
+        XCTAssertEqual(explicitCenter.ratio?.x, 0.5)
+        XCTAssertEqual(explicitCenter.ratio?.y, 0.5)
+
+        let offset = try DriverCommandExecutor.resolveTapParams(
+            "Continue",
+            offset: "4,5",
+            offsetRatio: nil,
+            traits: nil,
+            cindex: nil
+        )
+        XCTAssertEqual(offset.offset?.x, 4)
+        XCTAssertEqual(offset.offset?.y, 5)
+        XCTAssertNil(offset.ratio)
+    }
+
     func testUnknownOptionFailsBeforeAnySessionWork() {
         let result = IOSUseCLI().run(arguments: ["--not-a-real-option"])
 
@@ -3055,7 +3088,7 @@ final class IOSUseCLITests: XCTestCase {
 
 private final class FakeDriverCommandClient: DriverCommandClient {
     private let domHandler: (Bool, Bool, Bool) throws -> ForyDomPayload
-    private let tapHandler: (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload
+    private let tapHandler: (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws -> ForyElementPayload
     private let activateHandler: (String) throws -> Void
     private let terminateHandler: (String) throws -> Void
     private let screenshotHandler: () throws -> ScreenshotCapture
@@ -3065,7 +3098,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         domHandler: @escaping (Bool, Bool, Bool) throws -> ForyDomPayload = { _, _, _ in
             throw CLIParseError.invalidValue("unexpected dom")
         },
-        tapHandler: @escaping (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint) throws -> ForyElementPayload = { _, _, _, _, _ in
+        tapHandler: @escaping (ForyTarget, String?, Int32?, ForyPoint?, ForyPoint?) throws -> ForyElementPayload = { _, _, _, _, _ in
             throw CLIParseError.invalidValue("unexpected tap")
         },
         activateHandler: @escaping (String) throws -> Void = { _ in
@@ -3107,7 +3140,7 @@ private final class FakeDriverCommandClient: DriverCommandClient {
         try screenshotHandler()
     }
 
-    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint) throws -> ForyElementPayload {
+    func tap(target: ForyTarget, traits: String?, cindex: Int32?, offset: ForyPoint?, ratio: ForyPoint?) throws -> ForyElementPayload {
         try tapHandler(target, traits, cindex, offset, ratio)
     }
 

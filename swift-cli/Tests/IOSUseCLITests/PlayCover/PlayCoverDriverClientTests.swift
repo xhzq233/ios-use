@@ -214,8 +214,8 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertEqual(tapArgs.target.traits, "Button")
         XCTAssertEqual(tapArgs.offset?.x, 4)
         XCTAssertEqual(tapArgs.offset?.y, 5)
-        XCTAssertEqual(tapArgs.ratio.x, 0.5)
-        XCTAssertEqual(tapArgs.ratio.y, 0.75)
+        XCTAssertEqual(tapArgs.ratio?.x, 0.5)
+        XCTAssertEqual(tapArgs.ratio?.y, 0.75)
         guard case .longPress(let longArgs) = requests[3].1 else {
             return XCTFail("missing longPress arguments")
         }
@@ -248,6 +248,35 @@ final class PlayCoverDriverClientTests: XCTestCase {
             return XCTFail("missing open arguments")
         }
         XCTAssertEqual(openArgs.url, "demo://route")
+    }
+
+    func testTapPreservesAbsentRatioForRuntimePlacement() throws {
+        var captured: PlayCoverRuntimeTapArguments?
+        let client = PlayCoverDriverClient(
+            session: makeSession()
+        ) { command, arguments, _ in
+            XCTAssertEqual(command, .tap)
+            guard case .tap(let tap) = arguments else {
+                XCTFail("missing tap arguments")
+                return self.makePayload(capability: command)
+            }
+            captured = tap
+            return self.makePayload(
+                capability: command,
+                tap: self.makeAction(generation: 12)
+            )
+        }
+
+        _ = try client.tap(
+            target: ForyTarget(label: "Continue"),
+            traits: nil,
+            cindex: nil,
+            offset: nil,
+            ratio: nil
+        )
+
+        XCTAssertNil(captured?.offset)
+        XCTAssertNil(captured?.ratio)
     }
 
     func testFixedDistanceSwipeUsesNoDestinationAndScreenCenterAnchor()
