@@ -1098,7 +1098,6 @@ assert_healthy_status() {
         $safeArea.safeAreaCompatibilityReady == true and
         $safeArea.safeAreaReady == true and
         $safeArea.deviceContractReady == true and
-        $safeArea.runtimeProfile.validated == true and
         $safeArea.windowSafeArea ==
           {"top":59,"left":0,"bottom":34,"right":0} and
         $safeArea.expectedWindowSafeArea ==

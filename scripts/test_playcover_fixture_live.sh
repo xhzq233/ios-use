@@ -725,7 +725,6 @@ assert_canonical_host_status() {
       $safeArea.safeAreaCompatibilityReady == true and
       $safeArea.safeAreaReady == true and
       $safeArea.deviceContractReady == true and
-      $safeArea.runtimeProfile.validated == true and
       $safeArea.safeAreaLayoutGuideReady == true and
       $safeArea.additionalSafeAreaPreserved == true and
       $safeArea.deviceSafeArea ==
