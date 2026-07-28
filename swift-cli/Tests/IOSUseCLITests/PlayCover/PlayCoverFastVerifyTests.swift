@@ -225,7 +225,9 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             XCTAssertTrue(cwd?.hasPrefix("/.vol/") == true)
             let path = try XCTUnwrap(arguments.last)
             XCTAssertFalse(path.hasPrefix("/"))
+            eventLock.lock()
             calls[path, default: 0] += 1
+            eventLock.unlock()
             return Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
         }
 
@@ -397,6 +399,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         var mutatedFirstHash = false
         var hashReleaseSucceeded = false
         var nestedFailureInjected = false
+        var coordinatedNestedCall = false
         PlayCoverService.fastVerifyEventOverrideForTesting = { event in
             guard case .beforeFileHash(let relative) = event else {
                 return
@@ -426,6 +429,17 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                     "root signature must not run after a nested "
                         + "signature failure"
                 )
+                return Shell.RunResult(
+                    stdout: "",
+                    stderr: "",
+                    exitCode: 0
+                )
+            }
+            stateLock.lock()
+            let shouldCoordinate = !coordinatedNestedCall
+            coordinatedNestedCall = true
+            stateLock.unlock()
+            guard shouldCoordinate else {
                 return Shell.RunResult(
                     stdout: "",
                     stderr: "",
@@ -467,6 +481,192 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         stateLock.unlock()
         XCTAssertTrue(injected)
         XCTAssertTrue(released)
+    }
+
+    func testFastVerifyBoundsNestedSignatureWorkersAndKeepsRootLast()
+        throws
+    {
+        let fixture = try FastVerifyFixture(
+            additionalStandaloneDylibCount: 5
+        )
+        defer { fixture.remove() }
+        let nestedCount = fixture.manifest.signingOrder.count - 1
+        XCTAssertGreaterThan(nestedCount, 4)
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let stateLock = NSLock()
+        let result = LockedResult()
+        let completed = expectation(
+            description: "bounded nested signature verification"
+        )
+        var active = 0
+        var maximumActive = 0
+        var nestedStarted = 0
+        var nestedTimedOut = false
+        var rootObservedJoinedNested = false
+        Shell.runResultOverrideForTesting = {
+            _, arguments, _ in
+            let relative = try XCTUnwrap(arguments.last)
+            if relative == "." {
+                stateLock.lock()
+                rootObservedJoinedNested =
+                    active == 0 && nestedStarted == nestedCount
+                stateLock.unlock()
+                return Shell.RunResult(
+                    stdout: "",
+                    stderr: "",
+                    exitCode: 0
+                )
+            }
+            stateLock.lock()
+            active += 1
+            nestedStarted += 1
+            maximumActive = max(maximumActive, active)
+            stateLock.unlock()
+            entered.signal()
+            let released =
+                release.wait(timeout: .now() + 5) == .success
+            stateLock.lock()
+            active -= 1
+            nestedTimedOut = nestedTimedOut || !released
+            stateLock.unlock()
+            return Shell.RunResult(
+                stdout: "",
+                stderr: released ? "" : "test release timed out",
+                exitCode: released ? 0 : 1
+            )
+        }
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            result.set(
+                Result {
+                    try PlayCoverService.fastVerifyGeneration(
+                        appPath: fixture.app.path,
+                        manifest: fixture.manifest
+                    )
+                }
+            )
+            completed.fulfill()
+        }
+
+        var initialWorkers = 0
+        for _ in 0..<4 {
+            guard entered.wait(timeout: .now() + 5) == .success else {
+                break
+            }
+            initialWorkers += 1
+        }
+        if initialWorkers == 4 {
+            XCTAssertEqual(
+                entered.wait(timeout: .now() + 0.2),
+                .timedOut,
+                "a fifth nested worker escaped the configured bound"
+            )
+        }
+        for _ in 0..<nestedCount {
+            release.signal()
+        }
+        wait(for: [completed], timeout: 10)
+
+        guard let verification = result.value else {
+            return XCTFail("fast verification did not finish")
+        }
+        if case .failure(let error) = verification {
+            XCTFail("unexpected fast verification failure: \(error)")
+        }
+        stateLock.lock()
+        let observedMaximum = maximumActive
+        let observedStarted = nestedStarted
+        let observedTimeout = nestedTimedOut
+        let observedRoot = rootObservedJoinedNested
+        stateLock.unlock()
+        XCTAssertEqual(initialWorkers, 4)
+        XCTAssertEqual(observedMaximum, 4)
+        XCTAssertEqual(observedStarted, nestedCount)
+        XCTAssertFalse(observedTimeout)
+        XCTAssertTrue(observedRoot)
+    }
+
+    func testConcurrentNestedSignatureFailureUsesSigningOrder()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let nested = Array(fixture.manifest.signingOrder.dropLast())
+        let first = try XCTUnwrap(nested.first)
+        let second = nested[1]
+        let secondFinished = DispatchSemaphore(value: 0)
+        let stateLock = NSLock()
+        var firstObservedSecond = false
+        var rootRan = false
+        Shell.runResultOverrideForTesting = {
+            _, arguments, _ in
+            let relative = try XCTUnwrap(arguments.last)
+            if relative == "." {
+                stateLock.lock()
+                rootRan = true
+                stateLock.unlock()
+                return Shell.RunResult(
+                    stdout: "",
+                    stderr: "",
+                    exitCode: 0
+                )
+            }
+            if relative == first {
+                let observed =
+                    secondFinished.wait(timeout: .now() + 5)
+                        == .success
+                stateLock.lock()
+                firstObservedSecond = observed
+                stateLock.unlock()
+                return Shell.RunResult(
+                    stdout: "",
+                    stderr: "first signing-order failure",
+                    exitCode: 1
+                )
+            }
+            if relative == second {
+                secondFinished.signal()
+                return Shell.RunResult(
+                    stdout: "",
+                    stderr: "second signing-order failure",
+                    exitCode: 1
+                )
+            }
+            return Shell.RunResult(
+                stdout: "",
+                stderr: "",
+                exitCode: 0
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverService.fastVerifyGeneration(
+                appPath: fixture.app.path,
+                manifest: fixture.manifest
+            )
+        ) { error in
+            guard case .cacheTampered(let detail) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(detail.contains("(\(first))"))
+            XCTAssertTrue(
+                detail.contains("first signing-order failure")
+            )
+            XCTAssertFalse(
+                detail.contains("second signing-order failure")
+            )
+        }
+        stateLock.lock()
+        let observedSecond = firstObservedSecond
+        let observedRoot = rootRan
+        stateLock.unlock()
+        XCTAssertTrue(
+            observedSecond,
+            "a later signing-order failure must be allowed to finish first"
+        )
+        XCTAssertFalse(observedRoot)
     }
 
     func testGenerationSidecarsUseFinalInspectionHashesWithoutPreparedFiles()
@@ -930,7 +1130,10 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
         var signaturePaths = Set<String>()
         var replaced = false
+        let signatureLock = NSLock()
         PlayCoverService.fastVerifyEventOverrideForTesting = { event in
+            signatureLock.lock()
+            defer { signatureLock.unlock() }
             if case .beforeCodeSignature(let relative) = event {
                 signaturePaths.insert(relative)
             }
@@ -959,9 +1162,17 @@ final class PlayCoverFastVerifyTests: XCTestCase {
 
         assertFastVerifyTampered(fixture.app.path)
 
-        XCTAssertTrue(replaced)
-        XCTAssertTrue(signaturePaths.contains(frameworkRelative))
-        XCTAssertFalse(signaturePaths.contains(executableRelative))
+        signatureLock.lock()
+        let didReplace = replaced
+        let observedSignaturePaths = signaturePaths
+        signatureLock.unlock()
+        XCTAssertTrue(didReplace)
+        XCTAssertTrue(
+            observedSignaturePaths.contains(frameworkRelative)
+        )
+        XCTAssertFalse(
+            observedSignaturePaths.contains(executableRelative)
+        )
         #else
         throw XCTSkip("descriptor verification is Darwin-only")
         #endif
@@ -993,8 +1204,11 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         let fixture = try FastVerifyFixture()
         defer { fixture.remove() }
         var codeSignCalls = 0
+        let codeSignLock = NSLock()
         Shell.runResultOverrideForTesting = { _, _, _ in
+            codeSignLock.lock()
             codeSignCalls += 1
+            codeSignLock.unlock()
             return Shell.RunResult(
                 stdout: "",
                 stderr: "",
@@ -1005,7 +1219,10 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         XCTAssertNoThrow(
             try PlayCoverService.fastVerify(appPath: fixture.app.path)
         )
-        XCTAssertGreaterThan(codeSignCalls, 0)
+        codeSignLock.lock()
+        let initialCodeSignCalls = codeSignCalls
+        codeSignLock.unlock()
+        XCTAssertGreaterThan(initialCodeSignCalls, 0)
 
         let canonical = try Data(contentsOf: fixture.manifestURL)
         let object = try JSONSerialization.jsonObject(with: canonical)
@@ -1027,12 +1244,17 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             [.posixPermissions: 0o600],
             ofItemAtPath: fixture.manifestURL.path
         )
+        codeSignLock.lock()
         codeSignCalls = 0
+        codeSignLock.unlock()
 
         assertFastVerifyTampered(fixture.app.path)
 
+        codeSignLock.lock()
+        let rewrittenCodeSignCalls = codeSignCalls
+        codeSignLock.unlock()
         XCTAssertEqual(
-            codeSignCalls,
+            rewrittenCodeSignCalls,
             0,
             "rewritten manifest reached code signature verification"
         )
@@ -1649,7 +1871,11 @@ private struct FastVerifyFixture {
         )
     }
 
-    init(signingOrderOverride: [String]? = nil) throws {
+    init(
+        signingOrderOverride: [String]? = nil,
+        additionalStandaloneDylibCount: Int = 0
+    ) throws {
+        precondition(additionalStandaloneDylibCount >= 0)
         root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "IOSUsePlayCoverFastVerify-\(UUID().uuidString)",
             isDirectory: true
@@ -1746,6 +1972,21 @@ private struct FastVerifyFixture {
             [.posixPermissions: 0o755],
             ofItemAtPath: standaloneDylib.path
         )
+        for index in 0..<additionalStandaloneDylibCount {
+            let extraDylib = app
+                .appendingPathComponent(
+                    "Frameworks",
+                    isDirectory: true
+                )
+                .appendingPathComponent(
+                    "Extra-\(index).dylib"
+                )
+            try Self.makeThinMachO().write(to: extraDylib)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: extraDylib.path
+            )
+        }
         let prepared = try PlayCoverService.inspect(appPath: app.path)
         let runtimeHash = try Self.fileSHA256(runtime)
         let generationKey = PlayCoverService.makeGenerationKey(

@@ -162,6 +162,12 @@ public enum PlayCoverService {
         label: "com.iosuse.playcover.fast-verify-hash",
         qos: .userInitiated
     )
+    private static let fastVerifyNestedSignatureQueue = DispatchQueue(
+        label: "com.iosuse.playcover.fast-verify-nested-signature",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+    private static let fastVerifyNestedSignatureWorkerLimit = 4
 
     public static func inspect(
         appPath: String
@@ -1923,6 +1929,49 @@ public enum PlayCoverService {
         }
     }
 
+    private final class RecordedSignaturesResultBox:
+        @unchecked Sendable
+    {
+        private let lock = NSLock()
+        private var nextIndex = 0
+        private var storage: [Result<Void, Error>?]
+
+        init(count: Int) {
+            storage = Array(repeating: nil, count: count)
+        }
+
+        func takeNextIndex() -> Int? {
+            lock.lock()
+            defer { lock.unlock() }
+            guard nextIndex < storage.count else {
+                return nil
+            }
+            defer { nextIndex += 1 }
+            return nextIndex
+        }
+
+        func set(_ result: Result<Void, Error>, at index: Int) {
+            lock.lock()
+            storage[index] = result
+            lock.unlock()
+        }
+
+        func getInOriginalOrder() throws {
+            lock.lock()
+            let results = storage
+            lock.unlock()
+            for (index, result) in results.enumerated() {
+                guard let result else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "concurrent nested signature verification did not "
+                            + "finish at signing-order index \(index)"
+                    )
+                }
+                try result.get()
+            }
+        }
+    }
+
     private static func withStableGenerationDescriptor<T>(
         for app: URL,
         _ body: (Int32, URL) throws -> T
@@ -2215,7 +2264,7 @@ public enum PlayCoverService {
             )
         }
         let signature = Result {
-            try verifyRecordedCodeSignatures(
+            try verifyRecordedCodeSignaturesConcurrently(
                 nestedCodePaths,
                 app: app,
                 appDescriptor: appDescriptor,
@@ -2232,6 +2281,49 @@ public enum PlayCoverService {
         let result = try hashes.get()
         try signature.get()
         return result
+    }
+
+    private static func verifyRecordedCodeSignaturesConcurrently(
+        _ relativePaths: [String],
+        app: URL,
+        appDescriptor: Int32,
+        expectedStatuses: [String: stat],
+        stableAppURL: URL
+    ) throws {
+        guard !relativePaths.isEmpty else {
+            return
+        }
+        let results = RecordedSignaturesResultBox(
+            count: relativePaths.count
+        )
+        let work = DispatchGroup()
+        let workerCount = min(
+            fastVerifyNestedSignatureWorkerLimit,
+            relativePaths.count
+        )
+        for _ in 0..<workerCount {
+            work.enter()
+            fastVerifyNestedSignatureQueue.async {
+                defer { work.leave() }
+                while let index = results.takeNextIndex() {
+                    let relative = relativePaths[index]
+                    results.set(
+                        Result {
+                            try verifyRecordedCodeSignatures(
+                                [relative],
+                                app: app,
+                                appDescriptor: appDescriptor,
+                                expectedStatuses: expectedStatuses,
+                                stableAppURL: stableAppURL
+                            )
+                        },
+                        at: index
+                    )
+                }
+            }
+        }
+        work.wait()
+        try results.getInOriginalOrder()
     }
 
     private static func verifyRecordedHashes(
