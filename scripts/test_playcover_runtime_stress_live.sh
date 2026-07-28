@@ -1091,7 +1091,18 @@ assert_healthy_status() {
       .data.driver.runtime.nativeWidth == 1290 and
       .data.driver.runtime.nativeHeight == 2796 and
       .data.driver.runtime.scale == 3 and
-      .data.driver.runtime.host.opaque == true
+      .data.driver.runtime.host.opaque == true and
+      (.data.driver.runtime.diagnostics.runtime.window
+        .safeAreaCompatibility as $safeArea |
+        $safeArea.stage == "ready" and
+        $safeArea.safeAreaCompatibilityReady == true and
+        $safeArea.safeAreaReady == true and
+        $safeArea.deviceContractReady == true and
+        $safeArea.runtimeProfile.validated == true and
+        $safeArea.windowSafeArea ==
+          {"top":59,"left":0,"bottom":34,"right":0} and
+        $safeArea.expectedWindowSafeArea ==
+          {"top":59,"left":0,"bottom":34,"right":0})
     ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name did not prove an exact healthy fixture session"
   fi
@@ -1116,6 +1127,7 @@ assert_full_status_diagnostics() {
         ($window | has("screenIsMain")) and
         ($window | has("nativeAlert")) and
         ($window | has("bootstrapNativeAlert")) and
+        ($window | has("safeAreaCompatibility")) and
         ($window | has("resizeEdges")) and
         ($window | has("styleMask")) and
         ($window | has("mouseMonitorReady")) and

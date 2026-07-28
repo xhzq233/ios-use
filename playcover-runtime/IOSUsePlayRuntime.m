@@ -68,6 +68,11 @@ static void IOSUseConfigureRuntimeSurface(void) {
         return;
     }
     IOSUseRuntimeConfigurationStage = @"waiting-for-window";
+    if (error.code == 12) {
+        IOSUseRuntimeConfigurationStage = @"waiting-for-safe-area";
+    } else if (error.code == 13) {
+        IOSUseRuntimeConfigurationStage = @"safe-area-failed";
+    }
     IOSUseRuntimeConfigurationFailure =
         error.localizedDescription ?:
         @"fixed iPhone surface is not ready";
@@ -95,6 +100,15 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
     if (!includeFullDiagnostics) {
         return diagnostics;
     }
+    NSDictionary<NSString *, id> *safeAreaCompatibility =
+        window[@"safeAreaCompatibility"];
+    BOOL safeAreaOverride = [
+        safeAreaCompatibility[@"safeAreaCompatibilityReady"]
+        boolValue
+    ] && [
+        safeAreaCompatibility[@"safeAreaReady"]
+        boolValue
+    ];
     [diagnostics addEntriesFromDictionary:@{
         @"implementation": @"pinned-playtools",
         @"playToolsCommit":
@@ -119,7 +133,7 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
         },
         @"rendering": @{
             @"syntheticChrome": @NO,
-            @"safeAreaOverride": @NO,
+            @"safeAreaOverride": @(safeAreaOverride),
             @"fullFrame": IOSUseRuntimeFullFrameEvidence(),
         },
     }];
@@ -138,7 +152,9 @@ void IOSUsePlayRuntimeInitializeAfterStdio(void) {
         for (NSString *name in @[
             UIApplicationDidBecomeActiveNotification,
             UIWindowDidBecomeKeyNotification,
+            UISceneWillEnterForegroundNotification,
             UISceneDidActivateNotification,
+            UISceneDidDisconnectNotification,
         ]) {
             [center addObserverForName:name
                                object:nil

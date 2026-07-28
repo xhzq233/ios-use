@@ -386,6 +386,7 @@ assert_status() {
       .data.driver as $driver |
       ($driver.runtime) as $runtime |
       ($runtime.diagnostics.runtime.window) as $window |
+      ($window.safeAreaCompatibility) as $safeArea |
       ($window.canvasCapture) as $capture |
       ($window.hostContentBounds) as $host |
       ($window.canvasRect) as $canvas |
@@ -440,7 +441,7 @@ assert_status() {
       $runtime.host.opaque == true and
       ($runtime.diagnostics.runtime.rendering |
         .syntheticChrome == false and
-        .safeAreaOverride == false and
+        .safeAreaOverride == true and
         (.fullFrame |
           .logicalRect == {"x":0,"y":0,"width":430,"height":932} and
           .pixelWidth == 1290 and
@@ -449,6 +450,16 @@ assert_status() {
           .uncropped == true and
           .safeAreaCropped == false and
           .identityMapping == true)) and
+      $safeArea.stage == "ready" and
+      $safeArea.safeAreaCompatibilityReady == true and
+      $safeArea.safeAreaReady == true and
+      $safeArea.deviceContractReady == true and
+      $safeArea.runtimeProfile.validated == true and
+      $safeArea.windowSafeArea ==
+        {"top":59,"left":0,"bottom":34,"right":0} and
+      $safeArea.expectedWindowSafeArea ==
+        {"top":59,"left":0,"bottom":34,"right":0} and
+      $safeArea.runtimeAdditionalSafeAreaWriteCount == 0 and
       $window.status == "configured" and
       $window.opaque == true and
       $window.publicTitleBar == true and

@@ -678,6 +678,7 @@ assert_canonical_host_status() {
         (($lhs.height - $rhs.height) | abs) <= 0.01;
       .data.driver.runtime as $runtime |
       ($runtime.diagnostics.runtime.window) as $window |
+      ($window.safeAreaCompatibility) as $safeArea |
       ($window.canvasCapture) as $capture |
       ($window.hostContentBounds) as $host |
       ($window.canvasRect) as $canvas |
@@ -720,6 +721,26 @@ assert_canonical_host_status() {
       $window.publicTitleBar == true and
       $window.resizable == true and
       $window.hostPolicy == true and
+      $safeArea.stage == "ready" and
+      $safeArea.safeAreaCompatibilityReady == true and
+      $safeArea.safeAreaReady == true and
+      $safeArea.deviceContractReady == true and
+      $safeArea.runtimeProfile.validated == true and
+      $safeArea.safeAreaLayoutGuideReady == true and
+      $safeArea.additionalSafeAreaPreserved == true and
+      $safeArea.deviceSafeArea ==
+        {"top":59,"left":0,"bottom":34,"right":0} and
+      $safeArea.windowSafeArea ==
+        {"top":59,"left":0,"bottom":34,"right":0} and
+      $safeArea.expectedWindowSafeArea ==
+        {"top":59,"left":0,"bottom":34,"right":0} and
+      $safeArea.safeArea ==
+        {"top":59,"left":0,"bottom":34,"right":0} and
+      $safeArea.additionalSafeArea ==
+        {"top":0,"left":0,"bottom":0,"right":0} and
+      $safeArea.safeAreaLayoutFrame ==
+        {"x":0,"y":59,"width":430,"height":839} and
+      $safeArea.runtimeAdditionalSafeAreaWriteCount == 0 and
       $window.title == $title and
       $capture.title == $title and
       $window.mouseMonitorReady == true and
@@ -2275,7 +2296,7 @@ assert_json status '
   $runtime.diagnostics.socket.status == "listening" and
   ($runtime.diagnostics.runtime.rendering |
     .syntheticChrome == false and
-    .safeAreaOverride == false and
+    .safeAreaOverride == true and
     (.fullFrame |
       .logicalRect == {"x":0,"y":0,"width":430,"height":932} and
       .pixelWidth == 1290 and
@@ -2779,6 +2800,8 @@ assert_evidence swipe_fixed 'Scroll y [1-9][0-9]*'
 record_case scene_replace tap "Replace Scene Window" \
   --dom --json
 assert_evidence scene_replace 'Scene 2'
+record_case scene_replace_status status --json
+assert_canonical_host_status scene_replace_status
 
 record_case absolute_bottom_tab_focus input --tap "Fixture Input" \
   --content "absolute-bottom-tab-focus" --delete 99 \

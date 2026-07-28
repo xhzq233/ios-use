@@ -4,9 +4,9 @@
  * The single compile-time device contract shared by the PlayCover Runtime and
  * the Swift host.  Do not mirror these values in plist/bootstrap/session data.
  *
- * This header fixes only the target App's logical/native render surface.
- * Runtime-reported safe-area values are platform diagnostics: they are not a
- * host-prescribed inset or a synthetic system-chrome contract.
+ * This header fixes the target App's logical/native render surface and its
+ * base safe-area layout contract.  Safe area affects UIKit layout only: it is
+ * never a crop rect and does not imply synthetic system chrome.
  */
 
 #ifndef IOS_USE_PLAY_DEVICE_H
@@ -25,6 +25,10 @@ enum {
         IOSUsePlayDeviceLogicalWidth * IOSUsePlayDeviceScale,
     IOSUsePlayDeviceNativeHeight =
         IOSUsePlayDeviceLogicalHeight * IOSUsePlayDeviceScale,
+    IOSUsePlayDeviceSafeAreaTop = 59,
+    IOSUsePlayDeviceSafeAreaLeft = 0,
+    IOSUsePlayDeviceSafeAreaBottom = 34,
+    IOSUsePlayDeviceSafeAreaRight = 0,
 };
 
 static inline const char *IOSUsePlayDeviceProductType(void) {

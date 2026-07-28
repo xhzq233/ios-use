@@ -1,5 +1,6 @@
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlaySafeAreaCompatibility.h"
 #import "IOSUsePlayWindowCompositor.h"
 
 #import <UIKit/UIKit.h>
@@ -3923,7 +3924,10 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         for (NSString *name in @[
             @"NSWindowDidBecomeKeyNotification",
             UIApplicationDidBecomeActiveNotification,
+            UIWindowDidBecomeKeyNotification,
+            UISceneWillEnterForegroundNotification,
             UISceneDidActivateNotification,
+            UISceneDidDisconnectNotification,
         ]) {
             [center addObserverForName:name
                                object:nil
@@ -3997,6 +4001,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             usedBackgroundActivationFallback = window != nil;
         }
     }
+    NSError *safeAreaError = nil;
+    BOOL safeAreaReconciled =
+        IOSUsePlaySafeAreaCompatibilityReconcile(&safeAreaError);
     if (uiWindow == nil || window == nil) {
         IOSUsePlayWindowStatus = @"waiting-for-window";
         IOSUsePlayWindowFailure = @"UIKit/AppKit window bridge is unavailable";
@@ -4149,14 +4156,14 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             IOSUsePlayCurrentHostCanvasLayout.canvasRect,
             IOSUsePlayCurrentHostCanvasLayout.halfPixelTolerance
         );
-    BOOL exact = IOSUseBridgeWindowPolicyIsHost(window) &&
+    BOOL geometryExact = IOSUseBridgeWindowPolicyIsHost(window) &&
         sceneFixed &&
         sceneGeometryBootstrapped &&
         IOSUsePlayHostCanvasLayoutReady &&
         canvasMatchesLayout &&
         mouseMonitorReady &&
         IOSUseBridgeRectIsDeviceScreen(uiWindow.bounds);
-    if (exact && usedBackgroundActivationFallback) {
+    if (geometryExact && usedBackgroundActivationFallback) {
         IOSUsePlayWindowStatus =
             @"waiting-for-foreground-activation";
         IOSUsePlayWindowFailure =
@@ -4167,6 +4174,41 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
                 NSError
                 errorWithDomain:IOSUsePlayWindowErrorDomain
                            code:4
+                       userInfo:@{
+                NSLocalizedDescriptionKey:
+                    IOSUsePlayWindowFailure,
+            }];
+        }
+        return NO;
+    }
+    BOOL safeAreaReady =
+        safeAreaReconciled &&
+        IOSUsePlaySafeAreaCompatibilityIsReadyForWindow(uiWindow);
+    BOOL exact = geometryExact && safeAreaReady;
+    if (geometryExact && !safeAreaReady) {
+        NSDictionary<NSString *, id> *safeAreaDiagnostics =
+            IOSUsePlaySafeAreaCompatibilityDiagnostics();
+        BOOL failed = [
+            safeAreaDiagnostics[@"stage"] isEqual:@"failed"
+        ];
+        id diagnosticsFailure =
+            safeAreaDiagnostics[@"failure"];
+        NSString *diagnosticsFailureDescription =
+            [diagnosticsFailure isKindOfClass:NSString.class]
+                ? diagnosticsFailure
+                : nil;
+        IOSUsePlayWindowStatus = failed
+            ? @"safe-area-failed"
+            : @"waiting-for-safe-area";
+        IOSUsePlayWindowFailure =
+            safeAreaError.localizedDescription ?:
+            diagnosticsFailureDescription ?:
+            @"fixed iPhone safe-area layout is not ready";
+        if (error != NULL) {
+            *error = [
+                NSError
+                errorWithDomain:IOSUsePlayWindowErrorDomain
+                           code:failed ? 13 : 12
                        userInfo:@{
                 NSLocalizedDescriptionKey:
                     IOSUsePlayWindowFailure,
@@ -4964,6 +5006,8 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         @"hostPolicy": @(
             IOSUseBridgeWindowPolicyIsHost(window)
         ),
+        @"safeAreaCompatibility":
+            IOSUsePlaySafeAreaCompatibilityDiagnostics(),
         @"lastTextInputTransientDismissal":
             IOSUsePlayLastTextInputTransientDismissal ?:
                 (id)NSNull.null,
