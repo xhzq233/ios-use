@@ -124,6 +124,8 @@ enum PlayCoverSessionService {
         let usesPendingLaunchJournal: Bool
         let reused: Bool
         let timing: PlayCoverStartTiming
+        let currentGenerationToken:
+            PlayCoverFastVerifiedGenerationToken?
 
         init(
             sessionID: String,
@@ -137,7 +139,9 @@ enum PlayCoverSessionService {
             logPath: String? = nil,
             usesPendingLaunchJournal: Bool = false,
             reused: Bool,
-            timing: PlayCoverStartTiming = .empty
+            timing: PlayCoverStartTiming = .empty,
+            currentGenerationToken:
+                PlayCoverFastVerifiedGenerationToken? = nil
         ) {
             self.sessionID = sessionID
             self.appPath = appPath
@@ -152,6 +156,7 @@ enum PlayCoverSessionService {
                 usesPendingLaunchJournal
             self.reused = reused
             self.timing = timing
+            self.currentGenerationToken = currentGenerationToken
         }
     }
 
@@ -317,6 +322,8 @@ enum PlayCoverSessionService {
         defer { verifiedLaunch.capability?.close() }
         let validatedManifest = verifiedLaunch.evidence
         let launchCapability = verifiedLaunch.capability
+        let currentGenerationToken =
+            verifiedLaunch.currentGenerationToken
         let verifiedManifest = validatedManifest.manifest
         timing.addVerify(
             PlayCoverMonotonicClock.elapsed(
@@ -438,7 +445,8 @@ enum PlayCoverSessionService {
                 usesPendingLaunchJournal:
                     rawResult.usesPendingLaunchJournal,
                 reused: resolved.reused,
-                timing: timing
+                timing: timing,
+                currentGenerationToken: currentGenerationToken
             )
             guard result.sessionID == sessionID,
                   result.appPath
@@ -941,6 +949,8 @@ enum PlayCoverSessionService {
             PlayCoverGenerationIdentity?
     ) throws -> (
         evidence: PlayCoverValidatedPreparedManifest,
+        currentGenerationToken:
+            PlayCoverFastVerifiedGenerationToken?,
         capability: PlayCoverService.FastVerifiedLaunchCapability?
     ) {
         if fastVerifyOverrideForTesting != nil {
@@ -949,7 +959,7 @@ enum PlayCoverSessionService {
                 expectedGenerationIdentity:
                     expectedGenerationIdentity
             )
-            return (evidence, nil)
+            return (evidence, nil, nil)
         }
         let acquired =
             try PlayCoverService.acquireFastVerifiedLaunchCapability(
@@ -957,7 +967,11 @@ enum PlayCoverSessionService {
             expectedGenerationIdentity:
                 expectedGenerationIdentity
         )
-        return (acquired.evidence, acquired.capability)
+        return (
+            acquired.evidence,
+            acquired.currentGenerationToken,
+            acquired.capability
+        )
     }
 
     static func expectedRuntimeSocketPath(

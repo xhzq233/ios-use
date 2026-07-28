@@ -7,6 +7,8 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
     override func tearDown() {
         PlayCoverGenerationPruner.afterProtectedStateForTesting = nil
         PlayCoverGenerationPruner.afterInventoryForTesting = nil
+        PlayCoverGenerationPruner
+            .inventorySidecarReadObserverForTesting = nil
         super.tearDown()
     }
 
@@ -296,6 +298,219 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         XCTAssertTrue(result.removedGenerationKeys.isEmpty)
         XCTAssertTrue(result.warnings.isEmpty)
         XCTAssertTrue(fixture.generationExists(keys[0]))
+    }
+
+    func testPruneUsesFastVerifiedTokenOnlyForCurrentManifest()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let keys = (1...5).map {
+            String(repeating: String($0), count: 64)
+        }
+        let completedAt = keys.indices.map {
+            "2026-05-\(String(format: "%02d", $0 + 1))T00:00:00Z"
+        }
+        for index in keys.indices {
+            try fixture.createGeneration(
+                key: keys[index],
+                completedAt: completedAt[index]
+            )
+        }
+        try fixture.writeReference(generationKey: keys[3])
+        try fixture.writeDriverLock(generationKey: keys[2])
+        let token = try fixture.makeFastVerifiedToken(
+            generationKey: keys[4],
+            completedAt: completedAt[4]
+        )
+        var reads:
+            [PlayCoverGenerationPruner.InventorySidecarReadEvent] = []
+        PlayCoverGenerationPruner
+            .inventorySidecarReadObserverForTesting = {
+                reads.append($0)
+            }
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: keys[4],
+                currentGenerationToken: token
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        XCTAssertTrue(result.warnings.isEmpty)
+        for key in keys {
+            XCTAssertEqual(
+                reads.filter {
+                    $0.generationKey == key
+                        && $0.filename
+                            == PlayCoverService.completedFilename
+                }.count,
+                1
+            )
+            XCTAssertEqual(
+                reads.filter {
+                    $0.generationKey == key
+                        && $0.filename
+                            == PlayCoverService.manifestFilename
+                }.count,
+                key == keys[4] ? 0 : 1
+            )
+        }
+    }
+
+    func testPruneRetainsCurrentWhenFastVerifiedMarkerChanges()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let key = String(repeating: "b", count: 64)
+        let completedAt = "2026-05-20T00:00:00Z"
+        try fixture.createGeneration(
+            key: key,
+            completedAt: completedAt
+        )
+        try fixture.writeReference(generationKey: key)
+        try fixture.writeDriverLock(generationKey: key)
+        let token = try fixture.makeFastVerifiedToken(
+            generationKey: key,
+            completedAt: completedAt
+        )
+        let changed = PlayCoverCompletedGeneration(
+            schemaVersion: token.completed.schemaVersion,
+            generationKey: token.completed.generationKey,
+            manifestSHA256: token.completed.manifestSHA256,
+            executableSHA256: token.completed.executableSHA256,
+            runtimeSHA256: String(repeating: "a", count: 64)
+        )
+        try fixture.writeCompleted(
+            changed,
+            generationKey: key
+        )
+        var reads:
+            [PlayCoverGenerationPruner.InventorySidecarReadEvent] = []
+        PlayCoverGenerationPruner
+            .inventorySidecarReadObserverForTesting = {
+                reads.append($0)
+            }
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: key,
+                currentGenerationToken: token
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        XCTAssertTrue(fixture.generationExists(key))
+        XCTAssertTrue(
+            result.warnings.contains {
+                $0.contains("protected corrupt generation \(key)")
+                    && $0.contains(
+                        "completed sidecar changed after fast verification"
+                    )
+            }
+        )
+        XCTAssertEqual(
+            reads.filter {
+                $0.generationKey == key
+                    && $0.filename
+                        == PlayCoverService.completedFilename
+            }.count,
+            1
+        )
+        XCTAssertFalse(
+            reads.contains {
+                $0.generationKey == key
+                    && $0.filename
+                        == PlayCoverService.manifestFilename
+            }
+        )
+    }
+
+    func testPruneRetainsCurrentWhenFastVerifiedVnodeChanges()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let key = String(repeating: "c", count: 64)
+        let completedAt = "2026-05-21T00:00:00Z"
+        try fixture.createGeneration(
+            key: key,
+            completedAt: completedAt
+        )
+        try fixture.writeReference(generationKey: key)
+        try fixture.writeDriverLock(generationKey: key)
+        let token = try fixture.makeFastVerifiedToken(
+            generationKey: key,
+            completedAt: completedAt
+        )
+        PlayCoverGenerationPruner.afterProtectedStateForTesting = {
+            try fixture.replaceGenerationDirectory(generationKey: key)
+        }
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: key,
+                currentGenerationToken: token
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        XCTAssertTrue(fixture.generationExists(key))
+        XCTAssertTrue(
+            result.warnings.contains {
+                $0.contains("protected corrupt generation \(key)")
+                    && $0.contains(
+                        "generation vnode changed after fast verification"
+                    )
+            }
+        )
+    }
+
+    func testPruneSkipsMismatchedFastVerifiedGenerationToken()
+        throws
+    {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let tokenKey = String(repeating: "d", count: 64)
+        let currentKey = String(repeating: "e", count: 64)
+        try fixture.createGeneration(
+            key: tokenKey,
+            completedAt: "2026-05-22T00:00:00Z"
+        )
+        try fixture.createGeneration(
+            key: currentKey,
+            completedAt: "2026-05-23T00:00:00Z"
+        )
+        try fixture.writeReference(generationKey: currentKey)
+        try fixture.writeDriverLock(generationKey: currentKey)
+        let token = try fixture.makeFastVerifiedToken(
+            generationKey: tokenKey,
+            completedAt: "2026-05-22T00:00:00Z"
+        )
+        var reads:
+            [PlayCoverGenerationPruner.InventorySidecarReadEvent] = []
+        PlayCoverGenerationPruner
+            .inventorySidecarReadObserverForTesting = {
+                reads.append($0)
+            }
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: currentKey,
+                currentGenerationToken: token
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        XCTAssertTrue(reads.isEmpty)
+        XCTAssertEqual(result.warnings.count, 1)
+        XCTAssertTrue(
+            result.warnings[0].contains(
+                "fast-verified current generation token does not match"
+            )
+        )
     }
 
     func testPruneProtectsOldestGenerationWithValidPendingLaunch()
@@ -1102,6 +1317,68 @@ private struct CacheMaintenanceFixture {
             named: name,
             generationKey: generationKey
         )
+    }
+
+    func makeFastVerifiedToken(
+        generationKey: String,
+        completedAt: String
+    ) throws -> PlayCoverFastVerifiedGenerationToken {
+        let completed = PlayCoverCompletedGeneration(
+            schemaVersion: 3,
+            generationKey: generationKey,
+            manifestSHA256: String(repeating: "d", count: 64),
+            executableSHA256: String(repeating: "e", count: 64),
+            runtimeSHA256: String(repeating: "f", count: 64)
+        )
+        try writeCompleted(
+            completed,
+            generationKey: generationKey
+        )
+        return try PlayCoverService
+            .uncheckedFastVerifiedGenerationTokenForTesting(
+                generationKey: generationKey,
+                completedAt: completedAt,
+                completed: completed,
+                generationURL:
+                    generationDirectory(generationKey)
+            )
+    }
+
+    func writeCompleted(
+        _ completed: PlayCoverCompletedGeneration,
+        generationKey: String
+    ) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [
+            .sortedKeys,
+            .withoutEscapingSlashes,
+        ]
+        try writeSidecar(
+            encoder.encode(completed),
+            named: PlayCoverService.completedFilename,
+            generationKey: generationKey
+        )
+    }
+
+    func replaceGenerationDirectory(
+        generationKey: String
+    ) throws {
+        let original = generationDirectory(generationKey)
+        let replacement = original.deletingLastPathComponent()
+            .appendingPathComponent(
+                ".replacement-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.copyItem(
+            at: original,
+            to: replacement
+        )
+        try FileManager.default.removeItem(at: original)
+        try FileManager.default.moveItem(
+            at: replacement,
+            to: original
+        )
+        _ = chmod(original.path, 0o700)
     }
 
     func truncateSidecar(

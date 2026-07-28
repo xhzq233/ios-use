@@ -8,6 +8,13 @@ enum PlayCoverGenerationPruner {
     static let corruptGenerationQuarantineLimit = 8
     static var afterProtectedStateForTesting: (() throws -> Void)?
     static var afterInventoryForTesting: (() throws -> Void)?
+    static var inventorySidecarReadObserverForTesting:
+        ((InventorySidecarReadEvent) -> Void)?
+
+    struct InventorySidecarReadEvent: Equatable, Sendable {
+        let generationKey: String
+        let filename: String
+    }
 
     struct Result: Equatable, Sendable {
         let removedGenerationKeys: [String]
@@ -56,11 +63,21 @@ enum PlayCoverGenerationPruner {
 
     static func pruneAfterSuccessfulStart(
         paths: IOSUsePaths,
-        currentGenerationKey: String
+        currentGenerationKey: String,
+        currentGenerationToken:
+            PlayCoverFastVerifiedGenerationToken? = nil
     ) -> Result {
         guard isGenerationKey(currentGenerationKey) else {
             return skipped(
                 "current generation key is invalid"
+            )
+        }
+        if let currentGenerationToken,
+           currentGenerationToken.generationKey
+            != currentGenerationKey {
+            return skipped(
+                "fast-verified current generation token does not match "
+                    + "the started generation"
             )
         }
 
@@ -70,6 +87,8 @@ enum PlayCoverGenerationPruner {
                     try pruneAnchored(
                         paths: paths,
                         currentGenerationKey: currentGenerationKey,
+                        currentGenerationToken:
+                            currentGenerationToken,
                         access: $0
                     )
                 }
@@ -83,6 +102,8 @@ enum PlayCoverGenerationPruner {
     private static func pruneAnchored(
         paths: IOSUsePaths,
         currentGenerationKey: String,
+        currentGenerationToken:
+            PlayCoverFastVerifiedGenerationToken?,
         access: PlayCoverManagedAppService.ManagedDirectoryAccess
     ) throws -> Result {
         let protectedState = try protectedGenerationKeys(
@@ -99,7 +120,8 @@ enum PlayCoverGenerationPruner {
         let inventory = loadInventory(
             names: names,
             preparedRoot: access.prepared,
-            preparedDescriptor: access.preparedDescriptor
+            preparedDescriptor: access.preparedDescriptor,
+            currentGenerationToken: currentGenerationToken
         )
         try afterInventoryForTesting?()
         var warnings = inventory.warnings
@@ -310,7 +332,9 @@ enum PlayCoverGenerationPruner {
     private static func loadInventory(
         names: [String],
         preparedRoot: URL,
-        preparedDescriptor: Int32
+        preparedDescriptor: Int32,
+        currentGenerationToken:
+            PlayCoverFastVerifiedGenerationToken?
     ) -> Inventory {
         var complete: [Candidate] = []
         var corrupt: [CorruptCandidate] = []
@@ -349,13 +373,8 @@ enum PlayCoverGenerationPruner {
                 device: UInt64(status.st_dev),
                 inode: UInt64(status.st_ino)
             )
-            let manifestResult = readSidecar(
-                parentDescriptor: generationDescriptor,
-                filename: PlayCoverService.manifestFilename,
-                maximumBytes:
-                    PlayCoverService.generationManifestMaximumBytes
-            )
             let completedResult = readSidecar(
+                generationKey: name,
                 parentDescriptor: generationDescriptor,
                 filename: PlayCoverService.completedFilename,
                 maximumBytes:
@@ -381,21 +400,102 @@ enum PlayCoverGenerationPruner {
                 device: UInt64(status.st_dev),
                 inode: UInt64(status.st_ino)
             )
-            let manifestResult = readSidecar(
-                at: url.appendingPathComponent(
-                    PlayCoverService.manifestFilename
-                ),
-                filename: PlayCoverService.manifestFilename,
-                maximumBytes:
-                    PlayCoverService.generationManifestMaximumBytes
-            )
             let completedResult = readSidecar(
+                generationKey: name,
                 at: url.appendingPathComponent(
                     PlayCoverService.completedFilename
                 ),
                 filename: PlayCoverService.completedFilename,
                 maximumBytes:
                     PlayCoverService.completedMarkerMaximumBytes
+            )
+            #endif
+
+            if let token = currentGenerationToken,
+               token.generationKey == name {
+                guard token.directoryIdentity.device
+                        == identity.device,
+                      token.directoryIdentity.inode
+                        == identity.inode else {
+                    corrupt.append(
+                        CorruptCandidate(
+                            generationKey: name,
+                            reason:
+                                "generation vnode changed after fast "
+                                + "verification",
+                            identity: identity
+                        )
+                    )
+                    continue
+                }
+                let completedData: Data
+                switch completedResult {
+                case .success(let data):
+                    completedData = data
+                case .failure(let reason):
+                    corrupt.append(
+                        CorruptCandidate(
+                            generationKey: name,
+                            reason: reason,
+                            identity: identity
+                        )
+                    )
+                    continue
+                }
+                guard let completed = try? JSONDecoder().decode(
+                    PlayCoverCompletedGeneration.self,
+                    from: completedData
+                ), completed == token.completed else {
+                    corrupt.append(
+                        CorruptCandidate(
+                            generationKey: name,
+                            reason:
+                                "completed sidecar changed after fast "
+                                + "verification",
+                            identity: identity
+                        )
+                    )
+                    continue
+                }
+                guard let completedAt = ISO8601DateFormatter().date(
+                    from: token.completedAt
+                ) else {
+                    corrupt.append(
+                        CorruptCandidate(
+                            generationKey: name,
+                            reason: "manifest completedAt is malformed",
+                            identity: identity
+                        )
+                    )
+                    continue
+                }
+                complete.append(
+                    Candidate(
+                        generationKey: name,
+                        completedAt: completedAt,
+                        identity: identity
+                    )
+                )
+                continue
+            }
+
+            #if canImport(Darwin)
+            let manifestResult = readSidecar(
+                generationKey: name,
+                parentDescriptor: generationDescriptor,
+                filename: PlayCoverService.manifestFilename,
+                maximumBytes:
+                    PlayCoverService.generationManifestMaximumBytes
+            )
+            #else
+            let manifestResult = readSidecar(
+                generationKey: name,
+                at: url.appendingPathComponent(
+                    PlayCoverService.manifestFilename
+                ),
+                filename: PlayCoverService.manifestFilename,
+                maximumBytes:
+                    PlayCoverService.generationManifestMaximumBytes
             )
             #endif
 
@@ -515,10 +615,17 @@ enum PlayCoverGenerationPruner {
 
     #if canImport(Darwin)
     private static func readSidecar(
+        generationKey: String,
         parentDescriptor: Int32,
         filename: String,
         maximumBytes: Int
     ) -> SidecarRead {
+        inventorySidecarReadObserverForTesting?(
+            InventorySidecarReadEvent(
+                generationKey: generationKey,
+                filename: filename
+            )
+        )
         do {
             return .success(
                 try PlayCoverManagedAppService.readOwnedRegularFile(
@@ -535,10 +642,17 @@ enum PlayCoverGenerationPruner {
     }
     #else
     private static func readSidecar(
+        generationKey: String,
         at url: URL,
         filename: String,
         maximumBytes: Int
     ) -> SidecarRead {
+        inventorySidecarReadObserverForTesting?(
+            InventorySidecarReadEvent(
+                generationKey: generationKey,
+                filename: filename
+            )
+        )
         do {
             return .success(
                 try readOwnedRegularFile(

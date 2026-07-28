@@ -71,6 +71,30 @@ struct PlayCoverUnterminatedLaunchError: Error,
     }
 }
 
+struct PlayCoverFastVerifiedGenerationToken: Equatable, Sendable {
+    struct DirectoryIdentity: Equatable, Sendable {
+        let device: UInt64
+        let inode: UInt64
+    }
+
+    let generationKey: String
+    let completedAt: String
+    let completed: PlayCoverCompletedGeneration
+    let directoryIdentity: DirectoryIdentity
+
+    fileprivate init(
+        generationKey: String,
+        completedAt: String,
+        completed: PlayCoverCompletedGeneration,
+        directoryIdentity: DirectoryIdentity
+    ) {
+        self.generationKey = generationKey
+        self.completedAt = completedAt
+        self.completed = completed
+        self.directoryIdentity = directoryIdentity
+    }
+}
+
 public enum PlayCoverService {
     private static let upstreamStandardOutputLock = NSLock()
 
@@ -624,7 +648,7 @@ public enum PlayCoverService {
             suppliedManifest: suppliedManifest,
             expectedGenerationIdentity: expectedGenerationIdentity,
             captureLaunchEntries: false
-        ) { evidence, _, _, _, _ in
+        ) { evidence, _, _, _, _, _ in
             evidence
         }
     }
@@ -636,6 +660,7 @@ public enum PlayCoverService {
         captureLaunchEntries: Bool,
         body: (
             PlayCoverValidatedPreparedManifest,
+            PlayCoverCompletedGeneration,
             Int32,
             URL,
             Int32,
@@ -755,6 +780,7 @@ public enum PlayCoverService {
                 )
                 return try body(
                     evidence,
+                    marker,
                     generationDescriptor,
                     generationURL,
                     appDescriptor,
@@ -785,6 +811,7 @@ public enum PlayCoverService {
         expectedGenerationIdentity: PlayCoverGenerationIdentity?
     ) throws -> (
         evidence: PlayCoverValidatedPreparedManifest,
+        currentGenerationToken: PlayCoverFastVerifiedGenerationToken,
         capability: FastVerifiedLaunchCapability
     ) {
         let app = URL(
@@ -798,6 +825,7 @@ public enum PlayCoverService {
             captureLaunchEntries: true
         ) {
             evidence,
+            marker,
             generationDescriptor,
             generationURL,
             appDescriptor,
@@ -814,13 +842,55 @@ public enum PlayCoverService {
                 app: app,
                 entries: launchEntries
             )
-            return (evidence, capability)
+            let token = PlayCoverFastVerifiedGenerationToken(
+                generationKey: evidence.manifest.generationKey,
+                completedAt: evidence.manifest.completedAt,
+                completed: marker,
+                directoryIdentity: .init(
+                    device: UInt64(
+                        capability.generationStatus.st_dev
+                    ),
+                    inode: UInt64(
+                        capability.generationStatus.st_ino
+                    )
+                )
+            )
+            return (evidence, token, capability)
         }
         try emitLaunchIntegrityEvent(
             .afterFastVerificationBeforeLaunchBody
         )
         return acquired
     }
+
+    #if DEBUG && canImport(Darwin)
+    static func uncheckedFastVerifiedGenerationTokenForTesting(
+        generationKey: String,
+        completedAt: String,
+        completed: PlayCoverCompletedGeneration,
+        generationURL: URL
+    ) throws -> PlayCoverFastVerifiedGenerationToken {
+        var status = stat()
+        guard lstat(generationURL.path, &status) == 0,
+              status.st_mode & S_IFMT == S_IFDIR,
+              status.st_uid == geteuid(),
+              status.st_mode & 0o077 == 0,
+              completed.generationKey == generationKey else {
+            throw PlayCoverBackendError.cacheTampered(
+                "testing generation token identity is invalid"
+            )
+        }
+        return PlayCoverFastVerifiedGenerationToken(
+            generationKey: generationKey,
+            completedAt: completedAt,
+            completed: completed,
+            directoryIdentity: .init(
+                device: UInt64(status.st_dev),
+                inode: UInt64(status.st_ino)
+            )
+        )
+    }
+    #endif
 
     private static func retainLaunchCapability(
         generationDescriptor: Int32,

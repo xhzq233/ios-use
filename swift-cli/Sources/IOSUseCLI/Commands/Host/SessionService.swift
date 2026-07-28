@@ -237,7 +237,9 @@ public enum SessionService {
             let pruning =
                 PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
                     paths: paths,
-                    currentGenerationKey: result.generationKey
+                    currentGenerationKey: result.generationKey,
+                    currentGenerationToken:
+                        result.currentGenerationToken
                 )
             var output = """
             PlayCover session started for \(result.bundleIdentifier) (pid \(result.pid))

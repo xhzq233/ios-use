@@ -89,6 +89,51 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
     }
 
+    func testFastVerifiedGenerationTokenBindsMarkerAndVnode()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        Shell.runResultOverrideForTesting = {
+            _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+
+        let acquired =
+            try PlayCoverService.acquireFastVerifiedLaunchCapability(
+                appPath: fixture.app.path,
+                expectedGenerationIdentity: nil
+            )
+        defer { acquired.capability.close() }
+        let completed = try JSONDecoder().decode(
+            PlayCoverCompletedGeneration.self,
+            from: Data(contentsOf: fixture.completedURL)
+        )
+        var status = stat()
+        XCTAssertEqual(lstat(fixture.root.path, &status), 0)
+
+        XCTAssertEqual(
+            acquired.currentGenerationToken.generationKey,
+            fixture.manifest.generationKey
+        )
+        XCTAssertEqual(
+            acquired.currentGenerationToken.completedAt,
+            fixture.manifest.completedAt
+        )
+        XCTAssertEqual(
+            acquired.currentGenerationToken.completed,
+            completed
+        )
+        XCTAssertEqual(
+            acquired.currentGenerationToken.directoryIdentity.device,
+            UInt64(status.st_dev)
+        )
+        XCTAssertEqual(
+            acquired.currentGenerationToken.directoryIdentity.inode,
+            UInt64(status.st_ino)
+        )
+    }
+
     func testLaunchVerifiedConsumesValidatedManifestWithoutRevalidation()
         throws
     {
