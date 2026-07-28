@@ -295,8 +295,6 @@ struct PlayCoverCompletedGeneration: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let generationKey: String
     let manifestSHA256: String
-    let inventorySHA256: String
-    let machoSealSHA256: String
     let executableSHA256: String
     let runtimeSHA256: String
 }

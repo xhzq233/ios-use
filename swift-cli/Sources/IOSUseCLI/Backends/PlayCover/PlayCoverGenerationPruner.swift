@@ -467,7 +467,8 @@ enum PlayCoverGenerationPruner {
                 )
                 continue
             }
-            guard completed.schemaVersion == 2,
+            guard completed.schemaVersion == 2
+                    || completed.schemaVersion == 3,
                   completed.generationKey == name else {
                 corrupt.append(
                     CorruptCandidate(

@@ -189,6 +189,11 @@ final class PlayCoverCoreTests: XCTestCase {
                 "e6d3aa4abe106f90fd8c5a1ca04db15c19d324eb"
             )
         )
+        XCTAssertTrue(
+            PlayCoverService.prepareImplementationRevision.hasPrefix(
+                "ios-use-headless-v12+"
+            )
+        )
     }
 
     func testPreparationPlanCarriesOneSourceAndRuntimeIdentity()

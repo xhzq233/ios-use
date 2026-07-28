@@ -270,6 +270,34 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         }
     }
 
+    func testPruneInventoriesLegacyCompletedSchemaTwo() throws {
+        let fixture = try CacheMaintenanceFixture()
+        defer { fixture.remove() }
+        let keys = (1...4).map {
+            String(repeating: String($0), count: 64)
+        }
+        for (index, key) in keys.enumerated() {
+            try fixture.createGeneration(
+                key: key,
+                completedAt:
+                    "2026-06-\(String(format: "%02d", index + 1))T00:00:00Z",
+                completedSchemaVersion: index == 0 ? 2 : 3
+            )
+        }
+        try fixture.writeReference(generationKey: keys[1])
+        try fixture.writeDriverLock(generationKey: keys[2])
+
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey: keys[3]
+            )
+
+        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
+        XCTAssertTrue(result.warnings.isEmpty)
+        XCTAssertTrue(fixture.generationExists(keys[0]))
+    }
+
     func testPruneProtectsOldestGenerationWithValidPendingLaunch()
         throws
     {
@@ -450,8 +478,8 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         let protectedKeys = (1...3).map {
             String(repeating: String($0), count: 64)
         }
-        let corruptKeys = (4...9).map {
-            String(repeating: String($0), count: 64)
+        let corruptKeys = ["4", "5", "6", "7", "8", "9", "a"].map {
+            String(repeating: $0, count: 64)
         }
         for (index, key) in (protectedKeys + corruptKeys).enumerated() {
             try fixture.createGeneration(
@@ -494,11 +522,19 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         )
         try fixture.writeSidecarJSON(
             [
-                "schemaVersion": 2,
-                "generationKey": protectedKeys[0],
+                "schemaVersion": 4,
+                "generationKey": corruptKeys[5],
             ],
             named: PlayCoverService.completedFilename,
             generationKey: corruptKeys[5]
+        )
+        try fixture.writeSidecarJSON(
+            [
+                "schemaVersion": 3,
+                "generationKey": protectedKeys[0],
+            ],
+            named: PlayCoverService.completedFilename,
+            generationKey: corruptKeys[6]
         )
 
         let result =
@@ -882,7 +918,8 @@ private struct CacheMaintenanceFixture {
 
     func createGeneration(
         key: String,
-        completedAt: String
+        completedAt: String,
+        completedSchemaVersion: Int = 3
     ) throws {
         let directory = generationDirectory(key)
         try FileManager.default.createDirectory(
@@ -899,7 +936,7 @@ private struct CacheMaintenanceFixture {
             "completedAt": completedAt,
         ]
         let completed: [String: Any] = [
-            "schemaVersion": 2,
+            "schemaVersion": completedSchemaVersion,
             "generationKey": key,
         ]
         try JSONSerialization.data(

@@ -993,38 +993,51 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
     }
 
-    func testFastVerifyIgnoresLegacyArraySealsWhenRawManifestSealMatches()
+    func testCompletedMarkerSchemaThreeOmitsLegacyArraySeals()
         throws
     {
         let fixture = try FastVerifyFixture()
         defer { fixture.remove() }
-        let original = try JSONDecoder().decode(
+        let data = try Data(contentsOf: fixture.completedURL)
+        let completed = try JSONDecoder().decode(
             PlayCoverCompletedGeneration.self,
-            from: Data(contentsOf: fixture.completedURL)
+            from: data
         )
-        let completed = PlayCoverCompletedGeneration(
-            schemaVersion: original.schemaVersion,
-            generationKey: original.generationKey,
-            manifestSHA256: original.manifestSHA256,
-            inventorySHA256: String(repeating: "a", count: 64),
-            machoSealSHA256: String(repeating: "b", count: 64),
-            executableSHA256: original.executableSHA256,
-            runtimeSHA256: original.runtimeSHA256
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data)
+                as? [String: Any]
         )
-        XCTAssertNotEqual(
-            completed.inventorySHA256,
-            original.inventorySHA256
+
+        XCTAssertEqual(completed.schemaVersion, 3)
+        XCTAssertEqual(
+            Set(object.keys),
+            Set([
+                "schemaVersion",
+                "generationKey",
+                "manifestSHA256",
+                "executableSHA256",
+                "runtimeSHA256",
+            ])
         )
-        XCTAssertNotEqual(
-            completed.machoSealSHA256,
-            original.machoSealSHA256
+        XCTAssertNil(object["inventorySHA256"])
+        XCTAssertNil(object["machoSealSHA256"])
+    }
+
+    func testFastVerifyRejectsLegacyCompletedSchemaTwoBeforeCodeSign()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(contentsOf: fixture.completedURL)
+            ) as? [String: Any]
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        try encoder.encode(completed).write(
-            to: fixture.completedURL,
-            options: .atomic
-        )
+        object["schemaVersion"] = 2
+        try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ).write(to: fixture.completedURL, options: .atomic)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: fixture.completedURL.path
@@ -1039,10 +1052,8 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             )
         }
 
-        XCTAssertNoThrow(
-            try PlayCoverService.fastVerify(appPath: fixture.app.path)
-        )
-        XCTAssertGreaterThan(codeSignCalls, 0)
+        assertFastVerifyTampered(fixture.app.path)
+        XCTAssertEqual(codeSignCalls, 0)
     }
 
     func testManifestSymlinkFailsClosed() throws {

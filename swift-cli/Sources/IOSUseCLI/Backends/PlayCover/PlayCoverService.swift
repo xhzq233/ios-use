@@ -99,7 +99,7 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v11+playcover-"
+        "ios-use-headless-v12+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
@@ -672,7 +672,7 @@ public enum PlayCoverService {
                 filename: completedFilename,
                 maximumBytes: completedMarkerMaximumBytes
             ).value
-            guard marker.schemaVersion == 2,
+            guard marker.schemaVersion == 3,
                   marker.generationKey == manifest.generationKey else {
                 throw PlayCoverBackendError.cacheTampered(
                     "completed marker identity does not match the manifest"
@@ -1731,15 +1731,9 @@ public enum PlayCoverService {
                     == Substring(runtimeExecutableName)
         }
         let completed = PlayCoverCompletedGeneration(
-            schemaVersion: 2,
+            schemaVersion: 3,
             generationKey: manifest.generationKey,
             manifestSHA256: sha256(manifestData),
-            inventorySHA256: sha256(
-                try canonicalJSON(manifest.inventory)
-            ),
-            machoSealSHA256: sha256(
-                try canonicalJSON(manifest.machOs)
-            ),
             executableSHA256: executableSHA256,
             runtimeSHA256: runtimeSHA256
         )
