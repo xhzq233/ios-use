@@ -6,7 +6,7 @@ import Foundation
 import XCTest
 
 final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
-    private static let profileScope = "external-app-structural-v1"
+    private static let profileScope = "external-app-structural-v2"
 
     private struct Scenario: Decodable {
         let schemaVersion: Int
@@ -82,6 +82,7 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
     private struct ExternalProfile: Codable, Equatable {
         let schemaVersion: Int
         let scope: String
+        let workRootSHA256: String
         let source: SourceProfile
         let runtime: RuntimeProfile
         let playTools: PlayToolsProfile
@@ -112,6 +113,7 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         let result: String
         let repositoryCommit: String
         let profileSHA256: String
+        let workRootSHA256: String
         let originalSource: OriginalSourceEvidence
         let inputs: InputTreeEvidence
         let differential: PlayCoverDifferentialAttestation
@@ -119,9 +121,11 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
 
     private struct ExternalCharacterizationReport: Codable, Equatable {
         let schemaVersion: Int
+        let scope: String
         let kind: String
         let disposition: String
         let repositoryCommit: String
+        let workRootSHA256: String
         let source: SourceProfile
         let sourceState: OriginalSourceEvidence
         let runtime: RuntimeProfile
@@ -264,6 +268,10 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             from: profileData
         )
         try validate(profile)
+        try requireWorkRootBinding(
+            profile,
+            requestedWorkRoot: requestedWorkRoot
+        )
 
         let commit = try XCTUnwrap(
             environment["IOS_USE_PLAYCOVER_EXTERNAL_DIFFERENTIAL_COMMIT"]
@@ -292,6 +300,7 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             runtime: runtime,
             playTools: playTools,
             requestedWorkRoot: requestedWorkRoot,
+            expectedWorkRootSHA256: profile.workRootSHA256,
             runtimeExecutableRelativePath:
                 profile.runtime.outputExecutableRelativePath,
             pluginExecutableRelativePath:
@@ -302,9 +311,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             iosUseBaselineProvenance:
                 "external profile \(profileSHA256); fresh Runtime "
                 + "full-tree projection",
-            keepWorkOnFailure: environment[
-                "IOS_USE_PLAYCOVER_EXTERNAL_DIFFERENTIAL_KEEP_WORK"
-            ] == "1",
             validateInput: {
                 original,
                 runtimeTree,
@@ -347,15 +353,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 }
             }
         )
-        defer {
-            if environment[
-                "IOS_USE_PLAYCOVER_EXTERNAL_DIFFERENTIAL_KEEP_WORK"
-            ] != "1" {
-                try? FileManager.default.removeItem(
-                    at: requestedWorkRoot.resolvingSymlinksInPath()
-                )
-            }
-        }
         let allowances = profile.allowances.map {
             $0.allowance()
         }
@@ -399,11 +396,12 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         )
 
         let attestation = ExternalAttestation(
-            schemaVersion: 1,
+            schemaVersion: 2,
             scope: Self.profileScope,
             result: "pass",
             repositoryCommit: commit,
             profileSHA256: profileSHA256,
+            workRootSHA256: profile.workRootSHA256,
             originalSource: OriginalSourceEvidence(
                 scenarioSHA256: scenarioSHA256,
                 inputContentSHA256:
@@ -546,12 +544,16 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 "repository commit does not identify the current checkout"
             )
         }
+        let requestedWorkRootSHA256 = workRootSHA256(
+            requestedWorkRoot
+        )
 
         let comparison = try await prepareExternalComparison(
             scenario: scenario,
             runtime: runtime,
             playTools: playTools,
             requestedWorkRoot: requestedWorkRoot,
+            expectedWorkRootSHA256: requestedWorkRootSHA256,
             runtimeExecutableRelativePath:
                 "Frameworks/IOSUsePlayRuntime.framework/"
                     + "Versions/A/IOSUsePlayRuntime",
@@ -564,11 +566,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             validateInput: { _, _, _, _ in },
             validateProjection: { _, _, _, _ in }
         )
-        defer {
-            try? FileManager.default.removeItem(
-                at: requestedWorkRoot.resolvingSymlinksInPath()
-            )
-        }
         let differences =
             try PlayCoverPrepareDifferentialGate.differences(
                 pinnedResult: comparison.pinnedResult,
@@ -583,10 +580,12 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         )
 
         let report = ExternalCharacterizationReport(
-            schemaVersion: 1,
+            schemaVersion: 2,
+            scope: Self.profileScope,
             kind: "playcover-external-prepare-characterization",
             disposition: "diagnostic-only",
             repositoryCommit: commit,
+            workRootSHA256: requestedWorkRootSHA256,
             source: try sourceIdentity(
                 comparison.originalBefore
             ),
@@ -760,16 +759,131 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         )
     }
 
+    func testExternalProfileRejectsV1Schema() throws {
+        let profile = minimalProfile(
+            schemaVersion: 1,
+            allowances: [minimalAllowance()]
+        )
+        XCTAssertThrowsError(try validate(profile)) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "schema, scope, or producer revisions changed"
+                )
+            )
+        }
+    }
+
+    func testExternalProfileRejectsMalformedWorkRootDigest() throws {
+        let profile = minimalProfile(
+            workRootSHA256: "ABC",
+            allowances: [minimalAllowance()]
+        )
+        XCTAssertThrowsError(try validate(profile)) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "workRootSHA256 must be a lowercase SHA-256 digest"
+                )
+            )
+        }
+    }
+
+    func testExternalProfileRejectsMismatchedWorkRoot() throws {
+        let requested = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-external-profile-work-root-requested",
+                isDirectory: true
+            )
+        let profile = minimalProfile(
+            workRootSHA256: String(repeating: "b", count: 64),
+            allowances: [minimalAllowance()]
+        )
+        XCTAssertThrowsError(
+            try requireWorkRootBinding(
+                profile,
+                requestedWorkRoot: requested
+            )
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(
+                    "work-root SHA-256 does not match"
+                )
+            )
+        }
+    }
+
+    func testExternalProfileAcceptsSameCanonicalWorkRoot() throws {
+        let requested = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-external-profile-work-root-same",
+                isDirectory: true
+            )
+        let profile = minimalProfile(
+            workRootSHA256: workRootSHA256(requested),
+            allowances: [minimalAllowance()]
+        )
+        XCTAssertNoThrow(
+            try requireWorkRootBinding(
+                profile,
+                requestedWorkRoot: requested
+            )
+        )
+    }
+
+    func testWorkRootDigestMatchesShasumOfCanonicalUTF8Path() throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-work-root-digest-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: parent,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer {
+            try? FileManager.default.removeItem(at: parent)
+        }
+        let requested = parent.appendingPathComponent(
+            "candidate",
+            isDirectory: true
+        )
+        let canonicalPath = parent.resolvingSymlinksInPath()
+            .appendingPathComponent("candidate")
+            .standardizedFileURL.path
+        let input = Pipe()
+        let output = Pipe()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/shasum")
+        process.arguments = ["-a", "256"]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = Pipe()
+        try process.run()
+        input.fileHandleForWriting.write(Data(canonicalPath.utf8))
+        try input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        let shellOutput =
+            String(
+                data: output.fileHandleForReading.readDataToEndOfFile(),
+                encoding: .utf8
+            ) ?? ""
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertEqual(
+            workRootSHA256(requested),
+            shellOutput.split(separator: " ").first.map(String.init)
+        )
+    }
+
     private func prepareExternalComparison(
         scenario: Scenario,
         runtime: URL,
         playTools: URL,
         requestedWorkRoot: URL,
+        expectedWorkRootSHA256: String,
         runtimeExecutableRelativePath: String,
         pluginExecutableRelativePath: String,
         pinnedBaselineProvenance: String,
         iosUseBaselineProvenance: String,
-        keepWorkOnFailure: Bool = false,
         validateInput: (
             PlayCoverUpstreamAppInspection,
             String,
@@ -829,11 +943,10 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             attributes: [.posixPermissions: 0o700]
         )
         let workRoot = requestedWorkRoot.resolvingSymlinksInPath()
-        var completed = false
-        defer {
-            if !completed, !keepWorkOnFailure {
-                try? FileManager.default.removeItem(at: workRoot)
-            }
+        guard workRootSHA256(workRoot) == expectedWorkRootSHA256 else {
+            throw ProfileError.invalid(
+                "configured work-root identity changed after creation"
+            )
         }
         let sourceSnapshot = workRoot.appendingPathComponent(
             "source-snapshot/Source.app",
@@ -1022,7 +1135,6 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 pinnedManagedHome: pinnedHome,
                 iosUseManagedHome: iosUseHome
         )
-        completed = true
         return ExternalComparison(
             originalBefore: originalBefore,
             snapshotBefore: snapshotBefore,
@@ -1101,7 +1213,7 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
     }
 
     private func validate(_ profile: ExternalProfile) throws {
-        guard profile.schemaVersion == 1,
+        guard profile.schemaVersion == 2,
               profile.scope == Self.profileScope,
               profile.revisions.playCover
                 == PlayCoverPinnedHeadlessInstallerOracle
@@ -1116,6 +1228,11 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 == PlayCoverService.prepareImplementationRevision else {
             throw ProfileError.invalid(
                 "schema, scope, or producer revisions changed"
+            )
+        }
+        guard isLowercaseHex(profile.workRootSHA256, count: 64) else {
+            throw ProfileError.invalid(
+                "workRootSHA256 must be a lowercase SHA-256 digest"
             )
         }
         let hashes = [
@@ -1183,6 +1300,19 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                         + "or two-sided"
                 )
             }
+        }
+    }
+
+    private func requireWorkRootBinding(
+        _ profile: ExternalProfile,
+        requestedWorkRoot: URL
+    ) throws {
+        guard profile.workRootSHA256
+                == workRootSHA256(requestedWorkRoot) else {
+            throw ProfileError.invalid(
+                "reviewed profile work-root SHA-256 does not match "
+                    + "the configured canonical work root"
+            )
         }
     }
 
@@ -1424,6 +1554,15 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
         }.joined()
     }
 
+    private func workRootSHA256(_ requestedWorkRoot: URL) -> String {
+        let canonicalCandidate = requestedWorkRoot
+            .deletingLastPathComponent()
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(requestedWorkRoot.lastPathComponent)
+            .standardizedFileURL
+        return sha256(Data(canonicalCandidate.path.utf8))
+    }
+
     private func isLowercaseHex(
         _ value: String,
         count: Int
@@ -1435,12 +1574,15 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
     }
 
     private func minimalProfile(
+        schemaVersion: Int = 2,
+        workRootSHA256: String = String(repeating: "a", count: 64),
         allowances: [ExactAllowanceProfile]
     ) -> ExternalProfile {
         let digest = String(repeating: "a", count: 64)
         return ExternalProfile(
-            schemaVersion: 1,
+            schemaVersion: schemaVersion,
             scope: Self.profileScope,
+            workRootSHA256: workRootSHA256,
             source: SourceProfile(
                 contentSHA256: digest,
                 executableSHA256: digest,
@@ -1481,6 +1623,19 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 prepare: PlayCoverService.prepareImplementationRevision
             ),
             allowances: allowances
+        )
+    }
+
+    private func minimalAllowance() -> ExactAllowanceProfile {
+        ExactAllowanceProfile(
+            id: "reviewed",
+            relativePath: "Fixture",
+            field: "inventory.size",
+            pinnedValue: "1",
+            iosUseValue: "2",
+            reason: "reviewed reason",
+            pinnedSymbol: "Pinned.symbol",
+            iosUseSymbol: "IOSUse.symbol"
         )
     }
 }

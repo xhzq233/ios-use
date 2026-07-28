@@ -125,6 +125,9 @@ fi
 if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
   fail_usage "--commit must be a lowercase 40-digit Git commit"
 fi
+if [[ "$WORK_ROOT" == *$'\n'* || "$WORK_ROOT" == *$'\r'* ]]; then
+  fail_usage "--work-root must not contain CR or LF"
+fi
 for path in \
   "$PROFILE" \
   "$SCENARIO" \
@@ -228,6 +231,31 @@ ACTUAL_PROFILE_SHA256="$(
 if [[ "$ACTUAL_PROFILE_SHA256" != "$PROFILE_SHA256" ]]; then
   echo \
     "[playcover-external-prepare-differential] ERROR: profile bytes do not match the reviewed SHA-256" \
+    >&2
+  exit 78
+fi
+WORK_ROOT_SHA256="$(
+  printf '%s' "$WORK_ROOT" |
+    /usr/bin/shasum -a 256 |
+    /usr/bin/awk '{print $1}'
+)"
+if ! jq -e '
+    .schemaVersion == 2 and
+    .scope == "external-app-structural-v2" and
+    (
+      .workRootSHA256
+      | type == "string" and test("^[0-9a-f]{64}$")
+    )
+  ' "$PROFILE" >/dev/null; then
+  echo \
+    "[playcover-external-prepare-differential] ERROR: profile must use the external-app-structural-v2 schema with a lowercase work-root SHA-256" \
+    >&2
+  exit 78
+fi
+if [[ "$(jq -r '.workRootSHA256' "$PROFILE")" \
+    != "$WORK_ROOT_SHA256" ]]; then
+  echo \
+    "[playcover-external-prepare-differential] ERROR: profile work-root SHA-256 does not match the configured canonical work root" \
     >&2
   exit 78
 fi
@@ -341,13 +369,15 @@ fi
 
 if ! jq -e \
   --arg commit "$COMMIT" \
-  --arg profile "$PROFILE_SHA256" '
+  --arg profile "$PROFILE_SHA256" \
+  --arg work_root "$WORK_ROOT_SHA256" '
     def lower_sha256: type == "string" and test("^[0-9a-f]{64}$");
-    .schemaVersion == 1 and
-    .scope == "external-app-structural-v1" and
+    .schemaVersion == 2 and
+    .scope == "external-app-structural-v2" and
     .result == "pass" and
     .repositoryCommit == $commit and
     .profileSHA256 == $profile and
+    .workRootSHA256 == $work_root and
     .originalSource.unchanged == true and
     .originalSource.inputContentSHA256 ==
       .originalSource.snapshotContentSHA256 and

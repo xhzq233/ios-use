@@ -26,7 +26,7 @@ fail_contract() {
 
 require_last_output() {
   local expected="$1"
-  if ! grep -Fq "$expected" "$TEST_TEMP/output"; then
+  if ! grep -Fq -- "$expected" "$TEST_TEMP/output"; then
     cat "$TEST_TEMP/output" >&2
     fail_contract "missing rejection evidence: $expected"
   fi
@@ -54,6 +54,31 @@ expect_status() {
     "$ENTRYPOINT" "$expected" "$description" "$@"
 }
 
+work_root_sha256() {
+  local requested="$1"
+  local parent
+  parent="$(cd "$(dirname "$requested")" && pwd -P)"
+  printf '%s' "$parent/$(basename "$requested")" |
+    /usr/bin/shasum -a 256 |
+    /usr/bin/awk '{print $1}'
+}
+
+write_profile_binding() {
+  local output="$1"
+  local schema="$2"
+  local scope="$3"
+  local digest="$4"
+  jq -n \
+    --argjson schema "$schema" \
+    --arg scope "$scope" \
+    --arg digest "$digest" \
+    '{
+      schemaVersion: $schema,
+      scope: $scope,
+      workRootSHA256: $digest
+    }' >"$output"
+}
+
 prepare_git_fixture() {
   local name="$1"
   fixture_root="$TEST_TEMP/git-$name"
@@ -64,7 +89,11 @@ prepare_git_fixture() {
     "$fixture_root/PlayTools.framework" \
     "$TEST_TEMP/git-output-$name"
   cp "$ENTRYPOINT" "$fixture_entrypoint"
-  echo '{}' >"$fixture_root/profile.json"
+  write_profile_binding \
+    "$fixture_root/profile.json" \
+    2 \
+    "external-app-structural-v2" \
+    "$(work_root_sha256 "$TEST_TEMP/git-output-$name/work-root")"
   echo '{}' >"$fixture_root/scenario.json"
   echo runtime >"$fixture_root/IOSUsePlayRuntime.framework/input"
   echo playtools >"$fixture_root/PlayTools.framework/input"
@@ -104,9 +133,13 @@ work_root="$TEST_TEMP/work-root"
 attestation="$TEST_TEMP/attestation.json"
 commit="$(/usr/bin/git -C "$ROOT_DIR" rev-parse HEAD)"
 
-echo '{}' >"$profile"
 echo '{}' >"$scenario"
 mkdir "$runtime" "$playtools"
+write_profile_binding \
+  "$profile" \
+  2 \
+  "external-app-structural-v2" \
+  "$(work_root_sha256 "$work_root")"
 profile_sha256="$(
   /usr/bin/shasum -a 256 "$profile" | /usr/bin/awk '{print $1}'
 )"
@@ -146,11 +179,78 @@ expect_status 64 \
   "a non-lowercase profile digest" \
   "${invalid_profile_hash[@]}"
 
+v1_profile="$TEST_TEMP/profile-v1.json"
+write_profile_binding \
+  "$v1_profile" \
+  1 \
+  "external-app-structural-v1" \
+  "$(work_root_sha256 "$work_root")"
+v1_profile_args=("${full_args[@]}")
+v1_profile_args[1]="$v1_profile"
+v1_profile_args[3]="$(
+  /usr/bin/shasum -a 256 "$v1_profile" |
+    /usr/bin/awk '{print $1}'
+)"
+expect_status 78 \
+  "a schema-v1 profile" \
+  "${v1_profile_args[@]}"
+require_last_output \
+  "profile must use the external-app-structural-v2 schema"
+
+malformed_work_root_profile="$TEST_TEMP/profile-malformed-work-root.json"
+write_profile_binding \
+  "$malformed_work_root_profile" \
+  2 \
+  "external-app-structural-v2" \
+  "ABC"
+malformed_work_root_args=("${full_args[@]}")
+malformed_work_root_args[1]="$malformed_work_root_profile"
+malformed_work_root_args[3]="$(
+  /usr/bin/shasum -a 256 "$malformed_work_root_profile" |
+    /usr/bin/awk '{print $1}'
+)"
+expect_status 78 \
+  "a malformed work-root digest" \
+  "${malformed_work_root_args[@]}"
+require_last_output "with a lowercase work-root SHA-256"
+
+mismatched_work_root_profile="$TEST_TEMP/profile-mismatched-work-root.json"
+write_profile_binding \
+  "$mismatched_work_root_profile" \
+  2 \
+  "external-app-structural-v2" \
+  "$(printf 'b%.0s' {1..64})"
+mismatched_work_root_args=("${full_args[@]}")
+mismatched_work_root_args[1]="$mismatched_work_root_profile"
+mismatched_work_root_args[3]="$(
+  /usr/bin/shasum -a 256 "$mismatched_work_root_profile" |
+    /usr/bin/awk '{print $1}'
+)"
+expect_status 78 \
+  "a profile bound to another work root" \
+  "${mismatched_work_root_args[@]}"
+require_last_output \
+  "profile work-root SHA-256 does not match the configured canonical work root"
+
 invalid_commit=("${full_args[@]}")
 invalid_commit[15]="ABC"
 expect_status 64 \
   "a non-lowercase commit identity" \
   "${invalid_commit[@]}"
+
+lf_work_root=("${full_args[@]}")
+lf_work_root[11]="$TEST_TEMP/work"$'\n'"root"
+expect_status 64 \
+  "a work root containing LF" \
+  "${lf_work_root[@]}"
+require_last_output "--work-root must not contain CR or LF"
+
+cr_work_root=("${full_args[@]}")
+cr_work_root[11]="$TEST_TEMP/work"$'\r'"root"
+expect_status 64 \
+  "a work root containing CR" \
+  "${cr_work_root[@]}"
+require_last_output "--work-root must not contain CR or LF"
 
 relative_profile=("${full_args[@]}")
 relative_profile[1]="profile.json"
@@ -213,6 +313,16 @@ expect_entry_status \
   "${fixture_args[@]}"
 require_last_output "checkout has untracked non-ignored files"
 
+prepare_git_fixture same-root
+same_root_args=("${fixture_args[@]}")
+same_root_args[15]="0000000000000000000000000000000000000000"
+expect_entry_status \
+  "$fixture_entrypoint" 78 \
+  "the exact profile-bound canonical work root" \
+  "${same_root_args[@]}"
+require_last_output \
+  "--commit does not identify the current checkout HEAD"
+
 if ! grep -Fq \
   '/usr/bin/env -i' \
   "$ENTRYPOINT" ||
@@ -220,7 +330,10 @@ if ! grep -Fq \
   'PlayCoverExternalPrepareDifferentialTests/testConfiguredExternalAppPassesReviewedStructuralProfile' \
   "$ENTRYPOINT" ||
    ! grep -Fq \
-  '.scope == "external-app-structural-v1"' \
+  '.scope == "external-app-structural-v2"' \
+  "$ENTRYPOINT" ||
+   ! grep -Fq \
+  '.workRootSHA256 == $work_root' \
   "$ENTRYPOINT" ||
    ! grep -Fq \
   '.differential.scope == "external-app"' \

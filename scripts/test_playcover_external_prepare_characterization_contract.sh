@@ -29,7 +29,7 @@ fail_contract() {
 
 require_last_output() {
   local expected="$1"
-  if ! grep -Fq "$expected" "$TEST_TEMP/output"; then
+  if ! grep -Fq -- "$expected" "$TEST_TEMP/output"; then
     cat "$TEST_TEMP/output" >&2
     fail_contract "missing rejection evidence: $expected"
   fi
@@ -157,6 +157,20 @@ expect_status 64 \
   "a non-lowercase commit identity" \
   "${invalid_commit[@]}"
 
+lf_work_root=("${full_args[@]}")
+lf_work_root[7]="$TEST_TEMP/work"$'\n'"root"
+expect_status 64 \
+  "a work root containing LF" \
+  "${lf_work_root[@]}"
+require_last_output "--work-root must not contain CR or LF"
+
+cr_work_root=("${full_args[@]}")
+cr_work_root[7]="$TEST_TEMP/work"$'\r'"root"
+expect_status 64 \
+  "a work root containing CR" \
+  "${cr_work_root[@]}"
+require_last_output "--work-root must not contain CR or LF"
+
 for value_index in 1 3 5 7 9; do
   relative=("${full_args[@]}")
   relative[value_index]="relative-input"
@@ -219,9 +233,16 @@ require_last_output "checkout has untracked non-ignored files"
 expected_filter="PlayCoverExternalPrepareDifferentialTests/testConfiguredExternalAppWritesDiagnosticCharacterization"
 if [[ "$(grep -Fc -- '--filter "$XCTEST_FILTER"' "$ENTRYPOINT")" != "1" ]] ||
    ! grep -Fq "XCTEST_FILTER=\"$expected_filter\"" "$ENTRYPOINT" ||
-   ! grep -Fq "/usr/bin/env -i" "$ENTRYPOINT"; then
+   ! grep -Fq "/usr/bin/env -i" "$ENTRYPOINT" ||
+   ! grep -Fq ".schemaVersion == 2" "$ENTRYPOINT" ||
+   ! grep -Fq \
+     '.scope == "external-app-structural-v2"' \
+     "$ENTRYPOINT" ||
+   ! grep -Fq \
+     '.workRootSHA256 == $work_root' \
+     "$ENTRYPOINT"; then
   fail_contract \
-    "entrypoint lost its cleared environment or fixed XCTest"
+    "entrypoint lost its cleared environment, fixed XCTest, or v2 work-root binding"
 fi
 
 diagnostic_body="$(
@@ -240,6 +261,12 @@ if ! grep -Fq \
      <<<"$diagnostic_body"; then
   fail_contract \
     "diagnostic XCTest lost its typed raw-difference call"
+fi
+if grep -Eq \
+  'removeOwnedWorkRoot|removeItem\(at: (requestedWorkRoot|workRoot)' \
+  <<<"$diagnostic_body"; then
+  fail_contract \
+    "diagnostic XCTest must retain its work root for operator review"
 fi
 all_conclusion_calls="$(
   grep -Ec \
@@ -269,7 +296,8 @@ for recursive_guard in \
   "def all_key_names:" \
   "def all_string_values:" \
   "pass|profile|allowance|attestation" \
-  'test("reason|symbol")'; do
+  'test("reason|symbol")' \
+  'contains($work_root_path)'; do
   if ! grep -Fq "$recursive_guard" "$ENTRYPOINT"; then
     fail_contract \
       "report validation lost recursive guard: $recursive_guard"
@@ -297,6 +325,30 @@ for forbidden in pass profile allowance attestation; do
       "recursive scalar guard accepted nested forbidden word: $forbidden"
   fi
 done
+
+work_root_leak="$TEST_TEMP/nested-work-root-leak.json"
+jq -n \
+  --arg work_root_path "$work_root" \
+  '{
+    outer: {
+      ($work_root_path + "/nested-key"): "key leak",
+      nested: (
+        "prefix:" + $work_root_path + ":suffix"
+      )
+    }
+  }' >"$work_root_leak"
+if jq -e \
+  --arg work_root_path "$work_root" '
+    def all_key_names:
+      [paths | .[] | select(type == "string")];
+    def all_string_values:
+      [.. | select(type == "string")];
+    all_key_names + all_string_values
+    | all(.[]; contains($work_root_path) | not)
+  ' "$work_root_leak" >/dev/null; then
+  fail_contract \
+    "recursive scalar guard accepted the canonical work-root path"
+fi
 
 echo \
   "[playcover-external-characterization-contract] required-input, freshness, confinement, clean-HEAD, fixed-XCTest, and recursive-report negative cases OK"

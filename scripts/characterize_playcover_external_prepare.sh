@@ -107,6 +107,9 @@ done
 if [[ ! "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
   fail_usage "--commit must be a lowercase 40-digit Git commit"
 fi
+if [[ "$WORK_ROOT" == *$'\n'* || "$WORK_ROOT" == *$'\r'* ]]; then
+  fail_usage "--work-root must not contain CR or LF"
+fi
 for path in \
   "$SCENARIO" \
   "$RUNTIME" \
@@ -186,6 +189,11 @@ RUNTIME="$(cd "$RUNTIME" && pwd -P)"
 PLAYTOOLS="$(cd "$PLAYTOOLS" && pwd -P)"
 WORK_PARENT="$(cd "$(dirname "$WORK_ROOT")" && pwd -P)"
 WORK_ROOT="$WORK_PARENT/$(basename "$WORK_ROOT")"
+WORK_ROOT_SHA256="$(
+  printf '%s' "$WORK_ROOT" |
+    /usr/bin/shasum -a 256 |
+    /usr/bin/awk '{print $1}'
+)"
 REPORT_PARENT="$(cd "$(dirname "$REPORT_PATH")" && pwd -P)"
 REPORT_PATH="$REPORT_PARENT/$(basename "$REPORT_PATH")"
 
@@ -321,7 +329,9 @@ if [[ "$(
 fi
 
 if ! jq -e \
-  --arg commit "$COMMIT" '
+  --arg commit "$COMMIT" \
+  --arg work_root "$WORK_ROOT_SHA256" \
+  --arg work_root_path "$WORK_ROOT" '
     def lower_sha256:
       type == "string" and test("^[0-9a-f]{64}$");
     def forbidden_word:
@@ -331,10 +341,12 @@ if ! jq -e \
       [paths | .[] | select(type == "string")];
     def all_string_values:
       [.. | select(type == "string")];
-    .schemaVersion == 1 and
+    .schemaVersion == 2 and
+    .scope == "external-app-structural-v2" and
     .kind == "playcover-external-prepare-characterization" and
     .disposition == "diagnostic-only" and
     .repositoryCommit == $commit and
+    .workRootSHA256 == $work_root and
     (.source.contentSHA256 | lower_sha256) and
     (.source.executableSHA256 | lower_sha256) and
     (.source.inventorySelectorsSHA256 | lower_sha256) and
@@ -424,6 +436,10 @@ if ! jq -e \
     (
       all_key_names + all_string_values
       | all(.[]; forbidden_word | not)
+    ) and
+    (
+      all_key_names + all_string_values
+      | all(.[]; contains($work_root_path) | not)
     )
   ' "$CANDIDATE_PATH" >/dev/null; then
   echo \
