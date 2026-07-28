@@ -42,8 +42,9 @@ static NSInteger IOSUsePlaySafeAreaRuntimeMajorVersion(void) {
     return UIDevice.currentDevice.systemVersion.integerValue;
 }
 
-static BOOL IOSUsePlaySafeAreaRuntimeMajorIsValidated(
-    NSInteger majorVersion
+static BOOL IOSUsePlaySafeAreaProfileForRuntimeMajor(
+    NSInteger majorVersion,
+    UIEdgeInsets * _Nullable insets
 ) {
     // iPhone16,2 shipped on iOS 17. The portrait base geometry is unchanged
     // on the iOS 17, iOS 18, and iOS 26 runtime families we support. Keep the
@@ -53,18 +54,26 @@ static BOOL IOSUsePlaySafeAreaRuntimeMajorIsValidated(
         case 17:
         case 18:
         case 26:
+            if (insets != NULL) {
+                *insets = UIEdgeInsetsMake(
+                    IOSUsePlayDeviceSafeAreaTop,
+                    IOSUsePlayDeviceSafeAreaLeft,
+                    IOSUsePlayDeviceSafeAreaBottom,
+                    IOSUsePlayDeviceSafeAreaRight
+                );
+            }
             return YES;
         default:
             return NO;
     }
 }
 
-static UIEdgeInsets IOSUsePlaySafeAreaDeviceInsets(void) {
-    return UIEdgeInsetsMake(
-        IOSUsePlayDeviceSafeAreaTop,
-        IOSUsePlayDeviceSafeAreaLeft,
-        IOSUsePlayDeviceSafeAreaBottom,
-        IOSUsePlayDeviceSafeAreaRight
+static BOOL IOSUsePlaySafeAreaCurrentRuntimeProfile(
+    UIEdgeInsets * _Nullable insets
+) {
+    return IOSUsePlaySafeAreaProfileForRuntimeMajor(
+        IOSUsePlaySafeAreaRuntimeMajorVersion(),
+        insets
     );
 }
 
@@ -274,9 +283,15 @@ static UIEdgeInsets IOSUsePlaySafeAreaProviderHook(
             UISceneActivationStateForegroundActive) {
         return original;
     }
+    UIEdgeInsets deviceInsets = UIEdgeInsetsZero;
+    if (!IOSUsePlaySafeAreaCurrentRuntimeProfile(
+            &deviceInsets
+        )) {
+        return original;
+    }
     return IOSUsePlaySafeAreaMaximumInsets(
         original,
-        IOSUsePlaySafeAreaDeviceInsets()
+        deviceInsets
     );
 }
 
@@ -518,7 +533,11 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
                 YES
             );
     }
-    UIEdgeInsets deviceSafeArea = IOSUsePlaySafeAreaDeviceInsets();
+    UIEdgeInsets deviceSafeArea = UIEdgeInsetsZero;
+    BOOL runtimeProfileValidated =
+        IOSUsePlaySafeAreaCurrentRuntimeProfile(
+            &deviceSafeArea
+        );
     UIEdgeInsets expectedWindowSafeArea =
         IOSUsePlaySafeAreaMaximumInsets(
             originalProviderSafeArea,
@@ -568,9 +587,7 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
         window != nil &&
         selectedScene == scene &&
         selectedWindow == window &&
-        IOSUsePlaySafeAreaRuntimeMajorIsValidated(
-            IOSUsePlaySafeAreaRuntimeMajorVersion()
-        ) &&
+        runtimeProfileValidated &&
         compatibilityReady &&
         deviceContractReady &&
         IOSUsePlaySafeAreaInsetsMatch(
@@ -600,11 +617,7 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
             @"systemMajor":
                 @(IOSUsePlaySafeAreaRuntimeMajorVersion()),
             @"validatedSystemMajors": @[@17, @18, @26],
-            @"validated": @(
-                IOSUsePlaySafeAreaRuntimeMajorIsValidated(
-                    IOSUsePlaySafeAreaRuntimeMajorVersion()
-                )
-            ),
+            @"validated": @(runtimeProfileValidated),
             @"uikitBundleVersion": [[NSBundle
                 bundleForClass:UIWindow.class]
                 objectForInfoDictionaryKey:@"CFBundleVersion"] ?:
@@ -681,24 +694,12 @@ BOOL IOSUsePlaySafeAreaCompatibilityReconcile(
     NSError * _Nullable * _Nullable error
 ) {
     NSCAssert(NSThread.isMainThread, @"safe-area reconcile is main-only");
-    if (!IOSUsePlaySafeAreaInstallHook()) {
-        IOSUsePlaySafeAreaBind(nil, nil);
-        IOSUsePlaySafeAreaStage = @"failed";
-        if (error != NULL) {
-            *error = [NSError
-                errorWithDomain:IOSUsePlaySafeAreaErrorDomain
-                           code:1
-                       userInfo:@{
-                NSLocalizedDescriptionKey:
-                    IOSUsePlaySafeAreaFailure ?:
-                        @"safe-area compatibility hook failed",
-            }];
-        }
-        return NO;
-    }
     NSInteger runtimeMajor =
         IOSUsePlaySafeAreaRuntimeMajorVersion();
-    if (!IOSUsePlaySafeAreaRuntimeMajorIsValidated(runtimeMajor)) {
+    if (!IOSUsePlaySafeAreaProfileForRuntimeMajor(
+            runtimeMajor,
+            NULL
+        )) {
         IOSUsePlaySafeAreaBind(nil, nil);
         IOSUsePlaySafeAreaStage = @"failed";
         IOSUsePlaySafeAreaFailureCode =
@@ -715,6 +716,21 @@ BOOL IOSUsePlaySafeAreaCompatibilityReconcile(
                        userInfo:@{
                 NSLocalizedDescriptionKey:
                     IOSUsePlaySafeAreaFailure,
+            }];
+        }
+        return NO;
+    }
+    if (!IOSUsePlaySafeAreaInstallHook()) {
+        IOSUsePlaySafeAreaBind(nil, nil);
+        IOSUsePlaySafeAreaStage = @"failed";
+        if (error != NULL) {
+            *error = [NSError
+                errorWithDomain:IOSUsePlaySafeAreaErrorDomain
+                           code:1
+                       userInfo:@{
+                NSLocalizedDescriptionKey:
+                    IOSUsePlaySafeAreaFailure ?:
+                        @"safe-area compatibility hook failed",
             }];
         }
         return NO;
@@ -812,9 +828,13 @@ BOOL IOSUsePlaySafeAreaMethodHasABIForTesting(
     );
 }
 
-BOOL IOSUsePlaySafeAreaRuntimeMajorIsValidatedForTesting(
-    NSInteger majorVersion
+BOOL IOSUsePlaySafeAreaProfileForRuntimeMajorForTesting(
+    NSInteger majorVersion,
+    UIEdgeInsets * _Nullable insets
 ) {
-    return IOSUsePlaySafeAreaRuntimeMajorIsValidated(majorVersion);
+    return IOSUsePlaySafeAreaProfileForRuntimeMajor(
+        majorVersion,
+        insets
+    );
 }
 #endif

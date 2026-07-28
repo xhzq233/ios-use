@@ -14,8 +14,9 @@ extern BOOL IOSUsePlaySafeAreaMethodHasABIForTesting(
     const char *lastArgumentType,
     unsigned int argumentCount
 );
-extern BOOL IOSUsePlaySafeAreaRuntimeMajorIsValidatedForTesting(
-    NSInteger majorVersion
+extern BOOL IOSUsePlaySafeAreaProfileForRuntimeMajorForTesting(
+    NSInteger majorVersion,
+    UIEdgeInsets * _Nullable insets
 );
 
 @interface IOSUsePlaySafeAreaABIFixture : NSObject
@@ -99,23 +100,45 @@ int main(void) {
             @"compatibility helper shrank a larger provider inset"
         );
         for (NSNumber *major in @[@17, @18, @26]) {
+            UIEdgeInsets profile = UIEdgeInsetsZero;
             passed &= IOSUsePlaySafeAreaRequire(
-                IOSUsePlaySafeAreaRuntimeMajorIsValidatedForTesting(
-                    major.integerValue
+                IOSUsePlaySafeAreaProfileForRuntimeMajorForTesting(
+                    major.integerValue,
+                    &profile
                 ),
                 [NSString stringWithFormat:
                     @"supported runtime major %@ was rejected",
                     major
                 ]
             );
+            passed &= IOSUsePlaySafeAreaRequire(
+                IOSUsePlaySafeAreaInsetsEqual(profile, device),
+                [NSString stringWithFormat:
+                    @"supported runtime major %@ returned the wrong insets",
+                    major
+                ]
+            );
         }
         for (NSNumber *major in @[@16, @19, @27]) {
+            UIEdgeInsets profile =
+                UIEdgeInsetsMake(1, 2, 3, 4);
             passed &= IOSUsePlaySafeAreaRequire(
-                !IOSUsePlaySafeAreaRuntimeMajorIsValidatedForTesting(
-                    major.integerValue
+                !IOSUsePlaySafeAreaProfileForRuntimeMajorForTesting(
+                    major.integerValue,
+                    &profile
                 ),
                 [NSString stringWithFormat:
                     @"unverified runtime major %@ was accepted",
+                    major
+                ]
+            );
+            passed &= IOSUsePlaySafeAreaRequire(
+                IOSUsePlaySafeAreaInsetsEqual(
+                    profile,
+                    UIEdgeInsetsMake(1, 2, 3, 4)
+                ),
+                [NSString stringWithFormat:
+                    @"unverified runtime major %@ mutated the output",
                     major
                 ]
             );
