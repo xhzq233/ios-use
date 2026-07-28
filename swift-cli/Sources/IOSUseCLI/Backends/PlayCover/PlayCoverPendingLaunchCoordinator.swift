@@ -504,8 +504,12 @@ enum PlayCoverPendingLaunchCoordinator {
             )
         var authenticatedOwner:
             PlayCoverPendingLaunchRecovery.Owner?
-        if authenticateCandidates,
-           case .complete = observation.census {
+        if authenticateCandidates {
+            // Census completeness is required to prove that no matching
+            // process exists. It is not required for positive ownership:
+            // every observed candidate must still pass stable PID/birth/path
+            // checks plus the Runtime socket's peer and identified response
+            // authentication.
             switch PlayCoverPendingLaunchRecovery
                 .authenticateCandidateOwner(
                     evidence: evidence,

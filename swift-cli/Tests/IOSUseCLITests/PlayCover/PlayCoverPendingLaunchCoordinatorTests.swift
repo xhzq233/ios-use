@@ -420,6 +420,91 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         )
     }
 
+    func testRecoverBeforeStartAuthenticatesExactCandidateDespiteIncompleteCensus()
+        throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        configureManifestValidation(fixture)
+        let boot = UUID().uuidString.lowercased()
+        _ = try advanceToSubmissionArmed(
+            fixture,
+            bootSessionUUID: boot
+        )
+        let pid: Int32 = 9_211
+        let birth: UInt64 = 9_212
+        PlayCoverPendingLaunchRecovery
+            .bootSessionUUIDOverrideForTesting = { boot }
+        PlayCoverPendingLaunchRecovery
+            .exactExecutableCensusOverrideForTesting = { path in
+                XCTAssertEqual(
+                    path,
+                    fixture.manifest.executablePath
+                )
+                return .incomplete(
+                    candidates: [
+                        .init(
+                            pid: pid,
+                            processBirthMicroseconds: birth
+                        ),
+                    ],
+                    reason:
+                        "an unrelated same-UID process was unreadable"
+                )
+            }
+        PlayCoverPendingLaunchRecovery
+            .ownedProcessStateOverrideForTesting = { candidatePID in
+                XCTAssertEqual(candidatePID, pid)
+                return .running(
+                    executablePath:
+                        fixture.manifest.executablePath,
+                    processBirthMicroseconds: birth
+                )
+            }
+        PlayCoverPendingLaunchRecovery
+            .candidateAuthenticationOverrideForTesting = {
+                candidate,
+                evidence in
+                XCTAssertEqual(candidate.pid, pid)
+                XCTAssertEqual(
+                    evidence.sessionID,
+                    fixture.intent.sessionID
+                )
+                return true
+            }
+        var terminated:
+            PlayCoverService.LaunchedApplicationIdentity?
+        PlayCoverService.failedLaunchTerminatorOverrideForTesting = {
+            identity,
+            manifest in
+            XCTAssertEqual(manifest, fixture.manifest)
+            terminated = identity
+        }
+
+        try PlayCoverPendingLaunchCoordinator.recoverBeforeStart(
+            paths: fixture.paths
+        )
+
+        XCTAssertEqual(terminated?.pid, pid)
+        XCTAssertEqual(
+            terminated?.processStartTimeMicroseconds,
+            birth
+        )
+        XCTAssertEqual(
+            terminated?.source,
+            .authenticatedRuntime
+        )
+        XCTAssertNil(
+            try PlayCoverPendingLaunchStore.load(
+                paths: fixture.paths
+            )
+        )
+        XCTAssertNil(
+            try SessionService.readDriverLockInfo(
+                paths: fixture.paths
+            )
+        )
+    }
+
     func testTerminalCallbackAndCompleteEmptyCensusCanClean()
         throws {
         let fixture = try makeFixture()
