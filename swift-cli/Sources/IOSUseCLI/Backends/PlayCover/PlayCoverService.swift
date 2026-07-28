@@ -130,6 +130,8 @@ public enum PlayCoverService {
         ((LaunchIntegrityEvent) throws -> Void)?
     static var generationKeyComputationObserverForTesting:
         (() -> Void)?
+    static var manifestValidationObserverForTesting:
+        (() -> Void)?
     private static let fastVerifyHashQueue = DispatchQueue(
         label: "com.iosuse.playcover.fast-verify-hash",
         qos: .userInitiated
@@ -850,8 +852,7 @@ public enum PlayCoverService {
     }
 
     static func launchVerified(
-        manifest: PlayCoverPrepareManifest,
-        generationIdentity: PlayCoverGenerationIdentity? = nil,
+        validatedManifest: PlayCoverValidatedPreparedManifest,
         launchCapability: FastVerifiedLaunchCapability,
         sessionID: String,
         runtimeSocketPath: String,
@@ -861,6 +862,7 @@ public enum PlayCoverService {
         timeout: Double = 15
     ) throws -> PlayCoverLaunchIdentity {
         launchPhaseTiming = .empty
+        let manifest = validatedManifest.manifest
         guard !sessionID.isEmpty,
               sessionID.utf8.count <= 128 else {
             throw PlayCoverBackendError.launchFailed(
@@ -872,15 +874,6 @@ public enum PlayCoverService {
                 "timeout must be in (0, 60] seconds"
             )
         }
-        let app = URL(
-            fileURLWithPath: manifest.preparedAppPath,
-            isDirectory: true
-        ).standardizedFileURL
-        _ = try validateManifest(
-            manifest,
-            appURL: app,
-            expectedGenerationIdentity: generationIdentity
-        )
         let expectedRuntimeSocketPath =
             try PlayCoverSessionService.expectedRuntimeSocketPath(
                 sessionID: sessionID,
@@ -1721,6 +1714,7 @@ public enum PlayCoverService {
         expectedGenerationIdentity:
             PlayCoverGenerationIdentity? = nil
     ) throws -> PlayCoverGenerationIdentity {
+        manifestValidationObserverForTesting?()
         guard manifest.schemaVersion == 3,
               manifest.backend == "playcover-headless",
               manifest.prepareRevision == prepareImplementationRevision,

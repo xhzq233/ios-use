@@ -368,9 +368,7 @@ enum PlayCoverSessionService {
                 let identity: PlayCoverLaunchIdentity
                 do {
                     identity = try PlayCoverService.launchVerified(
-                        manifest: verifiedManifest,
-                        generationIdentity:
-                            validatedManifest.generationIdentity,
+                        validatedManifest: validatedManifest,
                         launchCapability: launchCapability,
                         sessionID: sessionID,
                         runtimeSocketPath: socketPath,

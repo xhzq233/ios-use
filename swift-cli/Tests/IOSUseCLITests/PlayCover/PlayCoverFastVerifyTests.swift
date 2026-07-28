@@ -17,6 +17,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         #endif
         PlayCoverService
             .generationKeyComputationObserverForTesting = nil
+        PlayCoverService.manifestValidationObserverForTesting = nil
         super.tearDown()
     }
 
@@ -53,20 +54,6 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
         XCTAssertEqual(explicit.generationIdentity, trusted)
         XCTAssertEqual(computationCount, 0)
-        XCTAssertNoThrow(
-            try PlayCoverService.validateManifest(
-                explicit.manifest,
-                appURL: fixture.app,
-                expectedGenerationIdentity:
-                    explicit.generationIdentity
-            )
-        )
-        XCTAssertEqual(
-            computationCount,
-            0,
-            "launch-time structural validation must carry the "
-                + "fast-verified identity instead of deriving it again"
-        )
 
         let differentPlan = try PlayCoverService.makePreparationPlan(
             source: PlayCoverService.inspectPreparationSource(
@@ -99,6 +86,57 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             0,
             "mismatched trusted evidence must fail by field comparison "
                 + "without silently deriving a replacement key"
+        )
+    }
+
+    func testLaunchVerifiedConsumesValidatedManifestWithoutRevalidation()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        Shell.runResultOverrideForTesting = {
+            _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+        var validationCount = 0
+        PlayCoverService.manifestValidationObserverForTesting = {
+            validationCount += 1
+        }
+        let acquired =
+            try PlayCoverService.acquireFastVerifiedLaunchCapability(
+                appPath: fixture.app.path,
+                expectedGenerationIdentity: nil
+            )
+        defer { acquired.capability.close() }
+        XCTAssertEqual(validationCount, 1)
+        var timing = PlayCoverLaunchPhaseTiming.empty
+
+        XCTAssertThrowsError(
+            try PlayCoverService.launchVerified(
+                validatedManifest: acquired.evidence,
+                launchCapability: acquired.capability,
+                sessionID: "validated-manifest-single-pass",
+                runtimeSocketPath: "/definitely/not-the-runtime.sock",
+                launchPhaseTiming: &timing,
+                timeout: 1
+            )
+        ) { error in
+            guard case .terminateFailed(let message) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains(
+                    "prepared App path does not identify"
+                ),
+                message
+            )
+        }
+        XCTAssertEqual(
+            validationCount,
+            1,
+            "launch must consume the fast-validated token without "
+                + "revalidating its manifest"
         )
     }
 
