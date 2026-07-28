@@ -1033,6 +1033,254 @@ final class PlayCoverCoreTests: XCTestCase {
         }
     }
 
+    func testLegacyRuntimeHelloUsesRemainingDeadlineExactlyOnce()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let manifest = try makeManifest(
+            inspection: inspection,
+            preparedAppPath: fixture.app.path,
+            generationKey: String(repeating: "e", count: 64)
+        )
+        let launchAliasPath = fixture.root
+            .appendingPathComponent("Launch.app").path
+        let identity =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: getpid(),
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: launchAliasPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 10,
+                source: .observedCandidate
+            )
+        let legacyPing = PlayCoverRuntimePingPayload(
+            pid: nil,
+            bundleIdentifier: nil,
+            executablePath: nil,
+            pong: true
+        )
+
+        var attempted = false
+        var pingTimeouts: [TimeInterval] = []
+        var helloTimeouts: [TimeInterval] = []
+        var nowIndex = 0
+        let nowValues = [100.0, 100.25]
+        XCTAssertTrue(
+            PlayCoverService.authenticateRuntimeLaunchCandidate(
+                identity,
+                runtimeSocketPath: "/unused/runtime.sock",
+                sessionID: "legacy-session",
+                manifest: manifest,
+                launchAliasPath: launchAliasPath,
+                deadline: 101,
+                legacyHelloAttempted: &attempted,
+                pingOverride: {
+                    pingTimeouts.append($0)
+                    return legacyPing
+                },
+                helloOverride: {
+                    helloTimeouts.append($0)
+                },
+                now: {
+                    let value = nowValues[
+                        min(nowIndex, nowValues.count - 1)
+                    ]
+                    nowIndex += 1
+                    return value
+                }
+            )
+        )
+        XCTAssertTrue(attempted)
+        XCTAssertEqual(pingTimeouts.count, 1)
+        XCTAssertEqual(helloTimeouts.count, 1)
+        XCTAssertEqual(nowIndex, 2)
+        let pingTimeout = try XCTUnwrap(pingTimeouts.first)
+        let helloTimeout = try XCTUnwrap(helloTimeouts.first)
+        XCTAssertEqual(pingTimeout, 0.05, accuracy: 0.000_001)
+        XCTAssertEqual(helloTimeout, 0.75, accuracy: 0.000_001)
+
+        XCTAssertFalse(
+            PlayCoverService.authenticateRuntimeLaunchCandidate(
+                identity,
+                runtimeSocketPath: "/unused/runtime.sock",
+                sessionID: "legacy-session",
+                manifest: manifest,
+                launchAliasPath: launchAliasPath,
+                deadline: 101,
+                legacyHelloAttempted: &attempted,
+                pingOverride: { _ in legacyPing },
+                helloOverride: { _ in
+                    XCTFail("legacy hello must not be queued twice")
+                },
+                now: { 100 }
+            )
+        )
+        XCTAssertEqual(helloTimeouts.count, 1)
+
+        var failedAttempted = false
+        var failedHelloCount = 0
+        func authenticateWithFailingHello() -> Bool {
+            PlayCoverService.authenticateRuntimeLaunchCandidate(
+                identity,
+                runtimeSocketPath: "/unused/runtime.sock",
+                sessionID: "legacy-session",
+                manifest: manifest,
+                launchAliasPath: launchAliasPath,
+                deadline: 101,
+                legacyHelloAttempted: &failedAttempted,
+                pingOverride: { _ in legacyPing },
+                helloOverride: { _ in
+                    failedHelloCount += 1
+                    throw NSError(
+                        domain: "PlayCoverCoreTests",
+                        code: 1
+                    )
+                },
+                now: { 100 }
+            )
+        }
+        XCTAssertFalse(authenticateWithFailingHello())
+        XCTAssertFalse(authenticateWithFailingHello())
+        XCTAssertTrue(failedAttempted)
+        XCTAssertEqual(failedHelloCount, 1)
+
+        var exhaustedAttempted = false
+        var exhaustedNowIndex = 0
+        let exhaustedNowValues = [100.0, 101.0]
+        XCTAssertFalse(
+            PlayCoverService.authenticateRuntimeLaunchCandidate(
+                identity,
+                runtimeSocketPath: "/unused/runtime.sock",
+                sessionID: "legacy-session",
+                manifest: manifest,
+                launchAliasPath: launchAliasPath,
+                deadline: 101,
+                legacyHelloAttempted: &exhaustedAttempted,
+                pingOverride: { _ in legacyPing },
+                helloOverride: { _ in
+                    XCTFail("expired fallback must not send hello")
+                },
+                now: {
+                    let value = exhaustedNowValues[
+                        min(
+                            exhaustedNowIndex,
+                            exhaustedNowValues.count - 1
+                        )
+                    ]
+                    exhaustedNowIndex += 1
+                    return value
+                }
+            )
+        )
+        XCTAssertFalse(exhaustedAttempted)
+        XCTAssertEqual(exhaustedNowIndex, 2)
+
+        var pingFailureAttempted = false
+        XCTAssertFalse(
+            PlayCoverService.authenticateRuntimeLaunchCandidate(
+                identity,
+                runtimeSocketPath: "/unused/runtime.sock",
+                sessionID: "legacy-session",
+                manifest: manifest,
+                launchAliasPath: launchAliasPath,
+                deadline: 101,
+                legacyHelloAttempted: &pingFailureAttempted,
+                pingOverride: { _ in
+                    throw NSError(
+                        domain: "PlayCoverCoreTests",
+                        code: 2
+                    )
+                },
+                helloOverride: { _ in
+                    XCTFail("failed ping must not send hello")
+                },
+                now: { 100 }
+            )
+        )
+        XCTAssertFalse(pingFailureAttempted)
+
+        let identifiedPing = PlayCoverRuntimePingPayload(
+            pid: identity.pid,
+            bundleIdentifier: manifest.bundleIdentifier,
+            executablePath: manifest.executablePath,
+            pong: true
+        )
+        var identifiedAttempted = false
+        XCTAssertTrue(
+            PlayCoverService.authenticateRuntimeLaunchCandidate(
+                identity,
+                runtimeSocketPath: "/unused/runtime.sock",
+                sessionID: "current-session",
+                manifest: manifest,
+                launchAliasPath: launchAliasPath,
+                deadline: 101,
+                legacyHelloAttempted: &identifiedAttempted,
+                pingOverride: { _ in identifiedPing },
+                helloOverride: { _ in
+                    XCTFail("identified ping must not use legacy hello")
+                },
+                now: { 100 }
+            )
+        )
+        XCTAssertFalse(identifiedAttempted)
+
+        let preparedIdentity =
+            PlayCoverService.LaunchedApplicationIdentity(
+                pid: identity.pid,
+                bundleIdentifier: manifest.bundleIdentifier,
+                bundleURLPath: manifest.preparedAppPath,
+                executablePath: manifest.executablePath,
+                processStartTimeMicroseconds: 10,
+                source: .observedCandidate
+            )
+        var preparedAttempted = false
+        XCTAssertFalse(
+            PlayCoverService.authenticateRuntimeLaunchCandidate(
+                preparedIdentity,
+                runtimeSocketPath: "/unused/runtime.sock",
+                sessionID: "legacy-session",
+                manifest: manifest,
+                launchAliasPath: launchAliasPath,
+                deadline: 101,
+                legacyHelloAttempted: &preparedAttempted,
+                pingOverride: { _ in legacyPing },
+                helloOverride: { _ in
+                    XCTFail(
+                        "canonical prepared path requires identified ping"
+                    )
+                },
+                now: { 100 }
+            )
+        )
+        XCTAssertFalse(preparedAttempted)
+
+        var expiredAttempted = false
+        XCTAssertFalse(
+            PlayCoverService.authenticateRuntimeLaunchCandidate(
+                identity,
+                runtimeSocketPath: "/unused/runtime.sock",
+                sessionID: "legacy-session",
+                manifest: manifest,
+                launchAliasPath: launchAliasPath,
+                deadline: 99,
+                legacyHelloAttempted: &expiredAttempted,
+                pingOverride: { _ in
+                    XCTFail("expired probe must not send ping")
+                    return legacyPing
+                },
+                helloOverride: { _ in
+                    XCTFail("expired probe must not send hello")
+                },
+                now: { 100 }
+            )
+        )
+        XCTAssertFalse(expiredAttempted)
+    }
+
     func testSessionLaunchAliasUsesPinnedTopLevelSymlinkFarm()
         throws {
         let fixture = try makeSourceApp()

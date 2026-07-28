@@ -1032,10 +1032,8 @@ public enum PlayCoverService {
             var lastError: Error?
             while ProcessInfo.processInfo.systemUptime < deadline {
                 do {
-                    let remaining = max(
-                        0.02,
+                    let remaining =
                         deadline - ProcessInfo.processInfo.systemUptime
-                    )
                     let payload = try PlayCoverRuntimeClient(
                         socketPath: runtimeSocketPath,
                         sessionID: sessionID,
@@ -4027,6 +4025,80 @@ public enum PlayCoverService {
         canonicalPath(bundleURLPath) == canonicalPath(launchAliasPath)
     }
 
+    static func authenticateRuntimeLaunchCandidate(
+        _ identity: LaunchedApplicationIdentity,
+        runtimeSocketPath: String,
+        sessionID: String,
+        manifest: PlayCoverPrepareManifest,
+        launchAliasPath: String,
+        deadline: TimeInterval,
+        legacyHelloAttempted: inout Bool,
+        pingOverride: ((TimeInterval) throws
+            -> PlayCoverRuntimePingPayload)? = nil,
+        helloOverride: ((TimeInterval) throws -> Void)? = nil,
+        now: () -> TimeInterval = {
+            ProcessInfo.processInfo.systemUptime
+        }
+    ) -> Bool {
+        func client(timeout: TimeInterval) -> PlayCoverRuntimeClient {
+            PlayCoverRuntimeClient(
+                socketPath: runtimeSocketPath,
+                sessionID: sessionID,
+                expectedPID: identity.pid,
+                expectedBundleIdentifier:
+                    manifest.bundleIdentifier,
+                expectedExecutablePath:
+                    manifest.executablePath,
+                timeoutSeconds: timeout
+            )
+        }
+
+        do {
+            let pingRemaining = deadline - now()
+            guard pingRemaining > 0 else {
+                return false
+            }
+            let pingTimeout = min(0.05, pingRemaining)
+            let ping: PlayCoverRuntimePingPayload
+            if let pingOverride {
+                ping = try pingOverride(pingTimeout)
+            } else {
+                ping = try client(timeout: pingTimeout).ping()
+            }
+            guard !ping.hasCompleteIdentity else {
+                return true
+            }
+            guard !ping.hasAnyIdentity,
+                runtimeCandidateAllowsLegacyHelloFallback(
+                    bundleURLPath: identity.bundleURLPath,
+                    launchAliasPath: launchAliasPath
+                ),
+                !legacyHelloAttempted else {
+                return false
+            }
+
+            // A pre-identified-ping Runtime reads requests on its serialized
+            // socket/FIFO worker, then waits synchronously for the App main
+            // queue to compute hello. Send exactly one fallback with the
+            // launch deadline's full remaining budget. Repeated 50 ms hello
+            // requests would keep executing after their clients timed out and
+            // starve the final ready hello behind stale FIFO work.
+            let helloRemaining = deadline - now()
+            guard helloRemaining > 0 else {
+                return false
+            }
+            legacyHelloAttempted = true
+            if let helloOverride {
+                try helloOverride(helloRemaining)
+            } else {
+                _ = try client(timeout: helloRemaining).hello()
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
     static func authenticatedRuntimeClaim(
         from candidates: [LaunchedApplicationIdentity]
     ) throws -> LaunchedApplicationIdentity? {
@@ -4347,6 +4419,7 @@ public enum PlayCoverService {
                 ownershipAndPingNanoseconds
         }
         var callbackError: Error?
+        var legacyHelloAttempted = false
         func authenticatesCurrentLaunch(
             _ identity: LaunchedApplicationIdentity
         ) -> Bool {
@@ -4364,38 +4437,15 @@ public enum PlayCoverService {
                 runtimeTransportPingNanoseconds =
                     overflow ? UInt64.max : sum
             }
-            do {
-                let runtime = PlayCoverRuntimeClient(
-                    socketPath: runtimeSocketPath,
-                    sessionID: sessionID,
-                    expectedPID: identity.pid,
-                    expectedBundleIdentifier:
-                        manifest.bundleIdentifier,
-                    expectedExecutablePath:
-                        manifest.executablePath,
-                    timeoutSeconds: min(
-                        0.05,
-                        max(
-                            0.01,
-                            deadline -
-                                ProcessInfo.processInfo.systemUptime
-                        )
-                    )
-                )
-                let ping = try runtime.ping()
-                if !ping.hasCompleteIdentity {
-                    guard runtimeCandidateAllowsLegacyHelloFallback(
-                        bundleURLPath: identity.bundleURLPath,
-                        launchAliasPath: alias.bundleURL.path
-                    ) else {
-                        return false
-                    }
-                    _ = try runtime.hello()
-                }
-                return true
-            } catch {
-                return false
-            }
+            return authenticateRuntimeLaunchCandidate(
+                identity,
+                runtimeSocketPath: runtimeSocketPath,
+                sessionID: sessionID,
+                manifest: manifest,
+                launchAliasPath: alias.bundleURL.path,
+                deadline: deadline,
+                legacyHelloAttempted: &legacyHelloAttempted
+            )
         }
         while ProcessInfo.processInfo.systemUptime < deadline {
             // A successful callback is published only after any required
