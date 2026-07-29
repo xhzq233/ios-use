@@ -97,11 +97,12 @@ The empty `UILaunchScreen` declaration is intentional. Removing it puts a
 freshly built App into the legacy 320x480 compatibility mode and must be
 rejected by the PlayCover Runtime rather than hidden by screenshot resizing.
 
-This fixture is only one part of the unified backend gate. A passing mock DOM
-or UIKit-only image is insufficient: the final PlayCover path must also prove
-real touch/input, Metal plus UIKit composition, complete uncropped App
-rendering without synthetic chrome or host decoration, signing, session
-identity, and the configured external-App live workflow.
+This fixture is only one part of the backend evidence. A passing mock DOM or
+UIKit-only image is insufficient: focused gates also cover touch/input, Metal
+plus UIKit composition, complete uncropped App rendering without synthetic
+chrome or host decoration, signing, and session identity. The external-App and
+multi-display workflows are optional additive diagnostics, not part of the
+core release gate.
 
 `runtime_socket_probe.swift` is intentionally a bounded negative-test client,
 not an automation API. The unified live gate uses it only against a fixture

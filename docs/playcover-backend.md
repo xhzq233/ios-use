@@ -162,8 +162,11 @@ Final Runtime `hello` must still pass before session commit.
 Confirmed stop and confirmed rollback remove the facade. A facade whose
 asynchronous open was submitted without yielding an owned process remains
 fail-closed so a late LaunchServices completion cannot lose its Bundle
-resources; the next CLI start uses a new session facade. Launch discovery uses
-the full validated `start --timeout` value rather than a shorter hidden
+resources; its pending journal blocks a new start until exact ownership or a
+durable terminal callback plus an empty exact-executable census proves safe
+cleanup. A cold-registration `-10670` callback may be retried only within the
+original start, using the same facade and monotonic deadline. Launch discovery
+uses the full validated `start --timeout` value rather than a shorter hidden
 deadline.
 
 Each connection carries one four-byte big-endian length-prefixed JSON request:
