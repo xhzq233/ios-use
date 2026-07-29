@@ -255,7 +255,10 @@ final class LockedDriverClientSession {
         let next: DriverCommandClient
         if info.deviceType == PlayCoverSessionService.deviceType {
             next = DriverCommandExecution.playCoverClientFactoryForTesting?(info)
-                ?? PlayCoverDriverClient(session: info)
+                ?? PlayCoverDriverClient(
+                    session: info,
+                    paths: paths
+                )
         } else {
             next = DriverCommandExecution.clientFactoryForTesting?(info)
                 ?? DriverClient(session: info, paths: paths)

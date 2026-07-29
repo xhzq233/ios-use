@@ -16,6 +16,7 @@ final class IOSUseCLITests: XCTestCase {
         DeviceService.resetCacheForTesting()
         DriverClient.usbmuxConnectorForTesting = nil
         IOSUseCLI.driverClientFactoryForTesting = nil
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = nil
         ScreenshotArtifactService.ocrRecognizerForTesting = nil
         AppLifecycleService.realDeviceRunnerForTesting = nil
         AppLifecycleService.simulatorRunnerForTesting = nil
@@ -3045,6 +3046,89 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertTrue(received.allSatisfy { $0.originalFilename == "fixture.png" })
         XCTAssertTrue(received.allSatisfy { $0.uniformTypeIdentifier == "public.png" })
         XCTAssertTrue(received.allSatisfy { $0.byteCount == 4 && $0.data == bytes })
+    }
+
+    func testMediaImportRoutesActivePlayCoverSessionToHostClient()
+        throws
+    {
+        let root =
+            "/tmp/iu-pcm-\(UUID().uuidString.prefix(8).lowercased())"
+        try FileManager.default.createDirectory(
+            atPath: root,
+            withIntermediateDirectories: true
+        )
+        let source = URL(fileURLWithPath: root)
+            .appendingPathComponent("fixture.png")
+        let bytes = Data([0x89, 0x50, 0x4e, 0x47])
+        try bytes.write(to: source)
+        let paths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": root]
+        )
+        let sessionID = "media-session"
+        let generationKey = "generation"
+        let appPath =
+            "\(paths.playcoverPrepared)/\(generationKey)/Media.app"
+        try FileManager.default.createDirectory(
+            atPath: appPath,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverRun,
+            withIntermediateDirectories: true
+        )
+        XCTAssertEqual(Darwin.chmod(paths.playcoverRun, 0o700), 0)
+        try SessionService.writeDriverLock(
+            info: SessionService.Info(
+                udid: "playcover:com.example.media",
+                deviceName: "iPhone16,2",
+                deviceVersion: "18.7",
+                deviceType: PlayCoverSessionService.deviceType,
+                startedAt: 1,
+                runnerPid: 42,
+                startMode: PlayCoverSessionService.deviceType,
+                sessionIdentifier: sessionID,
+                bundleId: "com.example.media",
+                playCoverAppPath: appPath,
+                playCoverExecutablePath:
+                    "\(appPath)/Media",
+                playCoverGenerationKey: generationKey,
+                playCoverRuntimeSocketPath:
+                    try paths.playCoverRuntimeSocketPath(
+                        sessionID: sessionID
+                    )
+            ),
+            paths: paths
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        var received: ForyMediaImportArgs?
+        IOSUseCLI.playCoverDriverClientFactoryForTesting = { _ in
+            FakeDriverCommandClient(mediaImportHandler: {
+                received = $0
+                return ForyMediaImportPayload(
+                    kind: $0.kind,
+                    originalFilename: $0.originalFilename,
+                    byteCount: $0.byteCount,
+                    assetLocalIdentifier: "playcover/asset",
+                    permissionPromptHandled: false
+                )
+            })
+        }
+
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root]
+        ).run(arguments: ["media", "import", source.path])
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertEqual(
+            result.stdout,
+            "Imported photo fixture.png "
+                + "(4 bytes, asset playcover/asset)\n"
+        )
+        XCTAssertEqual(received?.data, bytes)
+        XCTAssertEqual(received?.uniformTypeIdentifier, "public.png")
     }
 
     func testMediaImportValidationUsesClassifiedJSONAndMediaHelp() throws {

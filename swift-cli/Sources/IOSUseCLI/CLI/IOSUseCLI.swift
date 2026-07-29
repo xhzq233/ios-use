@@ -436,6 +436,8 @@ public struct IOSUseCLI: Sendable {
         switch command {
         case .status, .config, .start, .stop, .capture, .open, .oslog:
             return nil
+        case .mediaImport:
+            return nil
         case .appLifecycle(let options):
             return commandFailure(
                 command: options.action.commandName,

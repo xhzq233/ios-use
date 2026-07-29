@@ -1144,6 +1144,54 @@ final class PlayCoverDriverClientTests: XCTestCase {
         )
     }
 
+    func testMediaImportUsesHostAdapterWithoutRuntimeRequest()
+        throws
+    {
+        var runtimeRequestCount = 0
+        var imported: ForyMediaImportArgs?
+        let expected = ForyMediaImportPayload(
+            kind: "photo",
+            originalFilename: "fixture.heic",
+            byteCount: 4,
+            assetLocalIdentifier: "asset/local/id",
+            permissionPromptHandled: false
+        )
+        let client = PlayCoverDriverClient(
+            session: makeSession(),
+            runtimeRequester: { _, _, _ in
+                runtimeRequestCount += 1
+                return self.makePayload(capability: .hello)
+            },
+            mediaImporter: {
+                imported = $0
+                return expected
+            }
+        )
+        let args = ForyMediaImportArgs(
+            kind: "photo",
+            originalFilename: "fixture.heic",
+            uniformTypeIdentifier: "public.heic",
+            byteCount: 4,
+            data: Data([1, 2, 3, 4])
+        )
+
+        let result = try client.mediaImport(args: args)
+
+        XCTAssertEqual(result.assetLocalIdentifier, "asset/local/id")
+        XCTAssertEqual(imported?.kind, args.kind)
+        XCTAssertEqual(
+            imported?.originalFilename,
+            args.originalFilename
+        )
+        XCTAssertEqual(
+            imported?.uniformTypeIdentifier,
+            args.uniformTypeIdentifier
+        )
+        XCTAssertEqual(imported?.byteCount, args.byteCount)
+        XCTAssertEqual(imported?.data, args.data)
+        XCTAssertEqual(runtimeRequestCount, 0)
+    }
+
     private func makeClient(
         response: PlayCoverRuntimeResponsePayload
     ) -> PlayCoverDriverClient {

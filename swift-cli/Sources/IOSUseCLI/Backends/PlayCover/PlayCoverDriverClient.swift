@@ -38,6 +38,9 @@ final class PlayCoverDriverClient: DriverCommandClient {
         PlayCoverRuntimeRequestArguments,
         TimeInterval
     ) throws -> PlayCoverRuntimeResponsePayload
+    typealias MediaImporter = (
+        ForyMediaImportArgs
+    ) throws -> ForyMediaImportPayload
 
     static let logicalSize = CGSize(
         width: Int(IOSUsePlayDeviceLogicalWidth),
@@ -53,30 +56,42 @@ final class PlayCoverDriverClient: DriverCommandClient {
 
     private let session: SessionService.Info
     private let runtimeRequester: RuntimeRequester
+    private let mediaImporter: MediaImporter
 
     convenience init(session: SessionService.Info) {
         self.init(
             session: session,
-            runtimeRequester: { command, arguments, timeout in
-                let refreshAlertStatus =
-                    CLIInvocationContext.current?
-                        .claimAlertRefresh() ?? true
-                return try Self.runtimeClient(
-                    for: session,
-                    timeoutSeconds: timeout,
-                    refreshAlertStatus:
-                        refreshAlertStatus
-                ).request(command, arguments: arguments)
+            runtimeRequester: Self.runtimeRequester(for: session)
+        )
+    }
+
+    convenience init(
+        session: SessionService.Info,
+        paths: IOSUsePaths
+    ) {
+        self.init(
+            session: session,
+            runtimeRequester: Self.runtimeRequester(for: session),
+            mediaImporter: {
+                try PlayCoverMediaImportAdapter(
+                    paths: paths
+                ).importMedia(args: $0)
             }
         )
     }
 
     init(
         session: SessionService.Info,
-        runtimeRequester: @escaping RuntimeRequester
+        runtimeRequester: @escaping RuntimeRequester,
+        mediaImporter: @escaping MediaImporter = {
+            _ in
+            throw PlayCoverDriverClientError
+                .capabilityUnavailable("media import")
+        }
     ) {
         self.session = session
         self.runtimeRequester = runtimeRequester
+        self.mediaImporter = mediaImporter
     }
 
     func close() {}
@@ -580,6 +595,27 @@ final class PlayCoverDriverClient: DriverCommandClient {
     ) throws -> ForyWaitAppForegroundPayload {
         throw PlayCoverDriverClientError
             .lifecycleCommandUnsupported("waitAppForeground")
+    }
+
+    func mediaImport(
+        args: ForyMediaImportArgs
+    ) throws -> ForyMediaImportPayload {
+        try mediaImporter(args)
+    }
+
+    private static func runtimeRequester(
+        for session: SessionService.Info
+    ) -> RuntimeRequester {
+        { command, arguments, timeout in
+            let refreshAlertStatus =
+                CLIInvocationContext.current?
+                    .claimAlertRefresh() ?? true
+            return try Self.runtimeClient(
+                for: session,
+                timeoutSeconds: timeout,
+                refreshAlertStatus: refreshAlertStatus
+            ).request(command, arguments: arguments)
+        }
     }
 
     private func request(
