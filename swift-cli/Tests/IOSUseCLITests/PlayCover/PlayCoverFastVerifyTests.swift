@@ -108,10 +108,13 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         let fixture = try FastVerifyFixture()
         defer { fixture.remove() }
         var verifiedPaths: [String] = []
+        let verifiedPathsLock = NSLock()
         Shell.runResultOverrideForTesting = {
             _, arguments, _ in
             if arguments.first == "--verify" {
+                verifiedPathsLock.lock()
                 verifiedPaths.append(arguments.last ?? "")
+                verifiedPathsLock.unlock()
             }
             return Shell.RunResult(
                 stdout: "",
@@ -138,10 +141,13 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         let fixture = try FastVerifyFixture()
         defer { fixture.remove() }
         var verifiedPaths: [String] = []
+        let verifiedPathsLock = NSLock()
         Shell.runResultOverrideForTesting = {
             _, arguments, _ in
             if arguments.first == "--verify" {
+                verifiedPathsLock.lock()
                 verifiedPaths.append(arguments.last ?? "")
+                verifiedPathsLock.unlock()
             }
             return Shell.RunResult(
                 stdout: "",
