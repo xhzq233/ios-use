@@ -4730,7 +4730,10 @@ public enum PlayCoverService {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         configuration.addsToRecentItems = false
-        configuration.promptsUserIfNeeded = false
+        // Process-external launch UI belongs to macOS and remains available
+        // to the user or Computer Use. Suppressing it can leave an App stuck
+        // in libsecinit before the injected Runtime can create its socket.
+        configuration.promptsUserIfNeeded = true
         // Give this invocation its own callback process even if Finder or
         // another NSWorkspace client launches the same bundle concurrently.
         // Poll-only candidates remain unowned until they authenticate the
