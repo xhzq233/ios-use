@@ -303,7 +303,7 @@ public enum OSLogService {
             for: session,
             timeoutSeconds: 0.75,
             refreshAlertStatus:
-                CLIInvocationPerformanceContext.current?
+                CLIInvocationContext.current?
                     .claimAlertRefresh() ?? true
         )
         let response = try client.diagnostics()

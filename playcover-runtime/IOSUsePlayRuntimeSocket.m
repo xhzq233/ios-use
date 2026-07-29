@@ -1357,18 +1357,13 @@ static NSDictionary<NSString *, id> *
 IOSUseRuntimeResponseWithMetadata(
     NSDictionary<NSString *, id> *response,
     NSDictionary<NSString *, id> * _Nullable interactionState,
-    NSNumber * _Nullable alertRefreshElapsedMs,
-    NSTimeInterval requestStarted
+    NSNumber * _Nullable alertRefreshElapsedMs
 ) {
     NSMutableDictionary<NSString *, id> *result =
         [response mutableCopy];
     result[@"interactionState"] =
         interactionState ?: NSNull.null;
     result[@"performance"] = @{
-        @"requestElapsedMs": @(
-            (NSProcessInfo.processInfo.systemUptime -
-                requestStarted) * 1000.0
-        ),
         @"alertRefreshElapsedMs":
             alertRefreshElapsedMs ?: NSNull.null,
     };
@@ -1928,8 +1923,6 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     id object,
     int connection
 ) {
-    NSTimeInterval requestStarted =
-        NSProcessInfo.processInfo.systemUptime;
     NSDictionary<NSString *, id> *interactionState = nil;
     NSNumber *alertRefreshElapsedMs = nil;
     NSDictionary<NSString *, id> *response =
@@ -1942,8 +1935,7 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     return IOSUseRuntimeResponseWithMetadata(
         response,
         interactionState,
-        alertRefreshElapsedMs,
-        requestStarted
+        alertRefreshElapsedMs
     );
 }
 

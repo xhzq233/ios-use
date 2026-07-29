@@ -414,6 +414,27 @@ assert_json() {
   fi
 }
 
+assert_cli_refresh_timing_log() {
+  local command="$1"
+  local cli_log="$SESSION_HOME/logs/cli.log"
+  if ! rg -q \
+      "\\[cli\\] command=${command} ok=true commandElapsedMs=[0-9.]+ alertRefreshElapsedMs=[0-9.]+" \
+      "$cli_log"; then
+    echo \
+      "[playcover-fixture-live] FAIL: cli.log lacks compact refresh timing for $command" \
+      >&2
+    return 1
+  fi
+  if rg -q \
+      'runtimeRoundTrip|runtimeRequest|ElapsedCount|RefreshCount' \
+      "$cli_log"; then
+    echo \
+      "[playcover-fixture-live] FAIL: cli.log retained removed nested/count timing" \
+      >&2
+    return 1
+  fi
+}
+
 assert_failure_json() {
   local case_name="$1"
   local expression="$2"
@@ -609,8 +630,7 @@ assert_native_alert_blocks_command() {
     .error.code == \"preexisting_alert\" and
     .error.phase == \"precondition\" and
     .error.mutationMayHaveApplied == false and
-    .performance.alertRefreshCount == 1 and
-    (.performance.alertRefreshElapsedMs | type) == \"number\" and
+    (has(\"performance\") | not) and
     .interaction.blocking == true and
     ([.interaction.interactions[].type] |
       index(\"inProcessAlert\")) != null
@@ -2676,8 +2696,7 @@ record_case alert_show_tap tap "Show Alert" --json
 record_case alert_status status --json
 assert_evidence alert_status '_NSAlertPanel'
 assert_json alert_status '
-  .performance.alertRefreshCount == 1 and
-  (.performance.alertRefreshElapsedMs | type) == "number" and
+  (has("performance") | not) and
   .interaction.blocking == true and
   ([.interaction.interactions[].type] |
     index("inProcessAlert")) != null and
@@ -2699,13 +2718,13 @@ assert_json alert_status '
       select(.class == "_NSAlertPanel" and .visible == true)] |
     length) == 1
 '
+assert_cli_refresh_timing_log status
 record_case alert_screenshot screenshot \
   --name native-alert --json
 assert_evidence alert_screenshot '"compositorWindowNumbers"'
 assert_canvas_only_screenshot alert_screenshot
 assert_json alert_screenshot '
-  .performance.alertRefreshCount == 1 and
-  (.performance.alertRefreshElapsedMs | type) == "number" and
+  (has("performance") | not) and
   .interaction.blocking == true and
   .data.runtimeEvidence.compositor.windows as $windows |
   ([$windows[] | select(.class == "_NSAlertPanel")] |
@@ -2724,8 +2743,7 @@ assert_evidence alert_dom 'Fixture Alert'
 assert_evidence alert_dom 'Confirm'
 assert_evidence alert_dom 'Cancel'
 assert_json alert_dom '
-  .performance.alertRefreshCount == 1 and
-  (.performance.alertRefreshElapsedMs | type) == "number" and
+  (has("performance") | not) and
   .interaction.blocking == true and
   ([.warnings[] | select(contains("dismissAlert"))] |
     length) == 1
@@ -2753,7 +2771,7 @@ assert_json alert_dismiss_confirm '
   .data.dismissed == true and
   .data.button == "Confirm" and
   .data.reason == "label" and
-  .performance.alertRefreshCount == 1
+  (has("performance") | not)
 '
 record_case alert_confirmed waitFor "Alert Confirmed" \
   --timeout 10s --json
@@ -2825,7 +2843,7 @@ for selection_case in alert_default alert_only_button; do
     .error.code == "alert_selection_required" and
     .error.phase == "selection" and
     .error.mutationMayHaveApplied == false and
-    .performance.alertRefreshCount == 1
+    (has("performance") | not)
   '
 done
 record_case alert_default_still_visible status --json
@@ -2839,7 +2857,7 @@ assert_json alert_primary '
   .data.dismissed == true and
   .data.button == "Confirm" and
   .data.reason == "visualPrimary" and
-  .performance.alertRefreshCount == 1
+  (has("performance") | not)
 '
 record_case alert_primary_gone waitFor "Fixture Alert" \
   --gone --timeout 10s --json

@@ -10,27 +10,20 @@ final class CLIInvocationPerformanceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testMachineFinalizationPreservesDataPerformanceAndAddsSubmillisecondMetrics()
+    func testMachineOutputPreservesDataPerformanceWithoutInvocationPerformance()
         throws
     {
-        let collector = CLIInvocationPerformanceCollector(
-            startedAt: 1,
-            now: { 1.000625 }
-        )
-        collector.recordRuntimeRoundTrip(elapsedMs: 0.25)
-        collector.recordRuntimeRoundTrip(elapsedMs: 0.25)
-        collector.recordRuntimeRequest(elapsedMs: 0.125)
-        collector.recordAlertRefresh(elapsedMs: 0.375)
-        collector.recordWarning("runtime interaction is pending")
-        collector.recordInteractionState(
+        let state = CLIInvocationState()
+        state.recordWarning("runtime interaction is pending")
+        state.recordInteractionState(
             .object([
                 "blocking": .boolean(true),
                 "kind": .string("inProcessAlert"),
             ])
         )
 
-        let result = CLIInvocationPerformanceContext
-            .$current.withValue(collector) {
+        let result = CLIInvocationContext
+            .$current.withValue(state) {
                 MachineOutput.success(
                     command: "fixture",
                     data: .object([
@@ -43,40 +36,7 @@ final class CLIInvocationPerformanceTests: XCTestCase {
             }
 
         let envelope = try machineEnvelope(result.stdout)
-        let performance = try XCTUnwrap(
-            envelope["performance"] as? [String: Any]
-        )
-        XCTAssertEqual(
-            try XCTUnwrap(
-                performance["totalElapsedMs"] as? Double
-            ),
-            0.625,
-            accuracy: 0.000_001
-        )
-        XCTAssertEqual(
-            performance["runtimeRoundTripElapsedMs"] as? Double,
-            0.5
-        )
-        XCTAssertEqual(
-            performance["runtimeRoundTripCount"] as? Int,
-            2
-        )
-        XCTAssertEqual(
-            performance["runtimeRequestElapsedMs"] as? Double,
-            0.125
-        )
-        XCTAssertEqual(
-            performance["runtimeRequestCount"] as? Int,
-            1
-        )
-        XCTAssertEqual(
-            performance["alertRefreshElapsedMs"] as? Double,
-            0.375
-        )
-        XCTAssertEqual(
-            performance["alertRefreshCount"] as? Int,
-            1
-        )
+        XCTAssertNil(envelope["performance"])
         let data = try XCTUnwrap(
             envelope["data"] as? [String: Any]
         )
@@ -102,48 +62,60 @@ final class CLIInvocationPerformanceTests: XCTestCase {
             interaction["kind"] as? String,
             "inProcessAlert"
         )
-        XCTAssertTrue(
-            result.stdout.contains(
-                #""runtimeRequestElapsedMs" : 0.125"#
-            )
+        XCTAssertFalse(result.stdout.contains("totalElapsedMs"))
+        XCTAssertFalse(
+            result.stdout.contains("runtimeRequestElapsedMs")
         )
     }
 
-    func testCollectorClaimsOneRefreshAndAccumulatesConcurrently() {
-        let collector = CLIInvocationPerformanceCollector()
+    func testInvocationStateClaimsOneRefreshAndDeduplicatesWarningsConcurrently() {
+        let state = CLIInvocationState()
         let claimsLock = NSLock()
         var successfulClaims = 0
 
         DispatchQueue.concurrentPerform(iterations: 100) { _ in
-            if collector.claimAlertRefresh() {
+            if state.claimAlertRefresh() {
                 claimsLock.lock()
                 successfulClaims += 1
                 claimsLock.unlock()
             }
-            collector.recordRuntimeRoundTrip(elapsedMs: 0.25)
-            collector.recordRuntimeRequest(elapsedMs: 0.125)
-            collector.recordWarning("same warning")
+            state.recordWarning("same warning")
         }
 
-        let snapshot = collector.snapshot()
+        let snapshot = state.snapshot()
         XCTAssertEqual(successfulClaims, 1)
-        XCTAssertEqual(snapshot.runtimeRoundTripElapsedMs, 25)
-        XCTAssertEqual(snapshot.runtimeRoundTripCount, 100)
-        XCTAssertEqual(snapshot.runtimeRequestElapsedMs, 12.5)
-        XCTAssertEqual(snapshot.runtimeRequestCount, 100)
         XCTAssertEqual(snapshot.warnings, ["same warning"])
     }
 
     func testLifecycleSuppressionPreventsAlertRefreshClaim() {
-        let collector = CLIInvocationPerformanceCollector()
+        let state = CLIInvocationState()
 
-        collector.suppressAlertRefresh()
+        state.suppressAlertRefresh()
 
-        XCTAssertFalse(collector.claimAlertRefresh())
-        XCTAssertEqual(collector.snapshot().alertRefreshCount, 0)
+        XCTAssertFalse(state.claimAlertRefresh())
     }
 
-    func testPublicMachineSuccessParseFailureAndCommandFailureCarryPerformance()
+    func testPerformanceCollectorKeepsOnlyInternalElapsedValues() {
+        let collector = CLIInvocationPerformanceCollector(
+            startedAt: 1,
+            now: { 1.000625 }
+        )
+
+        DispatchQueue.concurrentPerform(iterations: 100) { _ in
+            collector.recordAlertRefresh(elapsedMs: 0.125)
+        }
+        collector.recordAlertRefresh(elapsedMs: -1)
+
+        let snapshot = collector.snapshot()
+        XCTAssertEqual(snapshot.alertRefreshElapsedMs, 12.5)
+        XCTAssertEqual(
+            collector.freezeTotalElapsedMs(),
+            0.625,
+            accuracy: 0.000_001
+        )
+    }
+
+    func testPublicMachineOutputsOmitInvocationPerformanceAndLogOneSummary()
         throws
     {
         let root = temporaryRoot("machine")
@@ -164,45 +136,18 @@ final class CLIInvocationPerformanceTests: XCTestCase {
         )
 
         XCTAssertEqual(success.exitCode, 0)
-        XCTAssertGreaterThanOrEqual(
-            try totalElapsedMs(in: success.stdout),
-            0
-        )
-        let successPerformance =
-            try performance(in: success.stdout)
-        XCTAssertTrue(
-            successPerformance["runtimeRoundTripElapsedMs"]
-                is NSNull
-        )
-        XCTAssertEqual(
-            successPerformance["runtimeRoundTripCount"] as? Int,
-            0
-        )
-        XCTAssertTrue(
-            successPerformance["runtimeRequestElapsedMs"]
-                is NSNull
-        )
-        XCTAssertEqual(
-            successPerformance["runtimeRequestCount"] as? Int,
-            0
-        )
-        XCTAssertTrue(
-            successPerformance["alertRefreshElapsedMs"]
-                is NSNull
-        )
-        XCTAssertEqual(
-            successPerformance["alertRefreshCount"] as? Int,
-            0
+        XCTAssertNil(
+            try machineEnvelope(success.stdout)["performance"]
         )
         XCTAssertEqual(parseFailure.exitCode, 64)
-        XCTAssertGreaterThanOrEqual(
-            try totalElapsedMs(in: parseFailure.stderr),
-            0
+        XCTAssertNil(
+            try machineEnvelope(parseFailure.stderr)["performance"]
         )
         XCTAssertEqual(commandFailure.exitCode, 1)
-        XCTAssertGreaterThanOrEqual(
-            try totalElapsedMs(in: commandFailure.stderr),
-            0
+        XCTAssertNil(
+            try machineEnvelope(commandFailure.stderr)[
+                "performance"
+            ]
         )
 
         let log = try String(
@@ -211,19 +156,23 @@ final class CLIInvocationPerformanceTests: XCTestCase {
         )
         XCTAssertTrue(
             log.contains(
-                "[cli-performance] command=status ok=true "
+                "[cli] command=status ok=true commandElapsedMs="
             )
         )
         XCTAssertTrue(
             log.contains(
-                "[cli-performance] command=tap ok=false "
+                "[cli] command=tap ok=false commandElapsedMs="
             )
         )
         XCTAssertTrue(
             log.contains(
-                "[cli-performance] command=open ok=false "
+                "[cli] command=open ok=false commandElapsedMs="
             )
         )
+        XCTAssertFalse(log.contains("runtimeRoundTrip"))
+        XCTAssertFalse(log.contains("runtimeRequest"))
+        XCTAssertFalse(log.contains("interactionElapsedMs"))
+        XCTAssertFalse(log.contains("Count="))
     }
 
     func testHumanHelpKeepsStdoutAndWritesPerformanceLog() throws {
@@ -246,10 +195,13 @@ final class CLIInvocationPerformanceTests: XCTestCase {
         )
         XCTAssertTrue(
             log.contains(
-                "[cli-performance] command=help ok=true "
+                "[cli] command=help ok=true commandElapsedMs="
             )
         )
-        XCTAssertTrue(log.contains("totalElapsedMs="))
+        XCTAssertEqual(
+            log.split(whereSeparator: \.isNewline).count,
+            1
+        )
     }
 
     func testJSONFlagDoesNotTurnImmediateHelpIntoMachineEnvelope()
@@ -275,41 +227,25 @@ final class CLIInvocationPerformanceTests: XCTestCase {
         )
         XCTAssertTrue(
             log.contains(
-                "[cli-performance] command=help ok=true "
+                "[cli] command=help ok=true commandElapsedMs="
             )
         )
     }
 
     func testInvocationWarningKeepsHumanStdoutAndUsesOneStderrLine() {
-        let collector = CLIInvocationPerformanceCollector()
-        collector.recordWarning("runtime state is pending\nretry the read")
+        let state = CLIInvocationState()
+        state.recordWarning("runtime state is pending\nretry the read")
 
         let result = MachineOutput.finalizeInvocation(
             CLIResult(exitCode: 0, stdout: "done\n"),
             expectsMachineOutput: false,
-            snapshot: collector.snapshot()
+            snapshot: state.snapshot()
         )
 
         XCTAssertEqual(result.stdout, "done\n")
         XCTAssertEqual(
             result.stderr,
             "warning: runtime state is pending retry the read\n"
-        )
-    }
-
-    private func totalElapsedMs(in output: String) throws -> Double {
-        let performance = try performance(in: output)
-        return try XCTUnwrap(
-            performance["totalElapsedMs"] as? Double
-        )
-    }
-
-    private func performance(
-        in output: String
-    ) throws -> [String: Any] {
-        let envelope = try machineEnvelope(output)
-        return try XCTUnwrap(
-            envelope["performance"] as? [String: Any]
         )
     }
 

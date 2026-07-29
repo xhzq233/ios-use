@@ -325,45 +325,53 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                         ]],
                     ],
                     "performance": [
-                        "requestElapsedMs": 4.5,
                         "alertRefreshElapsedMs": 1.25,
                     ],
                 ])
             )
         }
-        let collector =
+        let invocationState = CLIInvocationState()
+        let performanceCollector =
             CLIInvocationPerformanceCollector()
         let payload =
-            try CLIInvocationPerformanceContext
-                .$current.withValue(collector) {
-                    try makeClient(
-                        socketPath: fixture.socketPath,
-                        refreshAlertStatus: true
-                    ).dom(
-                        .init(
-                            raw: false,
-                            fresh: true,
-                            waitQuiescence: false
-                        )
-                    )
+            try CLIInvocationContext
+                .$current.withValue(invocationState) {
+                    try CLIInvocationPerformanceContext
+                        .$current.withValue(
+                            performanceCollector
+                        ) {
+                            try makeClient(
+                                socketPath: fixture.socketPath,
+                                refreshAlertStatus: true
+                            ).dom(
+                                .init(
+                                    raw: false,
+                                    fresh: true,
+                                    waitQuiescence: false
+                                )
+                            )
+                        }
                 }
         try server.wait()
 
         XCTAssertEqual(payload.snapshotGeneration, 71)
-        let snapshot = collector.snapshot()
-        XCTAssertEqual(snapshot.runtimeRoundTripCount, 1)
-        XCTAssertEqual(snapshot.runtimeRequestCount, 1)
-        XCTAssertEqual(snapshot.runtimeRequestElapsedMs, 4.5)
-        XCTAssertEqual(snapshot.alertRefreshCount, 1)
-        XCTAssertEqual(snapshot.alertRefreshElapsedMs, 1.25)
-        XCTAssertNotNil(snapshot.interactionState)
-        XCTAssertEqual(snapshot.warnings.count, 1)
+        let performanceSnapshot =
+            performanceCollector.snapshot()
+        XCTAssertEqual(
+            performanceSnapshot.alertRefreshElapsedMs,
+            1.25
+        )
+        let invocationSnapshot = invocationState.snapshot()
+        XCTAssertNotNil(invocationSnapshot.interactionState)
+        XCTAssertEqual(invocationSnapshot.warnings.count, 1)
         XCTAssertTrue(
-            snapshot.warnings[0].contains("dismissAlert")
+            invocationSnapshot.warnings[0].contains(
+                "dismissAlert"
+            )
         )
     }
 
-    func testRemoteInteractionErrorStillRecordsRefreshTiming()
+    func testRemoteInteractionStateDoesNotRequirePerformanceCollector()
         throws
     {
         let fixture = try RuntimeClientFixture()
@@ -419,18 +427,16 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                         ]],
                     ],
                     "performance": [
-                        "requestElapsedMs": 2.75,
                         "alertRefreshElapsedMs": 0.5,
                     ],
                 ])
             )
         }
-        let collector =
-            CLIInvocationPerformanceCollector()
+        let invocationState = CLIInvocationState()
 
         XCTAssertThrowsError(
-            try CLIInvocationPerformanceContext
-                .$current.withValue(collector) {
+            try CLIInvocationContext
+                .$current.withValue(invocationState) {
                     try makeClient(
                         socketPath: fixture.socketPath,
                         refreshAlertStatus: true
@@ -453,10 +459,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             )
         }
         try server.wait()
-        let snapshot = collector.snapshot()
-        XCTAssertEqual(snapshot.runtimeRequestElapsedMs, 2.75)
-        XCTAssertEqual(snapshot.alertRefreshElapsedMs, 0.5)
-        XCTAssertEqual(snapshot.alertRefreshCount, 1)
+        let snapshot = invocationState.snapshot()
         guard case .object(let interaction) =
                 snapshot.interactionState else {
             return XCTFail("missing interaction state")

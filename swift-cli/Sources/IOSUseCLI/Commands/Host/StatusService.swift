@@ -395,7 +395,7 @@ public enum StatusService {
                         for: info,
                         timeoutSeconds: 0.75,
                         refreshAlertStatus:
-                            CLIInvocationPerformanceContext
+                            CLIInvocationContext
                                 .current?
                                 .claimAlertRefresh()
                                 ?? true

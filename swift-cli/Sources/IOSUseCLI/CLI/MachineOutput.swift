@@ -38,42 +38,16 @@ protocol MachineErrorConvertible {
     var machineError: MachineError { get }
 }
 
-struct CLIInvocationPerformanceSnapshot: Equatable, Sendable {
-    let runtimeRoundTripElapsedMs: Double?
-    let runtimeRoundTripCount: Int
-    let runtimeRequestElapsedMs: Double?
-    let runtimeRequestCount: Int
-    let alertRefreshElapsedMs: Double?
-    let alertRefreshCount: Int
+struct CLIInvocationSnapshot: Equatable, Sendable {
     let interactionState: MachineValue?
     let warnings: [String]
 }
 
-final class CLIInvocationPerformanceCollector: @unchecked Sendable {
+final class CLIInvocationState: @unchecked Sendable {
     private let lock = NSLock()
-    private let startedAt: TimeInterval
-    private let now: @Sendable () -> TimeInterval
-    private var runtimeRoundTripElapsedMs = 0.0
-    private var runtimeRoundTripCount = 0
-    private var runtimeRequestElapsedMs = 0.0
-    private var runtimeRequestCount = 0
-    private var alertRefreshElapsedMs = 0.0
-    private var alertRefreshCount = 0
     private var alertRefreshClaimed = false
-    private var frozenTotalElapsedMs: Double?
     private var interactionState: MachineValue?
     private var warnings: [String] = []
-
-    init(
-        startedAt: TimeInterval =
-            ProcessInfo.processInfo.systemUptime,
-        now: @escaping @Sendable () -> TimeInterval = {
-            ProcessInfo.processInfo.systemUptime
-        }
-    ) {
-        self.startedAt = startedAt
-        self.now = now
-    }
 
     func claimAlertRefresh() -> Bool {
         withLock {
@@ -88,36 +62,6 @@ final class CLIInvocationPerformanceCollector: @unchecked Sendable {
     func suppressAlertRefresh() {
         withLock {
             alertRefreshClaimed = true
-        }
-    }
-
-    func recordRuntimeRoundTrip(elapsedMs: Double) {
-        guard elapsedMs.isFinite, elapsedMs >= 0 else {
-            return
-        }
-        withLock {
-            runtimeRoundTripElapsedMs += elapsedMs
-            runtimeRoundTripCount += 1
-        }
-    }
-
-    func recordRuntimeRequest(elapsedMs: Double) {
-        guard elapsedMs.isFinite, elapsedMs >= 0 else {
-            return
-        }
-        withLock {
-            runtimeRequestElapsedMs += elapsedMs
-            runtimeRequestCount += 1
-        }
-    }
-
-    func recordAlertRefresh(elapsedMs: Double) {
-        guard elapsedMs.isFinite, elapsedMs >= 0 else {
-            return
-        }
-        withLock {
-            alertRefreshElapsedMs += elapsedMs
-            alertRefreshCount += 1
         }
     }
 
@@ -138,26 +82,63 @@ final class CLIInvocationPerformanceCollector: @unchecked Sendable {
         }
     }
 
+    func snapshot() -> CLIInvocationSnapshot {
+        withLock {
+            CLIInvocationSnapshot(
+                interactionState: interactionState,
+                warnings: warnings
+            )
+        }
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+enum CLIInvocationContext {
+    @TaskLocal
+    static var current: CLIInvocationState?
+}
+
+struct CLIInvocationPerformanceSnapshot: Equatable, Sendable {
+    let alertRefreshElapsedMs: Double?
+}
+
+final class CLIInvocationPerformanceCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private let startedAt: TimeInterval
+    private let now: @Sendable () -> TimeInterval
+    private var alertRefreshElapsedMs: Double?
+    private var frozenTotalElapsedMs: Double?
+
+    init(
+        startedAt: TimeInterval =
+            ProcessInfo.processInfo.systemUptime,
+        now: @escaping @Sendable () -> TimeInterval = {
+            ProcessInfo.processInfo.systemUptime
+        }
+    ) {
+        self.startedAt = startedAt
+        self.now = now
+    }
+
+    func recordAlertRefresh(elapsedMs: Double) {
+        guard elapsedMs.isFinite, elapsedMs >= 0 else {
+            return
+        }
+        withLock {
+            alertRefreshElapsedMs =
+                (alertRefreshElapsedMs ?? 0) + elapsedMs
+        }
+    }
+
     func snapshot() -> CLIInvocationPerformanceSnapshot {
         withLock {
             CLIInvocationPerformanceSnapshot(
-                runtimeRoundTripElapsedMs:
-                    runtimeRoundTripCount > 0
-                        ? runtimeRoundTripElapsedMs
-                        : nil,
-                runtimeRoundTripCount: runtimeRoundTripCount,
-                runtimeRequestElapsedMs:
-                    runtimeRequestCount > 0
-                        ? runtimeRequestElapsedMs
-                        : nil,
-                runtimeRequestCount: runtimeRequestCount,
-                alertRefreshElapsedMs:
-                    alertRefreshCount > 0
-                        ? alertRefreshElapsedMs
-                        : nil,
-                alertRefreshCount: alertRefreshCount,
-                interactionState: interactionState,
-                warnings: warnings
+                alertRefreshElapsedMs: alertRefreshElapsedMs
             )
         }
     }
@@ -195,7 +176,6 @@ enum MachineOutput {
         let command: String
         let data: MachineValue
         let warnings: [String]
-        let performance: MachineValue?
         let interaction: MachineValue?
     }
 
@@ -207,13 +187,11 @@ enum MachineOutput {
         let warnings: [String]
         let error: MachineError
         let evidenceManifest: String?
-        let performance: MachineValue?
         let interaction: MachineValue?
     }
 
     private struct InvocationMetadata {
         let warnings: [String]
-        let performance: MachineValue?
         let interaction: MachineValue?
     }
 
@@ -230,7 +208,6 @@ enum MachineOutput {
                 command: command,
                 data: data,
                 warnings: metadata.warnings,
-                performance: metadata.performance,
                 interaction: metadata.interaction
             ),
             exitCode: 0,
@@ -267,7 +244,6 @@ enum MachineOutput {
                 warnings: metadata.warnings,
                 error: classified,
                 evidenceManifest: evidenceManifest,
-                performance: metadata.performance,
                 interaction: metadata.interaction
             ),
             exitCode: exitCode,
@@ -278,7 +254,7 @@ enum MachineOutput {
     static func finalizeInvocation(
         _ result: CLIResult,
         expectsMachineOutput: Bool,
-        snapshot: CLIInvocationPerformanceSnapshot
+        snapshot: CLIInvocationSnapshot
     ) -> CLIResult {
         if expectsMachineOutput {
             return result
@@ -612,42 +588,21 @@ enum MachineOutput {
     private static func invocationMetadata(
         baseWarnings: [String]
     ) -> InvocationMetadata {
-        guard let collector =
-                CLIInvocationPerformanceContext.current else {
+        guard let state =
+                CLIInvocationContext.current else {
             return InvocationMetadata(
                 warnings: baseWarnings,
-                performance: nil,
                 interaction: nil
             )
         }
-        let snapshot = collector.snapshot()
+        let snapshot = state.snapshot()
         var warnings = baseWarnings
         for warning in snapshot.warnings
             where !warnings.contains(warning) {
             warnings.append(warning)
         }
-        let performance: MachineValue = .object([
-            "totalElapsedMs":
-                .double(collector.freezeTotalElapsedMs()),
-            "runtimeRoundTripElapsedMs":
-                snapshot.runtimeRoundTripElapsedMs
-                    .map(MachineValue.double) ?? .null,
-            "runtimeRoundTripCount":
-                .integer(snapshot.runtimeRoundTripCount),
-            "runtimeRequestElapsedMs":
-                snapshot.runtimeRequestElapsedMs
-                    .map(MachineValue.double) ?? .null,
-            "runtimeRequestCount":
-                .integer(snapshot.runtimeRequestCount),
-            "alertRefreshElapsedMs":
-                snapshot.alertRefreshElapsedMs
-                    .map(MachineValue.double) ?? .null,
-            "alertRefreshCount":
-                .integer(snapshot.alertRefreshCount),
-        ])
         return InvocationMetadata(
             warnings: warnings,
-            performance: performance,
             interaction: snapshot.interactionState
         )
     }

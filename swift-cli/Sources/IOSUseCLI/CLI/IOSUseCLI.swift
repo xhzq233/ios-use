@@ -53,31 +53,44 @@ public struct IOSUseCLI: Sendable {
 
     private func runPublicInvocation(arguments: [String]) -> CLIResult {
         let startedAt = ProcessInfo.processInfo.systemUptime
-        let collector = CLIInvocationPerformanceCollector(
-            startedAt: startedAt
-        )
-        return CLIInvocationPerformanceContext.$current.withValue(collector) {
-            let wantsJSON = CLIParser.requestsJSON(arguments)
-            let command = performanceCommandName(arguments: arguments)
-            if command == "start" || command == "stop" {
-                collector.suppressAlertRefresh()
+        let invocationState = CLIInvocationState()
+        let performanceCollector =
+            CLIInvocationPerformanceCollector(
+                startedAt: startedAt
+            )
+        return CLIInvocationContext.$current.withValue(
+            invocationState
+        ) {
+            CLIInvocationPerformanceContext.$current.withValue(
+                performanceCollector
+            ) {
+                let wantsJSON = CLIParser.requestsJSON(arguments)
+                let command = performanceCommandName(
+                    arguments: arguments
+                )
+                if command == "start" || command == "stop" {
+                    invocationState.suppressAlertRefresh()
+                }
+                let result = executePublicInvocation(
+                    arguments: arguments
+                )
+                let invocationSnapshot =
+                    invocationState.snapshot()
+                let finalized = MachineOutput.finalizeInvocation(
+                    result,
+                    expectsMachineOutput: wantsJSON,
+                    snapshot: invocationSnapshot
+                )
+                let totalElapsedMs =
+                    performanceCollector.freezeTotalElapsedMs()
+                appendPerformanceLog(
+                    command: command,
+                    ok: finalized.exitCode == 0,
+                    totalElapsedMs: totalElapsedMs,
+                    snapshot: performanceCollector.snapshot()
+                )
+                return finalized
             }
-            let result = executePublicInvocation(arguments: arguments)
-            let snapshot = collector.snapshot()
-            let finalized = MachineOutput.finalizeInvocation(
-                result,
-                expectsMachineOutput: wantsJSON,
-                snapshot: snapshot
-            )
-            let totalElapsedMs =
-                collector.freezeTotalElapsedMs()
-            appendPerformanceLog(
-                command: command,
-                ok: finalized.exitCode == 0,
-                totalElapsedMs: totalElapsedMs,
-                snapshot: snapshot
-            )
-            return finalized
         }
     }
 
@@ -170,38 +183,22 @@ public struct IOSUseCLI: Sendable {
         totalElapsedMs: Double,
         snapshot: CLIInvocationPerformanceSnapshot
     ) {
-        let fields = [
-            "[cli-performance]",
+        var fields = [
+            "[cli]",
             "command=\(command)",
             "ok=\(ok)",
-            "totalElapsedMs=\(totalElapsedMs)",
-            "runtimeRoundTripElapsedMs="
-                + performanceValue(
-                    snapshot.runtimeRoundTripElapsedMs
-                ),
-            "runtimeRoundTripCount="
-                + String(snapshot.runtimeRoundTripCount),
-            "runtimeRequestElapsedMs="
-                + performanceValue(
-                    snapshot.runtimeRequestElapsedMs
-                ),
-            "runtimeRequestCount="
-                + String(snapshot.runtimeRequestCount),
-            "alertRefreshElapsedMs="
-                + performanceValue(
-                    snapshot.alertRefreshElapsedMs
-                ),
-            "alertRefreshCount="
-                + String(snapshot.alertRefreshCount),
+            "commandElapsedMs=\(totalElapsedMs)",
         ]
+        if let alertRefreshElapsedMs =
+                snapshot.alertRefreshElapsedMs {
+            fields.append(
+                "alertRefreshElapsedMs=\(alertRefreshElapsedMs)"
+            )
+        }
         CLILogService.append(
             paths: paths,
             [fields.joined(separator: " ")]
         )
-    }
-
-    private func performanceValue(_ value: Double?) -> String {
-        value.map { String($0) } ?? "null"
     }
 
     private func execute(_ parsed: ParsedCommand, json: Bool) -> CLIResult {

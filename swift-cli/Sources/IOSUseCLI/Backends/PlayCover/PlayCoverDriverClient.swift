@@ -59,7 +59,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             session: session,
             runtimeRequester: { command, arguments, timeout in
                 let refreshAlertStatus =
-                    CLIInvocationPerformanceContext.current?
+                    CLIInvocationContext.current?
                         .claimAlertRefresh() ?? true
                 return try Self.runtimeClient(
                     for: session,

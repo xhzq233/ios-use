@@ -778,7 +778,6 @@ struct PlayCoverRuntimeResponsePerformance:
     Equatable,
     Sendable
 {
-    let requestElapsedMs: Double
     let alertRefreshElapsedMs: Double?
 }
 
@@ -1182,18 +1181,6 @@ final class PlayCoverRuntimeClient {
     ) throws -> Payload {
         guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
             throw PlayCoverRuntimeClientError.invalidTimeout
-        }
-        let roundTripStarted =
-            ProcessInfo.processInfo.systemUptime
-        let performanceContext =
-            CLIInvocationPerformanceContext.current
-        defer {
-            performanceContext?.recordRuntimeRoundTrip(
-                elapsedMs: (
-                    ProcessInfo.processInfo.systemUptime -
-                        roundTripStarted
-                ) * 1_000
-            )
         }
         let address = try makeAddress()
         let requestID = UUID().uuidString
@@ -1774,38 +1761,30 @@ final class PlayCoverRuntimeClient {
         responseOK: Bool,
         remoteErrorCode: String?
     ) throws {
-        guard let performance else {
-            if refreshAlertStatus {
-                if remoteErrorCode == "invalid_request" {
-                    throw PlayCoverRuntimeClientError
-                        .alertRefreshUnsupportedByRuntime
-                }
+        if let performance {
+            guard performance.alertRefreshElapsedMs?.isFinite
+                    ?? true,
+                  (performance.alertRefreshElapsedMs ?? 0) >= 0
+            else {
                 throw PlayCoverRuntimeClientError.malformedResponse(
-                    "alert-refresh response is missing performance"
+                    "response performance is invalid"
                 )
             }
-            return
-        }
-        guard performance.requestElapsedMs.isFinite,
-              performance.requestElapsedMs >= 0,
-              performance.alertRefreshElapsedMs?.isFinite
-                ?? true,
-              (performance.alertRefreshElapsedMs ?? 0) >= 0
-        else {
+        } else if refreshAlertStatus {
+            if remoteErrorCode == "invalid_request" {
+                throw PlayCoverRuntimeClientError
+                    .alertRefreshUnsupportedByRuntime
+            }
             throw PlayCoverRuntimeClientError.malformedResponse(
-                "response performance is invalid"
+                "alert-refresh response is missing performance"
             )
         }
-        CLIInvocationPerformanceContext.current?
-            .recordRuntimeRequest(
-                elapsedMs: performance.requestElapsedMs
-            )
 
         if refreshAlertStatus {
             guard let interactionState,
                   interactionState.schemaVersion == 1,
                   let alertRefreshElapsedMs =
-                    performance.alertRefreshElapsedMs
+                    performance?.alertRefreshElapsedMs
             else {
                 throw PlayCoverRuntimeClientError.malformedResponse(
                     "alert-refresh response metadata is incomplete"
@@ -1841,18 +1820,19 @@ final class PlayCoverRuntimeClient {
                 }
             }
             let context =
-                CLIInvocationPerformanceContext.current
+                CLIInvocationContext.current
             context?.recordInteractionState(
                 interactionState.machineValue
             )
-            context?.recordAlertRefresh(
-                elapsedMs: alertRefreshElapsedMs
-            )
+            CLIInvocationPerformanceContext.current?
+                .recordAlertRefresh(
+                    elapsedMs: alertRefreshElapsedMs
+                )
             interactionState.warnings.forEach {
                 context?.recordWarning($0)
             }
         } else if interactionState != nil ||
-                    performance.alertRefreshElapsedMs != nil {
+                    performance?.alertRefreshElapsedMs != nil {
             throw PlayCoverRuntimeClientError.malformedResponse(
                 "response contains unrequested alert-refresh metadata"
             )
