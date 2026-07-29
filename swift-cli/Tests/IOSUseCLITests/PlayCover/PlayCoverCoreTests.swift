@@ -1907,6 +1907,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         var submittedURLs: [URL] = []
         var submittedEnvironments: [[String: String]] = []
+        var submittedPromptPolicies: [Bool] = []
         var observedDeadlines: [TimeInterval] = []
         var durablePhases:
             [PlayCoverPendingLaunchStore.Phase] = []
@@ -1926,8 +1927,11 @@ final class PlayCoverCoreTests: XCTestCase {
         var submissionCount = 0
         PlayCoverService.workspaceOpenOverrideForTesting = {
             _,
-            _,
+            configuration,
             completion in
+            submittedPromptPolicies.append(
+                configuration.promptsUserIfNeeded
+            )
             submissionCount += 1
             if let phase = try? PlayCoverPendingLaunchStore
                 .load(paths: fixture.paths)?.phase {
@@ -1962,6 +1966,11 @@ final class PlayCoverCoreTests: XCTestCase {
                 .workspaceColdRegistrationMaximumAttempts
         )
         XCTAssertEqual(maximumInFlight, 1)
+        XCTAssertEqual(
+            submittedPromptPolicies,
+            Array(repeating: true, count: submissionCount),
+            "macOS-owned launch UI must remain available on every attempt"
+        )
         XCTAssertEqual(
             durablePhases,
             Array(
