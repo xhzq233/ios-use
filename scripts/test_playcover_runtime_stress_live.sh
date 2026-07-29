@@ -1272,6 +1272,23 @@ assert_scene_two() {
   fi
 }
 
+assert_scene_replace_visible() {
+  local case_name="$1"
+  if ! jq -e '
+      [
+        .data.postDom.elements[] |
+        select(
+          .identifier == "fixture.scene.replace" and
+          .label == "Replace Scene Window" and
+          .state.visible == true
+        )
+      ] | length == 1
+    ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
+    fail_gate \
+      "$case_name did not bring Replace Scene Window into the visible DOM"
+  fi
+}
+
 run_cli protocol_start start --mac --app "$FIXTURE_APP"
 run_cli protocol_status status --json
 assert_healthy_status protocol_status
@@ -1481,6 +1498,10 @@ for cycle in $(seq 1 "$CLEAN_CYCLE_COUNT"); do
     fail_gate "$cycle_name has incomplete lifecycle identity"
 
   if [[ "$cycle" -eq 1 ]]; then
+    run_cli \
+      "${cycle_name}_scene_scroll" \
+      swipe --dir forth --distance 300 --dom --json
+    assert_scene_replace_visible "${cycle_name}_scene_scroll"
     run_cli \
       "${cycle_name}_scene_replace" \
       tap "Replace Scene Window" --dom --json
