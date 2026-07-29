@@ -2785,7 +2785,14 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(shellCalls.first?.1, ["simctl", "openurl", simulatorUdid, "https://example.com"])
     }
 
-    func testOpenURLInvalidURLFailsBeforeDriverOrShell() {
+    func testOpenURLInvalidURLFailsBeforeDriverOrShell() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ios-use-open-url-invalid-\(UUID().uuidString)")
+            .path
+        try FileManager.default.createDirectory(
+            atPath: root,
+            withIntermediateDirectories: true
+        )
         Shell.runOverrideForTesting = { _, _, _, _ in
             XCTFail("invalid URL should fail before shell")
             return ""
@@ -2795,11 +2802,14 @@ final class IOSUseCLITests: XCTestCase {
             return FakeDriverCommandClient()
         }
         addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
             Shell.runOverrideForTesting = nil
             IOSUseCLI.driverClientFactoryForTesting = nil
         }
 
-        let result = IOSUseCLI().run(arguments: ["open", "://missing"])
+        let result = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root]
+        ).run(arguments: ["open", "://missing"])
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(result.stderr.contains("Invalid URL: ://missing"))
