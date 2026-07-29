@@ -120,6 +120,7 @@ struct PlayCoverFastVerifiedGenerationToken: Equatable, Sendable {
 
 public enum PlayCoverService {
     private static let upstreamStandardOutputLock = NSLock()
+    static let workspaceColdRegistrationMaximumAttempts = 3
 
     enum FastVerifyEvent: Equatable {
         case afterGenerationOpen
@@ -172,6 +173,13 @@ public enum PlayCoverService {
             URL,
             NSWorkspace.OpenConfiguration,
             @escaping (NSRunningApplication?, Error?) -> Void
+        ) -> Void)?
+    static var workspaceSubmissionObserverForTesting:
+        ((
+            Int,
+            TimeInterval,
+            URL,
+            [String: String]
         ) -> Void)?
     #endif
     static var fastVerifyEventOverrideForTesting:
@@ -3312,6 +3320,82 @@ public enum PlayCoverService {
         )
     }
 
+    static func isLaunchServicesColdRegistrationRace(
+        _ error: Error
+    ) -> Bool {
+        var current = error as NSError
+        var visited = Set<ObjectIdentifier>()
+        while true {
+            guard visited.insert(
+                ObjectIdentifier(current)
+            ).inserted else {
+                return false
+            }
+            guard let underlying =
+                    current.userInfo[NSUnderlyingErrorKey]
+                        as? NSError else {
+                return current.domain == NSOSStatusErrorDomain
+                    && current.code == -10_670
+            }
+            current = underlying
+        }
+    }
+
+    static func permitsWorkspaceColdRegistrationRetry(
+        error: Error,
+        attemptNumber: Int,
+        hasDurablePendingLaunch: Bool,
+        hasRuntimeCandidates: Bool,
+        hasPostSubmissionIntegrityError: Bool,
+        isBeforeDeadline: Bool,
+        exactExecutableCensus:
+            @autoclosure () -> PlayCoverPendingLaunchRecovery.Census
+    ) -> Bool {
+        guard attemptNumber > 0,
+              attemptNumber
+                < workspaceColdRegistrationMaximumAttempts,
+              hasDurablePendingLaunch,
+              !hasRuntimeCandidates,
+              !hasPostSubmissionIntegrityError,
+              isBeforeDeadline,
+              isLaunchServicesColdRegistrationRace(error) else {
+            return false
+        }
+        return exactExecutableCensus().provesEmpty
+    }
+
+    private static func persistTerminalCallbackFailure(
+        _ error: Error,
+        sessionID: String,
+        paths: IOSUsePaths?
+    ) -> Error {
+        guard let paths else {
+            return error
+        }
+        do {
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(
+                .beforeTerminalCallbackDurable
+            )
+            #endif
+            _ = try PlayCoverPendingLaunchStore
+                .markTerminalCallbackFailure(
+                    sessionID: sessionID,
+                    errorDescription:
+                        boundedPendingLaunchError(error),
+                    paths: paths
+                )
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(
+                .afterTerminalCallbackDurable
+            )
+            #endif
+            return error
+        } catch {
+            return error
+        }
+    }
+
     struct SessionLaunchAlias: Equatable {
         let rootURL: URL
         let bundleURL: URL
@@ -3371,12 +3455,25 @@ public enum PlayCoverService {
 
     private final class LaunchBox: @unchecked Sendable {
         private let lock = NSLock()
+        private var completionClaimed = false
         private var value: Result<LaunchedApplicationIdentity, Error>?
 
-        func set(_ newValue: Result<LaunchedApplicationIdentity, Error>) {
+        func resolve(
+            _ body: () -> Result<LaunchedApplicationIdentity, Error>
+        ) -> Bool {
+            lock.lock()
+            guard !completionClaimed else {
+                lock.unlock()
+                return false
+            }
+            completionClaimed = true
+            lock.unlock()
+
+            let newValue = body()
             lock.lock()
             value = newValue
             lock.unlock()
+            return true
         }
 
         func get() -> Result<LaunchedApplicationIdentity, Error>? {
@@ -3384,6 +3481,12 @@ public enum PlayCoverService {
             defer { lock.unlock() }
             return value
         }
+    }
+
+    private struct WorkspaceLaunchAttempt {
+        let number: Int
+        let box: LaunchBox
+        let semaphore: DispatchSemaphore
     }
 
     private struct PendingOwnedLaunchError:
@@ -4679,165 +4782,172 @@ public enum PlayCoverService {
             .afterAliasBuiltBeforePreSubmitValidation
         )
         defer { aliasCapability.close() }
-        let box = LaunchBox()
-        let semaphore = DispatchSemaphore(value: 0)
-        let completion:
-            (NSRunningApplication?, Error?) -> Void = {
-                application, error in
-            if let application,
-               !application.isTerminated,
-               let bundleIdentifier = application.bundleIdentifier,
-               let bundlePath = application.bundleURL?
-                    .standardizedFileURL.path,
-               let executablePath = application.executableURL?
-                    .standardizedFileURL.path,
-               acceptsOwnedLaunchIdentity(
-                    pid: application.processIdentifier,
-                    bundleIdentifier: bundleIdentifier,
-                    bundleURLPath: bundlePath,
-                    executablePath: executablePath,
-                    existingPIDs: existingPIDs,
-                    manifest: manifest,
-                    launchAliasPath: alias.bundleURL.path
-               ) {
-                let identity = LaunchedApplicationIdentity(
-                    pid: application.processIdentifier,
-                    bundleIdentifier: bundleIdentifier,
-                    bundleURLPath: bundlePath,
-                    executablePath: executablePath,
-                    processStartTimeMicroseconds:
-                        processStartTimeMicroseconds(
-                            for: application.processIdentifier
-                        ),
-                    source: .workspaceCallback
-                )
-                if let pendingLaunchPaths {
-                    guard let owner = pendingLaunchOwner(
-                        identity
-                    ) else {
-                        box.set(
-                            .failure(
-                                PlayCoverBackendError.launchFailed(
-                                    "NSWorkspace callback owner "
-                                        + "has no stable process "
-                                        + "birth identity"
+        defer { launchCapability.close() }
+
+        func completion(
+            box: LaunchBox,
+            semaphore: DispatchSemaphore
+        ) -> (NSRunningApplication?, Error?) -> Void {
+            { application, error in
+                let resolved = box.resolve {
+                    if let application,
+                       !application.isTerminated,
+                       let bundleIdentifier =
+                            application.bundleIdentifier,
+                       let bundlePath = application.bundleURL?
+                            .standardizedFileURL.path,
+                       let executablePath = application.executableURL?
+                            .standardizedFileURL.path,
+                       acceptsOwnedLaunchIdentity(
+                            pid: application.processIdentifier,
+                            bundleIdentifier: bundleIdentifier,
+                            bundleURLPath: bundlePath,
+                            executablePath: executablePath,
+                            existingPIDs: existingPIDs,
+                            manifest: manifest,
+                            launchAliasPath: alias.bundleURL.path
+                       ) {
+                        let identity = LaunchedApplicationIdentity(
+                            pid: application.processIdentifier,
+                            bundleIdentifier: bundleIdentifier,
+                            bundleURLPath: bundlePath,
+                            executablePath: executablePath,
+                            processStartTimeMicroseconds:
+                                processStartTimeMicroseconds(
+                                    for:
+                                        application.processIdentifier
+                                ),
+                            source: .workspaceCallback
+                        )
+                        if let pendingLaunchPaths {
+                            guard let owner = pendingLaunchOwner(
+                                identity
+                            ) else {
+                                return .failure(
+                                    PlayCoverBackendError.launchFailed(
+                                        "NSWorkspace callback owner "
+                                            + "has no stable process "
+                                            + "birth identity"
+                                    )
                                 )
-                            )
-                        )
-                        semaphore.signal()
-                        return
+                            }
+                            do {
+                                try persistPendingLaunchOwner(
+                                    owner,
+                                    identity: identity,
+                                    sessionID: sessionID,
+                                    callbackSucceeded: true,
+                                    paths: pendingLaunchPaths
+                                )
+                            } catch {
+                                return .failure(error)
+                            }
+                        }
+                        return .success(identity)
                     }
-                    do {
-                        try persistPendingLaunchOwner(
-                            owner,
-                            identity: identity,
-                            sessionID: sessionID,
-                            callbackSucceeded: true,
-                            paths: pendingLaunchPaths
+                    return .failure(
+                        error ?? PlayCoverBackendError.launchFailed(
+                            "NSWorkspace returned a pre-existing, "
+                                + "incomplete, or mismatched App identity"
                         )
-                    } catch {
-                        box.set(.failure(error))
-                        semaphore.signal()
-                        return
-                    }
-                }
-                box.set(.success(identity))
-            } else {
-                let callbackError =
-                    error ?? PlayCoverBackendError.launchFailed(
-                        "NSWorkspace returned a pre-existing, "
-                            + "incomplete, or mismatched App identity"
                     )
-                do {
-                    if let pendingLaunchPaths {
-                        #if DEBUG && canImport(Darwin)
-                        PlayCoverLaunchCrashCut.hit(
-                            .beforeTerminalCallbackDurable
-                        )
-                        #endif
-                        _ = try PlayCoverPendingLaunchStore
-                            .markTerminalCallbackFailure(
-                                sessionID: sessionID,
-                                errorDescription:
-                                    boundedPendingLaunchError(
-                                        callbackError
-                                    ),
-                                paths: pendingLaunchPaths
-                            )
-                        #if DEBUG && canImport(Darwin)
-                        PlayCoverLaunchCrashCut.hit(
-                            .afterTerminalCallbackDurable
-                        )
-                        #endif
-                    }
-                    box.set(.failure(callbackError))
-                } catch {
-                    box.set(.failure(error))
+                }
+                if resolved {
+                    semaphore.signal()
                 }
             }
-            semaphore.signal()
         }
-        try validateFastVerifiedLaunchCapability(launchCapability)
-        try validateSessionLaunchAliasCapability(
-            aliasCapability,
-            expectedEntries: launchEntries
-        )
-        // NSWorkspace accepts a path, not an fd. These checks only sample the
-        // lexical identities immediately before and after the synchronous
-        // API call. Descriptor retention neither closes namespace ABA nor
-        // proves when LaunchServices consumes the asynchronous request.
-        if let pendingLaunchPaths {
-            _ = try PlayCoverPendingLaunchStore
-                .markSubmissionArmed(
-                    sessionID: sessionID,
-                    bootSessionUUID:
-                        PlayCoverPendingLaunchRecovery
-                            .currentBootSessionUUID(),
-                    paths: pendingLaunchPaths
-                )
-            #if DEBUG && canImport(Darwin)
-            PlayCoverLaunchCrashCut.hit(.afterSubmissionArmed)
-            #endif
-        }
-        workspaceOpenSubmitted = true
-        if let workspaceOpenOverrideForTesting {
-            workspaceOpenOverrideForTesting(
-                alias.bundleURL,
-                configuration,
-                completion
+
+        func submitWorkspaceAttempt(
+            number: Int
+        ) throws -> WorkspaceLaunchAttempt {
+            try validateFastVerifiedLaunchCapability(
+                launchCapability
             )
-        } else {
-            NSWorkspace.shared.openApplication(
-                at: alias.bundleURL,
-                configuration: configuration,
-                completionHandler: completion
-            )
-        }
-        #if DEBUG && canImport(Darwin)
-        PlayCoverLaunchCrashCut.hit(.afterOpenReturned)
-        #endif
-        do {
-            try emitLaunchIntegrityEvent(
-                .afterWorkspaceOpenReturnedBeforePostSubmitValidation
-            )
-            try validateFastVerifiedLaunchCapability(launchCapability)
             try validateSessionLaunchAliasCapability(
                 aliasCapability,
                 expectedEntries: launchEntries
             )
-        } catch {
-            // Submission may still create the App after this method returns
-            // from NSWorkspace. Keep the existing ownership loop alive so an
-            // exact process can be handed to the caller for rollback.
-            postSubmissionIntegrityError = error
+            // A retry keeps the original durable submissionArmed phase.
+            // Replaying this transition under the journal lock proves that
+            // the same session is still armed on the same boot before the
+            // same facade is submitted again.
+            if let pendingLaunchPaths {
+                _ = try PlayCoverPendingLaunchStore
+                    .markSubmissionArmed(
+                        sessionID: sessionID,
+                        bootSessionUUID:
+                            PlayCoverPendingLaunchRecovery
+                                .currentBootSessionUUID(),
+                        paths: pendingLaunchPaths
+                    )
+                #if DEBUG && canImport(Darwin)
+                PlayCoverLaunchCrashCut.hit(.afterSubmissionArmed)
+                #endif
+            }
+            let attempt = WorkspaceLaunchAttempt(
+                number: number,
+                box: LaunchBox(),
+                semaphore: DispatchSemaphore(value: 0)
+            )
+            let handler = completion(
+                box: attempt.box,
+                semaphore: attempt.semaphore
+            )
+            workspaceSubmissionObserverForTesting?(
+                number,
+                deadline,
+                alias.bundleURL,
+                configuration.environment
+            )
+            workspaceOpenSubmitted = true
+            if let workspaceOpenOverrideForTesting {
+                workspaceOpenOverrideForTesting(
+                    alias.bundleURL,
+                    configuration,
+                    handler
+                )
+            } else {
+                NSWorkspace.shared.openApplication(
+                    at: alias.bundleURL,
+                    configuration: configuration,
+                    completionHandler: handler
+                )
+            }
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(.afterOpenReturned)
+            #endif
+            do {
+                try emitLaunchIntegrityEvent(
+                    .afterWorkspaceOpenReturnedBeforePostSubmitValidation
+                )
+                try validateFastVerifiedLaunchCapability(
+                    launchCapability
+                )
+                try validateSessionLaunchAliasCapability(
+                    aliasCapability,
+                    expectedEntries: launchEntries
+                )
+            } catch {
+                // Submission may still create the App after this method
+                // returns. Keep the ownership loop alive so an exact process
+                // can be handed to the caller for rollback.
+                postSubmissionIntegrityError = error
+            }
+            return attempt
         }
-        aliasCapability.close()
-        launchCapability.close()
+
+        // NSWorkspace accepts a path, not an fd. The retained capabilities
+        // sample and hold the verified generation/facade identities around
+        // every bounded submission; they still cannot prove exactly when
+        // LaunchServices consumes an asynchronous request.
+        var activeAttempt = try submitWorkspaceAttempt(number: 1)
         // The caller supplies the one monotonic `start --timeout` deadline
         // shared by launch discovery and the subsequent ready Runtime hello.
         // Large Apps may exceed LaunchServices' historical ten-second window,
         // but discovery must not restart the public timeout.
         var callbackError: Error?
+        var handledFailureAttempt = 0
         var legacyHelloAttempted = false
         func authenticatesCurrentLaunch(
             _ identity: LaunchedApplicationIdentity
@@ -4857,7 +4967,8 @@ public enum PlayCoverService {
             // A successful callback is published only after any required
             // exact-owner durability. Consume it before the bounded candidate
             // ping; a callback failure must still allow Runtime rescue.
-            if case .success(let identity)? = box.get(),
+            if case .success(let identity)? =
+                    activeAttempt.box.get(),
                mayClaimLaunchIdentity(
                    identity,
                    callbackIdentity: identity,
@@ -4938,7 +5049,7 @@ public enum PlayCoverService {
             // Check the callback after polling. LaunchServices can report a
             // generic error after RunningBoard has already created the exact
             // process; returning the owned candidate avoids orphaning it.
-            if let value = box.get() {
+            if let value = activeAttempt.box.get() {
                 switch value {
                 case .success(let identity):
                     if mayClaimLaunchIdentity(
@@ -4953,11 +5064,49 @@ public enum PlayCoverService {
                             error as? PendingOwnedLaunchError {
                         throw ownershipError
                     }
+                    guard handledFailureAttempt
+                            != activeAttempt.number else {
+                        break
+                    }
+                    if permitsWorkspaceColdRegistrationRetry(
+                        error: error,
+                        attemptNumber: activeAttempt.number,
+                        hasDurablePendingLaunch:
+                            pendingLaunchPaths != nil,
+                        hasRuntimeCandidates: !candidates.isEmpty,
+                        hasPostSubmissionIntegrityError:
+                            postSubmissionIntegrityError != nil,
+                        isBeforeDeadline:
+                            ProcessInfo.processInfo.systemUptime
+                                < deadline,
+                        exactExecutableCensus:
+                            PlayCoverPendingLaunchRecovery
+                                .exactExecutableCensus(
+                                    executablePath:
+                                        manifest.executablePath
+                                )
+                    ),
+                       ProcessInfo.processInfo.systemUptime < deadline {
+                        handledFailureAttempt =
+                            activeAttempt.number
+                        activeAttempt =
+                            try submitWorkspaceAttempt(
+                                number:
+                                    activeAttempt.number + 1
+                            )
+                        continue
+                    }
                     // A newly-created exact process may not be visible to
                     // NSRunningApplication in the same poll that observes the
                     // callback failure. Keep polling to the bounded deadline
                     // so it can be claimed and rolled back by the caller.
-                    callbackError = error
+                    handledFailureAttempt = activeAttempt.number
+                    callbackError =
+                        persistTerminalCallbackFailure(
+                            error,
+                            sessionID: sessionID,
+                            paths: pendingLaunchPaths
+                        )
                 }
             }
 
@@ -4977,7 +5126,7 @@ public enum PlayCoverService {
                     0,
                     deadline - ProcessInfo.processInfo.systemUptime
                 )
-                _ = semaphore.wait(
+                _ = activeAttempt.semaphore.wait(
                     timeout: .now() + min(0.05, remaining)
                 )
             }
