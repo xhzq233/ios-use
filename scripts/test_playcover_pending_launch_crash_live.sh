@@ -1184,7 +1184,7 @@ run_crash_start() {
   set +e
   cli_env "$home" \
     "$CRASH_ENV=$cut" \
-    "$DEBUG_CLI" start --playcover --timeout 30s "$@" \
+    "$DEBUG_CLI" start --mac --timeout 30s "$@" \
     >"$RUN_DIR/$case_name.start.stdout" \
     2>"$RUN_DIR/$case_name.start.stderr"
   local status=$?
@@ -1257,7 +1257,7 @@ assert_start_blocked() {
   local home="$1"
   local case_name="$2"
   set +e
-  cli_env "$home" "$DEBUG_CLI" --json start --playcover --timeout 5s \
+  cli_env "$home" "$DEBUG_CLI" --json start --mac --timeout 5s \
     >"$RUN_DIR/$case_name.blocked-start.stdout" \
     2>"$RUN_DIR/$case_name.blocked-start.stderr"
   local status=$?
@@ -1325,7 +1325,7 @@ start_new_session_and_prove() {
   local old_birth="$4"
   local old_socket="$5"
   local old_session="$6"
-  cli_env "$home" "$DEBUG_CLI" --json start --playcover --timeout 30s \
+  cli_env "$home" "$DEBUG_CLI" --json start --mac --timeout 30s \
     >"$RUN_DIR/$case_name.start.stdout" \
     2>"$RUN_DIR/$case_name.start.stderr" ||
     fail_gate "$case_name first bare start attempt failed"
@@ -1394,7 +1394,7 @@ recover_terminal_without_live_candidate() {
     config_fail \
       "$case_name has neither an authenticated candidate nor safe terminal cleanup"
   fi
-  cli_env "$home" "$DEBUG_CLI" --json start --playcover --timeout 30s \
+  cli_env "$home" "$DEBUG_CLI" --json start --mac --timeout 30s \
     >"$RUN_DIR/$case_name.safe-recovery.start.stdout" \
     2>"$RUN_DIR/$case_name.safe-recovery.start.stderr" ||
     fail_gate "$case_name safe terminal recovery start failed"
@@ -1624,7 +1624,7 @@ run_handoff_case() {
 }
 
 MAIN_HOME="$(make_home)"
-cli_env "$MAIN_HOME" "$DEBUG_CLI" --json start --playcover \
+cli_env "$MAIN_HOME" "$DEBUG_CLI" --json start --mac \
   --app "$FIXTURE_APP" --timeout 30s \
   >"$RUN_DIR/baseline-start.stdout" \
   2>"$RUN_DIR/baseline-start.stderr" ||
