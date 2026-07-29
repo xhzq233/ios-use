@@ -1257,7 +1257,7 @@ assert_start_blocked() {
   local home="$1"
   local case_name="$2"
   set +e
-  cli_env "$home" "$DEBUG_CLI" --json start --mac --timeout 5s \
+  cli_env "$home" "$DEBUG_CLI" --json start --mac --reuse --timeout 5s \
     >"$RUN_DIR/$case_name.blocked-start.stdout" \
     2>"$RUN_DIR/$case_name.blocked-start.stderr"
   local status=$?
@@ -1325,10 +1325,10 @@ start_new_session_and_prove() {
   local old_birth="$4"
   local old_socket="$5"
   local old_session="$6"
-  cli_env "$home" "$DEBUG_CLI" --json start --mac --timeout 30s \
+  cli_env "$home" "$DEBUG_CLI" --json start --mac --reuse --timeout 30s \
     >"$RUN_DIR/$case_name.start.stdout" \
     2>"$RUN_DIR/$case_name.start.stderr" ||
-    fail_gate "$case_name first bare start attempt failed"
+    fail_gate "$case_name first reuse start attempt failed"
   assert_machine_success "$case_name.start" start
   assert_exact_process_gone \
     "$case_name.old-owner" \
@@ -1394,7 +1394,7 @@ recover_terminal_without_live_candidate() {
     config_fail \
       "$case_name has neither an authenticated candidate nor safe terminal cleanup"
   fi
-  cli_env "$home" "$DEBUG_CLI" --json start --mac --timeout 30s \
+  cli_env "$home" "$DEBUG_CLI" --json start --mac --reuse --timeout 30s \
     >"$RUN_DIR/$case_name.safe-recovery.start.stdout" \
     2>"$RUN_DIR/$case_name.safe-recovery.start.stderr" ||
     fail_gate "$case_name safe terminal recovery start failed"
@@ -1562,7 +1562,7 @@ run_before_owner_case() {
 run_owned_case() {
   local cut="$1"
   local case_name="$cut"
-  run_crash_start "$MAIN_HOME" "$case_name" "$cut"
+  run_crash_start "$MAIN_HOME" "$case_name" "$cut" --reuse
   assert_pending_evidence "$MAIN_HOME" "$case_name"
   assert_phase "$case_name" owned
   assert_owner_source "$case_name"
@@ -1589,7 +1589,7 @@ run_owned_case() {
 run_handoff_case() {
   local cut="$1"
   local case_name="$cut"
-  run_crash_start "$MAIN_HOME" "$case_name" "$cut"
+  run_crash_start "$MAIN_HOME" "$case_name" "$cut" --reuse
   case "$cut" in
     afterDriverLockDurable)
       assert_pending_evidence "$MAIN_HOME" "$case_name"
