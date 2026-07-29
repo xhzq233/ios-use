@@ -303,7 +303,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             ),
             runtimeFrameworkPath: runtime.path
         )
-        let preparedArtifact = try PlayCoverService.prepareMeasured(
+        let preparedArtifact = try PlayCoverService.prepareArtifact(
             plan: plan,
             outputAppPath: candidateOutput.path,
             paths: paths
@@ -810,7 +810,7 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverSigningIdentityService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverStartTiming.swift",
+                    + "PlayCoverPreparedArtifact.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                     + "PlayCoverExternalPrepareDifferentialTests.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"

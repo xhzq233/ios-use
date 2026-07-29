@@ -9,7 +9,6 @@
 
 import CryptoKit
 import Darwin
-import Dispatch
 import Foundation
 
 public enum PlayCoverUpstreamError: Error, Equatable, CustomStringConvertible, Sendable {
@@ -618,7 +617,6 @@ public struct PlayCoverUpstreamPrepareResult: Equatable, Sendable {
     public let convertedMachOs: [String]
     public let signingOrder: [String]
     public let entitlementDiff: PlayCoverUpstreamEntitlementDiff
-    public let phaseTimings: PlayCoverUpstreamPreparePhaseTimings?
 
     init(
         sourceBefore: PlayCoverUpstreamAppInspection,
@@ -626,8 +624,7 @@ public struct PlayCoverUpstreamPrepareResult: Equatable, Sendable {
         prepared: PlayCoverUpstreamAppInspection,
         convertedMachOs: [String],
         signingOrder: [String],
-        entitlementDiff: PlayCoverUpstreamEntitlementDiff,
-        phaseTimings: PlayCoverUpstreamPreparePhaseTimings? = nil
+        entitlementDiff: PlayCoverUpstreamEntitlementDiff
     ) {
         self.sourceBefore = sourceBefore
         self.sourceHashAfterPrepare = sourceHashAfterPrepare
@@ -635,28 +632,6 @@ public struct PlayCoverUpstreamPrepareResult: Equatable, Sendable {
         self.convertedMachOs = convertedMachOs
         self.signingOrder = signingOrder
         self.entitlementDiff = entitlementDiff
-        self.phaseTimings = phaseTimings
-    }
-}
-
-public struct PlayCoverUpstreamPreparePhaseTimings:
-    Codable, Equatable, Sendable
-{
-    public let cloneNanoseconds: UInt64
-    public let convertNanoseconds: UInt64
-    public let signNanoseconds: UInt64
-    public let verifyNanoseconds: UInt64
-
-    public init(
-        cloneNanoseconds: UInt64,
-        convertNanoseconds: UInt64,
-        signNanoseconds: UInt64,
-        verifyNanoseconds: UInt64
-    ) {
-        self.cloneNanoseconds = cloneNanoseconds
-        self.convertNanoseconds = convertNanoseconds
-        self.signNanoseconds = signNanoseconds
-        self.verifyNanoseconds = verifyNanoseconds
     }
 }
 
@@ -892,7 +867,6 @@ public enum PlayCoverUpstreamEngine {
                     + options.sourceApp.standardizedFileURL.path
             )
         }
-        var phaseTimings = PrepareTimingAccumulator()
         try validateManagedStaging(options, source: source)
 
         let expectedRuntimeBuildHash =
@@ -942,7 +916,6 @@ public enum PlayCoverUpstreamEngine {
                     : nil
             )
         }
-        let cloneStarted = monotonicTimestamp()
         try cloneSource(options.sourceApp, to: options.stagingApp)
         var rollback = true
         defer {
@@ -974,11 +947,6 @@ public enum PlayCoverUpstreamEngine {
         )
         let embeddedRuntimeRelativePath =
             "Frameworks/\(embeddedRuntime.lastPathComponent)"
-        accumulateMonotonicDuration(
-            &phaseTimings.cloneNanoseconds,
-            since: cloneStarted
-        )
-
         var converted: [String] = []
         for relative in inspectedRelativePaths {
             guard let sourceMacho = sourceByPath[relative] else {
@@ -989,7 +957,6 @@ public enum PlayCoverUpstreamEngine {
             let target = options.stagingApp
                 .appendingPathComponent(relative)
             if sourceMacho.platform != platformMacCatalyst {
-                let convertStarted = monotonicTimestamp()
                 do {
                     try Macho.convertMacho(target)
                 } catch {
@@ -997,13 +964,8 @@ public enum PlayCoverUpstreamEngine {
                         "\(relative): \(error)"
                     )
                 }
-                accumulateMonotonicDuration(
-                    &phaseTimings.convertNanoseconds,
-                    since: convertStarted
-                )
                 converted.append(relative)
             }
-            let signStarted = monotonicTimestamp()
             do {
                 try Shell.signMacho(
                     target,
@@ -1014,10 +976,6 @@ public enum PlayCoverUpstreamEngine {
                     "\(relative): \(error)"
                 )
             }
-            accumulateMonotonicDuration(
-                &phaseTimings.signNanoseconds,
-                since: signStarted
-            )
         }
 
         let mainExecutable = options.stagingApp
@@ -1038,14 +996,9 @@ public enum PlayCoverUpstreamEngine {
             in: plannedMain,
             runtimeLoadPath: options.runtimeLoadPath
         )
-        let injectionStarted = monotonicTimestamp()
         try PlayTools.injectRuntime(
             mainExecutable,
             loadPath: options.runtimeLoadPath
-        )
-        accumulateMonotonicDuration(
-            &phaseTimings.convertNanoseconds,
-            since: injectionStarted
         )
         // The final prepared-App inspection below is authoritative and rejects
         // a missing, duplicated, or basename-shadowed Runtime load command
@@ -1069,17 +1022,12 @@ public enum PlayCoverUpstreamEngine {
             managedHome: options.managedHome,
             playSignActive: options.playSignActive
         )
-        let signingStarted = monotonicTimestamp()
         let signing = try signInsideOutUsingPlan(
             appURL: options.stagingApp,
             source: source,
             additionalNestedBundles: [embeddedRuntimeRelativePath],
             finalEntitlements: composition.finalPlist,
             codesignIdentity: options.codesignIdentity
-        )
-        accumulateMonotonicDuration(
-            &phaseTimings.signNanoseconds,
-            since: signingStarted
         )
         do {
             _ = try Shell.run(
@@ -1095,7 +1043,6 @@ public enum PlayCoverUpstreamEngine {
             )
         }
 
-        let verifyStarted = monotonicTimestamp()
         let prepared = try verifyPrepared(
             appURL: options.stagingApp,
             runtimeLoadPath: options.runtimeLoadPath,
@@ -1110,10 +1057,6 @@ public enum PlayCoverUpstreamEngine {
         // is the caller's contract. Re-reading either the live source or its
         // clone would add a content pass without making that contract stronger.
         let sourceAfter = source.sourceContentHash
-        accumulateMonotonicDuration(
-            &phaseTimings.verifyNanoseconds,
-            since: verifyStarted
-        )
         rollback = false
         return PlayCoverUpstreamPrepareResult(
             sourceBefore: source,
@@ -1121,8 +1064,7 @@ public enum PlayCoverUpstreamEngine {
             prepared: prepared,
             convertedMachOs: converted,
             signingOrder: signing,
-            entitlementDiff: composition.diff,
-            phaseTimings: phaseTimings.evidence
+            entitlementDiff: composition.diff
         )
     }
 
@@ -1961,22 +1903,6 @@ public enum PlayCoverUpstreamEngine {
         let nestedBuildHash: String?
         let inventory: [PlayCoverUpstreamInventoryEntry]
         let machOs: [PlayCoverUpstreamMachOInspection]
-    }
-
-    private struct PrepareTimingAccumulator {
-        var cloneNanoseconds: UInt64 = 0
-        var convertNanoseconds: UInt64 = 0
-        var signNanoseconds: UInt64 = 0
-        var verifyNanoseconds: UInt64 = 0
-
-        var evidence: PlayCoverUpstreamPreparePhaseTimings {
-            PlayCoverUpstreamPreparePhaseTimings(
-                cloneNanoseconds: cloneNanoseconds,
-                convertNanoseconds: convertNanoseconds,
-                signNanoseconds: signNanoseconds,
-                verifyNanoseconds: verifyNanoseconds
-            )
-        }
     }
 
     private struct EmbeddedSignatureEvidence {
@@ -5170,21 +5096,6 @@ public enum PlayCoverUpstreamEngine {
             return nil
         }
         return String(path.dropFirst(rootPath.count + 1))
-    }
-
-    private static func monotonicTimestamp() -> UInt64 {
-        DispatchTime.now().uptimeNanoseconds
-    }
-
-    private static func accumulateMonotonicDuration(
-        _ total: inout UInt64,
-        since start: UInt64
-    ) {
-        let end = monotonicTimestamp()
-        let elapsed = end >= start ? end - start : 0
-        total = total > UInt64.max - elapsed
-            ? UInt64.max
-            : total + elapsed
     }
 
     private static func update(

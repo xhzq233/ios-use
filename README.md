@@ -241,17 +241,9 @@ launched. A later `start --mac --reuse` explicitly reuses the most recent
 generation from that same home after a bounded integrity check. After rebuilding
 the source App, pass `--app` again so the new iPhoneOS Mach-O content selects or
 prepares its generation; `--reuse` deliberately does not inspect the source
-build. Successful start output includes one timing line for inspect, clone,
-convert, sign, verify, launch, and total latency. Launch is further observed as
-alias creation, synchronous open dispatch, exact ownership, Runtime
-transport/ping, and ready geometry.
-Runtime transport/ping is a nested subtotal of exact ownership, not an
-additional duration to add to it. Skipped cache-hit or unobserved phases are
-reported explicitly. The isolated live Runtime stress gate preserves 20 warm
-same-generation fixture samples and reports per-phase median/MAD statistics
-with the raw samples needed to recompute them. Its raw Runtime probe also proves
-that launch `hello` carries only the fixed-geometry readiness snapshot while
-full window, screen, alert, resize, and mouse diagnostics remain on `status`.
+build. The isolated live Runtime stress gate proves that launch `hello` carries
+only the fixed-geometry readiness snapshot while full window, screen, alert,
+resize, and mouse diagnostics remain on `status`.
 
 The CLI creates one random session ID and connects straight to the injected
 Runtime's owner-only Unix socket. `driver.lock` keeps the Mac backend selected until

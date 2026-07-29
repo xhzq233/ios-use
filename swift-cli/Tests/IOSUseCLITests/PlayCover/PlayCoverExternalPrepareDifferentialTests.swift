@@ -1057,12 +1057,14 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 "preparation plan did not bind the supplied Runtime tree"
             )
         }
-        let measured = try PlayCoverService.prepareMeasured(
+        let preparedArtifact = try PlayCoverService.prepareArtifact(
             plan: plan,
             outputAppPath: iosUseOutput.path,
             paths: iosUsePaths
         )
-        let iosUseResult = try XCTUnwrap(measured.upstreamResult)
+        let iosUseResult = try XCTUnwrap(
+            preparedArtifact.upstreamResult
+        )
         let recomputedIOSUse = try PlayCoverUpstreamEngine.inspect(
             appURL: iosUseOutput
         )

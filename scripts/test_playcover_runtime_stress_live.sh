@@ -8,9 +8,8 @@ BUILT_RUNTIME_FRAMEWORK="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framewor
 RUNTIME_EXECUTABLE=""
 FIXTURE_APP=""
 PROBE_SOURCE="$ROOT_DIR/playcover-fixtures/runtime_socket_probe.swift"
-TIMING_STATS_FILTER="$ROOT_DIR/scripts/playcover_timing_stats.jq"
 EVIDENCE_ROOT="${IOS_USE_PLAYCOVER_EVIDENCE_ROOT:-$ROOT_DIR/.ios-use/live-evidence}"
-EVIDENCE_PARENT="$EVIDENCE_ROOT/playcover-runtime-stress-v2"
+EVIDENCE_PARENT="$EVIDENCE_ROOT/playcover-runtime-stress-v3"
 BUILD_ROOT=""
 CLI_SCRATCH_PATH=""
 FIXTURE_DERIVED_DATA=""
@@ -22,8 +21,6 @@ ARCHIVED_SESSION_HOME=""
 MANIFEST=""
 CLEAN_CYCLE_INDEX=""
 OBSERVATIONS=""
-WARM_TIMING_SAMPLES=""
-WARM_TIMING_SUMMARY=""
 ATTESTATION=""
 CLEAN_CYCLE_COUNT=20
 GATE_PASSED=0
@@ -37,7 +34,6 @@ FIXTURE_EXECUTABLE_SHA256=""
 FIXTURE_INFO_PLIST_SHA256=""
 FIXTURE_APP_TREE_SHA256=""
 PROBE_SOURCE_SHA256=""
-TIMING_STATS_FILTER_SHA256=""
 
 config_fail() {
   GATE_FAILURE="EX_CONFIG: $*"
@@ -207,22 +203,11 @@ assert_built_inputs_unchanged() {
     "$PROBE_SOURCE" \
     "$PROBE_SOURCE_SHA256" \
     "the Runtime socket probe source"
-  assert_file_hash_unchanged \
-    "$TIMING_STATS_FILTER" \
-    "$TIMING_STATS_FILTER_SHA256" \
-    "the warm timing statistics filter"
 }
 
 validate_pass_attestation() {
   local candidate="$1"
-  if ! jq -e \
-      --arg mode validate \
-      -f "$TIMING_STATS_FILTER" \
-      "$WARM_TIMING_SUMMARY" >/dev/null; then
-    return 1
-  fi
   jq -e \
-    --slurpfile warmTiming "$WARM_TIMING_SUMMARY" \
     --arg runID "$RUN_ID" \
     --arg gitHEAD "$START_GIT_HEAD" \
     --arg cliSHA256 "$CLI_SHA256" \
@@ -231,7 +216,6 @@ validate_pass_attestation() {
     --arg fixtureInfoPlistSHA256 "$FIXTURE_INFO_PLIST_SHA256" \
     --arg fixtureAppTreeSHA256 "$FIXTURE_APP_TREE_SHA256" \
     --arg probeSourceSHA256 "$PROBE_SOURCE_SHA256" \
-    --arg timingStatsFilterSHA256 "$TIMING_STATS_FILTER_SHA256" \
     --arg generationKey "$PROTOCOL_GENERATION_KEY" \
     --argjson expectedCleanCycles "$CLEAN_CYCLE_COUNT" '
       def is_sha256:
@@ -261,15 +245,6 @@ validate_pass_attestation() {
               "_stopped"
           ]
         ) | sort;
-      def expected_warm_cases($count):
-        [
-          range(1; $count + 1) |
-          . as $cycle |
-          "clean_cycle_" +
-            (if $cycle < 10 then "0" else "" end) +
-            ($cycle | tostring) +
-            "_start"
-        ];
       (
         .observations |
         map(select(.kind == "protocol-boundary"))
@@ -294,7 +269,7 @@ validate_pass_attestation() {
         .observations |
         map(select(.kind == "app-crash-recovery"))
       ) as $recovery |
-      .schemaVersion == 2 and
+      .schemaVersion == 3 and
       .gate == "playcover-runtime-stress" and
       .result == "pass" and
       .detail == null and
@@ -331,36 +306,8 @@ validate_pass_attestation() {
       (.fixtureAppTreeSHA256 | is_sha256) and
       (.probeSourceSHA256 == $probeSourceSHA256) and
       (.probeSourceSHA256 | is_sha256) and
-      (
-        .timingStatsFilterSHA256 ==
-          $timingStatsFilterSHA256
-      ) and
-      (.timingStatsFilterSHA256 | is_sha256) and
       (.generationKey == $generationKey) and
       (.generationKey | is_sha256) and
-      (.warmBareStartTiming == $warmTiming[0]) and
-      .warmBareStartTiming.schemaVersion == 1 and
-      .warmBareStartTiming.unit == "milliseconds" and
-      .warmBareStartTiming.inputPrecisionMs == {
-        inspect: 0.1,
-        verify: 0.1,
-        launch: 0.1,
-        alias: 0.001,
-        openDispatch: 0.001,
-        exactOwnership: 0.001,
-        runtimeTransportPing: 0.001,
-        readyGeometry: 0.001,
-        total: 0.1
-      } and
-      .warmBareStartTiming.minimumSampleCount == 5 and
-      .warmBareStartTiming.sampleCount ==
-        $expectedCleanCycles and
-      .warmBareStartTiming.generationKey ==
-        $generationKey and
-      .warmBareStartTiming.fixtureAppTreeSHA256 ==
-        $fixtureAppTreeSHA256 and
-      .warmBareStartTiming.sampleCases ==
-        expected_warm_cases($expectedCleanCycles) and
       .expectedCleanCycles == $expectedCleanCycles and
       .summary.helloReadinessShapeCount == 1 and
       .summary.protocolBoundaryCount == 6 and
@@ -532,7 +479,6 @@ write_attestation() {
     return 1
   fi
   jq -s \
-    --slurpfile warmTiming "$WARM_TIMING_SUMMARY" \
     --arg result "$result" \
     --arg detail "$detail" \
     --arg runID "$RUN_ID" \
@@ -543,12 +489,11 @@ write_attestation() {
     --arg fixtureInfoPlistSHA256 "$FIXTURE_INFO_PLIST_SHA256" \
     --arg fixtureAppTreeSHA256 "$FIXTURE_APP_TREE_SHA256" \
     --arg probeSourceSHA256 "$PROBE_SOURCE_SHA256" \
-    --arg timingStatsFilterSHA256 "$TIMING_STATS_FILTER_SHA256" \
     --arg generationKey "$PROTOCOL_GENERATION_KEY" \
     --argjson expectedCleanCycles "$CLEAN_CYCLE_COUNT" '
       . as $observations |
       {
-        schemaVersion: 2,
+        schemaVersion: 3,
         gate: "playcover-runtime-stress",
         result: $result,
         detail: (
@@ -591,12 +536,6 @@ write_attestation() {
           else $probeSourceSHA256
           end
         ),
-        timingStatsFilterSHA256: (
-          if $timingStatsFilterSHA256 == ""
-          then null
-          else $timingStatsFilterSHA256
-          end
-        ),
         generationKey: (
           if $generationKey == ""
           then null
@@ -604,7 +543,6 @@ write_attestation() {
           end
         ),
         expectedCleanCycles: $expectedCleanCycles,
-        warmBareStartTiming: $warmTiming[0],
         summary: {
           helloReadinessShapeCount: (
             [$observations[] |
@@ -809,10 +747,6 @@ fi
 if [[ ! -f "$PROBE_SOURCE" ]]; then
   config_fail "Runtime socket protocol probe is unavailable"
 fi
-if [[ ! -f "$TIMING_STATS_FILTER" || -L "$TIMING_STATS_FILTER" ]]; then
-  config_fail "warm bare-start timing statistics filter is unavailable"
-fi
-
 assert_initial_repository_state
 
 mkdir -p "$EVIDENCE_PARENT" ||
@@ -830,8 +764,6 @@ ARCHIVED_SESSION_HOME="$RUN_DIR/session-home"
 MANIFEST="$RUN_DIR/manifest.tsv"
 CLEAN_CYCLE_INDEX="$RUN_DIR/clean-cycle-index.tsv"
 OBSERVATIONS="$RUN_DIR/observations.jsonl"
-WARM_TIMING_SAMPLES="$RUN_DIR/warm-bare-start-timings.jsonl"
-WARM_TIMING_SUMMARY="$RUN_DIR/warm-bare-start-timing.json"
 ATTESTATION="$RUN_DIR/attestation.json"
 if [[ -e "$ATTESTATION" || -L "$ATTESTATION" ]]; then
   config_fail "exclusive evidence directory already contains attestation.json"
@@ -840,8 +772,6 @@ printf 'schema\tcase\tcommand\tstdout\tstderr\n' >"$MANIFEST"
 printf 'cycle\tsessionIdentifier\trunnerPid\tgeneration\n' \
   >"$CLEAN_CYCLE_INDEX"
 : >"$OBSERVATIONS"
-: >"$WARM_TIMING_SAMPLES"
-printf 'null\n' >"$WARM_TIMING_SUMMARY"
 printf '%s\n' "$START_GIT_HEAD" >"$RUN_DIR/git-head"
 trap cleanup EXIT
 
@@ -952,8 +882,6 @@ FIXTURE_APP_TREE_SHA256="$(sha256_tree "$FIXTURE_APP")" ||
   fail_gate "could not hash the complete fresh fixture App"
 PROBE_SOURCE_SHA256="$(sha256_file "$PROBE_SOURCE")" ||
   fail_gate "could not hash the Runtime socket probe source"
-TIMING_STATS_FILTER_SHA256="$(sha256_file "$TIMING_STATS_FILTER")" ||
-  fail_gate "could not hash the warm timing statistics filter"
 
 SESSION_HOME="$(mktemp -d /tmp/iups.XXXXXX)"
 if [[
@@ -999,75 +927,6 @@ run_cli() {
   if ! IOS_USE_HOME="$SESSION_HOME" "$CLI" "$@" \
       >"$stdout_file" 2>"$stderr_file"; then
     fail_gate "$case_name"
-  fi
-}
-
-record_warm_bare_start_timing() {
-  local case_name="$1"
-  local generation_key="$2"
-  local timing_line
-  local sample
-  timing_line="$(
-    /usr/bin/awk '
-      index($0, "Mac timing: ") == 1 {
-        count += 1
-        line = $0
-      }
-      END {
-        if (count != 1) {
-          exit 1
-        }
-        print line
-      }
-    ' "$RUN_DIR/${case_name}.stdout"
-  )" ||
-    fail_gate \
-      "$case_name did not emit exactly one Mac timing line"
-  sample="$(
-    jq -cn \
-      --arg line "$timing_line" \
-      --arg case "$case_name" \
-      --arg generationKey "$generation_key" \
-      --arg fixtureAppTreeSHA256 "$FIXTURE_APP_TREE_SHA256" '
-        {
-          line: $line,
-          case: $case,
-          generationKey: $generationKey,
-          fixtureAppTreeSHA256: $fixtureAppTreeSHA256
-        }
-      ' |
-      jq -ce \
-        --arg mode parse \
-        -f "$TIMING_STATS_FILTER"
-  )" ||
-    fail_gate "$case_name emitted an invalid warm timing contract"
-  printf '%s\n' "$sample" >>"$WARM_TIMING_SAMPLES" ||
-    fail_gate "$case_name timing sample could not be recorded"
-}
-
-build_warm_bare_start_summary() {
-  local candidate
-  candidate="$(
-    mktemp "$RUN_DIR/.warm-bare-start-timing.XXXXXX"
-  )" || fail_gate "could not create a warm timing summary candidate"
-  if ! jq -sce \
-      --arg mode build \
-      -f "$TIMING_STATS_FILTER" \
-      "$WARM_TIMING_SAMPLES" >"$candidate"; then
-    /bin/rm -f -- "$candidate"
-    fail_gate "warm bare-start timing samples could not be summarized"
-  fi
-  if ! jq -e \
-      --arg mode validate \
-      -f "$TIMING_STATS_FILTER" \
-      "$candidate" >/dev/null; then
-    /bin/rm -f -- "$candidate"
-    fail_gate "warm bare-start timing summary did not revalidate"
-  fi
-  if ! /bin/chmod 600 "$candidate" ||
-      ! /bin/mv -f -- "$candidate" "$WARM_TIMING_SUMMARY"; then
-    /bin/rm -f -- "$candidate"
-    fail_gate "warm bare-start timing summary could not be published"
   fi
 }
 
@@ -1586,10 +1445,6 @@ for cycle in $(seq 1 "$CLEAN_CYCLE_COUNT"); do
     "$protocol_generation_key"
   assert_lock_matches_status "${cycle_name}_status"
   assert_live_runtime_socket "${cycle_name}_status"
-  record_warm_bare_start_timing \
-    "${cycle_name}_start" \
-    "$protocol_generation_key"
-
   cycle_session_identifier="$(
     jq -er '.data.driver.sessionIdentifier' \
       "$RUN_DIR/${cycle_name}_status.stdout"
@@ -1686,8 +1541,6 @@ if ! /usr/bin/awk -F '\t' \
   fail_gate \
     "clean bare lifecycle cycles did not bind unique sessions to one generation"
 fi
-build_warm_bare_start_summary
-
 run_cli endpoint_start start --mac --reuse
 assert_bare_start_reused endpoint_start "$protocol_generation_key"
 run_cli endpoint_status status --json
@@ -1950,5 +1803,5 @@ fi
 GATE_PASSED=1
 trap - EXIT
 echo \
-  "[playcover-runtime-stress] PASS: minimal hello readiness, bounded frames, endpoint loss, clean bare lifecycles with warm launch median/MAD evidence, semantic Runtime tap, and App-crash recovery with preserved residue" \
+  "[playcover-runtime-stress] PASS: minimal hello readiness, bounded frames, endpoint loss, clean bare lifecycles, semantic Runtime tap, and App-crash recovery with preserved residue" \
   >&2

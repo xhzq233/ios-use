@@ -105,9 +105,7 @@ enum CLIHelp {
             an already prepared App. Use --app after every Debug rebuild so the
             current source is inspected. Use --reuse only to explicitly launch
             the most recent successful generation without checking its original
-            source. Successful Mac starts print prepare timings plus
-            alias/open/ownership/Runtime/
-            ready-geometry launch timings.
+            source.
             --log captures target-App stdout/stderr from the injected Runtime
             onward in an owner-only per-session file retained after stop,
             crash, or launch failure.

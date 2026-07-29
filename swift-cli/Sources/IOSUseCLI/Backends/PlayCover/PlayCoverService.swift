@@ -137,6 +137,7 @@ public enum PlayCoverService {
         case afterFastVerificationBeforeLaunchBody
         case afterAliasBuiltBeforePreSubmitValidation
         case afterWorkspaceOpenReturnedBeforePostSubmitValidation
+        case enteredExactOwnershipLoop
     }
 
     public static let manifestFilename = "manifest.json"
@@ -325,7 +326,7 @@ public enum PlayCoverService {
         paths: IOSUsePaths,
         publishedAppPath: String? = nil
     ) throws -> PlayCoverPrepareManifest {
-        try prepareMeasured(
+        try prepareArtifact(
             plan: plan,
             outputAppPath: outputAppPath,
             paths: paths,
@@ -333,7 +334,7 @@ public enum PlayCoverService {
         ).manifest
     }
 
-    static func prepareMeasured(
+    static func prepareArtifact(
         plan: PlayCoverPreparationPlan,
         outputAppPath: String,
         stagingIOAppPath: String? = nil,
@@ -493,7 +494,6 @@ public enum PlayCoverService {
         )
         return PlayCoverPreparedArtifact(
             manifest: manifest,
-            phaseTimings: upstream.phaseTimings,
             upstreamResult: upstream
         )
     }
@@ -1122,10 +1122,8 @@ public enum PlayCoverService {
         runtimeSocketPath: String,
         stdioLog: PlayCoverStdioLogIdentity? = nil,
         pendingLaunchPaths: IOSUsePaths? = nil,
-        launchPhaseTiming: inout PlayCoverLaunchPhaseTiming,
         timeout: Double = 15
     ) throws -> PlayCoverLaunchIdentity {
-        launchPhaseTiming = .empty
         let manifest = validatedManifest.manifest
         guard !sessionID.isEmpty,
               sessionID.utf8.count <= 128 else {
@@ -1204,8 +1202,7 @@ public enum PlayCoverService {
                 launchAlias: &launchAlias,
                 workspaceOpenSubmitted: &workspaceOpenSubmitted,
                 postSubmissionIntegrityError:
-                    &postSubmissionIntegrityError,
-                launchPhaseTiming: &launchPhaseTiming
+                    &postSubmissionIntegrityError
             )
             launched = identity
             guard let launchAlias,
@@ -1223,8 +1220,6 @@ public enum PlayCoverService {
                 throw postSubmissionIntegrityError
             }
 
-            let readyGeometryStarted =
-                PlayCoverMonotonicClock.now()
             var lastError: Error?
             while ProcessInfo.processInfo.systemUptime < deadline {
                 do {
@@ -1252,10 +1247,6 @@ public enum PlayCoverService {
                     #if DEBUG && canImport(Darwin)
                     PlayCoverLaunchCrashCut.hit(.afterReadyGate)
                     #endif
-                    launchPhaseTiming.readyGeometryNanoseconds =
-                        PlayCoverMonotonicClock.elapsed(
-                            since: readyGeometryStarted
-                        )
                     return PlayCoverLaunchIdentity(
                         sessionID: sessionID,
                         pid: identity.pid,
@@ -1268,10 +1259,6 @@ public enum PlayCoverService {
                     )
                 } catch {
                     if runtimeHelloFailureIsTerminal(error) {
-                        launchPhaseTiming.readyGeometryNanoseconds =
-                            PlayCoverMonotonicClock.elapsed(
-                                since: readyGeometryStarted
-                            )
                         throw error
                     }
                     lastError = error
@@ -1287,10 +1274,6 @@ public enum PlayCoverService {
                     )
                 }
             }
-            launchPhaseTiming.readyGeometryNanoseconds =
-                PlayCoverMonotonicClock.elapsed(
-                    since: readyGeometryStarted
-                )
             throw PlayCoverBackendError.launchTimedOut(
                 "no verified Runtime hello within \(timeout) seconds"
                     + (lastError.map { "; last error: \($0)" } ?? "")
@@ -4638,8 +4621,7 @@ public enum PlayCoverService {
         deadline: TimeInterval,
         launchAlias: inout SessionLaunchAlias?,
         workspaceOpenSubmitted: inout Bool,
-        postSubmissionIntegrityError: inout Error?,
-        launchPhaseTiming: inout PlayCoverLaunchPhaseTiming
+        postSubmissionIntegrityError: inout Error?
     ) throws -> LaunchedApplicationIdentity {
         #if canImport(AppKit)
         let configuration = NSWorkspace.OpenConfiguration()
@@ -4684,38 +4666,19 @@ public enum PlayCoverService {
                 destination: $0.destination
             )
         }
-        let aliasStarted = PlayCoverMonotonicClock.now()
-        let alias: SessionLaunchAlias
-        do {
-            alias = try createSessionLaunchAlias(
-                entries: launchEntries,
-                sessionID: sessionID,
-                pendingLaunchPaths: pendingLaunchPaths
-            )
-        } catch {
-            launchPhaseTiming.aliasNanoseconds =
-                PlayCoverMonotonicClock.elapsed(
-                    since: aliasStarted
-                )
-            throw error
-        }
+        let alias = try createSessionLaunchAlias(
+            entries: launchEntries,
+            sessionID: sessionID,
+            pendingLaunchPaths: pendingLaunchPaths
+        )
         launchAlias = alias
-        let aliasCapability: SessionLaunchAliasCapability
-        do {
-            aliasCapability = try openSessionLaunchAliasCapability(
-                alias: alias
-            )
-            try emitLaunchIntegrityEvent(
-                .afterAliasBuiltBeforePreSubmitValidation
-            )
-        } catch {
-            launchPhaseTiming.aliasNanoseconds =
-                PlayCoverMonotonicClock.elapsed(since: aliasStarted)
-            throw error
-        }
+        let aliasCapability = try openSessionLaunchAliasCapability(
+            alias: alias
+        )
+        try emitLaunchIntegrityEvent(
+            .afterAliasBuiltBeforePreSubmitValidation
+        )
         defer { aliasCapability.close() }
-        launchPhaseTiming.aliasNanoseconds =
-            PlayCoverMonotonicClock.elapsed(since: aliasStarted)
         let box = LaunchBox()
         let semaphore = DispatchSemaphore(value: 0)
         let completion:
@@ -4838,29 +4801,17 @@ public enum PlayCoverService {
         }
         workspaceOpenSubmitted = true
         if let workspaceOpenOverrideForTesting {
-            let openDispatchStarted =
-                PlayCoverMonotonicClock.now()
             workspaceOpenOverrideForTesting(
                 alias.bundleURL,
                 configuration,
                 completion
             )
-            launchPhaseTiming.openDispatchNanoseconds =
-                PlayCoverMonotonicClock.elapsed(
-                    since: openDispatchStarted
-                )
         } else {
-            let openDispatchStarted =
-                PlayCoverMonotonicClock.now()
             NSWorkspace.shared.openApplication(
                 at: alias.bundleURL,
                 configuration: configuration,
                 completionHandler: completion
             )
-            launchPhaseTiming.openDispatchNanoseconds =
-                PlayCoverMonotonicClock.elapsed(
-                    since: openDispatchStarted
-                )
         }
         #if DEBUG && canImport(Darwin)
         PlayCoverLaunchCrashCut.hit(.afterOpenReturned)
@@ -4886,41 +4837,11 @@ public enum PlayCoverService {
         // shared by launch discovery and the subsequent ready Runtime hello.
         // Large Apps may exceed LaunchServices' historical ten-second window,
         // but discovery must not restart the public timeout.
-        let exactOwnershipStarted =
-            PlayCoverMonotonicClock.now()
-        var runtimeTransportPingNanoseconds: UInt64 = 0
-        var attemptedRuntimeTransportPing = false
-        defer {
-            let ownershipAndPingNanoseconds =
-                PlayCoverMonotonicClock.elapsed(
-                    since: exactOwnershipStarted
-                )
-            launchPhaseTiming.runtimeTransportPingNanoseconds =
-                attemptedRuntimeTransportPing
-                    ? runtimeTransportPingNanoseconds
-                    : nil
-            launchPhaseTiming.exactOwnershipNanoseconds =
-                ownershipAndPingNanoseconds
-        }
         var callbackError: Error?
         var legacyHelloAttempted = false
         func authenticatesCurrentLaunch(
             _ identity: LaunchedApplicationIdentity
         ) -> Bool {
-            attemptedRuntimeTransportPing = true
-            let runtimeTransportPingStarted =
-                PlayCoverMonotonicClock.now()
-            defer {
-                let elapsed =
-                    PlayCoverMonotonicClock.elapsed(
-                        since: runtimeTransportPingStarted
-                    )
-                let (sum, overflow) =
-                    runtimeTransportPingNanoseconds
-                        .addingReportingOverflow(elapsed)
-                runtimeTransportPingNanoseconds =
-                    overflow ? UInt64.max : sum
-            }
             return authenticateRuntimeLaunchCandidate(
                 identity,
                 runtimeSocketPath: runtimeSocketPath,
@@ -4931,6 +4852,7 @@ public enum PlayCoverService {
                 legacyHelloAttempted: &legacyHelloAttempted
             )
         }
+        try emitLaunchIntegrityEvent(.enteredExactOwnershipLoop)
         while ProcessInfo.processInfo.systemUptime < deadline {
             // A successful callback is published only after any required
             // exact-owner durability. Consume it before the bounded candidate

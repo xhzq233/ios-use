@@ -237,7 +237,7 @@ if ! jq -e '
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverService.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningCertificateBuilder.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningIdentityService.swift",
-      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverStartTiming.swift",
+      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverPreparedArtifact.swift",
       "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverExternalPrepareDifferentialTests.swift",
       "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverPrepareDifferentialTests.swift",
       "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverSigningEvidenceTestSupport.swift"

@@ -123,7 +123,6 @@ enum PlayCoverSessionService {
         let logPath: String?
         let usesPendingLaunchJournal: Bool
         let reused: Bool
-        let timing: PlayCoverStartTiming
         let currentGenerationToken:
             PlayCoverFastVerifiedGenerationToken?
 
@@ -139,7 +138,6 @@ enum PlayCoverSessionService {
             logPath: String? = nil,
             usesPendingLaunchJournal: Bool = false,
             reused: Bool,
-            timing: PlayCoverStartTiming = .empty,
             currentGenerationToken:
                 PlayCoverFastVerifiedGenerationToken? = nil
         ) {
@@ -155,7 +153,6 @@ enum PlayCoverSessionService {
             self.usesPendingLaunchJournal =
                 usesPendingLaunchJournal
             self.reused = reused
-            self.timing = timing
             self.currentGenerationToken = currentGenerationToken
         }
     }
@@ -229,7 +226,6 @@ enum PlayCoverSessionService {
         let generationIdentity: PlayCoverGenerationIdentity?
         let expectedManifest: PlayCoverPrepareManifest?
         let reused: Bool
-        let timing: PlayCoverStartTiming
     }
 
     private static func resolveApp(
@@ -252,11 +248,9 @@ enum PlayCoverSessionService {
                 generationIdentity:
                     resolution.generationIdentity,
                 expectedManifest: resolution.manifest,
-                reused: resolution.reused,
-                timing: resolution.timing
+                reused: resolution.reused
             )
         }
-        let inspectStarted = PlayCoverMonotonicClock.now()
         guard let reference = try readPreparedReference(
             paths: paths
         ) else {
@@ -278,19 +272,7 @@ enum PlayCoverSessionService {
             generationKey: reference.generationKey,
             generationIdentity: nil,
             expectedManifest: nil,
-            reused: true,
-            timing: PlayCoverStartTiming(
-                inspectNanoseconds:
-                    PlayCoverMonotonicClock.elapsed(
-                        since: inspectStarted
-                    ),
-                cloneNanoseconds: nil,
-                convertNanoseconds: nil,
-                signNanoseconds: nil,
-                verifyNanoseconds: 0,
-                launchNanoseconds: 0,
-                totalNanoseconds: 0
-            )
+            reused: true
         )
     }
 
@@ -312,8 +294,6 @@ enum PlayCoverSessionService {
             explicitAppPath: explicitAppPath,
             paths: paths
         )
-        var timing = resolved.timing
-        let verificationStarted = PlayCoverMonotonicClock.now()
         let verifiedLaunch = try fastVerifiedLaunchCapability(
             appPath: resolved.appPath,
             expectedGenerationIdentity:
@@ -325,11 +305,6 @@ enum PlayCoverSessionService {
         let currentGenerationToken =
             verifiedLaunch.currentGenerationToken
         let verifiedManifest = validatedManifest.manifest
-        timing.addVerify(
-            PlayCoverMonotonicClock.elapsed(
-                since: verificationStarted
-            )
-        )
         guard verifiedManifest.preparedAppPath == resolved.appPath,
               verifiedManifest.bundleIdentifier
                 == resolved.bundleIdentifier,
@@ -355,8 +330,6 @@ enum PlayCoverSessionService {
             )
             : nil
         do {
-            let launchStarted = PlayCoverMonotonicClock.now()
-            var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
             let rawResult: LaunchResult
             if let launchOverrideForTesting {
                 rawResult = try launchOverrideForTesting(
@@ -381,15 +354,9 @@ enum PlayCoverSessionService {
                         runtimeSocketPath: socketPath,
                         stdioLog: stdioLog,
                         pendingLaunchPaths: paths,
-                        launchPhaseTiming: &launchPhaseTiming,
                         timeout: timeout
                     )
                 } catch let error as PlayCoverUnterminatedLaunchError {
-                    timing.launchNanoseconds =
-                        PlayCoverMonotonicClock.elapsed(
-                            since: launchStarted
-                        )
-                    timing.launchPhaseTiming = launchPhaseTiming
                     throw PlayCoverSessionUnterminatedLaunchError(
                         result: LaunchResult(
                             sessionID: error.sessionID,
@@ -407,8 +374,7 @@ enum PlayCoverSessionService {
                                 error.runtimeSocketPath,
                             logPath: stdioLog?.path,
                             usesPendingLaunchJournal: true,
-                            reused: resolved.reused,
-                            timing: timing
+                            reused: resolved.reused
                         ),
                         underlying: error
                     )
@@ -429,9 +395,6 @@ enum PlayCoverSessionService {
                     reused: resolved.reused
                 )
             }
-            timing.launchNanoseconds =
-                PlayCoverMonotonicClock.elapsed(since: launchStarted)
-            timing.launchPhaseTiming = launchPhaseTiming
             let result = LaunchResult(
                 sessionID: rawResult.sessionID,
                 appPath: rawResult.appPath,
@@ -445,7 +408,6 @@ enum PlayCoverSessionService {
                 usesPendingLaunchJournal:
                     rawResult.usesPendingLaunchJournal,
                 reused: resolved.reused,
-                timing: timing,
                 currentGenerationToken: currentGenerationToken
             )
             guard result.sessionID == sessionID,

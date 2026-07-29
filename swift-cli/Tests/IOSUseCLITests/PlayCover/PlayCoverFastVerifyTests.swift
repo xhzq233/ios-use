@@ -267,15 +267,12 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             )
         defer { acquired.capability.close() }
         XCTAssertEqual(validationCount, 1)
-        var timing = PlayCoverLaunchPhaseTiming.empty
-
         XCTAssertThrowsError(
             try PlayCoverService.launchVerified(
                 validatedManifest: acquired.evidence,
                 launchCapability: acquired.capability,
                 sessionID: "validated-manifest-single-pass",
                 runtimeSocketPath: "/definitely/not-the-runtime.sock",
-                launchPhaseTiming: &timing,
                 timeout: 1
             )
         ) { error in
@@ -1827,8 +1824,12 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         PlayCoverService.launchAliasRootOverrideForTesting =
             fixture.launchAliasRoot
         var mutationFired = false
+        var enteredOwnershipLoop = false
         PlayCoverService.launchIntegrityEventOverrideForTesting = {
             actual in
+            if actual == .enteredExactOwnershipLoop {
+                enteredOwnershipLoop = true
+            }
             guard actual == event, !mutationFired else { return }
             mutationFired = true
             try mutation()
@@ -1841,7 +1842,6 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         var alias: PlayCoverService.SessionLaunchAlias?
         var workspaceOpenSubmitted = false
         var postSubmissionIntegrityError: Error?
-        var timing = PlayCoverLaunchPhaseTiming.empty
         do {
             try PlayCoverService.withFastVerifiedLaunchCapability(
                 appPath: fixture.app.path,
@@ -1861,8 +1861,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                     workspaceOpenSubmitted:
                         &workspaceOpenSubmitted,
                     postSubmissionIntegrityError:
-                        &postSubmissionIntegrityError,
-                    launchPhaseTiming: &timing
+                        &postSubmissionIntegrityError
                 )
             }
             throw NSError(
@@ -1879,7 +1878,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                 mutationFired,
                 workspaceOpenCount,
                 workspaceOpenSubmitted,
-                timing.exactOwnershipNanoseconds != nil,
+                enteredOwnershipLoop,
                 alias
             )
         }

@@ -12,36 +12,6 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         super.tearDown()
     }
 
-    func testStartTimingRendersEveryRequestedPhase() {
-        let timing = PlayCoverStartTiming(
-            inspectNanoseconds: 1_500_000,
-            cloneNanoseconds: nil,
-            convertNanoseconds: 2_000_000,
-            signNanoseconds: 3_200_000,
-            verifyNanoseconds: 4_000_000,
-            launchNanoseconds: 5_500_000,
-            launchPhaseTiming: PlayCoverLaunchPhaseTiming(
-                aliasNanoseconds: 100_000,
-                openDispatchNanoseconds: 200_000,
-                exactOwnershipNanoseconds: 300_000,
-                runtimeTransportPingNanoseconds: nil,
-                readyGeometryNanoseconds: 400_000
-            ),
-            totalNanoseconds: 16_300_000
-        )
-
-        XCTAssertEqual(
-            timing.outputLine,
-            "inspect=1.5ms clone=skipped convert=2.0ms "
-                + "sign=3.2ms verify=4.0ms launch=5.5ms "
-                + "alias=0.100ms openDispatch=0.200ms "
-                + "exactOwnership=0.300ms "
-                + "runtimeTransportPing=skipped "
-                + "readyGeometry=0.400ms "
-                + "total=16.3ms"
-        )
-    }
-
     func testOperationLockSerializesAnotherProcess() throws {
         guard FileManager.default.isExecutableFile(
             atPath: "/usr/bin/python3"

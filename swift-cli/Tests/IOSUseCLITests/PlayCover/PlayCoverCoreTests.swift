@@ -1772,7 +1772,6 @@ final class PlayCoverCoreTests: XCTestCase {
             PlayCoverService.SessionLaunchAlias?
         var openSubmitted = false
         var postSubmissionIntegrityError: Error?
-        var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
         try PlayCoverService
             .withUncheckedLaunchCapabilityForTesting(
                 appPath: manifest.preparedAppPath
@@ -1793,9 +1792,7 @@ final class PlayCoverCoreTests: XCTestCase {
                             workspaceOpenSubmitted:
                                 &openSubmitted,
                             postSubmissionIntegrityError:
-                                &postSubmissionIntegrityError,
-                            launchPhaseTiming:
-                                &launchPhaseTiming
+                                &postSubmissionIntegrityError
                         )
                 )
             }
@@ -1887,7 +1884,6 @@ final class PlayCoverCoreTests: XCTestCase {
         var alias: PlayCoverService.SessionLaunchAlias?
         var openSubmitted = false
         var postSubmissionIntegrityError: Error?
-        var launchPhaseTiming = PlayCoverLaunchPhaseTiming.empty
 
         try PlayCoverService.withUncheckedLaunchCapabilityForTesting(
             appPath: manifest.preparedAppPath
@@ -1903,8 +1899,7 @@ final class PlayCoverCoreTests: XCTestCase {
                     launchAlias: &alias,
                     workspaceOpenSubmitted: &openSubmitted,
                     postSubmissionIntegrityError:
-                        &postSubmissionIntegrityError,
-                    launchPhaseTiming: &launchPhaseTiming
+                        &postSubmissionIntegrityError
                 )
             )
         }
@@ -1913,13 +1908,6 @@ final class PlayCoverCoreTests: XCTestCase {
             PlayCoverService.sessionLaunchAlias(sessionID: sessionID)
         XCTAssertTrue(openSubmitted)
         XCTAssertEqual(alias, expectedAlias)
-        XCTAssertNotNil(launchPhaseTiming.aliasNanoseconds)
-        XCTAssertNotNil(launchPhaseTiming.openDispatchNanoseconds)
-        XCTAssertNotNil(launchPhaseTiming.exactOwnershipNanoseconds)
-        XCTAssertNil(
-            launchPhaseTiming.runtimeTransportPingNanoseconds
-        )
-        XCTAssertNil(launchPhaseTiming.readyGeometryNanoseconds)
         XCTAssertEqual(submittedURL, expectedAlias.bundleURL)
         XCTAssertEqual(
             submittedEnvironment?["IOS_USE_PLAY_SESSION_ID"],

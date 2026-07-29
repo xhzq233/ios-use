@@ -89,26 +89,8 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertTrue(start.stdout.contains("generation reused:"))
         XCTAssertTrue(start.stdout.contains(manifest.generationKey))
         XCTAssertTrue(start.stdout.contains("IOS_USE_HOME: \(fixture.root)"))
-        XCTAssertTrue(
-            start.stdout.contains(
-                "Mac timing: inspect="
-            )
-        )
-        for phase in [
-            "clone=skipped",
-            "convert=skipped",
-            "sign=skipped",
-            "verify=",
-            "launch=",
-            "alias=skipped",
-            "openDispatch=skipped",
-            "exactOwnership=skipped",
-            "runtimeTransportPing=skipped",
-            "readyGeometry=skipped",
-            "total=",
-        ] {
-            XCTAssertTrue(start.stdout.contains(phase), phase)
-        }
+        XCTAssertFalse(start.stdout.contains("Mac timing:"))
+        XCTAssertFalse(start.stdout.contains("performance"))
         XCTAssertEqual(
             fastVerificationPaths,
             [manifest.preparedAppPath]

@@ -42,7 +42,6 @@ enum PlayCoverManagedAppService {
         let manifest: PlayCoverPrepareManifest
         let generationIdentity: PlayCoverGenerationIdentity
         let reused: Bool
-        let timing: PlayCoverStartTiming
     }
 
     struct ManagedDirectories: Equatable, Sendable {
@@ -61,7 +60,6 @@ enum PlayCoverManagedAppService {
         _ appPath: String,
         paths: IOSUsePaths
     ) throws -> Resolution {
-        let inspectStarted = PlayCoverMonotonicClock.now()
         let lexical = lexicalStandardizedPath(appPath)
         let isManagedCandidate = isLexicallyInsideManagedPrepared(
             lexical,
@@ -91,14 +89,7 @@ enum PlayCoverManagedAppService {
                 manifest: manifest,
                 generationIdentity:
                     validated.generationIdentity,
-                reused: true,
-                timing: makeTiming(
-                    inspectNanoseconds:
-                        PlayCoverMonotonicClock.elapsed(
-                            since: inspectStarted
-                        ),
-                    prepare: nil
-                )
+                reused: true
             )
         }
 
@@ -134,10 +125,6 @@ enum PlayCoverManagedAppService {
                 "content generation key must be a 64-character SHA-256"
             )
         }
-        let inspectNanoseconds = PlayCoverMonotonicClock.elapsed(
-            since: inspectStarted
-        )
-
         preparationProcessLock.lock()
         defer { preparationProcessLock.unlock() }
         return try withSecureManagedDirectories(paths: paths) { access in
@@ -182,11 +169,7 @@ enum PlayCoverManagedAppService {
                 return Resolution(
                     manifest: manifest,
                     generationIdentity: plan.generationIdentity,
-                    reused: true,
-                    timing: makeTiming(
-                        inspectNanoseconds: inspectNanoseconds,
-                        prepare: nil
-                    )
+                    reused: true
                 )
             }
 
@@ -262,11 +245,10 @@ enum PlayCoverManagedAppService {
                                 paths,
                                 layout.app.path
                             ),
-                            phaseTimings: nil,
                             upstreamResult: nil
                         )
                     }
-                    return try PlayCoverService.prepareMeasured(
+                    return try PlayCoverService.prepareArtifact(
                         plan: plan,
                         outputAppPath: stagingIdentityAppPath,
                         stagingIOAppPath: stagingIOAppPath,
@@ -382,11 +364,7 @@ enum PlayCoverManagedAppService {
                         manifest: winner,
                         generationIdentity:
                             plan.generationIdentity,
-                        reused: true,
-                        timing: makeTiming(
-                            inspectNanoseconds: inspectNanoseconds,
-                            prepare: preparedArtifact.phaseTimings
-                        )
+                        reused: true
                     )
                 }
                 throw PlayCoverBackendError.prepareFailed(
@@ -411,11 +389,7 @@ enum PlayCoverManagedAppService {
             return Resolution(
                 manifest: manifest,
                 generationIdentity: plan.generationIdentity,
-                reused: false,
-                timing: makeTiming(
-                    inspectNanoseconds: inspectNanoseconds,
-                    prepare: preparedArtifact.phaseTimings
-                )
+                reused: false
             )
         }
     }
@@ -542,21 +516,6 @@ enum PlayCoverManagedAppService {
             appPath: path,
             expectedGenerationIdentity:
                 expectedGenerationIdentity
-        )
-    }
-
-    private static func makeTiming(
-        inspectNanoseconds: UInt64,
-        prepare: PlayCoverUpstreamPreparePhaseTimings?
-    ) -> PlayCoverStartTiming {
-        PlayCoverStartTiming(
-            inspectNanoseconds: inspectNanoseconds,
-            cloneNanoseconds: prepare?.cloneNanoseconds,
-            convertNanoseconds: prepare?.convertNanoseconds,
-            signNanoseconds: prepare?.signNanoseconds,
-            verifyNanoseconds: prepare?.verifyNanoseconds ?? 0,
-            launchNanoseconds: 0,
-            totalNanoseconds: 0
         )
     }
 

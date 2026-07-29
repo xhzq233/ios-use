@@ -12,7 +12,7 @@ import MachO
 import injection
 
 private let playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 =
-    "7c276702b0aa23eb88506c178f90aa48487ecc0b52e8df466449947c92edef27"
+    "c9cb36d110266f338be39eb18aa120258deb8d41485ce8a3b3779c25014ab11c"
 
 private func playCoverCanonicalExistingURL(_ url: URL) -> URL? {
     guard let resolved = realpath(url.standardizedFileURL.path, nil) else {
@@ -3441,7 +3441,7 @@ public enum PlayCoverPrepareDifferentialGate {
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverSigningIdentityService.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverStartTiming.swift",
+                + "PlayCoverPreparedArtifact.swift",
             "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                 + "PlayCoverExternalPrepareDifferentialTests.swift",
             "swift-cli/Tests/IOSUseCLITests/PlayCover/"

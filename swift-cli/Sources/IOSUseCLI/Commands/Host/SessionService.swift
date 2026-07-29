@@ -185,14 +185,12 @@ public enum SessionService {
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
-        let started = PlayCoverMonotonicClock.now()
         return try SessionOperationLock.withExclusiveLock(paths: paths) {
             try startPlayCoverLocked(
                 appPath: appPath,
                 captureStdio: captureStdio,
                 timeout: timeout,
-                paths: paths,
-                started: started
+                paths: paths
             )
         }
     }
@@ -201,8 +199,7 @@ public enum SessionService {
         appPath: String?,
         captureStdio: Bool,
         timeout: Double,
-        paths: IOSUsePaths,
-        started: UInt64
+        paths: IOSUsePaths
     ) throws -> String {
         try prepareForStart(paths: paths)
         var launch: PlayCoverSessionService.LaunchResult?
@@ -257,10 +254,6 @@ public enum SessionService {
             if let logPath = result.logPath {
                 output += "Mac log: \(logPath)\n"
             }
-            var timing = result.timing
-            timing.totalNanoseconds =
-                PlayCoverMonotonicClock.elapsed(since: started)
-            output += "Mac timing: \(timing.outputLine)\n"
             return output
         } catch let error as
                 PlayCoverSessionJournalHandoffError {

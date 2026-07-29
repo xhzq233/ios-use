@@ -309,15 +309,6 @@ authoritative final prepared-App inspection. It does not re-read the live
 source after cloning; callers must provide a completed source build that stays
 byte-stable through publication.
 
-Each successful start prints a single `Mac timing:` line covering
-`inspect`, `clone`, `convert`, `sign`, `verify`, `launch`, and `total`.
-It also reports `alias`, `openDispatch`, `exactOwnership`,
-`runtimeTransportPing`, and `readyGeometry`. `exactOwnership` is gross wall
-time from open dispatch return through the exact claim;
-`runtimeTransportPing` is the accumulated nested subtotal of Runtime
-challenges attempted during that interval. Cache-hit or unobserved phases
-that did not run are shown as `skipped`.
-
 The schema-version-4 production prepare manifest remains a cache-integrity
 seal. It records the complete stable-signer evidence and the prepared root's
 certificate SHA-256, serialized designated requirement plus its SHA-256,
@@ -351,7 +342,7 @@ scenario.
 External-App characterization is a separate diagnostic-only operation. It
 clones a fresh source snapshot, uses disjoint fresh managed homes, runs the
 full pinned PlayTools Installer oracle and the real
-`PlayCoverService.inspectPreparationSource` → plan → `prepareMeasured` →
+`PlayCoverService.inspectPreparationSource` → plan → `prepareArtifact` →
 typed upstream-result path, and supplies signed Runtime/AKInterface one-sided
 baselines plus external managed-path normalization to the raw differential
 analyzer. It verifies that the original source, snapshot, Runtime, and
@@ -440,12 +431,11 @@ host does not use Accessibility APIs or UI scripting to inspect or click TCC,
 UserNotificationCenter, or Automation prompts; those remain manual or
 Computer Use interactions.
 
-Top-level `performance.totalElapsedMs` is a monotonic command/result-assembly
-measurement frozen once immediately before the machine envelope is encoded.
-The same frozen value is written to `cli.log`; JSON encoding, stdout delivery,
-and the log write itself are deliberately outside that boundary. Runtime
-round-trip, Runtime request, and alert-refresh fields are separate sums with
-counts, and unavailable measurements remain `null` with count zero.
+Mac-start and command-invocation performance measurements are not part of
+user-facing text or JSON envelopes. `cli.log` keeps only `commandElapsedMs` and,
+for commands that refresh App alert state, `alertRefreshElapsedMs`. Existing
+command-specific result data, such as screenshot capture measurements, is
+unchanged.
 
 Screenshot and capture crop and normalize only the inner fixed canvas from the
 target process's WindowServer backing surfaces, including Metal. The AppKit
@@ -479,21 +469,12 @@ invalid-UTF-8, and truncated Runtime frames and proves listener health after
 each one. One cold prepare is followed by 20 bare
 start/status/stop cycles with unique session IDs and one immutable generation;
 each cycle verifies the exact lock/PID/socket identity and the eventual removal
-of only that cycle's lock and Runtime-owned socket. Each warm start must emit
-exactly one complete timing line. The gate preserves all 20 raw samples and
-computes the per-phase median, raw median absolute deviation, normalized MAD,
-relative raw MAD, and observed/skipped counts. Aggregate phases retain 0.1 ms
-input precision and launch subphases retain 0.001 ms precision. These values
-are diagnostic evidence rather than an unevidenced absolute performance
-threshold. The same gate verifies
+of only that cycle's lock and Runtime-owned socket. The same gate verifies
 scene replacement, endpoint-loss classification, fixture-owned self-`SIGKILL`
 stale cleanup,
 preservation of the crash socket residue, and recovery through a fresh random
-session. Its schema-v2 attestation embeds the timing summary and raw samples,
-binds the timing filter's SHA-256, records every clean-stop absence result, and
-records the crash residue's before/after device, inode, owner, and mode
-observations. The summary is accepted only when it exactly matches a
-recomputation from its embedded samples.
+session. Its schema-v3 attestation records every clean-stop absence result and
+the crash residue's before/after device, inode, owner, and mode observations.
 The fixture self-crash is requested through a session-specific Darwin
 notification, so the host never signals a potentially recycled PID. The
 non-live aggregate also runs the full CLI suite, including deterministic
