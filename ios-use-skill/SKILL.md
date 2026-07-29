@@ -24,18 +24,27 @@ ios-use config --udid <udid>
 ios-use start <udid>
 ```
 
-For a source-built experimental PlayCover backend, pass either an unmodified
-iPhoneOS App or an already prepared App and start it directly:
+For a source-built experimental PlayCover backend, configure its signing
+identity once, then pass either an unmodified iPhoneOS App or an already
+prepared App:
 
 ```bash
+ios-use config --playcover
 ios-use start --playcover --app <source-or-prepared.app>
 ```
+
+The first command asks for one macOS authentication to trust the PlayCover
+signing identity. If the user cancels, safely retry the same command; it resumes
+the same identity instead of replacing it. This setup persists across
+`IOS_USE_HOME` values. `start --playcover` never performs setup itself and
+directs the user back to `config --playcover` when the identity is missing or
+needs attention.
 
 The source build supplies the default runtime. A source App is prepared into
 managed ios-use state and launched in the same command; a complete prepared App
 is verified and launched directly. Later, bare `ios-use start --playcover`
-reuses the most recent successful generation. Run ordinary `ios-use stop`
-before switching backends.
+reuses the most recent successful generation from the current `IOS_USE_HOME`.
+Run ordinary `ios-use stop` before switching backends.
 
 - Connect real devices over USB and use iOS 17.4 or later.
 - Run `config` on first use, after upgrading ios-use, when `status` reports
@@ -46,13 +55,12 @@ before switching backends.
 - Treat the device selected by `start` as the target for all UI commands. To switch
   devices, run `ios-use stop`, then `ios-use start <new-udid>`.
 - Treat PlayCover selected by `start --playcover` the same way: subsequent
-  session-bound commands cannot fall back to XCTest. Until the injected
-  automation transport is available, DOM/actions return an explicit PlayCover
-  capability error.
+  session-bound commands route to the active PlayCover Runtime and cannot fall
+  back to XCTest.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
   whether an individual command accepts `--udid`.
 
-For first-time signing, ask the user to run:
+For first-time real-device signing, ask the user to run:
 
 ```bash
 ios-use config --udid <udid> --apple-id <email>
@@ -239,6 +247,9 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
 - PlayCover reports that no default runtime was found: rebuild the source CLI
   with `bash scripts/build_swift_cli.sh --debug` on Apple silicon with the
   iPhoneOS SDK available, then retry the same `start --playcover --app` command.
+- PlayCover reports that its signing identity is missing or needs trust: run
+  `ios-use config --playcover`. If macOS authentication was cancelled, safely
+  retry that same command.
 - altsign HTTP 4xx: verify Apple Developer account state and interactive
   authentication, then retry `config`.
 - altsign HTTP 5xx: check network, VPN, or proxy conditions and retry later; do not

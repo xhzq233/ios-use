@@ -561,6 +561,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
     public let runtimeSocketPath: String
     public let runtimeLoadPath: String
     public let playSignActive: Bool
+    public let codesignIdentity: String
     public let expectedRuntimeBuildHash: String?
     public let expectedRuntimeEvidence: PlayCoverUpstreamRuntimeEvidence?
 
@@ -573,6 +574,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         runtimeSocketPath: String,
         runtimeLoadPath: String,
         playSignActive: Bool = false,
+        codesignIdentity: String,
         expectedRuntimeBuildHash: String? = nil,
         expectedRuntimeEvidence: PlayCoverUpstreamRuntimeEvidence? = nil
     ) {
@@ -584,6 +586,7 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         self.runtimeSocketPath = runtimeSocketPath
         self.runtimeLoadPath = runtimeLoadPath
         self.playSignActive = playSignActive
+        self.codesignIdentity = codesignIdentity
         self.expectedRuntimeBuildHash = expectedRuntimeBuildHash
         self.expectedRuntimeEvidence = expectedRuntimeEvidence
     }
@@ -1002,7 +1005,10 @@ public enum PlayCoverUpstreamEngine {
             }
             let signStarted = monotonicTimestamp()
             do {
-                try Shell.signMacho(target)
+                try Shell.signMacho(
+                    target,
+                    identity: options.codesignIdentity
+                )
             } catch {
                 throw PlayCoverUpstreamError.signingFailed(
                     "\(relative): \(error)"
@@ -1068,7 +1074,8 @@ public enum PlayCoverUpstreamEngine {
             appURL: options.stagingApp,
             source: source,
             additionalNestedBundles: [embeddedRuntimeRelativePath],
-            finalEntitlements: composition.finalPlist
+            finalEntitlements: composition.finalPlist,
+            codesignIdentity: options.codesignIdentity
         )
         accumulateMonotonicDuration(
             &phaseTimings.signNanoseconds,
@@ -3696,7 +3703,8 @@ public enum PlayCoverUpstreamEngine {
     static func signInsideOut(
         appURL: URL,
         source _: PlayCoverUpstreamAppInspection,
-        finalEntitlements: Data
+        finalEntitlements: Data,
+        codesignIdentity: String
     ) throws -> [String] {
         let prepared = try inspect(appURL: appURL)
         let nestedBundles = prepared.inventory.compactMap {
@@ -3714,7 +3722,8 @@ public enum PlayCoverUpstreamEngine {
             mainExecutableRelativePath:
                 prepared.mainExecutableRelativePath,
             nestedBundles: nestedBundles,
-            finalEntitlements: finalEntitlements
+            finalEntitlements: finalEntitlements,
+            codesignIdentity: codesignIdentity
         )
     }
 
@@ -3722,7 +3731,8 @@ public enum PlayCoverUpstreamEngine {
         appURL: URL,
         source: PlayCoverUpstreamAppInspection,
         additionalNestedBundles: [String],
-        finalEntitlements: Data
+        finalEntitlements: Data,
+        codesignIdentity: String
     ) throws -> [String] {
         let sourceNestedBundles = source.inventory.compactMap {
             entry -> String? in
@@ -3740,7 +3750,8 @@ public enum PlayCoverUpstreamEngine {
                 source.mainExecutableRelativePath,
             nestedBundles:
                 sourceNestedBundles + additionalNestedBundles,
-            finalEntitlements: finalEntitlements
+            finalEntitlements: finalEntitlements,
+            codesignIdentity: codesignIdentity
         )
     }
 
@@ -3749,7 +3760,8 @@ public enum PlayCoverUpstreamEngine {
         machOs: [PlayCoverUpstreamMachOInspection],
         mainExecutableRelativePath: String,
         nestedBundles unsortedNestedBundles: [String],
-        finalEntitlements: Data
+        finalEntitlements: Data,
+        codesignIdentity: String
     ) throws -> [String] {
         let preparedMachOPaths = Set(machOs.map(\.relativePath))
         let nestedBundles = Array(Set(unsortedNestedBundles)).sorted {
@@ -3790,7 +3802,8 @@ public enum PlayCoverUpstreamEngine {
         for macho in dependencies {
             try sign(
                 appURL.appendingPathComponent(macho.relativePath),
-                entitlements: nil
+                entitlements: nil,
+                codesignIdentity: codesignIdentity
             )
             order.append(macho.relativePath)
         }
@@ -3798,11 +3811,16 @@ public enum PlayCoverUpstreamEngine {
         for relative in nestedBundles {
             try sign(
                 appURL.appendingPathComponent(relative),
-                entitlements: nil
+                entitlements: nil,
+                codesignIdentity: codesignIdentity
             )
             order.append(relative)
         }
-        try sign(appURL, entitlements: finalEntitlements)
+        try sign(
+            appURL,
+            entitlements: finalEntitlements,
+            codesignIdentity: codesignIdentity
+        )
         order.append(".")
         // Verification is intentionally centralized in `verify` immediately
         // after this function. Checking after every inner sign and then again
@@ -3849,7 +3867,11 @@ public enum PlayCoverUpstreamEngine {
         }
     }
 
-    private static func sign(_ url: URL, entitlements: Data?) throws {
+    private static func sign(
+        _ url: URL,
+        entitlements: Data?,
+        codesignIdentity: String
+    ) throws {
         do {
             if let entitlements {
                 let temporary = FileManager.default.temporaryDirectory
@@ -3862,9 +3884,16 @@ public enum PlayCoverUpstreamEngine {
                     ofItemAtPath: temporary.path
                 )
                 defer { try? FileManager.default.removeItem(at: temporary) }
-                try Shell.signAppWith(url, entitlements: temporary)
+                try Shell.signAppWith(
+                    url,
+                    entitlements: temporary,
+                    identity: codesignIdentity
+                )
             } else {
-                try Shell.signMacho(url)
+                try Shell.signMacho(
+                    url,
+                    identity: codesignIdentity
+                )
             }
         } catch {
             throw PlayCoverUpstreamError.signingFailed(

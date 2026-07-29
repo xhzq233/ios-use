@@ -121,9 +121,40 @@ public enum Shell {
         try run("/usr/bin/codesign", "-fs-", binary.path)
     }
 
+    public static func signMacho(
+        _ binary: URL,
+        identity: String
+    ) throws {
+        try run(
+            "/usr/bin/codesign",
+            "--force",
+            "--sign",
+            identity,
+            "--timestamp=none",
+            binary.path
+        )
+    }
+
     public static func signAppWith(_ app: URL, entitlements: URL) throws {
         try run("/usr/bin/codesign", "-fs-", app.path,
                 "--entitlements", entitlements.path)
+    }
+
+    public static func signAppWith(
+        _ app: URL,
+        entitlements: URL,
+        identity: String
+    ) throws {
+        try run(
+            "/usr/bin/codesign",
+            "--force",
+            "--sign",
+            identity,
+            "--timestamp=none",
+            app.path,
+            "--entitlements",
+            entitlements.path
+        )
     }
 
     /// Exact pinned `Shell.signAppWith` arguments for the independent oracle.

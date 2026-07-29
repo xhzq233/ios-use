@@ -553,7 +553,7 @@ enum PlayCoverGenerationPruner {
                 )
                 continue
             }
-            guard manifest.schemaVersion == 3,
+            guard manifest.schemaVersion == 4,
                   manifest.backend == "playcover-headless",
                   manifest.generationKey == name else {
                 corrupt.append(
@@ -567,8 +567,7 @@ enum PlayCoverGenerationPruner {
                 )
                 continue
             }
-            guard completed.schemaVersion == 2
-                    || completed.schemaVersion == 3,
+            guard completed.schemaVersion == 4,
                   completed.generationKey == name else {
                 corrupt.append(
                     CorruptCandidate(

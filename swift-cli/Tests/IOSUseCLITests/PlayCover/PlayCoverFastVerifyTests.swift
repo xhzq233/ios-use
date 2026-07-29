@@ -7,6 +7,18 @@ import Darwin
 @testable import IOSUseCLI
 
 final class PlayCoverFastVerifyTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in makePlayCoverTestSigningIdentity()
+        }
+        PlayCoverService.rootCodeSignatureInspectorOverrideForTesting = {
+            _ in makePlayCoverTestRootCodeSignature(
+                bundleIdentifier: "com.example.fastverify"
+            )
+        }
+    }
+
     override func tearDown() {
         Shell.runResultOverrideForTesting = nil
         PlayCoverService.fastVerifyEventOverrideForTesting = nil
@@ -18,6 +30,9 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         PlayCoverService
             .generationKeyComputationObserverForTesting = nil
         PlayCoverService.manifestValidationObserverForTesting = nil
+        PlayCoverService.signingIdentityResolverOverrideForTesting = nil
+        PlayCoverService.rootCodeSignatureInspectorOverrideForTesting = nil
+        PlayCoverService.signingIdentityNowOverrideForTesting = nil
         super.tearDown()
     }
 
@@ -86,6 +101,104 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             0,
             "mismatched trusted evidence must fail by field comparison "
                 + "without silently deriving a replacement key"
+        )
+    }
+
+    func testFastVerifyRejectsReplacedSignerAfterRootSeal() throws {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        var verifiedPaths: [String] = []
+        Shell.runResultOverrideForTesting = {
+            _, arguments, _ in
+            if arguments.first == "--verify" {
+                verifiedPaths.append(arguments.last ?? "")
+            }
+            return Shell.RunResult(
+                stdout: "",
+                stderr: "",
+                exitCode: 0
+            )
+        }
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in makePlayCoverTestSigningIdentity(seed: "C")
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertEqual(
+            verifiedPaths.last,
+            ".",
+            "the current signer must be checked only after the root seal"
+        )
+    }
+
+    func testFastVerifyPropagatesSignerResolverErrorAfterRootSeal()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        var verifiedPaths: [String] = []
+        Shell.runResultOverrideForTesting = {
+            _, arguments, _ in
+            if arguments.first == "--verify" {
+                verifiedPaths.append(arguments.last ?? "")
+            }
+            return Shell.RunResult(
+                stdout: "",
+                stderr: "",
+                exitCode: 0
+            )
+        }
+        let expected =
+            PlayCoverSigningIdentityServiceError.unhealthy(.missing)
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in throw expected
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverService.fastVerifyEvidence(
+                appPath: fixture.app.path,
+                expectedGenerationIdentity: nil
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverSigningIdentityServiceError,
+                expected,
+                "resolver failures must not be reclassified as cache "
+                    + "tampering"
+            )
+        }
+        XCTAssertEqual(
+            verifiedPaths.last,
+            ".",
+            "resolver health must be observed only after the root seal"
+        )
+    }
+
+    func testFastVerifyRejectsRootEvidenceMismatchAtAnchoredAppVnode()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        Shell.runResultOverrideForTesting = {
+            _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+        var inspectedPath: String?
+        PlayCoverService.rootCodeSignatureInspectorOverrideForTesting = {
+            appURL in
+            inspectedPath = appURL.path
+            return makePlayCoverTestRootCodeSignature(
+                bundleIdentifier: "com.example.fastverify",
+                cdHashSeed: "C"
+            )
+        }
+
+        assertFastVerifyTampered(fixture.app.path)
+
+        XCTAssertTrue(
+            inspectedPath?.hasPrefix("/.vol/") == true,
+            "\(inspectedPath ?? "nil")"
         )
     }
 
@@ -1260,7 +1373,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
     }
 
-    func testCompletedMarkerSchemaThreeOmitsLegacyArraySeals()
+    func testCompletedMarkerSchemaFourOmitsLegacyArraySeals()
         throws
     {
         let fixture = try FastVerifyFixture()
@@ -1275,7 +1388,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                 as? [String: Any]
         )
 
-        XCTAssertEqual(completed.schemaVersion, 3)
+        XCTAssertEqual(completed.schemaVersion, 4)
         XCTAssertEqual(
             Set(object.keys),
             Set([
@@ -1989,10 +2102,17 @@ private struct FastVerifyFixture {
         }
         let prepared = try PlayCoverService.inspect(appPath: app.path)
         let runtimeHash = try Self.fileSHA256(runtime)
+        let signingIdentity = makePlayCoverTestSigningIdentity()
         let generationKey = PlayCoverService.makeGenerationKey(
             sourceContentHash: source.sourceContentHash,
             runtimeBuildHash: runtimeHash,
-            prepareRevision: PlayCoverService.prepareImplementationRevision
+            prepareRevision: PlayCoverService.prepareImplementationRevision,
+            signerPublicKeySPKISHA256:
+                signingIdentity.publicKeySPKISHA256,
+            signerCertificateSHA256:
+                signingIdentity.certificateSHA256,
+            signingPolicyRevision:
+                signingIdentity.policy.revision
         )
         let signingOrder = signingOrderOverride
             ?? prepared.inventory.compactMap { entry -> String? in
@@ -2015,6 +2135,11 @@ private struct FastVerifyFixture {
             runtimeBuildHash: runtimeHash,
             prepareRevision: PlayCoverService.prepareImplementationRevision,
             generationKey: generationKey,
+            signingIdentity: signingIdentity,
+            rootCodeSignature: makePlayCoverTestRootCodeSignature(
+                bundleIdentifier: prepared.bundleIdentifier,
+                identity: signingIdentity
+            ),
             runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
             runtimeFrameworkName:
                 PlayCoverService.runtimeFrameworkName,

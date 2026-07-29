@@ -566,7 +566,7 @@ enum PlayCoverManagedAppService {
         outputPath: String
     ) throws {
         let source = plan.source.inspection
-        guard manifest.schemaVersion == 3,
+        guard manifest.schemaVersion == 4,
               manifest.backend == "playcover-headless",
               standardizedPath(manifest.preparedAppPath)
                 == standardizedPath(outputPath),
@@ -576,6 +576,7 @@ enum PlayCoverManagedAppService {
                 == source.sourceContentHash,
               manifest.runtimeBuildHash == plan.runtimeBuildHash,
               manifest.generationKey == plan.generationKey,
+              manifest.signingIdentity == plan.signingIdentity,
               manifest.prepareRevision == plan.prepareRevision,
               plan.prepareRevision == preparationRevision else {
             throw PlayCoverBackendError.verificationFailed(

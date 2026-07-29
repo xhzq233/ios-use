@@ -125,7 +125,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     runtimeLoadPath:
                         "@executable_path/Frameworks/"
                         + "IOSUsePlayRuntime.framework/"
-                        + "IOSUsePlayRuntime"
+                        + "IOSUsePlayRuntime",
+                    codesignIdentity: "-"
                 )
             )
         ) {
@@ -1213,7 +1214,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let order = try PlayCoverUpstreamEngine.signInsideOut(
             appURL: prepared,
             source: sourceInspection,
-            finalEntitlements: mainEntitlements
+            finalEntitlements: mainEntitlements,
+            codesignIdentity: "-"
         )
 
         XCTAssertTrue(order.contains("PlugIns/Test.appex"))
@@ -1404,6 +1406,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     "run/s-runtime.sock"
                 ).path,
                 runtimeLoadPath: runtimeLoadPath,
+                codesignIdentity: "-",
                 expectedRuntimeBuildHash: runtimeBuildHash
             ),
             sourceInspection: sourceInspection
@@ -1660,7 +1663,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                         runtimeSocketPath: managed.appendingPathComponent(
                             "run/s-runtime.sock"
                         ).path,
-                        runtimeLoadPath: runtimeLoadPath
+                        runtimeLoadPath: runtimeLoadPath,
+                        codesignIdentity: "-"
                     ),
                     sourceInspection: sourceInspection
                 )
@@ -1756,6 +1760,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                         "run/s-runtime.sock"
                     ).path,
                     runtimeLoadPath: runtimeLoadPath,
+                    codesignIdentity: "-",
                     expectedRuntimeBuildHash:
                         try PlayCoverUpstreamEngine.runtimeBuildHash(
                             frameworkURL: runtime
@@ -1820,6 +1825,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             runtimeLoadPath:
                 "@executable_path/Frameworks/"
                 + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+            codesignIdentity: "-",
             expectedRuntimeBuildHash: String(repeating: "0", count: 64)
         )
         var contentPasses:

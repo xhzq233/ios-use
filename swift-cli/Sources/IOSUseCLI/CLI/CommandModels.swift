@@ -66,14 +66,24 @@ public struct ConfigOptions: Equatable, Sendable {
     public var appleId: String?
     public var password: String?
     public var verbose = false
+    public var playCover = false
 
-    public init(udid: String? = nil, list: Bool = false, simulator: Bool = false, appleId: String? = nil, password: String? = nil, verbose: Bool = false) {
+    public init(
+        udid: String? = nil,
+        list: Bool = false,
+        simulator: Bool = false,
+        appleId: String? = nil,
+        password: String? = nil,
+        verbose: Bool = false,
+        playCover: Bool = false
+    ) {
         self.udid = udid
         self.list = list
         self.simulator = simulator
         self.appleId = appleId
         self.password = password
         self.verbose = verbose
+        self.playCover = playCover
     }
 }
 

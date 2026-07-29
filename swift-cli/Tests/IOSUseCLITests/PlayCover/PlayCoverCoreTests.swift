@@ -5,8 +5,16 @@ import XCTest
 import Darwin
 #endif
 @testable import IOSUseCLI
+@testable import PlayCoverUpstream
 
 final class PlayCoverCoreTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in makePlayCoverTestSigningIdentity()
+        }
+    }
+
     override func tearDown() {
         PlayCoverService.failedLaunchTerminatorOverrideForTesting = nil
         PlayCoverService.failedLaunchProcessStateOverrideForTesting = nil
@@ -14,6 +22,10 @@ final class PlayCoverCoreTests: XCTestCase {
         PlayCoverService.keyCoverLockOverrideForTesting = nil
         PlayCoverService.launchAliasRootOverrideForTesting = nil
         PlayCoverService.launchIntegrityEventOverrideForTesting = nil
+        PlayCoverService.signingIdentityResolverOverrideForTesting = nil
+        PlayCoverService.rootCodeSignatureInspectorOverrideForTesting = nil
+        PlayCoverService.upstreamPrepareOverrideForTesting = nil
+        PlayCoverService.signingIdentityNowOverrideForTesting = nil
         #if canImport(AppKit)
         PlayCoverService.workspaceOpenOverrideForTesting = nil
         #endif
@@ -138,19 +150,26 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertTrue(socket.hasPrefix("/private/tmp/"))
     }
 
-    func testGenerationKeyUsesOnlyContentRuntimeAndPinnedRevision() {
+    func testGenerationKeyUsesContentRuntimeRevisionAndSigner() {
         let source = String(repeating: "a", count: 64)
         let runtime = String(repeating: "b", count: 64)
         let revision = PlayCoverService.prepareImplementationRevision
+        let signer = makePlayCoverTestSigningIdentity()
         let first = PlayCoverService.makeGenerationKey(
             sourceContentHash: source,
             runtimeBuildHash: runtime,
-            prepareRevision: revision
+            prepareRevision: revision,
+            signerPublicKeySPKISHA256: signer.publicKeySPKISHA256,
+            signerCertificateSHA256: signer.certificateSHA256,
+            signingPolicyRevision: signer.policy.revision
         )
         let second = PlayCoverService.makeGenerationKey(
             sourceContentHash: source,
             runtimeBuildHash: runtime,
-            prepareRevision: revision
+            prepareRevision: revision,
+            signerPublicKeySPKISHA256: signer.publicKeySPKISHA256,
+            signerCertificateSHA256: signer.certificateSHA256,
+            signingPolicyRevision: signer.policy.revision
         )
 
         XCTAssertEqual(first, second)
@@ -160,7 +179,12 @@ final class PlayCoverCoreTests: XCTestCase {
             PlayCoverService.makeGenerationKey(
                 sourceContentHash: String(repeating: "c", count: 64),
                 runtimeBuildHash: runtime,
-                prepareRevision: revision
+                prepareRevision: revision,
+                signerPublicKeySPKISHA256:
+                    signer.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    signer.certificateSHA256,
+                signingPolicyRevision: signer.policy.revision
             )
         )
         XCTAssertNotEqual(
@@ -168,7 +192,12 @@ final class PlayCoverCoreTests: XCTestCase {
             PlayCoverService.makeGenerationKey(
                 sourceContentHash: source,
                 runtimeBuildHash: String(repeating: "d", count: 64),
-                prepareRevision: revision
+                prepareRevision: revision,
+                signerPublicKeySPKISHA256:
+                    signer.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    signer.certificateSHA256,
+                signingPolicyRevision: signer.policy.revision
             )
         )
         XCTAssertNotEqual(
@@ -176,7 +205,25 @@ final class PlayCoverCoreTests: XCTestCase {
             PlayCoverService.makeGenerationKey(
                 sourceContentHash: source,
                 runtimeBuildHash: runtime,
-                prepareRevision: "different-prepare-revision"
+                prepareRevision: "different-prepare-revision",
+                signerPublicKeySPKISHA256:
+                    signer.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    signer.certificateSHA256,
+                signingPolicyRevision: signer.policy.revision
+            )
+        )
+        XCTAssertNotEqual(
+            first,
+            PlayCoverService.makeGenerationKey(
+                sourceContentHash: source,
+                runtimeBuildHash: runtime,
+                prepareRevision: revision,
+                signerPublicKeySPKISHA256:
+                    String(repeating: "C", count: 64),
+                signerCertificateSHA256:
+                    signer.certificateSHA256,
+                signingPolicyRevision: signer.policy.revision
             )
         )
         XCTAssertTrue(
@@ -191,7 +238,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertTrue(
             PlayCoverService.prepareImplementationRevision.hasPrefix(
-                "ios-use-headless-v13+"
+                "ios-use-headless-v14+"
             )
         )
     }
@@ -249,7 +296,13 @@ final class PlayCoverCoreTests: XCTestCase {
                 sourceContentHash:
                     plan.source.inspection.sourceContentHash,
                 runtimeBuildHash: plan.runtimeBuildHash,
-                prepareRevision: plan.prepareRevision
+                prepareRevision: plan.prepareRevision,
+                signerPublicKeySPKISHA256:
+                    plan.signingIdentity.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    plan.signingIdentity.certificateSHA256,
+                signingPolicyRevision:
+                    plan.signingIdentity.policy.revision
             )
         )
         XCTAssertNoThrow(
@@ -259,6 +312,219 @@ final class PlayCoverCoreTests: XCTestCase {
             "Service must forward the immutable computed generation "
                 + "identity without deriving it again"
         )
+    }
+
+    func testPostPrepareSignerResolutionPreservesServiceErrors()
+        throws
+    {
+        let identity = makePlayCoverTestSigningIdentity()
+        let expectedError =
+            PlayCoverSigningIdentityServiceError.unhealthy(.missing)
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in throw expectedError
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverService
+                .requireUnchangedSigningIdentityAfterPreparation(
+                    identity
+                )
+        ) { error in
+            XCTAssertEqual(
+                error as? PlayCoverSigningIdentityServiceError,
+                expectedError
+            )
+        }
+
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in makePlayCoverTestSigningIdentity(seed: "C")
+        }
+        XCTAssertThrowsError(
+            try PlayCoverService
+                .requireUnchangedSigningIdentityAfterPreparation(
+                    identity
+                )
+        ) { error in
+            guard case .codeSigningFailed(let message) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains(
+                    "stable signing identity changed"
+                ),
+                message
+            )
+        }
+    }
+
+    func testPrepareRejectsInspectorCDHashMismatchBeforePublish()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let paths = IOSUsePaths.resolve(
+            environment: [
+                "IOS_USE_HOME": fixture.root
+                    .appendingPathComponent(
+                        "managed-home",
+                        isDirectory: true
+                    ).path,
+            ]
+        )
+        let runtime = URL(
+            fileURLWithPath: paths.playcoverRuntime,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: runtime,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let runtimeExecutable = runtime.appendingPathComponent(
+            PlayCoverService.runtimeExecutableName
+        )
+        try makeThinMachO(
+            encrypted: false,
+            platform: 6
+        ).write(to: runtimeExecutable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: runtimeExecutable.path
+        )
+
+        let identity = makePlayCoverTestSigningIdentity(
+            codesignSelector: "-"
+        )
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in identity
+        }
+        let source = try PlayCoverService.inspectPreparationSource(
+            appPath: fixture.app.path
+        )
+        let plan = try PlayCoverService.makePreparationPlan(
+            source: source,
+            runtimeFrameworkPath: runtime.path
+        )
+        let finalInspectionCDHash = String(
+            repeating: "c",
+            count: 40
+        )
+        var prepareCallCount = 0
+        PlayCoverService.upstreamPrepareOverrideForTesting = {
+            options,
+            sourceInspection in
+            prepareCallCount += 1
+            try FileManager.default.copyItem(
+                at: options.sourceApp,
+                to: options.stagingApp
+            )
+            let preparedSignature = PlayCoverUpstreamSignature(
+                isSigned: true,
+                isValid: true,
+                cdHash: finalInspectionCDHash,
+                identifier: sourceInspection.bundleIdentifier,
+                entitlementsPlist: nil
+            )
+            let preparedInspection = PlayCoverUpstreamAppInspection(
+                appPath: options.stagingApp.path,
+                sourceContentHash:
+                    sourceInspection.sourceContentHash,
+                infoPlistSHA256:
+                    sourceInspection.infoPlistSHA256,
+                bundleIdentifier:
+                    sourceInspection.bundleIdentifier,
+                executableName:
+                    sourceInspection.executableName,
+                executablePath: options.stagingApp
+                    .appendingPathComponent(
+                        sourceInspection.mainExecutableRelativePath
+                    ).path,
+                mainExecutableRelativePath:
+                    sourceInspection.mainExecutableRelativePath,
+                signature: preparedSignature,
+                provisioning: sourceInspection.provisioning,
+                inventory: sourceInspection.inventory,
+                machOs: sourceInspection.machOs
+            )
+            return PlayCoverUpstreamPrepareResult(
+                sourceBefore: sourceInspection,
+                sourceHashAfterPrepare:
+                    sourceInspection.sourceContentHash,
+                prepared: preparedInspection,
+                convertedMachOs:
+                    sourceInspection.machOs.map(\.relativePath),
+                signingOrder: ["."],
+                entitlementDiff: PlayCoverUpstreamEntitlementDiff(
+                    original: [:],
+                    playCoverBaseline: [:],
+                    final: [:],
+                    addedByPlayCover: [],
+                    addedByIOSUse: [],
+                    changedFromOriginal: [],
+                    removedFromOriginal: []
+                )
+            )
+        }
+        var inspectorCallCount = 0
+        PlayCoverService.rootCodeSignatureInspectorOverrideForTesting = {
+            appURL in
+            inspectorCallCount += 1
+            XCTAssertTrue(
+                FileManager.default.fileExists(atPath: appURL.path)
+            )
+            return makePlayCoverTestRootCodeSignature(
+                bundleIdentifier: source.inspection.bundleIdentifier,
+                identity: identity,
+                cdHash: String(repeating: "D", count: 40)
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverManagedAppService.resolveExplicitApp(
+                fixture.app.path,
+                paths: paths
+            )
+        ) { error in
+            guard case .codeSigningFailed(let message) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("final prepared inspection"),
+                message
+            )
+        }
+
+        XCTAssertEqual(prepareCallCount, 1)
+        XCTAssertEqual(inspectorCallCount, 1)
+        let publishedGeneration = URL(
+            fileURLWithPath: paths.playcoverPrepared,
+            isDirectory: true
+        ).appendingPathComponent(
+            plan.generationKey,
+            isDirectory: true
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: publishedGeneration.path
+            ),
+            "a CDHash mismatch must fail before sidecars or publication"
+        )
+        if FileManager.default.fileExists(
+            atPath: paths.playcoverPrepared
+        ) {
+            XCTAssertTrue(
+                try FileManager.default.contentsOfDirectory(
+                    atPath: paths.playcoverPrepared
+                ).allSatisfy {
+                    !$0.hasPrefix(".staging-")
+                        && $0 != plan.generationKey
+                },
+                "failed preparation must not retain staging or published "
+                    + "generation state"
+            )
+        }
     }
 
     func testManifestHasSingleGenerationIdentityAndNoBootstrapFields()
@@ -279,7 +545,7 @@ final class PlayCoverCoreTests: XCTestCase {
             as: UTF8.self
         )
 
-        XCTAssertEqual(manifest.schemaVersion, 3)
+        XCTAssertEqual(manifest.schemaVersion, 4)
         XCTAssertEqual(manifest.backend, "playcover-headless")
         XCTAssertEqual(
             manifest.runtimeLoadPath,
@@ -3526,6 +3792,7 @@ final class PlayCoverCoreTests: XCTestCase {
             fileURLWithPath: preparedAppPath,
             isDirectory: true
         ).standardizedFileURL
+        let signingIdentity = makePlayCoverTestSigningIdentity()
         return PlayCoverPrepareManifest(
             sourceAppPath: inspection.appPath,
             preparedAppPath: prepared.path,
@@ -3539,6 +3806,11 @@ final class PlayCoverCoreTests: XCTestCase {
             runtimeBuildHash: runtimeBuildHash,
             prepareRevision: PlayCoverService.prepareImplementationRevision,
             generationKey: generationKey,
+            signingIdentity: signingIdentity,
+            rootCodeSignature: makePlayCoverTestRootCodeSignature(
+                bundleIdentifier: inspection.bundleIdentifier,
+                identity: signingIdentity
+            ),
             runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
             runtimeFrameworkName: PlayCoverService.runtimeFrameworkName,
             convertedMachOs: inspection.machOs.map(\.relativePath),

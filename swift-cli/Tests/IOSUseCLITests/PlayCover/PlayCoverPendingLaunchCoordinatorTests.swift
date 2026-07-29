@@ -998,8 +998,13 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         let appPath = paths.playcoverPrepared
             + "/\(generationKey)/Fixture.app"
         let executablePath = appPath + "/Fixture"
+        let signingIdentity = makePlayCoverTestSigningIdentity()
+        let rootCodeSignature = makePlayCoverTestRootCodeSignature(
+            bundleIdentifier: "com.example.fixture",
+            identity: signingIdentity
+        )
         let object: [String: Any] = [
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "backend": "playcover-headless",
             "sourceAppPath": root.path + "/Source.app",
             "preparedAppPath": appPath,
@@ -1013,6 +1018,12 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             "prepareRevision":
                 PlayCoverService.prepareImplementationRevision,
             "generationKey": generationKey,
+            "signingIdentity": try JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(signingIdentity)
+            ),
+            "rootCodeSignature": try JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(rootCodeSignature)
+            ),
             "runtimeLoadPath": PlayCoverMachO.runtimeLoadPath,
             "runtimeFrameworkName":
                 PlayCoverService.runtimeFrameworkName,

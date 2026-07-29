@@ -18,17 +18,28 @@ struct PlayCoverGenerationIdentity: Equatable, Sendable {
     let sourceContentHash: String
     let runtimeBuildHash: String
     let prepareRevision: String
+    let signerPublicKeySPKISHA256: String
+    let signerCertificateSHA256: String
+    let signingPolicyRevision: String
     let generationKey: String
 
     fileprivate init(
         sourceContentHash: String,
         runtimeBuildHash: String,
         prepareRevision: String,
+        signerPublicKeySPKISHA256: String,
+        signerCertificateSHA256: String,
+        signingPolicyRevision: String,
         generationKey: String
     ) {
         self.sourceContentHash = sourceContentHash
         self.runtimeBuildHash = runtimeBuildHash
         self.prepareRevision = prepareRevision
+        self.signerPublicKeySPKISHA256 =
+            signerPublicKeySPKISHA256
+        self.signerCertificateSHA256 =
+            signerCertificateSHA256
+        self.signingPolicyRevision = signingPolicyRevision
         self.generationKey = generationKey
     }
 
@@ -37,6 +48,12 @@ struct PlayCoverGenerationIdentity: Equatable, Sendable {
             sourceContentHash: manifest.sourceContentHash,
             runtimeBuildHash: manifest.runtimeBuildHash,
             prepareRevision: manifest.prepareRevision,
+            signerPublicKeySPKISHA256:
+                manifest.signingIdentity.publicKeySPKISHA256,
+            signerCertificateSHA256:
+                manifest.signingIdentity.certificateSHA256,
+            signingPolicyRevision:
+                manifest.signingIdentity.policy.revision,
             generationKey: manifest.generationKey
         )
     }
@@ -45,6 +62,12 @@ struct PlayCoverGenerationIdentity: Equatable, Sendable {
         sourceContentHash == manifest.sourceContentHash
             && runtimeBuildHash == manifest.runtimeBuildHash
             && prepareRevision == manifest.prepareRevision
+            && signerPublicKeySPKISHA256
+                == manifest.signingIdentity.publicKeySPKISHA256
+            && signerCertificateSHA256
+                == manifest.signingIdentity.certificateSHA256
+            && signingPolicyRevision
+                == manifest.signingIdentity.policy.revision
             && generationKey == manifest.generationKey
     }
 }
@@ -123,7 +146,7 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v13+playcover-"
+        "ios-use-headless-v14+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
@@ -158,6 +181,17 @@ public enum PlayCoverService {
         (() -> Void)?
     static var manifestValidationObserverForTesting:
         (() -> Void)?
+    static var signingIdentityResolverOverrideForTesting:
+        ((Bool) throws -> PlayCoverSigningIdentityEvidence)?
+    static var rootCodeSignatureInspectorOverrideForTesting:
+        ((URL) throws -> PlayCoverRootCodeSignatureEvidence)?
+    static var upstreamPrepareOverrideForTesting:
+        ((
+            PlayCoverUpstreamPrepareOptions,
+            PlayCoverUpstreamAppInspection
+        ) throws -> PlayCoverUpstreamPrepareResult)?
+    static var signingIdentityNowOverrideForTesting:
+        (() -> Date)?
     private static let fastVerifyHashQueue = DispatchQueue(
         label: "com.iosuse.playcover.fast-verify-hash",
         qos: .userInitiated
@@ -195,6 +229,8 @@ public enum PlayCoverService {
     static func makePreparationPlan(
         source: PlayCoverPreparationSource,
         runtimeFrameworkPath: String,
+        signingIdentity suppliedSigningIdentity:
+            PlayCoverSigningIdentityEvidence? = nil,
         generationKeyOverride: ((
             PlayCoverAppInspection,
             String,
@@ -210,6 +246,8 @@ public enum PlayCoverService {
         )
         let runtimeHash = runtimeEvidence.buildHash
         let revision = prepareImplementationRevision
+        let signingIdentity = try suppliedSigningIdentity
+            ?? resolveSigningIdentity(initializeIfMissing: false)
         let generationKey: String
         if let generationKeyOverride {
             generationKey = try generationKeyOverride(
@@ -221,17 +259,30 @@ public enum PlayCoverService {
             generationKey = makeGenerationKey(
                 sourceContentHash: source.inspection.sourceContentHash,
                 runtimeBuildHash: runtimeHash,
-                prepareRevision: revision
+                prepareRevision: revision,
+                signerPublicKeySPKISHA256:
+                    signingIdentity.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    signingIdentity.certificateSHA256,
+                signingPolicyRevision:
+                    signingIdentity.policy.revision
             )
         }
         return PlayCoverPreparationPlan(
             source: source,
             runtimeFrameworkPath: runtimePath,
             runtimeEvidence: runtimeEvidence,
+            signingIdentity: signingIdentity,
             generationIdentity: PlayCoverGenerationIdentity(
                 sourceContentHash: source.inspection.sourceContentHash,
                 runtimeBuildHash: runtimeHash,
                 prepareRevision: revision,
+                signerPublicKeySPKISHA256:
+                    signingIdentity.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    signingIdentity.certificateSHA256,
+                signingPolicyRevision:
+                    signingIdentity.policy.revision,
                 generationKey: generationKey
             )
         )
@@ -332,26 +383,36 @@ public enum PlayCoverService {
             .appendingPathComponent(
                 "playcover/run/s-runtime.sock"
             ).path
+        let upstreamOptions = PlayCoverUpstreamPrepareOptions(
+            sourceApp: URL(
+                fileURLWithPath: source.appPath,
+                isDirectory: true
+            ),
+            stagingApp: stagingURL,
+            managedStagingApp: stagingIdentityURL,
+            runtimeFramework: runtimeURL,
+            managedHome: canonicalManagedHome,
+            runtimeSocketPath: sandboxSocket,
+            runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
+            codesignIdentity:
+                plan.signingIdentity.codesignSelector,
+            expectedRuntimeBuildHash: plan.runtimeBuildHash,
+            expectedRuntimeEvidence: plan.runtimeEvidence
+        )
         let upstream: PlayCoverUpstreamPrepareResult
         do {
-            upstream = try withSuppressedUpstreamStandardOutput {
-                try PlayCoverUpstreamEngine.prepare(
-                    PlayCoverUpstreamPrepareOptions(
-                        sourceApp: URL(
-                            fileURLWithPath: source.appPath,
-                            isDirectory: true
-                        ),
-                        stagingApp: stagingURL,
-                        managedStagingApp: stagingIdentityURL,
-                        runtimeFramework: runtimeURL,
-                        managedHome: canonicalManagedHome,
-                        runtimeSocketPath: sandboxSocket,
-                        runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
-                        expectedRuntimeBuildHash: plan.runtimeBuildHash,
-                        expectedRuntimeEvidence: plan.runtimeEvidence
-                    ),
-                    sourceInspection: plan.source.upstreamInspection
+            if let upstreamPrepareOverrideForTesting {
+                upstream = try upstreamPrepareOverrideForTesting(
+                    upstreamOptions,
+                    plan.source.upstreamInspection
                 )
+            } else {
+                upstream = try withSuppressedUpstreamStandardOutput {
+                    try PlayCoverUpstreamEngine.prepare(
+                        upstreamOptions,
+                        sourceInspection: plan.source.upstreamInspection
+                    )
+                }
             }
         } catch let error as PlayCoverUpstreamError {
             throw PlayCoverMachO.map(error)
@@ -361,6 +422,39 @@ public enum PlayCoverService {
             upstream.prepared,
             appPath: publishedURL.path
         )
+        let rootCodeSignature: PlayCoverRootCodeSignatureEvidence
+        do {
+            rootCodeSignature = try inspectRootCodeSignature(
+                appURL: stagingURL
+            )
+        } catch {
+            throw PlayCoverBackendError.codeSigningFailed(
+                "cannot inspect stable root signature: \(error)"
+            )
+        }
+        try requireUnchangedSigningIdentityAfterPreparation(
+            plan.signingIdentity
+        )
+        guard rootCodeSignature.certificateSHA256
+                == plan.signingIdentity.certificateSHA256,
+              rootCodeSignature.signingIdentifier
+                == prepared.bundleIdentifier,
+              upstream.prepared.signature.isSigned,
+              upstream.prepared.signature.isValid,
+              upstream.prepared.signature.identifier
+                == rootCodeSignature.signingIdentifier,
+              let inspectedCDHash = normalizedCDHash(
+                  rootCodeSignature.cdHash
+              ),
+              let finalInspectionCDHash = normalizedCDHash(
+                  upstream.prepared.signature.cdHash
+              ),
+              inspectedCDHash == finalInspectionCDHash else {
+            throw PlayCoverBackendError.codeSigningFailed(
+                "prepared root signature does not match the selected "
+                    + "stable identity or final prepared inspection"
+            )
+        }
         let manifest = PlayCoverPrepareManifest(
             sourceAppPath: source.appPath,
             preparedAppPath: publishedURL.path,
@@ -372,6 +466,8 @@ public enum PlayCoverService {
             runtimeBuildHash: plan.runtimeBuildHash,
             prepareRevision: plan.prepareRevision,
             generationKey: plan.generationKey,
+            signingIdentity: plan.signingIdentity,
+            rootCodeSignature: rootCodeSignature,
             runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
             runtimeFrameworkName: runtimeFrameworkName,
             convertedMachOs: upstream.convertedMachOs,
@@ -485,7 +581,25 @@ public enum PlayCoverService {
                 == runtimeExecutableName,
               runtimeEvidence.mainExecutable.relativePath
                 == runtimeExecutableName,
-              isSHA256(plan.generationKey) else {
+              isSHA256(plan.generationKey),
+              isValidSigningIdentity(plan.signingIdentity),
+              plan.generationIdentity.signerPublicKeySPKISHA256
+                == plan.signingIdentity.publicKeySPKISHA256,
+              plan.generationIdentity.signerCertificateSHA256
+                == plan.signingIdentity.certificateSHA256,
+              plan.generationIdentity.signingPolicyRevision
+                == plan.signingIdentity.policy.revision,
+              plan.generationKey == makeGenerationKey(
+                sourceContentHash: sourceHash,
+                runtimeBuildHash: plan.runtimeBuildHash,
+                prepareRevision: plan.prepareRevision,
+                signerPublicKeySPKISHA256:
+                    plan.signingIdentity.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    plan.signingIdentity.certificateSHA256,
+                signingPolicyRevision:
+                    plan.signingIdentity.policy.revision
+              ) else {
             throw PlayCoverBackendError.prepareFailed(
                 "preparation plan identity is invalid"
             )
@@ -703,7 +817,7 @@ public enum PlayCoverService {
                 filename: completedFilename,
                 maximumBytes: completedMarkerMaximumBytes
             ).value
-            guard marker.schemaVersion == 3,
+            guard marker.schemaVersion == 4,
                   marker.generationKey == manifest.generationKey else {
                 throw PlayCoverBackendError.cacheTampered(
                     "completed marker identity does not match the manifest"
@@ -1357,18 +1471,170 @@ public enum PlayCoverService {
     static func makeGenerationKey(
         sourceContentHash: String,
         runtimeBuildHash: String,
-        prepareRevision: String
+        prepareRevision: String,
+        signerPublicKeySPKISHA256: String,
+        signerCertificateSHA256: String,
+        signingPolicyRevision: String
     ) -> String {
         generationKeyComputationObserverForTesting?()
         var hasher = SHA256()
         update(&hasher, sourceContentHash)
         update(&hasher, runtimeBuildHash)
         update(&hasher, prepareRevision)
+        update(&hasher, signerPublicKeySPKISHA256)
+        update(&hasher, signerCertificateSHA256)
+        update(&hasher, signingPolicyRevision)
         return hex(hasher.finalize())
+    }
+
+    private static func resolveSigningIdentity(
+        initializeIfMissing: Bool
+    ) throws -> PlayCoverSigningIdentityEvidence {
+        if let override =
+                signingIdentityResolverOverrideForTesting {
+            return try override(initializeIfMissing)
+        }
+        return try PlayCoverSigningIdentityService()
+            .requireHealthy(
+                initializeIfMissing: initializeIfMissing
+            )
+    }
+
+    static func requireUnchangedSigningIdentityAfterPreparation(
+        _ expected: PlayCoverSigningIdentityEvidence
+    ) throws {
+        let observed =
+            try resolveSigningIdentity(initializeIfMissing: false)
+        guard observed == expected else {
+            throw PlayCoverBackendError.codeSigningFailed(
+                "stable signing identity changed during preparation"
+            )
+        }
+    }
+
+    private static func inspectRootCodeSignature(
+        appURL: URL
+    ) throws -> PlayCoverRootCodeSignatureEvidence {
+        if let override =
+                rootCodeSignatureInspectorOverrideForTesting {
+            return try override(appURL)
+        }
+        return try PlayCoverCodeSignatureInspector.inspectRoot(
+            appURL: appURL
+        )
+    }
+
+    private static func isValidSigningIdentity(
+        _ evidence: PlayCoverSigningIdentityEvidence
+    ) -> Bool {
+        let now = signingIdentityNowOverrideForTesting?() ?? Date()
+        let selectorIsValid =
+            isUppercaseHex(
+                evidence.codesignSelector,
+                count: 40
+            )
+            || (
+                signingIdentityResolverOverrideForTesting != nil
+                    && evidence.codesignSelector == "-"
+            )
+        return evidence.policy.revision
+                == PlayCoverSigningIdentityService.policyRevision
+            && evidence.policy.source == .managedUserKeychain
+            && evidence.policy.health == .healthy
+            && isUppercaseHex(
+                evidence.publicKeySPKISHA256,
+                count: 64
+            )
+            && isUppercaseHex(
+                evidence.certificateSHA256,
+                count: 64
+            )
+            && selectorIsValid
+            && evidence.notBefore < evidence.notAfter
+            && now >= evidence.notBefore
+            && now < evidence.notAfter
+    }
+
+    private static func isValidRootCodeSignature(
+        _ evidence: PlayCoverRootCodeSignatureEvidence,
+        signingIdentity: PlayCoverSigningIdentityEvidence,
+        bundleIdentifier: String
+    ) -> Bool {
+        let cdHashLength = evidence.cdHash.count
+        return evidence.certificateSHA256
+                == signingIdentity.certificateSHA256
+            && !evidence.designatedRequirement.isEmpty
+            && evidence.designatedRequirementSHA256
+                == sha256(evidence.designatedRequirement).uppercased()
+            && isUppercaseHex(
+                evidence.designatedRequirementSHA256,
+                count: 64
+            )
+            && (cdHashLength == 40 || cdHashLength == 64)
+            && isUppercaseHex(
+                evidence.cdHash,
+                count: cdHashLength
+            )
+            && evidence.signingIdentifier == bundleIdentifier
+    }
+
+    private static func verifyStableRootSignature(
+        appURL: URL,
+        manifest: PlayCoverPrepareManifest
+    ) throws {
+        let currentIdentity =
+            try resolveSigningIdentity(initializeIfMissing: false)
+        guard currentIdentity == manifest.signingIdentity else {
+            throw PlayCoverBackendError.cacheTampered(
+                "stable signing identity no longer matches the prepared "
+                    + "generation"
+            )
+        }
+        let observed: PlayCoverRootCodeSignatureEvidence
+        do {
+            observed = try inspectRootCodeSignature(appURL: appURL)
+        } catch {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot inspect the prepared root signature: \(error)"
+            )
+        }
+        guard observed == manifest.rootCodeSignature else {
+            throw PlayCoverBackendError.cacheTampered(
+                "prepared root signer, designated requirement, identifier, "
+                    + "or CDHash changed"
+            )
+        }
     }
 
     private static func isSHA256(_ value: String) -> Bool {
         value.utf8.count == 64 && value.allSatisfy(\.isHexDigit)
+    }
+
+    private static func isUppercaseHex(
+        _ value: String,
+        count: Int
+    ) -> Bool {
+        value.utf8.count == count
+            && value.unicodeScalars.allSatisfy {
+                ($0.value >= 48 && $0.value <= 57)
+                    || ($0.value >= 65 && $0.value <= 70)
+            }
+    }
+
+    private static func normalizedCDHash(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+        let normalized = value.uppercased()
+        guard (normalized.utf8.count == 40
+                || normalized.utf8.count == 64),
+              normalized.unicodeScalars.allSatisfy({
+                  ($0.value >= 48 && $0.value <= 57)
+                      || ($0.value >= 65 && $0.value <= 70)
+              }) else {
+            return nil
+        }
+        return normalized
     }
 
     static func runtimeBuildHash(
@@ -1809,7 +2075,7 @@ public enum PlayCoverService {
                     == Substring(runtimeExecutableName)
         }
         let completed = PlayCoverCompletedGeneration(
-            schemaVersion: 3,
+            schemaVersion: 4,
             generationKey: manifest.generationKey,
             manifestSHA256: sha256(manifestData),
             executableSHA256: executableSHA256,
@@ -1853,7 +2119,7 @@ public enum PlayCoverService {
             PlayCoverGenerationIdentity? = nil
     ) throws -> PlayCoverGenerationIdentity {
         manifestValidationObserverForTesting?()
-        guard manifest.schemaVersion == 3,
+        guard manifest.schemaVersion == 4,
               manifest.backend == "playcover-headless",
               manifest.prepareRevision == prepareImplementationRevision,
               manifest.sourceContentHash
@@ -1873,7 +2139,13 @@ public enum PlayCoverService {
               Set(manifest.sourceInventory.map(\.relativePath)).count
                 == manifest.sourceInventory.count,
               Set(manifest.sourceMachOs.map(\.relativePath)).count
-                == manifest.sourceMachOs.count else {
+                == manifest.sourceMachOs.count,
+              isValidSigningIdentity(manifest.signingIdentity),
+              isValidRootCodeSignature(
+                manifest.rootCodeSignature,
+                signingIdentity: manifest.signingIdentity,
+                bundleIdentifier: manifest.bundleIdentifier
+              ) else {
             throw PlayCoverBackendError.verificationFailed(
                 "manifest schema or identity is invalid"
             )
@@ -1892,7 +2164,13 @@ public enum PlayCoverService {
         guard manifest.generationKey == makeGenerationKey(
                 sourceContentHash: manifest.sourceContentHash,
                 runtimeBuildHash: manifest.runtimeBuildHash,
-                prepareRevision: manifest.prepareRevision
+                prepareRevision: manifest.prepareRevision,
+                signerPublicKeySPKISHA256:
+                    manifest.signingIdentity.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    manifest.signingIdentity.certificateSHA256,
+                signingPolicyRevision:
+                    manifest.signingIdentity.policy.revision
               ) else {
             throw PlayCoverBackendError.verificationFailed(
                 "manifest generation key is invalid"
@@ -2216,6 +2494,10 @@ public enum PlayCoverService {
                 stableAppURL: stableAppURL
             )
         }
+        try verifyStableRootSignature(
+            appURL: stableAppURL,
+            manifest: manifest
+        )
         guard requiredHashes.isSubset(of: Set(hashes.keys)) else {
             throw PlayCoverBackendError.cacheTampered(
                 "manifest is missing a required executable hash entry"

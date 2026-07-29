@@ -80,6 +80,8 @@ public enum CLIParser {
             case .start, .stop, .status, .install, .apps, .open,
                     .appLifecycle, .driver, .mediaImport:
                 break
+            case .config(let options) where options.playCover:
+                break
             default:
                 throw CLIParseError.unknownOption("--json")
             }
@@ -138,8 +140,20 @@ public enum CLIParser {
             case "--apple-id": options.appleId = try parser.value(for: arg)
             case "--password": options.password = try parser.value(for: arg)
             case "--verbose": options.verbose = true
+            case "--playcover": options.playCover = true
             default: throw CLIParseError.unknownOption(arg)
             }
+        }
+        if options.playCover,
+           options.udid != nil
+                || options.list
+                || options.simulator
+                || options.appleId != nil
+                || options.password != nil {
+            throw CLIParseError.invalidValue(
+                "--playcover cannot be combined with --udid, --simulator, "
+                    + "--list, --apple-id, or --password"
+            )
         }
         return options
     }

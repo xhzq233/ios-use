@@ -414,6 +414,281 @@ final class IOSUseCLITests: XCTestCase {
         }
     }
 
+    func testPlayCoverConfigHelpDocumentsExplicitAuthenticationAndSafeRetry() {
+        let result = IOSUseCLI().run(
+            arguments: ["config", "--help"]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(
+            result.stdout.contains(
+                "ios-use config --playcover [--verbose] [--json]"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "macOS will show user authentication dialogs"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "safely retry the same command"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "resumes the same signing identity instead of replacing it"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "`start --playcover` never initializes or repairs this identity"
+            )
+        )
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testPlayCoverConfigDispatchFormatsNonSecretIdentityEvidence() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-config-\(UUID().uuidString)"
+            )
+            .path
+        let evidence = makePlayCoverTestSigningIdentity()
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root],
+            playCoverSignerInitializer: { evidence }
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = cli.run(
+            arguments: ["config", "--playcover"]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(
+            result.stdout,
+            """
+            PlayCover signing identity is ready.
+            Certificate SHA-256: \(evidence.certificateSHA256)
+            Expires: 2050-01-01T00:00:00Z
+
+            """
+        )
+        XCTAssertFalse(
+            result.stdout.localizedCaseInsensitiveContains(
+                "private key"
+            )
+        )
+        XCTAssertTrue(result.stderr.isEmpty)
+    }
+
+    func testPlayCoverConfigJSONUsesCommonMinimalSuccessEnvelope()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-config-json-\(UUID().uuidString)"
+            )
+            .path
+        let evidence = makePlayCoverTestSigningIdentity()
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root],
+            playCoverSignerInitializer: { evidence }
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = cli.run(
+            arguments: ["config", "--playcover", "--json"]
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stderr.isEmpty)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(result.stdout.utf8)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(envelope["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(envelope["ok"] as? Bool, true)
+        XCTAssertEqual(envelope["command"] as? String, "config")
+        let data = try XCTUnwrap(
+            envelope["data"] as? [String: Any]
+        )
+        XCTAssertEqual(
+            Set(data.keys),
+            Set([
+                "backend",
+                "status",
+                "certificateSHA256",
+                "expiresAt",
+            ])
+        )
+        XCTAssertEqual(data["backend"] as? String, "playcover")
+        XCTAssertEqual(data["status"] as? String, "ready")
+        XCTAssertEqual(
+            data["certificateSHA256"] as? String,
+            evidence.certificateSHA256
+        )
+        XCTAssertEqual(
+            data["expiresAt"] as? String,
+            "2050-01-01T00:00:00Z"
+        )
+    }
+
+    func testPlayCoverConfigJSONUsesCommonFailureEnvelope() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-playcover-config-failure-\(UUID().uuidString)"
+            )
+            .path
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root],
+            playCoverSignerInitializer: {
+                throw PlayCoverSigningIdentityServiceError
+                    .bindingUnavailable
+            }
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = cli.run(
+            arguments: ["config", "--playcover", "--json"]
+        )
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(result.stdout.isEmpty)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(result.stderr.utf8)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(envelope["schemaVersion"] as? Int, 1)
+        XCTAssertEqual(envelope["ok"] as? Bool, false)
+        XCTAssertEqual(envelope["command"] as? String, "config")
+        let error = try XCTUnwrap(
+            envelope["error"] as? [String: Any]
+        )
+        XCTAssertEqual(
+            error["code"] as? String,
+            "playcover_signing_identity_binding_unavailable"
+        )
+        XCTAssertEqual(
+            error["mutationMayHaveApplied"] as? Bool,
+            true
+        )
+    }
+
+    func testPlayCoverConfigJSONMarksEverySignerFailureAsPossiblyMutating()
+        throws
+    {
+        let failures: [PlayCoverSigningIdentityServiceError] = [
+            .identityCreationUnavailable,
+            .invalidCreatedIdentity,
+            .bindingUnavailable,
+            .trustConfigurationFailed(errSecAuthFailed),
+            .signingProbeFailed("denied"),
+            .unhealthy(.missing),
+            .unhealthy(.trustRequired),
+            .unhealthy(.unavailable),
+        ]
+
+        for failure in failures {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "ios-use-playcover-config-failure-\(UUID().uuidString)"
+                )
+                .path
+            let cli = IOSUseCLI(
+                environment: ["IOS_USE_HOME": root],
+                playCoverSignerInitializer: { throw failure }
+            )
+            defer { try? FileManager.default.removeItem(atPath: root) }
+
+            let result = cli.run(
+                arguments: ["config", "--playcover", "--json"]
+            )
+            let envelope = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: Data(result.stderr.utf8)
+                ) as? [String: Any]
+            )
+            let error = try XCTUnwrap(
+                envelope["error"] as? [String: Any]
+            )
+
+            XCTAssertEqual(result.exitCode, 1, "\(failure)")
+            XCTAssertEqual(
+                error["mutationMayHaveApplied"] as? Bool,
+                true,
+                "\(failure)"
+            )
+        }
+    }
+
+    func testReadOnlySignerFailureRemainsNonMutating() throws {
+        for health in [
+            PlayCoverSigningIdentityHealth.missing,
+            .trustRequired,
+            .unavailable,
+        ] {
+            let result = MachineOutput.failure(
+                command: "start",
+                error: PlayCoverSigningIdentityServiceError
+                    .unhealthy(health)
+            )
+            let envelope = try XCTUnwrap(
+                JSONSerialization.jsonObject(
+                    with: Data(result.stderr.utf8)
+                ) as? [String: Any]
+            )
+            let error = try XCTUnwrap(
+                envelope["error"] as? [String: Any]
+            )
+
+            XCTAssertEqual(
+                error["mutationMayHaveApplied"] as? Bool,
+                false,
+                health.rawValue
+            )
+        }
+    }
+
+    func testOrdinaryStartNeverCallsPlayCoverConfigInitializer() {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "ios-use-start-no-signer-init-\(UUID().uuidString)"
+            )
+            .path
+        DeviceService.listDevicesOverrideForTesting = { _, _ in [] }
+        let cli = IOSUseCLI(
+            environment: ["IOS_USE_HOME": root],
+            playCoverSignerInitializer: {
+                XCTFail(
+                    "ordinary start must not initialize PlayCover signing"
+                )
+                return makePlayCoverTestSigningIdentity()
+            }
+        )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(atPath: root)
+        }
+
+        let result = cli.run(arguments: ["start"])
+
+        XCTAssertEqual(result.exitCode, 1)
+        XCTAssertTrue(
+            result.stderr.contains(
+                "No --udid and no USB real devices detected"
+            )
+        )
+    }
+
     func testPlayCoverStartHelpDocumentsDirectSourceLaunch() {
         let result = IOSUseCLI().run(arguments: ["start", "--help"])
 

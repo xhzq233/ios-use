@@ -178,6 +178,7 @@ struct PlayCoverPreparationPlan: Equatable, Sendable {
     let source: PlayCoverPreparationSource
     let runtimeFrameworkPath: String
     let runtimeEvidence: PlayCoverUpstreamRuntimeEvidence
+    let signingIdentity: PlayCoverSigningIdentityEvidence
     let generationIdentity: PlayCoverGenerationIdentity
 
     var runtimeBuildHash: String {
@@ -226,6 +227,9 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
     public let runtimeBuildHash: String
     public let prepareRevision: String
     public let generationKey: String
+    public let signingIdentity: PlayCoverSigningIdentityEvidence
+    public let rootCodeSignature:
+        PlayCoverRootCodeSignatureEvidence
     public let runtimeLoadPath: String
     public let runtimeFrameworkName: String
     public let convertedMachOs: [String]
@@ -238,7 +242,7 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
     public let completedAt: String
 
     public init(
-        schemaVersion: Int = 3,
+        schemaVersion: Int = 4,
         backend: String = "playcover-headless",
         sourceAppPath: String,
         preparedAppPath: String,
@@ -250,6 +254,8 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
         runtimeBuildHash: String,
         prepareRevision: String,
         generationKey: String,
+        signingIdentity: PlayCoverSigningIdentityEvidence,
+        rootCodeSignature: PlayCoverRootCodeSignatureEvidence,
         runtimeLoadPath: String,
         runtimeFrameworkName: String,
         convertedMachOs: [String],
@@ -273,6 +279,8 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
         self.runtimeBuildHash = runtimeBuildHash
         self.prepareRevision = prepareRevision
         self.generationKey = generationKey
+        self.signingIdentity = signingIdentity
+        self.rootCodeSignature = rootCodeSignature
         self.runtimeLoadPath = runtimeLoadPath
         self.runtimeFrameworkName = runtimeFrameworkName
         self.convertedMachOs = convertedMachOs

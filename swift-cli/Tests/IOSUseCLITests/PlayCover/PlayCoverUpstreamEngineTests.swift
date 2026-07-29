@@ -552,7 +552,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 isDirectory: true
             ),
             runtimeSocketPath: "/tmp/unused.sock",
-            runtimeLoadPath: "@rpath/Unused.framework/Unused"
+            runtimeLoadPath: "@rpath/Unused.framework/Unused",
+            codesignIdentity: "-"
         )
 
         XCTAssertThrowsError(
@@ -638,6 +639,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     runtimeLoadPath:
                         "@executable_path/Frameworks/"
                         + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                    codesignIdentity: "-",
                     expectedRuntimeEvidence: evidence
                 ),
                 sourceInspection: source,
@@ -715,6 +717,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 runtimeLoadPath:
                     "@executable_path/Frameworks/"
                     + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
+                codesignIdentity: "-",
                 expectedRuntimeEvidence: evidence
             ),
             sourceInspection: source

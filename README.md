@@ -136,7 +136,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | Command | Use it for |
 | --- | --- |
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
-| `config` | Install or update the on-device driver. |
+| `config` | Install or update the on-device driver; use `config --playcover` once before the first local PlayCover start. |
 | `start` / `stop` | Select or release the current automation target; use `start --playcover [--app <App.app>]` for the local PlayCover backend. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID; activation is UI-ready by default. |
 | `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
@@ -215,6 +215,7 @@ pixels.
 ```bash
 bash scripts/build_swift_cli.sh --debug
 
+./ios-use config --playcover
 ./ios-use start --playcover --app /path/to/Source.app
 ./ios-use status
 ./ios-use dom
@@ -224,19 +225,26 @@ bash scripts/build_swift_cli.sh --debug
 ```
 
 On Apple Silicon with full Xcode and `xcodegen` available, the local CLI build
-also builds the default injected runtime. `start --playcover --app` accepts either
-an unmodified iPhoneOS App or a managed prepared App. A source App is cloned
-under the current `IOS_USE_HOME`, converted with pinned PlayCover sources,
-injected, signed inside-out, fully verified, and launched. The generation key
-contains only source content, Runtime/build content, and the pinned prepare
-revision. A later bare `start --playcover` reuses the most recent generation
-from that same home after a bounded integrity check; it never creates profile
-or bootstrap files. After rebuilding the source App, pass `--app` again so
-the new iPhoneOS Mach-O content selects or prepares its generation; bare start
-deliberately does not inspect the source build. Successful start output includes
-one timing line for inspect, clone, convert, sign, verify, launch, and total
-latency. Launch is further observed as alias creation, synchronous open
-dispatch, exact ownership, Runtime transport/ping, and ready geometry.
+also builds the default injected runtime. Before the first PlayCover start for
+your macOS account, run `config --playcover`; macOS asks once for authentication
+to trust the dedicated signing identity. If you cancel, safely retry the same
+command: it resumes that identity instead of creating another one. The identity
+persists across `IOS_USE_HOME` values, while prepared Apps remain in the home
+where they were created. Ordinary `start --playcover` only checks the existing
+identity and tells you to run `config --playcover` if setup is missing or trust
+must be completed.
+
+`start --playcover --app` accepts either an unmodified iPhoneOS App or a managed
+prepared App. A source App is cloned under the current `IOS_USE_HOME`, converted
+with pinned PlayCover sources, injected, signed inside-out, fully verified, and
+launched. A later bare `start --playcover` reuses the most recent generation
+from that same home after a bounded integrity check. After rebuilding the
+source App, pass `--app` again so the new iPhoneOS Mach-O content selects or
+prepares its generation; bare start deliberately does not inspect the source
+build. Successful start output includes one timing line for inspect, clone,
+convert, sign, verify, launch, and total latency. Launch is further observed as
+alias creation, synchronous open dispatch, exact ownership, Runtime
+transport/ping, and ready geometry.
 Runtime transport/ping is a nested subtotal of exact ownership, not an
 additional duration to add to it. Skipped cache-hit or unobserved phases are
 reported explicitly. The isolated live Runtime stress gate preserves 20 warm

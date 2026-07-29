@@ -4,6 +4,38 @@ import XCTest
 @testable import IOSUseCLI
 
 final class PlayCoverPrepareDifferentialTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        let identity = makePlayCoverTestSigningIdentity(
+            codesignSelector: "-"
+        )
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in identity
+        }
+        PlayCoverService.rootCodeSignatureInspectorOverrideForTesting = {
+            appURL in
+            let inspection = try PlayCoverUpstreamEngine.inspect(
+                appURL: appURL
+            )
+            guard let cdHash = inspection.signature.cdHash else {
+                throw PlayCoverBackendError.verificationFailed(
+                    "test App is missing final root CDHash evidence"
+                )
+            }
+            return makePlayCoverTestRootCodeSignature(
+                bundleIdentifier: inspection.bundleIdentifier,
+                identity: identity,
+                cdHash: cdHash.uppercased()
+            )
+        }
+    }
+
+    override func tearDown() {
+        PlayCoverService.signingIdentityResolverOverrideForTesting = nil
+        PlayCoverService.rootCodeSignatureInspectorOverrideForTesting = nil
+        super.tearDown()
+    }
+
     private enum HermeticOneSidedGoldenV1 {
         static let manifestID = "playcover-hermetic-one-sided-v1"
         static let runtimeSHA256 =
@@ -768,15 +800,23 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "swift-cli/Package.resolved",
                 "swift-cli/Package.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverCodeSignatureInspector.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverLaunchCrashCut.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverService.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverSigningCertificateBuilder.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverSigningIdentityService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverStartTiming.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                     + "PlayCoverExternalPrepareDifferentialTests.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                     + "PlayCoverPrepareDifferentialTests.swift",
+                "swift-cli/Tests/IOSUseCLITests/PlayCover/"
+                    + "PlayCoverSigningEvidenceTestSupport.swift",
             ].sorted()
         )
         XCTAssertEqual(attestation.implementation.contentSHA256.count, 64)

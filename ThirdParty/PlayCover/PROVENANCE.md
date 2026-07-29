@@ -82,9 +82,11 @@ Local patches are intentionally limited to:
   already-converted thin Mach-O does not eagerly copy the whole file before
   pinned Inject performs its mutation read; the independent pinned
   `installInIPA` oracle remains unchanged;
-- explicit inside-out ad-hoc signing in the ios-use production path (never
-  `codesign --deep` there), while retaining pinned `--deep` behavior solely in
-  the independent differential oracle;
+- explicit inside-out signing with the dedicated stable ios-use identity in
+  the production path (never `codesign --deep` there), while retaining pinned
+  `--deep` behavior solely in the independent differential oracle; the
+  hermetic differential fixture injects an ad-hoc selector instead of using a
+  real user Keychain identity;
 - owner-selected Unix-socket, stdio-log, and canonical lowercase `playchain`
   owner-only sandbox/storage rules shared by headless KeyCover and the Runtime,
   and recorded in the entitlement diff;
@@ -132,7 +134,7 @@ adapter call sites:
 | --- | --- |
 | `Entitlements.composeEntitlements(self)` | Both paths call the vendored `Entitlements.composeEntitlements` directly on the staged `BaseApp`. Explicit `discordActivityEnabled`, `bypass`, `playSignActive`, and managed-home inputs replace GUI `AppSettings` reads. Production keeps the pinned rule that source entitlements are overlaid only when PlaySign is active, then appends file access for the exact managed `playcover/run`, `playcover/logs`, and lowercase `playcover/playchain` directories plus AF_UNIX bind access only for `playcover/run`; it does not grant the target App the whole managed home. The manifest records every key removed from the source by the pinned non-PlaySign composition. |
 | `conf.store(tmpEnts)` | Both paths serialize the resulting dictionary to an owner-private temporary plist before codesign. The pinned oracle uses its reference plist; production writes the final composed data immediately before each entitlement-bearing sign and removes it with `defer`. |
-| `Shell.signAppWith(executable, entitlements: tmpEnts)` | The pinned oracle calls `Shell.signAppWithPinnedOracle` with the exact upstream root target and `--deep` arguments. Production deterministically reproduces the resulting code-object state inside-out: every child is ad-hoc signed without restoring source entitlements, each child is verified, and the root `.` is signed last with the final composed entitlements before the whole order is re-verified. |
+| `Shell.signAppWith(executable, entitlements: tmpEnts)` | The pinned oracle calls `Shell.signAppWithPinnedOracle` with the exact upstream root target and `--deep` arguments. Production deterministically reproduces the resulting code-object state inside-out with the selected stable identity: every child is signed without restoring source entitlements, each child is verified, and the root `.` is signed last with the final composed entitlements before the whole order is re-verified. The root certificate, designated requirement, CDHash, and signing identifier are then bound to the selected identity and prepared bundle. |
 
 The rest of `PlayApp` is corresponding source but is deliberately not linked:
 
@@ -258,7 +260,7 @@ scripts/test_playcover_prepare_differential.sh
 
 The gate runs in an isolated SwiftPM scratch directory and publishes a
 schema-v1 attestation only after every exact allowance and one-sided baseline
-is consumed. Its producer closure is a fixed 40-file list whose normalized
+is consumed. Its producer closure is a fixed 44-file list whose normalized
 SHA-256 is embedded into the executing test binary at build time and checked
 against source snapshots at both ends of attestation. The binary digest is read
 through an open descriptor whose device/inode must match the vnode backing the

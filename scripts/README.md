@@ -25,6 +25,20 @@ is needed for backend development. Normal
 Runtime built by `build_swift_cli.sh`; users do not run a separate PlayCover
 prepare command.
 
+Before running a script that performs a real PlayCover prepare or launch,
+initialize the host signer interactively once:
+
+```bash
+./ios-use config --playcover
+```
+
+This explicit command creates and trusts the per-user identity; a cancelled
+macOS authentication can be retried safely against the same identity. The
+identity and its binding persist outside `IOS_USE_HOME`, so isolated script
+homes separate generations and sessions but intentionally reuse the host
+signer. Prepare/start paths only resolve it and must not initialize or repair
+Keychain or Trust Settings from unattended validation.
+
 Use `./ios-use`, not global `ios-use`, when validating current workspace changes.
 
 ## Validation
@@ -39,7 +53,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/test_playcover_packaging_contract.sh` | Hermetic packaging audit tests, including negative cases for a deleted expected source, a one-sided provenance pin change, and a mismatched Yams resolution. |
 | `scripts/test_playcover_live_workflow_contract.sh` | Locked-safe live-workflow contract: compiles and exercises the AppKit display/mouse helper without posting events, then runs negative cases proving that the exact three-phase display matrix remains versioned, attestation/run metadata/logs stay under runner-temporary directories outside the checkout, and CI may upload only the redacted `external-app-live-v2.json` file. |
 | `scripts/test_playcover_pending_launch_crash_live.sh --live` | Clean-HEAD public-fixture gate that materializes committed HEAD and builds the debug CLI, Runtime, and fixture in fresh owner-only scratch paths outside the checkout. It uses an isolated `/tmp` alias root, `_exit(86)` cuts, independent CLI processes, exact PID/birth/executable/Runtime-socket evidence, and machine-envelope assertions for the post-open, generic pre/post-owner, ready, durable `driver.lock`, and three journal-retirement boundaries, plus the deliberately unresolved pre-open `submissionArmed` state. It proves unresolved-open blocking, exact-owner recovery, generation retention, and a fresh start after safe cleanup for that explicit set. It does not attest production installed-layout callback ordering or independently crash the terminal-failure/source-specific callback branches; their store/ordering semantics remain covered only by focused tests until a real independent-process gate is added. |
-| `scripts/test_playcover_prepare_differential.sh` | Run the hermetic pinned Installer-vs-ios-use prepare differential suite in an isolated SwiftPM scratch directory and publish its fixture-only schema-v1 attestation without replacing existing evidence. It binds an embedded 40-file source-closure digest to the loaded XCTest image's exact device/inode and content hash; it does not consume a private live UI scenario. |
+| `scripts/test_playcover_prepare_differential.sh` | Run the hermetic pinned Installer-vs-ios-use prepare differential suite in an isolated SwiftPM scratch directory and publish its fixture-only schema-v1 attestation without replacing existing evidence. It binds an embedded 44-file source-closure digest to the loaded XCTest image's exact device/inode and content hash; it does not consume a private live UI scenario. |
 | `scripts/test_playcover_entitlement_capabilities.sh --prepared-app <App.app> --managed-home <path>` | Test-only manual gate that copies the exact signed entitlements from an existing managed prepared App's main executable onto a standalone probe, verifies semantic entitlement equality, and directly exercises the narrowly scoped Runtime filesystem, AF_UNIX, log, and lowercase PlayChain SQLite capabilities without `sandbox-exec`. |
 | `scripts/test_playcover_runtime_stdio.sh` | Compiles the production early-constructor stdio redirector with a small harness and proves exact device/inode capture plus fail-closed rejection of missing identity, replacement, symlink, broad mode, and multiple-link files. |
 | `scripts/characterize_playcover_external_prepare.sh --scenario <path> --runtime <path> --playtools <path> --work-root <path> --report <path> --commit <sha>` | Collect a diagnostic-only external-App prepare report from the full pinned PlayTools Installer oracle and the real ios-use service prepare path. Every input is mandatory; the clean committed HEAD, fresh absolute work/report paths outside the checkout, cleared environment, fixed XCTest, owner-only report, and no-overwrite publication are enforced. The schema-v2 report contains observed typed identities, raw differences, and only the SHA-256 binding of the canonical requested work-root path, never that path itself. The command deliberately retains the work root for operator inspection and never recursively removes it. |

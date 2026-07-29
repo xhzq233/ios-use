@@ -3279,8 +3279,13 @@ final class PlayCoverSessionTests: XCTestCase {
     ) throws -> PlayCoverPrepareManifest {
         let appPath = fixture.paths.playcoverPrepared
             + "/\(generationKey)/com.example.demo.app"
+        let signingIdentity = makePlayCoverTestSigningIdentity()
+        let rootCodeSignature = makePlayCoverTestRootCodeSignature(
+            bundleIdentifier: "com.example.demo",
+            identity: signingIdentity
+        )
         let object: [String: Any] = [
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "backend": "playcover-headless",
             "sourceAppPath": fixture.root + "/Source.app",
             "preparedAppPath": appPath,
@@ -3302,6 +3307,12 @@ final class PlayCoverSessionTests: XCTestCase {
             "prepareRevision":
                 PlayCoverService.prepareImplementationRevision,
             "generationKey": generationKey,
+            "signingIdentity": try JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(signingIdentity)
+            ),
+            "rootCodeSignature": try JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(rootCodeSignature)
+            ),
             "runtimeLoadPath": PlayCoverMachO.runtimeLoadPath,
             "runtimeFrameworkName":
                 PlayCoverService.runtimeFrameworkName,

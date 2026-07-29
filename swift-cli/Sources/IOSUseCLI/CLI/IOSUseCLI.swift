@@ -3,6 +3,8 @@ import IOSUseProtocol
 
 public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
+    typealias PlayCoverSignerInitializer =
+        @Sendable () throws -> PlayCoverSigningIdentityEvidence
 
     public static let version = "1.3.4"
     static var driverClientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)? {
@@ -17,10 +19,28 @@ public struct IOSUseCLI: Sendable {
 
     public let paths: IOSUsePaths
     public let outputSink: CLIOutputSink?
+    private let playCoverSignerInitializer: PlayCoverSignerInitializer
 
     public init(environment: [String: String] = ProcessInfo.processInfo.environment, outputSink: CLIOutputSink? = nil) {
+        self.init(
+            environment: environment,
+            outputSink: outputSink,
+            playCoverSignerInitializer: {
+                try PlayCoverSigningIdentityService()
+                    .initializeForConfiguration()
+            }
+        )
+    }
+
+    init(
+        environment: [String: String],
+        outputSink: CLIOutputSink? = nil,
+        playCoverSignerInitializer:
+            @escaping PlayCoverSignerInitializer
+    ) {
         self.paths = IOSUsePaths.resolve(environment: environment)
         self.outputSink = outputSink
+        self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
     public func run(arguments: [String]) -> CLIResult {
@@ -216,6 +236,8 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .config(let options) where options.playCover:
+            return executePlayCoverConfiguration(json: json)
         case .config(let options) where options.list:
             return CLIResult(exitCode: 0, stdout: ConfigService.formatList(ConfigService.listEntries(paths: paths)))
         case .config(let options) where options.simulator:
@@ -408,6 +430,55 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
+    private func executePlayCoverConfiguration(
+        json: Bool
+    ) -> CLIResult {
+        do {
+            let evidence = try playCoverSignerInitializer()
+            if json {
+                return MachineOutput.success(
+                    command: "config",
+                    data: playCoverSignerMachineData(evidence)
+                )
+            }
+            let expiresAt = ISO8601DateFormatter().string(
+                from: evidence.notAfter
+            )
+            return CLIResult(
+                exitCode: 0,
+                stdout: """
+                PlayCover signing identity is ready.
+                Certificate SHA-256: \(evidence.certificateSHA256)
+                Expires: \(expiresAt)
+
+                """
+            )
+        } catch {
+            return commandFailure(
+                command: "config",
+                error: error,
+                json: json,
+                mutationMayHaveApplied: true
+            )
+        }
+    }
+
+    private func playCoverSignerMachineData(
+        _ evidence: PlayCoverSigningIdentityEvidence
+    ) -> MachineValue {
+        .object([
+            "backend": .string("playcover"),
+            "status": .string("ready"),
+            "certificateSHA256":
+                .string(evidence.certificateSHA256),
+            "expiresAt": .string(
+                ISO8601DateFormatter().string(
+                    from: evidence.notAfter
+                )
+            ),
+        ])
+    }
+
     private func playCoverRoutingFailure(
         for command: ParsedCommand,
         json: Bool
@@ -590,13 +661,20 @@ public struct IOSUseCLI: Sendable {
         }
     }
 
-    private func commandFailure(command: String, error: Error, json: Bool, exitCode: Int32 = 1) -> CLIResult {
+    private func commandFailure(
+        command: String,
+        error: Error,
+        json: Bool,
+        exitCode: Int32 = 1,
+        mutationMayHaveApplied: Bool? = nil
+    ) -> CLIResult {
         if json {
             return MachineOutput.failure(
                 command: command,
                 error: error,
                 data: machineDriverErrorData(error),
-                exitCode: exitCode
+                exitCode: exitCode,
+                mutationMayHaveApplied: mutationMayHaveApplied
             )
         }
         return CLIErrorEnvelope(message: "\(error)", exitCode: exitCode).render()

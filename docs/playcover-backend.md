@@ -11,11 +11,21 @@ code.
 The public lifecycle is intentionally small:
 
 ```bash
+./ios-use config --playcover
 ./ios-use start --playcover --app /path/to/Source.app --log
 ./ios-use status
 # normal ios-use UI, screenshot, capture, URL, and log commands
 ./ios-use stop
 ```
+
+`config --playcover` is the only public initialization path for the stable
+PlayCover signer. It is run once per macOS account, not once per
+`IOS_USE_HOME`. The first run creates and trusts the identity with one macOS
+authentication. If authentication is cancelled, the binding remains on the
+same identity and retrying the command safely resumes trust configuration.
+Ordinary start only resolves the existing identity and fails with an explicit
+`config --playcover` instruction when it is missing or still needs trust. Other
+unhealthy states fail closed without start-time mutation.
 
 `start --playcover` without `--app` reuses the most recent verified generation
 from the current `IOS_USE_HOME`. There are no public `playcover inspect`,
@@ -211,6 +221,24 @@ before touching another backend.
 
 ## Prepare, Signing, and Cache
 
+The signer is persistent per macOS user and deliberately independent of
+`IOS_USE_HOME`. Its private key and certificate live in the user's Keychain,
+while the exact non-secret binding is an owner-only file at
+`~/Library/Application Support/dev.ios-use/playcover-stable-signing-binding-v1.json`.
+Initialization is serialized by a per-user operation lock and claims the first
+binding atomically. It then installs code-signing-specific user trust and
+performs a real sign/strict-verify probe. A cancelled trust authentication does
+not remove the binding or create a replacement, so the next explicit
+`config --playcover` continues with the same certificate.
+
+All ordinary prepare, managed-selection, and start paths resolve this exact
+binding with initialization disabled. They never create, rotate, or repair the
+identity or modify Trust Settings. Missing and trust-required states direct the
+operator to the explicit configuration command; replaced, expired, or
+inaccessible state also fails closed and is never silently replaced. Separate
+`IOS_USE_HOME` values share the signer but not prepared generations, session
+state, or cache references.
+
 The source App is always read-only. Preparation takes place in a new staging
 directory under `IOS_USE_HOME/playcover/` and becomes visible only after the
 complete transaction verifies.
@@ -228,9 +256,10 @@ The headless dependency graph retains the pinned Installer order:
 6. update only required Info.plist compatibility keys, remove the copied
    mobile provision, and compose entitlements through pinned PlayCover,
    KeyCover, and PlayChain paths;
-7. sign nested binaries and bundles from the inside out with the same
-   non-PlaySign entitlement result as pinned PlayCover, then sign the outer
-   App with the composed root entitlements;
+7. sign nested binaries and bundles from the inside out using the stable
+   identity's full certificate SHA-1 selector and the same non-PlaySign
+   entitlement result as pinned PlayCover, then sign the outer App with the
+   composed root entitlements;
 8. remove quarantine and verify every Mach-O, dependency, load command,
    entitlement, nested signature, and outer seal.
 
@@ -258,12 +287,16 @@ The immutable generation key contains:
 
 - the complete source content hash;
 - the Runtime/build content hash;
-- the pinned prepare implementation revision.
+- the pinned prepare implementation revision;
+- the signer's public-key SPKI SHA-256;
+- the signer's certificate SHA-256;
+- the signing-policy revision.
 
 Initial preparation performs full verification. Reuse checks the immutable
-marker, key executable and Runtime hashes, signature validity, and managed
-path identity without enumerating or re-preparing the entire App. Different
-`IOS_USE_HOME` values never share prepared state.
+marker, key executable and Runtime hashes, signature validity, stable signer,
+root designated requirement, root CDHash, and managed path identity without
+enumerating or re-preparing the entire App. Different `IOS_USE_HOME` values
+never share prepared state, even though they resolve the same per-user signer.
 
 The explicit-source path creates one immutable preparation plan containing the
 source inspection, Runtime hash, prepare revision, and generation key. Managed
@@ -285,8 +318,14 @@ time from open dispatch return through the exact claim;
 challenges attempted during that interval. Cache-hit or unobserved phases
 that did not run are shown as `skipped`.
 
-The production prepare manifest remains a cache-integrity seal; ordinary
-`start` never performs a second pinned prepare. A separate hermetic
+The schema-version-4 production prepare manifest remains a cache-integrity
+seal. It records the complete stable-signer evidence and the prepared root's
+certificate SHA-256, serialized designated requirement plus its SHA-256,
+CDHash, and signing identifier. Fast verification first validates the anchored
+App's strict code seal and recorded nested signatures, then requires the
+current bound signer and the observed root signature evidence to match the
+manifest exactly. Ordinary `start` never performs a second pinned prepare. A
+separate hermetic
 differential gate emits a Codable JSON attestation outside the checkout. It
 consumes the two distinct, module-owned prepare result types and re-inspects
 the source plus both outputs before publication. The two canonical managed
@@ -295,7 +334,7 @@ path normalization applies only at path-token boundaries. The evidence records
 both complete object/slice selector sets, every App and inventory comparator
 family (including fields that compare equal), source/output/revision identity,
 static allowance reasons and symbols, one-sided baseline provenance, a fixed
-39-file transitive source closure, and the SHA-256 plus device/inode of the
+44-file transitive source closure, and the SHA-256 plus device/inode of the
 loaded XCTest image that executed the comparison. The normalized closure
 digest is embedded at build time and must match both source snapshots; the gate
 uses an isolated SwiftPM scratch directory. Managed-path replacement accepts

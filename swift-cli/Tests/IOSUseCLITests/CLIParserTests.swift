@@ -129,6 +129,58 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
+    func testParsesExplicitPlayCoverSignerConfiguration() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["config", "--playcover"]),
+            .config(ConfigOptions(playCover: true))
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation([
+                "--json",
+                "config",
+                "--playcover",
+                "--verbose",
+            ]),
+            ParsedInvocation(
+                command: .config(
+                    ConfigOptions(
+                        verbose: true,
+                        playCover: true
+                    )
+                ),
+                json: true
+            )
+        )
+    }
+
+    func testRejectsPlayCoverSignerConfigurationMixedWithDeviceOptions() {
+        let conflictingArguments: [[String]] = [
+            ["--udid", "REAL-1"],
+            ["--simulator"],
+            ["--list"],
+            ["--apple-id", "user@example.com"],
+            ["--password", "secret"],
+        ]
+
+        for arguments in conflictingArguments {
+            XCTAssertThrowsError(
+                try CLIParser.parse(
+                    ["config", "--playcover"] + arguments
+                ),
+                arguments.joined(separator: " ")
+            ) { error in
+                XCTAssertEqual(
+                    error as? CLIParseError,
+                    .invalidValue(
+                        "--playcover cannot be combined with --udid, "
+                            + "--simulator, --list, --apple-id, or "
+                            + "--password"
+                    )
+                )
+            }
+        }
+    }
+
     func testRejectsInvalidPlayCoverArguments() {
         XCTAssertThrowsError(
             try CLIParser.parse(["playcover"])

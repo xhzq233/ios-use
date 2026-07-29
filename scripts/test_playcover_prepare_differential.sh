@@ -232,11 +232,15 @@ if ! jq -e '
       "scripts/test_playcover_prepare_differential.sh",
       "swift-cli/Package.resolved",
       "swift-cli/Package.swift",
+      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverCodeSignatureInspector.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverLaunchCrashCut.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverService.swift",
+      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningCertificateBuilder.swift",
+      "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverSigningIdentityService.swift",
       "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/PlayCoverStartTiming.swift",
       "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverExternalPrepareDifferentialTests.swift",
-      "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverPrepareDifferentialTests.swift"
+      "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverPrepareDifferentialTests.swift",
+      "swift-cli/Tests/IOSUseCLITests/PlayCover/PlayCoverSigningEvidenceTestSupport.swift"
     ] | sort) and
     .normalization.mode ==
       "hermetic-fixture-managed-paths-v1" and

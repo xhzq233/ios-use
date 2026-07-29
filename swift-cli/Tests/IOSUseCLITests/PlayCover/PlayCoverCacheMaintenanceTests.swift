@@ -272,7 +272,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         }
     }
 
-    func testPruneInventoriesLegacyCompletedSchemaTwo() throws {
+    func testPruneQuarantinesLegacyCompletedSchemaTwo() throws {
         let fixture = try CacheMaintenanceFixture()
         defer { fixture.remove() }
         let keys = (1...4).map {
@@ -283,7 +283,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
                 key: key,
                 completedAt:
                     "2026-06-\(String(format: "%02d", index + 1))T00:00:00Z",
-                completedSchemaVersion: index == 0 ? 2 : 3
+                completedSchemaVersion: index == 0 ? 2 : 4
             )
         }
         try fixture.writeReference(generationKey: keys[1])
@@ -295,9 +295,13 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
                 currentGenerationKey: keys[3]
             )
 
-        XCTAssertTrue(result.removedGenerationKeys.isEmpty)
-        XCTAssertTrue(result.warnings.isEmpty)
-        XCTAssertTrue(fixture.generationExists(keys[0]))
+        XCTAssertEqual(result.removedGenerationKeys, [keys[0]])
+        XCTAssertTrue(
+            result.warnings.contains {
+                $0.contains(keys[0]) && $0.contains("quarantined")
+            }
+        )
+        XCTAssertFalse(fixture.generationExists(keys[0]))
     }
 
     func testPruneUsesFastVerifiedTokenOnlyForCurrentManifest()
@@ -616,7 +620,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         let largeManifestKey = keys[3]
         try fixture.writeSidecarJSON(
             [
-                "schemaVersion": 3,
+                "schemaVersion": 4,
                 "backend": "playcover-headless",
                 "generationKey": largeManifestKey,
                 "completedAt": "2026-07-04T00:00:00Z",
@@ -737,7 +741,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         )
         try fixture.writeSidecarJSON(
             [
-                "schemaVersion": 4,
+                "schemaVersion": 5,
                 "generationKey": corruptKeys[5],
             ],
             named: PlayCoverService.completedFilename,
@@ -1134,7 +1138,7 @@ private struct CacheMaintenanceFixture {
     func createGeneration(
         key: String,
         completedAt: String,
-        completedSchemaVersion: Int = 3
+        completedSchemaVersion: Int = 4
     ) throws {
         let directory = generationDirectory(key)
         try FileManager.default.createDirectory(
@@ -1145,7 +1149,7 @@ private struct CacheMaintenanceFixture {
         _ = chmod(directory.path, 0o700)
         _ = chmod(appURL(key).path, 0o755)
         let manifest: [String: Any] = [
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "backend": "playcover-headless",
             "generationKey": key,
             "completedAt": completedAt,
@@ -1324,7 +1328,7 @@ private struct CacheMaintenanceFixture {
         completedAt: String
     ) throws -> PlayCoverFastVerifiedGenerationToken {
         let completed = PlayCoverCompletedGeneration(
-            schemaVersion: 3,
+            schemaVersion: 4,
             generationKey: generationKey,
             manifestSHA256: String(repeating: "d", count: 64),
             executableSHA256: String(repeating: "e", count: 64),
