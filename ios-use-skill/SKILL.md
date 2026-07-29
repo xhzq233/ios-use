@@ -159,6 +159,7 @@ ios-use activateApp com.example.app --terminateExisting --log
 ios-use terminateApp com.example.app
 ios-use open "https://example.com"
 ios-use open "https://example.com" --dom
+ios-use dismissAlert --only-button
 ios-use dismissAlert --label "Allow Full Access"
 ```
 
@@ -167,9 +168,10 @@ ios-use dismissAlert --label "Allow Full Access"
   host launch acknowledgement is sufficient.
 - `open` only dispatches the URL by default. Add `--dom` for immediate foreground
   UI evidence, then use `waitFor` for the destination condition that matters.
-- Dismiss an alert with its fresh, exact visible button label. Use `--index` only
-  when the current action list has already established the intended zero-based
-  index; `--label` and `--index` are mutually exclusive.
+- `dismissAlert` requires an explicit or unambiguous button choice. Use
+  `--only-button` for a one-button alert, `--label` or `--index` for a known
+  multi-button alert, and `--primary` only when the visual trailing/top heuristic
+  is intentional.
 
 When `activateApp --terminateExisting --log` prints a log path, query the file with
 standard shell tools:

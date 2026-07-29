@@ -54,6 +54,15 @@ final class ScrollMechanicsTests: XCTestCase {
         XCTAssertEqual(projectedHorizontal.dy, 0)
     }
 
+    func testHitPointOffset_UsesClippedHorizontalCollectionFrame() {
+        let frame = CGRect(x: 0, y: 696, width: 402, height: 90)
+
+        let point = hitPointOffset(for: CGVector(dx: -300, dy: 0), scrollFrame: frame)
+
+        XCTAssertEqual(point.dx, 301)
+        XCTAssertEqual(point.dy, 718)
+    }
+
     func testCenterScrollAdjustment_MovesBottomCellToScrollCenter() {
         let scrollFrame = CGRect(x: 0, y: 116, width: 402, height: 696)
         let targetFrame = CGRect(x: 0, y: 790, width: 402, height: 53)

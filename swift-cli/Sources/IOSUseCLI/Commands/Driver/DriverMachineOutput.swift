@@ -69,19 +69,53 @@ extension DriverCommandResult {
         case (.home, _):
             return .object(["pressed": .boolean(true)])
         case (.dismissAlert, .alert(let alert)):
-            return .object([
-                "dismissed": .boolean(alert.dismissed),
-                "text": .string(alert.text),
-                "button": .string(alert.button),
-                "reason": .string(alert.reason),
-                "hitView": alert.hitView.map(machineHitView) ?? .null,
-                "finalState": alert.finalState.map(machineFinalState) ?? .null,
-                "postcondition": alert.postcondition.map(machinePostcondition) ?? .null,
-            ])
+            return machineAlert(alert)
         default:
             return .object([:])
         }
     }
+}
+
+func machineAlert(_ alert: ForyAlertPayload) -> MachineValue {
+    .object([
+        "dismissed": .boolean(alert.dismissed),
+        "surface": alert.surface.isEmpty ? .null : .string(alert.surface),
+        "kind": alert.kind.isEmpty ? .null : .string(alert.kind),
+        "text": .string(alert.text),
+        "buttonCount": .integer(Int(alert.buttonCount)),
+        "buttons": .array(alert.buttons.map { button in
+            .object([
+                "queryIndex": .integer(Int(button.queryIndex)),
+                "label": .string(button.label),
+                "identifier": .string(button.identifier),
+                "hittable": .boolean(button.hittable),
+                "frame": button.frame.map(machineRect) ?? .null,
+            ])
+        }),
+        "requestedSelection": .string(alert.requestedSelection),
+        "selectionStrategy": alert.selectionStrategy.isEmpty
+            ? .null
+            : .string(alert.selectionStrategy),
+        "selectedIndex": alert.selectedIndex >= 0
+            ? .integer(Int(alert.selectedIndex))
+            : .null,
+        "button": alert.button.isEmpty ? .null : .string(alert.button),
+        "layoutDirection": alert.layoutDirection.isEmpty
+            ? .null
+            : .string(alert.layoutDirection),
+        "layoutDirectionSource": alert.layoutDirectionSource.isEmpty
+            ? .null
+            : .string(alert.layoutDirectionSource),
+        "reason": alert.reason.isEmpty ? .null : .string(alert.reason),
+    ])
+}
+
+func machineDriverErrorData(_ error: Error) -> MachineValue {
+    guard case DriverClientError.driverError(_, let payload) = error,
+          let alert = payload.alert else {
+        return .object([:])
+    }
+    return .object(["alert": machineAlert(alert)])
 }
 
 func machineDom(_ payload: ForyDomPayload) -> MachineValue {

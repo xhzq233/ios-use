@@ -22,7 +22,7 @@ enum CLIHelp {
 
         Commands:
           status, config, start, stop, dom, waitFor, screenshot, capture, tap, longpress, input, swipe
-          activateApp, terminateApp, home, open, dismissAlert, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
+          activateApp, terminateApp, home, open, dismissAlert, media, install, uninstall, apps, ddi-mount, proxy, oslog, nslog
 
         """
     }
@@ -336,13 +336,19 @@ enum CLIHelp {
             """
         case "dismissAlert":
             return driverHelp(
-                usage: "ios-use dismissAlert [--label <label> | --index <index>]",
-                summary: "Dismiss a system alert.",
+                usage: "ios-use dismissAlert [--index <index> | --label <label> | --primary | --only-button] [--scope springboard|app|any] [--wait <duration>]",
+                summary: "Dismiss an alert only when its button selection is explicit or unambiguous.",
                 options: [
-                    "--label <label>  Exact visible button label; fails if absent or ambiguous",
-                    "--index <index>  Zero-based visible button index; omitted selects the last button",
+                    "--index <index>          Select the exact XCTest query-result index",
+                    "--label <label>          Select one exact normalized button label",
+                    "--primary                Select the visual trailing/top button heuristic",
+                    "--only-button            Require exactly one hittable button; this is the default",
+                    "--scope <scope>           springboard, app, or any; defaults to any",
+                    "--wait <duration>         Bounded alert wait; defaults to 0 (one check), maximum 30s",
                 ]
             )
+        case "media":
+            return mediaHelp(arguments: rest)
         case "oslog":
             return """
             Usage: ios-use oslog [--udid <udid>] [--process <name> | --pid <pid>] [--pattern <regex>] [--flags <flags>] [--timeout <duration>] [--verbose]
@@ -394,6 +400,10 @@ enum CLIHelp {
         }
         if arguments.first == "proxy",
            let help = commandHelpText(arguments: ["proxy"]) {
+            return help
+        }
+        if arguments.first == "media",
+           let help = commandHelpText(arguments: ["media"]) {
             return help
         }
         return rootText
@@ -509,4 +519,36 @@ enum CLIHelp {
         }
     }
 
+    private static func mediaHelp(arguments: [String]) -> String? {
+        let subcommand = arguments.first { $0 != "--help" && $0 != "-h" }
+        switch subcommand {
+        case nil:
+            return """
+            Usage: ios-use media <command>
+
+            Add local media to the connected device through the active Driver.
+
+            Commands:
+              import    Add one photo or video to the device Photos library
+
+            """
+        case "import":
+            return """
+            Usage: ios-use media import <photo-or-video> [--json]
+
+            Add one local photo or video to the device Photos library.
+            The first import requests Photos add-only access and safely accepts
+            the newly caused Runner permission prompt when it is unambiguous.
+
+            Requires an active driver.lock. Run `ios-use start` first.
+            Use an ordinary shell loop to import multiple files.
+
+            Options:
+              --json    Print the common machine-readable envelope
+
+            """
+        default:
+            return nil
+        }
+    }
 }

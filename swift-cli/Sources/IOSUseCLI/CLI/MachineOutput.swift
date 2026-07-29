@@ -34,6 +34,10 @@ struct MachineError: Encodable, Equatable {
     var mutationMayHaveApplied: Bool
 }
 
+protocol MachineErrorConvertible {
+    var machineError: MachineError { get }
+}
+
 enum MachineOutput {
     private struct SuccessEnvelope: Encodable {
         let schemaVersion = 1
@@ -98,6 +102,9 @@ enum MachineOutput {
     }
 
     static func classify(_ error: Error) -> MachineError {
+        if let classified = error as? MachineErrorConvertible {
+            return classified.machineError
+        }
         if let readinessError = error as? AppLifecycleService.ReadinessError {
             var classified = classify(readinessError.underlying)
             classified.message = readinessError.description

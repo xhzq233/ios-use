@@ -443,7 +443,7 @@ private final class EvidenceDriverClient: DriverCommandClient {
         throw CLIParseError.invalidValue("unexpected home")
     }
 
-    func dismissAlert(index: Int?) throws -> ForyAlertPayload {
+    func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload {
         throw CLIParseError.invalidValue("unexpected dismissAlert")
     }
 

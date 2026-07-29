@@ -514,8 +514,9 @@ func findLargestScrollable(_ root: SafeSnapshot) -> SafeSnapshot? {
     var bestArea: CGFloat = 0
     var stack: [SafeSnapshot] = [root]
     while let node = stack.popLast() {
-        if scrollableElementTypes.contains(UInt(node.elementType)) {
-            let a = node.frame.width * node.frame.height
+        if scrollableElementTypes.contains(UInt(node.elementType)),
+           let frame = interactionFrame(node) {
+            let a = frame.width * frame.height
             if a > bestArea { best = node; bestArea = a }
         }
         for c in node.children { stack.append(c) }
@@ -532,8 +533,7 @@ func findScrollableAncestor(_ node: SafeSnapshot) -> SafeSnapshot? {
     var cur: SafeSnapshot? = node.parent
     while let p = cur {
         if scrollableElementTypes.contains(UInt(p.elementType))
-            && p.isVisible
-            && p.frame.width > 0 && p.frame.height > 0 {
+            && interactionFrame(p) != nil {
             let frames = collectVisibleCellFrames(p, limit: 2)
             if frames.count > 1 { return p }
         }
@@ -551,11 +551,10 @@ func findScrollableAtPoint(_ point: CGPoint, _ root: SafeSnapshot) -> SafeSnapsh
     var bestArea: CGFloat = .greatestFiniteMagnitude
     var stack: [SafeSnapshot] = [root]
     while let node = stack.popLast() {
-        if scrollableElementTypes.contains(UInt(node.elementType))
-            && node.isVisible
-            && node.frame.width > 0 && node.frame.height > 0
-            && node.frame.contains(point) {
-            let a = node.frame.width * node.frame.height
+        if scrollableElementTypes.contains(UInt(node.elementType)),
+           let frame = interactionFrame(node),
+           frame.contains(point) {
+            let a = frame.width * frame.height
             if a < bestArea { best = node; bestArea = a }
         }
         for c in node.children { stack.append(c) }
@@ -641,53 +640,109 @@ func findCellAncestor(_ node: SafeSnapshot) -> SafeSnapshot {
     return node  // fallback: use node itself if no cell ancestor
 }
 
+/// A finite, positive-area rectangle. Negative origins are valid because
+/// scrollable content may extend outside the App frame.
 /// Time complexity: O(1).
-private func effectiveVisibleFrame(_ node: SafeSnapshot) -> CGRect {
-    let visibleFrame = node.visibleFrame
-    if visibleFrame.width > 0, visibleFrame.height > 0 {
-        return visibleFrame
-    }
-    let elementType = XCUIElement.ElementType(rawValue: node.elementType) ?? .other
-    if (elementType == .icon || elementType == .searchField),
-       node.frame.width > 0,
-       node.frame.height > 0 {
-        return node.frame
-    }
-    return visibleFrame
+private func isValidInteractionRect(_ rect: CGRect) -> Bool {
+    rect.origin.x.isFinite
+        && rect.origin.y.isFinite
+        && rect.width.isFinite
+        && rect.height.isFinite
+        && rect.width > 0
+        && rect.height > 0
 }
 
+/// XCTest inserts invisible, unnamed, zero-area structural containers in some
+/// hierarchies, including SpringBoard Icon pages and Toolbar content wrappers.
+/// They cannot define an occluding region, so they do not suppress raw-frame
+/// fallback for their children.
 /// Time complexity: O(1).
-func hasEffectiveVisibleGeometry(_ node: SafeSnapshot, in bounds: CGRect) -> Bool {
-    let frame = effectiveVisibleFrame(node)
-    guard frame.width > 0, frame.height > 0, bounds.width > 0, bounds.height > 0 else {
+private func isStructuralVisibilityPlaceholder(_ node: SafeSnapshot) -> Bool {
+    guard (node.elementType == XCUIElement.ElementType.icon.rawValue
+            || node.elementType == XCUIElement.ElementType.other.rawValue),
+          (node.label ?? "").isEmpty,
+          (node.identifier ?? "").isEmpty else {
         return false
     }
-    let clipped = frame.intersection(bounds)
-    return clipped.width > 0 && clipped.height > 0
+    return node.frame.width <= 0 || node.frame.height <= 0
 }
 
-/// Time complexity: O(1).
-func effectiveVisibilityRejectionReason(_ element: SnapshotElement, in bounds: CGRect) -> String? {
-    guard element.isVisible else {
+/// Checks raw snapshot ancestors without changing CleanedSnapshot or DOM
+/// visibility semantics.
+/// Time complexity: O(h), where h is the raw snapshot ancestor depth.
+private func hasEffectiveInvisibleAncestor(_ node: SafeSnapshot) -> Bool {
+    var current = node.parent
+    while let ancestor = current {
+        if !ancestor.isVisible && !isStructuralVisibilityPlaceholder(ancestor) {
+            return true
+        }
+        current = ancestor.parent
+    }
+    return false
+}
+
+/// Returns the only frame pointer actions may use.
+///
+/// A valid XCTest visibleFrame is authoritative. Raw frame fallback is allowed
+/// only when the node is visible and no effective-invisible ancestor exists.
+/// A valid frame that clips completely outside appFrame never falls back.
+/// Time complexity: O(1) for visibleFrame and O(h) for raw-frame fallback.
+func interactionFrame(_ node: SafeSnapshot, in appFrame: CGRect) -> CGRect? {
+    guard isValidInteractionRect(appFrame) else { return nil }
+
+    let visibleFrame = node.visibleFrame
+    if isValidInteractionRect(visibleFrame) {
+        let clipped = visibleFrame.intersection(appFrame)
+        return isValidInteractionRect(clipped) ? clipped : nil
+    }
+
+    guard node.isVisible,
+          !hasEffectiveInvisibleAncestor(node),
+          isValidInteractionRect(node.frame) else {
+        return nil
+    }
+    let clipped = node.frame.intersection(appFrame)
+    return isValidInteractionRect(clipped) ? clipped : nil
+}
+
+/// Uses the app frame captured with this snapshot; no XCTest query is made.
+/// Time complexity matches `interactionFrame(_:in:)`.
+func interactionFrame(_ node: SafeSnapshot) -> CGRect? {
+    interactionFrame(node, in: node.appFrame)
+}
+
+func interactionFrameRejectionReason(_ node: SafeSnapshot, in appFrame: CGRect) -> String? {
+    guard isValidInteractionRect(appFrame) else {
+        return IOSUseCandidateRejection.outsideAppBounds
+    }
+
+    let visibleFrame = node.visibleFrame
+    if isValidInteractionRect(visibleFrame) {
+        return isValidInteractionRect(visibleFrame.intersection(appFrame))
+            ? nil
+            : IOSUseCandidateRejection.outsideAppBounds
+    }
+
+    guard node.isVisible else {
         return IOSUseCandidateRejection.snapshotInvisible
     }
-    let frame = effectiveVisibleFrame(element.node)
-    guard frame.width > 0, frame.height > 0 else {
+    guard !hasEffectiveInvisibleAncestor(node) else {
+        return IOSUseCandidateRejection.ancestorInvisible
+    }
+    guard isValidInteractionRect(node.frame) else {
         return IOSUseCandidateRejection.emptyVisibleFrame
     }
-    guard bounds.width > 0, bounds.height > 0 else {
-        return IOSUseCandidateRejection.outsideAppBounds
-    }
-    let clipped = frame.intersection(bounds)
-    guard clipped.width > 0, clipped.height > 0 else {
-        return IOSUseCandidateRejection.outsideAppBounds
-    }
-    return nil
+    return isValidInteractionRect(node.frame.intersection(appFrame))
+        ? nil
+        : IOSUseCandidateRejection.outsideAppBounds
 }
 
-/// Time complexity: O(1).
-func isVisibleWithEffectiveGeometry(_ element: SnapshotElement, in bounds: CGRect) -> Bool {
-    effectiveVisibilityRejectionReason(element, in: bounds) == nil
+func interactionFrameRejectionReason(_ element: SnapshotElement, in bounds: CGRect) -> String? {
+    interactionFrameRejectionReason(element.node, in: bounds)
+}
+
+func hasInteractionFrame(_ element: SnapshotElement, in bounds: CGRect) -> Bool {
+    interactionFrame(element.node, in: bounds) != nil
 }
 
 // MARK: - Element type name

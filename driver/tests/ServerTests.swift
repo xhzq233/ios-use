@@ -66,6 +66,28 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(IOSUseProtocol.appForegroundSocketReadTimeoutSeconds(args.timeout), 312)
     }
 
+    func testDismissAlertInvocationDerivesAndBoundsWatchdogFromWait() throws {
+        for (wait, expectedWatchdog, expectedSocket) in [
+            (3.0, 10.0, 12),
+            (20.0, 22.0, 24),
+            (Double.infinity, 32.0, 34),
+        ] {
+            let args = ForyDismissAlertArgs(wait: wait)
+            let payload = try ForyRegistry.create().serialize(args)
+            let invocation = try CommandInvocation(
+                name: .dismissAlert,
+                payload: payload,
+                codec: Codec.Context()
+            )
+
+            XCTAssertEqual(invocation.watchdogTimeoutSeconds, expectedWatchdog)
+            XCTAssertEqual(
+                IOSUseProtocol.dismissAlertSocketReadTimeoutSeconds(args.wait),
+                expectedSocket
+            )
+        }
+    }
+
     func testLabelSwipeInvocationUsesLongCommandDeadline() throws {
         let args = ForySwipeArgs(
             toTarget: ForyTarget(label: "Developer"),
@@ -365,6 +387,40 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(capturedStartOrder, [Command.home.rawValue, Command.screenshot.rawValue])
     }
 
+    func testMediaImportDispatchesOnDedicatedBackgroundLane() throws {
+        DriverServer.shared.stop()
+        let port = try Self.freePort()
+        let dispatched = expectation(description: "media import dispatched")
+
+        DriverServer.dispatchForyForTesting = { command in
+            XCTAssertEqual(command, .mediaImport)
+            XCTAssertFalse(Thread.isMainThread)
+            dispatched.fulfill()
+            return Codec.foryOK()
+        }
+        defer { DriverServer.dispatchForyForTesting = nil }
+        try DriverServer.shared.start(port: port)
+
+        let fd = try Self.connect(port: port)
+        defer { Darwin.close(fd) }
+        let args = ForyMediaImportArgs(
+            kind: "photo",
+            originalFilename: "fixture.png",
+            uniformTypeIdentifier: "public.png",
+            byteCount: 3,
+            data: Data([1, 2, 3])
+        )
+        let payload = try createFory().serialize(args)
+        let response = try Self.sendRequestAndReadResponse(
+            fd: fd,
+            command: Command.mediaImport.rawValue,
+            payload: payload
+        )
+
+        wait(for: [dispatched], timeout: 1)
+        XCTAssertTrue(response.ok)
+    }
+
     private static func freePort() throws -> UInt16 {
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw NSError(domain: "socket", code: Int(errno)) }
@@ -412,14 +468,18 @@ final class ServerTests: XCTestCase {
         return fd
     }
 
-    private static func sendRequestAndReadResponse(fd: Int32, command: String) throws -> ForyResponseFrame {
-        try writeAll(fd: fd, data: try serializedRequest(command: command))
+    private static func sendRequestAndReadResponse(
+        fd: Int32,
+        command: String,
+        payload: Data = Data()
+    ) throws -> ForyResponseFrame {
+        try writeAll(fd: fd, data: try serializedRequest(command: command, payload: payload))
         return try readResponse(fd: fd)
     }
 
-    private static func serializedRequest(command: String) throws -> Data {
+    private static func serializedRequest(command: String, payload: Data = Data()) throws -> Data {
         let fory = createFory()
-        let request = ForyRequestFrame(command: command, payload: Data())
+        let request = ForyRequestFrame(command: command, payload: payload)
         let body = try fory.serialize(request)
         var frame = Data()
         var length = UInt32(body.count).bigEndian

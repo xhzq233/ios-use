@@ -63,6 +63,26 @@ enum DriverFailureEvidence {
                 let rejectedBy: [String]
             }
 
+            struct Alert: Codable {
+                struct Button: Codable {
+                    let queryIndex: Int32
+                    let label: String
+                    let identifier: String
+                    let hittable: Bool
+                    let frame: [Int32]?
+                }
+
+                let surface: String
+                let kind: String
+                let text: String
+                let buttonCount: Int32
+                let buttons: [Button]
+                let requestedSelection: String
+                let selectionStrategy: String
+                let selectedIndex: Int32?
+                let reason: String
+            }
+
             let message: String
             let category: String
             let code: String
@@ -74,6 +94,7 @@ enum DriverFailureEvidence {
             let candidateCount: Int32
             let suggestions: [String]
             let candidates: [Candidate]
+            let alert: Alert?
         }
 
         let schemaVersion: Int
@@ -549,7 +570,8 @@ enum DriverFailureEvidence {
             target: underlyingPayload.target,
             candidateCount: underlyingPayload.candidateCount,
             suggestions: underlyingPayload.suggestions,
-            candidates: underlyingPayload.candidates
+            candidates: underlyingPayload.candidates,
+            alert: underlyingPayload.alert
         )
         return Failure(
             message: postconditionMessage,
@@ -589,6 +611,27 @@ enum DriverFailureEvidence {
                 rejectedBy: candidate.rejectedBy
             )
         }
+        let alert = failure.payload.alert.map { alert in
+            Manifest.ErrorInfo.Alert(
+                surface: alert.surface,
+                kind: alert.kind,
+                text: alert.text,
+                buttonCount: alert.buttonCount,
+                buttons: alert.buttons.map { button in
+                    Manifest.ErrorInfo.Alert.Button(
+                        queryIndex: button.queryIndex,
+                        label: button.label,
+                        identifier: button.identifier,
+                        hittable: button.hittable,
+                        frame: button.frame.map { [$0.x, $0.y, $0.w, $0.h] }
+                    )
+                },
+                requestedSelection: alert.requestedSelection,
+                selectionStrategy: alert.selectionStrategy,
+                selectedIndex: alert.selectedIndex >= 0 ? alert.selectedIndex : nil,
+                reason: alert.reason
+            )
+        }
         return Manifest.ErrorInfo(
             message: failure.message,
             category: failure.payload.category,
@@ -600,7 +643,8 @@ enum DriverFailureEvidence {
             target: target,
             candidateCount: failure.payload.candidateCount,
             suggestions: failure.payload.suggestions,
-            candidates: candidates
+            candidates: candidates,
+            alert: alert
         )
     }
 

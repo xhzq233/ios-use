@@ -184,7 +184,6 @@ final class PlayCoverDriverClientTests: XCTestCase {
         XCTAssertNil(input.postcondition)
         XCTAssertTrue(alert.dismissed)
         XCTAssertEqual(alert.button, "Allow")
-        XCTAssertNil(alert.postcondition)
         XCTAssertTrue(open.delivered)
         XCTAssertEqual(open.url, "demo://route")
 

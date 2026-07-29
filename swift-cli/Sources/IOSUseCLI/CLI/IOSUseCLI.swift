@@ -4,7 +4,7 @@ import IOSUseProtocol
 public struct IOSUseCLI: Sendable {
     public typealias CLIOutputSink = @Sendable (String) -> Void
 
-    public static let version = "1.3.2"
+    public static let version = "1.3.4"
     static var driverClientFactoryForTesting: ((SessionService.Info) -> DriverCommandClient)? {
         get { DriverCommandExecution.clientFactoryForTesting }
         set { DriverCommandExecution.clientFactoryForTesting = newValue }
@@ -289,6 +289,19 @@ public struct IOSUseCLI: Sendable {
             } catch {
                 return CLIErrorEnvelope(message: "\(error)", exitCode: 1).render()
             }
+        case .mediaImport(let options):
+            do {
+                let result = try MediaImportService.run(options: options, paths: paths)
+                if json {
+                    return MachineOutput.success(
+                        command: parsed.commandName,
+                        data: MediaImportService.machineData(result)
+                    )
+                }
+                return CLIResult(exitCode: 0, stdout: MediaImportService.format(result))
+            } catch {
+                return commandFailure(command: parsed.commandName, error: error, json: json)
+            }
         }
     }
 
@@ -464,6 +477,7 @@ public struct IOSUseCLI: Sendable {
                 return MachineOutput.failure(
                     command: action.name,
                     error: error,
+                    data: machineDriverErrorData(error),
                     evidenceManifest: evidence.manifestPath
                 )
             }
@@ -473,7 +487,12 @@ public struct IOSUseCLI: Sendable {
 
     private func commandFailure(command: String, error: Error, json: Bool, exitCode: Int32 = 1) -> CLIResult {
         if json {
-            return MachineOutput.failure(command: command, error: error, exitCode: exitCode)
+            return MachineOutput.failure(
+                command: command,
+                error: error,
+                data: machineDriverErrorData(error),
+                exitCode: exitCode
+            )
         }
         return CLIErrorEnvelope(message: "\(error)", exitCode: exitCode).render()
     }

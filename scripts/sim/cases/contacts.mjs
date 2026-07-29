@@ -7,6 +7,7 @@ export const contactsCaseMetadata = [
   { id: 'IN-6', group: 'contacts', kind: 'input-keyboard-open', setup: 'new contact form', assertion: 'dom contains two edited fields', coverage: 'simulator' },
   { id: 'DA-1', group: 'contacts', kind: 'dismiss-alert', setup: 'discard contact alert', assertion: 'alert dismissed', coverage: 'simulator' },
   { id: 'DA-2', group: 'contacts', kind: 'dismiss-alert-index', setup: 'discard contact alert', assertion: 'alert dismissed by index', coverage: 'simulator' },
+  { id: 'DA-3', group: 'contacts', kind: 'dismiss-alert-guarded-label', setup: 'discard contact alert', assertion: 'an unknown explicit label fails and leaves the alert for explicit cleanup', coverage: 'simulator' },
   { id: 'TAP-11', group: 'contacts', kind: 'wait-then-tap', setup: 'discard contact alert', assertion: 'waitFor and immediate tap both succeed', coverage: 'simulator' },
 ];
 
@@ -91,8 +92,37 @@ export function buildContactsCases(ctx) {
       }
       await discardContactIfNeeded();
     } },
-    { id: 'DA-1', run: () => runCaseContains('DA-1', 'Alert dismissed', ['dismissAlert'], openContactsDiscardAlert) },
-    { id: 'DA-2', run: () => runCaseContains('DA-2', 'Alert dismissed', ['dismissAlert', '--index', '0'], openContactsDiscardAlert) },
+    { id: 'DA-1', run: () => runCaseContains('DA-1', 'dismissed alert', ['dismissAlert', '--label', 'Discard Changes'], openContactsDiscardAlert) },
+    { id: 'DA-2', run: () => runCaseContains('DA-2', 'dismissed alert', ['dismissAlert', '--index', '0'], openContactsDiscardAlert) },
+    { id: 'DA-3', run: async () => {
+      if (!selected('DA-3')) return recordSkip('DA-3');
+      await openContactsDiscardAlert();
+      const out = path.join(artifactDir, 'DA-3.out');
+      const err = path.join(artifactDir, 'DA-3.err');
+      const cleanupOut = path.join(artifactDir, 'DA-3-cleanup.out');
+      const cleanupErr = path.join(artifactDir, 'DA-3-cleanup.err');
+      console.log('[sim-test] RUN DA-3: ios-use dismissAlert --label __missing__ (expect guarded failure)');
+      const guarded = runCliToFiles(['dismissAlert', '--label', '__missing__'], out, err);
+      const cleanup = runCliToFiles(
+        ['dismissAlert', '--label', 'Discard Changes'],
+        cleanupOut,
+        cleanupErr,
+      );
+      if (
+        guarded.code !== 0
+        && `${guarded.stdout}\n${guarded.stderr}`.includes('[alert_selection_invalid]')
+        && cleanup.code === 0
+        && cleanup.stdout.includes('dismissed alert')
+      ) {
+        recordPass('DA-3');
+      } else {
+        recordFail(
+          'DA-3',
+          guarded.stdout + guarded.stderr + cleanup.stdout + cleanup.stderr,
+          'assertion',
+        );
+      }
+    } },
     { id: 'TAP-11', run: async () => {
       if (!selected('TAP-11')) return recordSkip('TAP-11');
       const out = path.join(artifactDir, 'TAP-11.out');

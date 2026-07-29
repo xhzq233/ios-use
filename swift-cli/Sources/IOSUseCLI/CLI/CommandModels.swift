@@ -15,6 +15,7 @@ public enum ParsedCommand: Equatable, Sendable {
     case oslog(OSLogOptions)
     case driver(DriverAction)
     case capture(CaptureOptions)
+    case mediaImport(MediaImportOptions)
     case nslog(NSLogOptions)
     case proxy(ProxyCommand)
 
@@ -33,6 +34,7 @@ public enum ParsedCommand: Equatable, Sendable {
         case .oslog: return "oslog"
         case .driver(let action): return action.name
         case .capture: return "capture"
+        case .mediaImport: return "media import"
         case .nslog: return "nslog"
         case .proxy(let command): return "proxy \(command.subcommand)"
         }
@@ -248,6 +250,43 @@ public struct CaptureOptions: Equatable, Sendable {
     }
 }
 
+public struct MediaImportOptions: Equatable, Sendable {
+    public var path: String
+
+    public init(path: String) {
+        self.path = path
+    }
+}
+
+public enum AlertSelectionOption: Equatable, Sendable {
+    case onlyButton
+    case index(Int)
+    case label(String)
+    case visualPrimary
+}
+
+public enum AlertScopeOption: String, Equatable, Sendable {
+    case any
+    case springboard
+    case app
+}
+
+public struct DismissAlertOptions: Equatable, Sendable {
+    public var selection: AlertSelectionOption
+    public var scope: AlertScopeOption
+    public var wait: Double
+
+    public init(
+        selection: AlertSelectionOption = .onlyButton,
+        scope: AlertScopeOption = .any,
+        wait: Double = 0
+    ) {
+        self.selection = selection
+        self.scope = scope
+        self.wait = wait
+    }
+}
+
 public enum PostDomMode: Equatable, Sendable {
     case afterQuiescence
     case afterMilliseconds(Int)
@@ -265,7 +304,7 @@ public enum DriverAction: Equatable, Sendable {
     case activateApp(bundleId: String)
     case terminateApp(bundleId: String)
     case home
-    case dismissAlert(index: Int?, label: String?)
+    case dismissAlert(DismissAlertOptions)
 
     public var name: String {
         switch self {

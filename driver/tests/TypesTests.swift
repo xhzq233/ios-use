@@ -130,7 +130,7 @@ final class TypesTests: XCTestCase {
             .activateApp, .terminateApp, .screenshot,
             .home, .dom, .tap, .longPress, .input, .swipe, .waitFor,
             .proxyCAPush, .dismissAlert, .dismissAlertByLabel,
-            .waitAppForeground,
+            .waitAppForeground, .mediaImport,
         ]
         for cmd in cmds {
             XCTAssertFalse(cmd.rawValue.isEmpty, "\(cmd) should have non-empty rawValue")
@@ -140,6 +140,9 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(Command.waitAppForeground.metadata.argsTypeName, "ForyWaitAppForegroundArgs")
         XCTAssertEqual(Command.waitAppForeground.metadata.payloadTypeName, "ForyWaitAppForegroundPayload")
         XCTAssertFalse(Command.waitAppForeground.metadata.mutatesUI)
+        XCTAssertEqual(Command.mediaImport.metadata.argsTypeName, "ForyMediaImportArgs")
+        XCTAssertEqual(Command.mediaImport.metadata.payloadTypeName, "ForyMediaImportPayload")
+        XCTAssertFalse(Command.mediaImport.metadata.mutatesUI)
     }
 
     func testSwipePayload_UsesElementSummaryAndScrollDirection() throws {
@@ -223,6 +226,258 @@ final class TypesTests: XCTestCase {
         )
         XCTAssertEqual(point.x, 90)
         XCTAssertEqual(point.y, 40)
+    }
+
+    // MARK: - interactionFrame
+
+    func testInteractionFrame_ClipsValidVisibleFrameToAppFrame() throws {
+        let raw = FakeRawSnapshot(
+            elementType: .collectionView,
+            frame: CGRect(x: -200, y: 696, width: 602, height: 90),
+            visibleFrame: CGRect(x: -200, y: 696, width: 602, height: 90)
+        )
+        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 402, height: 874))
+
+        let frame = try XCTUnwrap(interactionFrame(node))
+
+        XCTAssertEqual(frame, CGRect(x: 0, y: 696, width: 402, height: 90))
+        let tapPoint = resolveTapPoint(
+            frame: frame,
+            offset: nil,
+            ratio: ForyPoint(x: 0.5, y: 0.5)
+        )
+        XCTAssertEqual(tapPoint, CGPoint(x: 201, y: 741))
+    }
+
+    func testInteractionFrame_DoesNotFallbackWhenValidVisibleFrameIsOutsideApp() {
+        let raw = FakeRawSnapshot(
+            elementType: .button,
+            frame: CGRect(x: 20, y: 100, width: 80, height: 40),
+            visibleFrame: CGRect(x: 20, y: 900, width: 80, height: 40)
+        )
+        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertNil(interactionFrame(node))
+        XCTAssertEqual(
+            interactionFrameRejectionReason(node, in: node.appFrame),
+            IOSUseCandidateRejection.outsideAppBounds
+        )
+    }
+
+    func testInteractionFrame_ValidVisibleFrameIsAuthoritativeOverInvisibleAncestor() {
+        let child = FakeRawSnapshot(
+            label: "可见按钮",
+            elementType: .button,
+            frame: CGRect(x: 20, y: 100, width: 80, height: 40),
+            visibleFrame: CGRect(x: 20, y: 100, width: 80, height: 40)
+        )
+        let hiddenParent = FakeRawSnapshot(
+            elementType: .other,
+            frame: CGRect(x: 0, y: 80, width: 375, height: 100),
+            isVisible: false,
+            children: [child]
+        )
+        let root = SafeSnapshot(raw: hiddenParent, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertEqual(
+            interactionFrame(root.children[0]),
+            CGRect(x: 20, y: 100, width: 80, height: 40)
+        )
+    }
+
+    func testInteractionFrame_FallsBackToClippedRawFrameForVisibleNode() {
+        let raw = FakeRawSnapshot(
+            elementType: .collectionView,
+            frame: CGRect(x: -200, y: 696, width: 602, height: 90),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 402, height: 874))
+
+        XCTAssertEqual(
+            interactionFrame(node),
+            CGRect(x: 0, y: 696, width: 402, height: 90)
+        )
+    }
+
+    func testInteractionFrame_TreatsInfiniteZeroVisibleFrameAsInvalidAndFallsBack() {
+        let raw = FakeRawSnapshot(
+            elementType: .button,
+            frame: CGRect(x: 20, y: 100, width: 80, height: 40),
+            visibleFrame: CGRect(
+                x: CGFloat.infinity,
+                y: CGFloat.infinity,
+                width: 0,
+                height: 0
+            ),
+            isVisible: true
+        )
+        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertEqual(
+            interactionFrame(node),
+            CGRect(x: 20, y: 100, width: 80, height: 40)
+        )
+    }
+
+    func testInteractionFrame_RejectsRawFallbackForInvisibleNode() {
+        let raw = FakeRawSnapshot(
+            elementType: .button,
+            frame: CGRect(x: 20, y: 100, width: 80, height: 40),
+            visibleFrame: .zero,
+            isVisible: false
+        )
+        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertNil(interactionFrame(node))
+        XCTAssertEqual(
+            interactionFrameRejectionReason(node, in: node.appFrame),
+            IOSUseCandidateRejection.snapshotInvisible
+        )
+    }
+
+    func testInteractionFrame_RejectsRawFallbackOutsideAppFrame() {
+        let raw = FakeRawSnapshot(
+            elementType: .button,
+            frame: CGRect(x: 20, y: 900, width: 80, height: 40),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let node = SafeSnapshot(raw: raw, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertNil(interactionFrame(node))
+        XCTAssertEqual(
+            interactionFrameRejectionReason(node, in: node.appFrame),
+            IOSUseCandidateRejection.outsideAppBounds
+        )
+    }
+
+    func testInteractionFrame_AllowsSpringBoardIconPlaceholderAncestor() {
+        let appIcon = FakeRawSnapshot(
+            label: "设置",
+            elementType: .icon,
+            frame: CGRect(x: 22, y: 489, width: 80, height: 90),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let placeholder = FakeRawSnapshot(
+            elementType: .icon,
+            frame: .zero,
+            visibleFrame: .zero,
+            isVisible: false,
+            children: [appIcon]
+        )
+        let root = SafeSnapshot(raw: placeholder, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertEqual(
+            interactionFrame(root.children[0]),
+            CGRect(x: 22, y: 489, width: 80, height: 90)
+        )
+    }
+
+    func testInteractionFrame_AllowsUnnamedZeroAreaOtherPlaceholderAncestor() {
+        let search = FakeRawSnapshot(
+            label: "Search",
+            elementType: .searchField,
+            frame: CGRect(x: 33, y: 781, width: 267, height: 38),
+            visibleFrame: CGRect(
+                x: CGFloat.infinity,
+                y: CGFloat.infinity,
+                width: 0,
+                height: 0
+            ),
+            isVisible: true
+        )
+        let toolbarPlaceholder = FakeRawSnapshot(
+            elementType: .other,
+            frame: CGRect(x: 28, y: 776, width: 0, height: 0),
+            visibleFrame: CGRect(x: 28, y: 776, width: 0, height: 0),
+            isVisible: false,
+            children: [search]
+        )
+        let root = SafeSnapshot(
+            raw: toolbarPlaceholder,
+            appFrame: CGRect(x: 0, y: 0, width: 393, height: 852)
+        )
+
+        XCTAssertEqual(
+            interactionFrame(root.children[0]),
+            CGRect(x: 33, y: 781, width: 267, height: 38)
+        )
+    }
+
+    func testInteractionFrame_UnnamedZeroAreaCellAncestorStillBlocksFallback() {
+        let child = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .button,
+            frame: CGRect(x: 20, y: 700, width: 120, height: 44),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let hiddenCell = FakeRawSnapshot(
+            elementType: .cell,
+            frame: .zero,
+            visibleFrame: .zero,
+            isVisible: false,
+            children: [child]
+        )
+        let root = SafeSnapshot(raw: hiddenCell, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertNil(interactionFrame(root.children[0]))
+        XCTAssertEqual(
+            interactionFrameRejectionReason(root.children[0], in: root.children[0].appFrame),
+            IOSUseCandidateRejection.ancestorInvisible
+        )
+    }
+
+    func testInteractionFrame_NamedZeroAreaIconAncestorStillBlocksFallback() {
+        let appIcon = FakeRawSnapshot(
+            label: "设置",
+            elementType: .icon,
+            frame: CGRect(x: 22, y: 489, width: 80, height: 90),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let hiddenIcon = FakeRawSnapshot(
+            label: "不是占位容器",
+            elementType: .icon,
+            frame: .zero,
+            visibleFrame: .zero,
+            isVisible: false,
+            children: [appIcon]
+        )
+        let root = SafeSnapshot(raw: hiddenIcon, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+
+        XCTAssertNil(interactionFrame(root.children[0]))
+        XCTAssertEqual(
+            interactionFrameRejectionReason(root.children[0], in: root.children[0].appFrame),
+            IOSUseCandidateRejection.ancestorInvisible
+        )
+    }
+
+    func testScrollableLookup_UsesClippedInteractionFrame() {
+        let firstCell = FakeRawSnapshot(
+            label: "smooth",
+            elementType: .cell,
+            frame: CGRect(x: -180, y: 696, width: 100, height: 90)
+        )
+        let secondCell = FakeRawSnapshot(
+            label: "matte",
+            elementType: .cell,
+            frame: CGRect(x: 120, y: 696, width: 100, height: 90)
+        )
+        let collection = FakeRawSnapshot(
+            elementType: .collectionView,
+            frame: CGRect(x: -200, y: 696, width: 602, height: 90),
+            visibleFrame: .zero,
+            children: [firstCell, secondCell]
+        )
+        let root = SafeSnapshot(raw: collection, appFrame: CGRect(x: 0, y: 0, width: 402, height: 874))
+
+        XCTAssertTrue(findLargestScrollable(root) === root)
+        XCTAssertTrue(findScrollableAncestor(root.children[1]) === root)
+        XCTAssertTrue(findScrollableAtPoint(CGPoint(x: 380, y: 741), root) === root)
+        XCTAssertNil(findScrollableAtPoint(CGPoint(x: -50, y: 741), root))
     }
 
     func testRawFindInSnapshot_DisableFuzzyReturnsNotFoundWithoutSuggestions() {
@@ -682,64 +937,6 @@ final class TypesTests: XCTestCase {
         XCTAssertEqual(elementTypeName(.webView), "Web")
     }
 
-    // MARK: - resolveButtonIndex logic
-
-    func testResolveButtonIndex_EmptyButtons_ReturnsNil() {
-        XCTAssertNil(AlertCommands.resolveButtonIndex(buttonCount: 0, requestedIndex: nil))
-        XCTAssertNil(AlertCommands.resolveButtonIndex(buttonCount: 0, requestedIndex: 0))
-    }
-
-    func testResolveButtonIndex_NoIndex_ReturnsLast() {
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 1, requestedIndex: nil), 0)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: nil), 1)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: nil), 2)
-    }
-
-    func testResolveButtonIndex_ValidIndex_ReturnsThat() {
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 0), 0)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 1), 1)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 3, requestedIndex: 2), 2)
-    }
-
-    func testResolveButtonIndex_OutOfBounds_FallsBackToLast() {
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: 5), 1)
-        XCTAssertEqual(AlertCommands.resolveButtonIndex(buttonCount: 2, requestedIndex: -1), 1)
-    }
-
-    func testResolveButtonLabelIndex_RequiresOneExactMatch() {
-        XCTAssertEqual(
-            AlertCommands.resolveButtonLabelIndex(
-                buttonLabels: ["Cancel", "Allow Full Access"],
-                requestedLabel: "Allow Full Access"
-            ),
-            1
-        )
-        XCTAssertNil(
-            AlertCommands.resolveButtonLabelIndex(
-                buttonLabels: ["Allow", "Allow"],
-                requestedLabel: "Allow"
-            )
-        )
-        XCTAssertNil(
-            AlertCommands.resolveButtonLabelIndex(
-                buttonLabels: ["Allow Full Access"],
-                requestedLabel: "Allow"
-            )
-        )
-        XCTAssertNil(
-            AlertCommands.resolveButtonLabelIndex(
-                buttonLabels: ["Allow"],
-                requestedLabel: "allow"
-            )
-        )
-        XCTAssertNil(
-            AlertCommands.resolveButtonLabelIndex(
-                buttonLabels: ["Allow"],
-                requestedLabel: "Allow "
-            )
-        )
-    }
-
     // MARK: - rawFindInSnapshot
 
     func testRawFindInSnapshot_FindsByValueContains() {
@@ -1031,7 +1228,12 @@ final class TypesTests: XCTestCase {
             visibleFrame: .zero,
             isVisible: true
         )
-        let cell = FakeRawSnapshot(label: "配置代理", elementType: .cell, children: [hiddenChild])
+        let cell = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .cell,
+            isVisible: false,
+            children: [hiddenChild]
+        )
         let root = SafeSnapshot(raw: cell, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
         let cs = makeCleanedSnapshot(buildCleanElements(from: root))
 
@@ -1039,7 +1241,7 @@ final class TypesTests: XCTestCase {
         case .notFound(_, let rejected):
             XCTAssertEqual(rejected.count, 1)
             XCTAssertEqual(rejected.first?.element.label, "关闭")
-            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.emptyVisibleFrame])
+            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.ancestorInvisible])
         default:
             XCTFail("expected .only cindex result to filter invisible selected child")
         }
@@ -1064,7 +1266,7 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    func testRawFindInSnapshot_OnlyReturnsElementWithEffectiveGeometry() {
+    func testRawFindInSnapshot_OnlyReturnsElementWithInteractionFrame() {
         let offscreenLabel = FakeRawSnapshot(
             label: "配置代理",
             elementType: .staticText,
@@ -1093,11 +1295,11 @@ final class TypesTests: XCTestCase {
         case .found(let found):
             XCTAssertEqual(found.node.frame.origin.y, 600)
         default:
-            XCTFail("expected rawFindInSnapshot to return the element with effective geometry")
+            XCTFail("expected rawFindInSnapshot to return the element with an interaction frame")
         }
     }
 
-    func testRawFindInSnapshot_OnlyReturnsNotFoundWhenMatchesAreNotEffectivelyVisible() {
+    func testRawFindInSnapshot_OnlyReturnsNotFoundWhenMatchesHaveNoInteractionFrame() {
         let offscreenLabel = FakeRawSnapshot(
             label: "配置代理",
             elementType: .staticText,
@@ -1112,26 +1314,54 @@ final class TypesTests: XCTestCase {
             XCTAssertEqual(rejected.first?.element.label, "配置代理")
             XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.outsideAppBounds])
         default:
-            XCTFail("expected rawFindInSnapshot to return notFound when visibility is .only and matches are not effectively visible")
+            XCTFail("expected rawFindInSnapshot to return notFound when visibility is .only and matches have no interaction frame")
         }
     }
 
-    func testRawFindInSnapshot_OnlyDoesNotFallbackToFrameForNonIconElements() {
-        let proxyLabel = FakeRawSnapshot(
-            label: "配置代理",
-            elementType: .staticText,
+    func testRawFindInSnapshot_OnlyFallsBackToFrameForGenericButton() {
+        let closeButton = FakeRawSnapshot(
+            label: "关闭",
+            elementType: .button,
             frame: CGRect(x: 0, y: 116, width: 80, height: 20),
             visibleFrame: .zero,
             isVisible: true
         )
-        let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: proxyLabel, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
+        let cs = makeCleanedSnapshot([makeSnapshotElement(SafeSnapshot(raw: closeButton, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812)))])
+
+        switch rawFindInSnapshot(ForyTarget(label: "关闭"), cs: cs, visibility: .only) {
+        case .found(let found):
+            XCTAssertEqual(found.node.label, "关闭")
+        default:
+            XCTFail("expected visible Button with empty visibleFrame to fallback to raw frame")
+        }
+    }
+
+    func testRawFindInSnapshot_ConfigurationProxyButtonBlockedByInvisibleCellAncestor() {
+        let proxyButton = FakeRawSnapshot(
+            label: "配置代理",
+            elementType: .button,
+            frame: CGRect(x: 20, y: 700, width: 120, height: 44),
+            visibleFrame: .zero,
+            isVisible: true
+        )
+        let offscreenCell = FakeRawSnapshot(
+            elementType: .cell,
+            frame: CGRect(x: 0, y: 900, width: 375, height: 64),
+            visibleFrame: .zero,
+            isVisible: false,
+            children: [proxyButton]
+        )
+        let root = SafeSnapshot(raw: offscreenCell, appFrame: CGRect(x: 0, y: 0, width: 375, height: 812))
+        let proxy = makeSnapshotElement(root.children[0])
+        let cs = makeCleanedSnapshot([proxy])
 
         switch rawFindInSnapshot(ForyTarget(label: "配置代理"), cs: cs, visibility: .only) {
         case .notFound(_, let rejected):
             XCTAssertEqual(rejected.count, 1)
-            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.emptyVisibleFrame])
+            XCTAssertEqual(rejected.first?.element.label, "配置代理")
+            XCTAssertEqual(rejected.first?.rejectedBy, [IOSUseCandidateRejection.ancestorInvisible])
         default:
-            XCTFail("expected non-icon elements with empty visibleFrame to remain not effectively visible even when frame is in bounds")
+            XCTFail("expected 配置代理 under an invisible Cell to be non-interactable")
         }
     }
 
@@ -1173,7 +1403,7 @@ final class TypesTests: XCTestCase {
         }
     }
 
-    func testRawFindInSnapshot_OnlyFuzzyIgnoresNotEffectivelyVisibleCandidates() {
+    func testRawFindInSnapshot_OnlyFuzzyIgnoresCandidatesWithoutInteractionFrames() {
         let offscreenLabel = FakeRawSnapshot(
             label: "Blue",
             elementType: .staticText,
@@ -1196,7 +1426,7 @@ final class TypesTests: XCTestCase {
         case .fuzzy(let suggestions):
             XCTAssertEqual(suggestions, ["Bloc"])
         default:
-            XCTFail("expected rawFindInSnapshot fuzzy suggestions to ignore not effectively visible candidates when visibility is .only")
+            XCTFail("expected rawFindInSnapshot fuzzy suggestions to ignore candidates without interaction frames when visibility is .only")
         }
     }
 

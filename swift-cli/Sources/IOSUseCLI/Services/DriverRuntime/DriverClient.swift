@@ -64,11 +64,11 @@ protocol DriverCommandClient: AnyObject {
     func activateApp(bundleId: String) throws
     func terminateApp(bundleId: String) throws
     func home() throws
-    func dismissAlert(index: Int?) throws -> ForyAlertPayload
-    func dismissAlert(index: Int?, label: String?) throws -> ForyAlertPayload
+    func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
     func waitAppForeground(acceptedBundleIds: [String], timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload
+    func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload
     func evidenceSnapshot() throws -> DriverEvidenceSnapshot
 }
 
@@ -135,15 +135,6 @@ enum DriverCommandExecution {
 }
 
 extension DriverCommandClient {
-    func dismissAlert(index: Int?, label: String?) throws -> ForyAlertPayload {
-        guard label == nil else {
-            throw CLIParseError.invalidValue(
-                "the active driver does not support dismissAlert --label"
-            )
-        }
-        return try dismissAlert(index: index)
-    }
-
     func input(
         tap: ForyTarget?,
         content: String,
@@ -171,6 +162,10 @@ extension DriverCommandClient {
             screenshot: try screenshotCapture(),
             dom: try dom(raw: false, fresh: true, waitQuiescence: false)
         )
+    }
+
+    func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload {
+        throw CLIParseError.invalidValue("media import is not supported by this driver client")
     }
 
     func waitAppForeground(expectedBundleId: String, timeout: Double, returnDom: Bool) throws -> ForyWaitAppForegroundPayload {
@@ -551,11 +546,26 @@ final class DriverClient: DriverCommandClient {
         _ = try sendRawPayload(command: DriverCommand.home.rawValue, payload: Data())
     }
 
+    func dismissAlert(args: ForyDismissAlertArgs) throws -> ForyAlertPayload {
+        let payload = try fory.serialize(args)
+        let response = try sendRawPayload(
+            command: DismissAlertCommand.command.rawValue,
+            payload: payload,
+            responseTimeoutSeconds: IOSUseProtocol.dismissAlertSocketReadTimeoutSeconds(args.wait)
+        )
+        return try fory.deserialize(response, as: ForyAlertPayload.self)
+    }
+
+    // Compatibility for callers compiled against the branch's pre-1.3.4
+    // alert helpers. Public CLI requests use the unified args method above.
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
         try dismissAlert(index: index, label: nil)
     }
 
-    func dismissAlert(index: Int?, label: String?) throws -> ForyAlertPayload {
+    func dismissAlert(
+        index: Int?,
+        label: String?
+    ) throws -> ForyAlertPayload {
         if let label {
             return try send(
                 DismissAlertByLabelCommand.self,
@@ -563,6 +573,7 @@ final class DriverClient: DriverCommandClient {
             )
         }
         let wireIndex: Int32
+        let selection: IOSUseAlertSelectionMode
         if let index {
             guard let exactIndex = Int32(exactly: index) else {
                 throw CLIParseError.invalidValue(
@@ -570,16 +581,15 @@ final class DriverClient: DriverCommandClient {
                 )
             }
             wireIndex = exactIndex
+            selection = .index
         } else {
-            wireIndex =
-                IOSUseProtocol.XCConstants.defaultAlertButtonIndex
+            wireIndex = -1
+            selection = .onlyButton
         }
-        return try send(
-            DismissAlertCommand.self,
-            args: ForyDismissAlertArgs(
-                index: wireIndex
-            )
-        )
+        return try dismissAlert(args: ForyDismissAlertArgs(
+            selection: selection.rawValue,
+            index: wireIndex
+        ))
     }
 
     func proxyCAPush(caBase64: String) throws -> ForyProxyPayload {
@@ -614,6 +624,16 @@ final class DriverClient: DriverCommandClient {
         return try fory.deserialize(response, as: ForyWaitAppForegroundPayload.self)
     }
 
+    func mediaImport(args: ForyMediaImportArgs) throws -> ForyMediaImportPayload {
+        let payload = try fory.serialize(args)
+        let response = try sendRawPayload(
+            command: MediaImportCommand.command.rawValue,
+            payload: payload,
+            responseTimeoutSeconds: IOSUseProtocol.mediaImportSocketReadTimeoutSeconds
+        )
+        return try fory.deserialize(response, as: ForyMediaImportPayload.self)
+    }
+
     private func send<B: DriverCommandBinding>(_ binding: B.Type, args: B.Args) throws -> B.Payload {
         let payload = try sendRaw(binding, args: args)
         return try fory.deserialize(payload, as: B.Payload.self)
@@ -634,6 +654,9 @@ final class DriverClient: DriverCommandClient {
         do {
             let frameData = try fory.serialize(ForyRequestFrame(command: command, payload: payload))
             requestBytes = frameData.count
+            guard frameData.count <= IOSUseProtocol.maxFrameSizeBytes else {
+                throw DriverClientError.maxFrameSizeExceeded
+            }
             let fd = try connectedFD()
             configureSocketTimeout(fd, seconds: responseTimeoutSeconds ?? socketTimeoutSeconds)
             didUseConnection = true
@@ -897,6 +920,24 @@ func formatDriverError(message: String, payload: ForyErrorPayload) -> String {
     var lines = ["[\(payload.code)] \(message)"]
     if !payload.suggestions.isEmpty {
         lines.append("suggestions: \(payload.suggestions.joined(separator: ", "))")
+    }
+    if let alert = payload.alert {
+        let context = [alert.surface, alert.kind].filter { !$0.isEmpty }.joined(separator: " ")
+        if !context.isEmpty {
+            lines.append("Alert: \(context)")
+        }
+        if !alert.buttons.isEmpty {
+            let shown = alert.buttons.count
+            let total = max(Int(alert.buttonCount), shown)
+            lines.append(shown == total ? "Candidates:" : "Candidates (showing \(shown) of \(total)):")
+            lines.append(contentsOf: alert.buttons.map { button in
+                let identifier = button.identifier.isEmpty ? "" : " id=\"\(button.identifier)\""
+                let frame = button.frame.map {
+                    "[\($0.x),\($0.y),\($0.w),\($0.h)]"
+                } ?? "[]"
+                return "  [\(button.queryIndex)] \"\(button.label)\"\(identifier) hittable=\(button.hittable) frame=\(frame)"
+            })
+        }
     }
     if !payload.candidates.isEmpty {
         let shown = payload.candidates.count

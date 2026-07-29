@@ -89,7 +89,7 @@ bytes. To install a
 specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.3.2
+curl -fsSL https://raw.githubusercontent.com/xhzq233/ios-use/main/scripts/install.sh | bash -s -- --version v1.3.4
 ```
 
 Intel Macs are unsupported because the injected PlayCover Runtime and converted
@@ -145,6 +145,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | `input` | Type into the current keyboard focus, optionally tapping a target first. |
 | `screenshot` | Capture a native-resolution JPEG with accurate host OCR and Logical coordinates by default. |
 | `capture` | Capture a fixed-rate JPEG sequence plus `manifest.json`, with optional tolerant changed-frame filtering (max 10 FPS). |
+| `media import` | Add one local photo or video to the connected device Photos library through the active Driver. |
 | `oslog` / `nslog` | Capture system logs or app-side NSLogger output. |
 | `proxy` | Capture HTTP/HTTPS traffic through mitmproxy. |
 | `open` | Open a URL or custom scheme on a device. |

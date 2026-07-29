@@ -9,7 +9,7 @@ IOS_USE_BIN="${IOS_USE_BIN:-ios-use}"
 "$IOS_USE_BIN" terminateApp com.apple.mobilesafari
 "$IOS_USE_BIN" open "http://127.0.0.1:9088/ca.cer"
 "$IOS_USE_BIN" tap "允许" --traits Button
-"$IOS_USE_BIN" dismissAlert
+"$IOS_USE_BIN" dismissAlert --only-button
 
 "$IOS_USE_BIN" activateApp com.apple.Preferences
 "$IOS_USE_BIN" waitFor --label "已下载描述文件" --timeout 5

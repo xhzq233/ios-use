@@ -102,6 +102,76 @@ public struct ForyErrorCandidate {
 }
 
 @ForyStruct
+public struct ForyAlertButton {
+    public var queryIndex: Int32 = -1
+    public var label: String = ""
+    public var identifier: String = ""
+    public var hittable: Bool = false
+    public var frame: ForyRect? = nil
+
+    public init(
+        queryIndex: Int32 = -1,
+        label: String = "",
+        identifier: String = "",
+        hittable: Bool = false,
+        frame: ForyRect? = nil
+    ) {
+        self.queryIndex = queryIndex
+        self.label = label
+        self.identifier = identifier
+        self.hittable = hittable
+        self.frame = frame
+    }
+}
+
+@ForyStruct
+public struct ForyAlertPayload {
+    public var dismissed: Bool = false
+    public var surface: String = ""
+    public var kind: String = ""
+    public var text: String = ""
+    public var buttonCount: Int32 = 0
+    public var buttons: [ForyAlertButton] = []
+    public var requestedSelection: String = ""
+    public var selectionStrategy: String = ""
+    public var selectedIndex: Int32 = -1
+    public var button: String = ""
+    public var layoutDirection: String = ""
+    public var layoutDirectionSource: String = ""
+    public var reason: String = ""
+
+    public init(
+        dismissed: Bool = false,
+        surface: String = "",
+        kind: String = "",
+        text: String = "",
+        buttonCount: Int32 = 0,
+        buttons: [ForyAlertButton] = [],
+        requestedSelection: String = "",
+        selectionStrategy: String = "",
+        selectedIndex: Int32 = -1,
+        button: String = "",
+        layoutDirection: String = "",
+        layoutDirectionSource: String = "",
+        reason: String = ""
+    ) {
+        self.dismissed = dismissed
+        self.surface = surface
+        self.kind = kind
+        self.text = text
+        self.buttonCount = buttonCount
+        self.buttons = buttons
+        self.requestedSelection = requestedSelection
+        self.selectionStrategy = selectionStrategy
+        self.selectedIndex = selectedIndex
+        self.button = button
+        self.layoutDirection = layoutDirection
+        self.layoutDirectionSource = layoutDirectionSource
+        self.reason = reason
+    }
+}
+
+@ForyStruct
 public struct ForyErrorPayload {
     public var category: String = ""
     public var code: String = ""
@@ -112,6 +182,7 @@ public struct ForyErrorPayload {
     public var candidateCount: Int32 = 0
     public var suggestions: [String] = []
     public var candidates: [ForyErrorCandidate] = []
+    public var alert: ForyAlertPayload? = nil
 
     public init(
         category: String = "",
@@ -122,7 +193,8 @@ public struct ForyErrorPayload {
         target: ForyTarget? = nil,
         candidateCount: Int32 = 0,
         suggestions: [String] = [],
-        candidates: [ForyErrorCandidate] = []
+        candidates: [ForyErrorCandidate] = [],
+        alert: ForyAlertPayload? = nil
     ) {
         self.category = category
         self.code = code
@@ -133,6 +205,7 @@ public struct ForyErrorPayload {
         self.candidateCount = candidateCount
         self.suggestions = suggestions
         self.candidates = candidates
+        self.alert = alert
     }
 }
 
@@ -506,35 +579,6 @@ public struct ForySwipePayload {
 }
 
 @ForyStruct
-public struct ForyAlertPayload {
-    public var dismissed: Bool = false
-    public var text: String = ""
-    public var button: String = ""
-    public var reason: String = ""
-    public var hitView: ForyHitView? = nil
-    public var finalState: ForyTouchFinalState? = nil
-    public var postcondition: ForyActionPostcondition? = nil
-
-    public init(
-        dismissed: Bool = false,
-        text: String = "",
-        button: String = "",
-        reason: String = "",
-        hitView: ForyHitView? = nil,
-        finalState: ForyTouchFinalState? = nil,
-        postcondition: ForyActionPostcondition? = nil
-    ) {
-        self.dismissed = dismissed
-        self.text = text
-        self.button = button
-        self.reason = reason
-        self.hitView = hitView
-        self.finalState = finalState
-        self.postcondition = postcondition
-    }
-}
-
-@ForyStruct
 public struct ForySimpleStringPayload {
     public var value: String = ""
 
@@ -664,10 +708,24 @@ public struct ForySwipeArgs {
 
 @ForyStruct
 public struct ForyDismissAlertArgs {
-    public var index: Int32 = IOSUseProtocol.XCConstants.defaultAlertButtonIndex
+    public var selection: Int32 = IOSUseAlertSelectionMode.onlyButton.rawValue
+    public var index: Int32 = -1
+    public var label: String = ""
+    public var scope: Int32 = IOSUseAlertScope.any.rawValue
+    public var wait: Double = 0
 
-    public init(index: Int32 = IOSUseProtocol.XCConstants.defaultAlertButtonIndex) {
+    public init(
+        selection: Int32 = IOSUseAlertSelectionMode.onlyButton.rawValue,
+        index: Int32 = -1,
+        label: String = "",
+        scope: Int32 = IOSUseAlertScope.any.rawValue,
+        wait: Double = 0
+    ) {
+        self.selection = selection
         self.index = index
+        self.label = label
+        self.scope = scope
+        self.wait = wait
     }
 }
 
@@ -740,6 +798,53 @@ public struct ForyWaitAppForegroundPayload {
     }
 }
 
+@ForyStruct
+public struct ForyMediaImportArgs {
+    /// `photo` or `video`.
+    public var kind: String = ""
+    public var originalFilename: String = ""
+    public var uniformTypeIdentifier: String = ""
+    public var byteCount: Int64 = 0
+    public var data: Data = Data()
+
+    public init(
+        kind: String = "",
+        originalFilename: String = "",
+        uniformTypeIdentifier: String = "",
+        byteCount: Int64 = 0,
+        data: Data = Data()
+    ) {
+        self.kind = kind
+        self.originalFilename = originalFilename
+        self.uniformTypeIdentifier = uniformTypeIdentifier
+        self.byteCount = byteCount
+        self.data = data
+    }
+}
+
+@ForyStruct
+public struct ForyMediaImportPayload {
+    public var kind: String = ""
+    public var originalFilename: String = ""
+    public var byteCount: Int64 = 0
+    public var assetLocalIdentifier: String = ""
+    public var permissionPromptHandled: Bool = false
+
+    public init(
+        kind: String = "",
+        originalFilename: String = "",
+        byteCount: Int64 = 0,
+        assetLocalIdentifier: String = "",
+        permissionPromptHandled: Bool = false
+    ) {
+        self.kind = kind
+        self.originalFilename = originalFilename
+        self.byteCount = byteCount
+        self.assetLocalIdentifier = assetLocalIdentifier
+        self.permissionPromptHandled = permissionPromptHandled
+    }
+}
+
 public enum ForyRegistry {
     public static func create() -> Fory {
         let fory = Fory()
@@ -751,6 +856,8 @@ public enum ForyRegistry {
         try! fory.register(ForyEmptyPayload.self, name: "ForyEmptyPayload")
         try! fory.register(ForyFindMatch.self, name: "ForyFindMatch")
         try! fory.register(ForyErrorCandidate.self, name: "ForyErrorCandidate")
+        try! fory.register(ForyAlertButton.self, name: "ForyAlertButton")
+        try! fory.register(ForyAlertPayload.self, name: "ForyAlertPayload")
         try! fory.register(ForyErrorPayload.self, name: "ForyErrorPayload")
         try! fory.register(ForyElementState.self, name: "ForyElementState")
         try! fory.register(ForyElementHierarchy.self, name: "ForyElementHierarchy")
@@ -765,7 +872,6 @@ public enum ForyRegistry {
         try! fory.register(ForyActionPostcondition.self, name: "ForyActionPostcondition")
         try! fory.register(ForyElementPayload.self, name: "ForyElementPayload")
         try! fory.register(ForySwipePayload.self, name: "ForySwipePayload")
-        try! fory.register(ForyAlertPayload.self, name: "ForyAlertPayload")
         try! fory.register(ForySimpleStringPayload.self, name: "ForySimpleStringPayload")
         try! fory.register(ForyProxyPayload.self, name: "ForyProxyPayload")
         try! fory.register(ForyActivateAppArgs.self, name: "ForyActivateAppArgs")
@@ -781,6 +887,8 @@ public enum ForyRegistry {
         try! fory.register(ForyProxyCAPushArgs.self, name: "ForyProxyCAPushArgs")
         try! fory.register(ForyWaitAppForegroundArgs.self, name: "ForyWaitAppForegroundArgs")
         try! fory.register(ForyWaitAppForegroundPayload.self, name: "ForyWaitAppForegroundPayload")
+        try! fory.register(ForyMediaImportArgs.self, name: "ForyMediaImportArgs")
+        try! fory.register(ForyMediaImportPayload.self, name: "ForyMediaImportPayload")
         return fory
     }
 }

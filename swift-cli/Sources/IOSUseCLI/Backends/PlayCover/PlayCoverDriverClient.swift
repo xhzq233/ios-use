@@ -392,6 +392,44 @@ final class PlayCoverDriverClient: DriverCommandClient {
         target.point == nil && target.label.isEmpty
     }
 
+    func dismissAlert(
+        args: ForyDismissAlertArgs
+    ) throws -> ForyAlertPayload {
+        guard args.wait == 0 else {
+            throw PlayCoverDriverClientError
+                .capabilityUnavailable("dismissAlert --wait")
+        }
+        guard args.scope != IOSUseAlertScope.springboard.rawValue else {
+            throw PlayCoverDriverClientError
+                .capabilityUnavailable(
+                    "dismissAlert --scope springboard"
+                )
+        }
+        switch IOSUseAlertSelectionMode(rawValue: args.selection) {
+        case .label:
+            return try dismissAlert(
+                index: nil,
+                label: args.label
+            )
+        case .index:
+            guard args.index >= 0 else {
+                throw CLIParseError.invalidValue(
+                    "dismissAlert --index must be non-negative"
+                )
+            }
+            return try dismissAlert(
+                index: Int(args.index),
+                label: nil
+            )
+        case .onlyButton, .visualPrimary:
+            return try dismissAlert(index: nil, label: nil)
+        case nil:
+            throw CLIParseError.invalidValue(
+                "unsupported dismissAlert selection \(args.selection)"
+            )
+        }
+    }
+
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
         try dismissAlert(index: index, label: nil)
     }
@@ -433,12 +471,11 @@ final class PlayCoverDriverClient: DriverCommandClient {
         }
         return ForyAlertPayload(
             dismissed: payload.dismissed,
+            surface: "app",
+            kind: "alert",
             text: payload.text,
             button: payload.button,
-            reason: payload.reason,
-            hitView: try payload.hitView.map(mapHitView),
-            finalState: payload.finalState.map(mapFinalState),
-            postcondition: nil
+            reason: payload.reason
         )
     }
 

@@ -110,8 +110,7 @@ private func tapInputTarget(_ target: ForyTarget, app: XCUIApplication) throws -
 }
 
 private func tapSnapshotCenter(_ snapshot: SafeSnapshot, app: XCUIApplication) -> Bool {
-    let frame = snapshot.frame.integral
-    guard !frame.isEmpty else { return false }
+    guard let frame = interactionFrame(snapshot) else { return false }
     let point = CGPoint(x: frame.midX, y: frame.midY)
     return RawPointer.perform(app: app, event: .tap(point)) == nil
 }

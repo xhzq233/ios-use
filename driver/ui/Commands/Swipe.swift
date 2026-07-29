@@ -72,17 +72,15 @@ enum SwipeCommands {
 
         // STEP 3: find scrollable ancestor.
         guard let scrollView = findScrollableAncestor(target.node) else {
-            if isVisibleWithEffectiveGeometry(target, in: cs.appFrame) {
-                return try okScroll(target: target, scrolls: 0, scrollDirection: "")
-            }
             return try okScroll(target: target, scrolls: 0, scrollDirection: "")
         }
 
         // STEP 4: already visible in app frame. Still try centering the target
         // in its scrollable so edge / overlay-adjacent targets become easier to tap.
-        if isVisibleWithEffectiveGeometry(target, in: cs.appFrame) {
+        if hasInteractionFrame(target, in: cs.appFrame),
+           let scrollFrame = interactionFrame(scrollView) {
             let adjusted = centerTargetInScrollFrame(targetCell: findCellAncestor(target.node),
-                                                     scrollFrame: scrollView.frame,
+                                                     scrollFrame: scrollFrame,
                                                      app: app)
             return try okScroll(target: target, scrolls: adjusted.count, scrollDirection: adjusted.scrollDirection)
         }
@@ -243,7 +241,9 @@ enum SwipeCommands {
         guard let scrollView = findScrollableAtPoint(p, cs.root) else {
             return try scrollUnavailable("no scrollable at point", target: ForyTarget(point: point))
         }
-        let frame = scrollView.frame
+        guard let frame = interactionFrame(scrollView) else {
+            return try scrollUnavailable("scrollable has no interaction frame", target: ForyTarget(point: point))
+        }
         let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollView), scrollFrame: frame)
         let center = CGPoint(x: frame.midX, y: frame.midY)
         let rawVector = CGVector(dx: center.x - p.x, dy: center.y - p.y)
@@ -263,6 +263,7 @@ enum SwipeCommands {
         ))
         return try performDirectScroll(scrollView: scrollView,
                                    responseNode: scrollView,
+                                   scrollFrame: frame,
                                    vector: vector,
                                    vertical: vertical,
                                    scrollUpwards: scrollUpwards,
@@ -275,7 +276,7 @@ enum SwipeCommands {
                                             cs: CleanedSnapshot,
                                             app: XCUIApplication) throws -> ForyResponseFrame {
         let scrollNode = findLargestScrollable(cs.root)
-        let scrollFrame = scrollNode?.frame ?? cs.appFrame
+        let scrollFrame = scrollNode.flatMap(interactionFrame) ?? cs.appFrame
         let isBack = args.dir == IOSUseProtocol.XCConstants.swipeDirectionBack
         let axis = primaryScrollAxis(visibleCellFrames: collectVisibleCellFrames(scrollNode ?? cs.root), scrollFrame: scrollFrame)
         let axisSize = axis == .vertical ? scrollFrame.height : scrollFrame.width
@@ -295,6 +296,7 @@ enum SwipeCommands {
         let node = scrollNode ?? cs.root
         return try performDirectScroll(scrollView: node,
                                    responseNode: node,
+                                   scrollFrame: scrollFrame,
                                    vector: vector,
                                    vertical: vertical,
                                    scrollUpwards: isBack,
@@ -316,10 +318,13 @@ enum SwipeCommands {
                                    vertical: Bool,
                                    scrollUpwards: Bool,
                                    app: XCUIApplication) -> ScrollOutcome {
-        var prevFrames = collectVisibleCellFrames(scrollView)
-        let scrollFrame = scrollView.frame
+        var currentScrollView = scrollView
+        var prevFrames = collectVisibleCellFrames(currentScrollView)
 
         for i in 0..<IOSUseProtocol.maxScrollCount {
+            guard let scrollFrame = interactionFrame(currentScrollView) else {
+                return .hitBoundary
+            }
             autoreleasepool {
                 if vertical {
                     scrollUpwards
@@ -336,7 +341,7 @@ enum SwipeCommands {
             invalidateSnapshot()
             guard let freshCS = rebuildCleanedSnapshot() else { return .snapshotFailed }
 
-            guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: scrollView) else {
+            guard let freshScrollView = findMatching(in: freshCS.rawRoot, against: currentScrollView) else {
                 return .hitBoundary
             }
 
@@ -354,24 +359,26 @@ enum SwipeCommands {
                 return .hitBoundary
             }
             prevFrames = nowFrames
+            currentScrollView = freshScrollView
         }
         return .reachedMax
     }
 
     private static func performDirectScroll(scrollView: SafeSnapshot,
                                             responseNode: SafeSnapshot,
+                                            scrollFrame: CGRect,
                                             vector: CGVector,
                                             vertical: Bool,
                                             scrollUpwards: Bool,
                                             app: XCUIApplication) throws -> ForyResponseFrame {
-        let segments = scrollSegments(for: vector, scrollFrame: scrollView.frame)
+        let segments = scrollSegments(for: vector, scrollFrame: scrollFrame)
         guard !segments.isEmpty else {
             DriverLog.info(String(format: "[point-swipe] too small to scroll vector=(%.1f,%.1f)", vector.dx, vector.dy))
             return try tooSmallToScrollResponse(vertical: vertical, scrollUpwards: scrollUpwards)
         }
 
         let prevFrames = collectVisibleCellFrames(scrollView)
-        let segmentCount = dispatchScrollSegments(segments, scrollFrame: scrollView.frame, app: app)
+        let segmentCount = dispatchScrollSegments(segments, scrollFrame: scrollFrame, app: app)
 
         Thread.sleep(forTimeInterval: IOSUseProtocol.scrollSettleInterval)
 

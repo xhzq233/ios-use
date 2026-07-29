@@ -323,7 +323,7 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["dismissAlert"]),
-            .driver(.dismissAlert(index: nil, label: nil))
+            .driver(.dismissAlert(DismissAlertOptions()))
         )
 
         XCTAssertEqual(
@@ -399,32 +399,28 @@ final class CLIParserTests: XCTestCase {
 
         XCTAssertEqual(
             try CLIParser.parse(["dismissAlert", "--index", "0"]),
-            .driver(.dismissAlert(index: 0, label: nil))
+            .driver(.dismissAlert(DismissAlertOptions(selection: .index(0))))
         )
 
         XCTAssertEqual(
             try CLIParser.parse([
-                "dismissAlert",
-                "--index",
-                "0",
-                "--index",
-                "2147483648",
+                "dismissAlert", "--primary", "--scope", "springboard", "--wait", "3s",
             ]),
-            .driver(.dismissAlert(index: 2_147_483_648, label: nil))
+            .driver(.dismissAlert(DismissAlertOptions(
+                selection: .visualPrimary,
+                scope: .springboard,
+                wait: 3
+            )))
         )
 
         XCTAssertEqual(
-            try CLIParser.parse([
-                "dismissAlert",
-                "--label",
-                "Allow Full Access",
-            ]),
-            .driver(
-                .dismissAlert(
-                    index: nil,
-                    label: "Allow Full Access"
-                )
-            )
+            try CLIParser.parse(["dismissAlert", "--label", "Allow"]),
+            .driver(.dismissAlert(DismissAlertOptions(selection: .label("Allow"))))
+        )
+
+        XCTAssertEqual(
+            try CLIParser.parse(["dismissAlert"]),
+            .driver(.dismissAlert(DismissAlertOptions()))
         )
 
         XCTAssertEqual(
@@ -509,6 +505,26 @@ final class CLIParserTests: XCTestCase {
             try CLIParser.parse(["proxy", "doctor"]),
             .proxy(.doctor)
         )
+    }
+
+    func testParsesMediaImportAndGlobalJSON() throws {
+        XCTAssertEqual(
+            try CLIParser.parse(["media", "import", "/tmp/fixture.heic"]),
+            .mediaImport(MediaImportOptions(path: "/tmp/fixture.heic"))
+        )
+        XCTAssertEqual(
+            try CLIParser.parseInvocation(["media", "import", "/tmp/fixture.mov", "--json"]),
+            ParsedInvocation(
+                command: .mediaImport(MediaImportOptions(path: "/tmp/fixture.mov")),
+                json: true
+            )
+        )
+        XCTAssertThrowsError(try CLIParser.parse(["media", "export", "/tmp/fixture.heic"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .unknownCommand("media export"))
+        }
+        XCTAssertThrowsError(try CLIParser.parse(["media", "import"])) { error in
+            XCTAssertEqual(error as? CLIParseError, .missingRequiredArgument("photo-or-video"))
+        }
     }
 
     func testRejectsInvalidValuesAndUnknownOptions() {
@@ -655,64 +671,22 @@ final class CLIParserTests: XCTestCase {
         XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--index", "-1"])) { error in
             XCTAssertEqual(error as? CLIParseError, .invalidValue("--index must be non-negative"))
         }
-        XCTAssertThrowsError(
-            try CLIParser.parse([
-                "dismissAlert",
-                "--index",
-                "0",
-                "--label",
-                "Allow",
-            ])
-        ) { error in
+        XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--primary", "--only-button"])) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue(
-                    "dismissAlert --index cannot be combined with --label"
-                )
+                .invalidValue("--index, --label, --primary, and --only-button are mutually exclusive")
             )
         }
-        XCTAssertThrowsError(
-            try CLIParser.parse([
-                "dismissAlert",
-                "--label",
-                "Allow",
-                "--index",
-                "0",
-            ])
-        ) { error in
+        XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--scope", "other"])) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue(
-                    "dismissAlert --index cannot be combined with --label"
-                )
+                .invalidValue("--scope must be one of: springboard, app, any")
             )
         }
-        XCTAssertThrowsError(
-            try CLIParser.parse([
-                "dismissAlert",
-                "--label",
-                "   ",
-            ])
-        ) { error in
+        XCTAssertThrowsError(try CLIParser.parse(["dismissAlert", "--wait", "31s"])) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("--label must not be empty")
-            )
-        }
-        XCTAssertThrowsError(
-            try CLIParser.parse([
-                "dismissAlert",
-                "--label",
-                "Allow",
-                "--label",
-                "Cancel",
-            ])
-        ) { error in
-            XCTAssertEqual(
-                error as? CLIParseError,
-                .invalidValue(
-                    "dismissAlert --label can only be provided once"
-                )
+                .invalidValue("--wait must be at most 30.0s")
             )
         }
         XCTAssertThrowsError(try CLIParser.parse(["tap", "General", "--dom", "-1"])) { error in

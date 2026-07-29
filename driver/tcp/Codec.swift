@@ -114,6 +114,13 @@ final class Codec {
         return ForyResponseFrame(ok: true, error: "", payload: data)
     }
 
+    /// Background command lanes use a fresh serializer so Fory instances remain
+    /// thread-confined. UI commands should continue using `foryOK`.
+    static func foryOKFromAnyThread<P>(_ payload: P) throws -> ForyResponseFrame {
+        let data = try ForyRegistry.create().serialize(payload)
+        return ForyResponseFrame(ok: true, error: "", payload: data)
+    }
+
     static func foryError(
         _ message: String,
         category: String,
@@ -124,7 +131,8 @@ final class Codec {
         target: ForyTarget? = nil,
         suggestions: [String] = [],
         candidates: [ForyErrorCandidate] = [],
-        candidateCount: Int? = nil
+        candidateCount: Int? = nil,
+        alert: ForyAlertPayload? = nil
     ) throws -> ForyResponseFrame {
         let limitedCandidates = Array(candidates.prefix(IOSUseProtocol.errorCandidateLimit))
         let errorPayload = ForyErrorPayload(
@@ -136,7 +144,8 @@ final class Codec {
             target: target,
             candidateCount: Int32(clamping: candidateCount ?? candidates.count),
             suggestions: suggestions,
-            candidates: limitedCandidates
+            candidates: limitedCandidates,
+            alert: alert
         )
         let data = try ForyRegistry.create().serialize(errorPayload)
         return ForyResponseFrame(ok: false, error: message, payload: data)

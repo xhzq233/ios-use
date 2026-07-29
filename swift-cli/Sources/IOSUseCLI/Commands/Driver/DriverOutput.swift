@@ -166,9 +166,9 @@ public enum DriverOutput {
 
     public static func formatAlert(_ payload: ForyAlertPayload) -> String {
         if payload.dismissed {
-            return "Alert dismissed: tapped \"\(payload.button)\" (text: \(payload.text))\n"
+            return "Button \"\(payload.button)\" dismissed alert (selection=\(payload.selectionStrategy), index=\(payload.selectedIndex))\n"
         }
-        return "No alert found: \(payload.reason)\n"
+        return "Alert was not dismissed: \(payload.reason)\n"
     }
 
     public static func elementTypeName(_ raw: Int32) -> String {
