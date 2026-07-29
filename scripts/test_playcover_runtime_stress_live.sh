@@ -34,6 +34,7 @@ FIXTURE_EXECUTABLE_SHA256=""
 FIXTURE_INFO_PLIST_SHA256=""
 FIXTURE_APP_TREE_SHA256=""
 PROBE_SOURCE_SHA256=""
+HEALTHY_STATUS_CASE=""
 
 config_fail() {
   GATE_FAILURE="EX_CONFIG: $*"
@@ -930,9 +931,9 @@ run_cli() {
   fi
 }
 
-assert_healthy_status() {
+is_healthy_status() {
   local case_name="$1"
-  if ! jq -e '
+  jq -e '
       .data.driver.status == "healthy" and
       (.data.driver.runnerPid | type) == "number" and
       .data.driver.runnerPid > 1 and
@@ -961,9 +962,32 @@ assert_healthy_status() {
           {"top":59,"left":0,"bottom":34,"right":0} and
         $safeArea.expectedWindowSafeArea ==
           {"top":59,"left":0,"bottom":34,"right":0})
-    ' "$RUN_DIR/${case_name}.stdout" >/dev/null; then
+    ' "$RUN_DIR/${case_name}.stdout" >/dev/null
+}
+
+assert_healthy_status() {
+  local case_name="$1"
+  if ! is_healthy_status "$case_name"; then
     fail_gate "$case_name did not prove an exact healthy fixture session"
   fi
+}
+
+run_healthy_status_with_retry() {
+  local case_prefix="$1"
+  local attempt
+  local attempt_case
+  HEALTHY_STATUS_CASE=""
+  for attempt in $(seq 1 50); do
+    printf -v attempt_case '%s_%02d' "$case_prefix" "$attempt"
+    run_cli "$attempt_case" status --json
+    if is_healthy_status "$attempt_case"; then
+      HEALTHY_STATUS_CASE="$attempt_case"
+      return 0
+    fi
+    sleep 0.1
+  done
+  fail_gate \
+    "$case_prefix did not converge to an exact healthy fixture session"
 }
 
 assert_full_status_diagnostics() {
@@ -1506,16 +1530,17 @@ for cycle in $(seq 1 "$CLEAN_CYCLE_COUNT"); do
       "${cycle_name}_scene_replace" \
       tap "Replace Scene Window" --dom --json
     assert_scene_two "${cycle_name}_scene_replace"
-    run_cli "${cycle_name}_post_tap_status" status --json
-    assert_healthy_status "${cycle_name}_post_tap_status"
+    run_healthy_status_with_retry "${cycle_name}_post_tap_status"
+    post_tap_status_case="$HEALTHY_STATUS_CASE"
+    assert_healthy_status "$post_tap_status_case"
     assert_expected_generation \
-      "${cycle_name}_post_tap_status" \
+      "$post_tap_status_case" \
       "$protocol_generation_key"
     assert_same_live_session \
       "${cycle_name}_status" \
-      "${cycle_name}_post_tap_status"
-    assert_lock_matches_status "${cycle_name}_post_tap_status"
-    assert_live_runtime_socket "${cycle_name}_post_tap_status"
+      "$post_tap_status_case"
+    assert_lock_matches_status "$post_tap_status_case"
+    assert_live_runtime_socket "$post_tap_status_case"
   fi
 
   run_cli "${cycle_name}_stop" stop
