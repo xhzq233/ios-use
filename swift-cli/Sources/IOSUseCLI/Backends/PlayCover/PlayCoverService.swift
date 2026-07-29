@@ -425,7 +425,13 @@ public enum PlayCoverService {
         let rootCodeSignature: PlayCoverRootCodeSignatureEvidence
         do {
             rootCodeSignature = try inspectRootCodeSignature(
-                appURL: stagingURL
+                appURL: stagingURL,
+                mainExecutableRelativePath:
+                    upstream.prepared.mainExecutableRelativePath,
+                scratchRootURL: URL(
+                    fileURLWithPath: paths.root,
+                    isDirectory: true
+                )
             )
         } catch {
             throw PlayCoverBackendError.codeSigningFailed(
@@ -1513,15 +1519,43 @@ public enum PlayCoverService {
     }
 
     private static func inspectRootCodeSignature(
-        appURL: URL
+        appURL: URL,
+        mainExecutableRelativePath: String,
+        scratchRootURL: URL
     ) throws -> PlayCoverRootCodeSignatureEvidence {
         if let override =
                 rootCodeSignatureInspectorOverrideForTesting {
             return try override(appURL)
         }
-        return try PlayCoverCodeSignatureInspector.inspectRoot(
-            appURL: appURL
+        #if canImport(Darwin)
+        let descriptor = Darwin.open(
+            appURL.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
         )
+        guard descriptor >= 0 else {
+            throw PlayCoverBackendError.codeSigningFailed(
+                "cannot open prepared App root for signature inspection: "
+                    + "errno \(errno)"
+            )
+        }
+        defer { Darwin.close(descriptor) }
+        let stableURL =
+            try PlayCoverManagedAppService.ownedDirectoryDescriptorPath(
+                descriptor,
+                label: "signature-inspection App root"
+            )
+        return try PlayCoverCodeSignatureInspector.inspectRoot(
+            appURL: stableURL,
+            mainExecutableRelativePath: mainExecutableRelativePath,
+            scratchRootURL: scratchRootURL
+        )
+        #else
+        return try PlayCoverCodeSignatureInspector.inspectRoot(
+            appURL: appURL,
+            mainExecutableRelativePath: mainExecutableRelativePath,
+            scratchRootURL: scratchRootURL
+        )
+        #endif
     }
 
     private static func isValidSigningIdentity(
@@ -1580,6 +1614,7 @@ public enum PlayCoverService {
 
     private static func verifyStableRootSignature(
         appURL: URL,
+        scratchRootURL: URL,
         manifest: PlayCoverPrepareManifest
     ) throws {
         let currentIdentity =
@@ -1592,7 +1627,11 @@ public enum PlayCoverService {
         }
         let observed: PlayCoverRootCodeSignatureEvidence
         do {
-            observed = try inspectRootCodeSignature(appURL: appURL)
+            observed = try inspectRootCodeSignature(
+                appURL: appURL,
+                mainExecutableRelativePath: manifest.executableName,
+                scratchRootURL: scratchRootURL
+            )
         } catch {
             throw PlayCoverBackendError.cacheTampered(
                 "cannot inspect the prepared root signature: \(error)"
@@ -2496,6 +2535,11 @@ public enum PlayCoverService {
         }
         try verifyStableRootSignature(
             appURL: stableAppURL,
+            scratchRootURL: app
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent(),
             manifest: manifest
         )
         guard requiredHashes.isSubset(of: Set(hashes.keys)) else {
