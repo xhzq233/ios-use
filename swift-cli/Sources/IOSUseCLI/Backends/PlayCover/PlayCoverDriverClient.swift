@@ -58,9 +58,14 @@ final class PlayCoverDriverClient: DriverCommandClient {
         self.init(
             session: session,
             runtimeRequester: { command, arguments, timeout in
-                try Self.runtimeClient(
+                let refreshAlertStatus =
+                    CLIInvocationPerformanceContext.current?
+                        .claimAlertRefresh() ?? true
+                return try Self.runtimeClient(
                     for: session,
-                    timeoutSeconds: timeout
+                    timeoutSeconds: timeout,
+                    refreshAlertStatus:
+                        refreshAlertStatus
                 ).request(command, arguments: arguments)
             }
         )
@@ -408,6 +413,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
         switch IOSUseAlertSelectionMode(rawValue: args.selection) {
         case .label:
             return try dismissAlert(
+                selection: "label",
                 index: nil,
                 label: args.label
             )
@@ -418,11 +424,22 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 )
             }
             return try dismissAlert(
+                selection: "index",
                 index: Int(args.index),
                 label: nil
             )
-        case .onlyButton, .visualPrimary:
-            return try dismissAlert(index: nil, label: nil)
+        case .onlyButton:
+            return try dismissAlert(
+                selection: "onlyButton",
+                index: nil,
+                label: nil
+            )
+        case .visualPrimary:
+            return try dismissAlert(
+                selection: "visualPrimary",
+                index: nil,
+                label: nil
+            )
         case nil:
             throw CLIParseError.invalidValue(
                 "unsupported dismissAlert selection \(args.selection)"
@@ -431,10 +448,28 @@ final class PlayCoverDriverClient: DriverCommandClient {
     }
 
     func dismissAlert(index: Int?) throws -> ForyAlertPayload {
-        try dismissAlert(index: index, label: nil)
+        try dismissAlert(
+            selection: index == nil ? "onlyButton" : "index",
+            index: index,
+            label: nil
+        )
     }
 
     func dismissAlert(
+        index: Int?,
+        label: String?
+    ) throws -> ForyAlertPayload {
+        try dismissAlert(
+            selection: label == nil
+                ? (index == nil ? "onlyButton" : "index")
+                : "label",
+            index: index,
+            label: label
+        )
+    }
+
+    private func dismissAlert(
+        selection: String,
         index: Int?,
         label: String?
     ) throws -> ForyAlertPayload {
@@ -453,6 +488,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
                 .dismissAlert,
                 arguments: .dismissAlert(
                     PlayCoverRuntimeDismissAlertArguments(
+                        selection: selection,
                         index: index
                     )
                 )
@@ -559,7 +595,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
 
     static func runtimeClient(
         for session: SessionService.Info,
-        timeoutSeconds: TimeInterval
+        timeoutSeconds: TimeInterval,
+        refreshAlertStatus: Bool = false
     ) throws -> PlayCoverRuntimeClient {
         let expected = try ExpectedRuntimeIdentity(session: session)
         guard let socketPath = session.playCoverRuntimeSocketPath,
@@ -580,7 +617,8 @@ final class PlayCoverDriverClient: DriverCommandClient {
             expectedPID: expected.pid,
             expectedBundleIdentifier: expected.bundleIdentifier,
             expectedExecutablePath: expected.executablePath,
-            timeoutSeconds: timeoutSeconds
+            timeoutSeconds: timeoutSeconds,
+            refreshAlertStatus: refreshAlertStatus
         )
     }
 

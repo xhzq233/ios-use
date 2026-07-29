@@ -185,6 +185,10 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                 .dismissAlert(.init(index: 1)),
                 {
                     XCTAssertEqual($0["index"] as? Int, 1)
+                    XCTAssertEqual(
+                        $0["selection"] as? String,
+                        "index"
+                    )
                     XCTAssertNil($0["label"])
                 }
             ),
@@ -238,6 +242,7 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
                     request["command"] as? String,
                     command.rawValue
                 )
+                XCTAssertNil(request["refreshAlertStatus"])
                 let requestID = try XCTUnwrap(
                     request["requestId"] as? String
                 )
@@ -274,6 +279,266 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             try server.wait()
             XCTAssertEqual(server.peerUID, geteuid())
         }
+    }
+
+    func testAlertRefreshMetadataIsRecordedForReadCommand()
+        throws
+    {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            XCTAssertEqual(
+                request["refreshAlertStatus"] as? Bool,
+                true
+            )
+            let requestID = try XCTUnwrap(
+                request["requestId"] as? String
+            )
+            return .body(
+                try JSONSerialization.data(withJSONObject: [
+                    "schemaVersion": 3,
+                    "requestId": requestID,
+                    "sessionID": self.sessionID,
+                    "ok": true,
+                    "payload": [
+                        "dom": self.domPayload(generation: 71),
+                    ],
+                    "interactionState": [
+                        "schemaVersion": 1,
+                        "refreshComplete": true,
+                        "blocking": true,
+                        "interactions": [[
+                            "type": "inProcessAlert",
+                            "owner": "targetApp",
+                            "visible": true,
+                            "actionableByIOSUse": true,
+                            "source": "appkitNative",
+                            "text": "Fixture Alert",
+                            "actions": [[
+                                "index": 0,
+                                "label": "Confirm",
+                            ]],
+                            "suggestedCommand":
+                                "ios-use dismissAlert --label Confirm",
+                        ]],
+                    ],
+                    "performance": [
+                        "requestElapsedMs": 4.5,
+                        "alertRefreshElapsedMs": 1.25,
+                    ],
+                ])
+            )
+        }
+        let collector =
+            CLIInvocationPerformanceCollector()
+        let payload =
+            try CLIInvocationPerformanceContext
+                .$current.withValue(collector) {
+                    try makeClient(
+                        socketPath: fixture.socketPath,
+                        refreshAlertStatus: true
+                    ).dom(
+                        .init(
+                            raw: false,
+                            fresh: true,
+                            waitQuiescence: false
+                        )
+                    )
+                }
+        try server.wait()
+
+        XCTAssertEqual(payload.snapshotGeneration, 71)
+        let snapshot = collector.snapshot()
+        XCTAssertEqual(snapshot.runtimeRoundTripCount, 1)
+        XCTAssertEqual(snapshot.runtimeRequestCount, 1)
+        XCTAssertEqual(snapshot.runtimeRequestElapsedMs, 4.5)
+        XCTAssertEqual(snapshot.alertRefreshCount, 1)
+        XCTAssertEqual(snapshot.alertRefreshElapsedMs, 1.25)
+        XCTAssertNotNil(snapshot.interactionState)
+        XCTAssertEqual(snapshot.warnings.count, 1)
+        XCTAssertTrue(
+            snapshot.warnings[0].contains("dismissAlert")
+        )
+    }
+
+    func testRemoteInteractionErrorStillRecordsRefreshTiming()
+        throws
+    {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            let requestID = try XCTUnwrap(
+                request["requestId"] as? String
+            )
+            return .body(
+                try JSONSerialization.data(withJSONObject: [
+                    "schemaVersion": 3,
+                    "requestId": requestID,
+                    "sessionID": self.sessionID,
+                    "ok": false,
+                    "error": [
+                        "code":
+                            "photos_permission_interaction_required",
+                        "message":
+                            "Photos authorization is pending",
+                        "details": [
+                            "category": "interaction",
+                            "phase": "precondition",
+                            "retryable": false,
+                            "fatal": false,
+                            "candidateCount": 0,
+                            "candidates": [],
+                            "suggestions": [
+                                "Handle the prompt manually.",
+                            ],
+                        ],
+                    ],
+                    "interactionState": [
+                        "schemaVersion": 1,
+                        "refreshComplete": true,
+                        "blocking": true,
+                        "interactions": [[
+                            "type":
+                                "pendingExternalInteraction",
+                            "kind": "photosAuthorization",
+                            "pending": true,
+                            "visibility": "unknown",
+                            "actionableByIOSUse": false,
+                            "outstandingCount": 1,
+                            "sequence": 8,
+                            "api": "requestAuthorization:",
+                            "accessLevel": 2,
+                            "authorizationStatus": 0,
+                            "ageMicroseconds": 500,
+                            "resolution":
+                                "manual_or_computer_use",
+                        ]],
+                    ],
+                    "performance": [
+                        "requestElapsedMs": 2.75,
+                        "alertRefreshElapsedMs": 0.5,
+                    ],
+                ])
+            )
+        }
+        let collector =
+            CLIInvocationPerformanceCollector()
+
+        XCTAssertThrowsError(
+            try CLIInvocationPerformanceContext
+                .$current.withValue(collector) {
+                    try makeClient(
+                        socketPath: fixture.socketPath,
+                        refreshAlertStatus: true
+                    ).tap(
+                        .init(
+                            target: .init(label: "Underlay"),
+                            offset: nil,
+                            ratio: nil
+                        )
+                    )
+                }
+        ) {
+            guard case .remoteError(let code, _, _) =
+                    $0 as? PlayCoverRuntimeClientError else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertEqual(
+                code,
+                "photos_permission_interaction_required"
+            )
+        }
+        try server.wait()
+        let snapshot = collector.snapshot()
+        XCTAssertEqual(snapshot.runtimeRequestElapsedMs, 2.75)
+        XCTAssertEqual(snapshot.alertRefreshElapsedMs, 0.5)
+        XCTAssertEqual(snapshot.alertRefreshCount, 1)
+        guard case .object(let interaction) =
+                snapshot.interactionState else {
+            return XCTFail("missing interaction state")
+        }
+        guard case .array(let interactions) =
+                interaction["interactions"],
+              case .object(let photos) = interactions.first else {
+            return XCTFail("missing Photos interaction")
+        }
+        XCTAssertEqual(photos["accessLevel"], .integer(2))
+        XCTAssertEqual(
+            photos["authorizationStatus"],
+            .integer(0)
+        )
+        XCTAssertEqual(snapshot.warnings.count, 1)
+        XCTAssertTrue(
+            snapshot.warnings[0].contains("Computer Use")
+        )
+    }
+
+    func testOldRuntimeRefreshRejectionRequestsSessionRestart()
+        throws
+    {
+        let fixture = try RuntimeClientFixture()
+        defer { fixture.remove() }
+        let server = try FakeUnixRuntimeServer(
+            socketPath: fixture.socketPath
+        ) { request in
+            XCTAssertEqual(
+                request["refreshAlertStatus"] as? Bool,
+                true
+            )
+            let requestID = try XCTUnwrap(
+                request["requestId"] as? String
+            )
+            return .body(
+                try JSONSerialization.data(withJSONObject: [
+                    "schemaVersion": 3,
+                    "requestId": requestID,
+                    "sessionID": self.sessionID,
+                    "ok": false,
+                    "error": [
+                        "code": "invalid_request",
+                        "message":
+                            "request does not match Runtime schema version 3",
+                        "details": [
+                            "category": "protocol",
+                            "phase": "validation",
+                            "retryable": false,
+                            "fatal": false,
+                            "candidateCount": 0,
+                            "candidates": [],
+                            "suggestions": [],
+                        ],
+                    ],
+                ])
+            )
+        }
+
+        XCTAssertThrowsError(
+            try makeClient(
+                socketPath: fixture.socketPath,
+                refreshAlertStatus: true
+            ).dom(
+                .init(
+                    raw: false,
+                    fresh: true,
+                    waitQuiescence: false
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? PlayCoverRuntimeClientError,
+                .alertRefreshUnsupportedByRuntime
+            )
+            XCTAssertTrue(
+                String(describing: $0).contains(
+                    "ios-use stop"
+                )
+            )
+        }
+        try server.wait()
     }
 
     func testDecodesCommandSpecificScreenshotAndDOMPayload() throws {
@@ -887,7 +1152,8 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
 
     private func makeClient(
         socketPath: String,
-        timeout: TimeInterval = 1
+        timeout: TimeInterval = 1,
+        refreshAlertStatus: Bool = false
     ) throws -> PlayCoverRuntimeClient {
         let executable = try XCTUnwrap(
             PlayCoverRuntimeClient.executablePath(for: getpid())
@@ -898,7 +1164,8 @@ final class PlayCoverRuntimeClientTests: XCTestCase {
             expectedPID: getpid(),
             expectedBundleIdentifier: bundleIdentifier,
             expectedExecutablePath: executable,
-            timeoutSeconds: timeout
+            timeoutSeconds: timeout,
+            refreshAlertStatus: refreshAlertStatus
         )
     }
 

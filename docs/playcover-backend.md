@@ -161,12 +161,23 @@ Each connection carries one four-byte big-endian length-prefixed JSON request:
   "requestId": "unique-request-id",
   "sessionID": "active-session-id",
   "command": "dom",
-  "arguments": {}
+  "arguments": {},
+  "refreshAlertStatus": true
 }
 ```
 
 The response echoes the schema, request ID, and session ID and contains either
-a command-specific typed payload or structured error. `hello` returns process
+a command-specific typed payload or structured error. A public command's first
+Runtime request sets `refreshAlertStatus`; later internal requests from the same
+CLI invocation do not repeat the refresh. The response reports the measured
+Runtime request and alert-refresh durations plus the fresh interaction state.
+Host-only lifecycle and internal discovery requests omit the optional field
+entirely, preserving wire compatibility with an already-running older Runtime;
+only the one fresh public-command request encodes it as `true`.
+If an active older Runtime rejects that field, the CLI fails safely with an
+explicit stop/start upgrade instruction; it does not retry the mutation without
+the modal gate.
+`hello` returns process
 identity, capabilities, and only the exact fixed-geometry observations consumed
 by the launch readiness predicate. It deliberately omits window/view
 inventories, screen topology, alert state, resize history, and mouse delivery
@@ -375,6 +386,27 @@ AppKit alert panels are projected into the same logical canvas, but their
 buttons are invoked through the panel's real target/action rather than falling
 through to a UIKit touch beneath the panel. Alert dismissal and URL opening
 likewise keep their command-specific disappearance/delivery checks.
+
+Before a public Runtime command is dispatched, one lightweight fresh snapshot
+checks App-owned UIKit/AppKit alerts and Runtime-known outstanding PhotoKit
+authorization requests. `status`, screenshot, DOM, and wait remain readable
+and return the interaction warning. Mutations are rejected before delivery;
+only `dismissAlert` may act on an App-owned alert. Its bare/default selection
+is `onlyButton` and therefore refuses a multi-action alert; index and exact
+label are explicit, while `visualPrimary` uses the same guarded horizontal
+trailing or vertical top geometry rule as the real-device driver. A PhotoKit
+request whose callback has not completed is reported as an external interaction
+with unknown window visibility and no invented owner, text, or actions. The
+host does not use Accessibility APIs or UI scripting to inspect or click TCC,
+UserNotificationCenter, or Automation prompts; those remain manual or
+Computer Use interactions.
+
+Top-level `performance.totalElapsedMs` is a monotonic command/result-assembly
+measurement frozen once immediately before the machine envelope is encoded.
+The same frozen value is written to `cli.log`; JSON encoding, stdout delivery,
+and the log write itself are deliberately outside that boundary. Runtime
+round-trip, Runtime request, and alert-refresh fields are separate sums with
+counts, and unavailable measurements remain `null` with count zero.
 
 Screenshot and capture crop and normalize only the inner fixed canvas from the
 target process's WindowServer backing surfaces, including Metal. The AppKit

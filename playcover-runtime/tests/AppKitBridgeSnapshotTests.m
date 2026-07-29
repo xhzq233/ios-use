@@ -52,7 +52,9 @@ typedef NS_ENUM(NSUInteger, IOSUseBridgeSnapshotFixtureMode) {
 static IOSUseBridgeSnapshotFixtureMode
     IOSUseBridgeSnapshotCurrentFixtureMode;
 static NSUInteger IOSUseBridgeSnapshotEnumerationCount;
+static NSUInteger IOSUseBridgeSnapshotNativeAlertEnumerationCount;
 static BOOL IOSUseBridgeSnapshotUnexpectedEnumerationArguments;
+static NSArray *IOSUseBridgeSnapshotNativeAlertWindows;
 
 @interface IOSUseBridgeSnapshotAlertContentFixture : NSObject
 @end
@@ -169,7 +171,8 @@ static CFArrayRef _Nullable IOSUseBridgeSnapshotCopyWindowInfo(
 }
 
 static NSArray *IOSUseBridgeSnapshotEmptyNativeAlertWindows(void) {
-    return @[];
+    IOSUseBridgeSnapshotNativeAlertEnumerationCount += 1;
+    return IOSUseBridgeSnapshotNativeAlertWindows ?: @[];
 }
 
 static void IOSUseBridgeSnapshotResetEnumeration(
@@ -369,6 +372,69 @@ static BOOL IOSUseBridgeSnapshotTestRequestEnumerationCounts(void) {
     return passed;
 }
 
+static BOOL IOSUseBridgeSnapshotTestConsolidatedAlertSnapshot(void) {
+    IOSUseBridgeSnapshotAlertPanelFixture *panel =
+        [[IOSUseBridgeSnapshotAlertPanelFixture alloc]
+            initWithWindowNumber:41];
+    IOSUseBridgeSnapshotNativeAlertWindows = @[panel];
+    IOSUseBridgeSnapshotNativeAlertEnumerationCount = 0;
+    IOSUseBridgeSnapshotResetEnumeration(
+        IOSUseBridgeSnapshotFixtureModeValid
+    );
+    NSDictionary<NSString *, id> *snapshot =
+        [IOSUsePlayAppKitBridge nativeAlertSnapshot];
+    BOOL passed = IOSUseBridgeSnapshotRequire(
+        IOSUseBridgeSnapshotEnumerationCount == 1 &&
+            [snapshot[@"candidateVisible"] boolValue] &&
+            [snapshot[@"visible"] boolValue] &&
+            CFGetTypeID((__bridge CFTypeRef)
+                snapshot[@"actionableByIOSUse"]) ==
+                CFBooleanGetTypeID() &&
+            [snapshot[@"source"]
+                isEqualToString:@"appkitNative"],
+        @"one consolidated alert refresh did not reuse one CGWindow snapshot"
+    );
+    NSUInteger nativeAlertEnumerationCount =
+        IOSUseBridgeSnapshotNativeAlertEnumerationCount;
+    NSDictionary<NSString *, id> *diagnostics =
+        [IOSUsePlayAppKitBridge
+            diagnosticsWithNativeAlertSnapshot:snapshot];
+    passed &= IOSUseBridgeSnapshotRequire(
+        [diagnostics isKindOfClass:NSDictionary.class] &&
+            IOSUseBridgeSnapshotNativeAlertEnumerationCount ==
+                nativeAlertEnumerationCount &&
+            IOSUseBridgeSnapshotEnumerationCount == 1,
+        @"full diagnostics did not reuse the caller's alert snapshot"
+    );
+
+    IOSUseBridgeSnapshotResetEnumeration(
+        IOSUseBridgeSnapshotFixtureModeNil
+    );
+    snapshot = [IOSUsePlayAppKitBridge nativeAlertSnapshot];
+    passed &= IOSUseBridgeSnapshotRequire(
+        IOSUseBridgeSnapshotEnumerationCount == 1 &&
+            [snapshot[@"candidateVisible"] boolValue] &&
+            [snapshot[@"visible"] boolValue] &&
+            ![snapshot[@"actionableByIOSUse"] boolValue] &&
+            [snapshot[@"source"]
+                isEqualToString:@"appkitNativeUnresolved"],
+        @"an unresolved native alert candidate was not reported fail closed"
+    );
+
+    IOSUseBridgeSnapshotNativeAlertWindows = @[];
+    IOSUseBridgeSnapshotResetEnumeration(
+        IOSUseBridgeSnapshotFixtureModeValid
+    );
+    snapshot = [IOSUsePlayAppKitBridge nativeAlertSnapshot];
+    passed &= IOSUseBridgeSnapshotRequire(
+        IOSUseBridgeSnapshotEnumerationCount == 0 &&
+            ![snapshot[@"candidateVisible"] boolValue] &&
+            ![snapshot[@"visible"] boolValue],
+        @"an empty alert inventory performed an unnecessary CGWindow enumeration"
+    );
+    return passed;
+}
+
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
         (void)argv;
@@ -392,7 +458,10 @@ int main(int argc, const char *argv[]) {
             IOSUseBridgeSnapshotTestCallerMetadataSelection();
         passed &=
             IOSUseBridgeSnapshotTestRequestEnumerationCounts();
+        passed &=
+            IOSUseBridgeSnapshotTestConsolidatedAlertSnapshot();
 
+        IOSUseBridgeSnapshotNativeAlertWindows = nil;
         IOSUsePlayAppKitBridgeSetNativeAlertWindowsProviderForTesting(
             NULL
         );

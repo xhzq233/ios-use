@@ -11,14 +11,364 @@
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlayDevice.h"
 
+#import <Photos/Photos.h>
 #import <UIKit/UIKit.h>
+#import <mach/mach_time.h>
+#import <objc/runtime.h>
+#import <os/lock.h>
 
 static NSUInteger IOSUseRuntimeConfigurationAttempt;
 static BOOL IOSUseRuntimeSurfaceProbePending;
 static NSString *IOSUseRuntimeConfigurationStage = @"loaded";
 static NSString *IOSUseRuntimeConfigurationFailure;
+static os_unfair_lock IOSUsePhotosAuthorizationLock =
+    OS_UNFAIR_LOCK_INIT;
+static uint64_t IOSUsePhotosAuthorizationSequence;
+static uint64_t IOSUsePhotosAuthorizationStateVersion;
+static uint64_t IOSUsePhotosAuthorizationCompletionSequence;
+static NSUInteger IOSUsePhotosAuthorizationOutstandingCount;
+static uint64_t
+    IOSUsePhotosAuthorizationRequestMonotonicMicroseconds;
+static NSInteger IOSUsePhotosAuthorizationAccessLevel;
+static BOOL IOSUsePhotosAuthorizationHasAccessLevel;
+static NSInteger IOSUsePhotosAuthorizationStatus;
+static BOOL IOSUsePhotosAuthorizationHasCompletion;
+static BOOL IOSUsePhotosAuthorizationLegacyHookInstalled;
+static BOOL IOSUsePhotosAuthorizationAccessLevelHookInstalled;
+static NSString *IOSUsePhotosAuthorizationLastAPI;
+static NSMutableDictionary<
+    NSNumber *,
+    NSDictionary<NSString *, id> *
+> *IOSUsePhotosAuthorizationOutstandingRequests;
+static IMP IOSUsePhotosAuthorizationLegacyOriginal;
+static IMP IOSUsePhotosAuthorizationAccessLevelOriginal;
 
 static void IOSUseConfigureRuntimeSurface(void);
+
+typedef void (^IOSUsePhotosAuthorizationHandler)(
+    PHAuthorizationStatus status
+);
+
+static uint64_t IOSUseMonotonicMicroseconds(void) {
+    static mach_timebase_info_data_t timebase;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        mach_timebase_info(&timebase);
+    });
+    __uint128_t nanoseconds =
+        (__uint128_t)mach_continuous_time() *
+        timebase.numer /
+        timebase.denom;
+    return (uint64_t)(nanoseconds / 1000);
+}
+
+static uint64_t IOSUsePhotosAuthorizationBegin(
+    NSString *api,
+    BOOL hasAccessLevel,
+    NSInteger accessLevel
+) {
+    os_unfair_lock_lock(
+        &IOSUsePhotosAuthorizationLock
+    );
+    IOSUsePhotosAuthorizationStateVersion += 1;
+    IOSUsePhotosAuthorizationSequence += 1;
+    uint64_t sequence =
+        IOSUsePhotosAuthorizationSequence;
+    uint64_t requestMonotonicMicroseconds =
+        IOSUseMonotonicMicroseconds();
+    IOSUsePhotosAuthorizationRequestMonotonicMicroseconds =
+        requestMonotonicMicroseconds;
+    IOSUsePhotosAuthorizationLastAPI = api;
+    IOSUsePhotosAuthorizationHasAccessLevel =
+        hasAccessLevel;
+    IOSUsePhotosAuthorizationAccessLevel =
+        accessLevel;
+    if (IOSUsePhotosAuthorizationOutstandingRequests == nil) {
+        IOSUsePhotosAuthorizationOutstandingRequests =
+            [NSMutableDictionary dictionary];
+    }
+    IOSUsePhotosAuthorizationOutstandingRequests[@(sequence)] = @{
+        @"sequence": @(sequence),
+        @"requestMonotonicMicroseconds":
+            @(requestMonotonicMicroseconds),
+        @"api": api,
+        @"accessLevel": hasAccessLevel
+            ? @(accessLevel)
+            : (id)NSNull.null,
+    };
+    IOSUsePhotosAuthorizationOutstandingCount =
+        IOSUsePhotosAuthorizationOutstandingRequests.count;
+    os_unfair_lock_unlock(
+        &IOSUsePhotosAuthorizationLock
+    );
+    return sequence;
+}
+
+static void IOSUsePhotosAuthorizationComplete(
+    uint64_t sequence,
+    PHAuthorizationStatus status
+) {
+    os_unfair_lock_lock(
+        &IOSUsePhotosAuthorizationLock
+    );
+    IOSUsePhotosAuthorizationStateVersion += 1;
+    [IOSUsePhotosAuthorizationOutstandingRequests
+        removeObjectForKey:@(sequence)];
+    IOSUsePhotosAuthorizationOutstandingCount =
+        IOSUsePhotosAuthorizationOutstandingRequests.count;
+    if (!IOSUsePhotosAuthorizationHasCompletion ||
+        sequence >=
+            IOSUsePhotosAuthorizationCompletionSequence) {
+        IOSUsePhotosAuthorizationCompletionSequence =
+            sequence;
+        IOSUsePhotosAuthorizationStatus = status;
+        IOSUsePhotosAuthorizationHasCompletion = YES;
+    }
+    os_unfair_lock_unlock(
+        &IOSUsePhotosAuthorizationLock
+    );
+}
+
+static void IOSUsePhotosRequestAuthorization(
+    id receiver,
+    SEL selector,
+    IOSUsePhotosAuthorizationHandler handler
+) {
+    uint64_t sequence =
+        IOSUsePhotosAuthorizationBegin(
+            @"requestAuthorization:",
+            NO,
+            0
+        );
+    IOSUsePhotosAuthorizationHandler wrapped =
+        ^(PHAuthorizationStatus status) {
+            IOSUsePhotosAuthorizationComplete(
+                sequence,
+                status
+            );
+            if (handler != nil) {
+                handler(status);
+            }
+        };
+    ((void (*)(
+        id,
+        SEL,
+        IOSUsePhotosAuthorizationHandler
+    ))IOSUsePhotosAuthorizationLegacyOriginal)(
+        receiver,
+        selector,
+        wrapped
+    );
+}
+
+static void IOSUsePhotosRequestAuthorizationForAccessLevel(
+    id receiver,
+    SEL selector,
+    NSInteger accessLevel,
+    IOSUsePhotosAuthorizationHandler handler
+) {
+    uint64_t sequence =
+        IOSUsePhotosAuthorizationBegin(
+            @"requestAuthorizationForAccessLevel:handler:",
+            YES,
+            accessLevel
+        );
+    IOSUsePhotosAuthorizationHandler wrapped =
+        ^(PHAuthorizationStatus status) {
+            IOSUsePhotosAuthorizationComplete(
+                sequence,
+                status
+            );
+            if (handler != nil) {
+                handler(status);
+            }
+        };
+    ((void (*)(
+        id,
+        SEL,
+        NSInteger,
+        IOSUsePhotosAuthorizationHandler
+    ))IOSUsePhotosAuthorizationAccessLevelOriginal)(
+        receiver,
+        selector,
+        accessLevel,
+        wrapped
+    );
+}
+
+static BOOL IOSUseInstallPhotosAuthorizationHook(
+    SEL selector,
+    IMP replacement,
+    IMP *original
+) {
+    Method method = class_getClassMethod(
+        PHPhotoLibrary.class,
+        selector
+    );
+    if (method == NULL) {
+        return NO;
+    }
+    IMP current = method_getImplementation(method);
+    if (current == replacement) {
+        return YES;
+    }
+    *original = current;
+    method_setImplementation(method, replacement);
+    return YES;
+}
+
+static void IOSUseInstallPhotosAuthorizationHooks(void) {
+    if (!IOSUsePhotosAuthorizationLegacyHookInstalled) {
+        IOSUsePhotosAuthorizationLegacyHookInstalled =
+            IOSUseInstallPhotosAuthorizationHook(
+                @selector(requestAuthorization:),
+                (IMP)IOSUsePhotosRequestAuthorization,
+                &IOSUsePhotosAuthorizationLegacyOriginal
+            );
+    }
+    if (!IOSUsePhotosAuthorizationAccessLevelHookInstalled) {
+        IOSUsePhotosAuthorizationAccessLevelHookInstalled =
+            IOSUseInstallPhotosAuthorizationHook(
+                @selector(
+                    requestAuthorizationForAccessLevel:handler:
+                ),
+                (IMP)
+                    IOSUsePhotosRequestAuthorizationForAccessLevel,
+                &IOSUsePhotosAuthorizationAccessLevelOriginal
+            );
+    }
+}
+
+static NSDictionary<NSString *, id> *
+IOSUsePhotosAuthorizationDiagnosticsLocked(void) {
+    uint64_t observation =
+        IOSUseMonotonicMicroseconds();
+    NSArray<NSNumber *> *pendingSequences =
+        [IOSUsePhotosAuthorizationOutstandingRequests.allKeys
+            sortedArrayUsingSelector:@selector(compare:)];
+    NSMutableArray<NSDictionary<NSString *, id> *> *pendingRequests =
+        [NSMutableArray arrayWithCapacity:pendingSequences.count];
+    for (NSNumber *pendingSequence in pendingSequences) {
+        NSDictionary<NSString *, id> *pending =
+            IOSUsePhotosAuthorizationOutstandingRequests[
+                pendingSequence
+            ];
+        uint64_t requestedAt = [
+            pending[@"requestMonotonicMicroseconds"]
+            unsignedLongLongValue
+        ];
+        [pendingRequests addObject:@{
+            @"sequence": pending[@"sequence"],
+            @"requestMonotonicMicroseconds":
+                pending[@"requestMonotonicMicroseconds"],
+            @"ageMicroseconds": @(
+                observation >= requestedAt
+                    ? observation - requestedAt
+                    : 0
+            ),
+            @"api": pending[@"api"],
+            @"accessLevel": pending[@"accessLevel"],
+        }];
+    }
+    NSDictionary<NSString *, id> *result = @{
+        @"schemaVersion": @1,
+        @"legacyHookInstalled": @(
+            IOSUsePhotosAuthorizationLegacyHookInstalled
+        ),
+        @"accessLevelHookInstalled": @(
+            IOSUsePhotosAuthorizationAccessLevelHookInstalled
+        ),
+        @"sequence": @(IOSUsePhotosAuthorizationSequence),
+        @"stateVersion": @(
+            IOSUsePhotosAuthorizationStateVersion
+        ),
+        @"outstandingCount": @(
+            IOSUsePhotosAuthorizationOutstandingCount
+        ),
+        @"pendingRequests": pendingRequests,
+        @"requestMonotonicMicroseconds":
+            IOSUsePhotosAuthorizationSequence == 0
+                ? (id)NSNull.null
+                : @(
+                    IOSUsePhotosAuthorizationRequestMonotonicMicroseconds
+                ),
+        @"observationMonotonicMicroseconds":
+            @(observation),
+        @"ageMicroseconds":
+            IOSUsePhotosAuthorizationSequence == 0
+                ? (id)NSNull.null
+                : @(
+                    observation -
+                    IOSUsePhotosAuthorizationRequestMonotonicMicroseconds
+                ),
+        @"lastAPI":
+            IOSUsePhotosAuthorizationLastAPI ?: NSNull.null,
+        @"accessLevel":
+            IOSUsePhotosAuthorizationHasAccessLevel
+                ? @(IOSUsePhotosAuthorizationAccessLevel)
+                : (id)NSNull.null,
+        @"completionSequence":
+            IOSUsePhotosAuthorizationHasCompletion
+                ? @(IOSUsePhotosAuthorizationCompletionSequence)
+                : (id)NSNull.null,
+        @"authorizationStatus":
+            IOSUsePhotosAuthorizationHasCompletion
+                ? @(IOSUsePhotosAuthorizationStatus)
+                : (id)NSNull.null,
+    };
+    return result;
+}
+
+NSDictionary<NSString *, id> *
+IOSUsePlayRuntimePhotosAuthorizationDiagnostics(void) {
+    os_unfair_lock_lock(
+        &IOSUsePhotosAuthorizationLock
+    );
+    NSDictionary<NSString *, id> *result =
+        IOSUsePhotosAuthorizationDiagnosticsLocked();
+    os_unfair_lock_unlock(
+        &IOSUsePhotosAuthorizationLock
+    );
+    return result;
+}
+
+BOOL IOSUsePlayRuntimeTryLinearizePhotosMutation(
+    uint64_t expectedStateVersion,
+    NSDictionary<NSString *, id> **blockingDiagnostics
+) {
+    os_unfair_lock_lock(
+        &IOSUsePhotosAuthorizationLock
+    );
+    uint64_t observedStateVersion =
+        IOSUsePhotosAuthorizationStateVersion;
+    NSUInteger outstandingCount =
+        IOSUsePhotosAuthorizationOutstandingCount;
+    BOOL stateChanged =
+        observedStateVersion != expectedStateVersion;
+    BOOL unchangedAndClear =
+        !stateChanged && outstandingCount == 0;
+    BOOL settledAfterChange =
+        stateChanged && outstandingCount == 0;
+    BOOL allowed = unchangedAndClear || settledAfterChange;
+    NSDictionary<NSString *, id> *capturedBlockingDiagnostics =
+        allowed
+            ? nil
+            : IOSUsePhotosAuthorizationDiagnosticsLocked();
+    os_unfair_lock_unlock(
+        &IOSUsePhotosAuthorizationLock
+    );
+    if (allowed) {
+        // The locked comparison is the mutation's linearization point
+        // relative to PhotoKit Begin/Complete transitions. A later Begin is
+        // ordered after this mutation. A changed version whose outstanding
+        // set is already empty no longer blocks interaction.
+        return YES;
+    }
+    if (blockingDiagnostics != NULL) {
+        *blockingDiagnostics = capturedBlockingDiagnostics;
+    }
+    return NO;
+}
 
 static NSDictionary<NSString *, id> *IOSUseRuntimeFullFrameEvidence(void) {
     return @{
@@ -83,12 +433,18 @@ static void IOSUseConfigureRuntimeSurface(void) {
 }
 
 NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
-    IOSUsePlayRuntimeDiagnosticsScope scope
+    IOSUsePlayRuntimeDiagnosticsScope scope,
+    NSDictionary<NSString *, id> *nativeAlertSnapshot,
+    NSDictionary<NSString *, id> *photosAuthorizationDiagnostics
 ) {
     BOOL includeFullDiagnostics =
         scope == IOSUsePlayRuntimeDiagnosticsScopeFull;
     NSDictionary<NSString *, id> *window = includeFullDiagnostics
-        ? [IOSUsePlayAppKitBridge diagnostics]
+        ? nativeAlertSnapshot == nil
+            ? [IOSUsePlayAppKitBridge diagnostics]
+            : [IOSUsePlayAppKitBridge
+                diagnosticsWithNativeAlertSnapshot:
+                    nativeAlertSnapshot]
         : [IOSUsePlayAppKitBridge readinessDiagnostics];
     NSMutableDictionary<NSString *, id> *diagnostics =
         [@{
@@ -136,6 +492,9 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
             @"safeAreaOverride": @(safeAreaOverride),
             @"fullFrame": IOSUseRuntimeFullFrameEvidence(),
         },
+        @"photosAuthorization":
+            photosAuthorizationDiagnostics ?:
+                IOSUsePlayRuntimePhotosAuthorizationDiagnostics(),
     }];
     return diagnostics;
 }
@@ -146,6 +505,7 @@ void IOSUsePlayRuntimeInitializeAfterStdio(void) {
         // before the first scene exists. Install the fixed identity scale
         // before UIApplicationMain creates UINSSceneViewController.
         [IOSUsePlayAppKitBridge installFixedSceneScale:NULL];
+        IOSUseInstallPhotosAuthorizationHooks();
         IOSUsePlayRuntimeStartSocket();
         NSNotificationCenter *center =
             NSNotificationCenter.defaultCenter;

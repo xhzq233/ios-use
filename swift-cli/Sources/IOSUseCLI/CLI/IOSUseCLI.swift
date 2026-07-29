@@ -48,6 +48,42 @@ public struct IOSUseCLI: Sendable {
             }
         }
 
+        return runPublicInvocation(arguments: arguments)
+    }
+
+    private func runPublicInvocation(arguments: [String]) -> CLIResult {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let collector = CLIInvocationPerformanceCollector(
+            startedAt: startedAt
+        )
+        return CLIInvocationPerformanceContext.$current.withValue(collector) {
+            let wantsJSON = CLIParser.requestsJSON(arguments)
+            let command = performanceCommandName(arguments: arguments)
+            if command == "start" || command == "stop" {
+                collector.suppressAlertRefresh()
+            }
+            let result = executePublicInvocation(arguments: arguments)
+            let snapshot = collector.snapshot()
+            let finalized = MachineOutput.finalizeInvocation(
+                result,
+                expectsMachineOutput: wantsJSON,
+                snapshot: snapshot
+            )
+            let totalElapsedMs =
+                collector.freezeTotalElapsedMs()
+            appendPerformanceLog(
+                command: command,
+                ok: finalized.exitCode == 0,
+                totalElapsedMs: totalElapsedMs,
+                snapshot: snapshot
+            )
+            return finalized
+        }
+    }
+
+    private func executePublicInvocation(
+        arguments: [String]
+    ) -> CLIResult {
         let (machineArguments, wantsJSON) = CLIParser.extractGlobalJSONFlag(arguments)
         if let immediate = CLIHelp.immediateResult(arguments: machineArguments) {
             return immediate
@@ -96,6 +132,76 @@ public struct IOSUseCLI: Sendable {
             }
             return execute(invocation.command, json: invocation.json)
         }
+    }
+
+    private func performanceCommandName(arguments: [String]) -> String {
+        let normalized = CLIParser.extractGlobalJSONFlag(arguments).0
+        guard let first = normalized.first else {
+            return "help"
+        }
+        let command: String
+        switch first {
+        case "-h", "--help", "help":
+            command = "help"
+        case "-V", "--version":
+            command = "version"
+        case "media", "proxy":
+            if normalized.count > 1,
+               !normalized[1].hasPrefix("-") {
+                command = "\(first) \(normalized[1])"
+            } else {
+                command = first
+            }
+        default:
+            command = first
+        }
+        let allowed = CharacterSet.alphanumerics.union(
+            CharacterSet(charactersIn: "._-")
+        )
+        let safe = command.unicodeScalars.map {
+            allowed.contains($0) ? String($0) : "_"
+        }.joined()
+        return String(safe.prefix(80))
+    }
+
+    private func appendPerformanceLog(
+        command: String,
+        ok: Bool,
+        totalElapsedMs: Double,
+        snapshot: CLIInvocationPerformanceSnapshot
+    ) {
+        let fields = [
+            "[cli-performance]",
+            "command=\(command)",
+            "ok=\(ok)",
+            "totalElapsedMs=\(totalElapsedMs)",
+            "runtimeRoundTripElapsedMs="
+                + performanceValue(
+                    snapshot.runtimeRoundTripElapsedMs
+                ),
+            "runtimeRoundTripCount="
+                + String(snapshot.runtimeRoundTripCount),
+            "runtimeRequestElapsedMs="
+                + performanceValue(
+                    snapshot.runtimeRequestElapsedMs
+                ),
+            "runtimeRequestCount="
+                + String(snapshot.runtimeRequestCount),
+            "alertRefreshElapsedMs="
+                + performanceValue(
+                    snapshot.alertRefreshElapsedMs
+                ),
+            "alertRefreshCount="
+                + String(snapshot.alertRefreshCount),
+        ]
+        CLILogService.append(
+            paths: paths,
+            [fields.joined(separator: " ")]
+        )
+    }
+
+    private func performanceValue(_ value: Double?) -> String {
+        value.map { String($0) } ?? "null"
     }
 
     private func execute(_ parsed: ParsedCommand, json: Bool) -> CLIResult {

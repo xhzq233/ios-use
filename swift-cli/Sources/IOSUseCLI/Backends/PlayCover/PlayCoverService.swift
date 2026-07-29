@@ -1314,6 +1314,7 @@ public enum PlayCoverService {
              .requestIDMismatch,
              .sessionIDMismatch,
              .responseIdentityMismatch,
+             .alertRefreshUnsupportedByRuntime,
              .malformedResponse,
              .remoteError:
             return false
@@ -1728,6 +1729,7 @@ public enum PlayCoverService {
                  .requestIDMismatch,
                  .sessionIDMismatch,
                  .responseIdentityMismatch,
+                 .alertRefreshUnsupportedByRuntime,
                  .malformedResponse:
                 return true
             }

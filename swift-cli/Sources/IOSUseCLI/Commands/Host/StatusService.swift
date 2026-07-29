@@ -393,7 +393,12 @@ public enum StatusService {
                 let client =
                     try PlayCoverDriverClient.runtimeClient(
                         for: info,
-                        timeoutSeconds: 0.75
+                        timeoutSeconds: 0.75,
+                        refreshAlertStatus:
+                            CLIInvocationPerformanceContext
+                                .current?
+                                .claimAlertRefresh()
+                                ?? true
                     )
                 payload = try client.diagnostics()
             }

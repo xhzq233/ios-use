@@ -1,4 +1,5 @@
 #import "IOSUsePlayRuntimeSocket.h"
+#import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayRuntimeAutomation.h"
 #import "IOSUsePlayRuntimeDOM.h"
 #import "IOSUsePlayRuntimeScreenshot.h"
@@ -908,7 +909,9 @@ static BOOL IOSUseHostGeometryReady(NSDictionary<NSString *, id> *host) {
 /// turn. Readiness keeps the exact geometry predicate inputs without paying
 /// for status-only inventories; full diagnostics retains the public payload.
 static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
-    IOSUsePlayRuntimeDiagnosticsScope scope
+    IOSUsePlayRuntimeDiagnosticsScope scope,
+    NSDictionary<NSString *, id> *nativeAlertSnapshot,
+    NSDictionary<NSString *, id> *photosAuthorizationDiagnostics
 ) {
     __block NSDictionary<NSString *, id> *geometry;
     __block NSDictionary<NSString *, id> *hooks;
@@ -964,7 +967,11 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
             deviceOrientation ==
                 (UIDeviceOrientation)IOSUsePlayDeviceOrientation &&
             sceneOrientation == UIInterfaceOrientationPortrait;
-        hooks = IOSUsePlayRuntimeHookDiagnostics(scope);
+        hooks = IOSUsePlayRuntimeHookDiagnostics(
+            scope,
+            nativeAlertSnapshot,
+            photosAuthorizationDiagnostics
+        );
         NSDictionary<NSString *, id> *hostGeometry =
             IOSUseHostGeometry(hooks);
         geometry = @{
@@ -1095,6 +1102,279 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
     };
 }
 
+static BOOL IOSUseRuntimeJSONBoolean(id value) {
+    return [value isKindOfClass:NSNumber.class] &&
+        CFGetTypeID((__bridge CFTypeRef)value) ==
+            CFBooleanGetTypeID();
+}
+
+static void IOSUseRuntimeAppendPhotosInteraction(
+    NSMutableArray<NSDictionary<NSString *, id> *> *interactions,
+    NSDictionary<NSString *, id> *photos
+) {
+    NSUInteger outstandingCount =
+        [photos[@"outstandingCount"] unsignedIntegerValue];
+    if (outstandingCount == 0) {
+        return;
+    }
+    NSDictionary<NSString *, id> *oldestRequest =
+        [photos[@"pendingRequests"] isKindOfClass:NSArray.class]
+            ? [photos[@"pendingRequests"] firstObject]
+            : nil;
+    [interactions addObject:@{
+        @"type": @"pendingExternalInteraction",
+        @"kind": @"photosAuthorization",
+        @"pending": @YES,
+        @"visibility": @"unknown",
+        @"actionableByIOSUse": @NO,
+        @"outstandingCount": @(outstandingCount),
+        @"sequence":
+            oldestRequest[@"sequence"] ?: NSNull.null,
+        @"api": oldestRequest[@"api"] ?: NSNull.null,
+        @"accessLevel":
+            oldestRequest[@"accessLevel"] ?: NSNull.null,
+        @"authorizationStatus":
+            photos[@"authorizationStatus"] ?: NSNull.null,
+        @"ageMicroseconds":
+            oldestRequest[@"ageMicroseconds"] ?: NSNull.null,
+        @"resolution": @"manual_or_computer_use",
+    }];
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseRuntimeInteractionStateByReplacingPhotos(
+    NSDictionary<NSString *, id> *state,
+    NSDictionary<NSString *, id> *photos
+) {
+    NSMutableArray<NSDictionary<NSString *, id> *> *interactions =
+        [NSMutableArray array];
+    for (NSDictionary<NSString *, id> *interaction
+         in state[@"interactions"]) {
+        BOOL photosInteraction =
+            [interaction[@"type"]
+                isEqualToString:@"pendingExternalInteraction"] &&
+            [interaction[@"kind"]
+                isEqualToString:@"photosAuthorization"];
+        if (!photosInteraction) {
+            [interactions addObject:interaction];
+        }
+    }
+    IOSUseRuntimeAppendPhotosInteraction(interactions, photos);
+    return @{
+        @"schemaVersion": @1,
+        @"refreshComplete": @YES,
+        @"refreshError": NSNull.null,
+        @"blocking":
+            interactions.count > 0 ? @YES : @NO,
+        @"interactions": interactions,
+    };
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseRuntimeInteractionSnapshotOnMainThread(
+    uint64_t *photosStateVersion,
+    NSDictionary<NSString *, id> **capturedNativeAlert,
+    NSDictionary<NSString *, id> **capturedPhotosAuthorization
+) {
+    NSCParameterAssert(NSThread.isMainThread);
+    NSDictionary<NSString *, id> *nativeAlert =
+        [IOSUsePlayAppKitBridge nativeAlertSnapshot];
+    NSDictionary<NSString *, id> *uikitAlert =
+        IOSUsePlayRuntimeUIKitAlertSnapshot();
+
+    NSMutableArray<NSDictionary<NSString *, id> *> *interactions =
+        [NSMutableArray array];
+    if ([nativeAlert[@"candidateVisible"] boolValue]) {
+        [interactions addObject:@{
+            @"type": @"inProcessAlert",
+            @"owner": @"targetApp",
+            @"visible": @YES,
+            @"actionableByIOSUse":
+                [nativeAlert[@"actionableByIOSUse"] boolValue]
+                    ? @YES
+                    : @NO,
+            @"source":
+                nativeAlert[@"source"] ?: @"appkitNativeUnresolved",
+            @"text": nativeAlert[@"text"] ?: @"",
+            @"actions": nativeAlert[@"actions"] ?: @[],
+            @"windowClass":
+                nativeAlert[@"windowClass"] ?: NSNull.null,
+            @"windowNumber":
+                nativeAlert[@"windowNumber"] ?: NSNull.null,
+            @"frame": nativeAlert[@"frame"] ?: NSNull.null,
+            @"suggestedCommand":
+                @"ios-use dismissAlert --label <exact-label>",
+        }];
+    } else if ([uikitAlert[@"visible"] boolValue]) {
+        [interactions addObject:@{
+            @"type": @"inProcessAlert",
+            @"owner": @"targetApp",
+            @"visible": @YES,
+            @"actionableByIOSUse":
+                [uikitAlert[@"actionableByIOSUse"] boolValue]
+                    ? @YES
+                    : @NO,
+            @"source": uikitAlert[@"source"] ?: @"uikit",
+            @"text": uikitAlert[@"text"] ?: @"",
+            @"actions": uikitAlert[@"actions"] ?: @[],
+            @"controllerClass":
+                uikitAlert[@"controllerClass"] ?: NSNull.null,
+            @"suggestedCommand":
+                @"ios-use dismissAlert --label <exact-label>",
+        }];
+    }
+
+    NSDictionary<NSString *, id> *photos =
+        IOSUsePlayRuntimePhotosAuthorizationDiagnostics();
+    if (capturedNativeAlert != NULL) {
+        *capturedNativeAlert = nativeAlert;
+    }
+    if (capturedPhotosAuthorization != NULL) {
+        *capturedPhotosAuthorization = photos;
+    }
+    if (photosStateVersion != NULL) {
+        *photosStateVersion =
+            [photos[@"stateVersion"] unsignedLongLongValue];
+    }
+    IOSUseRuntimeAppendPhotosInteraction(interactions, photos);
+
+    return @{
+        @"schemaVersion": @1,
+        @"refreshComplete": @YES,
+        @"refreshError": NSNull.null,
+        @"blocking":
+            interactions.count > 0 ? @YES : @NO,
+        @"interactions": interactions,
+    };
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseRuntimeInteractionGateError(
+    NSString *code,
+    NSString *message,
+    NSArray<NSString *> *suggestions,
+    NSDictionary<NSString *, id> *interactionState
+) {
+    NSMutableDictionary<NSString *, id> *details =
+        [IOSUseErrorObject(
+            code,
+            message,
+            @"interaction",
+            @"precondition",
+            NO
+        )[@"details"] mutableCopy];
+    details[@"suggestions"] = suggestions ?: @[];
+    NSArray<NSDictionary<NSString *, id> *> *interactions =
+        interactionState[@"interactions"];
+    NSDictionary<NSString *, id> *alert = nil;
+    for (NSDictionary<NSString *, id> *interaction in interactions) {
+        if ([interaction[@"type"]
+                isEqualToString:@"inProcessAlert"]) {
+            alert = interaction;
+            break;
+        }
+    }
+    if (alert != nil) {
+        details[@"alert"] = alert;
+    }
+    return @{
+        @"code": code,
+        @"message": message,
+        @"details": details,
+    };
+}
+
+static BOOL IOSUseRuntimeIsAtomicMutationCommand(
+    NSString *command
+) {
+    return [command isEqualToString:@"tap"] ||
+        [command isEqualToString:@"longPress"] ||
+        [command isEqualToString:@"swipe"] ||
+        [command isEqualToString:@"input"] ||
+        [command isEqualToString:@"open"];
+}
+
+static NSDictionary<NSString *, id> * _Nullable
+IOSUseRuntimeGateCommand(
+    NSString *command,
+    NSDictionary<NSString *, id> *interactionState
+) {
+    if (![interactionState[@"blocking"] boolValue]) {
+        return nil;
+    }
+    BOOL hasInProcessAlert = NO;
+    BOOL hasPendingExternalInteraction = NO;
+    for (NSDictionary<NSString *, id> *interaction
+         in interactionState[@"interactions"]) {
+        hasInProcessAlert |= [interaction[@"type"]
+            isEqualToString:@"inProcessAlert"];
+        hasPendingExternalInteraction |= [interaction[@"type"]
+            isEqualToString:@"pendingExternalInteraction"];
+    }
+    BOOL dismissCommand =
+        [command isEqualToString:@"dismissAlert"] ||
+        [command isEqualToString:@"dismissAlertByLabel"];
+    if (dismissCommand) {
+        if (hasInProcessAlert) {
+            return nil;
+        }
+        if (hasPendingExternalInteraction) {
+            return IOSUseRuntimeInteractionGateError(
+                @"photos_permission_interaction_required",
+                @"a PhotoKit authorization request is outstanding and may require external macOS interaction; ios-use does not inspect or click process-external windows",
+                @[
+                    @"Approve or deny the macOS prompt manually or with Computer Use, then retry the command.",
+                ],
+                interactionState
+            );
+        }
+    }
+
+    if (!IOSUseRuntimeIsAtomicMutationCommand(command)) {
+        return nil;
+    }
+    if (hasInProcessAlert) {
+        return IOSUseRuntimeInteractionGateError(
+            @"preexisting_alert",
+            @"a visible App-owned alert blocks this mutation; use dismissAlert with an explicit selection",
+            @[
+                @"Run ios-use dismissAlert with --label, --index, --only-button, or --primary.",
+            ],
+            interactionState
+        );
+    }
+    return IOSUseRuntimeInteractionGateError(
+        @"photos_permission_interaction_required",
+        @"a PhotoKit authorization request is outstanding and may require external macOS interaction; the mutation was not dispatched",
+        @[
+            @"Approve or deny the macOS prompt manually or with Computer Use, then retry the command.",
+        ],
+        interactionState
+    );
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseRuntimeResponseWithMetadata(
+    NSDictionary<NSString *, id> *response,
+    NSDictionary<NSString *, id> * _Nullable interactionState,
+    NSNumber * _Nullable alertRefreshElapsedMs,
+    NSTimeInterval requestStarted
+) {
+    NSMutableDictionary<NSString *, id> *result =
+        [response mutableCopy];
+    result[@"interactionState"] =
+        interactionState ?: NSNull.null;
+    result[@"performance"] = @{
+        @"requestElapsedMs": @(
+            (NSProcessInfo.processInfo.systemUptime -
+                requestStarted) * 1000.0
+        ),
+        @"alertRefreshElapsedMs":
+            alertRefreshElapsedMs ?: NSNull.null,
+    };
+    return result;
+}
+
 static NSDictionary<NSString *, id> *IOSUseSuccessEnvelope(
     NSString *requestID,
     NSDictionary<NSString *, id> *payload
@@ -1174,10 +1454,18 @@ static NSDictionary<NSString *, id> *IOSUseHandleScreenshot(
     );
 }
 
-static NSDictionary<NSString *, id> *IOSUseHandleRequest(
+static NSDictionary<NSString *, id> *IOSUseHandleRequestBody(
     id object,
-    int connection
+    int connection,
+    NSDictionary<NSString *, id> * _Nullable *interactionState,
+    NSNumber * _Nullable *alertRefreshElapsedMs
 ) {
+    if (interactionState != NULL) {
+        *interactionState = nil;
+    }
+    if (alertRefreshElapsedMs != NULL) {
+        *alertRefreshElapsedMs = nil;
+    }
     if (![object isKindOfClass:NSDictionary.class]) {
         return IOSUseBasicErrorEnvelope(
             @"",
@@ -1192,16 +1480,22 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     NSString *requestID = IOSUseIsNonemptyString(request[@"requestId"])
         ? request[@"requestId"]
         : @"";
-    NSSet<NSString *> *expectedKeys = [NSSet setWithArray:@[
+    NSSet<NSString *> *requiredKeys = [NSSet setWithArray:@[
         @"schemaVersion",
         @"requestId",
         @"sessionID",
         @"command",
         @"arguments",
     ]];
-    if (request.count != expectedKeys.count ||
-        ![[NSSet setWithArray:request.allKeys]
-            isEqualToSet:expectedKeys] ||
+    NSMutableSet<NSString *> *actualKeys =
+        [NSMutableSet setWithArray:request.allKeys];
+    [actualKeys removeObject:@"refreshAlertStatus"];
+    id refreshAlertStatus = request[@"refreshAlertStatus"];
+    if (![actualKeys isEqualToSet:requiredKeys] ||
+        (request.count != requiredKeys.count &&
+         request.count != requiredKeys.count + 1) ||
+        (refreshAlertStatus != nil &&
+         !IOSUseRuntimeJSONBoolean(refreshAlertStatus)) ||
         !IOSUseIsSchemaVersionThree(request[@"schemaVersion"]) ||
         requestID.length == 0 ||
         requestID.length > 256 ||
@@ -1230,6 +1524,245 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     }
     NSString *command = request[@"command"];
     NSDictionary<NSString *, id> *arguments = request[@"arguments"];
+    __block NSDictionary<NSString *, id>
+        *preexecutedAutomationResult = nil;
+    __block NSDictionary<NSString *, id>
+        *preexecutedAutomationError = nil;
+    __block uint64_t freshPhotosStateVersion = 0;
+    __block BOOL photosMutationLinearized = NO;
+    __block NSDictionary<NSString *, id>
+        *freshNativeAlertSnapshot = nil;
+    __block NSDictionary<NSString *, id>
+        *freshPhotosAuthorizationDiagnostics = nil;
+    BOOL preexecuteAutomation =
+        [refreshAlertStatus boolValue] &&
+        IOSUseRuntimeIsAtomicMutationCommand(command);
+    if ([refreshAlertStatus boolValue]) {
+        NSTimeInterval refreshStarted =
+            NSProcessInfo.processInfo.systemUptime;
+        __block NSDictionary<NSString *, id>
+            *freshInteractionState = nil;
+        __block NSDictionary<NSString *, id> *gateError = nil;
+        __block NSNumber *measuredRefreshElapsedMs = nil;
+        NSLock *executionLock = [NSLock new];
+        __block BOOL executionCancelled = NO;
+        __block BOOL automationStarted = NO;
+        void (^refreshAndMaybeExecute)(void) = ^{
+            [executionLock lock];
+            BOOL shouldRefresh = !executionCancelled;
+            [executionLock unlock];
+            if (!shouldRefresh) {
+                return;
+            }
+            uint64_t capturedPhotosStateVersion = 0;
+            NSDictionary<NSString *, id> *capturedNativeAlert = nil;
+            NSDictionary<NSString *, id>
+                *capturedPhotosAuthorization = nil;
+            NSDictionary<NSString *, id> *capturedState =
+                IOSUseRuntimeInteractionSnapshotOnMainThread(
+                    &capturedPhotosStateVersion,
+                    &capturedNativeAlert,
+                    &capturedPhotosAuthorization
+                );
+            NSDictionary<NSString *, id> *capturedGateError =
+                IOSUseRuntimeGateCommand(
+                    command,
+                    capturedState
+                );
+            BOOL capturedPhotosMutationLinearized = NO;
+            if (capturedGateError == nil &&
+                preexecuteAutomation) {
+                NSDictionary<NSString *, id> *blockingPhotos = nil;
+                capturedPhotosMutationLinearized =
+                    IOSUsePlayRuntimeTryLinearizePhotosMutation(
+                        capturedPhotosStateVersion,
+                        &blockingPhotos
+                    );
+                if (!capturedPhotosMutationLinearized) {
+                    capturedState =
+                        IOSUseRuntimeInteractionStateByReplacingPhotos(
+                            capturedState,
+                            blockingPhotos ?: @{}
+                        );
+                    capturedGateError =
+                        IOSUseRuntimeGateCommand(
+                            command,
+                            capturedState
+                        );
+                }
+            }
+            NSNumber *capturedElapsedMs = @(
+                (NSProcessInfo.processInfo.systemUptime -
+                    refreshStarted) * 1000.0
+            );
+            [executionLock lock];
+            freshInteractionState = capturedState;
+            measuredRefreshElapsedMs = capturedElapsedMs;
+            gateError = capturedGateError;
+            freshPhotosStateVersion =
+                capturedPhotosStateVersion;
+            freshNativeAlertSnapshot =
+                capturedNativeAlert;
+            freshPhotosAuthorizationDiagnostics =
+                capturedPhotosAuthorization;
+            photosMutationLinearized =
+                capturedPhotosMutationLinearized;
+            BOOL shouldExecute =
+                !executionCancelled &&
+                capturedGateError == nil &&
+                preexecuteAutomation &&
+                capturedPhotosMutationLinearized;
+            if (shouldExecute) {
+                automationStarted = YES;
+            }
+            [executionLock unlock];
+            if (shouldExecute) {
+                NSDictionary<NSString *, id> *localError = nil;
+                NSDictionary<NSString *, id> *localResult =
+                    IOSUsePlayRuntimeAutomationCommand(
+                        command,
+                        arguments,
+                        &localError
+                    );
+                [executionLock lock];
+                preexecutedAutomationResult = localResult;
+                preexecutedAutomationError = localError;
+                [executionLock unlock];
+            }
+        };
+        BOOL mainThreadTimedOut = NO;
+        if (NSThread.isMainThread) {
+            refreshAndMaybeExecute();
+        } else {
+            dispatch_semaphore_t completion =
+                dispatch_semaphore_create(0);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                refreshAndMaybeExecute();
+                dispatch_semaphore_signal(completion);
+            });
+            dispatch_time_t deadline = dispatch_time(
+                DISPATCH_TIME_NOW,
+                (int64_t)(
+                    IOSUsePlayRuntimeAutomationMainThreadTimeout()
+                    * NSEC_PER_SEC
+                )
+            );
+            mainThreadTimedOut =
+                dispatch_semaphore_wait(completion, deadline) != 0;
+        }
+        if (mainThreadTimedOut) {
+            [executionLock lock];
+            executionCancelled = YES;
+            BOOL mutationMayHaveApplied = automationStarted;
+            NSDictionary<NSString *, id> *capturedState =
+                freshInteractionState;
+            NSNumber *capturedElapsedMs =
+                measuredRefreshElapsedMs;
+            [executionLock unlock];
+            if (capturedState == nil) {
+                capturedState = @{
+                    @"schemaVersion": @1,
+                    @"refreshComplete": @NO,
+                    @"refreshError": @"main_thread_timeout",
+                    @"blocking": @NO,
+                    @"interactions": @[],
+                };
+            }
+            if (capturedElapsedMs == nil) {
+                capturedElapsedMs = @(
+                    (NSProcessInfo.processInfo.systemUptime -
+                        refreshStarted) * 1000.0
+                );
+            }
+            if (interactionState != NULL) {
+                *interactionState = capturedState;
+            }
+            if (alertRefreshElapsedMs != NULL) {
+                *alertRefreshElapsedMs = capturedElapsedMs;
+            }
+            return IOSUseErrorEnvelope(
+                requestID,
+                IOSUseErrorObject(
+                    @"main_thread_timeout",
+                    mutationMayHaveApplied
+                        ? @"Runtime main-thread automation exceeded its deadline after dispatch began"
+                        : @"Runtime main thread did not complete the alert refresh before its deadline",
+                    mutationMayHaveApplied
+                        ? @"action"
+                        : @"timeout",
+                    mutationMayHaveApplied
+                        ? @"dispatch"
+                        : @"alert_refresh",
+                    YES
+                )
+            );
+        }
+        if (interactionState != NULL) {
+            *interactionState = freshInteractionState;
+        }
+        if (alertRefreshElapsedMs != NULL) {
+            *alertRefreshElapsedMs =
+                measuredRefreshElapsedMs;
+        }
+        if (gateError != nil) {
+            return IOSUseErrorEnvelope(requestID, gateError);
+        }
+        if (IOSUseRuntimeIsAtomicMutationCommand(command) &&
+            !photosMutationLinearized) {
+            NSDictionary<NSString *, id> *blockingPhotos = nil;
+            photosMutationLinearized =
+                IOSUsePlayRuntimeTryLinearizePhotosMutation(
+                    freshPhotosStateVersion,
+                    &blockingPhotos
+                );
+            if (!photosMutationLinearized) {
+                freshInteractionState =
+                    IOSUseRuntimeInteractionStateByReplacingPhotos(
+                        freshInteractionState,
+                        blockingPhotos ?: @{}
+                    );
+                measuredRefreshElapsedMs = @(
+                    (NSProcessInfo.processInfo.systemUptime -
+                        refreshStarted) * 1000.0
+                );
+                if (interactionState != NULL) {
+                    *interactionState =
+                        freshInteractionState;
+                }
+                if (alertRefreshElapsedMs != NULL) {
+                    *alertRefreshElapsedMs =
+                        measuredRefreshElapsedMs;
+                }
+                return IOSUseErrorEnvelope(
+                    requestID,
+                    IOSUseRuntimeGateCommand(
+                        command,
+                        freshInteractionState
+                    ) ?: IOSUseErrorObject(
+                        @"photos_permission_interaction_required",
+                        @"a PhotoKit authorization request became outstanding before mutation dispatch",
+                        @"interaction",
+                        @"precondition",
+                        NO
+                    )
+                );
+            }
+        }
+        if (preexecuteAutomation &&
+            preexecutedAutomationResult == nil) {
+            return IOSUseErrorEnvelope(
+                requestID,
+                preexecutedAutomationError ?:
+                    IOSUseErrorObject(
+                        @"automation_failed",
+                        @"Runtime automation failed",
+                        @"interaction",
+                        @"dispatch",
+                        YES
+                    )
+            );
+        }
+    }
     NSMutableDictionary<NSString *, id> *payload =
         [NSMutableDictionary dictionary];
     if ([command isEqualToString:@"hello"]) {
@@ -1245,7 +1778,9 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
         }
         NSDictionary<NSString *, id> *snapshot =
             IOSUseRuntimeSnapshot(
-                IOSUsePlayRuntimeDiagnosticsScopeReadiness
+                IOSUsePlayRuntimeDiagnosticsScopeReadiness,
+                nil,
+                nil
             );
         payload = [snapshot[@"identity"] mutableCopy];
         payload[@"observed"] = snapshot[@"observed"];
@@ -1279,7 +1814,9 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
         }
         NSDictionary<NSString *, id> *snapshot =
             IOSUseRuntimeSnapshot(
-                IOSUsePlayRuntimeDiagnosticsScopeFull
+                IOSUsePlayRuntimeDiagnosticsScopeFull,
+                freshNativeAlertSnapshot,
+                freshPhotosAuthorizationDiagnostics
             );
         payload = [snapshot[@"identity"] mutableCopy];
         payload[@"diagnostics"] = @{
@@ -1351,13 +1888,16 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
             @"open",
         ] containsObject:command]
     ) {
-        NSDictionary<NSString *, id> *commandError = nil;
+        NSDictionary<NSString *, id> *commandError =
+            preexecutedAutomationError;
         NSDictionary<NSString *, id> *result =
-            IOSUsePlayRuntimeAutomationCommand(
-                command,
-                arguments,
-                &commandError
-            );
+            preexecuteAutomation
+                ? preexecutedAutomationResult
+                : IOSUsePlayRuntimeAutomationCommand(
+                    command,
+                    arguments,
+                    &commandError
+                );
         if (result == nil) {
             return IOSUseErrorEnvelope(
                 requestID,
@@ -1384,6 +1924,29 @@ static NSDictionary<NSString *, id> *IOSUseHandleRequest(
     return IOSUseSuccessEnvelope(requestID, payload);
 }
 
+static NSDictionary<NSString *, id> *IOSUseHandleRequest(
+    id object,
+    int connection
+) {
+    NSTimeInterval requestStarted =
+        NSProcessInfo.processInfo.systemUptime;
+    NSDictionary<NSString *, id> *interactionState = nil;
+    NSNumber *alertRefreshElapsedMs = nil;
+    NSDictionary<NSString *, id> *response =
+        IOSUseHandleRequestBody(
+            object,
+            connection,
+            &interactionState,
+            &alertRefreshElapsedMs
+        );
+    return IOSUseRuntimeResponseWithMetadata(
+        response,
+        interactionState,
+        alertRefreshElapsedMs,
+        requestStarted
+    );
+}
+
 static void IOSUseWriteResponse(
     int connection,
     NSDictionary<NSString *, id> *response
@@ -1397,7 +1960,8 @@ static void IOSUseWriteResponse(
         NSString *requestID = IOSUseIsNonemptyString(
             response[@"requestId"]
         ) ? response[@"requestId"] : @"";
-        response = IOSUseBasicErrorEnvelope(
+        NSMutableDictionary<NSString *, id> *fallback =
+            [IOSUseBasicErrorEnvelope(
             requestID,
             data == nil ? @"internal_failure" : @"response_too_large",
             data == nil
@@ -1406,7 +1970,12 @@ static void IOSUseWriteResponse(
             @"internal",
             @"encoding",
             NO
-        );
+        ) mutableCopy];
+        fallback[@"interactionState"] =
+            response[@"interactionState"] ?: NSNull.null;
+        fallback[@"performance"] =
+            response[@"performance"] ?: NSNull.null;
+        response = fallback;
         data = [NSJSONSerialization
             dataWithJSONObject:response
                        options:0

@@ -301,7 +301,10 @@ public enum OSLogService {
     ) throws -> String? {
         let client = try PlayCoverDriverClient.runtimeClient(
             for: session,
-            timeoutSeconds: 0.75
+            timeoutSeconds: 0.75,
+            refreshAlertStatus:
+                CLIInvocationPerformanceContext.current?
+                    .claimAlertRefresh() ?? true
         )
         let response = try client.diagnostics()
         guard !response.diagnostics.isEmpty else {

@@ -1,7 +1,7 @@
 import Foundation
 import IOSUseProtocol
 
-enum MachineValue: Encodable, Equatable {
+enum MachineValue: Encodable, Equatable, Sendable {
     case object([String: MachineValue])
     case array([MachineValue])
     case string(String)
@@ -38,6 +38,156 @@ protocol MachineErrorConvertible {
     var machineError: MachineError { get }
 }
 
+struct CLIInvocationPerformanceSnapshot: Equatable, Sendable {
+    let runtimeRoundTripElapsedMs: Double?
+    let runtimeRoundTripCount: Int
+    let runtimeRequestElapsedMs: Double?
+    let runtimeRequestCount: Int
+    let alertRefreshElapsedMs: Double?
+    let alertRefreshCount: Int
+    let interactionState: MachineValue?
+    let warnings: [String]
+}
+
+final class CLIInvocationPerformanceCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private let startedAt: TimeInterval
+    private let now: @Sendable () -> TimeInterval
+    private var runtimeRoundTripElapsedMs = 0.0
+    private var runtimeRoundTripCount = 0
+    private var runtimeRequestElapsedMs = 0.0
+    private var runtimeRequestCount = 0
+    private var alertRefreshElapsedMs = 0.0
+    private var alertRefreshCount = 0
+    private var alertRefreshClaimed = false
+    private var frozenTotalElapsedMs: Double?
+    private var interactionState: MachineValue?
+    private var warnings: [String] = []
+
+    init(
+        startedAt: TimeInterval =
+            ProcessInfo.processInfo.systemUptime,
+        now: @escaping @Sendable () -> TimeInterval = {
+            ProcessInfo.processInfo.systemUptime
+        }
+    ) {
+        self.startedAt = startedAt
+        self.now = now
+    }
+
+    func claimAlertRefresh() -> Bool {
+        withLock {
+            guard !alertRefreshClaimed else {
+                return false
+            }
+            alertRefreshClaimed = true
+            return true
+        }
+    }
+
+    func suppressAlertRefresh() {
+        withLock {
+            alertRefreshClaimed = true
+        }
+    }
+
+    func recordRuntimeRoundTrip(elapsedMs: Double) {
+        guard elapsedMs.isFinite, elapsedMs >= 0 else {
+            return
+        }
+        withLock {
+            runtimeRoundTripElapsedMs += elapsedMs
+            runtimeRoundTripCount += 1
+        }
+    }
+
+    func recordRuntimeRequest(elapsedMs: Double) {
+        guard elapsedMs.isFinite, elapsedMs >= 0 else {
+            return
+        }
+        withLock {
+            runtimeRequestElapsedMs += elapsedMs
+            runtimeRequestCount += 1
+        }
+    }
+
+    func recordAlertRefresh(elapsedMs: Double) {
+        guard elapsedMs.isFinite, elapsedMs >= 0 else {
+            return
+        }
+        withLock {
+            alertRefreshElapsedMs += elapsedMs
+            alertRefreshCount += 1
+        }
+    }
+
+    func recordWarning(_ warning: String) {
+        guard !warning.isEmpty else {
+            return
+        }
+        withLock {
+            if !warnings.contains(warning) {
+                warnings.append(warning)
+            }
+        }
+    }
+
+    func recordInteractionState(_ value: MachineValue) {
+        withLock {
+            interactionState = value
+        }
+    }
+
+    func snapshot() -> CLIInvocationPerformanceSnapshot {
+        withLock {
+            CLIInvocationPerformanceSnapshot(
+                runtimeRoundTripElapsedMs:
+                    runtimeRoundTripCount > 0
+                        ? runtimeRoundTripElapsedMs
+                        : nil,
+                runtimeRoundTripCount: runtimeRoundTripCount,
+                runtimeRequestElapsedMs:
+                    runtimeRequestCount > 0
+                        ? runtimeRequestElapsedMs
+                        : nil,
+                runtimeRequestCount: runtimeRequestCount,
+                alertRefreshElapsedMs:
+                    alertRefreshCount > 0
+                        ? alertRefreshElapsedMs
+                        : nil,
+                alertRefreshCount: alertRefreshCount,
+                interactionState: interactionState,
+                warnings: warnings
+            )
+        }
+    }
+
+    func freezeTotalElapsedMs() -> Double {
+        withLock {
+            if let frozenTotalElapsedMs {
+                return frozenTotalElapsedMs
+            }
+            let elapsed =
+                (now() - startedAt) * 1_000
+            let normalized =
+                elapsed.isFinite ? max(0, elapsed) : 0
+            frozenTotalElapsedMs = normalized
+            return normalized
+        }
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+enum CLIInvocationPerformanceContext {
+    @TaskLocal
+    static var current: CLIInvocationPerformanceCollector?
+}
+
 enum MachineOutput {
     private struct SuccessEnvelope: Encodable {
         let schemaVersion = 1
@@ -45,6 +195,8 @@ enum MachineOutput {
         let command: String
         let data: MachineValue
         let warnings: [String]
+        let performance: MachineValue?
+        let interaction: MachineValue?
     }
 
     private struct FailureEnvelope: Encodable {
@@ -55,6 +207,14 @@ enum MachineOutput {
         let warnings: [String]
         let error: MachineError
         let evidenceManifest: String?
+        let performance: MachineValue?
+        let interaction: MachineValue?
+    }
+
+    private struct InvocationMetadata {
+        let warnings: [String]
+        let performance: MachineValue?
+        let interaction: MachineValue?
     }
 
     static func success(
@@ -62,8 +222,17 @@ enum MachineOutput {
         data: MachineValue = .object([:]),
         warnings: [String] = []
     ) -> CLIResult {
-        render(
-            SuccessEnvelope(command: command, data: data, warnings: warnings),
+        let metadata = invocationMetadata(
+            baseWarnings: warnings
+        )
+        return render(
+            SuccessEnvelope(
+                command: command,
+                data: data,
+                warnings: metadata.warnings,
+                performance: metadata.performance,
+                interaction: metadata.interaction
+            ),
             exitCode: 0,
             toStderr: false
         )
@@ -88,17 +257,33 @@ enum MachineOutput {
             fields["playcoverLogPath"] = .string(logPath)
             failureData = .object(fields)
         }
+        let metadata = invocationMetadata(
+            baseWarnings: warnings
+        )
         return render(
             FailureEnvelope(
                 command: command,
                 data: failureData,
-                warnings: warnings,
+                warnings: metadata.warnings,
                 error: classified,
-                evidenceManifest: evidenceManifest
+                evidenceManifest: evidenceManifest,
+                performance: metadata.performance,
+                interaction: metadata.interaction
             ),
             exitCode: exitCode,
             toStderr: true
         )
+    }
+
+    static func finalizeInvocation(
+        _ result: CLIResult,
+        expectsMachineOutput: Bool,
+        snapshot: CLIInvocationPerformanceSnapshot
+    ) -> CLIResult {
+        if expectsMachineOutput {
+            return result
+        }
+        return appendHumanWarnings(snapshot.warnings, to: result)
     }
 
     static func classify(_ error: Error) -> MachineError {
@@ -422,6 +607,73 @@ enum MachineOutput {
             return cleanupError.logPath
         }
         return nil
+    }
+
+    private static func invocationMetadata(
+        baseWarnings: [String]
+    ) -> InvocationMetadata {
+        guard let collector =
+                CLIInvocationPerformanceContext.current else {
+            return InvocationMetadata(
+                warnings: baseWarnings,
+                performance: nil,
+                interaction: nil
+            )
+        }
+        let snapshot = collector.snapshot()
+        var warnings = baseWarnings
+        for warning in snapshot.warnings
+            where !warnings.contains(warning) {
+            warnings.append(warning)
+        }
+        let performance: MachineValue = .object([
+            "totalElapsedMs":
+                .double(collector.freezeTotalElapsedMs()),
+            "runtimeRoundTripElapsedMs":
+                snapshot.runtimeRoundTripElapsedMs
+                    .map(MachineValue.double) ?? .null,
+            "runtimeRoundTripCount":
+                .integer(snapshot.runtimeRoundTripCount),
+            "runtimeRequestElapsedMs":
+                snapshot.runtimeRequestElapsedMs
+                    .map(MachineValue.double) ?? .null,
+            "runtimeRequestCount":
+                .integer(snapshot.runtimeRequestCount),
+            "alertRefreshElapsedMs":
+                snapshot.alertRefreshElapsedMs
+                    .map(MachineValue.double) ?? .null,
+            "alertRefreshCount":
+                .integer(snapshot.alertRefreshCount),
+        ])
+        return InvocationMetadata(
+            warnings: warnings,
+            performance: performance,
+            interaction: snapshot.interactionState
+        )
+    }
+
+    private static func appendHumanWarnings(
+        _ warnings: [String],
+        to result: CLIResult
+    ) -> CLIResult {
+        guard !warnings.isEmpty else {
+            return result
+        }
+        var stderr = result.stderr
+        if !stderr.isEmpty, !stderr.hasSuffix("\n") {
+            stderr += "\n"
+        }
+        for warning in warnings {
+            let line = warning
+                .split(whereSeparator: \.isNewline)
+                .joined(separator: " ")
+            stderr += "warning: \(line)\n"
+        }
+        return CLIResult(
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: stderr
+        )
     }
 
     private static func render<T: Encodable>(_ value: T, exitCode: Int32, toStderr: Bool) -> CLIResult {

@@ -20,6 +20,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)setMenuBarVisible:(BOOL)visible;
 + (BOOL)hasVisibleNativeAlertCandidate;
 + (BOOL)hasVisibleNativeAlert;
++ (NSDictionary<NSString *, id> *)nativeAlertSnapshot;
 + (CGRect)nativeAlertFrame;
 + (NSString *)nativeAlertText;
 + (NSArray<NSDictionary<NSString *, id> *> *)nativeAlertActions;
@@ -38,6 +39,8 @@ NS_ASSUME_NONNULL_BEGIN
         (NSError * _Nullable * _Nullable)error;
 + (NSDictionary<NSString *, id> *)readinessDiagnostics;
 + (NSDictionary<NSString *, id> *)diagnostics;
++ (NSDictionary<NSString *, id> *)diagnosticsWithNativeAlertSnapshot:
+    (NSDictionary<NSString *, id> *)nativeAlertSnapshot;
 
 @end
 

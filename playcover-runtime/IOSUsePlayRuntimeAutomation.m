@@ -12,6 +12,10 @@
 
 static const NSTimeInterval IOSUseAutomationMainTimeout = 40.0;
 
+NSTimeInterval IOSUsePlayRuntimeAutomationMainThreadTimeout(void) {
+    return IOSUseAutomationMainTimeout;
+}
+
 typedef BOOL (*IOSUseAutomationSendBool)(id, SEL);
 typedef unsigned long long (*IOSUseAutomationSendTraits)(id, SEL);
 typedef CGPoint (*IOSUseAutomationSendPoint)(id, SEL);
@@ -67,6 +71,10 @@ static BOOL IOSUseAutomationDOMHasVisibleUIKitAlertMirror(
     NSDictionary<NSString *, id> *dom
 );
 static BOOL IOSUseAutomationRectHasArea(CGRect rect);
+static NSArray<NSDictionary<NSString *, id> *> *
+IOSUseAutomationUIKitAlertCandidates(
+    UIAlertController *alert
+);
 
 static BOOL IOSUseAutomationIsNumber(id value) {
     return [value isKindOfClass:NSNumber.class] &&
@@ -129,6 +137,34 @@ static NSDictionary<NSString *, id> *IOSUseAutomationError(
         candidates,
         candidates.count
     );
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseAutomationPostconditionError(
+    NSDictionary<NSString *, id> *error
+) {
+    if (error == nil) {
+        return IOSUseAutomationError(
+            @"postcondition_failed",
+            @"automation delivery completed without a verifiable postcondition",
+            @"postcondition",
+            @"postcondition",
+            YES,
+            nil,
+            @[]
+        );
+    }
+    NSMutableDictionary<NSString *, id> *normalized =
+        [error mutableCopy];
+    NSMutableDictionary<NSString *, id> *details =
+        [error[@"details"] mutableCopy];
+    if (details == nil) {
+        details = [NSMutableDictionary dictionary];
+    }
+    details[@"category"] = @"postcondition";
+    details[@"phase"] = @"postcondition";
+    normalized[@"details"] = details;
+    return normalized;
 }
 
 static NSDictionary<NSString *, id> *
@@ -2111,7 +2147,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                                 IOSUseAutomationError(
                                     @"native_alert_action_failed",
                                     @"native alert target/action did not close the panel",
-                                    @"interaction",
+                                    @"postcondition",
                                     @"postcondition",
                                     YES,
                                     target,
@@ -2132,7 +2168,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationTouchCommand(
                                 IOSUseAutomationError(
                                     @"native_alert_action_failed",
                                     @"native alert UIKit mirror did not settle",
-                                    @"interaction",
+                                    @"postcondition",
                                     @"postcondition",
                                     YES,
                                     target,
@@ -2734,7 +2770,7 @@ IOSUseAutomationInputPostconditionError(
         IOSUseAutomationError(
             @"input_not_applied",
             @"text input did not produce the exact expected value",
-            @"interaction",
+            @"postcondition",
             @"postcondition",
             YES,
             target,
@@ -3459,31 +3495,352 @@ static NSDictionary<NSString *, id> *IOSUseAutomationInput(
     );
 }
 
-static UIViewController *IOSUseAutomationPresentedController(void) {
+static UIAlertController *
+IOSUseAutomationVisibleAlertController(void) {
+    NSCParameterAssert(NSThread.isMainThread);
     for (UIWindow *window in IOSUseAutomationWindows()) {
         UIViewController *controller = window.rootViewController;
         while (controller.presentedViewController != nil) {
             controller = controller.presentedViewController;
         }
-        if (controller != nil) {
-            return controller;
+        if (![controller isKindOfClass:UIAlertController.class]) {
+            continue;
         }
+        UIAlertController *alert = (UIAlertController *)controller;
+        UIView *view = alert.viewIfLoaded;
+        CGRect windowFrame = view == nil
+            ? CGRectNull
+            : [view convertRect:view.bounds toView:window];
+        if (alert.isBeingDismissed ||
+            view == nil ||
+            view.window != window ||
+            view.hidden ||
+            view.alpha <= 0.01 ||
+            !IOSUseAutomationRectHasArea(
+                CGRectIntersection(window.bounds, windowFrame)
+            )) {
+            continue;
+        }
+        return alert;
     }
     return nil;
+}
+
+NSDictionary<NSString *, id> *
+IOSUsePlayRuntimeUIKitAlertSnapshot(void) {
+    NSCParameterAssert(NSThread.isMainThread);
+    UIAlertController *alert =
+        IOSUseAutomationVisibleAlertController();
+    if (alert == nil) {
+        return @{
+            @"visible": @NO,
+            @"actionableByIOSUse": @NO,
+        };
+    }
+
+    NSMutableArray<NSDictionary<NSString *, id> *> *actions =
+        [NSMutableArray arrayWithCapacity:alert.actions.count];
+    [alert.actions
+        enumerateObjectsUsingBlock:^(
+            UIAlertAction *action,
+            NSUInteger index,
+            BOOL *stop
+        ) {
+        (void)stop;
+        [actions addObject:@{
+            @"index": @(index),
+            @"label": action.title ?: @"",
+            @"enabled": @(action.enabled),
+        }];
+    }];
+    NSMutableArray<NSString *> *textParts =
+        [NSMutableArray array];
+    if (alert.title.length > 0) {
+        [textParts addObject:alert.title];
+    }
+    if (alert.message.length > 0) {
+        [textParts addObject:alert.message];
+    }
+    return @{
+        @"visible": @YES,
+        @"actionableByIOSUse":
+            IOSUseAutomationUIKitAlertCandidates(alert).count > 0
+                ? @YES
+                : @NO,
+        @"source": @"uikit",
+        @"controllerClass":
+            NSStringFromClass([alert class]) ?: @"",
+        @"text": [textParts componentsJoinedByString:@"\n"],
+        @"actions": actions,
+    };
 }
 
 static void IOSUseAutomationCollectControls(
     UIView *view,
     NSMutableArray<UIControl *> *controls
 ) {
-    if ([view isKindOfClass:UIControl.class] &&
-        !view.hidden &&
-        view.alpha > 0) {
+    if (view.hidden ||
+        view.alpha <= 0.01 ||
+        !view.userInteractionEnabled) {
+        return;
+    }
+    if ([view isKindOfClass:UIControl.class]) {
         [controls addObject:(UIControl *)view];
     }
     for (UIView *child in view.subviews) {
         IOSUseAutomationCollectControls(child, controls);
     }
+}
+
+static NSDictionary<NSString *, id> *
+IOSUseAutomationAlertSelectionError(
+    NSString *code,
+    NSString *message,
+    NSUInteger candidateCount
+) {
+    return IOSUseAutomationErrorWithCandidateCount(
+        code,
+        message,
+        @"interaction",
+        @"selection",
+        NO,
+        nil,
+        @[],
+        candidateCount
+    );
+}
+
+static CGFloat IOSUseAutomationAlertOverlapRatio(
+    CGFloat firstMinimum,
+    CGFloat firstMaximum,
+    CGFloat secondMinimum,
+    CGFloat secondMaximum
+) {
+    CGFloat overlap = MAX(
+        0,
+        MIN(firstMaximum, secondMaximum) -
+            MAX(firstMinimum, secondMinimum)
+    );
+    CGFloat shorter = MIN(
+        firstMaximum - firstMinimum,
+        secondMaximum - secondMinimum
+    );
+    return shorter > 0 ? overlap / shorter : 0;
+}
+
+static NSDictionary<NSString *, id> * _Nullable
+IOSUseAutomationSelectAlertCandidate(
+    NSArray<NSDictionary<NSString *, id> *> *candidates,
+    NSString *selection,
+    NSInteger requestedIndex,
+    NSDictionary<NSString *, id> **commandError
+) {
+    if ([selection isEqualToString:@"index"]) {
+        for (NSDictionary<NSString *, id> *candidate in candidates) {
+            if ([candidate[@"index"] integerValue] ==
+                requestedIndex) {
+                return candidate;
+            }
+        }
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationAlertSelectionError(
+                @"alert_selection_required",
+                @"the requested alert index is not an actionable button",
+                candidates.count
+            );
+        }
+        return nil;
+    }
+    if ([selection isEqualToString:@"onlyButton"]) {
+        if (candidates.count == 1) {
+            return candidates.firstObject;
+        }
+        if (commandError != NULL) {
+            NSString *message = candidates.count == 0
+                ? @"the alert has no actionable buttons"
+                : [NSString stringWithFormat:
+                    @"the alert has %lu actionable buttons; choose one explicitly",
+                    (unsigned long)candidates.count];
+            *commandError = IOSUseAutomationAlertSelectionError(
+                @"alert_selection_required",
+                message,
+                candidates.count
+            );
+        }
+        return nil;
+    }
+
+    for (NSDictionary<NSString *, id> *candidate in candidates) {
+        CGRect frame = IOSUseAutomationFrameDictionaryRect(
+            candidate[@"frame"]
+        );
+        if (!IOSUseAutomationRectHasArea(frame)) {
+            if (commandError != NULL) {
+                *commandError =
+                    IOSUseAutomationAlertSelectionError(
+                        @"alert_primary_ambiguous",
+                        @"an actionable alert button has invalid geometry",
+                        candidates.count
+                    );
+            }
+            return nil;
+        }
+    }
+    if (candidates.count == 0) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationAlertSelectionError(
+                @"alert_selection_required",
+                @"the alert has no actionable buttons",
+                0
+            );
+        }
+        return nil;
+    }
+    if (candidates.count == 1) {
+        return candidates.firstObject;
+    }
+    if (candidates.count > 2) {
+        if (commandError != NULL) {
+            *commandError = IOSUseAutomationAlertSelectionError(
+                @"alert_primary_ambiguous",
+                [NSString stringWithFormat:
+                    @"visual primary is ambiguous for %lu actionable buttons",
+                    (unsigned long)candidates.count],
+                candidates.count
+            );
+        }
+        return nil;
+    }
+
+    NSDictionary<NSString *, id> *first = candidates[0];
+    NSDictionary<NSString *, id> *second = candidates[1];
+    CGRect firstFrame = IOSUseAutomationFrameDictionaryRect(
+        first[@"frame"]
+    );
+    CGRect secondFrame = IOSUseAutomationFrameDictionaryRect(
+        second[@"frame"]
+    );
+    const CGFloat overlapThreshold = 0.6;
+    const CGFloat centerTolerance = 1;
+    BOOL horizontal =
+        IOSUseAutomationAlertOverlapRatio(
+            CGRectGetMinY(firstFrame),
+            CGRectGetMaxY(firstFrame),
+            CGRectGetMinY(secondFrame),
+            CGRectGetMaxY(secondFrame)
+        ) >= overlapThreshold;
+    BOOL vertical =
+        IOSUseAutomationAlertOverlapRatio(
+            CGRectGetMinX(firstFrame),
+            CGRectGetMaxX(firstFrame),
+            CGRectGetMinX(secondFrame),
+            CGRectGetMaxX(secondFrame)
+        ) >= overlapThreshold;
+    NSDictionary<NSString *, id> *selected = nil;
+    if (horizontal && !vertical &&
+        fabs(CGRectGetMidX(firstFrame) -
+             CGRectGetMidX(secondFrame)) > centerTolerance) {
+        BOOL rightToLeft =
+            UIApplication.sharedApplication
+                .userInterfaceLayoutDirection ==
+            UIUserInterfaceLayoutDirectionRightToLeft;
+        BOOL firstIsPrimary = rightToLeft
+            ? CGRectGetMidX(firstFrame) <
+                CGRectGetMidX(secondFrame)
+            : CGRectGetMidX(firstFrame) >
+                CGRectGetMidX(secondFrame);
+        selected = firstIsPrimary ? first : second;
+    } else if (vertical && !horizontal &&
+               fabs(CGRectGetMidY(firstFrame) -
+                    CGRectGetMidY(secondFrame)) >
+                   centerTolerance) {
+        selected = CGRectGetMidY(firstFrame) <
+                CGRectGetMidY(secondFrame)
+            ? first
+            : second;
+    }
+    if (selected == nil && commandError != NULL) {
+        *commandError = IOSUseAutomationAlertSelectionError(
+            @"alert_primary_ambiguous",
+            @"button geometry does not resolve one visual primary action",
+            candidates.count
+        );
+    }
+    return selected;
+}
+
+static NSArray<NSDictionary<NSString *, id> *> *
+IOSUseAutomationUIKitAlertCandidates(
+    UIAlertController *alert
+) {
+    UIWindow *window = alert.view.window;
+    if (window == nil) {
+        return @[];
+    }
+    NSMutableArray<UIControl *> *controls = [NSMutableArray array];
+    IOSUseAutomationCollectControls(alert.view, controls);
+    NSMutableDictionary<NSString *, NSNumber *> *actionLabelCounts =
+        [NSMutableDictionary dictionary];
+    for (UIAlertAction *action in alert.actions) {
+        if (!action.enabled || action.title.length == 0) {
+            continue;
+        }
+        actionLabelCounts[action.title] = @(
+            [actionLabelCounts[action.title] unsignedIntegerValue] + 1
+        );
+    }
+
+    NSMutableArray<NSDictionary<NSString *, id> *> *candidates =
+        [NSMutableArray array];
+    [alert.actions
+        enumerateObjectsUsingBlock:^(
+            UIAlertAction *action,
+            NSUInteger actionIndex,
+            BOOL *stop
+        ) {
+        (void)stop;
+        if (!action.enabled ||
+            action.title.length == 0 ||
+            [actionLabelCounts[action.title]
+                unsignedIntegerValue] != 1) {
+            return;
+        }
+        NSMutableArray<UIControl *> *matches =
+            [NSMutableArray array];
+        for (UIControl *control in controls) {
+            if (control.enabled &&
+                control.userInteractionEnabled &&
+                control.window == window &&
+                [control.accessibilityLabel
+                    isEqualToString:action.title]) {
+                [matches addObject:control];
+            }
+        }
+        if (matches.count != 1) {
+            return;
+        }
+        UIControl *control = matches.firstObject;
+        CGRect frame = [control
+            convertRect:control.bounds
+              toView:window];
+        if (!IOSUseAutomationRectHasArea(frame)) {
+            return;
+        }
+        [candidates addObject:@{
+            @"index": @(actionIndex),
+            @"label": action.title,
+            @"frame": @{
+                @"x": @(frame.origin.x),
+                @"y": @(frame.origin.y),
+                @"width": @(frame.size.width),
+                @"height": @(frame.size.height),
+            },
+            @"action": action,
+            @"control": control,
+            @"window": window,
+        }];
+    }];
+    return candidates;
 }
 
 static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
@@ -3493,7 +3850,10 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
 ) {
     id rawIndex = arguments[@"index"];
     id rawLabel = arguments[@"label"];
+    id rawSelection = arguments[@"selection"];
     NSString *requestedLabel = nil;
+    NSString *selection = nil;
+    NSInteger requestedIndex = NSNotFound;
     if (labelOnly) {
         NSSet<NSString *> *providedKeys =
             [NSSet setWithArray:arguments.allKeys];
@@ -3518,6 +3878,99 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
             return nil;
         }
         requestedLabel = (NSString *)rawLabel;
+        selection = @"label";
+    } else {
+        NSSet<NSString *> *providedKeys =
+            [NSSet setWithArray:arguments.allKeys];
+        NSSet<NSString *> *allowedKeys = [NSSet setWithArray:@[
+            @"selection",
+            @"index",
+        ]];
+        if (![providedKeys isSubsetOfSet:allowedKeys] ||
+            (rawSelection != nil &&
+             ![rawSelection isKindOfClass:NSString.class])) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"invalid_arguments",
+                    @"dismissAlert accepts only selection and index arguments",
+                    @"validation",
+                    @"validation",
+                    NO,
+                    nil,
+                    @[]
+                );
+            }
+            return nil;
+        }
+        selection = rawSelection == nil
+            ? (rawIndex == nil ? @"onlyButton" : @"index")
+            : (NSString *)rawSelection;
+        if (![@[
+                @"onlyButton",
+                @"index",
+                @"visualPrimary",
+            ] containsObject:selection]) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"invalid_arguments",
+                    @"dismissAlert selection must be onlyButton, index, or visualPrimary",
+                    @"validation",
+                    @"validation",
+                    NO,
+                    nil,
+                    @[]
+                );
+            }
+            return nil;
+        }
+        if ([selection isEqualToString:@"index"]) {
+            if (!IOSUseAutomationIsNumber(rawIndex)) {
+                if (commandError != NULL) {
+                    *commandError = IOSUseAutomationError(
+                        @"invalid_arguments",
+                        @"dismissAlert index selection requires one non-negative integer index",
+                        @"validation",
+                        @"validation",
+                        NO,
+                        nil,
+                        @[]
+                    );
+                }
+                return nil;
+            }
+            double indexValue = [rawIndex doubleValue];
+            requestedIndex = [rawIndex integerValue];
+            if (!isfinite(indexValue) ||
+                indexValue < 0 ||
+                floor(indexValue) != indexValue ||
+                indexValue > (double)NSIntegerMax) {
+                if (commandError != NULL) {
+                    *commandError = IOSUseAutomationError(
+                        @"invalid_arguments",
+                        @"dismissAlert index selection requires one non-negative integer index",
+                        @"validation",
+                        @"validation",
+                        NO,
+                        nil,
+                        @[]
+                    );
+                }
+                return nil;
+            }
+        } else if (rawIndex != nil) {
+            if (commandError != NULL) {
+                *commandError = IOSUseAutomationError(
+                    @"invalid_arguments",
+                    @"dismissAlert index is valid only with index selection",
+                    @"validation",
+                    @"validation",
+                    NO,
+                    nil,
+                    @[]
+                );
+            }
+            return nil;
+        }
     }
     BOOL nativeAlertCandidateVisible =
         [IOSUsePlayAppKitBridge
@@ -3569,11 +4022,27 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
     if (nativeActions.count > 0) {
         NSString *nativeAlertText =
             [IOSUsePlayAppKitBridge nativeAlertText];
-        NSInteger nativeIndex = NSNotFound;
+        NSMutableArray<NSDictionary<NSString *, id> *>
+            *nativeCandidates = [NSMutableArray
+                arrayWithCapacity:nativeActions.count];
+        [nativeActions
+            enumerateObjectsUsingBlock:^(
+                NSDictionary<NSString *, id> *action,
+                NSUInteger index,
+                BOOL *stop
+            ) {
+            (void)stop;
+            [nativeCandidates addObject:@{
+                @"index": @(index),
+                @"label": action[@"label"] ?: @"",
+                @"frame": action[@"frame"] ?: @{},
+            }];
+        }];
+        NSDictionary<NSString *, id> *nativeAction = nil;
         if (requestedLabel != nil) {
             NSMutableIndexSet *matches =
                 [NSMutableIndexSet indexSet];
-            [nativeActions
+            [nativeCandidates
                 enumerateObjectsUsingBlock:^(
                     NSDictionary<NSString *, id> *action,
                     NSUInteger index,
@@ -3608,37 +4077,88 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                 }
                 return nil;
             }
-            nativeIndex = (NSInteger)matches.firstIndex;
+            nativeAction =
+                nativeCandidates[matches.firstIndex];
         } else {
-            nativeIndex = rawIndex == nil
-                ? (NSInteger)nativeActions.count - 1
-                : [rawIndex integerValue];
+            if ([selection isEqualToString:@"index"] &&
+                requestedIndex >=
+                    (NSInteger)nativeActions.count) {
+                if (commandError != NULL) {
+                    *commandError = IOSUseAutomationError(
+                        @"invalid_arguments",
+                        @"dismissAlert index is outside the visible native action list",
+                        @"validation",
+                        @"validation",
+                        NO,
+                        nil,
+                        @[]
+                    );
+                }
+                return nil;
+            }
+            nativeAction = IOSUseAutomationSelectAlertCandidate(
+                nativeCandidates,
+                selection,
+                requestedIndex,
+                commandError
+            );
         }
-        if (requestedLabel == nil &&
-            rawIndex != nil &&
-            (!IOSUseAutomationIsNumber(rawIndex) ||
-             nativeIndex < 0 ||
-             nativeIndex >= (NSInteger)nativeActions.count)) {
+        if (nativeAction == nil) {
+            return nil;
+        }
+        NSString *nativeActionLabel = nativeAction[@"label"];
+        NSUInteger deliveryLabelMatches = 0;
+        for (NSDictionary<NSString *, id> *candidate
+             in nativeCandidates) {
+            if ([candidate[@"label"]
+                    isEqualToString:nativeActionLabel]) {
+                deliveryLabelMatches += 1;
+            }
+        }
+        if (deliveryLabelMatches != 1) {
+            if (commandError != NULL) {
+                *commandError =
+                    IOSUseAutomationAlertSelectionError(
+                        @"alert_selection_required",
+                        @"the selected native alert button cannot be delivered by one unique exact label",
+                        deliveryLabelMatches
+                    );
+            }
+            return nil;
+        }
+        CGRect actionFrame =
+            IOSUseAutomationFrameDictionaryRect(
+                nativeAction[@"frame"]
+            );
+        NSDictionary<NSString *, id> *freshNativeAction =
+            IOSUseAutomationExactNativeAlertAction(
+                nativeActionLabel,
+                actionFrame
+            );
+        if (freshNativeAction == nil) {
             if (commandError != NULL) {
                 *commandError = IOSUseAutomationError(
-                    @"invalid_arguments",
-                    @"dismissAlert index is outside the visible native action list",
-                    @"validation",
-                    @"validation",
-                    NO,
+                    @"alert_changed_before_action",
+                    @"the selected native alert action changed before delivery",
+                    @"interaction",
+                    @"selection",
+                    YES,
                     nil,
                     @[]
                 );
             }
             return nil;
         }
-        NSDictionary<NSString *, id> *nativeAction =
-            nativeActions[(NSUInteger)nativeIndex];
+        nativeAction = freshNativeAction;
+        nativeActionLabel = nativeAction[@"label"];
+        actionFrame = IOSUseAutomationFrameDictionaryRect(
+            nativeAction[@"frame"]
+        );
         NSError *nativeError = nil;
         NSDictionary<NSString *, id> *nativeDelivery =
             [IOSUsePlayAppKitBridge
                 performNativeAlertActionWithLabel:
-                    nativeAction[@"label"]
+                    nativeActionLabel
                 error:&nativeError];
         if (nativeDelivery == nil) {
             if (commandError != NULL) {
@@ -3646,7 +4166,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                     @"alert_not_dismissed",
                     nativeError.localizedDescription ?:
                         @"native alert action was not delivered",
-                    @"interaction",
+                    @"action",
                     @"delivery",
                     YES,
                     nil,
@@ -3655,10 +4175,6 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
             }
             return nil;
         }
-        CGRect actionFrame =
-            IOSUseAutomationFrameDictionaryRect(
-                nativeAction[@"frame"]
-            );
         CGPoint actionPoint = CGPointMake(
             CGRectGetMidX(actionFrame),
             CGRectGetMidY(actionFrame)
@@ -3673,7 +4189,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                         *deferredError = IOSUseAutomationError(
                             @"alert_not_dismissed",
                             @"native alert target/action did not close the panel",
-                            @"interaction",
+                            @"postcondition",
                             @"postcondition",
                             YES,
                             nil,
@@ -3693,7 +4209,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                         *deferredError = IOSUseAutomationError(
                             @"alert_not_dismissed",
                             @"native alert UIKit mirror did not settle",
-                            @"interaction",
+                            @"postcondition",
                             @"postcondition",
                             YES,
                             nil,
@@ -3705,12 +4221,8 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                 return @{
                     @"dismissed": @YES,
                     @"text": nativeAlertText,
-                    @"button": nativeAction[@"label"],
-                    @"reason": requestedLabel != nil
-                        ? @"label"
-                        : (rawIndex == nil
-                            ? @"default"
-                            : @"index"),
+                    @"button": nativeActionLabel,
+                    @"reason": selection,
                     @"nativeAlertDelivery": nativeDelivery,
                     @"finalState": @{
                         @"point": @{
@@ -3727,9 +4239,9 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
                 [finalize copy],
         };
     }
-    UIViewController *controller =
-        IOSUseAutomationPresentedController();
-    if (![controller isKindOfClass:UIAlertController.class]) {
+    UIAlertController *alert =
+        IOSUseAutomationVisibleAlertController();
+    if (alert == nil) {
         if (commandError != NULL) {
             *commandError = IOSUseAutomationError(
                 @"alert_not_found",
@@ -3743,22 +4255,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
         }
         return nil;
     }
-    UIAlertController *alert = (UIAlertController *)controller;
-    if (alert.actions.count == 0) {
-        if (commandError != NULL) {
-            *commandError = IOSUseAutomationError(
-                @"alert_action_unavailable",
-                @"visible alert has no actions",
-                @"interaction",
-                @"lookup",
-                NO,
-                nil,
-                @[]
-            );
-        }
-        return nil;
-    }
-    NSInteger index = NSNotFound;
+    NSInteger labelIndex = NSNotFound;
     if (requestedLabel != nil) {
         NSMutableIndexSet *matches =
             [NSMutableIndexSet indexSet];
@@ -3796,15 +4293,10 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
             }
             return nil;
         }
-        index = (NSInteger)matches.firstIndex;
-    } else if (rawIndex != nil) {
-        index = [rawIndex integerValue];
+        labelIndex = (NSInteger)matches.firstIndex;
     }
-    if (requestedLabel == nil &&
-        rawIndex != nil &&
-        (!IOSUseAutomationIsNumber(rawIndex) ||
-         index < 0 ||
-         index >= (NSInteger)alert.actions.count)) {
+    if ([selection isEqualToString:@"index"] &&
+        requestedIndex >= (NSInteger)alert.actions.count) {
         if (commandError != NULL) {
             *commandError = IOSUseAutomationError(
                 @"invalid_arguments",
@@ -3818,62 +4310,69 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
         }
         return nil;
     }
-    if (index == NSNotFound) {
-        index = (NSInteger)alert.actions.count - 1;
-    }
-    UIAlertAction *action = alert.actions[(NSUInteger)index];
-    NSMutableArray<UIControl *> *controls = [NSMutableArray array];
-    IOSUseAutomationCollectControls(alert.view, controls);
-    NSMutableArray<UIControl *> *matchingControls =
-        [NSMutableArray array];
-    UIControl *selectedControl = nil;
-    for (UIControl *control in controls) {
-        if (![control.accessibilityLabel
-                isEqualToString:action.title]) {
-            continue;
-        }
-        if (requestedLabel != nil) {
-            if (control.enabled &&
-                control.userInteractionEnabled) {
-                [matchingControls addObject:control];
-            }
-        } else if (selectedControl == nil) {
-            selectedControl = control;
-        }
-    }
+    NSArray<NSDictionary<NSString *, id> *> *candidates =
+        IOSUseAutomationUIKitAlertCandidates(alert);
+    NSDictionary<NSString *, id> *selectedCandidate = nil;
     if (requestedLabel != nil) {
-        selectedControl = matchingControls.firstObject;
-    }
-    if (requestedLabel != nil && matchingControls.count != 1) {
-        if (commandError != NULL) {
+        for (NSDictionary<NSString *, id> *candidate
+             in candidates) {
+            if ([candidate[@"index"] integerValue] ==
+                labelIndex) {
+                selectedCandidate = candidate;
+                break;
+            }
+        }
+        if (selectedCandidate == nil && commandError != NULL) {
             *commandError =
                 IOSUseAutomationErrorWithCandidateCount(
-                matchingControls.count == 0
-                    ? @"alert_action_not_found"
-                    : @"alert_action_ambiguous",
-                matchingControls.count == 0
-                    ? @"the exact alert action has no enabled live UIControl"
-                    : @"the exact alert action maps to multiple enabled live UIControls",
-                @"interaction",
-                @"hit-test",
-                YES,
-                @{
-                    @"label": requestedLabel,
-                    @"traits": @"Button",
-                },
-                @[],
-                matchingControls.count
-            );
+                    @"alert_action_not_found",
+                    @"the exact alert action has no unique enabled live UIControl and window frame",
+                    @"interaction",
+                    @"hit-test",
+                    YES,
+                    @{
+                        @"label": requestedLabel,
+                        @"traits": @"Button",
+                    },
+                    @[],
+                    0
+                );
         }
+    } else {
+        selectedCandidate =
+            IOSUseAutomationSelectAlertCandidate(
+                candidates,
+                selection,
+                requestedIndex,
+                commandError
+            );
+    }
+    if (selectedCandidate == nil) {
         return nil;
     }
-    if (selectedControl == nil) {
+    UIAlertAction *action = selectedCandidate[@"action"];
+    UIControl *selectedControl =
+        selectedCandidate[@"control"];
+    UIWindow *window = selectedCandidate[@"window"];
+    CGRect controlFrame =
+        IOSUseAutomationFrameDictionaryRect(
+            selectedCandidate[@"frame"]
+        );
+    if (action == nil ||
+        selectedControl == nil ||
+        window == nil ||
+        !action.enabled ||
+        !selectedControl.enabled ||
+        !selectedControl.userInteractionEnabled ||
+        selectedControl.window != window ||
+        !IOSUseAutomationRectHasArea(controlFrame) ||
+        IOSUseAutomationVisibleAlertController() != alert) {
         if (commandError != NULL) {
             *commandError = IOSUseAutomationError(
-                @"alert_action_unavailable",
-                @"visible alert action has no live UIControl",
+                @"alert_changed_before_action",
+                @"the selected alert action changed before delivery",
                 @"interaction",
-                @"hit-test",
+                @"selection",
                 YES,
                 nil,
                 @[]
@@ -3881,16 +4380,14 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
         }
         return nil;
     }
-    UIWindow *window = alert.view.window;
-    CGRect controlFrame =
-        [selectedControl convertRect:selectedControl.bounds toView:nil];
-    CGPoint screenPoint = CGPointMake(
+    CGPoint point = CGPointMake(
         CGRectGetMidX(controlFrame),
         CGRectGetMidY(controlFrame)
     );
-    CGPoint point = [window convertPoint:screenPoint fromWindow:nil];
     UIView *hitView = [window hitTest:point withEvent:nil];
-    if (window == nil || hitView == nil) {
+    if (hitView == nil ||
+        (hitView != selectedControl &&
+         ![hitView isDescendantOfView:selectedControl])) {
         if (commandError != NULL) {
             *commandError = IOSUseAutomationError(
                 @"alert_action_unavailable",
@@ -3925,12 +4422,12 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
     if (PTFakeMetaTouch.deliveryGeneration <
         deliveryBefore + 2 ||
         alert.presentingViewController != nil ||
-        IOSUseAutomationPresentedController() == alert) {
+        IOSUseAutomationVisibleAlertController() == alert) {
         if (commandError != NULL) {
             *commandError = IOSUseAutomationError(
                 @"alert_not_dismissed",
                 @"alert action was delivered but the alert remained visible",
-                @"interaction",
+                @"postcondition",
                 @"postcondition",
                 YES,
                 nil,
@@ -3943,11 +4440,7 @@ static NSDictionary<NSString *, id> *IOSUseAutomationDismissAlert(
         @"dismissed": @YES,
         @"text": alert.message ?: alert.title ?: @"",
         @"button": action.title ?: @"",
-        @"reason": requestedLabel != nil
-            ? @"label"
-            : (rawIndex == nil
-                ? @"default"
-                : @"index"),
+        @"reason": selection,
         @"hitView": IOSUseAutomationHitViewJSON(hitView),
         @"finalState": @{
             @"point": @{
@@ -4093,35 +4586,44 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
         }
         return nil;
     }
-    __block NSDictionary<NSString *, id> *result;
-    __block NSDictionary<NSString *, id> *blockError;
-    void (^work)(void) = ^{
+    NSDictionary<NSString *, id> * _Nullable (^runCommand)(
+        NSDictionary<NSString *, id> * _Nullable * _Nullable
+    ) = ^NSDictionary<NSString *, id> *(
+        NSDictionary<NSString *, id> **localError
+    ) {
+        NSDictionary<NSString *, id> *localResult = nil;
         @try {
             if ([command isEqualToString:@"tap"] ||
                 [command isEqualToString:@"longPress"] ||
                 [command isEqualToString:@"swipe"]) {
-                result = IOSUseAutomationTouchCommand(
+                localResult = IOSUseAutomationTouchCommand(
                     command,
                     arguments,
-                    &blockError
+                    localError
                 );
             } else if ([command isEqualToString:@"input"]) {
-                result = IOSUseAutomationInput(arguments, &blockError);
+                localResult = IOSUseAutomationInput(
+                    arguments,
+                    localError
+                );
             } else if (
                 [command isEqualToString:@"dismissAlert"] ||
                 [command
                     isEqualToString:@"dismissAlertByLabel"]
             ) {
-                result = IOSUseAutomationDismissAlert(
+                localResult = IOSUseAutomationDismissAlert(
                     arguments,
                     [command
                         isEqualToString:@"dismissAlertByLabel"],
-                    &blockError
+                    localError
                 );
             } else if ([command isEqualToString:@"open"]) {
-                result = IOSUseAutomationOpen(arguments, &blockError);
-            } else {
-                blockError = IOSUseAutomationError(
+                localResult = IOSUseAutomationOpen(
+                    arguments,
+                    localError
+                );
+            } else if (localError != NULL) {
+                *localError = IOSUseAutomationError(
                     @"unsupported_command",
                     @"unsupported Runtime automation command",
                     @"protocol",
@@ -4132,43 +4634,87 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
                 );
             }
         } @catch (NSException *exception) {
-            blockError = IOSUseAutomationError(
-                @"automation_exception",
-                [NSString stringWithFormat:
-                    @"automation raised %@",
-                    exception.name],
-                @"internal",
-                @"dispatch",
-                NO,
-                nil,
-                @[]
-            );
+            if (localError != NULL) {
+                *localError = IOSUseAutomationError(
+                    @"automation_exception",
+                    [NSString stringWithFormat:
+                        @"automation raised %@",
+                        exception.name],
+                    @"action",
+                    @"dispatch",
+                    NO,
+                    nil,
+                    @[]
+                );
+            }
         }
+        return localResult;
     };
+    NSDictionary<NSString *, id> *result = nil;
+    NSDictionary<NSString *, id> *blockError = nil;
     BOOL calledOnMainThread = NSThread.isMainThread;
     if (calledOnMainThread) {
-        work();
+        result = runCommand(&blockError);
     } else {
+        NSLock *executionLock = [NSLock new];
         dispatch_semaphore_t completion = dispatch_semaphore_create(0);
+        __block BOOL executionCancelled = NO;
+        __block BOOL executionStarted = NO;
+        __block BOOL executionCompleted = NO;
+        __block NSDictionary<NSString *, id> *publishedResult = nil;
+        __block NSDictionary<NSString *, id> *publishedError = nil;
         dispatch_async(dispatch_get_main_queue(), ^{
-            work();
+            [executionLock lock];
+            if (executionCancelled) {
+                executionCompleted = YES;
+                [executionLock unlock];
+                dispatch_semaphore_signal(completion);
+                return;
+            }
+            executionStarted = YES;
+            [executionLock unlock];
+
+            NSDictionary<NSString *, id> *localError = nil;
+            NSDictionary<NSString *, id> *localResult =
+                runCommand(&localError);
+
+            [executionLock lock];
+            if (!executionCancelled) {
+                publishedResult = localResult;
+                publishedError = localError;
+            }
+            executionCompleted = YES;
+            [executionLock unlock];
             dispatch_semaphore_signal(completion);
         });
         dispatch_time_t deadline = dispatch_time(
             DISPATCH_TIME_NOW,
             (int64_t)(IOSUseAutomationMainTimeout * NSEC_PER_SEC)
         );
-        if (dispatch_semaphore_wait(completion, deadline) != 0) {
+        long waitResult =
+            dispatch_semaphore_wait(completion, deadline);
+        [executionLock lock];
+        if (waitResult == 0 || executionCompleted) {
+            result = publishedResult;
+            blockError = publishedError;
+        } else {
+            BOOL mutationMayHaveApplied = executionStarted;
+            executionCancelled = YES;
             blockError = IOSUseAutomationError(
                 @"main_thread_timeout",
-                @"automation exceeded its main-thread deadline",
-                @"timeout",
+                mutationMayHaveApplied
+                    ? @"automation exceeded its main-thread deadline after dispatch began; the mutation may still complete"
+                    : @"automation did not begin before its main-thread deadline",
+                mutationMayHaveApplied
+                    ? @"action"
+                    : @"timeout",
                 @"dispatch",
                 YES,
                 nil,
                 @[]
             );
         }
+        [executionLock unlock];
     }
     IOSUseAutomationDeferredFinalize deferred =
         result[IOSUseAutomationDeferredFinalizeKey];
@@ -4178,15 +4724,23 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
             blockError = IOSUseAutomationError(
                 @"deferred_postcondition_unavailable",
                 @"native alert postcondition requires the Runtime socket worker",
-                @"internal",
+                @"postcondition",
                 @"postcondition",
                 NO,
                 nil,
                 @[]
             );
         } else {
+            NSLock *finalizeLock = [NSLock new];
             dispatch_semaphore_t completion =
                 dispatch_semaphore_create(0);
+            __block BOOL finalizeCancelled = NO;
+            __block BOOL finalizeStarted = NO;
+            __block BOOL finalizeCompleted = NO;
+            __block NSDictionary<NSString *, id>
+                *publishedFinalizeResult = nil;
+            __block NSDictionary<NSString *, id>
+                *publishedFinalizeError = nil;
             dispatch_after(
                 dispatch_time(
                     DISPATCH_TIME_NOW,
@@ -4194,21 +4748,48 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
                 ),
                 dispatch_get_main_queue(),
                 ^{
+                    [finalizeLock lock];
+                    if (finalizeCancelled) {
+                        finalizeCompleted = YES;
+                        [finalizeLock unlock];
+                        dispatch_semaphore_signal(completion);
+                        return;
+                    }
+                    finalizeStarted = YES;
+                    [finalizeLock unlock];
+
+                    NSDictionary<NSString *, id> *localError = nil;
+                    NSDictionary<NSString *, id> *localResult = nil;
                     @try {
-                        result = deferred(&blockError);
+                        localResult = deferred(&localError);
                     } @catch (NSException *exception) {
-                        blockError = IOSUseAutomationError(
+                        localError = IOSUseAutomationError(
                             @"automation_exception",
                             [NSString stringWithFormat:
                                 @"deferred automation raised %@",
                                 exception.name],
-                            @"internal",
+                            @"postcondition",
                             @"postcondition",
                             NO,
                             nil,
                             @[]
                         );
                     }
+                    if (localResult == nil) {
+                        localError =
+                            IOSUseAutomationPostconditionError(
+                                localError
+                            );
+                    } else {
+                        localError = nil;
+                    }
+                    [finalizeLock lock];
+                    if (!finalizeCancelled) {
+                        publishedFinalizeResult = localResult;
+                        publishedFinalizeError = localError;
+                    }
+                    finalizeCompleted = YES;
+                    [finalizeLock unlock];
                     dispatch_semaphore_signal(completion);
                 }
             );
@@ -4219,27 +4800,36 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeAutomationCommand(
                     NSEC_PER_SEC
                 )
             );
-            if (dispatch_semaphore_wait(
-                    completion,
-                    deadline
-                ) != 0) {
+            long waitResult = dispatch_semaphore_wait(
+                completion,
+                deadline
+            );
+            [finalizeLock lock];
+            if (waitResult == 0 || finalizeCompleted) {
+                result = publishedFinalizeResult;
+                blockError = publishedFinalizeError;
+            } else {
+                finalizeCancelled = YES;
                 blockError = IOSUseAutomationError(
                     @"main_thread_timeout",
-                    @"deferred automation postcondition exceeded its main-thread deadline",
-                    @"timeout",
+                    finalizeStarted
+                        ? @"deferred automation postcondition exceeded its main-thread deadline after evaluation began; the mutation may already have applied"
+                        : @"deferred automation postcondition did not begin before its main-thread deadline; the mutation may already have applied",
+                    @"postcondition",
                     @"postcondition",
                     YES,
                     nil,
                     @[]
                 );
             }
+            [finalizeLock unlock];
         }
     }
     if (result == nil && commandError != NULL) {
         *commandError = blockError ?: IOSUseAutomationError(
             @"automation_failed",
             @"automation did not produce a result",
-            @"internal",
+            @"action",
             @"dispatch",
             NO,
             nil,

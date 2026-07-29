@@ -9,4 +9,10 @@ IOSUsePlayRuntimeAutomationCommand(
     NSDictionary<NSString *, id> * _Nullable * _Nullable commandError
 );
 
+FOUNDATION_EXPORT NSDictionary<NSString *, id> *
+IOSUsePlayRuntimeUIKitAlertSnapshot(void);
+
+FOUNDATION_EXPORT NSTimeInterval
+IOSUsePlayRuntimeAutomationMainThreadTimeout(void);
+
 NS_ASSUME_NONNULL_END

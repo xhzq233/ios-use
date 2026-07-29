@@ -231,9 +231,16 @@ struct PlayCoverRuntimeInputArguments: Codable, Equatable, Sendable {
 }
 
 struct PlayCoverRuntimeDismissAlertArguments: Codable, Equatable, Sendable {
+    let selection: String
     let index: Int?
 
     init(index: Int?) {
+        self.selection = index == nil ? "onlyButton" : "index"
+        self.index = index
+    }
+
+    init(selection: String, index: Int? = nil) {
+        self.selection = selection
         self.index = index
     }
 }
@@ -627,6 +634,154 @@ struct PlayCoverRuntimeErrorDetails: Codable, Equatable, Sendable {
     let suggestions: [String]
 }
 
+struct PlayCoverRuntimeInteractionAction:
+    Codable,
+    Equatable,
+    Sendable
+{
+    let index: Int?
+    let label: String
+    let enabled: Bool?
+}
+
+struct PlayCoverRuntimeInteraction:
+    Codable,
+    Equatable,
+    Sendable
+{
+    let type: String
+    let kind: String?
+    let owner: String?
+    let visible: Bool?
+    let pending: Bool?
+    let visibility: String?
+    let actionableByIOSUse: Bool
+    let source: String?
+    let text: String?
+    let actions: [PlayCoverRuntimeInteractionAction]?
+    let outstandingCount: Int?
+    let sequence: UInt64?
+    let api: String?
+    let accessLevel: Int?
+    let authorizationStatus: Int?
+    let ageMicroseconds: UInt64?
+    let resolution: String?
+    let suggestedCommand: String?
+}
+
+struct PlayCoverRuntimeInteractionState:
+    Codable,
+    Equatable,
+    Sendable
+{
+    let schemaVersion: Int
+    let refreshComplete: Bool?
+    let refreshError: String?
+    let blocking: Bool
+    let interactions: [PlayCoverRuntimeInteraction]
+
+    var warnings: [String] {
+        var values: [String] = []
+        if refreshComplete == false {
+            values.append(
+                "The Runtime could not refresh alert status"
+                    + (refreshError.map { ": \($0)." } ?? ".")
+            )
+        }
+        values.append(contentsOf: interactions.compactMap { interaction in
+            switch interaction.type {
+            case "inProcessAlert":
+                let labels = interaction.actions?
+                    .map(\.label)
+                    .filter { !$0.isEmpty } ?? []
+                let suffix = labels.isEmpty
+                    ? ""
+                    : " Available actions: \(labels.joined(separator: ", "))."
+                return "The App has a blocking alert; use dismissAlert with an explicit selection first.\(suffix)"
+            case "pendingExternalInteraction":
+                return "A PhotoKit authorization request is still outstanding and may require external macOS interaction. ios-use does not inspect or click process-external prompts; handle any prompt manually or with Computer Use, then retry."
+            default:
+                return nil
+            }
+        })
+        return values
+    }
+
+    var machineValue: MachineValue {
+        var fields: [String: MachineValue] = [
+            "schemaVersion": .integer(schemaVersion),
+            "blocking": .boolean(blocking),
+            "interactions": .array(
+                interactions.map(\.machineValue)
+            ),
+        ]
+        fields["refreshComplete"] =
+            refreshComplete.map(MachineValue.boolean)
+        fields["refreshError"] =
+            refreshError.map(MachineValue.string)
+        return .object(fields)
+    }
+}
+
+private extension PlayCoverRuntimeInteraction {
+    var machineValue: MachineValue {
+        var fields: [String: MachineValue] = [
+            "type": .string(type),
+            "actionableByIOSUse":
+                .boolean(actionableByIOSUse),
+        ]
+        fields["kind"] = kind.map(MachineValue.string)
+        fields["owner"] = owner.map(MachineValue.string)
+        fields["visible"] = visible.map(MachineValue.boolean)
+        fields["pending"] = pending.map(MachineValue.boolean)
+        fields["visibility"] =
+            visibility.map(MachineValue.string)
+        fields["source"] = source.map(MachineValue.string)
+        fields["text"] = text.map(MachineValue.string)
+        fields["outstandingCount"] =
+            outstandingCount.map(MachineValue.integer)
+        fields["sequence"] = sequence.map {
+            .string(String($0))
+        }
+        fields["api"] = api.map(MachineValue.string)
+        fields["accessLevel"] =
+            accessLevel.map(MachineValue.integer)
+        fields["authorizationStatus"] =
+            authorizationStatus.map(MachineValue.integer)
+        fields["ageMicroseconds"] = ageMicroseconds.map {
+            .string(String($0))
+        }
+        fields["resolution"] =
+            resolution.map(MachineValue.string)
+        fields["suggestedCommand"] =
+            suggestedCommand.map(MachineValue.string)
+        if let actions {
+            fields["actions"] = .array(
+                actions.map { action in
+                    var actionFields: [String: MachineValue] = [
+                        "label": .string(action.label),
+                    ]
+                    actionFields["index"] =
+                        action.index.map(MachineValue.integer)
+                    actionFields["enabled"] =
+                        action.enabled.map(MachineValue.boolean)
+                    return .object(actionFields)
+                }
+            )
+        }
+        return .object(fields)
+    }
+}
+
+struct PlayCoverRuntimeResponsePerformance:
+    Codable,
+    Equatable,
+    Sendable
+{
+    let requestElapsedMs: Double
+    let alertRefreshElapsedMs: Double?
+}
+
 enum PlayCoverRuntimeSocketPathError: Equatable, Sendable {
     case empty
     case containsNUL
@@ -659,6 +814,7 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
     case requestIDMismatch
     case sessionIDMismatch
     case responseIdentityMismatch(String)
+    case alertRefreshUnsupportedByRuntime
     case malformedResponse(String)
     case remoteError(
         code: String,
@@ -722,6 +878,8 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
             return "PlayCover runtime response sessionID does not match the active session"
         case .responseIdentityMismatch(let field):
             return "PlayCover runtime response \(field) does not match the active session"
+        case .alertRefreshUnsupportedByRuntime:
+            return "the active PlayCover Runtime predates alert-status refresh; run `ios-use stop`, then start the App again with this ios-use build"
         case .malformedResponse(let reason):
             return "malformed PlayCover runtime response: \(reason)"
         case .remoteError(let code, let message, _):
@@ -748,6 +906,7 @@ final class PlayCoverRuntimeClient {
     private let expectedBundleIdentifier: String
     private let expectedExecutablePath: String
     private let timeoutSeconds: TimeInterval
+    private let refreshAlertStatus: Bool
 
     init(
         socketPath: String,
@@ -756,7 +915,8 @@ final class PlayCoverRuntimeClient {
         expectedBundleIdentifier: String,
         expectedExecutablePath: String,
         timeoutSeconds: TimeInterval = PlayCoverRuntimeClient
-            .defaultTimeoutSeconds
+            .defaultTimeoutSeconds,
+        refreshAlertStatus: Bool = false
     ) {
         self.socketPath = socketPath
         self.sessionID = sessionID
@@ -764,6 +924,7 @@ final class PlayCoverRuntimeClient {
         self.expectedBundleIdentifier = expectedBundleIdentifier
         self.expectedExecutablePath = expectedExecutablePath
         self.timeoutSeconds = timeoutSeconds
+        self.refreshAlertStatus = refreshAlertStatus
     }
 
     func hello() throws -> PlayCoverRuntimeHelloPayload {
@@ -1022,6 +1183,18 @@ final class PlayCoverRuntimeClient {
         guard timeoutSeconds.isFinite, timeoutSeconds > 0 else {
             throw PlayCoverRuntimeClientError.invalidTimeout
         }
+        let roundTripStarted =
+            ProcessInfo.processInfo.systemUptime
+        let performanceContext =
+            CLIInvocationPerformanceContext.current
+        defer {
+            performanceContext?.recordRuntimeRoundTrip(
+                elapsedMs: (
+                    ProcessInfo.processInfo.systemUptime -
+                        roundTripStarted
+                ) * 1_000
+            )
+        }
         let address = try makeAddress()
         let requestID = UUID().uuidString
         let request = RequestEnvelope(
@@ -1029,7 +1202,9 @@ final class PlayCoverRuntimeClient {
             requestId: requestID,
             sessionID: sessionID,
             command: command,
-            arguments: arguments
+            arguments: arguments,
+            refreshAlertStatus:
+                refreshAlertStatus ? true : nil
         )
 
         let requestBody: Data
@@ -1556,6 +1731,12 @@ final class PlayCoverRuntimeClient {
         guard envelope.sessionID == sessionID else {
             throw PlayCoverRuntimeClientError.sessionIDMismatch
         }
+        try consumeResponseMetadata(
+            interactionState: envelope.interactionState,
+            performance: envelope.performance,
+            responseOK: envelope.ok,
+            remoteErrorCode: envelope.error?.code
+        )
         if envelope.ok {
             guard envelope.error == nil else {
                 throw PlayCoverRuntimeClientError.malformedResponse(
@@ -1585,6 +1766,97 @@ final class PlayCoverRuntimeClient {
             message: redact(remote.message),
             details: remote.details
         )
+    }
+
+    private func consumeResponseMetadata(
+        interactionState: PlayCoverRuntimeInteractionState?,
+        performance: PlayCoverRuntimeResponsePerformance?,
+        responseOK: Bool,
+        remoteErrorCode: String?
+    ) throws {
+        guard let performance else {
+            if refreshAlertStatus {
+                if remoteErrorCode == "invalid_request" {
+                    throw PlayCoverRuntimeClientError
+                        .alertRefreshUnsupportedByRuntime
+                }
+                throw PlayCoverRuntimeClientError.malformedResponse(
+                    "alert-refresh response is missing performance"
+                )
+            }
+            return
+        }
+        guard performance.requestElapsedMs.isFinite,
+              performance.requestElapsedMs >= 0,
+              performance.alertRefreshElapsedMs?.isFinite
+                ?? true,
+              (performance.alertRefreshElapsedMs ?? 0) >= 0
+        else {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "response performance is invalid"
+            )
+        }
+        CLIInvocationPerformanceContext.current?
+            .recordRuntimeRequest(
+                elapsedMs: performance.requestElapsedMs
+            )
+
+        if refreshAlertStatus {
+            guard let interactionState,
+                  interactionState.schemaVersion == 1,
+                  let alertRefreshElapsedMs =
+                    performance.alertRefreshElapsedMs
+            else {
+                throw PlayCoverRuntimeClientError.malformedResponse(
+                    "alert-refresh response metadata is incomplete"
+                )
+            }
+            let supportedTypes = Set([
+                "inProcessAlert",
+                "pendingExternalInteraction",
+            ])
+            if interactionState.refreshComplete == false {
+                guard !responseOK,
+                      !interactionState.blocking,
+                      interactionState.interactions.isEmpty,
+                      !(interactionState.refreshError ?? "").isEmpty
+                else {
+                    throw PlayCoverRuntimeClientError
+                        .malformedResponse(
+                            "incomplete interaction refresh is inconsistent"
+                        )
+                }
+            } else {
+                guard interactionState.refreshComplete == true,
+                      interactionState.interactions.allSatisfy({
+                          supportedTypes.contains($0.type)
+                      }),
+                      interactionState.blocking ==
+                        !interactionState.interactions.isEmpty
+                else {
+                    throw PlayCoverRuntimeClientError
+                        .malformedResponse(
+                            "interaction state is inconsistent"
+                        )
+                }
+            }
+            let context =
+                CLIInvocationPerformanceContext.current
+            context?.recordInteractionState(
+                interactionState.machineValue
+            )
+            context?.recordAlertRefresh(
+                elapsedMs: alertRefreshElapsedMs
+            )
+            interactionState.warnings.forEach {
+                context?.recordWarning($0)
+            }
+        } else if interactionState != nil ||
+                    performance.alertRefreshElapsedMs != nil {
+            throw PlayCoverRuntimeClientError.malformedResponse(
+                "response contains unrequested alert-refresh metadata"
+            )
+        }
     }
 
     private func validateIdentity(
@@ -1635,6 +1907,7 @@ private extension PlayCoverRuntimeClient {
         let sessionID: String
         let command: PlayCoverRuntimeCommand
         let arguments: PlayCoverRuntimeRequestArguments
+        let refreshAlertStatus: Bool?
     }
 
     struct ResponseEnvelope<Payload: Decodable>: Decodable {
@@ -1644,6 +1917,10 @@ private extension PlayCoverRuntimeClient {
         let ok: Bool
         let payload: Payload?
         let error: RemoteError?
+        let interactionState:
+            PlayCoverRuntimeInteractionState?
+        let performance:
+            PlayCoverRuntimeResponsePerformance?
     }
 
     struct RemoteError: Codable {

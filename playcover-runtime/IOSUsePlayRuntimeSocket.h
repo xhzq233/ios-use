@@ -14,7 +14,11 @@ IOSUsePlayRuntimeSocketIdentity(void);
 
 FOUNDATION_EXPORT NSDictionary<NSString *, id> *
 IOSUsePlayRuntimeHookDiagnostics(
-    IOSUsePlayRuntimeDiagnosticsScope scope
+    IOSUsePlayRuntimeDiagnosticsScope scope,
+    NSDictionary<NSString *, id> * _Nullable
+        nativeAlertSnapshot,
+    NSDictionary<NSString *, id> * _Nullable
+        photosAuthorizationDiagnostics
 );
 
 NS_ASSUME_NONNULL_END

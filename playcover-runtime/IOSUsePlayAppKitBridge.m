@@ -3766,7 +3766,10 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
 @interface IOSUsePlayAppKitBridge ()
 
 + (NSDictionary<NSString *, id> *)diagnosticsIncludingStatusOnlyFields:
-    (BOOL)includeStatusOnlyFields;
+    (BOOL)includeStatusOnlyFields
+    nativeAlertSnapshot:
+        (NSDictionary<NSString *, id> * _Nullable)
+            nativeAlertSnapshot;
 
 @end
 
@@ -4334,6 +4337,70 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     return IOSUseBridgeVisibleNativeAlertSelection() != nil;
 }
 
++ (NSDictionary<NSString *, id> *)nativeAlertSnapshot {
+    NSParameterAssert(NSThread.isMainThread);
+    NSArray *windows = IOSUseBridgeNativeAlertWindows();
+    BOOL candidateVisible =
+        IOSUseBridgeHasVisibleNativeAlertCandidateInWindows(
+            windows
+        );
+    if (!candidateVisible) {
+        return @{
+            @"candidateVisible": @NO,
+            @"visible": @NO,
+            @"actionableByIOSUse": @NO,
+        };
+    }
+
+    NSDictionary<
+        NSNumber *,
+        NSDictionary<NSString *, id> *
+    > *cgMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    NSDictionary<NSString *, id> *selection =
+        IOSUseBridgeVisibleNativeAlertSelectionFromWindows(
+            windows,
+            cgMetadata
+        );
+    id alertWindow = selection[@"window"];
+    if (selection == nil || alertWindow == nil) {
+        return @{
+            @"candidateVisible": @YES,
+            @"visible": @YES,
+            @"actionableByIOSUse": @NO,
+            @"source": @"appkitNativeUnresolved",
+            @"text": @"",
+            @"actions": @[],
+            @"_cgWindowMetadata":
+                cgMetadata ?: (id)NSNull.null,
+        };
+    }
+
+    CGRect frame = IOSUseBridgeWindowLogicalFrame(
+        alertWindow,
+        selection[@"cgMetadata"]
+    );
+    NSArray<NSDictionary<NSString *, id> *> *actions =
+        IOSUseBridgePublicNativeAlertActions(alertWindow);
+    return @{
+        @"candidateVisible": @YES,
+        @"visible": @YES,
+        @"actionableByIOSUse":
+            actions.count > 0 ? @YES : @NO,
+        @"source": @"appkitNative",
+        @"windowClass":
+            NSStringFromClass([alertWindow class]) ?: @"",
+        @"windowNumber": @(
+            IOSUseBridgeInteger(alertWindow, @"windowNumber")
+        ),
+        @"frame": CGRectIsNull(frame)
+            ? (id)NSNull.null
+            : IOSUseBridgeRectJSON(frame),
+        @"text": IOSUseBridgeNativeAlertText(alertWindow),
+        @"actions": actions,
+        @"_cgWindowMetadata": cgMetadata,
+    };
+}
+
 + (NSDictionary<NSString *, id> *)
     canvasCaptureGeometryWithError:(NSError **)error {
     NSParameterAssert(NSThread.isMainThread);
@@ -4609,7 +4676,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
 }
 
 + (NSDictionary<NSString *, id> *)diagnosticsIncludingStatusOnlyFields:
-    (BOOL)includeStatusOnlyFields {
+    (BOOL)includeStatusOnlyFields
+    nativeAlertSnapshot:
+        (NSDictionary<NSString *, id> *)nativeAlertSnapshot {
     // Keep diagnostics anchored to the strict foreground UIKit selection when
     // the host has not yet been installed; after installation the selected
     // host is the authoritative visible surface.
@@ -4618,10 +4687,24 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             ? IOSUseBridgeSelectedWindow()
             : nil;
     id window = IOSUsePlayHostWindow ?: selectedWindow;
+    id capturedCGWindowMetadata =
+        nativeAlertSnapshot[@"_cgWindowMetadata"];
+    BOOL hasCapturedCGWindowMetadata =
+        capturedCGWindowMetadata != nil;
     NSDictionary<
         NSNumber *,
         NSDictionary<NSString *, id> *
-    > *cgWindowMetadata = IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    > *cgWindowMetadata = nil;
+    if (hasCapturedCGWindowMetadata) {
+        cgWindowMetadata =
+            [capturedCGWindowMetadata
+                isKindOfClass:NSDictionary.class]
+                ? capturedCGWindowMetadata
+                : nil;
+    } else {
+        cgWindowMetadata =
+            IOSUseBridgeOwnOnscreenCGWindowMetadata();
+    }
     NSDictionary<NSString *, id> *baseCGWindow =
         includeStatusOnlyFields
             ? IOSUseBridgeExactOnscreenCGWindowMetadata(
@@ -4715,7 +4798,8 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
     // automation accessors intentionally continue to re-select so a later
     // action never trusts this observational snapshot.
     NSDictionary<NSString *, id> *nativeAlertSelection =
-        includeStatusOnlyFields
+        includeStatusOnlyFields &&
+            nativeAlertSnapshot == nil
             ? IOSUseBridgeVisibleNativeAlertSelectionWithCGWindowMetadata(
                 cgWindowMetadata
             )
@@ -4727,12 +4811,23 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             nativeAlertWindow,
             nativeAlertSelection[@"cgMetadata"]
         );
-    BOOL nativeAlertVisible = nativeAlertSelection != nil;
-    NSString *nativeAlertText = includeStatusOnlyFields
-        ? IOSUseBridgeNativeAlertText(nativeAlertWindow)
-        : @"";
+    BOOL nativeAlertVisible = nativeAlertSnapshot != nil
+        ? [nativeAlertSnapshot[@"visible"] boolValue]
+        : nativeAlertSelection != nil;
+    id nativeAlertFrameJSON = nativeAlertSnapshot != nil
+        ? nativeAlertSnapshot[@"frame"] ?: NSNull.null
+        : CGRectIsNull(nativeAlertFrame)
+            ? (id)NSNull.null
+            : IOSUseBridgeRectJSON(nativeAlertFrame);
+    NSString *nativeAlertText = nativeAlertSnapshot != nil
+        ? nativeAlertSnapshot[@"text"] ?: @""
+        : includeStatusOnlyFields
+            ? IOSUseBridgeNativeAlertText(nativeAlertWindow)
+            : @"";
     NSArray<NSDictionary<NSString *, id> *> *nativeAlertActions =
-        includeStatusOnlyFields
+        nativeAlertSnapshot != nil
+            ? nativeAlertSnapshot[@"actions"] ?: @[]
+            : includeStatusOnlyFields
             ? IOSUseBridgePublicNativeAlertActions(nativeAlertWindow)
             : @[];
     NSDictionary<NSString *, id> *bootstrapNativeAlert =
@@ -4961,9 +5056,7 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         @"allWindows": IOSUseBridgeWindowInventory(),
         @"nativeAlert": @{
             @"visible": @(nativeAlertVisible),
-            @"frame": CGRectIsNull(nativeAlertFrame)
-                ? (id)NSNull.null
-                : IOSUseBridgeRectJSON(nativeAlertFrame),
+            @"frame": nativeAlertFrameJSON,
             @"text": nativeAlertText,
             @"actions": nativeAlertActions,
         },
@@ -5035,11 +5128,22 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
 }
 
 + (NSDictionary<NSString *, id> *)readinessDiagnostics {
-    return [self diagnosticsIncludingStatusOnlyFields:NO];
+    return [self
+        diagnosticsIncludingStatusOnlyFields:NO
+        nativeAlertSnapshot:nil];
 }
 
 + (NSDictionary<NSString *, id> *)diagnostics {
-    return [self diagnosticsIncludingStatusOnlyFields:YES];
+    return [self
+        diagnosticsIncludingStatusOnlyFields:YES
+        nativeAlertSnapshot:nil];
+}
+
++ (NSDictionary<NSString *, id> *)diagnosticsWithNativeAlertSnapshot:
+    (NSDictionary<NSString *, id> *)nativeAlertSnapshot {
+    return [self
+        diagnosticsIncludingStatusOnlyFields:YES
+        nativeAlertSnapshot:nativeAlertSnapshot];
 }
 
 @end

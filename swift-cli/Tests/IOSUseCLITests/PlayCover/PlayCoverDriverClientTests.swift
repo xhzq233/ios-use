@@ -255,6 +255,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
             return XCTFail("missing dismissAlert arguments")
         }
         XCTAssertEqual(dismissArgs.index, 1)
+        XCTAssertEqual(dismissArgs.selection, "index")
         guard case .open(let openArgs) = requests[7].1 else {
             return XCTFail("missing open arguments")
         }
@@ -316,6 +317,53 @@ final class PlayCoverDriverClientTests: XCTestCase {
             )
         )
         XCTAssertEqual(commands, [.dismissAlertByLabel])
+    }
+
+    func testDismissAlertForwardsGuardedSelectionModes() throws {
+        var captured: [PlayCoverRuntimeDismissAlertArguments] = []
+        let client = PlayCoverDriverClient(
+            session: makeSession()
+        ) { command, arguments, _ in
+            XCTAssertEqual(command, .dismissAlert)
+            guard case .dismissAlert(let dismiss) = arguments
+            else {
+                XCTFail("missing dismissAlert arguments")
+                return self.makePayload(capability: command)
+            }
+            captured.append(dismiss)
+            return self.makePayload(
+                capability: command,
+                dismissAlert: .init(
+                    dismissed: true,
+                    text: "Fixture Alert",
+                    button: "Confirm",
+                    reason: dismiss.selection,
+                    hitView: nil,
+                    finalState: nil
+                )
+            )
+        }
+
+        _ = try client.dismissAlert(
+            args: ForyDismissAlertArgs(
+                selection:
+                    IOSUseAlertSelectionMode.onlyButton.rawValue
+            )
+        )
+        _ = try client.dismissAlert(
+            args: ForyDismissAlertArgs(
+                selection:
+                    IOSUseAlertSelectionMode.visualPrimary.rawValue
+            )
+        )
+
+        XCTAssertEqual(
+            captured,
+            [
+                .init(selection: "onlyButton"),
+                .init(selection: "visualPrimary"),
+            ]
+        )
     }
 
     func testTapPreservesAbsentRatioForRuntimePlacement() throws {

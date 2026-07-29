@@ -73,6 +73,7 @@ targets:
           - "@executable_path/Frameworks"
     dependencies:
       - sdk: UIKit.framework
+      - sdk: Photos.framework
       - sdk: Security.framework
       - sdk: libsqlite3.tbd
       - sdk: AVFoundation.framework

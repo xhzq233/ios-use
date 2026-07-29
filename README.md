@@ -177,6 +177,16 @@ ios-use activateApp com.apple.Preferences --dom --json
 ios-use tap "通用" --json
 ```
 
+Every machine envelope includes top-level
+`performance.totalElapsedMs`. Commands routed to an active Mac Runtime also
+report the Runtime request/round-trip totals and the one
+`alertRefreshElapsedMs` performed for that CLI invocation. When a blocking
+interaction exists, the envelope includes a top-level `interaction` summary
+and a warning. App-owned alerts must be handled with `dismissAlert`; external
+macOS permission prompts are left to the user or Computer Use. Bare
+`dismissAlert` accepts only an unambiguous one-button alert; choose
+`--label`, `--index`, or `--primary` for a multi-button alert.
+
 Repeatable sequences are ordinary shell scripts, so they can use variables, conditionals, and the same CLI commands without another DSL:
 
 ```bash

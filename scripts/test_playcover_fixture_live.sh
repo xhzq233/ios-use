@@ -587,8 +587,7 @@ assert_swiftui_overlap_blocks_increment() {
 
 assert_native_alert_blocks_command() {
   local case_name="$1"
-  local expected_phase="$2"
-  shift 2
+  shift
   local stdout_file="$RUN_DIR/${case_name}.stdout"
   local stderr_file="$RUN_DIR/${case_name}.stderr"
   printf '%s\t%s\t%s\t%s\t%s\n' \
@@ -607,8 +606,14 @@ assert_native_alert_blocks_command() {
   assert_failure_json "$case_name" "
     .ok == false and
     .error.category == \"interaction\" and
-    .error.code == \"element_not_hittable\" and
-    .error.phase == \"$expected_phase\"
+    .error.code == \"preexisting_alert\" and
+    .error.phase == \"precondition\" and
+    .error.mutationMayHaveApplied == false and
+    .performance.alertRefreshCount == 1 and
+    (.performance.alertRefreshElapsedMs | type) == \"number\" and
+    .interaction.blocking == true and
+    ([.interaction.interactions[].type] |
+      index(\"inProcessAlert\")) != null
   "
 }
 
@@ -2671,6 +2676,13 @@ record_case alert_show_tap tap "Show Alert" --json
 record_case alert_status status --json
 assert_evidence alert_status '_NSAlertPanel'
 assert_json alert_status '
+  .performance.alertRefreshCount == 1 and
+  (.performance.alertRefreshElapsedMs | type) == "number" and
+  .interaction.blocking == true and
+  ([.interaction.interactions[].type] |
+    index("inProcessAlert")) != null and
+  ([.warnings[] | select(contains("dismissAlert"))] |
+    length) == 1 and
   .data.driver.runtime.diagnostics.runtime.window as $appkit |
   $appkit.nativeAlert as $alert |
   $alert.visible == 1 and
@@ -2692,6 +2704,9 @@ record_case alert_screenshot screenshot \
 assert_evidence alert_screenshot '"compositorWindowNumbers"'
 assert_canvas_only_screenshot alert_screenshot
 assert_json alert_screenshot '
+  .performance.alertRefreshCount == 1 and
+  (.performance.alertRefreshElapsedMs | type) == "number" and
+  .interaction.blocking == true and
   .data.runtimeEvidence.compositor.windows as $windows |
   ([$windows[] | select(.class == "_NSAlertPanel")] |
     length) == 1 and
@@ -2708,25 +2723,40 @@ record_case alert_dom dom --json
 assert_evidence alert_dom 'Fixture Alert'
 assert_evidence alert_dom 'Confirm'
 assert_evidence alert_dom 'Cancel'
+assert_json alert_dom '
+  .performance.alertRefreshCount == 1 and
+  (.performance.alertRefreshElapsedMs | type) == "number" and
+  .interaction.blocking == true and
+  ([.warnings[] | select(contains("dismissAlert"))] |
+    length) == 1
+'
 assert_native_alert_blocks_command \
-  alert_underlay_tap identity tap "Increment"
+  alert_underlay_tap tap "Increment"
 assert_native_alert_blocks_command \
-  alert_absolute_outside hit-test tap 10,10
+  alert_absolute_outside tap 10,10
 assert_native_alert_blocks_command \
-  alert_underlay_longpress identity \
+  alert_underlay_longpress \
   longpress "Long Press Target" --duration 100ms
 assert_native_alert_blocks_command \
-  alert_underlay_swipe identity \
+  alert_underlay_swipe \
   swipe --from "Increment" --dir forth --distance 50
 assert_native_alert_blocks_command \
-  alert_underlay_input identity \
+  alert_underlay_input \
   input --tap "Fixture Input" --content blocked
-record_case alert_tap_confirm tap "Confirm" --dom --json
-assert_json alert_tap_confirm '
-  .data.finalState.phase == "native-ended" and
-  .data.finalState.touchID == -1
+assert_native_alert_blocks_command \
+  alert_tap_confirm tap "Confirm"
+assert_native_alert_blocks_command \
+  alert_open_underlay open "iosusefixture://blocked"
+record_case alert_dismiss_confirm \
+  dismissAlert --label "Confirm" --json
+assert_json alert_dismiss_confirm '
+  .data.dismissed == true and
+  .data.button == "Confirm" and
+  .data.reason == "label" and
+  .performance.alertRefreshCount == 1
 '
-assert_evidence alert_tap_confirm 'Alert Confirmed'
+record_case alert_confirmed waitFor "Alert Confirmed" \
+  --timeout 10s --json
 
 record_case alert_show_label tap "Show Alert" --json
 alert_missing_stdout="$RUN_DIR/alert_label_missing.stdout"
@@ -2767,10 +2797,51 @@ record_case alert_label_gone waitFor "Fixture Alert" \
   --gone --timeout 10s --json
 
 record_case alert_show_default tap "Show Alert" --json
-record_case alert_default dismissAlert --json
-assert_evidence alert_default \
-  '"button"[[:space:]]*:[[:space:]]*"Confirm"'
-record_case alert_default_gone waitFor "Fixture Alert" \
+for selection_case in alert_default alert_only_button; do
+  selection_stdout="$RUN_DIR/${selection_case}.stdout"
+  selection_stderr="$RUN_DIR/${selection_case}.stderr"
+  if [[ "$selection_case" == "alert_default" ]]; then
+    selection_args=()
+  else
+    selection_args=(--only-button)
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$MATRIX_VERSION" \
+    "$selection_case" \
+    "dismissAlert ${selection_args[*]} --json (expected guarded-selection failure)" \
+    "$selection_stdout" \
+    "$selection_stderr" >>"$MANIFEST"
+  if IOS_USE_HOME="$SESSION_HOME" "$ROOT_DIR/ios-use" \
+      dismissAlert "${selection_args[@]}" --json \
+      >"$selection_stdout" 2>"$selection_stderr"; then
+    echo \
+      "[playcover-fixture-live] FAIL: only-button selection dismissed a two-button alert" \
+      >&2
+    exit 1
+  fi
+  assert_failure_json "$selection_case" '
+    .ok == false and
+    .error.category == "interaction" and
+    .error.code == "alert_selection_required" and
+    .error.phase == "selection" and
+    .error.mutationMayHaveApplied == false and
+    .performance.alertRefreshCount == 1
+  '
+done
+record_case alert_default_still_visible status --json
+assert_json alert_default_still_visible '
+  .interaction.blocking == true and
+  ([.interaction.interactions[].actions[].label] | sort) ==
+    ["Cancel","Confirm"]
+'
+record_case alert_primary dismissAlert --primary --json
+assert_json alert_primary '
+  .data.dismissed == true and
+  .data.button == "Confirm" and
+  .data.reason == "visualPrimary" and
+  .performance.alertRefreshCount == 1
+'
+record_case alert_primary_gone waitFor "Fixture Alert" \
   --gone --timeout 10s --json
 
 record_case open_url open "iosusefixture://acceptance/v1" \
