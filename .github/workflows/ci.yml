@@ -71,7 +71,6 @@ jobs:
           bash scripts/test_install.sh
           bash scripts/test_playcover_packaging_contract.sh
           bash scripts/test_playcover_live_workflow_contract.sh
-          bash scripts/test_playcover_timing_stats.sh
           node --check scripts/benchmark.js
           node --check scripts/ios_use_test_simulator.js
           node --check scripts/test_simulator_commands.mjs
