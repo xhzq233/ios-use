@@ -526,6 +526,84 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
     }
 
+    func testRuntimeBuildHashNormalizesRegeneratedSigningMaterial()
+        throws
+    {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "IOSUsePlayCoverRuntimeSigning-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false
+        )
+        let runtime = try makeCatalystRuntimeFramework(in: root)
+        let executable = runtime.appendingPathComponent(
+            "IOSUsePlayRuntime"
+        )
+        let baseline = try PlayCoverUpstreamEngine.runtimeBuildHash(
+            frameworkURL: runtime
+        )
+
+        var bytes = try Data(contentsOf: executable)
+        let command = try thinCodeSignatureCommand(in: bytes)
+        let replacementSize = command.dataSize + 80
+        bytes.replaceSubrange(
+            (command.commandOffset + 12)..<(command.commandOffset + 16),
+            with: littleEndianBytes(UInt32(replacementSize))
+        )
+        let replacementFileSize =
+            UInt64(command.dataOffset + replacementSize)
+                - command.linkeditFileOffset
+        let replacementVMSize =
+            (replacementFileSize + 0x3fff) & ~UInt64(0x3fff)
+        bytes.replaceSubrange(
+            (command.linkeditOffset + 32)..<(command.linkeditOffset + 40),
+            with: littleEndianBytes(replacementVMSize)
+        )
+        bytes.replaceSubrange(
+            (command.linkeditOffset + 48)..<(command.linkeditOffset + 56),
+            with: littleEndianBytes(replacementFileSize)
+        )
+        bytes.replaceSubrange(
+            command.dataOffset..<bytes.count,
+            with: Data(repeating: 0xa5, count: replacementSize)
+        )
+        try bytes.write(to: executable)
+
+        XCTAssertEqual(
+            try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: runtime
+            ),
+            baseline,
+            "re-signing must not create a different Runtime build identity"
+        )
+
+        var malformedEnvelope = bytes
+        malformedEnvelope.replaceSubrange(
+            (command.linkeditOffset + 48)..<(command.linkeditOffset + 56),
+            with: littleEndianBytes(replacementFileSize + 1)
+        )
+        try malformedEnvelope.write(to: executable)
+        XCTAssertThrowsError(
+            try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: runtime
+            )
+        )
+
+        bytes[command.dataOffset - 1] ^= 0x01
+        try bytes.write(to: executable)
+        XCTAssertNotEqual(
+            try PlayCoverUpstreamEngine.runtimeBuildHash(
+                frameworkURL: runtime
+            ),
+            baseline,
+            "bytes outside generated signature material remain build input"
+        )
+    }
+
     func testPrepareWithInspectionRejectsDifferentCanonicalSource() throws {
         let fixture = try makeInspectionFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -762,6 +840,96 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             [.posixPermissions: 0o600],
             ofItemAtPath: z.path
         )
+    }
+
+    private func thinCodeSignatureCommand(
+        in data: Data
+    ) throws -> (
+        commandOffset: Int,
+        linkeditOffset: Int,
+        linkeditFileOffset: UInt64,
+        dataOffset: Int,
+        dataSize: Int
+    ) {
+        func u32(_ offset: Int) throws -> UInt32 {
+            guard offset >= 0, offset + 4 <= data.count else {
+                throw NSError(domain: "RuntimeSigningFixture", code: 1)
+            }
+            return UInt32(data[offset])
+                | UInt32(data[offset + 1]) << 8
+                | UInt32(data[offset + 2]) << 16
+                | UInt32(data[offset + 3]) << 24
+        }
+        func u64(_ offset: Int) throws -> UInt64 {
+            guard offset >= 0, offset + 8 <= data.count else {
+                throw NSError(domain: "RuntimeSigningFixture", code: 6)
+            }
+            var value: UInt64 = 0
+            for index in 0..<8 {
+                value |= UInt64(data[offset + index])
+                    << UInt64(index * 8)
+            }
+            return value
+        }
+        guard try u32(0) == 0xfeed_facf else {
+            throw NSError(domain: "RuntimeSigningFixture", code: 2)
+        }
+        let count = Int(try u32(16))
+        let commandBytes = Int(try u32(20))
+        var cursor = 32
+        var linkeditOffset: Int?
+        for _ in 0..<count {
+            let command = try u32(cursor) & 0x7fff_ffff
+            let size = Int(try u32(cursor + 4))
+            guard size >= 8,
+                  cursor + size <= 32 + commandBytes else {
+                throw NSError(domain: "RuntimeSigningFixture", code: 3)
+            }
+            if command == 0x19, size >= 72 {
+                let nameBytes = data[
+                    (cursor + 8)..<(cursor + 24)
+                ].prefix { $0 != 0 }
+                if String(decoding: nameBytes, as: UTF8.self)
+                    == "__LINKEDIT" {
+                    linkeditOffset = cursor
+                }
+            }
+            if command == 0x1d {
+                let dataOffset = Int(try u32(cursor + 8))
+                let dataSize = Int(try u32(cursor + 12))
+                guard dataOffset + dataSize == data.count,
+                      let linkeditOffset else {
+                    throw NSError(
+                        domain: "RuntimeSigningFixture",
+                        code: 4
+                    )
+                }
+                return (
+                    cursor,
+                    linkeditOffset,
+                    try u64(linkeditOffset + 40),
+                    dataOffset,
+                    dataSize
+                )
+            }
+            cursor += size
+        }
+        throw NSError(domain: "RuntimeSigningFixture", code: 5)
+    }
+
+    private func littleEndianBytes(_ value: UInt32) -> [UInt8] {
+        [
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24),
+        ]
+    }
+
+    private func littleEndianBytes(_ value: UInt64) -> [UInt8] {
+        (0..<8).map {
+            UInt8(truncatingIfNeeded: value >> UInt64($0 * 8))
+        }
     }
 
     private func makeInspectionFixture() throws -> InspectionFixture {

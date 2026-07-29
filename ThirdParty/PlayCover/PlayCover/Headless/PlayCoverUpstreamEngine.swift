@@ -1575,6 +1575,12 @@ public enum PlayCoverUpstreamEngine {
             at: executableURL,
             relativePath: executableRelativePath
         )
+        guard inspection.container == .thin,
+              inspection.cpuType == cpuTypeArm64 else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "Runtime must be one thin arm64 Mach-O"
+            )
+        }
         return PlayCoverUpstreamRuntimeEvidence(
             frameworkPath: root.resolvingSymlinksInPath().path,
             buildHash: snapshot.buildHash,
@@ -1693,37 +1699,42 @@ public enum PlayCoverUpstreamEngine {
             update(&hasher, relative)
             update(&hasher, kind)
             update(&hasher, String(permissions))
-            update(&hasher, String(size))
             if kind == "file" {
-                updateLength(&hasher, size)
-                var retainedData = url.resolvingSymlinksInPath()
-                    .standardizedFileURL.path == mainExecutableCanonicalPath
-                    ? Data()
-                    : nil
-                var fileHasher = SHA256()
-                do {
-                    let handle = try FileHandle(forReadingFrom: url)
-                    defer { try? handle.close() }
-                    while let data = try handle.read(upToCount: 1_048_576),
-                          !data.isEmpty {
-                        hasher.update(data: data)
-                        if retainedData != nil {
-                            retainedData?.append(data)
-                            fileHasher.update(data: data)
-                        }
-                    }
+                let rawData = try Data(
+                    contentsOf: url,
+                    options: .alwaysMapped
+                )
+                guard UInt64(rawData.count) == size else {
+                    throw PlayCoverUpstreamError.invalidApp(
+                        "Runtime file size changed while hashing: "
+                            + relative
+                    )
                 }
-                if let retainedData {
-                    mainExecutableData = retainedData
-                    mainExecutableSHA256 = hex(fileHasher.finalize())
+                let buildData = try codeSignatureNeutralMachOData(
+                    rawData,
+                    path: relative
+                )
+                update(&hasher, String(buildData.count))
+                updateLength(&hasher, UInt64(buildData.count))
+                hasher.update(data: buildData)
+                if url.resolvingSymlinksInPath()
+                    .standardizedFileURL.path
+                    == mainExecutableCanonicalPath {
+                    mainExecutableData = rawData
+                    mainExecutableSHA256 = hex(
+                        SHA256.hash(data: rawData)
+                    )
                 }
             } else if kind == "symlink" {
+                update(&hasher, String(size))
                 update(
                     &hasher,
                     try FileManager.default.destinationOfSymbolicLink(
                         atPath: url.path
                     )
                 )
+            } else {
+                update(&hasher, String(size))
             }
         }
         return (
@@ -1731,6 +1742,186 @@ public enum PlayCoverUpstreamEngine {
             mainExecutableData,
             mainExecutableSHA256
         )
+    }
+
+    /// A Runtime framework is copied unchanged and then signed again as one
+    /// nested code object. Its embedded Mach-O signature varies with signing
+    /// identity even when the Runtime build does not. Hash the complete thin
+    /// 64-bit Mach-O up to LC_CODE_SIGNATURE while normalizing only the
+    /// generated signature envelope.
+    private static func codeSignatureNeutralMachOData(
+        _ data: Data,
+        path: String
+    ) throws -> Data {
+        guard data.count >= 4 else {
+            return data
+        }
+        let magic = try u32(data, 0, bigEndian: false)
+        let swapped: Bool
+        switch magic {
+        case 0xfeed_facf:
+            swapped = false
+        case 0xcffa_edfe:
+            swapped = true
+        default:
+            return data
+        }
+        guard data.count >= 32 else {
+            throw PlayCoverUpstreamError.malformedMachO(
+                "\(path) has an incomplete 64-bit header"
+            )
+        }
+        let commandCount = try u32(data, 16, bigEndian: swapped)
+        let commandBytes = try u32(data, 20, bigEndian: swapped)
+        guard commandCount <= maximumLoadCommands,
+              UInt64(32) + UInt64(commandBytes) <= UInt64(data.count)
+        else {
+            throw PlayCoverUpstreamError.malformedMachO(
+                "\(path) has invalid Runtime load-command bounds"
+            )
+        }
+
+        var cursor = 32
+        var signatureCommandOffset: Int?
+        var signatureDataOffset: UInt32?
+        var signatureDataSize: UInt32?
+        var linkeditCommandOffset: Int?
+        for index in 0..<Int(commandCount) {
+            guard cursor + 8 <= 32 + Int(commandBytes) else {
+                throw PlayCoverUpstreamError.malformedMachO(
+                    "\(path) Runtime command \(index) is truncated"
+                )
+            }
+            let command = try u32(data, cursor, bigEndian: swapped)
+            let commandSize = Int(
+                try u32(data, cursor + 4, bigEndian: swapped)
+            )
+            guard commandSize >= 8,
+                  cursor + commandSize <= 32 + Int(commandBytes)
+            else {
+                throw PlayCoverUpstreamError.malformedMachO(
+                    "\(path) Runtime command \(index) has invalid size"
+                )
+            }
+            if command & 0x7fff_ffff == 0x1d {
+                guard commandSize >= 16,
+                      signatureCommandOffset == nil else {
+                    throw PlayCoverUpstreamError.malformedMachO(
+                        "\(path) has invalid LC_CODE_SIGNATURE commands"
+                    )
+                }
+                signatureCommandOffset = cursor
+                signatureDataOffset = try u32(
+                    data,
+                    cursor + 8,
+                    bigEndian: swapped
+                )
+                signatureDataSize = try u32(
+                    data,
+                    cursor + 12,
+                    bigEndian: swapped
+                )
+            } else if command & 0x7fff_ffff == 0x19,
+                      commandSize >= 72,
+                      fixedString(data, cursor + 8, length: 16)
+                        == "__LINKEDIT" {
+                guard linkeditCommandOffset == nil else {
+                    throw PlayCoverUpstreamError.malformedMachO(
+                        "\(path) has duplicate __LINKEDIT segments"
+                    )
+                }
+                linkeditCommandOffset = cursor
+            }
+            cursor += commandSize
+        }
+        guard cursor == 32 + Int(commandBytes) else {
+            throw PlayCoverUpstreamError.malformedMachO(
+                "\(path) Runtime load-command bytes disagree"
+            )
+        }
+        guard let signatureCommandOffset,
+              let signatureDataOffset,
+              let signatureDataSize else {
+            return data
+        }
+        guard let linkeditCommandOffset else {
+            throw PlayCoverUpstreamError.malformedMachO(
+                "\(path) signed Runtime has no __LINKEDIT segment"
+            )
+        }
+        guard UInt64(signatureDataOffset) >= UInt64(cursor),
+              UInt64(signatureDataOffset) <= UInt64(data.count),
+              UInt64(signatureDataSize)
+                == UInt64(data.count) - UInt64(signatureDataOffset)
+        else {
+            throw PlayCoverUpstreamError.malformedMachO(
+                "\(path) has invalid Runtime LC_CODE_SIGNATURE bounds"
+            )
+        }
+        let linkeditVMSize = try u64(
+            data,
+            linkeditCommandOffset + 32,
+            bigEndian: swapped
+        )
+        let linkeditFileOffset = try u64(
+            data,
+            linkeditCommandOffset + 40,
+            bigEndian: swapped
+        )
+        let linkeditFileSize = try u64(
+            data,
+            linkeditCommandOffset + 48,
+            bigEndian: swapped
+        )
+        guard linkeditFileOffset <= UInt64(signatureDataOffset),
+              linkeditFileSize
+                == UInt64(data.count) - linkeditFileOffset,
+              linkeditFileSize <= UInt64.max - 0x3fff,
+              linkeditVMSize
+                == (linkeditFileSize + 0x3fff) & ~UInt64(0x3fff)
+        else {
+            throw PlayCoverUpstreamError.malformedMachO(
+                "\(path) has invalid signed __LINKEDIT envelope"
+            )
+        }
+        let canonicalFileSize =
+            UInt64(signatureDataOffset) - linkeditFileOffset
+        guard canonicalFileSize <= UInt64.max - 0x3fff else {
+            throw PlayCoverUpstreamError.malformedMachO(
+                "\(path) has an overflowing canonical __LINKEDIT envelope"
+            )
+        }
+        let canonicalVMSize =
+            (canonicalFileSize + 0x3fff) & ~UInt64(0x3fff)
+        func encodedU64(_ value: UInt64) -> [UInt8] {
+            (0..<8).map { index in
+                let shift = swapped
+                    ? UInt64((7 - index) * 8)
+                    : UInt64(index * 8)
+                return UInt8(truncatingIfNeeded: value >> shift)
+            }
+        }
+
+        var normalized = Data(
+            data.prefix(Int(signatureDataOffset))
+        )
+        normalized.replaceSubrange(
+            (signatureCommandOffset + 12)..<(signatureCommandOffset + 16),
+            with: repeatElement(UInt8(0), count: 4)
+        )
+        // codesign grows the final __LINKEDIT extent to contain its generated
+        // SuperBlob. Preserve vmaddr/fileoff and every preceding byte, but
+        // normalize only the generated vmsize/filesize envelope to the
+        // unsigned prefix that ends at LC_CODE_SIGNATURE.dataoff.
+        normalized.replaceSubrange(
+            (linkeditCommandOffset + 32)..<(linkeditCommandOffset + 40),
+            with: encodedU64(canonicalVMSize)
+        )
+        normalized.replaceSubrange(
+            (linkeditCommandOffset + 48)..<(linkeditCommandOffset + 56),
+            with: encodedU64(canonicalFileSize)
+        )
+        return normalized
     }
 
     private struct Slice {
@@ -1762,6 +1953,7 @@ public enum PlayCoverUpstreamEngine {
         let sha256: String?
         let isMachO: Bool
         let retainedData: Data?
+        let secondaryData: Data?
     }
 
     private struct TreeSnapshot {
@@ -3422,7 +3614,9 @@ public enum PlayCoverUpstreamEngine {
                     &nested,
                     String(entry.posixPermissions ?? 0)
                 )
-                update(&nested, String(entry.size ?? 0))
+                if entry.kind != .regularFile {
+                    update(&nested, String(entry.size ?? 0))
+                }
                 nestedHasher = nested
             }
             let fileSHA256: String?
@@ -3430,20 +3624,31 @@ public enum PlayCoverUpstreamEngine {
             switch entry.kind {
             case .regularFile:
                 updateLength(&hasher, entry.size ?? 0)
-                if nestedRelativePath != nil, var nested = nestedHasher {
-                    updateLength(&nested, entry.size ?? 0)
-                    nestedHasher = nested
-                }
                 let file = try readRegularFile(
                     entry.url,
                     preloadedData:
                         preloadedRegularFileData[entry.relativePath],
                     retainMachOData: inspectMachOs,
+                    retainSecondaryData: nestedRelativePath != nil,
                     computeSHA256: collectFileHashes || inspectMachOs,
-                    contentHasher: &hasher,
-                    secondaryContentHasher: &nestedHasher,
-                    hashSecondaryContent: nestedRelativePath != nil
+                    contentHasher: &hasher
                 )
+                if let nestedRelativePath,
+                   var nested = nestedHasher {
+                    guard let secondaryData = file.secondaryData else {
+                        preconditionFailure(
+                            "nested Runtime bytes were not retained"
+                        )
+                    }
+                    let buildData = try codeSignatureNeutralMachOData(
+                        secondaryData,
+                        path: nestedRelativePath
+                    )
+                    update(&nested, String(buildData.count))
+                    updateLength(&nested, UInt64(buildData.count))
+                    nested.update(data: buildData)
+                    nestedHasher = nested
+                }
                 fileSHA256 = file.sha256
                 codeKind = file.isMachO
                     ? codeObjectKind(
@@ -3522,25 +3727,20 @@ public enum PlayCoverUpstreamEngine {
         _ url: URL,
         preloadedData: Data?,
         retainMachOData: Bool,
+        retainSecondaryData: Bool,
         computeSHA256: Bool,
-        contentHasher: inout SHA256,
-        secondaryContentHasher: inout SHA256?,
-        hashSecondaryContent: Bool
+        contentHasher: inout SHA256
     ) throws -> RegularFileSnapshot {
         if let data = preloadedData {
             let macho = isMachO(data)
             contentHasher.update(data: data)
-            if hashSecondaryContent,
-               var secondary = secondaryContentHasher {
-                secondary.update(data: data)
-                secondaryContentHasher = secondary
-            }
             return RegularFileSnapshot(
                 sha256: computeSHA256
                     ? hex(SHA256.hash(data: data))
                     : nil,
                 isMachO: macho,
-                retainedData: retainMachOData && macho ? data : nil
+                retainedData: retainMachOData && macho ? data : nil,
+                secondaryData: retainSecondaryData ? data : nil
             )
         }
 
@@ -3553,15 +3753,11 @@ public enum PlayCoverUpstreamEngine {
             ? hex(SHA256.hash(data: data))
             : nil
         contentHasher.update(data: data)
-        if hashSecondaryContent,
-           var secondary = secondaryContentHasher {
-            secondary.update(data: data)
-            secondaryContentHasher = secondary
-        }
         return RegularFileSnapshot(
             sha256: fileSHA256,
             isMachO: macho,
-            retainedData: retainMachOData && macho ? data : nil
+            retainedData: retainMachOData && macho ? data : nil,
+            secondaryData: retainSecondaryData ? data : nil
         )
     }
 
@@ -4293,11 +4489,13 @@ public enum PlayCoverUpstreamEngine {
                     )
                 }
             }
-            guard evidence.mainExecutable.platform == platformMacCatalyst,
+            guard evidence.mainExecutable.container == .thin,
+                  evidence.mainExecutable.cpuType == cpuTypeArm64,
+                  evidence.mainExecutable.platform == platformMacCatalyst,
                   !evidence.mainExecutable.encrypted else {
                 throw PlayCoverUpstreamError.invalidApp(
-                    "Runtime must be an unencrypted arm64 Mac Catalyst "
-                        + "binary"
+                    "Runtime must be one thin, unencrypted arm64 "
+                        + "Mac Catalyst binary"
                 )
             }
             return
@@ -4334,10 +4532,13 @@ public enum PlayCoverUpstreamEngine {
             at: executable,
             relativePath: executable.lastPathComponent
         )
-        guard inspection.platform == platformMacCatalyst,
+        guard inspection.container == .thin,
+              inspection.cpuType == cpuTypeArm64,
+              inspection.platform == platformMacCatalyst,
               !inspection.encrypted else {
             throw PlayCoverUpstreamError.invalidApp(
-                "Runtime must be an unencrypted arm64 Mac Catalyst binary"
+                "Runtime must be one thin, unencrypted arm64 "
+                    + "Mac Catalyst binary"
             )
         }
     }
