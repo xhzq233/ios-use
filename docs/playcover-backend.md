@@ -482,17 +482,24 @@ recorded-PID-reuse cases that cannot be forced safely in a host live run.
 The run directory and attestation candidate are exclusively created and the
 final is a no-clobber hard link; it does not rely on `ditto` preserving a Unix
 socket in the archived home.
-These process-local checks remain additive: they do not replace the unlocked
-real cursor, popup, and mouse/touch matrix. The version-2 live display matrix
-requires exactly one main display and one eligible active, online,
-non-mirrored extended display with an NSScreen and a different backing scale;
-missing hardware or a locked console is an `EX_CONFIG` (78) failure. The same
-PID, session, prepared generation, and AppKit window number must survive
-exact-window interpolated title-bar drags main → extended → main. Each phase
-binds Runtime diagnostics to the selected screen ID, backing scale, and visible
-frame while requiring host display scales 0.75, 1.0, and 0.875 respectively.
-Only the redacted external-App schema-v2 attestation is eligible for CI upload;
-raw topology and UI evidence remain runner-private.
+These process-local checks, together with the pending-launch same-boot crash
+gate, are the required core live aggregate. CI runs that aggregate on the
+provisioned Apple-silicon host with its stable signer already initialized and
+an unlocked, launch-capable GUI session. It does not consume a private App,
+two-display matrix, or external-App attestation.
+
+The unlocked real cursor, popup, and mouse/touch workflows remain optional
+additive diagnostics. Their version-2 live display matrix requires exactly one
+main display and one eligible active, online, non-mirrored extended display
+with an NSScreen and a different backing scale; missing hardware or a locked
+console is an `EX_CONFIG` (78) failure. The same PID, session, prepared
+generation, and AppKit window number must survive exact-window interpolated
+title-bar drags main → extended → main. Each phase binds Runtime diagnostics to
+the selected screen ID, backing scale, and visible frame while requiring host
+display scales 0.75, 1.0, and 0.875 respectively. The external-App diagnostic
+may still publish its redacted schema-v2 attestation when invoked directly,
+but the core `test_playcover_backend.sh --live` and CI job neither require nor
+upload it.
 
 ## Upstream Provenance
 

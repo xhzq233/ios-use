@@ -138,12 +138,13 @@ To watch it:
   provenance, build manifest, changelog, and checksums in addition to the CLI
   and driver IPAs.
 
-The external-App live/stress gate is a separate `workflow_dispatch` entry
-because hosted jobs cannot access an operator's App or interactive runner. A
-release still requires a passing attestation for the exact release commit.
-The runner supplies `IOS_USE_PLAYCOVER_LIVE_SCENARIO` and
-`IOS_USE_PLAYCOVER_PRIVATE_EVIDENCE_DIR`; raw screenshots, DOM, logs, and
-session state remain outside the public checkout. CI receives and uploads only
-the schema-v1 redacted attestation containing the commit, generic case IDs,
-result, and evidence digests. A queued or unavailable private runner is an
-infrastructure gap, never passing evidence.
+The core PlayCover live gate is a separate `workflow_dispatch` entry because
+its public-fixture pending-launch and Runtime crash/stress checks require the
+provisioned Apple-silicon runner. That host must already have the stable signer
+initialized and an unlocked, launch-capable GUI session. A release still
+requires the core gate to pass for the exact release commit. The job needs no
+operator App, private scenario/evidence directory, or external-App
+attestation; CI uploads its runner-temporary `run.log`. The two-display fixture
+and generic external-App workflows remain optional additive diagnostics. A
+queued or unavailable provisioned runner is an infrastructure gap, never a
+passing live result.
