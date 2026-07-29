@@ -80,13 +80,24 @@ STATUS_FILE="$TEMP_ROOT/status.json"
 SOURCE_ASSET="source.tar.gz"
 INSTALL_VERSION_FOR_TEST="v0.0.0-test"
 EXPECTED_RUNTIME="$RUNTIME_SOURCE"
+START_ATTEMPTED=0
+SESSION_STOPPED=0
 
 cleanup() {
-  if [[ -x "$INSTALLED_BINARY" ]]; then
-    (
+  if [[ "$START_ATTEMPTED" -eq 1 &&
+        "$SESSION_STOPPED" -eq 0 &&
+        -x "$INSTALLED_BINARY" ]]; then
+    if ! (
       cd "$TEMP_ROOT"
-      IOS_USE_HOME="$CUSTOM_HOME" "$INSTALLED_BINARY" stop >/dev/null 2>&1 || true
-    )
+      IOS_USE_HOME="$CUSTOM_HOME" \
+        "$INSTALLED_BINARY" stop \
+          >"$TEMP_ROOT/cleanup-stop.log" 2>&1
+    ); then
+      echo \
+        "[installed-layout] preserving failed launch evidence: $TEMP_ROOT" \
+        >&2
+      return
+    fi
   fi
   if [[ -d "$TEMP_ROOT" ]]; then
     chmod -R u+w "$TEMP_ROOT"
@@ -408,6 +419,7 @@ if [[ -e "$CUSTOM_HOME/playcover/IOSUsePlayRuntime.framework" ]] ||
   exit 1
 fi
 
+START_ATTEMPTED=1
 set +e
 (
   cd "$TEMP_ROOT"
@@ -433,6 +445,7 @@ fi
     "$INSTALLED_BINARY" status --json >"$STATUS_FILE"
   IOS_USE_HOME="$CUSTOM_HOME" "$INSTALLED_BINARY" stop
 )
+SESSION_STOPPED=1
 RUNTIME_SOCKET="$(
   jq -er '.data.driver.playcoverRuntimeSocketPath' "$STATUS_FILE"
 )"
