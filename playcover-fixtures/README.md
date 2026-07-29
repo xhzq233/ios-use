@@ -105,7 +105,7 @@ multi-display workflows are optional additive diagnostics, not part of the
 core release gate.
 
 `runtime_socket_probe.swift` is intentionally a bounded negative-test client,
-not an automation API. The unified live gate uses it only against a fixture
+not an automation API. The core Runtime-stress gate uses it only against a fixture
 session in a freshly created `IOS_USE_HOME` to prove exact protocol errors for
 zero-length, oversized, exact-limit invalid-JSON, malformed-JSON, invalid-UTF-8,
 and truncated frames while the Runtime listener remains healthy. The same
