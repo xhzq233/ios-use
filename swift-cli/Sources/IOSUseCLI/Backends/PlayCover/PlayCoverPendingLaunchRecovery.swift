@@ -21,7 +21,9 @@ struct PlayCoverPendingLaunchRecoveryError:
 /// This type deliberately does not infer safety from age, a missing Runtime
 /// socket, or an empty AppKit query. `Decision` is derived only from durable
 /// submission evidence, an exact owned process identity, the current boot,
-/// and a complete process-table census.
+/// and a complete same-UID process-table census. LaunchServices starts the
+/// target as the invoking user, so unrelated system-user processes are outside
+/// this launch authority and must not make recovery permanently unverifiable.
 enum PlayCoverPendingLaunchRecovery {
     struct Evidence: Equatable, Sendable {
         let sessionID: String
@@ -298,10 +300,11 @@ enum PlayCoverPendingLaunchRecovery {
             executablePath
         )
         let pidStride = MemoryLayout<pid_t>.stride
-        let processListKind = UInt32(PROC_ALL_PIDS)
+        let processListKind = UInt32(PROC_UID_ONLY)
+        let processListTypeInfo = UInt32(geteuid())
         let requiredBytes = Darwin.proc_listpids(
             processListKind,
-            0,
+            processListTypeInfo,
             nil,
             0
         )
@@ -337,7 +340,7 @@ enum PlayCoverPendingLaunchRecovery {
             let byteCount = buffer.withUnsafeMutableBytes {
                 Darwin.proc_listpids(
                     processListKind,
-                    0,
+                    processListTypeInfo,
                     $0.baseAddress,
                     byteCapacity32
                 )
@@ -375,17 +378,6 @@ enum PlayCoverPendingLaunchRecovery {
         var candidates: [Candidate] = []
         var unreadable: [Int32] = []
         for pid in Set(pids) where pid > 0 {
-            switch processUserForCensus(pid) {
-            case .otherUser:
-                continue
-            case .exited:
-                continue
-            case .unverifiable:
-                unreadable.append(pid)
-                continue
-            case .currentUser:
-                break
-            }
             switch stableExactCandidate(
                 pid: pid,
                 expectedExecutablePath: expected
@@ -525,44 +517,6 @@ enum PlayCoverPendingLaunchRecovery {
         case unverifiable
     }
 
-    private enum ProcessUserCensusResult {
-        case currentUser
-        case otherUser
-        case exited
-        case unverifiable
-    }
-
-    private static func processUserForCensus(
-        _ pid: Int32
-    ) -> ProcessUserCensusResult {
-        #if canImport(Darwin)
-        var info = proc_bsdinfo()
-        let expectedSize = Int32(
-            MemoryLayout<proc_bsdinfo>.size
-        )
-        let actualSize = Darwin.proc_pidinfo(
-            pid,
-            PROC_PIDTBSDINFO,
-            0,
-            &info,
-            expectedSize
-        )
-        if actualSize == expectedSize {
-            return info.pbi_uid == geteuid()
-                ? .currentUser
-                : .otherUser
-        }
-        let probe = Darwin.kill(pid, 0)
-        let probeError = errno
-        if probe != 0, probeError == ESRCH {
-            return .exited
-        }
-        return .unverifiable
-        #else
-        return .unverifiable
-        #endif
-    }
-
     private enum StableCandidateResult {
         case candidate(Candidate?)
         case unverifiable
@@ -576,7 +530,10 @@ enum PlayCoverPendingLaunchRecovery {
         case .exited:
             return .candidate(nil)
         case .unverifiable:
-            return .unverifiable
+            return stableOpaqueNonCandidate(
+                pid: pid,
+                expectedExecutablePath: expectedExecutablePath
+            )
         case .path(let firstPath):
             guard PlayCoverRuntimeClient.canonicalPath(firstPath)
                     == expectedExecutablePath else {
@@ -611,6 +568,155 @@ enum PlayCoverPendingLaunchRecovery {
                 processBirthMicroseconds: firstBirth
             )
         )
+    }
+
+    private struct OpaqueProcessInfo: Equatable {
+        let status: UInt32
+        let command: String
+        let processBirthMicroseconds: UInt64
+    }
+
+    private enum OpaqueProcessInfoResult {
+        case info(OpaqueProcessInfo)
+        case exited
+        case unverifiable
+    }
+
+    private static func stableOpaqueNonCandidate(
+        pid: Int32,
+        expectedExecutablePath: String
+    ) -> StableCandidateResult {
+        #if canImport(Darwin)
+        let first = opaqueProcessInfo(pid)
+        switch first {
+        case .exited:
+            return .candidate(nil)
+        case .unverifiable:
+            return .unverifiable
+        case .info(let info):
+            guard opaqueProcessCanBeExcluded(
+                status: info.status,
+                command: info.command,
+                expectedExecutablePath: expectedExecutablePath
+            ) else {
+                return .unverifiable
+            }
+        }
+
+        let second = opaqueProcessInfo(pid)
+        switch second {
+        case .exited:
+            return .candidate(nil)
+        case .unverifiable:
+            return .unverifiable
+        case .info(let info):
+            guard case .info(let firstInfo) = first,
+                  info.processBirthMicroseconds
+                    == firstInfo.processBirthMicroseconds,
+                  opaqueProcessCanBeExcluded(
+                    status: info.status,
+                    command: info.command,
+                    expectedExecutablePath: expectedExecutablePath
+                  ) else {
+                return .unverifiable
+            }
+            return .candidate(nil)
+        }
+        #else
+        return .unverifiable
+        #endif
+    }
+
+    private static func opaqueProcessInfo(
+        _ pid: Int32
+    ) -> OpaqueProcessInfoResult {
+        #if canImport(Darwin)
+        var query = [
+            Int32(CTL_KERN),
+            Int32(KERN_PROC),
+            Int32(KERN_PROC_PID),
+            pid,
+        ]
+        var info = kinfo_proc()
+        var byteCount = MemoryLayout<kinfo_proc>.size
+        errno = 0
+        let result = query.withUnsafeMutableBufferPointer {
+            Darwin.sysctl(
+                $0.baseAddress,
+                u_int($0.count),
+                &info,
+                &byteCount,
+                nil,
+                0
+            )
+        }
+        if result != 0 {
+            return errno == ESRCH || errno == ENOENT
+                ? .exited
+                : .unverifiable
+        }
+        guard byteCount == MemoryLayout<kinfo_proc>.size else {
+            return byteCount == 0 ? .exited : .unverifiable
+        }
+        guard info.kp_proc.p_pid == pid,
+              info.kp_eproc.e_ucred.cr_uid == geteuid() else {
+            return .unverifiable
+        }
+        let seconds = UInt64(info.kp_proc.p_starttime.tv_sec)
+        let microseconds = UInt64(
+            info.kp_proc.p_starttime.tv_usec
+        )
+        guard microseconds < 1_000_000,
+              seconds <=
+                (UInt64.max - microseconds) / 1_000_000 else {
+            return .unverifiable
+        }
+        let command = withUnsafeBytes(
+            of: info.kp_proc.p_comm
+        ) { rawBuffer -> String in
+            let bytes = rawBuffer.prefix {
+                $0 != 0
+            }
+            return String(bytes: bytes, encoding: .utf8) ?? ""
+        }
+        return .info(
+            OpaqueProcessInfo(
+                status: UInt32(info.kp_proc.p_stat),
+                command: command,
+                processBirthMicroseconds:
+                    seconds * 1_000_000 + microseconds
+            )
+        )
+        #else
+        return .unverifiable
+        #endif
+    }
+
+    static func opaqueProcessCanBeExcluded(
+        status: UInt32,
+        command: String,
+        expectedExecutablePath: String
+    ) -> Bool {
+        #if canImport(Darwin)
+        if status == UInt32(SZOMB) {
+            return true
+        }
+        #endif
+        guard !command.isEmpty else {
+            return false
+        }
+        let expected = URL(
+            fileURLWithPath: expectedExecutablePath
+        ).lastPathComponent
+        guard command != expected else {
+            return false
+        }
+        let commandBytes = Array(command.utf8)
+        let expectedBytes = Array(expected.utf8)
+        if expectedBytes.starts(with: commandBytes) {
+            return false
+        }
+        return true
     }
 
     private static func executablePathForCensus(

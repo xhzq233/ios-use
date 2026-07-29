@@ -80,6 +80,77 @@ final class PlayCoverPendingLaunchRecoveryTests: XCTestCase {
         XCTAssertTrue(reason.contains("incomplete"))
     }
 
+    #if canImport(Darwin)
+    func testExactExecutableCensusIgnoresProvablyUnrelatedProcesses() {
+        let absentExecutable =
+            "/tmp/ios-use-absent-\(UUID().uuidString)/App"
+        switch PlayCoverPendingLaunchRecovery.exactExecutableCensus(
+            executablePath: absentExecutable
+        ) {
+        case .complete(let candidates):
+            XCTAssertTrue(candidates.isEmpty)
+        case .incomplete(_, let reason):
+            XCTFail(
+                "same-UID census was blocked by unrelated processes: "
+                    + reason
+            )
+        }
+    }
+
+    func testOpaqueProcessFilterFailsClosedForPossibleTargetNames() {
+        let expected =
+            "/tmp/pending/IOSUsePlayFixture.app/IOSUsePlayFixture"
+        XCTAssertTrue(
+            PlayCoverPendingLaunchRecovery
+                .opaqueProcessCanBeExcluded(
+                    status: UInt32(SRUN),
+                    command: "node_repl",
+                    expectedExecutablePath: expected
+                )
+        )
+        XCTAssertFalse(
+            PlayCoverPendingLaunchRecovery
+                .opaqueProcessCanBeExcluded(
+                    status: UInt32(SRUN),
+                    command: "IOSUsePlayFixture",
+                    expectedExecutablePath: expected
+                )
+        )
+        XCTAssertFalse(
+            PlayCoverPendingLaunchRecovery
+                .opaqueProcessCanBeExcluded(
+                    status: UInt32(SRUN),
+                    command: "",
+                    expectedExecutablePath: expected
+                )
+        )
+        XCTAssertFalse(
+            PlayCoverPendingLaunchRecovery
+                .opaqueProcessCanBeExcluded(
+                    status: UInt32(SRUN),
+                    command: "IOSUsePlayFixtu",
+                    expectedExecutablePath: expected
+                )
+        )
+        XCTAssertFalse(
+            PlayCoverPendingLaunchRecovery
+                .opaqueProcessCanBeExcluded(
+                    status: UInt32(SRUN),
+                    command: "IOSUsePlayFixtur",
+                    expectedExecutablePath: expected
+                )
+        )
+        XCTAssertTrue(
+            PlayCoverPendingLaunchRecovery
+                .opaqueProcessCanBeExcluded(
+                    status: UInt32(SZOMB),
+                    command: "IOSUsePlayFixture",
+                    expectedExecutablePath: expected
+                )
+        )
+    }
+    #endif
+
     func testNewBootAndCompleteEmptyCensusIsSafe() {
         XCTAssertEqual(
             decide(
