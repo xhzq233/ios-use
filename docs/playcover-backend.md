@@ -106,8 +106,11 @@ dropping the first/last row.
 The full device frame is the target App's complete 430 x 932 logical rendering.
 The Runtime does not create a fallback system-chrome window or draw synthetic
 Dynamic Island, status glyphs, time, battery, or Home Indicator. Safe-area
-values are observed from the App/platform rather than forced to an iPhone
-constant; they never crop the output or consume App touch events.
+compatibility uses the compile-time iPhone16,2 contract of 59/0/34/0 points.
+The provider hook is scoped to the active foreground primary App window and
+keeps the maximum of the platform and device values, while preserving the
+App's own `additionalSafeAreaInsets`. Safe areas never crop the output or
+consume App touch events.
 
 ## Architecture and Session
 
