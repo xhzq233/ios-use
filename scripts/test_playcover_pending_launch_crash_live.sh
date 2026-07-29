@@ -818,7 +818,7 @@ assert_identified_runtime_live() {
       .mode == "identified-ping" and
       .runtimeListenerSurvived == true and
       .runtimePID == $pid and
-      .runtimeBundleIdentifier == "com.iosuse.playfixture" and
+      .runtimeBundleIdentifier == "com.iosuse.playfixture.stablev1" and
       .processBirthMicroseconds == $birth and
       (.runtimeExecutablePath | type) == "string"
     )

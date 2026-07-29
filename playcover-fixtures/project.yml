@@ -33,7 +33,7 @@ targets:
           - UIInterfaceOrientationPortrait
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.iosuse.playfixture
+        PRODUCT_BUNDLE_IDENTIFIER: com.iosuse.playfixture.stablev1
         PRODUCT_NAME: IOSUsePlayFixture
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1"

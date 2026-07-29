@@ -944,7 +944,7 @@ assert_healthy_status() {
         test("^[0-9a-f]{64}$")) and
       .data.driver.runtime.status == "healthy" and
       .data.driver.runtime.identityVerified == true and
-      .data.driver.bundleId == "com.iosuse.playfixture" and
+      .data.driver.bundleId == "com.iosuse.playfixture.stablev1" and
       .data.driver.runtime.logicalWidth == 430 and
       .data.driver.runtime.logicalHeight == 932 and
       .data.driver.runtime.nativeWidth == 1290 and
@@ -1028,7 +1028,7 @@ assert_lock_matches_status() {
       $status[0].data.driver as $driver |
       $lock.deviceType == "mac" and
       $lock.startMode == "mac" and
-      $lock.bundleId == "com.iosuse.playfixture" and
+      $lock.bundleId == "com.iosuse.playfixture.stablev1" and
       $lock.bundleId == $driver.bundleId and
       $lock.sessionIdentifier == $driver.sessionIdentifier and
       ($lock.sessionIdentifier |

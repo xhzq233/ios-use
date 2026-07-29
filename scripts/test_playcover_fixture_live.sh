@@ -2406,7 +2406,8 @@ runtime_socket_path="$(
 record_case oslog_exact oslog --pid "$runner_pid" \
   --pattern 'ios-use-runtime' --timeout 1s
 assert_evidence oslog_exact '\[ios-use-runtime\]'
-assert_evidence oslog_exact '"bundleIdentifier":"com.iosuse.playfixture"'
+assert_evidence oslog_exact \
+  '"bundleIdentifier":"com.iosuse.playfixture.stablev1"'
 
 oslog_wrong_pid_stdout="$RUN_DIR/oslog_wrong_pid.stdout"
 oslog_wrong_pid_stderr="$RUN_DIR/oslog_wrong_pid.stderr"
