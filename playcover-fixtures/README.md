@@ -89,7 +89,7 @@ The fixture pins light appearance so reference surfaces do not change with the
 macOS automatic day/night appearance.
 
 At launch it writes one session-specific marker to stdout and another to
-stderr. A session started with `start --playcover --log` must expose both
+stderr. A session started with `start --mac --app <fixture.app> --log` must expose both
 markers in the printed owner-only log while the App is still running, and the
 same file must remain after normal stop or the fixture-owned crash gate.
 

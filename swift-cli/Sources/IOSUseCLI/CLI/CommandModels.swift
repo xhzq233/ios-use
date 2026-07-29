@@ -100,23 +100,26 @@ public struct SessionOptions: Equatable, Sendable {
 public struct StartOptions: Equatable, Sendable {
     public var udid: String?
     public var verbose = false
-    public var playCover = false
+    public var mac = false
     public var appPath: String?
+    public var reuse = false
     public var log = false
     public var timeout: Double = 15
 
     public init(
         udid: String? = nil,
         verbose: Bool = false,
-        playCover: Bool = false,
+        mac: Bool = false,
         appPath: String? = nil,
+        reuse: Bool = false,
         log: Bool = false,
         timeout: Double = 15
     ) {
         self.udid = udid
         self.verbose = verbose
-        self.playCover = playCover
+        self.mac = mac
         self.appPath = appPath
+        self.reuse = reuse
         self.log = log
         self.timeout = timeout
     }

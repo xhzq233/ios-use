@@ -21,7 +21,7 @@ bash scripts/build_swift_cli.sh --debug
 
 `build_playcover_runtime.sh` remains available when an explicit Runtime output
 is needed for backend development. Normal
-`start --playcover --app <source-or-managed-prepared.app>` discovers the
+`start --mac --app <source-or-managed-prepared.app>` discovers the
 Runtime built by `build_swift_cli.sh`; users do not run a separate PlayCover
 prepare command.
 

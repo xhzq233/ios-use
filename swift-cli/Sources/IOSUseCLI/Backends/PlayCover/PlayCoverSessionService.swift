@@ -22,11 +22,11 @@ struct PlayCoverSessionCleanupError: Error,
         switch operation {
         case .launch:
             prefix =
-                "PlayCover launch failed and its exact process is "
+                "Mac launch failed and its exact process is "
                 + "stopped, but launch cleanup did not finish"
         case .stop:
             prefix =
-                "PlayCover stop applied its lifecycle mutation, "
+                "Mac stop applied its lifecycle mutation, "
                 + "but session cleanup did not finish"
         }
         return prefix
@@ -37,7 +37,7 @@ struct PlayCoverSessionCleanupError: Error,
             + ". Durable recovery authority was preserved; "
             + "retry `ios-use stop` after resolving the cleanup error."
             + (logPath.map {
-                "\nPlayCover log: \($0)"
+                "\nMac log: \($0)"
             } ?? "")
     }
 }
@@ -51,7 +51,7 @@ struct PlayCoverSessionUnterminatedLaunchError: Error,
     var description: String {
         underlying.description
             + (result.logPath.map {
-                "\nPlayCover log: \($0)"
+                "\nMac log: \($0)"
             } ?? "")
     }
 }
@@ -63,7 +63,7 @@ struct PlayCoverSessionLoggedLaunchError: Error,
     let underlying: Error
 
     var description: String {
-        "\(underlying)\nPlayCover log: \(logPath)"
+        "\(underlying)\nMac log: \(logPath)"
     }
 }
 
@@ -75,11 +75,11 @@ struct PlayCoverSessionCommitRollbackError: Error,
     let cleanupError: Error
 
     var description: String {
-        "PlayCover session commit failed and exact rollback could "
+        "Mac session commit failed and exact rollback could "
             + "not be confirmed. Original error: \(originalError). "
             + "Cleanup error: \(cleanupError)"
             + (result.logPath.map {
-                "\nPlayCover log: \($0)"
+                "\nMac log: \($0)"
             } ?? "")
     }
 }
@@ -91,17 +91,17 @@ struct PlayCoverSessionJournalHandoffError: Error,
     let underlying: Error
 
     var description: String {
-        "PlayCover driver.lock is durable, but pending launch "
+        "Mac driver.lock is durable, but pending launch "
             + "handoff did not finish: \(underlying). The active "
             + "session and recovery evidence were preserved."
             + (result.logPath.map {
-                "\nPlayCover log: \($0)"
+                "\nMac log: \($0)"
             } ?? "")
     }
 }
 
 enum PlayCoverSessionService {
-    static let deviceType = "playcover"
+    static let deviceType = "mac"
 
     struct PreparedReference: Codable, Equatable, Sendable {
         let schemaVersion: Int
@@ -517,7 +517,7 @@ enum PlayCoverSessionService {
               let runtimeSocketPath =
                 session.playCoverRuntimeSocketPath else {
             throw CLIParseError.invalidValue(
-                "Invalid driver.lock: PlayCover handoff identity "
+                "Invalid driver.lock: Mac handoff identity "
                     + "is incomplete."
             )
         }
@@ -632,7 +632,7 @@ enum PlayCoverSessionService {
         let pid = try terminateConfirmedProcess(session: session)
         guard let sessionID = session.sessionIdentifier else {
             throw CLIParseError.invalidValue(
-                "Invalid driver.lock: PlayCover sessionID is missing."
+                "Invalid driver.lock: Mac sessionID is missing."
             )
         }
         do {
@@ -664,7 +664,7 @@ enum PlayCoverSessionService {
               let expectedExecutable =
                 session.playCoverExecutablePath else {
             throw CLIParseError.invalidValue(
-                "Invalid driver.lock: PlayCover PID/executable "
+                "Invalid driver.lock: Mac PID/executable "
                     + "identity is incomplete."
             )
         }
@@ -677,7 +677,7 @@ enum PlayCoverSessionService {
                 return pid
             case .unverifiable(let errorNumber):
                 throw PlayCoverBackendError.terminateFailed(
-                    "cannot verify whether PlayCover App PID "
+                    "cannot verify whether Mac App PID "
                         + "\(pid) is still running: errno "
                         + "\(errorNumber)"
                 )
@@ -737,7 +737,7 @@ enum PlayCoverSessionService {
                 return pid
             case .unverifiable(let errorNumber):
                 throw PlayCoverBackendError.terminateFailed(
-                    "cannot revalidate PlayCover App PID \(pid) "
+                    "cannot revalidate Mac App PID \(pid) "
                         + "before SIGTERM: errno \(errorNumber)"
                 )
             case .running:
@@ -822,14 +822,14 @@ enum PlayCoverSessionService {
                     return pid
                 }
                 throw PlayCoverBackendError.terminateFailed(
-                    "cannot verify PlayCover App PID \(pid) "
+                    "cannot verify Mac App PID \(pid) "
                         + "after SIGTERM: errno \(errorNumber)"
                 )
             }
             usleep(50_000)
         }
         throw PlayCoverBackendError.terminateFailed(
-            "PlayCover App PID \(pid) did not exit after SIGTERM"
+            "Mac App PID \(pid) did not exit after SIGTERM"
         )
     }
 
@@ -859,7 +859,7 @@ enum PlayCoverSessionService {
               runnerPID > 0,
               runnerPID <= Int(Int32.max) else {
             throw CLIParseError.invalidValue(
-                "Invalid driver.lock: PlayCover App generation "
+                "Invalid driver.lock: Mac App generation "
                     + "identity is incomplete."
             )
         }
@@ -877,8 +877,7 @@ enum PlayCoverSessionService {
             ),
             manifest.generationKey == generationKey,
             manifest.bundleIdentifier == bundleIdentifier,
-            session.udid
-                == "playcover:\(manifest.bundleIdentifier)" else {
+            session.udid == deviceType else {
             throw PlayCoverBackendError.terminateFailed(
                 "active session no longer matches the exact "
                     + "prepared App generation"
@@ -1003,7 +1002,7 @@ enum PlayCoverSessionService {
             .joined()
         guard !socketToken.isEmpty else {
             throw CLIParseError.invalidValue(
-                "PlayCover sessionID cannot produce a runtime "
+                "Mac sessionID cannot produce a runtime "
                     + "socket name."
             )
         }
@@ -1039,7 +1038,7 @@ enum PlayCoverSessionService {
             .appendingPathComponent(socketName).path
         guard expected.utf8.count <= 103 else {
             throw CLIParseError.invalidValue(
-                "IOS_USE_HOME is too long for a PlayCover Unix socket "
+                "IOS_USE_HOME is too long for a Mac Runtime Unix socket "
                     + "(\(expected.utf8.count) UTF-8 bytes; maximum 103)."
             )
         }
@@ -1097,7 +1096,7 @@ enum PlayCoverSessionService {
         from result: LaunchResult
     ) -> SessionService.Info {
         SessionService.Info(
-            udid: "playcover:\(result.bundleIdentifier)",
+            udid: deviceType,
             deviceName: result.productType,
             deviceVersion: "Mac Catalyst",
             deviceType: deviceType,
@@ -1127,7 +1126,7 @@ enum PlayCoverSessionService {
         }
         guard playcoverDescriptor >= 0 else {
             throw PlayCoverBackendError.launchFailed(
-                "cannot open the PlayCover state directory without "
+                "cannot open the Mac backend state directory without "
                     + "following links: errno \(errno)"
             )
         }
@@ -1138,7 +1137,7 @@ enum PlayCoverSessionService {
               directoryStatus.st_uid == geteuid(),
               directoryStatus.st_mode & 0o077 == 0 else {
             throw PlayCoverBackendError.launchFailed(
-                "PlayCover state directory is not owner-only"
+                "Mac backend state directory is not owner-only"
             )
         }
         let filename = URL(
@@ -1249,7 +1248,7 @@ enum PlayCoverSessionService {
               info.st_uid == geteuid(),
               chmod(path, 0o700) == 0 else {
             throw PlayCoverBackendError.launchFailed(
-                "PlayCover runtime directory must be an "
+                "Mac Runtime directory must be an "
                     + "owner-only directory"
             )
         }

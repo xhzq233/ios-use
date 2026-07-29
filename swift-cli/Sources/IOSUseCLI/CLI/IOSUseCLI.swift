@@ -255,7 +255,7 @@ public struct IOSUseCLI: Sendable {
         case .start(let options):
             do {
                 let output: String
-                if options.playCover {
+                if options.mac {
                     output = try SessionService.startPlayCover(
                         appPath: options.appPath,
                         captureStdio: options.log,
@@ -447,7 +447,7 @@ public struct IOSUseCLI: Sendable {
             return CLIResult(
                 exitCode: 0,
                 stdout: """
-                PlayCover signing identity is ready.
+                Mac backend PlayCover-derived signing identity is ready.
                 Certificate SHA-256: \(evidence.certificateSHA256)
                 Expires: \(expiresAt)
 
@@ -467,7 +467,7 @@ public struct IOSUseCLI: Sendable {
         _ evidence: PlayCoverSigningIdentityEvidence
     ) -> MachineValue {
         .object([
-            "backend": .string("playcover"),
+            "backend": .string("mac"),
             "status": .string("ready"),
             "certificateSHA256":
                 .string(evidence.certificateSHA256),

@@ -107,7 +107,7 @@ public enum StatusService {
                             )
                         }
                         fields["runtime"] = .object(runtime)
-                        warnings.append("PlayCover runtime health check failed: \(error)")
+                        warnings.append("Mac Runtime health check failed: \(error)")
                     case .stale(let error):
                         fields["status"] = .string("stale")
                         fields["runtime"] = .object([
@@ -115,7 +115,7 @@ public enum StatusService {
                             "identityVerified": .boolean(false),
                             "error": .string(error),
                         ])
-                        warnings.append("PlayCover session is stale: \(error)")
+                        warnings.append("Mac session is stale: \(error)")
                     }
                 }
                 driver = .object(fields)
@@ -162,7 +162,7 @@ public enum StatusService {
                         ),
                     ])
                     warnings.append(
-                        "PlayCover pending launch is invalid: \(error)"
+                        "Mac pending launch is invalid: \(error)"
                     )
                 }
             }
@@ -267,7 +267,7 @@ public enum StatusService {
                     ]
                 } catch {
                     return [
-                        "  invalid PlayCover pending launch: \(error)",
+                        "  invalid Mac pending launch: \(error)",
                     ]
                 }
             }

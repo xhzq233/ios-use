@@ -118,7 +118,7 @@ enum OpenURLService {
                explicit != activeDriver.udid {
                 throw CLIParseError.invalidValue(
                     "open target \(explicit) does not match active "
-                        + "PlayCover target \(activeDriver.udid)."
+                        + "Mac target \(activeDriver.udid)."
                 )
             }
             return try openPlayCover(
@@ -336,7 +336,7 @@ enum OpenURLService {
                 .malformedRuntimePayload("open URL echo")
         }
         return OpenResult(
-            message: "Opened URL in active PlayCover App: \(url)",
+            message: "Opened URL in active Mac App: \(url)",
             url: url,
             targetUdid: session.udid,
             deviceType: PlayCoverSessionService.deviceType,

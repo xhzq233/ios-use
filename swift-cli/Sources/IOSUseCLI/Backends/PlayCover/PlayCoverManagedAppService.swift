@@ -567,7 +567,7 @@ enum PlayCoverManagedAppService {
     ) throws {
         let source = plan.source.inspection
         guard manifest.schemaVersion == 4,
-              manifest.backend == "playcover-headless",
+              manifest.backend == "mac",
               standardizedPath(manifest.preparedAppPath)
                 == standardizedPath(outputPath),
               manifest.bundleIdentifier == source.bundleIdentifier,

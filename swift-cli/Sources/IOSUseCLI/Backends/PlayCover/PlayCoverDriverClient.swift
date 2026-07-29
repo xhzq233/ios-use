@@ -19,7 +19,7 @@ enum PlayCoverDriverClientError:
     var description: String {
         switch self {
         case .incompleteSessionIdentity(let field):
-            return "active PlayCover session is missing \(field)"
+            return "active Mac session is missing \(field)"
         case .runtimeGeometryMismatch(let field):
             return "PlayCover Runtime geometry does not match the fixed device contract: \(field)"
         case .malformedRuntimePayload(let field):
@@ -27,7 +27,7 @@ enum PlayCoverDriverClientError:
         case .capabilityUnavailable(let command):
             return "PlayCover Runtime capability `\(command)` is unavailable"
         case .lifecycleCommandUnsupported(let command):
-            return "PlayCover does not support Driver `\(command)`; use `ios-use start --playcover` and `ios-use stop` for App lifecycle"
+            return "Mac backend does not support Driver `\(command)`; use `ios-use start --mac --reuse` and `ios-use stop` for App lifecycle"
         }
     }
 }

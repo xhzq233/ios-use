@@ -127,7 +127,7 @@ public enum OSLogService {
                 session.playCoverExecutablePath,
               !executablePath.isEmpty else {
             throw CLIParseError.invalidValue(
-                "active PlayCover session has incomplete PID/executable identity"
+                "active Mac session has incomplete PID/executable identity"
             )
         }
         let pid = Int32(runnerPID)
@@ -139,13 +139,13 @@ public enum OSLogService {
                   executablePath
               ) else {
             throw CLIParseError.invalidValue(
-                "active PlayCover PID no longer belongs to the exact App executable"
+                "active Mac PID no longer belongs to the exact App executable"
             )
         }
         if let requestedPID = source.pid,
            requestedPID != runnerPID {
             throw CLIParseError.invalidValue(
-                "PlayCover oslog is scoped to active PID \(runnerPID)"
+                "Mac oslog is scoped to active PID \(runnerPID)"
             )
         }
         let executableName = URL(
@@ -154,7 +154,7 @@ public enum OSLogService {
         if let requestedProcess = source.process,
            requestedProcess != executableName {
             throw CLIParseError.invalidValue(
-                "PlayCover oslog is scoped to active executable \(executableName)"
+                "Mac oslog is scoped to active executable \(executableName)"
             )
         }
 
@@ -191,7 +191,7 @@ public enum OSLogService {
                 as: UTF8.self
             )
             return prefix
-                + "\n[ios-use] PlayCover log output truncated\n"
+                + "\n[ios-use] Mac log output truncated\n"
         }
         return output
     }
@@ -338,7 +338,7 @@ enum OSLogCommandService {
                explicit != activeDriver.udid {
                 throw CLIParseError.invalidValue(
                     "oslog target \(explicit) does not match active "
-                        + "PlayCover target \(activeDriver.udid)"
+                        + "Mac target \(activeDriver.udid)"
                 )
             }
             let output = try OSLogService.fetchPlayCover(

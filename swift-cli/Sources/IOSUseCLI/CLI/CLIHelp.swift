@@ -73,12 +73,12 @@ enum CLIHelp {
                    ios-use config --playcover [--verbose] [--json]
 
             Configure a device or Simulator, or explicitly initialize the
-            dedicated stable PlayCover signing identity.
-            Run `config --playcover` once before the first PlayCover start.
+            dedicated stable Mac-backend signing identity.
+            Run `config --playcover` once before the first Mac backend start.
             macOS will show user authentication dialogs while the identity is
             created and trusted. If you cancel, safely retry the same command;
             the retry resumes the same signing identity instead of replacing it.
-            `start --playcover` never initializes or repairs this identity.
+            `start --mac` never initializes or repairs this identity.
 
             Options:
               --udid <udid>          Target device or Simulator UDID
@@ -94,17 +94,19 @@ enum CLIHelp {
         case "start":
             return """
             Usage: ios-use start [udid] [--verbose]
-                   ios-use start --playcover [--app <source-or-prepared.app>] [--log] [--timeout <duration>]
+                   ios-use start --mac --app <source-or-prepared.app> [--log] [--timeout <duration>]
+                   ios-use start --mac --reuse [--log] [--timeout <duration>]
 
-            Start a configured XCTest driver or a PlayCover App and
+            Start a configured XCTest driver or an iOS App on this Mac and
             record it as the active backend in driver.lock.
             Defaults to the first connected USB real device when udid is omitted.
-            PlayCover automatically prepares an unmodified iPhoneOS App into
-            managed IOS_USE_HOME state, or verifies and directly launches an
-            already prepared App. When --app is omitted, it uses the most recent
-            successful prepared generation without rechecking the original
-            source; pass --app again after rebuilding. Successful PlayCover
-            starts print prepare timings plus alias/open/ownership/Runtime/
+            The Mac backend automatically prepares an unmodified iPhoneOS App
+            into managed IOS_USE_HOME state, or verifies and directly launches
+            an already prepared App. Use --app after every Debug rebuild so the
+            current source is inspected. Use --reuse only to explicitly launch
+            the most recent successful generation without checking its original
+            source. Successful Mac starts print prepare timings plus
+            alias/open/ownership/Runtime/
             ready-geometry launch timings.
             --log captures target-App stdout/stderr from the injected Runtime
             onward in an owner-only per-session file retained after stop,
@@ -112,9 +114,10 @@ enum CLIHelp {
 
             Options:
               --verbose                    Enable verbose XCTest output
-              --playcover                  Select the PlayCover backend
+              --mac                        Select the Mac backend
               --app <source-or-prepared.app>
                                            Prepare if needed, then launch this App
+              --reuse                      Launch the most recent successful generation
               --log                        Capture target-App stdout/stderr to a retained session log
               --timeout <duration>          Wait up to 60 seconds for direct Runtime socket hello; default 15s
 
@@ -123,7 +126,7 @@ enum CLIHelp {
             return """
             Usage: ios-use stop [--json]
 
-            Stop the active XCTest driver or exact PlayCover process recorded
+            Stop the active XCTest driver or exact Mac process recorded
             in driver.lock, then clear the active backend.
 
             Options:

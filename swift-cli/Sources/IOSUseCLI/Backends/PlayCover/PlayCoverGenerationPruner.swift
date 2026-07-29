@@ -554,7 +554,7 @@ enum PlayCoverGenerationPruner {
                 continue
             }
             guard manifest.schemaVersion == 4,
-                  manifest.backend == "playcover-headless",
+                  manifest.backend == "mac",
                   manifest.generationKey == name else {
                 corrupt.append(
                     CorruptCandidate(

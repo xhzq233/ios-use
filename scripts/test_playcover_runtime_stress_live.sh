@@ -1009,7 +1009,7 @@ record_warm_bare_start_timing() {
   local sample
   timing_line="$(
     /usr/bin/awk '
-      index($0, "PlayCover timing: ") == 1 {
+      index($0, "Mac timing: ") == 1 {
         count += 1
         line = $0
       }
@@ -1022,7 +1022,7 @@ record_warm_bare_start_timing() {
     ' "$RUN_DIR/${case_name}.stdout"
   )" ||
     fail_gate \
-      "$case_name did not emit exactly one PlayCover timing line"
+      "$case_name did not emit exactly one Mac timing line"
   sample="$(
     jq -cn \
       --arg line "$timing_line" \
@@ -1167,8 +1167,8 @@ assert_lock_matches_status() {
       --slurpfile status "$RUN_DIR/${status_case}.stdout" '
       . as $lock |
       $status[0].data.driver as $driver |
-      $lock.deviceType == "playcover" and
-      $lock.startMode == "playcover" and
+      $lock.deviceType == "mac" and
+      $lock.startMode == "mac" and
       $lock.bundleId == "com.iosuse.playfixture" and
       $lock.bundleId == $driver.bundleId and
       $lock.sessionIdentifier == $driver.sessionIdentifier and
@@ -1286,7 +1286,7 @@ assert_bare_start_reused() {
   local case_name="$1"
   local generation="$2"
   if ! /usr/bin/grep -Fqx \
-      "PlayCover generation reused: $generation" \
+      "Mac generation reused: $generation" \
       "$RUN_DIR/${case_name}.stdout"; then
     fail_gate "$case_name did not report exact bare generation reuse"
   fi
@@ -1413,7 +1413,7 @@ assert_scene_two() {
   fi
 }
 
-run_cli protocol_start start --playcover --app "$FIXTURE_APP"
+run_cli protocol_start start --mac --app "$FIXTURE_APP"
 run_cli protocol_status status --json
 assert_healthy_status protocol_status
 assert_lock_matches_status protocol_status
@@ -1439,7 +1439,7 @@ if [[ ! "$protocol_generation_key" =~ ^[0-9a-f]{64}$ ]]; then
   fail_gate "protocol start has no exact prepared generation"
 fi
 if ! /usr/bin/grep -Fqx \
-    "PlayCover generation prepared: $protocol_generation_key" \
+    "Mac generation prepared: $protocol_generation_key" \
     "$RUN_DIR/protocol_start.stdout"; then
   fail_gate "protocol start did not explicitly prepare its generation"
 fi
@@ -1574,7 +1574,7 @@ echo \
   >&2
 for cycle in $(seq 1 "$CLEAN_CYCLE_COUNT"); do
   printf -v cycle_name 'clean_cycle_%02d' "$cycle"
-  run_cli "${cycle_name}_start" start --playcover
+  run_cli "${cycle_name}_start" start --mac --reuse
   assert_bare_start_reused \
     "${cycle_name}_start" \
     "$protocol_generation_key"
@@ -1688,7 +1688,7 @@ if ! /usr/bin/awk -F '\t' \
 fi
 build_warm_bare_start_summary
 
-run_cli endpoint_start start --playcover
+run_cli endpoint_start start --mac --reuse
 assert_bare_start_reused endpoint_start "$protocol_generation_key"
 run_cli endpoint_status status --json
 assert_healthy_status endpoint_status
@@ -1749,7 +1749,7 @@ assert_clean_session_stopped \
   "$endpoint_pid" \
   "$endpoint_socket"
 
-run_cli crash_start start --playcover --log
+run_cli crash_start start --mac --reuse --log
 assert_bare_start_reused crash_start "$protocol_generation_key"
 run_cli crash_status status --json
 assert_healthy_status crash_status
@@ -1872,7 +1872,7 @@ jq -cn \
     }
   ' >>"$OBSERVATIONS"
 
-run_cli crash_recovery_start start --playcover
+run_cli crash_recovery_start start --mac --reuse
 assert_bare_start_reused \
   crash_recovery_start \
   "$protocol_generation_key"

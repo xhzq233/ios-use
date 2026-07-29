@@ -70,7 +70,7 @@ enum DriverSessionStore {
                   !runtimeSocket.isEmpty,
                   let runnerPid = info.runnerPid, runnerPid > 0 else {
                 throw CLIParseError.invalidValue(
-                    "Invalid driver.lock: incomplete PlayCover session."
+                    "Invalid driver.lock: incomplete Mac session."
                 )
             }
             let expectedSocket: String
@@ -80,14 +80,14 @@ enum DriverSessionStore {
                 )
             } catch {
                 throw CLIParseError.invalidValue(
-                    "Invalid driver.lock: PlayCover sessionID cannot "
+                    "Invalid driver.lock: Mac sessionID cannot "
                         + "derive its Runtime socket."
                 )
             }
             guard canonicalPath(runtimeSocket)
                     == canonicalPath(expectedSocket) else {
                 throw CLIParseError.invalidValue(
-                    "Invalid driver.lock: PlayCover Runtime socket does "
+                    "Invalid driver.lock: Mac Runtime socket does "
                         + "not match its sessionID."
                 )
             }
@@ -104,7 +104,7 @@ enum DriverSessionStore {
                 paths: paths
             ) else {
                 throw CLIParseError.invalidValue(
-                    "Invalid driver.lock: PlayCover App is not the "
+                    "Invalid driver.lock: Mac App is not the "
                         + "recorded generation under this IOS_USE_HOME."
                 )
             }
@@ -112,7 +112,7 @@ enum DriverSessionStore {
                 canonicalPath(appPath) + "/"
             ) else {
                 throw CLIParseError.invalidValue(
-                    "Invalid driver.lock: PlayCover executable is outside "
+                    "Invalid driver.lock: Mac executable is outside "
                         + "the managed App."
                 )
             }
@@ -503,7 +503,7 @@ enum DriverSessionStore {
               info.st_uid == geteuid(),
               (info.st_mode & 0o077) == 0 else {
             throw CLIParseError.invalidValue(
-                "Invalid driver.lock: PlayCover Runtime directory is "
+                "Invalid driver.lock: Mac Runtime directory is "
                     + "not an owner-only directory."
             )
         }

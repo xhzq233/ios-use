@@ -136,8 +136,8 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | Command | Use it for |
 | --- | --- |
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
-| `config` | Install or update the on-device driver; use `config --playcover` once before the first local PlayCover start. |
-| `start` / `stop` | Select or release the current automation target; use `start --playcover [--app <App.app>]` for the local PlayCover backend. |
+| `config` | Install or update the on-device driver; use `config --playcover` once before the first local Mac-backend start. |
+| `start` / `stop` | Select or release the current automation target; use `start --mac --app <App.app>` or `start --mac --reuse` for the PlayCover-derived Mac backend. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID; activation is UI-ready by default. |
 | `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
 | `tap` / `longpress` | Act on a label or coordinate. |
@@ -204,9 +204,9 @@ Time options accept `s` and `ms` suffixes. Bare `waitFor`, `capture`, and log
 timeouts are seconds; bare long-press and post-mutation `--dom` durations are
 milliseconds.
 
-### Experimental Headless PlayCover Backend
+### Experimental Mac Backend (PlayCover-derived)
 
-The PlayCover backend runs a managed copy of an unencrypted
+The Mac backend runs a managed copy of an unencrypted
 arm64 iPhone App on Apple silicon without the PlayCover GUI. Its device
 contract is compiled into the Runtime and host from one header:
 `iPhone16,2`, 430 x 932 logical points, 3x scale, and 1290 x 2796 native
@@ -216,7 +216,7 @@ pixels.
 bash scripts/build_swift_cli.sh --debug
 
 ./ios-use config --playcover
-./ios-use start --playcover --app /path/to/Source.app
+./ios-use start --mac --app /path/to/Source.app
 ./ios-use status
 ./ios-use dom
 ./ios-use tap "A stable label" --dom
@@ -225,22 +225,22 @@ bash scripts/build_swift_cli.sh --debug
 ```
 
 On Apple Silicon with full Xcode and `xcodegen` available, the local CLI build
-also builds the default injected runtime. Before the first PlayCover start for
+also builds the default injected runtime. Before the first Mac-backend start for
 your macOS account, run `config --playcover`; macOS asks once for authentication
 to trust the dedicated signing identity. If you cancel, safely retry the same
 command: it resumes that identity instead of creating another one. The identity
 persists across `IOS_USE_HOME` values, while prepared Apps remain in the home
-where they were created. Ordinary `start --playcover` only checks the existing
-identity and tells you to run `config --playcover` if setup is missing or trust
-must be completed.
+where they were created. Both `start --mac --app` and
+`start --mac --reuse` only check the existing identity and tell you to run
+`config --playcover` if setup is missing or trust must be completed.
 
-`start --playcover --app` accepts either an unmodified iPhoneOS App or a managed
+`start --mac --app` accepts either an unmodified iPhoneOS App or a managed
 prepared App. A source App is cloned under the current `IOS_USE_HOME`, converted
 with pinned PlayCover sources, injected, signed inside-out, fully verified, and
-launched. A later bare `start --playcover` reuses the most recent generation
-from that same home after a bounded integrity check. After rebuilding the
-source App, pass `--app` again so the new iPhoneOS Mach-O content selects or
-prepares its generation; bare start deliberately does not inspect the source
+launched. A later `start --mac --reuse` explicitly reuses the most recent
+generation from that same home after a bounded integrity check. After rebuilding
+the source App, pass `--app` again so the new iPhoneOS Mach-O content selects or
+prepares its generation; `--reuse` deliberately does not inspect the source
 build. Successful start output includes one timing line for inspect, clone,
 convert, sign, verify, launch, and total latency. Launch is further observed as
 alias creation, synchronous open dispatch, exact ownership, Runtime
@@ -254,12 +254,12 @@ that launch `hello` carries only the fixed-geometry readiness snapshot while
 full window, screen, alert, resize, and mouse diagnostics remain on `status`.
 
 The CLI creates one random session ID and connects straight to the injected
-Runtime's owner-only Unix socket. `driver.lock` keeps PlayCover selected until
+Runtime's owner-only Unix socket. `driver.lock` keeps the Mac backend selected until
 `ios-use stop`, so session commands cannot fall back to XCTest. `status`,
 screenshots, DOM/wait, touch/input, capture, URL delivery, logs, and evidence
 all use that exact PID, executable, session, and prepared generation.
 Lifecycle remains host-owned: `activateApp`, `terminateApp`, `home`, and DDI
-operations are explicitly unsupported while a PlayCover session is active.
+operations are explicitly unsupported while a Mac session is active.
 
 The Runtime presents the App in an opaque, rectangular Simulator-style host
 with the standard AppKit title bar, traffic lights, shadow, and four-edge

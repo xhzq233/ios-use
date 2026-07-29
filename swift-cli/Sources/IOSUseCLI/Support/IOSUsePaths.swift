@@ -52,7 +52,7 @@ public struct IOSUsePaths: Equatable, Sendable {
         let maximumUTF8Bytes = 103
         guard socket.utf8.count <= maximumUTF8Bytes else {
             throw CLIParseError.invalidValue(
-                "IOS_USE_HOME is too long for a PlayCover Unix socket "
+                "IOS_USE_HOME is too long for a Mac Runtime Unix socket "
                     + "(\(socket.utf8.count) UTF-8 bytes; maximum "
                     + "\(maximumUTF8Bytes))."
             )

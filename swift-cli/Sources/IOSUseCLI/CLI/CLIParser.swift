@@ -164,13 +164,27 @@ public enum CLIParser {
         while let arg = parser.consume() {
             switch arg {
             case "--verbose": options.verbose = true
-            case "--playcover":
-                options.playCover = true
+            case "--mac":
+                guard !options.mac else {
+                    throw CLIParseError.invalidValue("--mac may only be provided once")
+                }
+                options.mac = true
             case "--app":
                 guard options.appPath == nil else {
                     throw CLIParseError.invalidValue("--app may only be provided once")
                 }
-                options.appPath = try parser.value(for: arg)
+                let appPath = try parser.value(for: arg)
+                guard !appPath.isEmpty else {
+                    throw CLIParseError.invalidValue(
+                        "--app requires a non-empty App path"
+                    )
+                }
+                options.appPath = appPath
+            case "--reuse":
+                guard !options.reuse else {
+                    throw CLIParseError.invalidValue("--reuse may only be provided once")
+                }
+                options.reuse = true
             case "--log":
                 options.log = true
             case "--timeout":
@@ -192,14 +206,25 @@ public enum CLIParser {
                 options.udid = arg
             }
         }
-        if options.playCover {
+        if options.mac {
             guard options.udid == nil else {
-                throw CLIParseError.invalidValue("a device UDID cannot be used with --playcover")
+                throw CLIParseError.invalidValue("a device UDID cannot be used with --mac")
             }
-        } else if options.log {
-            throw CLIParseError.invalidValue("--log requires --playcover")
-        } else if options.appPath != nil || timeoutWasProvided {
-            throw CLIParseError.invalidValue("--app and --timeout require --playcover")
+            guard !options.verbose else {
+                throw CLIParseError.invalidValue("--verbose cannot be used with --mac")
+            }
+            guard (options.appPath != nil) != options.reuse else {
+                throw CLIParseError.invalidValue(
+                    "--mac requires exactly one of --app <app> or --reuse"
+                )
+            }
+        } else if options.appPath != nil
+                    || options.reuse
+                    || options.log
+                    || timeoutWasProvided {
+            throw CLIParseError.invalidValue(
+                "--app, --reuse, --log, and --timeout require --mac"
+            )
         }
         return options
     }

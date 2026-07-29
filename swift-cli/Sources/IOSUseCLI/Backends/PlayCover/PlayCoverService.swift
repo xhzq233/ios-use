@@ -146,7 +146,7 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v14+playcover-"
+        "ios-use-headless-v15+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
@@ -2159,7 +2159,7 @@ public enum PlayCoverService {
     ) throws -> PlayCoverGenerationIdentity {
         manifestValidationObserverForTesting?()
         guard manifest.schemaVersion == 4,
-              manifest.backend == "playcover-headless",
+              manifest.backend == "mac",
               manifest.prepareRevision == prepareImplementationRevision,
               manifest.sourceContentHash
                 == manifest.sourceHashAfterPreparation,

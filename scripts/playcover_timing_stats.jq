@@ -218,7 +218,7 @@ def build_summary:
     };
 
 def timing_pattern:
-  "^PlayCover timing: "
+  "^Mac timing: "
   + "inspect=(?<inspect>[0-9]+\\.[0-9])ms "
   + "clone=skipped convert=skipped sign=skipped "
   + "verify=(?<verify>[0-9]+\\.[0-9])ms "

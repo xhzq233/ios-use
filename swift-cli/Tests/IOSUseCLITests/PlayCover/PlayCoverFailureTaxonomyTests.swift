@@ -111,7 +111,7 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
         XCTAssertFalse(classified.mutationMayHaveApplied)
         XCTAssertTrue(
             classified.message.contains(
-                "PlayCover log: /tmp/stdio-session.log"
+                "Mac log: /tmp/stdio-session.log"
             )
         )
     }
@@ -157,7 +157,7 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
         XCTAssertTrue(classified.mutationMayHaveApplied)
         XCTAssertTrue(
             classified.message.contains(
-                "PlayCover log: /tmp/stdio-session.log"
+                "Mac log: /tmp/stdio-session.log"
             )
         )
     }

@@ -182,7 +182,7 @@ jobs:
           jq -e \
             --arg commit "$GITHUB_SHA" '
               .schemaVersion == 2 and
-              .backend == "playcover" and
+              .backend == "mac" and
               .gate == "external-app-live" and
               .result == "pass" and
               .leafCommit == $commit and

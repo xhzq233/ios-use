@@ -412,7 +412,7 @@ set +e
 (
   cd "$TEMP_ROOT"
   IOS_USE_HOME="$CUSTOM_HOME" \
-    "$INSTALLED_BINARY" start --playcover --app "$FIXTURE_APP"
+    "$INSTALLED_BINARY" start --mac --app "$FIXTURE_APP"
 ) >"$LOG_FILE" 2>&1
 START_STATUS=$?
 set -e

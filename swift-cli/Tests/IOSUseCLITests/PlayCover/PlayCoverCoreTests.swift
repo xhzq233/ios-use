@@ -238,7 +238,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertTrue(
             PlayCoverService.prepareImplementationRevision.hasPrefix(
-                "ios-use-headless-v14+"
+                "ios-use-headless-v15+"
             )
         )
     }
@@ -546,7 +546,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(manifest.schemaVersion, 4)
-        XCTAssertEqual(manifest.backend, "playcover-headless")
+        XCTAssertEqual(manifest.backend, "mac")
         XCTAssertEqual(
             manifest.runtimeLoadPath,
             PlayCoverMachO.runtimeLoadPath

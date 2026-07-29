@@ -243,7 +243,7 @@ public struct PlayCoverPrepareManifest: Codable, Equatable, Sendable {
 
     public init(
         schemaVersion: Int = 4,
-        backend: String = "playcover-headless",
+        backend: String = "mac",
         sourceAppPath: String,
         preparedAppPath: String,
         bundleIdentifier: String,

@@ -82,7 +82,7 @@ final class PlayCoverSessionTests: XCTestCase {
             environment: ["IOS_USE_HOME": fixture.root]
         )
         let start = cli.run(
-            arguments: ["start", "--playcover"]
+            arguments: ["start", "--mac", "--reuse"]
         )
 
         XCTAssertEqual(start.exitCode, 0, start.stderr)
@@ -91,7 +91,7 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertTrue(start.stdout.contains("IOS_USE_HOME: \(fixture.root)"))
         XCTAssertTrue(
             start.stdout.contains(
-                "PlayCover timing: inspect="
+                "Mac timing: inspect="
             )
         )
         for phase in [
@@ -151,7 +151,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 paths: fixture.paths
             )
         )
-        XCTAssertEqual(lock.deviceType, "playcover")
+        XCTAssertEqual(lock.deviceType, "mac")
         XCTAssertEqual(lock.deviceName, "iPhone16,2")
         XCTAssertEqual(lock.runnerPid, 4_242)
         XCTAssertEqual(lock.sessionIdentifier, sessionID)
@@ -239,8 +239,8 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertTrue(keyCoverLocked)
         XCTAssertEqual(
             stop.stdout,
-            "PlayCover App stopped (pid 4242)\n"
-                + "PlayCover session stopped\n"
+            "Mac App stopped (pid 4242)\n"
+                + "Mac session stopped\n"
         )
         XCTAssertEqual(
             terminatedSession?.sessionIdentifier,
@@ -415,13 +415,13 @@ final class PlayCoverSessionTests: XCTestCase {
         )
 
         let start = cli.run(
-            arguments: ["start", "--playcover", "--log"]
+            arguments: ["start", "--mac", "--reuse", "--log"]
         )
 
         XCTAssertEqual(start.exitCode, 0, start.stderr)
         let log = try XCTUnwrap(launchedLog)
         XCTAssertTrue(
-            start.stdout.contains("PlayCover log: \(log.path)")
+            start.stdout.contains("Mac log: \(log.path)")
         )
         var fileStatus = stat()
         XCTAssertEqual(lstat(log.path, &fileStatus), 0)
@@ -553,7 +553,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
         XCTAssertEqual(
             cli.run(
-                arguments: ["start", "--playcover", "--log"]
+                arguments: ["start", "--mac", "--reuse", "--log"]
             ).exitCode,
             0
         )
@@ -622,13 +622,13 @@ final class PlayCoverSessionTests: XCTestCase {
         let result = IOSUseCLI(
             environment: ["IOS_USE_HOME": fixture.root]
         ).run(
-            arguments: ["start", "--playcover", "--log"]
+            arguments: ["start", "--mac", "--reuse", "--log"]
         )
 
         XCTAssertEqual(result.exitCode, 1)
         let path = try XCTUnwrap(logPath)
         XCTAssertTrue(result.stderr.contains("fixture launch failure"))
-        XCTAssertTrue(result.stderr.contains("PlayCover log: \(path)"))
+        XCTAssertTrue(result.stderr.contains("Mac log: \(path)"))
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: path)
         )
@@ -719,7 +719,7 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let result = IOSUseCLI(
             environment: ["IOS_USE_HOME": fixture.root]
-        ).run(arguments: ["start", "--playcover"])
+        ).run(arguments: ["start", "--mac", "--reuse"])
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(
@@ -770,7 +770,7 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let result = IOSUseCLI(
             environment: ["IOS_USE_HOME": fixture.root]
-        ).run(arguments: ["start", "--playcover"])
+        ).run(arguments: ["start", "--mac", "--reuse"])
 
         XCTAssertEqual(result.exitCode, 0, result.stderr)
         XCTAssertTrue(result.stdout.contains("generation reused:"))
@@ -815,7 +815,7 @@ final class PlayCoverSessionTests: XCTestCase {
         ).run(
             arguments: [
                 "start",
-                "--playcover",
+                "--mac",
                 "--app",
                 selected.preparedAppPath,
             ]
@@ -870,7 +870,7 @@ final class PlayCoverSessionTests: XCTestCase {
         ).run(
             arguments: [
                 "start",
-                "--playcover",
+                "--mac",
                 "--app",
                 selected.preparedAppPath,
             ]
@@ -935,7 +935,7 @@ final class PlayCoverSessionTests: XCTestCase {
         let failed = cli.run(
             arguments: [
                 "start",
-                "--playcover",
+                "--mac",
                 "--app",
                 selected.preparedAppPath,
             ]
@@ -954,7 +954,9 @@ final class PlayCoverSessionTests: XCTestCase {
             selected.generationKey
         )
 
-        let retry = cli.run(arguments: ["start", "--playcover"])
+        let retry = cli.run(
+            arguments: ["start", "--mac", "--reuse"]
+        )
 
         XCTAssertEqual(retry.exitCode, 0, retry.stderr)
         XCTAssertTrue(retry.stdout.contains("generation reused:"))
@@ -1053,7 +1055,7 @@ final class PlayCoverSessionTests: XCTestCase {
         ).run(
             arguments: [
                 "start",
-                "--playcover",
+                "--mac",
                 "--app",
                 "/tmp/Other.app",
             ]
@@ -1109,7 +1111,9 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let result = IOSUseCLI(
             environment: ["IOS_USE_HOME": fixture.root]
-        ).run(arguments: ["start", "--playcover", "--log"])
+        ).run(
+            arguments: ["start", "--mac", "--reuse", "--log"]
+        )
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertEqual(
@@ -1127,7 +1131,7 @@ final class PlayCoverSessionTests: XCTestCase {
         let launchedLogPath = try XCTUnwrap(launched?.logPath)
         XCTAssertTrue(
             result.stderr.contains(
-                "PlayCover log: \(launchedLogPath)"
+                "Mac log: \(launchedLogPath)"
             )
         )
         XCTAssertTrue(
@@ -1188,7 +1192,8 @@ final class PlayCoverSessionTests: XCTestCase {
         ).run(
             arguments: [
                 "start",
-                "--playcover",
+                "--mac",
+                "--reuse",
                 "--log",
                 "--json",
             ]
@@ -1272,7 +1277,8 @@ final class PlayCoverSessionTests: XCTestCase {
         ).run(
             arguments: [
                 "start",
-                "--playcover",
+                "--mac",
+                "--reuse",
                 "--log",
                 "--json",
             ]
@@ -1376,7 +1382,9 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let result = IOSUseCLI(
             environment: ["IOS_USE_HOME": fixture.root]
-        ).run(arguments: ["start", "--playcover", "--log"])
+        ).run(
+            arguments: ["start", "--mac", "--reuse", "--log"]
+        )
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(
@@ -1394,7 +1402,7 @@ final class PlayCoverSessionTests: XCTestCase {
         let expectedLogPath = try XCTUnwrap(expected?.logPath)
         XCTAssertTrue(
             result.stderr.contains(
-                "PlayCover log: \(expectedLogPath)"
+                "Mac log: \(expectedLogPath)"
             )
         )
         XCTAssertTrue(
@@ -2086,7 +2094,7 @@ final class PlayCoverSessionTests: XCTestCase {
             XCTAssertEqual(result.exitCode, 1, "\(arguments)")
             XCTAssertTrue(
                 result.stderr.contains(
-                    "use `ios-use start --playcover` "
+                    "use `ios-use start --mac --reuse` "
                         + "and `ios-use stop`"
                 ),
                 result.stderr
@@ -2140,7 +2148,7 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertTrue(
             result.stderr.contains(
-                "Invalid driver.lock: incomplete PlayCover session"
+                "Invalid driver.lock: unknown deviceType playcover"
             )
         )
         XCTAssertEqual(deviceLookupCount, 0)
@@ -2459,10 +2467,12 @@ final class PlayCoverSessionTests: XCTestCase {
                 paths: paths
             )
         ) { error in
+            let description = String(describing: error)
             XCTAssertTrue(
-                String(describing: error).contains(
-                    "too long for a PlayCover Unix socket"
-                )
+                description.contains(
+                    "too long for a Mac Runtime Unix socket"
+                ),
+                description
             )
         }
         XCTAssertFalse(inspected)
@@ -3286,7 +3296,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
         let object: [String: Any] = [
             "schemaVersion": 4,
-            "backend": "playcover-headless",
+            "backend": "mac",
             "sourceAppPath": fixture.root + "/Source.app",
             "preparedAppPath": appPath,
             "bundleIdentifier": "com.example.demo",
@@ -3375,7 +3385,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
     ) -> SessionService.Info {
         .init(
-            udid: "playcover:\(manifest.bundleIdentifier)",
+            udid: "mac",
             deviceName: "iPhone16,2",
             deviceVersion: "Mac Catalyst",
             deviceType: PlayCoverSessionService.deviceType,

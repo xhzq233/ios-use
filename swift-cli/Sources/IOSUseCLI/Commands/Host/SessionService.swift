@@ -242,25 +242,25 @@ public enum SessionService {
                         result.currentGenerationToken
                 )
             var output = """
-            PlayCover session started for \(result.bundleIdentifier) (pid \(result.pid))
-            PlayCover generation \(cacheDisposition): \(result.generationKey)
+            Mac session started for \(result.bundleIdentifier) (pid \(result.pid))
+            Mac generation \(cacheDisposition): \(result.generationKey)
             IOS_USE_HOME: \(paths.root)
 
             """
             if !pruning.removedGenerationKeys.isEmpty {
-                output += "PlayCover cache pruned: "
+                output += "Mac cache pruned: "
                     + "\(pruning.removedGenerationKeys.count) generation(s)\n"
             }
             for warning in pruning.warnings {
                 output += "Warning: \(warning)\n"
             }
             if let logPath = result.logPath {
-                output += "PlayCover log: \(logPath)\n"
+                output += "Mac log: \(logPath)\n"
             }
             var timing = result.timing
             timing.totalNanoseconds =
                 PlayCoverMonotonicClock.elapsed(since: started)
-            output += "PlayCover timing: \(timing.outputLine)\n"
+            output += "Mac timing: \(timing.outputLine)\n"
             return output
         } catch let error as
                 PlayCoverSessionJournalHandoffError {
@@ -370,8 +370,8 @@ public enum SessionService {
                 let pidText = recovered.pid.map {
                     " (pid \($0))"
                 } ?? ""
-                return "PlayCover pending launch stopped\(pidText)\n"
-                    + "PlayCover session stopped\n"
+                return "Mac pending launch stopped\(pidText)\n"
+                    + "Mac session stopped\n"
             }
             _ = try requireDriverLock(paths: paths)
             preconditionFailure(
@@ -387,8 +387,8 @@ public enum SessionService {
             let pidText = recovered.pid.map {
                 " (pid \($0))"
             } ?? ""
-            return "PlayCover pending launch stopped\(pidText)\n"
-                + "PlayCover session stopped\n"
+            return "Mac pending launch stopped\(pidText)\n"
+                + "Mac session stopped\n"
         }
         if current.deviceType == PlayCoverSessionService.deviceType {
             let pid = try PlayCoverSessionService.terminate(
@@ -398,12 +398,12 @@ public enum SessionService {
                 try DriverSessionStore.removeDriverLock(paths: paths)
             } catch {
                 throw CLIParseError.invalidValue(
-                    "PlayCover App stopped, but failed to remove "
+                    "Mac App stopped, but failed to remove "
                         + "\(paths.driverLock): \(error)"
                 )
             }
-            return "PlayCover App stopped (pid \(pid))\n"
-                + "PlayCover session stopped\n"
+            return "Mac App stopped (pid \(pid))\n"
+                + "Mac session stopped\n"
         }
         var output = try DriverLifecycleService.terminateDriver(
             for: current,

@@ -1,8 +1,8 @@
-# Headless PlayCover Backend
+# Mac Backend (PlayCover-derived)
 
 ## Scope
 
-The source-build-only PlayCover backend runs a managed, unencrypted arm64
+The source-build-only Mac backend runs a managed, unencrypted arm64
 iPhone App on Apple silicon without the PlayCover GUI. It directly ports the
 non-GUI preparation graph from pinned PlayCover sources and injects one
 Mac Catalyst Runtime containing the pinned PlayTools compatibility and touch
@@ -12,7 +12,7 @@ The public lifecycle is intentionally small:
 
 ```bash
 ./ios-use config --playcover
-./ios-use start --playcover --app /path/to/Source.app --log
+./ios-use start --mac --app /path/to/Source.app --log
 ./ios-use status
 # normal ios-use UI, screenshot, capture, URL, and log commands
 ./ios-use stop
@@ -27,10 +27,10 @@ Ordinary start only resolves the existing identity and fails with an explicit
 `config --playcover` instruction when it is missing or still needs trust. Other
 unhealthy states fail closed without start-time mutation.
 
-`start --playcover` without `--app` reuses the most recent verified generation
+`start --mac --reuse` explicitly reuses the most recent verified generation
 from the current `IOS_USE_HOME`. There are no public `playcover inspect`,
 `prepare`, or `verify` commands; those are internal start steps and test
-entry points. After rebuilding a source App, pass `--app` again; bare start
+entry points. After rebuilding a source App, pass `--app` again; `--reuse`
 deliberately does not inspect, hash, or otherwise depend on the original source
 path.
 
@@ -112,7 +112,7 @@ constant; they never crop the output or consume App touch events.
 ## Architecture and Session
 
 ```text
-ios-use start --playcover [--app <source-or-managed-prepared.app>] [--log]
+ios-use start --mac (--app <source-or-managed-prepared.app> | --reuse) [--log]
   -> PlayCoverManagedAppService
      -> source classification or managed-generation selection
      -> deterministic generation selection under this IOS_USE_HOME
@@ -309,7 +309,7 @@ authoritative final prepared-App inspection. It does not re-read the live
 source after cloning; callers must provide a completed source build that stays
 byte-stable through publication.
 
-Each successful start prints a single `PlayCover timing:` line covering
+Each successful start prints a single `Mac timing:` line covering
 `inspect`, `clone`, `convert`, `sign`, `verify`, `launch`, and `total`.
 It also reports `alias`, `openDispatch`, `exactOwnership`,
 `runtimeTransportPing`, and `readyGeometry`. `exactOwnership` is gross wall

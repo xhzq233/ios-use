@@ -442,7 +442,7 @@ final class IOSUseCLITests: XCTestCase {
         )
         XCTAssertTrue(
             result.stdout.contains(
-                "`start --playcover` never initializes or repairs this identity"
+                "`start --mac` never initializes or repairs this identity"
             )
         )
         XCTAssertTrue(result.stderr.isEmpty)
@@ -471,7 +471,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(
             result.stdout,
             """
-            PlayCover signing identity is ready.
+            Mac backend PlayCover-derived signing identity is ready.
             Certificate SHA-256: \(evidence.certificateSHA256)
             Expires: 2050-01-01T00:00:00Z
 
@@ -528,7 +528,7 @@ final class IOSUseCLITests: XCTestCase {
                 "expiresAt",
             ])
         )
-        XCTAssertEqual(data["backend"] as? String, "playcover")
+        XCTAssertEqual(data["backend"] as? String, "mac")
         XCTAssertEqual(data["status"] as? String, "ready")
         XCTAssertEqual(
             data["certificateSHA256"] as? String,
@@ -3354,7 +3354,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(Darwin.chmod(paths.playcoverRun, 0o700), 0)
         try SessionService.writeDriverLock(
             info: SessionService.Info(
-                udid: "playcover:com.example.media",
+                udid: "mac",
                 deviceName: "iPhone16,2",
                 deviceVersion: "18.7",
                 deviceType: PlayCoverSessionService.deviceType,

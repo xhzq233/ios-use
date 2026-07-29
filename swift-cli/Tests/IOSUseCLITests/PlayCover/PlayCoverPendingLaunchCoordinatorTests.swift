@@ -158,7 +158,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
 
         let result = IOSUseCLI(
             environment: ["IOS_USE_HOME": fixture.root.path]
-        ).run(arguments: ["start", "--playcover"])
+        ).run(arguments: ["start", "--mac", "--reuse"])
 
         XCTAssertEqual(result.exitCode, 1)
         XCTAssertFalse(launched)
@@ -189,7 +189,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         let output = try SessionService.stop(paths: fixture.paths)
 
         XCTAssertTrue(
-            output.contains("PlayCover pending launch stopped")
+            output.contains("Mac pending launch stopped")
         )
         XCTAssertNil(
             try PlayCoverPendingLaunchStore.load(
@@ -289,7 +289,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         let output = try SessionService.stop(paths: fixture.paths)
 
         XCTAssertTrue(
-            output.contains("PlayCover pending launch stopped")
+            output.contains("Mac pending launch stopped")
         )
         XCTAssertEqual(lockAttempts, 2)
         XCTAssertNil(
@@ -1005,7 +1005,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         )
         let object: [String: Any] = [
             "schemaVersion": 4,
-            "backend": "playcover-headless",
+            "backend": "mac",
             "sourceAppPath": root.path + "/Source.app",
             "preparedAppPath": appPath,
             "bundleIdentifier": "com.example.fixture",

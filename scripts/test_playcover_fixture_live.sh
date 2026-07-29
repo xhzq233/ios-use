@@ -2296,7 +2296,7 @@ EXPECTED_HOST_TITLE="$(expected_host_title_for_app "$FIXTURE_APP")" || {
 printf '%s\n' "$EXPECTED_HOST_TITLE" >"$RUN_DIR/expected-host-title"
 
 capture_original_frontmost_application
-record_case start start --playcover --app "$FIXTURE_APP" --log
+record_case start start --mac --app "$FIXTURE_APP" --log
 record_case status status --json
 assert_evidence status \
   '"status"[[:space:]]*:[[:space:]]*"healthy"'

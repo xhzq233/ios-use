@@ -325,7 +325,7 @@ jq -c \
   "$BASE_SAMPLES" >"$FIXTURE_MISMATCH"
 expect_build_rejected "$FIXTURE_MISMATCH" "a fixture tree mismatch"
 
-VALID_TIMING_LINE="PlayCover timing: inspect=1.0ms clone=skipped convert=skipped sign=skipped verify=2.0ms launch=3.0ms alias=4.000ms openDispatch=5.000ms exactOwnership=6.000ms runtimeTransportPing=skipped readyGeometry=7.000ms total=8.0ms"
+VALID_TIMING_LINE="Mac timing: inspect=1.0ms clone=skipped convert=skipped sign=skipped verify=2.0ms launch=3.0ms alias=4.000ms openDispatch=5.000ms exactOwnership=6.000ms runtimeTransportPing=skipped readyGeometry=7.000ms total=8.0ms"
 VALID_PARSE_INPUT="$TEST_TEMP/valid-parse-input.json"
 VALID_SAMPLE="$TEST_TEMP/valid-sample.json"
 write_parse_input "$VALID_PARSE_INPUT" "$VALID_TIMING_LINE"

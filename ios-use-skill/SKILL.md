@@ -1,6 +1,6 @@
 ---
 name: "ios-use-skill"
-description: "Operate iOS devices, Simulators, and the experimental PlayCover backend with ios-use for setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and troubleshooting. Re-read after context compaction or resuming iOS work. Build shell workflows from stable semantic DOM labels."
+description: "Operate iOS devices, Simulators, and the experimental PlayCover-derived Mac backend with ios-use for setup, DOM-first UI actions, app lifecycle, screenshots, logs, proxying, signing, and troubleshooting. Re-read after context compaction or resuming iOS work. Build shell workflows from stable semantic DOM labels."
 ---
 
 # ios-use Operational Playbook
@@ -24,26 +24,26 @@ ios-use config --udid <udid>
 ios-use start <udid>
 ```
 
-For a source-built experimental PlayCover backend, configure its signing
+For the source-built experimental Mac backend, configure its PlayCover-derived signing
 identity once, then pass either an unmodified iPhoneOS App or an already
 prepared App:
 
 ```bash
 ios-use config --playcover
-ios-use start --playcover --app <source-or-prepared.app>
+ios-use start --mac --app <source-or-prepared.app>
 ```
 
 The first command asks for one macOS authentication to trust the PlayCover
 signing identity. If the user cancels, safely retry the same command; it resumes
 the same identity instead of replacing it. This setup persists across
-`IOS_USE_HOME` values. `start --playcover` never performs setup itself and
+`IOS_USE_HOME` values. `start --mac` never performs setup itself and
 directs the user back to `config --playcover` when the identity is missing or
 needs attention.
 
 The source build supplies the default runtime. A source App is prepared into
 managed ios-use state and launched in the same command; a complete prepared App
-is verified and launched directly. Later, bare `ios-use start --playcover`
-reuses the most recent successful generation from the current `IOS_USE_HOME`.
+is verified and launched directly. Later, `ios-use start --mac --reuse`
+explicitly reuses the most recent successful generation from the current `IOS_USE_HOME`.
 Run ordinary `ios-use stop` before switching backends.
 
 - Connect real devices over USB and use iOS 17.4 or later.
@@ -54,8 +54,8 @@ Run ordinary `ios-use stop` before switching backends.
   `open --dom`, or device-backed proxy commands.
 - Treat the device selected by `start` as the target for all UI commands. To switch
   devices, run `ios-use stop`, then `ios-use start <new-udid>`.
-- Treat PlayCover selected by `start --playcover` the same way: subsequent
-  session-bound commands route to the active PlayCover Runtime and cannot fall
+- Treat the Mac backend selected by `start --mac` the same way: subsequent
+  session-bound commands route to the active PlayCover-derived Runtime and cannot fall
   back to XCTest.
 - Use `ios-use help <command>` for the complete option contract instead of guessing
   whether an individual command accepts `--udid`.
@@ -244,9 +244,9 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
   label/value, then add `--traits` or `--cindex` only if needed.
 - DDI missing or mismatched: use `ddi-mount`, the fallback archive above, and an
   exact device-version match.
-- PlayCover reports that no default runtime was found: rebuild the source CLI
+- The Mac backend reports that no default runtime was found: rebuild the source CLI
   with `bash scripts/build_swift_cli.sh --debug` on Apple silicon with the
-  iPhoneOS SDK available, then retry the same `start --playcover --app` command.
+  iPhoneOS SDK available, then retry the same `start --mac --app` command.
 - PlayCover reports that its signing identity is missing or needs trust: run
   `ios-use config --playcover`. If macOS authentication was cancelled, safely
   retry that same command.

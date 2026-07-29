@@ -34,26 +34,6 @@ final class CLIParserTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            try CLIParser.parse(["start", "--playcover"]),
-            .start(StartOptions(playCover: true))
-        )
-
-        XCTAssertEqual(
-            try CLIParser.parse([
-                "start", "--playcover",
-                "--app", "/work/Demo.app",
-                "--timeout", "800ms",
-            ]),
-            .start(
-                StartOptions(
-                    playCover: true,
-                    appPath: "/work/Demo.app",
-                    timeout: 0.8
-                )
-            )
-        )
-
-        XCTAssertEqual(
             try CLIParser.parse(["install", "app.ipa", "--udid", "REAL-1", "--verbose"]),
             .install(AppInstallOptions(ipaPath: "app.ipa", udid: "REAL-1", verbose: true))
         )
@@ -99,29 +79,36 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
-    func testParsesPlayCoverStartAsOnlyPublicBackendEntry()
+    func testParsesMacStartWithExplicitAppOrReuse()
         throws
     {
         XCTAssertEqual(
-            try CLIParser.parse(["start", "--playcover"]),
+            try CLIParser.parse([
+                "start",
+                "--mac",
+                "--app",
+                "/fixtures/Demo.app",
+            ]),
             .start(
-                StartOptions(playCover: true)
+                StartOptions(
+                    mac: true,
+                    appPath: "/fixtures/Demo.app"
+                )
             )
         )
         XCTAssertEqual(
             try CLIParser.parse([
                 "start",
-                "--playcover",
-                "--app",
-                "/fixtures/Demo.app",
+                "--mac",
+                "--reuse",
                 "--log",
                 "--timeout",
                 "800ms",
             ]),
             .start(
                 StartOptions(
-                    playCover: true,
-                    appPath: "/fixtures/Demo.app",
+                    mac: true,
+                    reuse: true,
                     log: true,
                     timeout: 0.8
                 )
@@ -181,7 +168,7 @@ final class CLIParserTests: XCTestCase {
         }
     }
 
-    func testRejectsInvalidPlayCoverArguments() {
+    func testRejectsInvalidMacStartArguments() {
         XCTAssertThrowsError(
             try CLIParser.parse(["playcover"])
         ) { error in
@@ -191,7 +178,31 @@ final class CLIParserTests: XCTestCase {
             )
         }
         XCTAssertThrowsError(
-            try CLIParser.parse(["start", "--playcover", "--timeout", "61s"])
+            try CLIParser.parse(["start", "--playcover"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .unknownOption("--playcover")
+            )
+        }
+        for command in ["status", "stop"] {
+            XCTAssertThrowsError(
+                try CLIParser.parse([command, "--mac"])
+            ) { error in
+                XCTAssertEqual(
+                    error as? CLIParseError,
+                    .unknownOption("--mac")
+                )
+            }
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "start",
+                "--mac",
+                "--reuse",
+                "--timeout",
+                "61s",
+            ])
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
@@ -199,11 +210,41 @@ final class CLIParserTests: XCTestCase {
             )
         }
         XCTAssertThrowsError(
-            try CLIParser.parse(["start", "SIM-1", "--playcover"])
+            try CLIParser.parse(["start", "SIM-1", "--mac", "--reuse"])
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("a device UDID cannot be used with --playcover")
+                .invalidValue("a device UDID cannot be used with --mac")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--mac"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--mac requires exactly one of --app <app> or --reuse")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--mac", "--app", ""])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app requires a non-empty App path")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse([
+                "start",
+                "--mac",
+                "--app",
+                "/work/Demo.app",
+                "--reuse",
+            ])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--mac requires exactly one of --app <app> or --reuse")
             )
         }
         XCTAssertThrowsError(
@@ -211,7 +252,15 @@ final class CLIParserTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("--app and --timeout require --playcover")
+                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--reuse"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
             )
         }
         XCTAssertThrowsError(
@@ -219,9 +268,82 @@ final class CLIParserTests: XCTestCase {
         ) { error in
             XCTAssertEqual(
                 error as? CLIParseError,
-                .invalidValue("--log requires --playcover")
+                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
             )
         }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--timeout", "1s"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--app, --reuse, --log, and --timeout require --mac")
+            )
+        }
+        XCTAssertThrowsError(
+            try CLIParser.parse(["start", "--mac", "--reuse", "--verbose"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .invalidValue("--verbose cannot be used with --mac")
+            )
+        }
+    }
+
+    func testRejectsDuplicateMacStartSelectors() {
+        let duplicateArguments: [([String], CLIParseError)] = [
+            (
+                ["start", "--mac", "--mac", "--reuse"],
+                .invalidValue("--mac may only be provided once")
+            ),
+            (
+                ["start", "--mac", "--reuse", "--reuse"],
+                .invalidValue("--reuse may only be provided once")
+            ),
+            (
+                [
+                    "start",
+                    "--mac",
+                    "--app",
+                    "/work/A.app",
+                    "--app",
+                    "/work/B.app",
+                ],
+                .invalidValue("--app may only be provided once")
+            ),
+        ]
+
+        for (arguments, expectedError) in duplicateArguments {
+            XCTAssertThrowsError(try CLIParser.parse(arguments)) { error in
+                XCTAssertEqual(error as? CLIParseError, expectedError)
+            }
+        }
+    }
+
+    func testMacStartHelpDocumentsExplicitSourceAndReuseModes() {
+        let result = IOSUseCLI().run(arguments: ["start", "--help"])
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(
+            result.stdout.contains(
+                "ios-use start --mac --app <source-or-prepared.app>"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains("ios-use start --mac --reuse")
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "Use --app after every Debug rebuild"
+            )
+        )
+        XCTAssertTrue(
+            result.stdout.contains(
+                "Use --reuse only to explicitly launch"
+            )
+        )
+        XCTAssertFalse(
+            result.stdout.contains("start --playcover")
+        )
     }
 
     func testParsesDriverReadCommands() throws {
@@ -785,14 +907,16 @@ final class CLIParserTests: XCTestCase {
         XCTAssertEqual(
             try CLIParser.parseInvocation([
                 "start",
-                "--playcover",
+                "--mac",
+                "--reuse",
                 "--log",
                 "--json",
             ]),
             ParsedInvocation(
                 command: .start(
                     StartOptions(
-                        playCover: true,
+                        mac: true,
+                        reuse: true,
                         log: true
                     )
                 ),

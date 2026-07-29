@@ -599,8 +599,8 @@ assert_cycle_identity() {
       --arg generation "$GENERATION_KEY" \
       --slurpfile status "$status_file" '
         ($status[0].data.driver) as $driver |
-        .deviceType == "playcover" and
-        .startMode == "playcover" and
+        .deviceType == "mac" and
+        .startMode == "mac" and
         .bundleId == $driver.bundleId and
         .runnerPid == $driver.runnerPid and
         .runnerPid > 1 and
@@ -2223,7 +2223,7 @@ write_redacted_attestation() {
     --argjson pidReuseObserved "$PID_REUSE_OBSERVED" '
       {
         schemaVersion: 2,
-        backend: "playcover",
+        backend: "mac",
         gate: "external-app-live",
         result: "pass",
         leafCommit: $leafCommit,
@@ -2478,15 +2478,15 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
   if [[ "$cycle" -eq 1 ]]; then
     run_cli \
       "${cycle_name}_start" \
-      start --playcover --app "$LIVE_APP"
+      start --mac --app "$LIVE_APP"
     if ! rg -q -- \
-        'PlayCover generation prepared: [0-9a-f]{64}' \
+        'Mac generation prepared: [0-9a-f]{64}' \
         "$RUN_DIR/${cycle_name}_start.stdout"; then
       fail_gate "the first isolated external App start did not prepare a generation"
     fi
     GENERATION_KEY="$(
       /usr/bin/sed -nE \
-        's/^PlayCover generation prepared: ([0-9a-f]{64})$/\1/p' \
+        's/^Mac generation prepared: ([0-9a-f]{64})$/\1/p' \
         "$RUN_DIR/${cycle_name}_start.stdout"
     )"
     if [[ ! "$GENERATION_KEY" =~ ^[0-9a-f]{64}$ ]]; then
@@ -2496,9 +2496,9 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
   else
     run_cli \
       "${cycle_name}_start" \
-      start --playcover
+      start --mac --reuse
     if ! rg -q -- \
-        "PlayCover generation reused: $GENERATION_KEY" \
+        "Mac generation reused: $GENERATION_KEY" \
         "$RUN_DIR/${cycle_name}_start.stdout"; then
       fail_gate \
         "$cycle_name did not reuse the exact prepared generation"

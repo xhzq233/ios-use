@@ -621,7 +621,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         try fixture.writeSidecarJSON(
             [
                 "schemaVersion": 4,
-                "backend": "playcover-headless",
+                "backend": "mac",
                 "generationKey": largeManifestKey,
                 "completedAt": "2026-07-04T00:00:00Z",
                 "fixturePadding": String(repeating: "x", count: 4_300_000),
@@ -732,7 +732,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         try fixture.writeSidecarJSON(
             [
                 "schemaVersion": 3,
-                "backend": "playcover-headless",
+                "backend": "mac",
                 "generationKey": protectedKeys[0],
                 "completedAt": "2026-04-08T00:00:00Z",
             ],
@@ -1150,7 +1150,7 @@ private struct CacheMaintenanceFixture {
         _ = chmod(appURL(key).path, 0o755)
         let manifest: [String: Any] = [
             "schemaVersion": 4,
-            "backend": "playcover-headless",
+            "backend": "mac",
             "generationKey": key,
             "completedAt": completedAt,
         ]
@@ -1205,12 +1205,12 @@ private struct CacheMaintenanceFixture {
         let sessionID = UUID().uuidString
         try SessionService.writeDriverLock(
             info: SessionService.Info(
-                udid: "playcover:com.example.fixture",
+                udid: "mac",
                 deviceName: "iPhone16,2",
                 deviceVersion: "17.0",
                 deviceType: PlayCoverSessionService.deviceType,
                 runnerPid: 42,
-                startMode: "playcover",
+                startMode: "mac",
                 sessionIdentifier: sessionID,
                 bundleId: "com.example.fixture",
                 playCoverAppPath: appURL(generationKey).path,

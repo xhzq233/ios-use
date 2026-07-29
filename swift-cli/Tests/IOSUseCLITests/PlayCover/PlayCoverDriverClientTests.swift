@@ -1202,7 +1202,7 @@ final class PlayCoverDriverClientTests: XCTestCase {
 
     private func makeSession() -> SessionService.Info {
         SessionService.Info(
-            udid: "playcover:com.example.runtime",
+            udid: "mac",
             deviceName: "iPhone16,2",
             deviceVersion: "Mac Catalyst",
             deviceType: PlayCoverSessionService.deviceType,
