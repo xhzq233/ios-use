@@ -24,10 +24,29 @@ IOSUsePlaySafeAreaSceneActivationStateSupportsFixedGeometryForTesting(
     UISceneActivationState state
 );
 extern BOOL
-IOSUsePlaySafeAreaPreBindActivationStateSupportsFixedGeometryForTesting(
-    UISceneActivationState state,
-    BOOL targetBound,
-    BOOL attachedPrimaryWindow
+IOSUsePlaySafeAreaPreBindContractMatchesForTesting(
+    BOOL sceneAttached,
+    BOOL applicationRole,
+    BOOL normalWindowLevel,
+    BOOL auxiliaryWindow
+);
+extern void IOSUsePlaySafeAreaRecordProviderInvocationForTesting(
+    UIWindow *window,
+    BOOL includeStatusBar,
+    UIEdgeInsets original,
+    UIEdgeInsets result,
+    BOOL fixedGeometryApplied
+);
+extern BOOL
+IOSUsePlaySafeAreaFirstProviderInvocationReadyForWindowForTesting(
+    UIWindow *window
+);
+extern NSDictionary<NSString *, id> *
+IOSUsePlaySafeAreaFirstProviderEvidenceForWindowForTesting(
+    UIWindow *window
+);
+extern void IOSUsePlaySafeAreaResetEvidenceForWindowForTesting(
+    UIWindow *window
 );
 extern Class IOSUsePlaySafeAreaMethodOwnerForTesting(
     Class receiverClass,
@@ -212,28 +231,41 @@ int main(void) {
             @"unattached scene received fixed foreground geometry"
         );
         passed &= IOSUsePlaySafeAreaRequire(
-            IOSUsePlaySafeAreaPreBindActivationStateSupportsFixedGeometryForTesting(
-                UISceneActivationStateUnattached,
-                NO,
-                YES
+            IOSUsePlaySafeAreaPreBindContractMatchesForTesting(
+                YES,
+                YES,
+                YES,
+                NO
             ),
-            @"connecting primary window missed the pre-bind fixed geometry"
+            @"scene-attached application-role normal App window "
+             "missed pre-bind fixed geometry"
         );
         passed &= IOSUsePlaySafeAreaRequire(
-            !IOSUsePlaySafeAreaPreBindActivationStateSupportsFixedGeometryForTesting(
-                UISceneActivationStateUnattached,
+            !IOSUsePlaySafeAreaPreBindContractMatchesForTesting(
+                YES,
+                NO,
+                YES,
+                NO
+            ),
+            @"non-application scene entered the pre-bind scope"
+        );
+        passed &= IOSUsePlaySafeAreaRequire(
+            !IOSUsePlaySafeAreaPreBindContractMatchesForTesting(
+                YES,
+                YES,
                 YES,
                 YES
             ),
-            @"disconnected window retained fixed geometry after binding"
+            @"auxiliary window entered the pre-bind scope"
         );
         passed &= IOSUsePlaySafeAreaRequire(
-            !IOSUsePlaySafeAreaPreBindActivationStateSupportsFixedGeometryForTesting(
-                UISceneActivationStateUnattached,
+            !IOSUsePlaySafeAreaPreBindContractMatchesForTesting(
                 NO,
+                YES,
+                YES,
                 NO
             ),
-            @"unattached auxiliary window received pre-bind geometry"
+            @"scene-unattached window entered the pre-bind scope"
         );
         Method provider = class_getInstanceMethod(
             IOSUsePlaySafeAreaABIFixture.class,
@@ -402,6 +434,110 @@ int main(void) {
                     runtimeHook
                 ),
             @"production UIWindow owner did not dispatch to the hook"
+        );
+        UIWindow *firstWindow = [UIWindow new];
+        IOSUsePlaySafeAreaResetEvidenceForWindowForTesting(
+            firstWindow
+        );
+        IOSUsePlaySafeAreaRecordProviderInvocationForTesting(
+            firstWindow,
+            YES,
+            UIEdgeInsetsZero,
+            device,
+            YES
+        );
+        NSDictionary<NSString *, id> *firstEvidence =
+            IOSUsePlaySafeAreaFirstProviderEvidenceForWindowForTesting(
+                firstWindow
+            );
+        passed &= IOSUsePlaySafeAreaRequire(
+            IOSUsePlaySafeAreaFirstProviderInvocationReadyForWindowForTesting(
+                firstWindow
+            ) &&
+                [firstEvidence[@"recorded"] boolValue] &&
+                [firstEvidence[@"evidenceKind"]
+                    isEqualToString:
+                        @"first-eligible-app-window-provider-hook-invocation"] &&
+                ![firstEvidence[
+                    @"businessInvocationProven"
+                ] boolValue] &&
+                [firstEvidence[@"generation"]
+                    unsignedIntegerValue] > 0 &&
+                [firstEvidence[@"providerInvocationCount"]
+                    unsignedIntegerValue] == 1,
+            @"correct first provider invocation was not attributed "
+             "to its UIWindow generation"
+        );
+        IOSUsePlaySafeAreaRecordProviderInvocationForTesting(
+            firstWindow,
+            YES,
+            UIEdgeInsetsZero,
+            UIEdgeInsetsZero,
+            YES
+        );
+        firstEvidence =
+            IOSUsePlaySafeAreaFirstProviderEvidenceForWindowForTesting(
+                firstWindow
+            );
+        passed &= IOSUsePlaySafeAreaRequire(
+            IOSUsePlaySafeAreaFirstProviderInvocationReadyForWindowForTesting(
+                firstWindow
+            ) &&
+                [firstEvidence[@"providerInvocationCount"]
+                    unsignedIntegerValue] == 2 &&
+                [firstEvidence[@"resultMatchedExpected"] boolValue],
+            @"later provider invocation rewrote immutable first-read "
+             "evidence"
+        );
+        UIWindow *replacementWindow = [UIWindow new];
+        IOSUsePlaySafeAreaResetEvidenceForWindowForTesting(
+            replacementWindow
+        );
+        IOSUsePlaySafeAreaRecordProviderInvocationForTesting(
+            replacementWindow,
+            YES,
+            UIEdgeInsetsZero,
+            UIEdgeInsetsZero,
+            NO
+        );
+        NSDictionary<NSString *, id> *unattachedEvidence =
+            IOSUsePlaySafeAreaFirstProviderEvidenceForWindowForTesting(
+                replacementWindow
+            );
+        passed &= IOSUsePlaySafeAreaRequire(
+            ![unattachedEvidence[@"recorded"] boolValue] &&
+                !IOSUsePlaySafeAreaFirstProviderInvocationReadyForWindowForTesting(
+                    replacementWindow
+                ),
+            @"unattached/non-eligible provider invocation polluted "
+             "the App-window first evidence"
+        );
+        IOSUsePlaySafeAreaRecordProviderInvocationForTesting(
+            replacementWindow,
+            YES,
+            UIEdgeInsetsZero,
+            device,
+            YES
+        );
+        NSDictionary<NSString *, id> *replacementEvidence =
+            IOSUsePlaySafeAreaFirstProviderEvidenceForWindowForTesting(
+                replacementWindow
+            );
+        passed &= IOSUsePlaySafeAreaRequire(
+            IOSUsePlaySafeAreaFirstProviderInvocationReadyForWindowForTesting(
+                replacementWindow
+            ) &&
+                [replacementEvidence[@"generation"]
+                    unsignedIntegerValue] >
+                [firstEvidence[@"generation"]
+                    unsignedIntegerValue] &&
+                [replacementEvidence[@"providerInvocationCount"]
+                    unsignedIntegerValue] == 1 &&
+                [replacementEvidence[
+                    @"resultMatchedExpected"
+                ] boolValue],
+            @"eligible invocation did not become replacement window's "
+             "immutable first evidence after an unattached query"
         );
         method_setImplementation(runtimeProvider, runtimeOriginal);
         NSError *collisionError = nil;

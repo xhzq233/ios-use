@@ -749,7 +749,7 @@ assert_canonical_host_status() {
       $safeArea.stage == "ready" and
       $safeArea.safeAreaCompatibilityReady == true and
       $safeArea.installEvidenceReady == true and
-      $safeArea.firstReadReady == true and
+      $safeArea.firstEligibleProviderInvocationReady == true and
       $safeArea.safeAreaReady == true and
       $safeArea.deviceContractReady == true and
       $safeArea.safeAreaLayoutGuideReady == true and
@@ -776,12 +776,17 @@ assert_canonical_host_status() {
         .invalidationOwner == "UIWindow" and
         .classHookActive == true and
         .targetDispatchesHook == true and
-        .eligibleInvocationCount > 0 and
-        .statusBarInclusiveInvocationCount > 0 and
-        (.firstEligibleInvocation |
+        .scope ==
+          "scene-attached-application-role-normal-app-window" and
+        (.targetFirstEligibleProviderInvocation |
           .recorded == true and
+          .generation > 0 and
+          .providerInvocationCount > 0 and
+          .evidenceKind ==
+            "first-eligible-app-window-provider-hook-invocation" and
+          .businessInvocationProven == false and
           .installedBeforeDispatch == true and
-          .targetWasBound == false and
+          .fixedGeometryApplied == true and
           .resultMatchedExpected == true and
           (.activationState == "foreground-active" or
             .activationState == "foreground-inactive" or
@@ -2356,6 +2361,13 @@ assert_json status '
       .identityMapping == true))
 '
 assert_canonical_host_status status
+initial_safe_area_evidence_generation="$(
+  jq -er '
+    .data.driver.runtime.diagnostics.runtime.window
+      .safeAreaCompatibility.compatibilityHook
+      .targetFirstEligibleProviderInvocation.generation
+  ' "$RUN_DIR/status.stdout"
+)"
 
 runner_pid="$(jq -er '.data.driver.runnerPid' "$RUN_DIR/status.stdout")"
 session_identifier="$(
@@ -2965,8 +2977,45 @@ assert_evidence swipe_fixed 'Scroll y [1-9][0-9]*'
 record_case scene_replace tap "Replace Scene Window" \
   --dom --json
 assert_evidence scene_replace 'Scene 2'
+assert_json scene_replace '
+  ([.data.postDom.elements[] |
+    select(
+      .identifier == "fixture.safe-area.first-read-header"
+    )][0]) as $header |
+  $header.label == "First Read Header" and
+  ($header.value |
+    startswith(
+      "height=129 safeTop=59 source=window-safe-area statusBar="
+    )) and
+  (($header.frame[3] - 129) | fabs) <= 0.5
+'
 record_case scene_replace_status status --json
 assert_canonical_host_status scene_replace_status
+if ! jq -e \
+    --argjson initialGeneration \
+      "$initial_safe_area_evidence_generation" '
+    .data.driver.runtime.diagnostics.runtime.window
+      .safeAreaCompatibility as $safeArea |
+    ($safeArea.compatibilityHook
+      .targetFirstEligibleProviderInvocation) as $firstRead |
+    $firstRead.recorded == true and
+    $firstRead.generation > $initialGeneration and
+    $firstRead.evidenceKind ==
+      "first-eligible-app-window-provider-hook-invocation" and
+    $firstRead.businessInvocationProven == false and
+    $firstRead.fixedGeometryApplied == true and
+    $firstRead.resultMatchedExpected == true and
+    $firstRead.expected ==
+      {"top":59,"left":0,"bottom":34,"right":0} and
+    $firstRead.result ==
+      {"top":59,"left":0,"bottom":34,"right":0} and
+    $safeArea.lifecycle.windowReplacements > 0
+  ' "$RUN_DIR/scene_replace_status.stdout" >/dev/null; then
+  echo \
+    "[playcover-fixture-live] FAIL: Scene 2 lacks new first-read evidence" \
+    >&2
+  exit 1
+fi
 
 record_case absolute_bottom_tab_focus input --tap "Fixture Input" \
   --content "absolute-bottom-tab-focus" --delete 99 \

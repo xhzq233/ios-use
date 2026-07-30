@@ -22,6 +22,26 @@ typedef UIEdgeInsets (*IOSUsePlaySafeAreaProviderIMP)(
     BOOL
 );
 
+@interface IOSUsePlaySafeAreaFirstProviderEvidence : NSObject {
+@public
+    NSUInteger generation;
+    NSUInteger invocationCount;
+    BOOL installedBeforeDispatch;
+    BOOL includeStatusBar;
+    BOOL fixedGeometryApplied;
+    BOOL resultMatchedExpected;
+    UIEdgeInsets original;
+    UIEdgeInsets expected;
+    UIEdgeInsets result;
+    NSString *windowClass;
+    NSString *activationState;
+    NSString *sceneIdentifier;
+}
+@end
+
+@implementation IOSUsePlaySafeAreaFirstProviderEvidence
+@end
+
 static __weak UIWindowScene *IOSUsePlaySafeAreaTargetScene;
 static __weak UIWindow *IOSUsePlaySafeAreaTargetWindow;
 static BOOL IOSUsePlaySafeAreaHookAttempted;
@@ -44,23 +64,8 @@ static BOOL IOSUsePlaySafeAreaPreMainInstallAttempted;
 static BOOL IOSUsePlaySafeAreaPreMainInstallSucceeded;
 static os_unfair_lock IOSUsePlaySafeAreaEvidenceLock =
     OS_UNFAIR_LOCK_INIT;
-static NSUInteger IOSUsePlaySafeAreaEligibleInvocationCount;
-static NSUInteger
-    IOSUsePlaySafeAreaStatusBarInclusiveInvocationCount;
-static NSUInteger
-    IOSUsePlaySafeAreaStatusBarExclusiveInvocationCount;
-static BOOL IOSUsePlaySafeAreaFirstEligibleInvocationRecorded;
-static BOOL
-    IOSUsePlaySafeAreaFirstInvocationInstalledBeforeDispatch;
-static BOOL IOSUsePlaySafeAreaFirstInvocationTargetWasBound;
-static BOOL IOSUsePlaySafeAreaFirstInvocationTargetMatched;
-static BOOL IOSUsePlaySafeAreaFirstInvocationIncludedStatusBar;
-static BOOL IOSUsePlaySafeAreaFirstInvocationResultMatched;
-static UIEdgeInsets IOSUsePlaySafeAreaFirstInvocationOriginal;
-static UIEdgeInsets IOSUsePlaySafeAreaFirstInvocationExpected;
-static UIEdgeInsets IOSUsePlaySafeAreaFirstInvocationResult;
-static NSString *IOSUsePlaySafeAreaFirstInvocationWindowClass;
-static NSString *IOSUsePlaySafeAreaFirstInvocationActivationState;
+static NSUInteger IOSUsePlaySafeAreaNextEvidenceGeneration;
+static char IOSUsePlaySafeAreaEvidenceAssociationKey;
 
 static UIEdgeInsets IOSUsePlaySafeAreaDeviceInsets(
     BOOL includeStatusBar
@@ -173,18 +178,6 @@ static BOOL IOSUsePlaySafeAreaSceneSupportsFixedGeometry(
             UISceneActivationStateForegroundInactive);
 }
 
-static BOOL IOSUsePlaySafeAreaPreBindActivationSupportsFixedGeometry(
-    UISceneActivationState state,
-    BOOL targetBound,
-    BOOL attachedPrimaryWindow
-) {
-    return state == UISceneActivationStateForegroundActive ||
-        state == UISceneActivationStateForegroundInactive ||
-        (state == UISceneActivationStateUnattached &&
-         !targetBound &&
-         attachedPrimaryWindow);
-}
-
 static UIWindow *IOSUsePlaySafeAreaSceneDelegateWindow(
     UIWindowScene *scene
 ) {
@@ -202,26 +195,27 @@ static UIWindow *IOSUsePlaySafeAreaSceneDelegateWindow(
         : nil;
 }
 
-static BOOL IOSUsePlaySafeAreaIsEligibleReceiver(UIWindow *window) {
+static BOOL IOSUsePlaySafeAreaPreBindContractMatches(
+    BOOL sceneAttached,
+    BOOL applicationRole,
+    BOOL normalWindowLevel,
+    BOOL auxiliaryWindow
+) {
+    return sceneAttached &&
+        applicationRole &&
+        normalWindowLevel &&
+        !auxiliaryWindow;
+}
+
+static BOOL IOSUsePlaySafeAreaIsPreBindAppWindow(UIWindow *window) {
     UIWindowScene *scene = window.windowScene;
-    UIWindow *delegateWindow =
-        IOSUsePlaySafeAreaSceneDelegateWindow(scene);
-    BOOL attachedPrimaryWindow =
-        window.rootViewController != nil &&
-        [scene.windows containsObject:window] &&
-        (delegateWindow == nil || delegateWindow == window);
-    return window != nil &&
-        IOSUsePlaySafeAreaPreBindActivationSupportsFixedGeometry(
-            scene.activationState,
-            IOSUsePlaySafeAreaTargetWindow != nil,
-            attachedPrimaryWindow
-        ) &&
+    return IOSUsePlaySafeAreaPreBindContractMatches(
+        scene != nil,
         [scene.session.role
-            isEqualToString:UIWindowSceneSessionRoleApplication] &&
-        fabs(window.windowLevel - UIWindowLevelNormal) <= 0.5 &&
-        window.bounds.size.width > 0 &&
-        window.bounds.size.height > 0 &&
-        !IOSUsePlaySafeAreaIsAuxiliaryWindow(window);
+            isEqualToString:UIWindowSceneSessionRoleApplication],
+        fabs(window.windowLevel - UIWindowLevelNormal) <= 0.5,
+        IOSUsePlaySafeAreaIsAuxiliaryWindow(window)
+    );
 }
 
 static BOOL IOSUsePlaySafeAreaIsEligibleWindow(
@@ -353,25 +347,11 @@ static UIWindowScene *IOSUsePlaySafeAreaForegroundScene(void) {
 static BOOL IOSUsePlaySafeAreaReceiverUsesFixedGeometry(
     UIWindow *window
 ) {
-    if (!IOSUsePlaySafeAreaIsEligibleReceiver(window)) {
-        return NO;
-    }
-    UIWindow *target = IOSUsePlaySafeAreaTargetWindow;
-    if (target == nil || target == window ||
-        IOSUsePlaySafeAreaSceneDelegateWindow(
-            window.windowScene
-        ) == window ||
-        !IOSUsePlaySafeAreaIsEligibleReceiver(target)) {
-        return YES;
-    }
-    NSInteger receiverRank =
-        IOSUsePlaySafeAreaActivationRank(window.windowScene);
-    NSInteger targetRank =
-        IOSUsePlaySafeAreaActivationRank(target.windowScene);
-    if (receiverRank != targetRank) {
-        return receiverRank > targetRank;
-    }
-    return window.isKeyWindow && !target.isKeyWindow;
+    // First reads can happen immediately after UIWindow(windowScene:) and
+    // before root/visibility/scene.windows/activation state are established.
+    // Keep strict primary selection in reconciliation; the provider's
+    // pre-bind scope is the narrower semantic App-window contract instead.
+    return IOSUsePlaySafeAreaIsPreBindAppWindow(window);
 }
 
 static UIEdgeInsets IOSUsePlaySafeAreaProviderInsets(
@@ -384,13 +364,14 @@ static UIEdgeInsets IOSUsePlaySafeAreaProviderInsets(
     );
 }
 
-static void IOSUsePlaySafeAreaRecordEligibleInvocation(
+static void IOSUsePlaySafeAreaRecordProviderInvocation(
     UIWindow *window,
     BOOL includeStatusBar,
     UIEdgeInsets original,
-    UIEdgeInsets result
+    UIEdgeInsets result,
+    BOOL fixedGeometryApplied
 ) {
-    if (!IOSUsePlaySafeAreaIsEligibleReceiver(window)) {
+    if (window == nil || !fixedGeometryApplied) {
         return;
     }
     UIEdgeInsets expected =
@@ -398,47 +379,127 @@ static void IOSUsePlaySafeAreaRecordEligibleInvocation(
             original,
             includeStatusBar
         );
-    UIWindow *target = IOSUsePlaySafeAreaTargetWindow;
-    BOOL targetWasBound = target != nil;
-    BOOL targetMatched = target == window;
-    BOOL installedBeforeDispatch =
+    UIWindowScene *scene = window.windowScene;
+    IOSUsePlaySafeAreaFirstProviderEvidence *candidate =
+        [IOSUsePlaySafeAreaFirstProviderEvidence new];
+    candidate->invocationCount = 1;
+    candidate->installedBeforeDispatch =
         IOSUsePlaySafeAreaHookInstalled &&
         IOSUsePlaySafeAreaHookABICompatible;
-    BOOL resultMatched =
+    candidate->includeStatusBar = includeStatusBar;
+    candidate->fixedGeometryApplied = fixedGeometryApplied;
+    candidate->resultMatchedExpected =
         IOSUsePlaySafeAreaInsetsMatch(result, expected);
-    NSString *windowClass = NSStringFromClass(window.class);
-    NSString *activationState =
-        IOSUsePlaySafeAreaActivationStateName(
-            window.windowScene.activationState
+    candidate->original = original;
+    candidate->expected = expected;
+    candidate->result = result;
+    candidate->windowClass = NSStringFromClass(window.class);
+    candidate->activationState = scene == nil
+        ? @"not-attached"
+        : IOSUsePlaySafeAreaActivationStateName(
+            scene.activationState
         );
+    candidate->sceneIdentifier =
+        scene.session.persistentIdentifier;
     os_unfair_lock_lock(&IOSUsePlaySafeAreaEvidenceLock);
-    IOSUsePlaySafeAreaEligibleInvocationCount += 1;
-    if (includeStatusBar) {
-        IOSUsePlaySafeAreaStatusBarInclusiveInvocationCount += 1;
+    IOSUsePlaySafeAreaFirstProviderEvidence *evidence =
+        objc_getAssociatedObject(
+            window,
+            &IOSUsePlaySafeAreaEvidenceAssociationKey
+        );
+    if (evidence == nil) {
+        IOSUsePlaySafeAreaNextEvidenceGeneration += 1;
+        candidate->generation =
+            IOSUsePlaySafeAreaNextEvidenceGeneration;
+        evidence = candidate;
+        objc_setAssociatedObject(
+            window,
+            &IOSUsePlaySafeAreaEvidenceAssociationKey,
+            evidence,
+            OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        );
     } else {
-        IOSUsePlaySafeAreaStatusBarExclusiveInvocationCount += 1;
-    }
-    if (!IOSUsePlaySafeAreaFirstEligibleInvocationRecorded) {
-        IOSUsePlaySafeAreaFirstEligibleInvocationRecorded = YES;
-        IOSUsePlaySafeAreaFirstInvocationInstalledBeforeDispatch =
-            installedBeforeDispatch;
-        IOSUsePlaySafeAreaFirstInvocationTargetWasBound =
-            targetWasBound;
-        IOSUsePlaySafeAreaFirstInvocationTargetMatched =
-            targetMatched;
-        IOSUsePlaySafeAreaFirstInvocationIncludedStatusBar =
-            includeStatusBar;
-        IOSUsePlaySafeAreaFirstInvocationResultMatched =
-            resultMatched;
-        IOSUsePlaySafeAreaFirstInvocationOriginal = original;
-        IOSUsePlaySafeAreaFirstInvocationExpected = expected;
-        IOSUsePlaySafeAreaFirstInvocationResult = result;
-        IOSUsePlaySafeAreaFirstInvocationWindowClass =
-            windowClass;
-        IOSUsePlaySafeAreaFirstInvocationActivationState =
-            activationState;
+        evidence->invocationCount += 1;
     }
     os_unfair_lock_unlock(&IOSUsePlaySafeAreaEvidenceLock);
+}
+
+static IOSUsePlaySafeAreaFirstProviderEvidence *
+IOSUsePlaySafeAreaEvidenceForWindow(UIWindow *window) {
+    if (window == nil) {
+        return nil;
+    }
+    os_unfair_lock_lock(&IOSUsePlaySafeAreaEvidenceLock);
+    IOSUsePlaySafeAreaFirstProviderEvidence *evidence =
+        objc_getAssociatedObject(
+            window,
+            &IOSUsePlaySafeAreaEvidenceAssociationKey
+        );
+    os_unfair_lock_unlock(&IOSUsePlaySafeAreaEvidenceLock);
+    return evidence;
+}
+
+static BOOL IOSUsePlaySafeAreaEvidenceIsReadyForWindow(
+    UIWindow *window
+) {
+    IOSUsePlaySafeAreaFirstProviderEvidence *evidence =
+        IOSUsePlaySafeAreaEvidenceForWindow(window);
+    if (evidence == nil) {
+        return NO;
+    }
+    os_unfair_lock_lock(&IOSUsePlaySafeAreaEvidenceLock);
+    BOOL ready =
+        evidence->installedBeforeDispatch &&
+        evidence->fixedGeometryApplied &&
+        evidence->resultMatchedExpected;
+    os_unfair_lock_unlock(&IOSUsePlaySafeAreaEvidenceLock);
+    return ready;
+}
+
+static NSDictionary<NSString *, id> *
+IOSUsePlaySafeAreaEvidenceJSONForWindow(UIWindow *window) {
+    IOSUsePlaySafeAreaFirstProviderEvidence *evidence =
+        IOSUsePlaySafeAreaEvidenceForWindow(window);
+    if (evidence == nil) {
+        return @{
+            @"recorded": @NO,
+            @"evidenceKind":
+                @"first-eligible-app-window-provider-hook-invocation",
+            @"businessInvocationProven": @NO,
+            @"generation": NSNull.null,
+        };
+    }
+    os_unfair_lock_lock(&IOSUsePlaySafeAreaEvidenceLock);
+    NSDictionary<NSString *, id> *resultJSON = @{
+        @"recorded": @YES,
+        @"evidenceKind":
+            @"first-eligible-app-window-provider-hook-invocation",
+        @"businessInvocationProven": @NO,
+        @"generation": @(evidence->generation),
+        @"providerInvocationCount":
+            @(evidence->invocationCount),
+        @"installedBeforeDispatch":
+            @(evidence->installedBeforeDispatch),
+        @"includeStatusBar": @(evidence->includeStatusBar),
+        @"fixedGeometryApplied":
+            @(evidence->fixedGeometryApplied),
+        @"resultMatchedExpected":
+            @(evidence->resultMatchedExpected),
+        @"windowClass":
+            evidence->windowClass ?: NSNull.null,
+        @"activationState":
+            evidence->activationState ?: NSNull.null,
+        @"sceneIdentifier":
+            evidence->sceneIdentifier ?: NSNull.null,
+        @"original":
+            IOSUsePlaySafeAreaInsetsJSON(evidence->original),
+        @"expected":
+            IOSUsePlaySafeAreaInsetsJSON(evidence->expected),
+        @"result":
+            IOSUsePlaySafeAreaInsetsJSON(evidence->result),
+    };
+    os_unfair_lock_unlock(&IOSUsePlaySafeAreaEvidenceLock);
+    return resultJSON;
 }
 
 static UIEdgeInsets IOSUsePlaySafeAreaProviderHook(
@@ -454,18 +515,21 @@ static UIEdgeInsets IOSUsePlaySafeAreaProviderHook(
             includeStatusBar
         );
     }
+    BOOL fixedGeometryApplied =
+        IOSUsePlaySafeAreaReceiverUsesFixedGeometry(window);
     UIEdgeInsets result =
-        IOSUsePlaySafeAreaReceiverUsesFixedGeometry(window)
+        fixedGeometryApplied
             ? IOSUsePlaySafeAreaProviderInsets(
                 original,
                 includeStatusBar
             )
             : original;
-    IOSUsePlaySafeAreaRecordEligibleInvocation(
+    IOSUsePlaySafeAreaRecordProviderInvocation(
         window,
         includeStatusBar,
         original,
-        result
+        result,
+        fixedGeometryApplied
     );
     return result;
 }
@@ -818,53 +882,24 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
 #else
         YES;
 #endif
-    os_unfair_lock_lock(&IOSUsePlaySafeAreaEvidenceLock);
-    NSUInteger eligibleInvocationCount =
-        IOSUsePlaySafeAreaEligibleInvocationCount;
-    NSUInteger statusBarInclusiveInvocationCount =
-        IOSUsePlaySafeAreaStatusBarInclusiveInvocationCount;
-    NSUInteger statusBarExclusiveInvocationCount =
-        IOSUsePlaySafeAreaStatusBarExclusiveInvocationCount;
-    BOOL firstInvocationRecorded =
-        IOSUsePlaySafeAreaFirstEligibleInvocationRecorded;
-    BOOL firstInvocationInstalledBeforeDispatch =
-        IOSUsePlaySafeAreaFirstInvocationInstalledBeforeDispatch;
-    BOOL firstInvocationTargetWasBound =
-        IOSUsePlaySafeAreaFirstInvocationTargetWasBound;
-    BOOL firstInvocationTargetMatched =
-        IOSUsePlaySafeAreaFirstInvocationTargetMatched;
-    BOOL firstInvocationIncludedStatusBar =
-        IOSUsePlaySafeAreaFirstInvocationIncludedStatusBar;
-    BOOL firstInvocationResultMatched =
-        IOSUsePlaySafeAreaFirstInvocationResultMatched;
-    UIEdgeInsets firstInvocationOriginal =
-        IOSUsePlaySafeAreaFirstInvocationOriginal;
-    UIEdgeInsets firstInvocationExpected =
-        IOSUsePlaySafeAreaFirstInvocationExpected;
-    UIEdgeInsets firstInvocationResult =
-        IOSUsePlaySafeAreaFirstInvocationResult;
-    NSString *firstInvocationWindowClass =
-        IOSUsePlaySafeAreaFirstInvocationWindowClass;
-    NSString *firstInvocationActivationState =
-        IOSUsePlaySafeAreaFirstInvocationActivationState;
-    os_unfair_lock_unlock(&IOSUsePlaySafeAreaEvidenceLock);
+    NSDictionary<NSString *, id>
+        *targetFirstEligibleProviderInvocation =
+        IOSUsePlaySafeAreaEvidenceJSONForWindow(window);
 #if TARGET_OS_MACCATALYST
     BOOL installEvidenceReady =
         IOSUsePlaySafeAreaPreMainInstallAttempted &&
         IOSUsePlaySafeAreaPreMainInstallSucceeded &&
         classHookReady;
-    BOOL firstReadReady =
-        firstInvocationRecorded &&
-        firstInvocationInstalledBeforeDispatch &&
-        firstInvocationResultMatched;
+    BOOL firstEligibleProviderInvocationReady =
+        IOSUsePlaySafeAreaEvidenceIsReadyForWindow(window);
 #else
     BOOL installEvidenceReady = YES;
-    BOOL firstReadReady = YES;
+    BOOL firstEligibleProviderInvocationReady = YES;
 #endif
     BOOL compatibilityReady =
         installEvidenceReady &&
         targetDispatchesHook &&
-        firstReadReady;
+        firstEligibleProviderInvocationReady;
     BOOL deviceContractReady =
         IOSUsePlaySafeAreaInsetsMatch(
             expectedWindowSafeArea,
@@ -899,7 +934,8 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
         @"failure": IOSUsePlaySafeAreaFailure ?: NSNull.null,
         @"safeAreaCompatibilityReady": @(compatibilityReady),
         @"installEvidenceReady": @(installEvidenceReady),
-        @"firstReadReady": @(firstReadReady),
+        @"firstEligibleProviderInvocationReady":
+            @(firstEligibleProviderInvocationReady),
         @"safeAreaReady": @(safeAreaReady),
         @"deviceContractReady": @(deviceContractReady),
         @"safeAreaLayoutGuideReady": @(layoutGuideReady),
@@ -958,7 +994,7 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
             @"targetDispatchesHook":
                 @(targetDispatchesHook),
             @"scope":
-                @"foreground-primary-and-prebind-connecting-app-window",
+                @"scene-attached-application-role-normal-app-window",
             @"invalidations":
                 @(IOSUsePlaySafeAreaInvalidationCount),
             @"installPhase": @"pre-main-constructor",
@@ -966,38 +1002,8 @@ IOSUsePlaySafeAreaCompatibilityDiagnostics(void) {
                 @(IOSUsePlaySafeAreaPreMainInstallAttempted),
             @"preMainInstallSucceeded":
                 @(IOSUsePlaySafeAreaPreMainInstallSucceeded),
-            @"eligibleInvocationCount":
-                @(eligibleInvocationCount),
-            @"statusBarInclusiveInvocationCount":
-                @(statusBarInclusiveInvocationCount),
-            @"statusBarExclusiveInvocationCount":
-                @(statusBarExclusiveInvocationCount),
-            @"firstEligibleInvocation": @{
-                @"recorded": @(firstInvocationRecorded),
-                @"installedBeforeDispatch":
-                    @(firstInvocationInstalledBeforeDispatch),
-                @"targetWasBound":
-                    @(firstInvocationTargetWasBound),
-                @"targetMatched":
-                    @(firstInvocationTargetMatched),
-                @"includeStatusBar":
-                    @(firstInvocationIncludedStatusBar),
-                @"resultMatchedExpected":
-                    @(firstInvocationResultMatched),
-                @"windowClass":
-                    firstInvocationWindowClass ?: NSNull.null,
-                @"activationState":
-                    firstInvocationActivationState ?: NSNull.null,
-                @"original": IOSUsePlaySafeAreaInsetsJSON(
-                    firstInvocationOriginal
-                ),
-                @"expected": IOSUsePlaySafeAreaInsetsJSON(
-                    firstInvocationExpected
-                ),
-                @"result": IOSUsePlaySafeAreaInsetsJSON(
-                    firstInvocationResult
-                ),
-            },
+            @"targetFirstEligibleProviderInvocation":
+                targetFirstEligibleProviderInvocation,
         },
         @"lifecycle": @{
             @"sceneReplacements":
@@ -1064,6 +1070,71 @@ BOOL IOSUsePlaySafeAreaCompatibilityReconcile(
     IOSUsePlaySafeAreaBind(scene, window);
     NSDictionary<NSString *, id> *diagnostics =
         IOSUsePlaySafeAreaCompatibilityDiagnostics();
+    NSDictionary<NSString *, id> *firstEligibleProviderInvocation =
+        diagnostics[@"compatibilityHook"][
+            @"targetFirstEligibleProviderInvocation"
+        ];
+    if (![firstEligibleProviderInvocation[
+            @"recorded"
+        ] boolValue]) {
+        IOSUsePlaySafeAreaStage =
+            @"waiting-for-first-eligible-provider-invocation";
+        IOSUsePlaySafeAreaFailureCode =
+            @"safe_area_first_eligible_provider_unavailable";
+        IOSUsePlaySafeAreaFailure =
+            @"the target window has no eligible App-window provider "
+             "invocation evidence";
+        if (error != NULL) {
+            *error = [NSError
+                errorWithDomain:IOSUsePlaySafeAreaErrorDomain
+                           code:2
+                       userInfo:@{
+                NSLocalizedDescriptionKey:
+                    IOSUsePlaySafeAreaFailure,
+            }];
+        }
+        return NO;
+    }
+    if (![diagnostics[
+            @"firstEligibleProviderInvocationReady"
+        ] boolValue]) {
+        IOSUsePlaySafeAreaStage = @"failed";
+        if (![firstEligibleProviderInvocation[
+                @"installedBeforeDispatch"
+            ] boolValue]) {
+            IOSUsePlaySafeAreaFailureCode =
+                @"safe_area_first_provider_before_install";
+            IOSUsePlaySafeAreaFailure =
+                @"the target window's first observed provider "
+                 "invocation preceded hook installation";
+        } else if (![firstEligibleProviderInvocation[
+                @"fixedGeometryApplied"
+            ] boolValue]) {
+            IOSUsePlaySafeAreaFailureCode =
+                @"safe_area_first_provider_outside_prebind_scope";
+            IOSUsePlaySafeAreaFailure =
+                @"the target window's first observed provider "
+                 "invocation occurred "
+                 "outside the App-window pre-bind scope";
+        } else {
+            IOSUsePlaySafeAreaFailureCode =
+                @"safe_area_first_provider_result_mismatch";
+            IOSUsePlaySafeAreaFailure =
+                @"the target window's first observed provider "
+                 "invocation returned "
+                 "geometry outside the fixed iPhone contract";
+        }
+        if (error != NULL) {
+            *error = [NSError
+                errorWithDomain:IOSUsePlaySafeAreaErrorDomain
+                           code:3
+                       userInfo:@{
+                NSLocalizedDescriptionKey:
+                    IOSUsePlaySafeAreaFailure,
+            }];
+        }
+        return NO;
+    }
     if ([diagnostics[@"safeAreaReady"] boolValue]) {
         IOSUsePlaySafeAreaStage = @"ready";
         IOSUsePlaySafeAreaFailureCode = nil;
@@ -1174,16 +1245,61 @@ BOOL IOSUsePlaySafeAreaSceneActivationStateSupportsFixedGeometryForTesting(
         state == UISceneActivationStateForegroundInactive;
 }
 
-BOOL IOSUsePlaySafeAreaPreBindActivationStateSupportsFixedGeometryForTesting(
-    UISceneActivationState state,
-    BOOL targetBound,
-    BOOL attachedPrimaryWindow
+BOOL IOSUsePlaySafeAreaPreBindContractMatchesForTesting(
+    BOOL sceneAttached,
+    BOOL applicationRole,
+    BOOL normalWindowLevel,
+    BOOL auxiliaryWindow
 ) {
-    return IOSUsePlaySafeAreaPreBindActivationSupportsFixedGeometry(
-        state,
-        targetBound,
-        attachedPrimaryWindow
+    return IOSUsePlaySafeAreaPreBindContractMatches(
+        sceneAttached,
+        applicationRole,
+        normalWindowLevel,
+        auxiliaryWindow
     );
+}
+
+void IOSUsePlaySafeAreaRecordProviderInvocationForTesting(
+    UIWindow *window,
+    BOOL includeStatusBar,
+    UIEdgeInsets original,
+    UIEdgeInsets result,
+    BOOL fixedGeometryApplied
+) {
+    IOSUsePlaySafeAreaRecordProviderInvocation(
+        window,
+        includeStatusBar,
+        original,
+        result,
+        fixedGeometryApplied
+    );
+}
+
+BOOL
+IOSUsePlaySafeAreaFirstProviderInvocationReadyForWindowForTesting(
+    UIWindow *window
+) {
+    return IOSUsePlaySafeAreaEvidenceIsReadyForWindow(window);
+}
+
+NSDictionary<NSString *, id> *
+IOSUsePlaySafeAreaFirstProviderEvidenceForWindowForTesting(
+    UIWindow *window
+) {
+    return IOSUsePlaySafeAreaEvidenceJSONForWindow(window);
+}
+
+void IOSUsePlaySafeAreaResetEvidenceForWindowForTesting(
+    UIWindow *window
+) {
+    os_unfair_lock_lock(&IOSUsePlaySafeAreaEvidenceLock);
+    objc_setAssociatedObject(
+        window,
+        &IOSUsePlaySafeAreaEvidenceAssociationKey,
+        nil,
+        OBJC_ASSOCIATION_RETAIN_NONATOMIC
+    );
+    os_unfair_lock_unlock(&IOSUsePlaySafeAreaEvidenceLock);
 }
 
 Class IOSUsePlaySafeAreaMethodOwnerForTesting(
