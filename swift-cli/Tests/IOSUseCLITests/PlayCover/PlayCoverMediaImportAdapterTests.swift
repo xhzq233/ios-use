@@ -551,7 +551,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
         timeoutSeconds: TimeInterval = 10
     ) -> PlayCoverMediaImportAdapter {
         PlayCoverMediaImportAdapter(
-            paths: IOSUsePaths.resolve(
+            paths: resolvePlayCoverTestPaths(
                 environment: ["IOS_USE_HOME": "/state/ios-use"]
             ),
             processRunner: processRunner,
@@ -706,7 +706,7 @@ private struct RealFileSystemFixture {
                 "ios-use-media-import-\(UUID().uuidString)",
                 isDirectory: true
             )
-        paths = IOSUsePaths.resolve(
+        paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": root.path]
         )
         try FileManager.default.createDirectory(

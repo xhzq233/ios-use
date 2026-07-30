@@ -164,23 +164,22 @@ final class PlayCoverPendingLaunchRecoveryTests: XCTestCase {
         )
     }
 
-    func testNewBootWithExactCandidateStaysUnresolved() {
-        let decision = decide(
-            evidence: makeEvidence(
-                submissionBootSessionUUID: bootA
-            ),
-            currentBoot: bootB,
-            census: .complete([
-                .init(
-                    pid: 42,
-                    processBirthMicroseconds: 100
+    func testNewBootIgnoresSameExecutableProcessFromCurrentBoot() {
+        XCTAssertEqual(
+            decide(
+                evidence: makeEvidence(
+                    submissionBootSessionUUID: bootA
                 ),
-            ])
+                currentBoot: bootB,
+                census: .complete([
+                    .init(
+                        pid: 42,
+                        processBirthMicroseconds: 100
+                    ),
+                ])
+            ),
+            .safeCleanup(.newBootAndEmptyCensus)
         )
-        guard case .unresolved(let reason) = decision else {
-            return XCTFail("new-boot live candidate was ignored")
-        }
-        XCTAssertTrue(reason.contains("process count is 1"))
     }
 
     func testOwnedMissingProcessIsSafeToClean() {

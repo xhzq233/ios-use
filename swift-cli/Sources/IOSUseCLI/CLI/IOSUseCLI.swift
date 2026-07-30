@@ -43,6 +43,22 @@ public struct IOSUseCLI: Sendable {
         self.playCoverSignerInitializer = playCoverSignerInitializer
     }
 
+    /// Internal test-only construction keeps commands on the fixture's
+    /// explicitly isolated account-global/cache/socket namespace.
+    init(
+        pathsForTesting paths: IOSUsePaths,
+        outputSink: CLIOutputSink? = nil,
+        playCoverSignerInitializer:
+            @escaping PlayCoverSignerInitializer = {
+                try PlayCoverSigningIdentityService()
+                    .initializeForConfiguration()
+            }
+    ) {
+        self.paths = paths
+        self.outputSink = outputSink
+        self.playCoverSignerInitializer = playCoverSignerInitializer
+    }
+
     public func run(arguments: [String]) -> CLIResult {
         if arguments.first == XCTestSessionHolderService.commandName {
             do {
@@ -222,6 +238,30 @@ public struct IOSUseCLI: Sendable {
     }
 
     private func execute(_ parsed: ParsedCommand, json: Bool) -> CLIResult {
+        // An explicit Mac App start must establish its read-only signer
+        // evidence before routing probes driver.lock. This keeps a missing
+        // configuration ahead of every Mac state/cache/source mutation and
+        // passes the exact same evidence into preparation.
+        let explicitMacSigningIdentity:
+            PlayCoverSigningIdentityEvidence?
+        if case .start(let options) = parsed,
+           options.mac,
+           let appPath = options.appPath,
+           !appPath.isEmpty {
+            do {
+                explicitMacSigningIdentity =
+                    try PlayCoverService
+                        .requireHealthySigningIdentityForStart()
+            } catch {
+                return commandFailure(
+                    command: parsed.commandName,
+                    error: error,
+                    json: json
+                )
+            }
+        } else {
+            explicitMacSigningIdentity = nil
+        }
         if let routedFailure = playCoverRoutingFailure(for: parsed, json: json) {
             return routedFailure
         }
@@ -256,8 +296,11 @@ public struct IOSUseCLI: Sendable {
             do {
                 let output: String
                 if options.mac {
-                    output = try SessionService.startPlayCover(
+                    output = try SessionService
+                        .startPlayCoverAfterPreflight(
                         appPath: options.appPath,
+                        signingIdentity:
+                            explicitMacSigningIdentity,
                         captureStdio: options.log,
                         timeout: options.timeout,
                         paths: paths

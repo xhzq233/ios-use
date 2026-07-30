@@ -71,6 +71,11 @@ enum PlayCoverPendingLaunchRecovery {
         let processBirthMicroseconds: UInt64?
     }
 
+    struct ForeignSession: Equatable, Sendable {
+        let sessionID: String
+        let runtimeSocketPath: String
+    }
+
     struct SystemObservation: Equatable, Sendable {
         let bootSessionUUID: String
         let census: Census
@@ -95,6 +100,13 @@ enum PlayCoverPendingLaunchRecovery {
         var provesEmpty: Bool {
             if case .complete(let candidates) = self {
                 return candidates.isEmpty
+            }
+            return false
+        }
+
+        var isComplete: Bool {
+            if case .complete = self {
+                return true
             }
             return false
         }
@@ -140,7 +152,8 @@ enum PlayCoverPendingLaunchRecovery {
         currentBootSessionUUID: String,
         census: Census,
         ownedProcessState: OwnedProcessState?,
-        authenticatedOwner: Owner?
+        authenticatedOwner: Owner?,
+        candidateAuthenticationComplete: Bool = false
     ) -> Decision {
         guard let submissionBootSessionUUID =
                 evidence.submissionBootSessionUUID else {
@@ -170,21 +183,15 @@ enum PlayCoverPendingLaunchRecovery {
                     currentBootSessionUUID
                 )
         if !sameBoot {
-            if census.provesEmpty {
-                return .safeCleanup(.newBootAndEmptyCensus)
-            }
-            return .unresolved(
-                censusUnresolvedReason(
-                    prefix:
-                        "boot changed, but an empty exact-executable "
-                        + "census was not proven",
-                    census: census
-                )
-            )
+            // A process from the recorded boot cannot survive the boot
+            // boundary. Same-executable processes on the current boot may
+            // belong to another logical Home and are not negative evidence.
+            return .safeCleanup(.newBootAndEmptyCensus)
         }
 
         if evidence.terminalCallbackRecorded {
-            if census.provesEmpty {
+            if census.provesEmpty
+                || candidateAuthenticationComplete {
                 return .safeCleanup(
                     .terminalCallbackAndEmptyCensus
                 )
@@ -193,7 +200,8 @@ enum PlayCoverPendingLaunchRecovery {
                 censusUnresolvedReason(
                     prefix:
                         "terminal callback is durable, but an empty "
-                        + "exact-executable census was not proven",
+                        + "session-specific candidate authentication "
+                        + "was not completed",
                     census: census
                 )
             )
@@ -435,7 +443,8 @@ enum PlayCoverPendingLaunchRecovery {
 
     static func authenticateCandidateOwner(
         evidence: Evidence,
-        census: Census
+        census: Census,
+        foreignSessions: [ForeignSession] = []
     ) -> Result<Owner?, PlayCoverPendingLaunchRecoveryError> {
         var authenticated: [Owner] = []
         for candidate in census.candidates {
@@ -451,6 +460,7 @@ enum PlayCoverPendingLaunchRecovery {
                 return .failure(error)
             }
             let accepted: Bool
+            var ownAuthenticationFailure: Error?
             do {
                 if let candidateAuthenticationOverrideForTesting {
                     accepted = try
@@ -461,14 +471,108 @@ enum PlayCoverPendingLaunchRecovery {
                 } else {
                     accepted = try authenticateRuntime(
                         candidate: candidate,
+                        sessionID: evidence.sessionID,
+                        runtimeSocketPath:
+                            evidence.runtimeSocketPath,
                         evidence: evidence
                     )
                 }
             } catch {
+                ownAuthenticationFailure = error
+                accepted = false
+            }
+            if accepted {
+                switch candidateStillMatches(
+                    candidate,
+                    evidence: evidence
+                ) {
+                case .success(false):
+                    continue
+                case .success(true):
+                    break
+                case .failure(let error):
+                    return .failure(error)
+                }
+                guard let processBirth =
+                        candidate.processBirthMicroseconds else {
+                    return .failure(
+                        PlayCoverPendingLaunchRecoveryError(
+                            message:
+                                "authenticated pid \(candidate.pid) has "
+                                + "no stable process birth token"
+                        )
+                    )
+                }
+                authenticated.append(
+                    Owner(
+                        pid: candidate.pid,
+                        processBirthMicroseconds: processBirth,
+                        source: .authenticatedRuntime
+                    )
+                )
                 continue
             }
-            guard accepted else {
-                continue
+
+            var foreignClaims = 0
+            var foreignFailures: [String] = []
+            for foreign in foreignSessions {
+                do {
+                    guard try authenticateRuntime(
+                        candidate: candidate,
+                        sessionID: foreign.sessionID,
+                        runtimeSocketPath:
+                            foreign.runtimeSocketPath,
+                        evidence: evidence
+                    ) else {
+                        foreignFailures.append(
+                            "session \(foreign.sessionID): incomplete "
+                                + "Runtime identity"
+                        )
+                        continue
+                    }
+                    foreignClaims += 1
+                } catch {
+                    // A peer-PID mismatch proves that this authenticated
+                    // socket belongs to another process. Every other
+                    // transport, credential, executable, or protocol failure
+                    // leaves ownership unverifiable and must fail closed.
+                    if case PlayCoverRuntimeClientError
+                        .peerPIDMismatch = error {
+                        continue
+                    }
+                    foreignFailures.append(
+                        "session \(foreign.sessionID): \(error)"
+                    )
+                }
+            }
+            guard foreignClaims <= 1 else {
+                return .failure(
+                    PlayCoverPendingLaunchRecoveryError(
+                        message:
+                            "candidate pid \(candidate.pid) was claimed "
+                                + "by multiple foreign Home sessions"
+                    )
+                )
+            }
+            guard foreignClaims == 1 else {
+                let ownFailureSuffix = ownAuthenticationFailure.map {
+                    "; pending-session authentication failed: \($0)"
+                } ?? ""
+                let foreignFailureSuffix =
+                    foreignFailures.isEmpty
+                    ? ""
+                    : "; foreign-session failures: "
+                        + foreignFailures.joined(separator: " | ")
+                return .failure(
+                    PlayCoverPendingLaunchRecoveryError(
+                        message:
+                            "candidate pid \(candidate.pid) could not be "
+                                + "authenticated as this pending session or "
+                                + "exactly one durable foreign Home session"
+                                + ownFailureSuffix
+                                + foreignFailureSuffix
+                    )
+                )
             }
             switch candidateStillMatches(
                 candidate,
@@ -481,23 +585,6 @@ enum PlayCoverPendingLaunchRecovery {
             case .failure(let error):
                 return .failure(error)
             }
-            guard let processBirth =
-                    candidate.processBirthMicroseconds else {
-                return .failure(
-                    PlayCoverPendingLaunchRecoveryError(
-                        message:
-                            "authenticated pid \(candidate.pid) has "
-                            + "no stable process birth token"
-                    )
-                )
-            }
-            authenticated.append(
-                Owner(
-                    pid: candidate.pid,
-                    processBirthMicroseconds: processBirth,
-                    source: .authenticatedRuntime
-                )
-            )
         }
         guard authenticated.count <= 1 else {
             return .failure(
@@ -751,11 +838,13 @@ enum PlayCoverPendingLaunchRecovery {
 
     private static func authenticateRuntime(
         candidate: Candidate,
+        sessionID: String,
+        runtimeSocketPath: String,
         evidence: Evidence
     ) throws -> Bool {
         let client = PlayCoverRuntimeClient(
-            socketPath: evidence.runtimeSocketPath,
-            sessionID: evidence.sessionID,
+            socketPath: runtimeSocketPath,
+            sessionID: sessionID,
             expectedPID: candidate.pid,
             expectedBundleIdentifier:
                 evidence.bundleIdentifier,

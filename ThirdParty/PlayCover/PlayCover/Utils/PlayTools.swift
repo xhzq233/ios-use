@@ -7,6 +7,7 @@ import Foundation
 import injection
 
 public final class PlayTools {
+    private static let managedContainerLock = NSRecursiveLock()
     private static var managedContainerOverride: URL?
     private static var bundledPlayToolsFrameworkOverride: URL?
     private static var headlessOracleTrace: [String]?
@@ -32,6 +33,8 @@ public final class PlayTools {
     }
 
     public static var playCoverContainer: URL {
+        managedContainerLock.lock()
+        defer { managedContainerLock.unlock() }
         if let managedContainerOverride {
             return managedContainerOverride
         }
@@ -55,13 +58,69 @@ public final class PlayTools {
     /// ios-use local patch: the CLI owns the container and never discovers it
     /// through PlayCover GUI preferences or the user's default home.
     public static func configureManagedContainer(_ url: URL) throws {
-        let value = url.standardizedFileURL
+        managedContainerLock.lock()
+        defer { managedContainerLock.unlock() }
+        let value = lexicallyStandardizedFileURL(url)
         try FileManager.default.createDirectory(
             at: value,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
         managedContainerOverride = value
+    }
+
+    /// Runs one headless operation with an exact transaction-owned container
+    /// and restores the prior process-global PlayCover setting.
+    public static func withManagedContainer<T>(
+        _ url: URL,
+        _ operation: () throws -> T
+    ) throws -> T {
+        managedContainerLock.lock()
+        defer { managedContainerLock.unlock() }
+        let previous = managedContainerOverride
+        defer { managedContainerOverride = previous }
+        let value = lexicallyStandardizedFileURL(url)
+        try FileManager.default.createDirectory(
+            at: value,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        managedContainerOverride = value
+        return try operation()
+    }
+
+    public static func withExistingManagedContainer<T>(
+        _ url: URL,
+        _ operation: () throws -> T
+    ) throws -> T {
+        managedContainerLock.lock()
+        defer { managedContainerLock.unlock() }
+        let previous = managedContainerOverride
+        defer { managedContainerOverride = previous }
+        managedContainerOverride = lexicallyStandardizedFileURL(url)
+        return try operation()
+    }
+
+    private static func lexicallyStandardizedFileURL(
+        _ url: URL
+    ) -> URL {
+        var components: [Substring] = []
+        for component in url.path.split(separator: "/") {
+            if component == "." {
+                continue
+            }
+            if component == ".." {
+                if !components.isEmpty {
+                    components.removeLast()
+                }
+                continue
+            }
+            components.append(component)
+        }
+        return URL(
+            fileURLWithPath: "/" + components.joined(separator: "/"),
+            isDirectory: true
+        )
     }
 
     /// Direct headless port of `installInIPA`, with the system PlayTools path

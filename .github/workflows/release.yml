@@ -118,6 +118,9 @@ jobs:
         run: bash playcover-fixtures/build.sh
 
       - name: Verify the exact release assets through install and execution
+        env:
+          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
+          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
         run: bash scripts/test_playcover_installed_layout.sh --release-dir release
 
       - name: Upload to Release

@@ -36,7 +36,6 @@ final class PlayCoverCoreTests: XCTestCase {
         PlayCoverPendingLaunchRecovery
             .exactExecutableCensusOverrideForTesting = nil
         PlayCoverManagedAppService.inspectOverrideForTesting = nil
-        PlayCoverManagedAppService.verifyOverrideForTesting = nil
         PlayCoverManagedAppService.readManifestOverrideForTesting = nil
         PlayCoverManagedAppService.prepareOverrideForTesting = nil
         PlayCoverManagedAppService.runtimePathOverrideForTesting = nil
@@ -45,6 +44,8 @@ final class PlayCoverCoreTests: XCTestCase {
         PlayCoverManagedAppService.afterManagedDirectoryOpenForTesting = nil
         PlayCoverManagedAppService
             .afterStagingPathResolvedForTesting = nil
+        PlayCoverManagedAppService
+            .afterPreparedSelectionPinnedForTesting = nil
         super.tearDown()
     }
 
@@ -77,9 +78,9 @@ final class PlayCoverCoreTests: XCTestCase {
         }
     }
 
-    func testPathsSeparateMacStateFromHomeLocalPreparedCache()
+    func testPathsKeepSessionStateLocalAndPreparedCacheAccountGlobal()
         throws {
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": "/state/ios-use"]
         )
 
@@ -87,7 +88,7 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(paths.playcoverRun, "/state/ios-use/mac/run")
         XCTAssertEqual(
             paths.playcoverLogs,
-            "/state/ios-use/mac/logs"
+            "\(paths.playcoverRuntimeHome)/logs"
         )
         XCTAssertEqual(
             paths.playcoverPendingLaunch,
@@ -98,73 +99,113 @@ final class PlayCoverCoreTests: XCTestCase {
             "/state/ios-use/mac/pending-launch.lock"
         )
         XCTAssertEqual(
-            paths.playcoverPrepared,
-            "/state/ios-use/cache/mac/prepared"
+            paths.playcoverGlobalObjects,
+            "\(paths.playcoverGlobalCache)/objects"
         )
         XCTAssertEqual(
             paths.playcoverRuntime,
             "/state/ios-use/mac/IOSUsePlayRuntime.framework"
         )
-        XCTAssertEqual(
-            try paths.macRuntimeSocketPath(
-                sessionID: "ABC-def_123"
-            ),
-            "/state/ios-use/mac/run/s-ABCdef123.sock"
+        let socket = try paths.macRuntimeSocketPath(
+            sessionID: "ABC-def_123"
         )
+        XCTAssertTrue(
+            socket.hasPrefix(paths.playcoverSocketRoot + "/s-")
+        )
+        XCTAssertTrue(socket.hasSuffix(".sock"))
+        XCTAssertFalse(socket.contains("ABC"))
     }
 
-    func testSessionSocketRejectsHomeOverDarwinLimit() {
+    func testProductionAccountRootsIgnorePoisonedHOME() throws {
+        let password = try XCTUnwrap(getpwuid(geteuid()))
+        let expectedAccountHome = String(
+            cString: try XCTUnwrap(password.pointee.pw_dir)
+        )
         let paths = IOSUsePaths.resolve(
             environment: [
-                "IOS_USE_HOME": "/tmp/" + String(repeating: "x", count: 96),
+                "HOME": "/tmp/attacker-controlled-home",
+                "IOS_USE_HOME":
+                    "/tmp/ios-use-logical-\(UUID().uuidString)",
             ]
         )
 
-        XCTAssertThrowsError(
-            try paths.macRuntimeSocketPath(sessionID: "session")
+        XCTAssertTrue(
+            paths.playcoverGlobalCache.hasPrefix(
+                URL(
+                    fileURLWithPath: expectedAccountHome,
+                    isDirectory: true
+                ).resolvingSymlinksInPath().path + "/"
+            ),
+            paths.playcoverGlobalCache
+        )
+        XCTAssertFalse(
+            paths.playcoverGlobalCache.contains(
+                "attacker-controlled-home"
+            )
         )
     }
 
-    func testSessionSocketCanonicalizesRootOwnedTmpAlias() throws {
+    func testSessionSocketIsBoundedIndependentlyOfLogicalHome() throws {
+        let accountHome = "/tmp/iu-account-"
+            + UUID().uuidString
+        defer {
+            if FileManager.default.fileExists(atPath: accountHome) {
+                try? FileManager.default.removeItem(
+                    atPath: accountHome
+                )
+            }
+        }
+        let paths = resolvePlayCoverTestPaths(
+            environment: [
+                "IOS_USE_HOME": "/tmp/" + String(repeating: "x", count: 96),
+            ],
+            accountHomeDirectory: accountHome
+        )
+
+        XCTAssertLessThanOrEqual(
+            try paths.macRuntimeSocketPath(sessionID: "session")
+                .utf8.count,
+            103
+        )
+    }
+
+    func testSessionSocketUsesIsolatedAccountTestRoot() throws {
         let lexicalRoot = URL(
             fileURLWithPath:
                 "/tmp/ios-use-play-path-\(UUID().uuidString)",
             isDirectory: true
         )
         defer {
-            try? FileManager.default.removeItem(at: lexicalRoot)
+            if FileManager.default.fileExists(
+                atPath: lexicalRoot.path
+            ) {
+                try? FileManager.default.removeItem(at: lexicalRoot)
+            }
         }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": lexicalRoot.path]
         )
-        try FileManager.default.createDirectory(
-            atPath: paths.playcoverRun,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-
         let socket = try paths.macRuntimeSocketPath(
             sessionID: "tmp-alias"
         )
 
-        XCTAssertEqual(
-            socket,
-            "/private"
-                + "\(paths.playcoverRun)/s-tmpalias.sock"
+        XCTAssertTrue(
+            socket.hasPrefix(paths.playcoverSocketRoot + "/s-")
         )
-        XCTAssertFalse(socket.hasPrefix("/tmp/"))
-        XCTAssertTrue(socket.hasPrefix("/private/tmp/"))
+        XCTAssertFalse(socket.contains("tmpalias"))
     }
 
     func testGenerationKeyUsesContentRuntimeRevisionAndSigner() {
         let source = String(repeating: "a", count: 64)
         let runtime = String(repeating: "b", count: 64)
+        let namespace = String(repeating: "e", count: 64)
         let revision = PlayCoverService.prepareImplementationRevision
         let signer = makePlayCoverTestSigningIdentity()
         let first = PlayCoverService.makeGenerationKey(
             sourceContentHash: source,
             runtimeBuildHash: runtime,
             prepareRevision: revision,
+            accountNamespacePolicyHash: namespace,
             signerPublicKeySPKISHA256: signer.publicKeySPKISHA256,
             signerCertificateSHA256: signer.certificateSHA256,
             signingPolicyRevision: signer.policy.revision
@@ -173,6 +214,7 @@ final class PlayCoverCoreTests: XCTestCase {
             sourceContentHash: source,
             runtimeBuildHash: runtime,
             prepareRevision: revision,
+            accountNamespacePolicyHash: namespace,
             signerPublicKeySPKISHA256: signer.publicKeySPKISHA256,
             signerCertificateSHA256: signer.certificateSHA256,
             signingPolicyRevision: signer.policy.revision
@@ -186,6 +228,7 @@ final class PlayCoverCoreTests: XCTestCase {
                 sourceContentHash: String(repeating: "c", count: 64),
                 runtimeBuildHash: runtime,
                 prepareRevision: revision,
+                accountNamespacePolicyHash: namespace,
                 signerPublicKeySPKISHA256:
                     signer.publicKeySPKISHA256,
                 signerCertificateSHA256:
@@ -199,6 +242,7 @@ final class PlayCoverCoreTests: XCTestCase {
                 sourceContentHash: source,
                 runtimeBuildHash: String(repeating: "d", count: 64),
                 prepareRevision: revision,
+                accountNamespacePolicyHash: namespace,
                 signerPublicKeySPKISHA256:
                     signer.publicKeySPKISHA256,
                 signerCertificateSHA256:
@@ -212,6 +256,7 @@ final class PlayCoverCoreTests: XCTestCase {
                 sourceContentHash: source,
                 runtimeBuildHash: runtime,
                 prepareRevision: "different-prepare-revision",
+                accountNamespacePolicyHash: namespace,
                 signerPublicKeySPKISHA256:
                     signer.publicKeySPKISHA256,
                 signerCertificateSHA256:
@@ -225,6 +270,22 @@ final class PlayCoverCoreTests: XCTestCase {
                 sourceContentHash: source,
                 runtimeBuildHash: runtime,
                 prepareRevision: revision,
+                accountNamespacePolicyHash:
+                    String(repeating: "f", count: 64),
+                signerPublicKeySPKISHA256:
+                    signer.publicKeySPKISHA256,
+                signerCertificateSHA256:
+                    signer.certificateSHA256,
+                signingPolicyRevision: signer.policy.revision
+            )
+        )
+        XCTAssertNotEqual(
+            first,
+            PlayCoverService.makeGenerationKey(
+                sourceContentHash: source,
+                runtimeBuildHash: runtime,
+                prepareRevision: revision,
+                accountNamespacePolicyHash: namespace,
                 signerPublicKeySPKISHA256:
                     String(repeating: "C", count: 64),
                 signerCertificateSHA256:
@@ -244,7 +305,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertTrue(
             PlayCoverService.prepareImplementationRevision.hasPrefix(
-                "ios-use-headless-v16+"
+                "ios-use-headless-v17+"
             )
         )
     }
@@ -276,9 +337,13 @@ final class PlayCoverCoreTests: XCTestCase {
         let source = try PlayCoverService.inspectPreparationSource(
             appPath: fixture.app.path
         )
+        let paths = resolvePlayCoverTestPaths(
+            environment: ["IOS_USE_HOME": fixture.root.path]
+        )
         let plan = try PlayCoverService.makePreparationPlan(
             source: source,
-            runtimeFrameworkPath: runtime.path
+            runtimeFrameworkPath: runtime.path,
+            paths: paths
         )
 
         XCTAssertEqual(plan.source, source)
@@ -303,6 +368,8 @@ final class PlayCoverCoreTests: XCTestCase {
                     plan.source.inspection.sourceContentHash,
                 runtimeBuildHash: plan.runtimeBuildHash,
                 prepareRevision: plan.prepareRevision,
+                accountNamespacePolicyHash:
+                    plan.accountNamespacePolicyHash,
                 signerPublicKeySPKISHA256:
                     plan.signingIdentity.publicKeySPKISHA256,
                 signerCertificateSHA256:
@@ -320,48 +387,132 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
-    func testPostPrepareSignerResolutionPreservesServiceErrors()
+    func testAccountNamespacePolicyChangesGenerationWithoutBindingLogicalHome()
         throws
     {
-        let identity = makePlayCoverTestSigningIdentity()
-        let expectedError =
-            PlayCoverSigningIdentityServiceError.unhealthy(.missing)
-        PlayCoverService.signingIdentityResolverOverrideForTesting = {
-            _ in throw expectedError
-        }
-
-        XCTAssertThrowsError(
-            try PlayCoverService
-                .requireUnchangedSigningIdentityAfterPreparation(
-                    identity
-                )
-        ) { error in
-            XCTAssertEqual(
-                error as? PlayCoverSigningIdentityServiceError,
-                expectedError
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runtime = fixture.root.appendingPathComponent(
+            PlayCoverService.runtimeFrameworkName,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: runtime,
+            withIntermediateDirectories: true
+        )
+        let runtimeExecutable = runtime.appendingPathComponent(
+            PlayCoverService.runtimeExecutableName
+        )
+        try makeThinMachO(
+            encrypted: false,
+            platform: 6
+        ).write(to: runtimeExecutable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: runtimeExecutable.path
+        )
+        let source = try PlayCoverService.inspectPreparationSource(
+            appPath: fixture.app.path
+        )
+        let accountA = fixture.root.appendingPathComponent(
+            "account-a",
+            isDirectory: true
+        )
+        let accountB = fixture.root.appendingPathComponent(
+            "account-b",
+            isDirectory: true
+        )
+        let socketToken = UUID().uuidString.prefix(8)
+        let socketA = "/private/tmp/iu-policy-a-\(socketToken)"
+        let socketB = "/private/tmp/iu-policy-b-\(socketToken)"
+        func paths(
+            logicalHome: String,
+            accountHome: URL,
+            socketRoot: String
+        ) -> IOSUsePaths {
+            IOSUsePaths.resolve(
+                environment: ["IOS_USE_HOME": logicalHome],
+                accountHomeDirectoryOverrideForTesting:
+                    accountHome.path,
+                socketRootOverrideForTesting: socketRoot
             )
         }
-
-        PlayCoverService.signingIdentityResolverOverrideForTesting = {
-            _ in makePlayCoverTestSigningIdentity(seed: "C")
-        }
-        XCTAssertThrowsError(
-            try PlayCoverService
-                .requireUnchangedSigningIdentityAfterPreparation(
-                    identity
-                )
-        ) { error in
-            guard case .codeSigningFailed(let message) =
-                    error as? PlayCoverBackendError else {
-                return XCTFail("unexpected error: \(error)")
-            }
-            XCTAssertTrue(
-                message.contains(
-                    "stable signing identity changed"
-                ),
-                message
+        let firstPaths = paths(
+            logicalHome: fixture.root
+                .appendingPathComponent("logical-a").path,
+            accountHome: accountA,
+            socketRoot: socketA
+        )
+        let differentLogicalHomePaths = paths(
+            logicalHome: fixture.root
+                .appendingPathComponent("logical-b").path,
+            accountHome: accountA,
+            socketRoot: socketA
+        )
+        let differentAccountPaths = paths(
+            logicalHome: fixture.root
+                .appendingPathComponent("logical-a").path,
+            accountHome: accountB,
+            socketRoot: socketA
+        )
+        let differentSocketPaths = paths(
+            logicalHome: fixture.root
+                .appendingPathComponent("logical-a").path,
+            accountHome: accountA,
+            socketRoot: socketB
+        )
+        let first = try PlayCoverService.makePreparationPlan(
+            source: source,
+            runtimeFrameworkPath: runtime.path,
+            paths: firstPaths
+        )
+        let differentLogicalHome =
+            try PlayCoverService.makePreparationPlan(
+                source: source,
+                runtimeFrameworkPath: runtime.path,
+                paths: differentLogicalHomePaths
             )
-        }
+        let differentAccount =
+            try PlayCoverService.makePreparationPlan(
+                source: source,
+                runtimeFrameworkPath: runtime.path,
+                paths: differentAccountPaths
+            )
+        let differentSocket =
+            try PlayCoverService.makePreparationPlan(
+                source: source,
+                runtimeFrameworkPath: runtime.path,
+                paths: differentSocketPaths
+            )
+
+        XCTAssertNotEqual(
+            firstPaths.playcoverHomeID,
+            differentLogicalHomePaths.playcoverHomeID
+        )
+        XCTAssertEqual(
+            first.accountNamespacePolicyHash,
+            differentLogicalHome.accountNamespacePolicyHash
+        )
+        XCTAssertEqual(
+            first.generationKey,
+            differentLogicalHome.generationKey
+        )
+        XCTAssertNotEqual(
+            first.accountNamespacePolicyHash,
+            differentAccount.accountNamespacePolicyHash
+        )
+        XCTAssertNotEqual(
+            first.generationKey,
+            differentAccount.generationKey
+        )
+        XCTAssertNotEqual(
+            first.accountNamespacePolicyHash,
+            differentSocket.accountNamespacePolicyHash
+        )
+        XCTAssertNotEqual(
+            first.generationKey,
+            differentSocket.generationKey
+        )
     }
 
     func testPrepareRejectsInspectorCDHashMismatchBeforePublish()
@@ -369,7 +520,7 @@ final class PlayCoverCoreTests: XCTestCase {
     {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent(
@@ -410,7 +561,8 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         let plan = try PlayCoverService.makePreparationPlan(
             source: source,
-            runtimeFrameworkPath: runtime.path
+            runtimeFrameworkPath: runtime.path,
+            paths: paths
         )
         let finalInspectionCDHash = String(
             repeating: "c",
@@ -505,7 +657,7 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(prepareCallCount, 1)
         XCTAssertEqual(inspectorCallCount, 1)
         let publishedGeneration = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent(
             plan.generationKey,
@@ -518,11 +670,11 @@ final class PlayCoverCoreTests: XCTestCase {
             "a CDHash mismatch must fail before sidecars or publication"
         )
         if FileManager.default.fileExists(
-            atPath: paths.playcoverPrepared
+            atPath: paths.playcoverGlobalObjects
         ) {
             XCTAssertTrue(
                 try FileManager.default.contentsOfDirectory(
-                    atPath: paths.playcoverPrepared
+                    atPath: paths.playcoverGlobalObjects
                 ).allSatisfy {
                     !$0.hasPrefix(".staging-")
                         && $0 != plan.generationKey
@@ -533,7 +685,7 @@ final class PlayCoverCoreTests: XCTestCase {
         }
     }
 
-    func testManifestHasSingleGenerationIdentityAndNoBootstrapFields()
+    func testManifestIsCompactAndContainsNoAbsoluteOrFullInventoryFields()
         throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -551,7 +703,7 @@ final class PlayCoverCoreTests: XCTestCase {
             as: UTF8.self
         )
 
-        XCTAssertEqual(manifest.schemaVersion, 4)
+        XCTAssertEqual(manifest.schemaVersion, 5)
         XCTAssertEqual(manifest.backend, "mac")
         XCTAssertEqual(
             manifest.runtimeLoadPath,
@@ -565,9 +717,20 @@ final class PlayCoverCoreTests: XCTestCase {
             "runtimeSocketPath",
             "logicalWidth",
             "nativeWidth",
+            "sourceAppPath",
+            "preparedAppPath",
+            "executablePath",
+            "sourceInventory",
+            "sourceMachOs",
+            "\"inventory\"",
+            "\"machOs\"",
+            "convertedMachOs",
+            "entitlementDiff",
         ] {
             XCTAssertFalse(encoded.contains(forbidden), encoded)
         }
+        XCTAssertFalse(encoded.contains(fixture.root.path), encoded)
+        XCTAssertTrue(encoded.contains("\"codeObjects\""), encoded)
     }
 
     func testLaunchEnvironmentForwardsOnlyAllowlistAndDirectIdentity() {
@@ -620,7 +783,9 @@ final class PlayCoverCoreTests: XCTestCase {
             ],
             sessionID: "session-one",
             runtimeSocketPath: "/state/run/s-sessionone.sock",
-            managedHomePath: "/state/managed-home"
+            runtimeHomePath: "/state/managed-home",
+            homeID: String(repeating: "a", count: 64),
+            generationKey: String(repeating: "b", count: 64)
         )
 
         XCTAssertEqual(result["HOME"], "/state/managed-home")
@@ -652,7 +817,9 @@ final class PlayCoverCoreTests: XCTestCase {
             ],
             sessionID: "session-one",
             runtimeSocketPath: "/state/run/s-sessionone.sock",
-            managedHomePath: "/state",
+            runtimeHomePath: "/state",
+            homeID: String(repeating: "a", count: 64),
+            generationKey: String(repeating: "b", count: 64),
             stdioLog: log
         )
 
@@ -2089,7 +2256,7 @@ final class PlayCoverCoreTests: XCTestCase {
             isDirectory: true
         )
         defer { try? FileManager.default.removeItem(at: root) }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": root.path]
         )
         try SessionOperationLock.withExclusiveLock(paths: paths) {}
@@ -2099,7 +2266,7 @@ final class PlayCoverCoreTests: XCTestCase {
 
         let generationKey = String(repeating: "9", count: 64)
         let generation = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent(
             generationKey,
@@ -2111,7 +2278,7 @@ final class PlayCoverCoreTests: XCTestCase {
             attributes: [.posixPermissions: 0o700]
         )
         let app = generation.appendingPathComponent(
-            "Fixture.app",
+            "App.app",
             isDirectory: true
         )
         try FileManager.default.copyItem(
@@ -2130,9 +2297,14 @@ final class PlayCoverCoreTests: XCTestCase {
             "launch-aliases",
             isDirectory: true
         )
+        try FileManager.default.createDirectory(
+            at: aliasRoot,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
         PlayCoverService.launchAliasRootOverrideForTesting =
             aliasRoot
-        let sessionID = UUID().uuidString.lowercased()
+        let sessionID = UUID().uuidString
         let intent = PlayCoverPendingLaunchStore.Intent(
             sessionID: sessionID,
             runtimeSocketPath:
@@ -2179,6 +2351,9 @@ final class PlayCoverCoreTests: XCTestCase {
                             sessionID: sessionID,
                             runtimeSocketPath:
                                 intent.runtimeSocketPath,
+                            runtimeHomePath:
+                                paths.playcoverRuntimeHome,
+                            homeID: paths.playcoverHomeID,
                             pendingLaunchPaths: paths,
                             deadline:
                                 ProcessInfo.processInfo
@@ -2289,6 +2464,9 @@ final class PlayCoverCoreTests: XCTestCase {
                     launchCapability: capability,
                     sessionID: sessionID,
                     runtimeSocketPath: socketPath,
+                    runtimeHomePath: fixture.root
+                        .appendingPathComponent("runtime-home").path,
+                    homeID: String(repeating: "a", count: 64),
                     deadline:
                         ProcessInfo.processInfo.systemUptime + 0.05,
                     launchAlias: &alias,
@@ -2386,7 +2564,7 @@ final class PlayCoverCoreTests: XCTestCase {
     }
 
     func testRuntimeCandidatesPreferExplicitManagedHome() {
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": "/state/ios-use"]
         )
 
@@ -2406,7 +2584,7 @@ final class PlayCoverCoreTests: XCTestCase {
     }
 
     func testRuntimeCandidatesIgnoreImplicitMutableHome() {
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: ["HOME": "/Users/example"]
         )
 
@@ -2448,7 +2626,7 @@ final class PlayCoverCoreTests: XCTestCase {
         throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("home").path,
@@ -2461,14 +2639,7 @@ final class PlayCoverCoreTests: XCTestCase {
             source: inspection,
             generationKey: String(repeating: "a", count: 64)
         )
-        var fullVerifyCount = 0
         var manifestReadCount = 0
-        PlayCoverManagedAppService.verifyOverrideForTesting = { _ in
-            fullVerifyCount += 1
-            throw PlayCoverBackendError.verificationFailed(
-                "full verify must not run during reuse"
-            )
-        }
         let originalManifestRead = try XCTUnwrap(
             PlayCoverManagedAppService.readManifestOverrideForTesting
         )
@@ -2489,7 +2660,6 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertFalse(prepared.reused)
         XCTAssertTrue(reused.reused)
         XCTAssertEqual(prepared.manifest, reused.manifest)
-        XCTAssertEqual(fullVerifyCount, 0)
         XCTAssertEqual(manifestReadCount, 2)
         XCTAssertTrue(
             FileManager.default.fileExists(
@@ -2507,9 +2677,117 @@ final class PlayCoverCoreTests: XCTestCase {
             )
         )
         let leftovers = try FileManager.default.contentsOfDirectory(
-            atPath: paths.playcoverPrepared
+            atPath: paths.playcoverGlobalObjects
         ).filter { $0.hasPrefix(".staging-") }
         XCTAssertTrue(leftovers.isEmpty)
+    }
+
+    func testOversizedCompactManifestRollsBackStagingBeforePublication()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let paths = resolvePlayCoverTestPaths(
+            environment: [
+                "IOS_USE_HOME": fixture.root
+                    .appendingPathComponent("home").path,
+            ]
+        )
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let generationKey = String(repeating: "e", count: 64)
+        try installFakeManagedPipeline(
+            source: inspection,
+            generationKey: generationKey
+        )
+        let originalPrepare = try XCTUnwrap(
+            PlayCoverManagedAppService.prepareOverrideForTesting
+        )
+        PlayCoverManagedAppService.prepareOverrideForTesting = {
+            plan,
+            staging,
+            paths,
+            published in
+            let normal = try originalPrepare(
+                plan,
+                staging,
+                paths,
+                published
+            )
+            var object = try XCTUnwrap(
+                try JSONSerialization.jsonObject(
+                    with: JSONEncoder().encode(normal)
+                ) as? [String: Any]
+            )
+            object["codeObjects"] = [
+                [
+                    "relativePath": String(
+                        repeating: "x",
+                        count:
+                            PlayCoverService
+                                .generationManifestMaximumBytes
+                            + 1_024
+                    ),
+                    "kind": "regularFile",
+                    "sha256": String(repeating: "a", count: 64),
+                ],
+            ]
+            let oversized = try JSONDecoder().decode(
+                PlayCoverPrepareManifest.self,
+                from: JSONSerialization.data(
+                    withJSONObject: object
+                )
+            ).resolving(
+                appURL: URL(
+                    fileURLWithPath: published,
+                    isDirectory: true
+                )
+            )
+            _ = try PlayCoverService.generationSidecars(
+                manifest: oversized
+            )
+            return oversized
+        }
+
+        XCTAssertThrowsError(
+            try PlayCoverManagedAppService.resolveExplicitApp(
+                fixture.app.path,
+                paths: paths
+            )
+        ) { error in
+            guard case .verificationFailed(let message) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(
+                message.contains(
+                    "manifest exceeds the managed generation size limit"
+                )
+            )
+        }
+        let generation = URL(
+            fileURLWithPath: paths.playcoverGlobalObjects,
+            isDirectory: true
+        ).appendingPathComponent(
+            generationKey,
+            isDirectory: true
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: generation.path)
+        )
+        let residues = try FileManager.default.contentsOfDirectory(
+            atPath: paths.playcoverGlobalObjects
+        ).filter {
+            $0.hasPrefix(".staging-\(generationKey)-")
+        }
+        XCTAssertTrue(residues.isEmpty)
+        let reference = try XCTUnwrap(
+            PlayCoverGlobalReferenceStore.read(paths: paths)
+        )
+        XCTAssertNil(reference.preparingGenerationKey)
+        XCTAssertNil(reference.preparationID)
+        XCTAssertNil(reference.lastGenerationKey)
     }
 
     func testManagedPathAcceptsEquivalentPrivateTmpAlias()
@@ -2527,21 +2805,29 @@ final class PlayCoverCoreTests: XCTestCase {
         defer {
             try? FileManager.default.removeItem(at: lexicalHome)
         }
+        let paths = resolvePlayCoverTestPaths(
+            environment: ["IOS_USE_HOME": privateHome.path]
+        )
+        let privatePrepared = URL(
+            fileURLWithPath: paths.playcoverGlobalObjects,
+            isDirectory: true
+        )
         try FileManager.default.createDirectory(
-            at: privateHome.appendingPathComponent(
-                "cache/mac/prepared",
-                isDirectory: true
-            ),
+            at: privatePrepared,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        let paths = IOSUsePaths.resolve(
-            environment: ["IOS_USE_HOME": privateHome.path]
-        )
         let generation = String(repeating: "7", count: 64)
-        let notYetCreatedApp = privateHome
+        let lexicalPrepared = URL(
+            fileURLWithPath: privatePrepared.path.replacingOccurrences(
+                of: "/private/tmp/",
+                with: "/tmp/"
+            ),
+            isDirectory: true
+        )
+        let notYetCreatedApp = lexicalPrepared
             .appendingPathComponent(
-                "cache/mac/prepared/\(generation)",
+                generation,
                 isDirectory: true
             )
             .appendingPathComponent(
@@ -2569,7 +2855,8 @@ final class PlayCoverCoreTests: XCTestCase {
         ) { error in
             XCTAssertTrue(
                 String(describing: error).contains(
-                    "path must be below IOS_USE_HOME"
+                    "path must be below the account-global "
+                        + "managed prepared directory"
                 )
             )
         }
@@ -2580,7 +2867,7 @@ final class PlayCoverCoreTests: XCTestCase {
     {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("home").path,
@@ -2681,7 +2968,7 @@ final class PlayCoverCoreTests: XCTestCase {
             1
         )
         let leftovers = try FileManager.default.contentsOfDirectory(
-            atPath: paths.playcoverPrepared
+            atPath: paths.playcoverGlobalObjects
         ).filter { $0.hasPrefix(".staging-") }
         XCTAssertTrue(leftovers.isEmpty)
     }
@@ -2690,7 +2977,7 @@ final class PlayCoverCoreTests: XCTestCase {
         throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("home").path,
@@ -2705,7 +2992,7 @@ final class PlayCoverCoreTests: XCTestCase {
             generationKey: generationKey
         )
         let incomplete = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent(generationKey, isDirectory: true)
         try FileManager.default.createDirectory(
@@ -2747,7 +3034,7 @@ final class PlayCoverCoreTests: XCTestCase {
         throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("home").path,
@@ -2780,7 +3067,9 @@ final class PlayCoverCoreTests: XCTestCase {
                 inspection: plan.source.inspection,
                 preparedAppPath: published,
                 generationKey: plan.generationKey,
-                runtimeBuildHash: wrongRuntimeHash
+                runtimeBuildHash: wrongRuntimeHash,
+                accountNamespacePolicyHash:
+                    plan.accountNamespacePolicyHash
             )
         }
 
@@ -2796,12 +3085,67 @@ final class PlayCoverCoreTests: XCTestCase {
             }
         }
         let generation = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent(generationKey, isDirectory: true)
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: generation.path)
         )
+    }
+
+    func testManagedExplicitAppRejectsDifferentSocketNamespacePolicy()
+        throws
+    {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let logicalHome = fixture.root.appendingPathComponent(
+            "logical-home",
+            isDirectory: true
+        ).path
+        let accountHome = fixture.root.appendingPathComponent(
+            "account-home",
+            isDirectory: true
+        ).path
+        let token = UUID().uuidString.prefix(8)
+        let firstPaths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": logicalHome],
+            accountHomeDirectoryOverrideForTesting: accountHome,
+            socketRootOverrideForTesting:
+                "/private/tmp/iu-explicit-a-\(token)"
+        )
+        let movedPaths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": logicalHome],
+            accountHomeDirectoryOverrideForTesting: accountHome,
+            socketRootOverrideForTesting:
+                "/private/tmp/iu-explicit-b-\(token)"
+        )
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        try installFakeManagedPipeline(
+            source: inspection,
+            generationKey: String(repeating: "8", count: 64)
+        )
+        let prepared = try PlayCoverManagedAppService.resolveExplicitApp(
+            fixture.app.path,
+            paths: firstPaths
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverManagedAppService.resolveExplicitApp(
+                prepared.manifest.preparedAppPath,
+                paths: movedPaths
+            )
+        ) {
+            guard case .cacheTampered(let message) =
+                    $0 as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \($0)")
+            }
+            XCTAssertTrue(
+                message.contains("current account Runtime namespace"),
+                message
+            )
+        }
     }
 
     func testManagedPreparedRootAndAppRejectSymlinkEscape()
@@ -2811,16 +3155,20 @@ final class PlayCoverCoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let generationKey = String(repeating: "f", count: 64)
 
-        let childPaths = IOSUsePaths.resolve(
+        let childPaths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("child-home").path,
             ]
         )
         let generation = URL(
-            fileURLWithPath: childPaths.playcoverPrepared,
+            fileURLWithPath: childPaths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent(generationKey, isDirectory: true)
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: generationKey,
+            paths: childPaths
+        )
         try FileManager.default.createDirectory(
             at: generation,
             withIntermediateDirectories: true
@@ -2834,7 +3182,7 @@ final class PlayCoverCoreTests: XCTestCase {
             withIntermediateDirectories: true
         )
         let childLink = generation.appendingPathComponent(
-            "Escaped.app",
+            "App.app",
             isDirectory: true
         )
         try FileManager.default.createSymbolicLink(
@@ -2855,7 +3203,7 @@ final class PlayCoverCoreTests: XCTestCase {
             XCTAssertTrue(message.contains("symbolic-link escape"))
         }
 
-        let rootPaths = IOSUsePaths.resolve(
+        let rootPaths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("root-home").path,
@@ -2868,39 +3216,51 @@ final class PlayCoverCoreTests: XCTestCase {
         let externalGeneration = externalPrepared
             .appendingPathComponent(generationKey, isDirectory: true)
         let externalApp = externalGeneration.appendingPathComponent(
-            "Escaped.app",
+            "App.app",
             isDirectory: true
         )
         try FileManager.default.createDirectory(
             at: externalApp,
             withIntermediateDirectories: true
         )
-        let preparedParent = URL(
-            fileURLWithPath: rootPaths.playcoverPrepared
-        ).deletingLastPathComponent()
-        try FileManager.default.createDirectory(
-            at: preparedParent,
-            withIntermediateDirectories: true
+        _ = try PlayCoverManagedAppService.secureManagedDirectories(
+            paths: rootPaths
+        )
+        try FileManager.default.removeItem(
+            atPath: rootPaths.playcoverGlobalObjects
         )
         try FileManager.default.createSymbolicLink(
             at: URL(
-                fileURLWithPath: rootPaths.playcoverPrepared
+                fileURLWithPath: rootPaths.playcoverGlobalObjects
             ),
             withDestinationURL: externalPrepared
         )
 
         XCTAssertThrowsError(
             try PlayCoverManagedAppService.resolveExplicitApp(
-                rootPaths.playcoverPrepared
-                    + "/\(generationKey)/Escaped.app",
+                rootPaths.playcoverGlobalObjects
+                    + "/\(generationKey)/App.app",
                 paths: rootPaths
             )
         ) {
-            guard case .cacheTampered(let message) =
+            guard let backendError =
                     $0 as? PlayCoverBackendError else {
                 return XCTFail("unexpected error: \($0)")
             }
-            XCTAssertTrue(message.contains("symbolic-link escape"))
+            switch backendError {
+            case .cacheTampered(let message):
+                XCTAssertTrue(
+                    message.contains("symbolic-link escape"),
+                    message
+                )
+            case .prepareFailed(let message):
+                XCTAssertTrue(
+                    message.contains("symbolic link"),
+                    message
+                )
+            default:
+                XCTFail("unexpected error: \($0)")
+            }
         }
     }
 
@@ -2921,17 +3281,20 @@ final class PlayCoverCoreTests: XCTestCase {
             "managed-link",
             isDirectory: true
         )
+        let paths = resolvePlayCoverTestPaths(
+            environment: [
+                "IOS_USE_HOME": fixture.root
+                    .appendingPathComponent(
+                        "logical-home",
+                        isDirectory: true
+                    ).path,
+            ],
+            accountHomeDirectory:
+                link.path + "/account-home"
+        )
         try FileManager.default.createSymbolicLink(
             at: link,
             withDestinationURL: external
-        )
-        let paths = IOSUsePaths.resolve(
-            environment: [
-                "IOS_USE_HOME": link.appendingPathComponent(
-                    "home",
-                    isDirectory: true
-                ).path,
-            ]
         )
         let preparationSource =
             try PlayCoverService.inspectPreparationSource(
@@ -3017,7 +3380,7 @@ final class PlayCoverCoreTests: XCTestCase {
             source: inspection,
             generationKey: generationKey
         )
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("managed-home").path,
@@ -3037,7 +3400,7 @@ final class PlayCoverCoreTests: XCTestCase {
         let sentinel = external.appendingPathComponent("sentinel")
         try Data("keep".utf8).write(to: sentinel)
         let prepared = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         )
         let displaced = prepared.deletingLastPathComponent()
@@ -3065,9 +3428,20 @@ final class PlayCoverCoreTests: XCTestCase {
                 paths: paths
             )
         ) { error in
-            guard case .cacheTampered =
+            guard let backendError =
                     error as? PlayCoverBackendError else {
                 return XCTFail("unexpected error: \(error)")
+            }
+            switch backendError {
+            case .cacheTampered:
+                break
+            case .prepareFailed(let message):
+                XCTAssertTrue(
+                    message.contains("symbolic link"),
+                    message
+                )
+            default:
+                XCTFail("unexpected error: \(error)")
             }
         }
         XCTAssertEqual(
@@ -3104,16 +3478,14 @@ final class PlayCoverCoreTests: XCTestCase {
             source: inspection,
             generationKey: generationKey
         )
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("managed-home").path,
             ]
         )
-        try FileManager.default.createDirectory(
-            atPath: paths.playcoverPrepared,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
+        _ = try PlayCoverManagedAppService.secureManagedDirectories(
+            paths: paths
         )
         let external = fixture.root.appendingPathComponent(
             "external",
@@ -3126,7 +3498,7 @@ final class PlayCoverCoreTests: XCTestCase {
         let sentinel = external.appendingPathComponent("sentinel")
         try Data("keep".utf8).write(to: sentinel)
         let prepared = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         )
         let macCache = prepared.deletingLastPathComponent()
@@ -3217,7 +3589,7 @@ final class PlayCoverCoreTests: XCTestCase {
             source: inspection,
             generationKey: String(repeating: "4", count: 64)
         )
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("managed-home").path,
@@ -3231,11 +3603,11 @@ final class PlayCoverCoreTests: XCTestCase {
         PlayCoverManagedAppService
             .afterStagingPathResolvedForTesting = { staging in
                 let lexicalStaging =
-                    URL(fileURLWithPath: paths.playcoverPrepared)
+                    URL(fileURLWithPath: paths.playcoverGlobalObjects)
                         .appendingPathComponent(
                             try XCTUnwrap(
                                 FileManager.default.contentsOfDirectory(
-                                    atPath: paths.playcoverPrepared
+                                    atPath: paths.playcoverGlobalObjects
                                 ).first(where: {
                                     $0.hasPrefix(".staging-")
                                 })
@@ -3286,19 +3658,17 @@ final class PlayCoverCoreTests: XCTestCase {
             source: inspection,
             generationKey: String(repeating: "3", count: 64)
         )
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("managed-home").path,
             ]
         )
-        try FileManager.default.createDirectory(
-            atPath: paths.playcoverPrepared,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
+        _ = try PlayCoverManagedAppService.secureManagedDirectories(
+            paths: paths
         )
         let prepared = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         )
         let macCache = prepared.deletingLastPathComponent()
@@ -3336,7 +3706,7 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(try fileMode(prepared), preparedModeBefore)
         XCTAssertTrue(
             try FileManager.default.contentsOfDirectory(
-                atPath: paths.playcoverPrepared
+                atPath: paths.playcoverGlobalObjects
             ).allSatisfy { !$0.hasPrefix(".staging-") }
         )
     }
@@ -3345,21 +3715,21 @@ final class PlayCoverCoreTests: XCTestCase {
         throws
     {
         let fixture = try makeSourceApp()
+        let paths = resolvePlayCoverTestPaths(
+            environment: [
+                "IOS_USE_HOME": fixture.root
+                    .appendingPathComponent("managed-home").path,
+            ]
+        )
         defer {
             try? clearAppendOnlyFlag(
                 URL(
-                    fileURLWithPath:
-                        fixture.root.appendingPathComponent(
-                            "managed-home/cache/mac"
-                        ).path
+                    fileURLWithPath: paths.playcoverGlobalCache
                 )
             )
             try? clearAppendOnlyFlag(
                 URL(
-                    fileURLWithPath:
-                        fixture.root.appendingPathComponent(
-                            "managed-home/cache/mac/prepared"
-                        ).path
+                    fileURLWithPath: paths.playcoverGlobalObjects
                 )
             )
             try? FileManager.default.removeItem(at: fixture.root)
@@ -3371,19 +3741,11 @@ final class PlayCoverCoreTests: XCTestCase {
             source: inspection,
             generationKey: String(repeating: "2", count: 64)
         )
-        let paths = IOSUsePaths.resolve(
-            environment: [
-                "IOS_USE_HOME": fixture.root
-                    .appendingPathComponent("managed-home").path,
-            ]
-        )
-        try FileManager.default.createDirectory(
-            atPath: paths.playcoverPrepared,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
+        _ = try PlayCoverManagedAppService.secureManagedDirectories(
+            paths: paths
         )
         let prepared = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         )
         let macCache = prepared.deletingLastPathComponent()
@@ -3893,7 +4255,7 @@ final class PlayCoverCoreTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, SIGKILL)
     }
 
-    func testSameContentIsIsolatedAcrossHomesAndForeignPreparedReuseFails()
+    func testSameContentReusesOneGlobalGenerationAcrossHomes()
         throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -3905,17 +4267,23 @@ final class PlayCoverCoreTests: XCTestCase {
             source: inspection,
             generationKey: generationKey
         )
-        let homeOne = IOSUsePaths.resolve(
+        let accountHome = fixture.root.appendingPathComponent(
+            "account",
+            isDirectory: true
+        ).path
+        let homeOne = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("home-one").path,
-            ]
+            ],
+            accountHomeDirectory: accountHome
         )
-        let homeTwo = IOSUsePaths.resolve(
+        let homeTwo = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("home-two").path,
-            ]
+            ],
+            accountHomeDirectory: accountHome
         )
 
         let first = try PlayCoverManagedAppService.resolveExplicitApp(
@@ -3927,7 +4295,7 @@ final class PlayCoverCoreTests: XCTestCase {
             paths: homeTwo
         )
 
-        XCTAssertNotEqual(
+        XCTAssertEqual(
             first.manifest.preparedAppPath,
             second.manifest.preparedAppPath
         )
@@ -3935,17 +4303,132 @@ final class PlayCoverCoreTests: XCTestCase {
             first.manifest.generationKey,
             second.manifest.generationKey
         )
-        XCTAssertThrowsError(
+        XCTAssertFalse(first.reused)
+        XCTAssertTrue(second.reused)
+    }
+
+    func testPreparedSelectionPinBlocksCrossHomeGCUntilHandoff()
+        throws {
+        let fixture = try makeSourceApp()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+        let generationKey = String(repeating: "b", count: 64)
+        try installFakeManagedPipeline(
+            source: inspection,
+            generationKey: generationKey
+        )
+        let accountHome = fixture.root.appendingPathComponent(
+            "account",
+            isDirectory: true
+        ).path
+        let producer = resolvePlayCoverTestPaths(
+            environment: [
+                "IOS_USE_HOME": fixture.root
+                    .appendingPathComponent("producer").path,
+            ],
+            accountHomeDirectory: accountHome
+        )
+        let selector = resolvePlayCoverTestPaths(
+            environment: [
+                "IOS_USE_HOME": fixture.root
+                    .appendingPathComponent("selector").path,
+            ],
+            accountHomeDirectory: accountHome
+        )
+        let collector = resolvePlayCoverTestPaths(
+            environment: [
+                "IOS_USE_HOME": fixture.root
+                    .appendingPathComponent("collector").path,
+            ],
+            accountHomeDirectory: accountHome
+        )
+        let prepared =
             try PlayCoverManagedAppService.resolveExplicitApp(
-                first.manifest.preparedAppPath,
-                paths: homeTwo
+                fixture.app.path,
+                paths: producer
             )
-        ) { error in
-            guard case .cacheTampered =
-                    error as? PlayCoverBackendError else {
-                return XCTFail("unexpected error: \(error)")
+        let producerReference = URL(
+            fileURLWithPath: producer.playcoverGlobalHomes,
+            isDirectory: true
+        ).appendingPathComponent(
+            "\(producer.playcoverHomeID).json"
+        )
+        var producerReferenceObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: producerReference)
+            ) as? [String: Any]
+        )
+        producerReferenceObject.removeValue(
+            forKey: "lastGenerationKey"
+        )
+        try JSONSerialization.data(
+            withJSONObject: producerReferenceObject,
+            options: [.sortedKeys]
+        ).write(to: producerReference, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: producerReference.path
+        )
+
+        var pruneWhilePinned:
+            PlayCoverGenerationPruner.Result?
+        PlayCoverManagedAppService
+            .afterPreparedSelectionPinnedForTesting = {
+                pruneWhilePinned =
+                    PlayCoverGenerationPruner
+                        .pruneAfterSuccessfulStart(
+                            paths: collector,
+                            currentGenerationKey:
+                                String(
+                                    repeating: "c",
+                                    count: 64
+                                )
+                        )
             }
-        }
+        let selected =
+            try PlayCoverManagedAppService.resolveExplicitApp(
+                prepared.manifest.preparedAppPath,
+                paths: selector
+            )
+        let preparationID = try XCTUnwrap(
+            selected.selectionPreparationID
+        )
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: prepared.manifest.preparedAppPath
+            )
+        )
+        XCTAssertTrue(
+            try XCTUnwrap(pruneWhilePinned).warnings.contains {
+                $0.contains("protected corrupt generation")
+            }
+        )
+        try PlayCoverGlobalReferenceStore.abandonPreparation(
+            generationKey: generationKey,
+            preparationID: preparationID,
+            paths: selector
+        )
+
+        let afterHandoff =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: collector,
+                currentGenerationKey:
+                    String(repeating: "c", count: 64)
+            )
+        XCTAssertTrue(
+            afterHandoff.removedGenerationKeys.contains(
+                generationKey
+            ),
+            "\(afterHandoff)"
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: prepared.manifest.preparedAppPath
+            )
+        )
     }
 
     func testSameContentAtDifferentSourcePathReusesGeneration() throws {
@@ -3979,7 +4462,7 @@ final class PlayCoverCoreTests: XCTestCase {
                 appPath: path
             )
         }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("home").path,
@@ -4004,7 +4487,7 @@ final class PlayCoverCoreTests: XCTestCase {
         throws {
         let fixture = try makeSourceApp()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: [
                 "IOS_USE_HOME": fixture.root
                     .appendingPathComponent("home").path,
@@ -4053,7 +4536,7 @@ final class PlayCoverCoreTests: XCTestCase {
             isDirectory: true
         )
         do {
-            let paths = IOSUsePaths.resolve(
+            let paths = resolvePlayCoverTestPaths(
                 environment: ["IOS_USE_HOME": root.path]
             )
             try SessionOperationLock.withExclusiveLock(
@@ -4063,7 +4546,7 @@ final class PlayCoverCoreTests: XCTestCase {
                 .secureManagedDirectories(paths: paths)
             let generationKey = String(repeating: "7", count: 64)
             let generation = URL(
-                fileURLWithPath: paths.playcoverPrepared,
+                fileURLWithPath: paths.playcoverGlobalObjects,
                 isDirectory: true
             ).appendingPathComponent(
                 generationKey,
@@ -4075,7 +4558,7 @@ final class PlayCoverCoreTests: XCTestCase {
                 attributes: [.posixPermissions: 0o700]
             )
             let app = generation.appendingPathComponent(
-                "Fixture.app",
+                "App.app",
                 isDirectory: true
             )
             try FileManager.default.copyItem(
@@ -4088,14 +4571,24 @@ final class PlayCoverCoreTests: XCTestCase {
             let manifest = try makeManifest(
                 inspection: inspection,
                 preparedAppPath: app.path,
-                generationKey: generationKey
+                generationKey: generationKey,
+                accountNamespacePolicyHash:
+                    PlayCoverService.accountNamespacePolicyHash(
+                        paths: paths
+                    )
+            )
+            let launchAliasRoot = root.appendingPathComponent(
+                "launch-aliases",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: launchAliasRoot,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
             )
             PlayCoverService.launchAliasRootOverrideForTesting =
-                root.appendingPathComponent(
-                    "launch-aliases",
-                    isDirectory: true
-                )
-            let sessionID = UUID().uuidString.lowercased()
+                launchAliasRoot
+            let sessionID = UUID().uuidString
             let runtimeSocketPath =
                 try paths.macRuntimeSocketPath(
                     sessionID: sessionID
@@ -4147,6 +4640,10 @@ final class PlayCoverCoreTests: XCTestCase {
                             sessionID: fixture.sessionID,
                             runtimeSocketPath:
                                 fixture.runtimeSocketPath,
+                            runtimeHomePath:
+                                fixture.paths.playcoverRuntimeHome,
+                            homeID:
+                                fixture.paths.playcoverHomeID,
                             pendingLaunchPaths: fixture.paths,
                             deadline: deadline,
                             launchAlias: &launchAlias,
@@ -4250,7 +4747,7 @@ final class PlayCoverCoreTests: XCTestCase {
         let manifestLock = NSLock()
         var manifests: [String: PlayCoverPrepareManifest] = [:]
         PlayCoverManagedAppService.prepareOverrideForTesting = {
-            plan, staging, _, published in
+            plan, staging, paths, published in
             let stagingURL = URL(
                 fileURLWithPath: staging,
                 isDirectory: true
@@ -4278,17 +4775,31 @@ final class PlayCoverCoreTests: XCTestCase {
                 inspection: plan.source.inspection,
                 preparedAppPath: published,
                 generationKey: plan.generationKey,
-                runtimeBuildHash: plan.runtimeBuildHash
+                runtimeBuildHash: plan.runtimeBuildHash,
+                accountNamespacePolicyHash:
+                    PlayCoverService.accountNamespacePolicyHash(
+                        paths: paths
+                    )
             )
             manifestLock.lock()
-            manifests[published] = manifest
+            manifests[
+                URL(fileURLWithPath: published)
+                    .resolvingSymlinksInPath().path
+            ] = manifest
             manifestLock.unlock()
             return manifest
         }
         PlayCoverManagedAppService.readManifestOverrideForTesting = { path in
             manifestLock.lock()
             defer { manifestLock.unlock() }
-            guard let manifest = manifests[path] else {
+            let canonical = URL(fileURLWithPath: path)
+                .resolvingSymlinksInPath().path
+            guard let manifest = manifests[canonical]
+                    ?? (
+                        manifests.count == 1
+                        ? manifests.values.first
+                        : nil
+                    ) else {
                 throw PlayCoverBackendError.verificationFailed(
                     "fake manifest is missing for \(path)"
                 )
@@ -4301,12 +4812,14 @@ final class PlayCoverCoreTests: XCTestCase {
         inspection: PlayCoverAppInspection,
         preparedAppPath: String,
         generationKey: String,
-        runtimeBuildHash: String = String(repeating: "d", count: 64)
+        runtimeBuildHash: String = String(repeating: "d", count: 64),
+        accountNamespacePolicyHash: String =
+            String(repeating: "7", count: 64)
     ) throws -> PlayCoverPrepareManifest {
         let prepared = URL(
             fileURLWithPath: preparedAppPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         let signingIdentity = makePlayCoverTestSigningIdentity()
         return PlayCoverPrepareManifest(
             sourceAppPath: inspection.appPath,
@@ -4320,6 +4833,8 @@ final class PlayCoverCoreTests: XCTestCase {
             sourceHashAfterPreparation: inspection.sourceContentHash,
             runtimeBuildHash: runtimeBuildHash,
             prepareRevision: PlayCoverService.prepareImplementationRevision,
+            accountNamespacePolicyHash:
+                accountNamespacePolicyHash,
             generationKey: generationKey,
             signingIdentity: signingIdentity,
             rootCodeSignature: makePlayCoverTestRootCodeSignature(

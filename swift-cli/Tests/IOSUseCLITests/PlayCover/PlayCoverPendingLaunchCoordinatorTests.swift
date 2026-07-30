@@ -33,6 +33,8 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         PlayCoverService.failedLaunchSignalOverrideForTesting = nil
         PlayCoverService.keyCoverLockOverrideForTesting = nil
         PlayCoverService.launchAliasRootOverrideForTesting = nil
+        PlayCoverPendingLaunchCoordinator
+            .cleanupPinStepObserverForTesting = nil
         SessionService.simulatorDriverTerminatorForTesting = nil
         SessionService.realDriverTerminatorForTesting = nil
         DeviceService.listDevicesOverrideForTesting = nil
@@ -88,6 +90,97 @@ final class PlayCoverPendingLaunchCoordinatorTests:
                 atPath: fixture.intent.aliasPath
             )
         )
+    }
+
+    func testConfirmedCleanupKeepsJournalAcrossEveryPinRetirementCut()
+        throws {
+        for interruptedStep in [
+            PlayCoverPendingLaunchCoordinator.CleanupPinStep
+                .pendingCleared,
+            .activeCleared,
+        ] {
+            let fixture = try makeFixture()
+            defer {
+                try? FileManager.default.removeItem(
+                    at: fixture.root
+                )
+            }
+            configureManifestValidation(fixture)
+            PlayCoverService.keyCoverLockOverrideForTesting = {
+                _, _ in
+            }
+            _ = try PlayCoverPendingLaunchStore.createIntent(
+                fixture.intent,
+                paths: fixture.paths
+            )
+            _ = try PlayCoverPendingLaunchStore
+                .markConfirmedStopped(
+                    sessionID: fixture.intent.sessionID,
+                    cleanupProof: .neverSubmitted,
+                    paths: fixture.paths
+                )
+            try PlayCoverGlobalReferenceStore.setPending(
+                sessionID: fixture.intent.sessionID,
+                generationKey: fixture.intent.generationKey,
+                paths: fixture.paths
+            )
+            try PlayCoverGlobalReferenceStore.markActive(
+                sessionID: fixture.intent.sessionID,
+                generationKey: fixture.intent.generationKey,
+                paths: fixture.paths
+            )
+            PlayCoverPendingLaunchCoordinator
+                .cleanupPinStepObserverForTesting = { step in
+                    if step == interruptedStep {
+                        throw CLIParseError.invalidValue(
+                            "simulated cleanup crash cut"
+                        )
+                    }
+                }
+
+            XCTAssertThrowsError(
+                try PlayCoverPendingLaunchCoordinator
+                    .recoverBeforeStart(paths: fixture.paths)
+            )
+            XCTAssertEqual(
+                try PlayCoverPendingLaunchStore.load(
+                    paths: fixture.paths
+                )?.phase,
+                .confirmedStopped
+            )
+            let interruptedReference =
+                try XCTUnwrap(
+                    PlayCoverGlobalReferenceStore.read(
+                        paths: fixture.paths
+                    )
+                )
+            XCTAssertNil(interruptedReference.pending)
+            XCTAssertEqual(
+                interruptedReference.active?.sessionID,
+                interruptedStep == .pendingCleared
+                    ? fixture.intent.sessionID
+                    : nil
+            )
+
+            PlayCoverPendingLaunchCoordinator
+                .cleanupPinStepObserverForTesting = nil
+            try PlayCoverPendingLaunchCoordinator
+                .recoverBeforeStart(paths: fixture.paths)
+
+            XCTAssertNil(
+                try PlayCoverPendingLaunchStore.load(
+                    paths: fixture.paths
+                )
+            )
+            let recoveredReference =
+                try XCTUnwrap(
+                    PlayCoverGlobalReferenceStore.read(
+                        paths: fixture.paths
+                    )
+                )
+            XCTAssertNil(recoveredReference.pending)
+            XCTAssertNil(recoveredReference.active)
+        }
     }
 
     func testStatusDoesNotAuthenticateArmedCandidatesOrMutateJournal()
@@ -157,7 +250,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         }
 
         let result = IOSUseCLI(
-            environment: ["IOS_USE_HOME": fixture.root.path]
+            pathsForTesting: fixture.paths
         ).run(arguments: ["start", "--mac", "--reuse"])
 
         XCTAssertEqual(result.exitCode, 1)
@@ -247,9 +340,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         }
 
         let first = IOSUseCLI(
-            environment: [
-                "IOS_USE_HOME": fixture.root.path,
-            ]
+            pathsForTesting: fixture.paths
         ).run(
             arguments: ["--json", "stop"]
         )
@@ -954,6 +1045,11 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             fixture.intent,
             paths: fixture.paths
         )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: fixture.intent.sessionID,
+            generationKey: fixture.intent.generationKey,
+            paths: fixture.paths
+        )
         _ = try PlayCoverPendingLaunchStore.markAliasReady(
             sessionID: fixture.intent.sessionID,
             device: 1,
@@ -971,7 +1067,10 @@ final class PlayCoverPendingLaunchCoordinatorTests:
 
     private func makeFixture() throws -> Fixture {
         var template =
-            Array("/tmp/iu-pending-coordinator-XXXXXX".utf8CString)
+            Array(
+                "/private/tmp/iu-pending-coordinator-XXXXXX"
+                    .utf8CString
+            )
         guard let pointer = mkdtemp(&template) else {
             throw NSError(
                 domain: NSPOSIXErrorDomain,
@@ -986,7 +1085,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             [.posixPermissions: 0o700],
             ofItemAtPath: root.path
         )
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": root.path]
         )
         try FileManager.default.createDirectory(
@@ -994,9 +1093,14 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
+        try FileManager.default.createDirectory(
+            atPath: paths.playcoverPlayChain,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
         let generationKey = String(repeating: "b", count: 64)
-        let appPath = paths.playcoverPrepared
-            + "/\(generationKey)/Fixture.app"
+        let appPath = paths.playcoverGlobalObjects
+            + "/\(generationKey)/App.app"
         let executablePath = appPath + "/Fixture"
         let signingIdentity = makePlayCoverTestSigningIdentity()
         let rootCodeSignature = makePlayCoverTestRootCodeSignature(
@@ -1004,19 +1108,53 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             identity: signingIdentity
         )
         let object: [String: Any] = [
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "backend": "mac",
-            "sourceAppPath": root.path + "/Source.app",
-            "preparedAppPath": appPath,
+            "appBundleName": "App.app",
+            "mainExecutableRelativePath": "Fixture",
+            "runtimeExecutableRelativePath":
+                "Frameworks/\(PlayCoverService.runtimeFrameworkName)/"
+                + PlayCoverService.runtimeExecutableName,
+            "infoPlistSHA256":
+                String(repeating: "3", count: 64),
+            "mainExecutableSHA256":
+                String(repeating: "4", count: 64),
+            "runtimeExecutableSHA256":
+                String(repeating: "5", count: 64),
+            "rootEntitlementsSHA256":
+                String(repeating: "6", count: 64),
+            "codeObjects": [
+                [
+                    "relativePath": "Info.plist",
+                    "kind": "regularFile",
+                    "sha256": String(repeating: "3", count: 64),
+                ],
+                [
+                    "relativePath": "Fixture",
+                    "kind": "regularFile",
+                    "sha256": String(repeating: "4", count: 64),
+                ],
+                [
+                    "relativePath":
+                        "Frameworks/"
+                        + "\(PlayCoverService.runtimeFrameworkName)/"
+                        + PlayCoverService.runtimeExecutableName,
+                    "kind": "regularFile",
+                    "sha256": String(repeating: "5", count: 64),
+                ],
+            ],
             "bundleIdentifier": "com.example.fixture",
             "executableName": "Fixture",
-            "executablePath": executablePath,
             "sourceContentHash": String(repeating: "1", count: 64),
             "sourceHashAfterPreparation":
                 String(repeating: "1", count: 64),
             "runtimeBuildHash": String(repeating: "2", count: 64),
             "prepareRevision":
                 PlayCoverService.prepareImplementationRevision,
+            "accountNamespacePolicyHash":
+                PlayCoverService.accountNamespacePolicyHash(
+                    paths: paths
+                ),
             "generationKey": generationKey,
             "signingIdentity": try JSONSerialization.jsonObject(
                 with: JSONEncoder().encode(signingIdentity)
@@ -1027,12 +1165,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             "runtimeLoadPath": PlayCoverMachO.runtimeLoadPath,
             "runtimeFrameworkName":
                 PlayCoverService.runtimeFrameworkName,
-            "convertedMachOs": ["Fixture"],
             "signingOrder": ["Fixture"],
-            "sourceInventory": [],
-            "sourceMachOs": [],
-            "inventory": [],
-            "machOs": [],
             "entitlementDiff": [
                 "original": [:],
                 "playCoverBaseline": [:],
@@ -1047,13 +1180,43 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         let manifest = try JSONDecoder().decode(
             PlayCoverPrepareManifest.self,
             from: JSONSerialization.data(withJSONObject: object)
-        )
-        let sessionID = UUID().uuidString.lowercased()
-        PlayCoverService.launchAliasRootOverrideForTesting =
-            root.appendingPathComponent(
-                "launch-aliases",
+        ).resolving(
+            appURL: URL(
+                fileURLWithPath: appPath,
                 isDirectory: true
             )
+        )
+        // The real prepare flow durably registers the Home before any object
+        // is staged or published.
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: generationKey,
+            paths: paths
+        )
+        try FileManager.default.createDirectory(
+            atPath: appPath,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o755]
+        )
+        try Data("fixture".utf8).write(
+            to: URL(fileURLWithPath: executablePath),
+            options: .atomic
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executablePath
+        )
+        let sessionID = UUID().uuidString
+        let launchAliasRoot = root.appendingPathComponent(
+            "launch-aliases",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: launchAliasRoot,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            launchAliasRoot
         let intent = PlayCoverPendingLaunchStore.Intent(
             sessionID: sessionID,
             runtimeSocketPath:
@@ -1076,7 +1239,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             inventory: [
                 .init(
                     name: "Fixture",
-                    destination: executablePath
+                    destination: appPath + "/Fixture"
                 ),
             ]
         )

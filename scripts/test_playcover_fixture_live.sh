@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 MATRIX_VERSION="2"
 MATRIX_SOURCE="$ROOT_DIR/playcover-fixtures/live-matrix-v2.tsv"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
@@ -9,6 +10,8 @@ EVIDENCE_ROOT="${IOS_USE_PLAYCOVER_EVIDENCE_ROOT:-$ROOT_DIR/.ios-use/live-eviden
 RUN_DIR="$EVIDENCE_ROOT/playcover-fixture-v${MATRIX_VERSION}/$RUN_ID"
 SESSION_HOME=""
 CANONICAL_SESSION_HOME=""
+SESSION_HOME_ID=""
+SESSION_RUNTIME_HOME=""
 ARCHIVED_SESSION_HOME="$RUN_DIR/session-home"
 MANIFEST="$RUN_DIR/manifest.tsv"
 FIXTURE_APP="${IOS_USE_PLAYCOVER_FIXTURE_APP:-}"
@@ -27,7 +30,8 @@ Usage: scripts/test_playcover_fixture_live.sh --live
 
 --live    Run the fixture acceptance matrix against a real unlocked macOS GUI
           session. Live evidence and global input are intentionally never the
-          default.
+          default. The documented disposable-account ACK and expected passwd
+          Home are mandatory.
 USAGE
 }
 
@@ -46,6 +50,16 @@ case "$1" in
     exit 64
     ;;
 esac
+
+if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
+  echo \
+    "[playcover-fixture-live] EX_CONFIG: the account-global PlayCover safety guard is unavailable." \
+    >&2
+  exit 78
+fi
+# shellcheck source=scripts/test_playcover_global_state_guard.sh
+source "$GLOBAL_STATE_GUARD"
+playcover_require_disposable_account_contract "playcover-fixture-live"
 
 mkdir -p "$RUN_DIR"
 if [[ ! -f "$MATRIX_SOURCE" ]]; then
@@ -152,6 +166,18 @@ fi
 
 SESSION_HOME="$(mktemp -d /tmp/iupf.XXXXXX)"
 CANONICAL_SESSION_HOME="$(cd "$SESSION_HOME" && pwd -P)"
+SESSION_HOME_ID="$(
+  printf '%s' "$CANONICAL_SESSION_HOME" |
+    /usr/bin/shasum -a 256 |
+    /usr/bin/awk '{ print $1 }'
+)"
+if [[ ! "$SESSION_HOME_ID" =~ ^[0-9a-f]{64}$ ]]; then
+  echo \
+    "[playcover-fixture-live] EX_CONFIG: could not derive the logical Home identity." \
+    >&2
+  exit 78
+fi
+SESSION_RUNTIME_HOME="$PLAYCOVER_RUNTIME_ROOT/$SESSION_HOME_ID"
 printf '%s\n' "$SESSION_HOME" >"$RUN_DIR/session-home-origin"
 
 archive_session_home() {
@@ -2371,6 +2397,25 @@ assert_json status '
       .safeAreaCropped == false and
       .identityMapping == true))
 '
+if ! jq -e \
+    --arg objectsRoot "$PLAYCOVER_GLOBAL_OBJECTS_ROOT" '
+      .data.driver as $driver |
+      $driver.macGenerationKey as $generation |
+      ($generation |
+        type == "string" and
+        test("^[0-9a-f]{64}$")) and
+      ($driver.macAppPath |
+        startswith(
+          $objectsRoot + "/" + $generation + "/"
+        )) and
+      ($driver.macExecutablePath |
+        startswith($driver.macAppPath + "/"))
+    ' "$RUN_DIR/status.stdout" >/dev/null; then
+  echo \
+    "[playcover-fixture-live] FAIL: status did not bind the account-global generation." \
+    >&2
+  exit 1
+fi
 assert_canonical_host_status status
 initial_safe_area_evidence_generation="$(
   jq -er '
@@ -2391,7 +2436,7 @@ lower_session_identifier="$(
   printf '%s' "$session_identifier" |
     /usr/bin/tr '[:upper:]' '[:lower:]'
 )"
-expected_stdio_log_path="$CANONICAL_SESSION_HOME/mac/logs/stdio-$lower_session_identifier.log"
+expected_stdio_log_path="$SESSION_RUNTIME_HOME/logs/stdio-$lower_session_identifier.log"
 if [[
   "$stdio_log_path" != "$expected_stdio_log_path" ||
   ! -f "$stdio_log_path" ||
@@ -2451,6 +2496,15 @@ runtime_socket_path="$(
     '.data.driver.macRuntimeSocketPath' \
     "$RUN_DIR/status.stdout"
 )"
+case "$runtime_socket_path" in
+  "$PLAYCOVER_SOCKET_ROOT"/s-*.sock) ;;
+  *)
+    echo \
+      "[playcover-fixture-live] FAIL: Runtime socket escaped the fixed UID socket root." \
+      >&2
+    exit 1
+    ;;
+esac
 record_case oslog_exact oslog --pid "$runner_pid" \
   --pattern 'ios-use-runtime' --timeout 1s
 assert_evidence oslog_exact '\[ios-use-runtime\]'

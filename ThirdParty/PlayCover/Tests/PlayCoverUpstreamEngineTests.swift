@@ -1,5 +1,8 @@
 import Foundation
 import XCTest
+#if canImport(Darwin)
+import Darwin
+#endif
 @testable import PlayCoverUpstream
 
 final class PlayCoverUpstreamEngineTests: XCTestCase {
@@ -111,6 +114,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 PlayCoverUpstreamPrepareOptions(
                     sourceApp: fixture.app,
                     stagingApp: staging,
+                    managedStagingRoot: fixture.root,
                     runtimeFramework: fixture.root
                         .appendingPathComponent(
                             "Unused.framework",
@@ -120,6 +124,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                         "managed",
                         isDirectory: true
                     ),
+                    runtimeSocketRoot: fixture.root,
                     runtimeSocketPath: fixture.root
                         .appendingPathComponent("runtime.sock").path,
                     runtimeLoadPath:
@@ -198,7 +203,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
     }
 
     func testHeadlessKeyCoverRoundTripPersistsAndIsolatesHomes() throws {
-        let root = try makeTemporaryDirectory()
+        let root = try makeAnchoredTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let firstHome = root.appendingPathComponent("home-one")
         let secondHome = root.appendingPathComponent("home-two")
@@ -212,22 +217,48 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         let bundleID = "com.example.keycover.\(UUID().uuidString)"
         let payload = Data("persistent-playchain".utf8)
+        let firstPlayChainDirectory = firstHome
+            .appendingPathComponent(
+                "playchain",
+                isDirectory: true
+            )
+        let secondPlayChainDirectory = secondHome
+            .appendingPathComponent(
+                "playchain",
+                isDirectory: true
+            )
+        for directory in [
+            firstPlayChainDirectory,
+            secondPlayChainDirectory,
+        ] {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
 
         let firstPlayChain = try PlayCoverHeadlessKeyCover.configure(
-            managedHome: firstHome
+            playChainDirectory: firstPlayChainDirectory
         )
         XCTAssertEqual(
             firstPlayChain.path,
-            firstHome
-                .appendingPathComponent("mac", isDirectory: true)
-                .appendingPathComponent("playchain", isDirectory: true)
-                .path
+            firstPlayChainDirectory.path
         )
         XCTAssertEqual(
             try FileManager.default.contentsOfDirectory(
                 atPath: firstPlayChain.deletingLastPathComponent().path
             ),
             ["playchain"]
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: firstHome
+                    .appendingPathComponent(
+                        "mac/playchain",
+                        isDirectory: true
+                    ).path
+            )
         )
         XCTAssertEqual(
             try FileManager.default.attributesOfItem(
@@ -237,7 +268,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         defer {
             _ = try? PlayCoverHeadlessKeyCover.configure(
-                managedHome: firstHome
+                playChainDirectory: firstPlayChainDirectory
             )
             KeyCover.shared.restorePersistedKey()
             KeyCoverPassword.shared.removeKeyCoverPassword()
@@ -246,10 +277,10 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             .userProvidedPassword
         KeyCoverPassword.shared.setKeyCoverPassword("fixture-secret")
         let firstKey = KeyCoverKey(appBundleID: bundleID)
-        try payload.write(to: firstKey.decryptedKeyDB)
+        try writeOwnerOnly(payload, to: firstKey.decryptedKeyDB)
         try PlayCoverHeadlessKeyCover.lock(
             bundleIdentifier: bundleID,
-            managedHome: firstHome
+            playChainDirectory: firstPlayChainDirectory
         )
         XCTAssertFalse(
             FileManager.default.fileExists(
@@ -265,7 +296,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         KeyCover.shared = KeyCover()
         try PlayCoverHeadlessKeyCover.unlock(
             bundleIdentifier: bundleID,
-            managedHome: firstHome
+            playChainDirectory: firstPlayChainDirectory
         )
         XCTAssertEqual(
             try Data(contentsOf: firstKey.decryptedKeyDB),
@@ -274,7 +305,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         KeyCover.shared = KeyCover()
         try PlayCoverHeadlessKeyCover.lock(
             bundleIdentifier: bundleID,
-            managedHome: firstHome
+            playChainDirectory: firstPlayChainDirectory
         )
         XCTAssertFalse(
             FileManager.default.fileExists(
@@ -288,7 +319,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
 
         _ = try PlayCoverHeadlessKeyCover.configure(
-            managedHome: secondHome
+            playChainDirectory: secondPlayChainDirectory
         )
         XCTAssertNil(KeyCoverPassword.shared.getKeyCoverPassword())
         XCTAssertFalse(
@@ -301,7 +332,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
     }
 
     func testHeadlessKeyCoverLeavesStorageUntouchedWhenDisabled() throws {
-        let root = try makeTemporaryDirectory()
+        let root = try makeAnchoredTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let home = root.appendingPathComponent("disabled-home")
         try FileManager.default.createDirectory(
@@ -310,17 +341,26 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         let bundleID =
             "com.example.keycover.disabled.\(UUID().uuidString)"
+        let playChainDirectory = home.appendingPathComponent(
+            "playchain",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: playChainDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
         _ = try PlayCoverHeadlessKeyCover.configure(
-            managedHome: home
+            playChainDirectory: playChainDirectory
         )
         KeyCoverPreferences.shared.keyCoverEnabled = .disabled
         let key = KeyCoverKey(appBundleID: bundleID)
         let payload = Data("plain-playchain".utf8)
-        try payload.write(to: key.decryptedKeyDB)
+        try writeOwnerOnly(payload, to: key.decryptedKeyDB)
 
         try PlayCoverHeadlessKeyCover.lock(
             bundleIdentifier: bundleID,
-            managedHome: home
+            playChainDirectory: playChainDirectory
         )
 
         XCTAssertEqual(
@@ -334,10 +374,10 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
 
         let encryptedPayload = Data("encrypted-playchain".utf8)
-        try encryptedPayload.write(to: key.encryptedKeyDB)
+        try writeOwnerOnly(encryptedPayload, to: key.encryptedKeyDB)
         try PlayCoverHeadlessKeyCover.unlock(
             bundleIdentifier: bundleID,
-            managedHome: home
+            playChainDirectory: playChainDirectory
         )
 
         XCTAssertEqual(
@@ -348,6 +388,195 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             try Data(contentsOf: key.encryptedKeyDB),
             encryptedPayload
         )
+    }
+
+    func testHeadlessKeyCoverRecoversBothFilesFromTrustedOperationInput()
+        throws
+    {
+        let root = try makeAnchoredTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let playChainDirectory = root.appendingPathComponent(
+            "playchain",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: playChainDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        _ = try PlayCoverHeadlessKeyCover.configure(
+            playChainDirectory: playChainDirectory
+        )
+        defer {
+            _ = try? PlayCoverHeadlessKeyCover.configure(
+                playChainDirectory: playChainDirectory
+            )
+            KeyCover.shared.restorePersistedKey()
+            KeyCoverPassword.shared.removeKeyCoverPassword()
+        }
+        KeyCoverPreferences.shared.keyCoverEnabled =
+            .userProvidedPassword
+        KeyCoverPassword.shared.setKeyCoverPassword(
+            "interrupted-transaction-secret"
+        )
+        let bundleID =
+            "com.example.keycover.interrupted.\(UUID().uuidString)"
+        let key = KeyCoverKey(appBundleID: bundleID)
+        let expected = Data("trusted-plaintext-input".utf8)
+        let staleEncrypted = Data("stale-encrypted-output".utf8)
+        try writeOwnerOnly(expected, to: key.decryptedKeyDB)
+        try writeOwnerOnly(staleEncrypted, to: key.encryptedKeyDB)
+        let interrupted = playChainDirectory.appendingPathComponent(
+            ".\(bundleID).ios-use.tmp"
+        )
+        try Data("partial-openssl-output".utf8).write(
+            to: interrupted
+        )
+        XCTAssertEqual(chmod(interrupted.path, 0o644), 0)
+
+        try PlayCoverHeadlessKeyCover.lock(
+            bundleIdentifier: bundleID,
+            playChainDirectory: playChainDirectory
+        )
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: key.decryptedKeyDB.path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: key.encryptedKeyDB.path
+            )
+        )
+        XCTAssertNotEqual(
+            try Data(contentsOf: key.encryptedKeyDB),
+            staleEncrypted
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: interrupted.path)
+        )
+
+        let stalePlaintext = Data("stale-plaintext-output".utf8)
+        try writeOwnerOnly(stalePlaintext, to: key.decryptedKeyDB)
+        try PlayCoverHeadlessKeyCover.unlock(
+            bundleIdentifier: bundleID,
+            playChainDirectory: playChainDirectory
+        )
+
+        XCTAssertEqual(
+            try Data(contentsOf: key.decryptedKeyDB),
+            expected
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: key.encryptedKeyDB.path
+            )
+        )
+    }
+
+    func testDisabledKeyCoverLeavesInterruptedTransactionUntouched()
+        throws
+    {
+        let root = try makeAnchoredTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let playChain = root.appendingPathComponent(
+            "playchain",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: playChain,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let bundleIdentifier =
+            "com.example.interrupted.\(UUID().uuidString)"
+        let transaction = playChain.appendingPathComponent(
+            ".\(bundleIdentifier).ios-use.tmp"
+        )
+        let expected = Data("untrusted-readable-residue".utf8)
+        try expected.write(to: transaction)
+        XCTAssertEqual(chmod(transaction.path, 0o644), 0)
+        KeyCoverPreferences.shared.keyCoverEnabled = .disabled
+
+        XCTAssertNoThrow(
+            try PlayCoverHeadlessKeyCover.lock(
+                bundleIdentifier: bundleIdentifier,
+                playChainDirectory: playChain
+            )
+        )
+        XCTAssertEqual(try Data(contentsOf: transaction), expected)
+        var status = stat()
+        XCTAssertEqual(lstat(transaction.path, &status), 0)
+        XCTAssertEqual(status.st_mode & 0o777, 0o644)
+    }
+
+    func testHeadlessKeyCoverRejectsPlayChainDirectorySymlink()
+        throws {
+        let root = try makeAnchoredTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtimeHome = root.appendingPathComponent(
+            "runtime-home",
+            isDirectory: true
+        )
+        let external = root.appendingPathComponent(
+            "external",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: runtimeHome,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createDirectory(
+            at: external,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let sentinel = external.appendingPathComponent("sentinel")
+        let expected = Data("do-not-touch".utf8)
+        try expected.write(to: sentinel)
+        let playChain = runtimeHome.appendingPathComponent(
+            "playchain",
+            isDirectory: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: playChain,
+            withDestinationURL: external
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverHeadlessKeyCover.configure(
+                playChainDirectory: playChain
+            )
+        )
+        XCTAssertEqual(try Data(contentsOf: sentinel), expected)
+    }
+
+    func testHeadlessKeyCoverRejectsBundleIdentifierTraversal()
+        throws {
+        let root = try makeAnchoredTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let playChain = root.appendingPathComponent(
+            "playchain",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: playChain,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let sentinel = root.appendingPathComponent("victim.db")
+        let expected = Data("do-not-touch".utf8)
+        try expected.write(to: sentinel)
+
+        XCTAssertThrowsError(
+            try PlayCoverHeadlessKeyCover.lock(
+                bundleIdentifier: "../victim",
+                playChainDirectory: playChain
+            )
+        )
+        XCTAssertEqual(try Data(contentsOf: sentinel), expected)
     }
 
     func testInspectThinArm64CapturesBuildDependencyAndResourceInventory() throws {
@@ -1075,9 +1304,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "(allow network-bind (subpath \""
                 + "\(canonicalRoot)/mac/run\"))",
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"\(canonicalRoot)/mac/logs\"))",
-            "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"\(canonicalRoot)/mac/playchain\"))",
+                + "(subpath \"\(canonicalRoot)\"))",
         ]
         let actualIOSUseRules = Array(
             sandbox.suffix(expectedIOSUseRules.count)
@@ -1092,11 +1319,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             )
         })
         XCTAssertFalse(actualIOSUseRules.contains {
-            $0 == "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"\(canonicalRoot)\"))"
-        })
-        XCTAssertFalse(actualIOSUseRules.contains {
-                $0.contains("\(canonicalRoot)/mac/PlayChain")
+            $0.contains("\(canonicalRoot)/mac/logs")
+                || $0.contains("\(canonicalRoot)/mac/playchain")
         })
     }
 
@@ -1339,7 +1563,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         PlayCoverUpstreamEngine.fullContentPassObserverForTesting = {
             kind,
             url in
-            let path = url.standardizedFileURL.path
+            let path = self.canonicalFixturePath(url)
             contentPasses.append((kind, path))
             if path == finalInspectionPath {
                 finalInspectionStarted = true
@@ -1381,11 +1605,12 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "prepared/Fixture.app",
             isDirectory: true
         )
-        finalInspectionPath = staging.path
-        let stagedMainPath = staging
-            .appendingPathComponent("Fixture").standardizedFileURL.path
+        finalInspectionPath = canonicalFixturePath(staging)
+        let stagedMainPath = canonicalFixturePath(
+            staging.appendingPathComponent("Fixture")
+        )
         PlayCoverUpstreamEngine.machOInspectionObserverForTesting = { url in
-            guard url.standardizedFileURL.path == stagedMainPath else {
+            guard self.canonicalFixturePath(url) == stagedMainPath else {
                 return
             }
             stagedMainInspectionPhases.append(finalInspectionStarted)
@@ -1395,7 +1620,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             url in
             if finalInspectionStarted {
                 finalSignatureObservations.append(
-                    (kind, url.standardizedFileURL.path)
+                    (kind, self.canonicalFixturePath(url))
                 )
             }
         }
@@ -1406,11 +1631,13 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             PlayCoverUpstreamPrepareOptions(
                 sourceApp: source,
                 stagingApp: staging,
+                managedStagingRoot:
+                    staging.deletingLastPathComponent(),
                 runtimeFramework: runtime,
                 managedHome: managed,
-                runtimeSocketPath: managed.appendingPathComponent(
-                    "run/s-runtime.sock"
-                ).path,
+                runtimeSocketRoot: managed,
+                runtimeSocketPath:
+                    managed.appendingPathComponent("s-runtime.sock").path,
                 runtimeLoadPath: runtimeLoadPath,
                 codesignIdentity: "-",
                 expectedRuntimeBuildHash: runtimeBuildHash
@@ -1441,12 +1668,17 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "cold prepare must perform only source, original Runtime, "
                 + "and final prepared full-content passes"
         )
-        XCTAssertEqual(contentPasses[0].path, source.path)
+        XCTAssertEqual(
+            contentPasses[0].path,
+            canonicalFixturePath(source)
+        )
         XCTAssertEqual(
             contentPasses[1].path,
             runtime.resolvingSymlinksInPath().path
         )
-        XCTAssertEqual(contentPasses[2].path, staging.path)
+        let observedStagingPath =
+            canonicalFixturePath(staging)
+        XCTAssertEqual(contentPasses[2].path, observedStagingPath)
         XCTAssertEqual(
             stagedMainInspectionPhases,
             [true],
@@ -1520,10 +1752,10 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 + "validate its main executable"
         )
         XCTAssertEqual(
-            strictPaths.filter { $0 == staging.path }.count,
+            strictPaths.filter { $0 == observedStagingPath }.count,
             1
         )
-        XCTAssertEqual(strictPaths.last, staging.path)
+        XCTAssertEqual(strictPaths.last, observedStagingPath)
         XCTAssertTrue(result.prepared.signature.isValid)
         XCTAssertTrue(
             result.prepared.machOs.allSatisfy(\.signature.isValid)
@@ -1546,7 +1778,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             url in
             if kind == .strictVerify {
                 publicVerifyStrictPaths.append(
-                    url.standardizedFileURL.path
+                    self.canonicalFixturePath(url)
                 )
             }
         }
@@ -1558,11 +1790,16 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
         XCTAssertTrue(
             publicVerifyStrictPaths.contains(
-                staging.appendingPathComponent("Fixture").path
+                canonicalFixturePath(
+                    staging.appendingPathComponent("Fixture")
+                )
             ),
             "public verify must keep direct main validation"
         )
-        XCTAssertEqual(publicVerifyStrictPaths.last, staging.path)
+        XCTAssertEqual(
+            publicVerifyStrictPaths.last,
+            observedStagingPath
+        )
         XCTAssertEqual(
             result.entitlementDiff.removedFromOriginal,
             [
@@ -1613,7 +1850,12 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     "prepared",
                     isDirectory: true
                 ),
-                withIntermediateDirectories: true
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: home.path
             )
         }
         let runtimeLoadPath =
@@ -1626,11 +1868,15 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     "prepared/Fixture.app",
                     isDirectory: true
                 ),
+                managedStagingRoot: home.appendingPathComponent(
+                    "prepared",
+                    isDirectory: true
+                ),
                 runtimeFramework: runtime,
                 managedHome: home,
-                runtimeSocketPath: home.appendingPathComponent(
-                    "mac/run/s-runtime.sock"
-                ).path,
+                runtimeSocketRoot: home,
+                runtimeSocketPath:
+                    home.appendingPathComponent("s-runtime.sock").path,
                 runtimeLoadPath: runtimeLoadPath,
                 codesignIdentity: "-",
                 expectedRuntimeBuildHash: runtimeHash
@@ -1657,9 +1903,55 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             sourceInspection: sourceInspection,
             options: consumerOptions
         )
+        let poisonedContainer = root.appendingPathComponent(
+            "poisoned-container",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: poisonedContainer,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let poisonSentinel = poisonedContainer
+            .appendingPathComponent("sentinel")
+        let poisonData = Data("must-not-change".utf8)
+        try poisonData.write(to: poisonSentinel)
+        try PlayTools.configureManagedContainer(
+            poisonedContainer
+        )
         let result = try PlayCoverUpstreamEngine.finalizeSubstrate(
             consumer,
             options: consumerOptions
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: poisonSentinel),
+            poisonData
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: poisonedContainer
+                    .appendingPathComponent(
+                        "Entitlements",
+                        isDirectory: true
+                    ).path
+            )
+        )
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                atPath: consumerOptions.stagingApp
+                    .deletingLastPathComponent().path
+            ).allSatisfy {
+                !$0.hasPrefix(".playcover-support-")
+            }
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: consumerOptions.managedHome
+                    .appendingPathComponent(
+                        "mac/playchain",
+                        isDirectory: true
+                    ).path
+            )
         )
         let sandbox = try XCTUnwrap(
             result.entitlementDiff.final[
@@ -1668,9 +1960,10 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         let producerHome = homes[0].resolvingSymlinksInPath().path
         let consumerHome = homes[1].resolvingSymlinksInPath().path
-        XCTAssertTrue(sandbox.contains("\(consumerHome)/mac/run"))
-        XCTAssertTrue(sandbox.contains("\(consumerHome)/mac/logs"))
-        XCTAssertFalse(sandbox.contains("\(producerHome)/mac/"))
+        XCTAssertTrue(sandbox.contains(consumerHome))
+        XCTAssertFalse(sandbox.contains("\(consumerHome)/mac/run"))
+        XCTAssertFalse(sandbox.contains("\(consumerHome)/mac/logs"))
+        XCTAssertFalse(sandbox.contains(producerHome))
     }
 
     func testPrepareRejectsPlannedRuntimeDuplicateByExactPathAndBasename()
@@ -1759,11 +2052,13 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                     PlayCoverUpstreamPrepareOptions(
                         sourceApp: source,
                         stagingApp: staging,
+                        managedStagingRoot:
+                            staging.deletingLastPathComponent(),
                         runtimeFramework: runtime,
                         managedHome: managed,
-                        runtimeSocketPath: managed.appendingPathComponent(
-                            "run/s-runtime.sock"
-                        ).path,
+                        runtimeSocketRoot: managed,
+                        runtimeSocketPath: managed
+                            .appendingPathComponent("s-runtime.sock").path,
                         runtimeLoadPath: runtimeLoadPath,
                         codesignIdentity: "-"
                     ),
@@ -1819,6 +2114,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "prepared/Fixture.app",
             isDirectory: true
         )
+        let observedStagingPath = canonicalFixturePath(staging)
         var mutationError: Error?
         var mutated = false
         var strictPaths: [String] = []
@@ -1829,7 +2125,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 return
             }
             strictPaths.append(url.standardizedFileURL.path)
-            guard url.standardizedFileURL.path == staging.path,
+            guard self.canonicalFixturePath(url) == observedStagingPath,
                   !mutated else {
                 return
             }
@@ -1855,11 +2151,13 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 PlayCoverUpstreamPrepareOptions(
                     sourceApp: source,
                     stagingApp: staging,
+                    managedStagingRoot:
+                        staging.deletingLastPathComponent(),
                     runtimeFramework: runtime,
                     managedHome: managed,
-                    runtimeSocketPath: managed.appendingPathComponent(
-                        "run/s-runtime.sock"
-                    ).path,
+                    runtimeSocketRoot: managed,
+                    runtimeSocketPath: managed
+                        .appendingPathComponent("s-runtime.sock").path,
                     runtimeLoadPath: runtimeLoadPath,
                     codesignIdentity: "-",
                     expectedRuntimeBuildHash:
@@ -1882,7 +2180,10 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         }
         XCTAssertNil(mutationError)
         XCTAssertTrue(mutated)
-        XCTAssertEqual(strictPaths.last, staging.path)
+        XCTAssertEqual(
+            strictPaths.last,
+            observedStagingPath
+        )
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: staging.path),
             "failed root validation must roll staging back"
@@ -1918,11 +2219,13 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         let options = PlayCoverUpstreamPrepareOptions(
             sourceApp: source,
             stagingApp: staging,
+            managedStagingRoot:
+                staging.deletingLastPathComponent(),
             runtimeFramework: runtime,
             managedHome: managed,
-            runtimeSocketPath: managed.appendingPathComponent(
-                "run/s-runtime.sock"
-            ).path,
+            runtimeSocketRoot: managed,
+            runtimeSocketPath:
+                managed.appendingPathComponent("s-runtime.sock").path,
             runtimeLoadPath:
                 "@executable_path/Frameworks/"
                 + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
@@ -2222,16 +2525,50 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
     }
 
     private func makeTemporaryDirectory() throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(
-                "PlayCoverUpstream-\(UUID().uuidString)",
-                isDirectory: true
-            )
+        try makeAnchoredTemporaryDirectory()
+    }
+
+    private func canonicalFixturePath(_ url: URL) -> String {
+        var existing = url
+        var suffix: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path),
+              existing.path != "/" {
+            suffix.insert(existing.lastPathComponent, at: 0)
+            existing.deleteLastPathComponent()
+        }
+        var result = existing.resolvingSymlinksInPath()
+        for component in suffix {
+            result.appendPathComponent(component)
+        }
+        return result.path
+    }
+
+    private func makeAnchoredTemporaryDirectory() throws -> URL {
+        let root = URL(
+            fileURLWithPath: "/private/tmp",
+            isDirectory: true
+        ).appendingPathComponent(
+            "PlayCoverUpstream-\(UUID().uuidString)",
+            isDirectory: true
+        )
         try FileManager.default.createDirectory(
             at: root,
-            withIntermediateDirectories: true
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
         )
         return root
+    }
+
+    private func writeOwnerOnly(
+        _ data: Data,
+        to url: URL
+    ) throws {
+        try data.write(to: url)
+        guard chmod(url.path, 0o600) == 0 else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "cannot make KeyCover test fixture owner-only"
+            )
+        }
     }
 
     private func makeRealIOSExecutable(

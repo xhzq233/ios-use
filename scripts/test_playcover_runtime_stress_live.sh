@@ -3,6 +3,7 @@ set -euo pipefail
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 CLI=""
 BUILT_RUNTIME_FRAMEWORK="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
 RUNTIME_EXECUTABLE=""
@@ -17,6 +18,8 @@ RUN_ID=""
 RUN_DIR=""
 SESSION_HOME=""
 CANONICAL_SESSION_HOME=""
+SESSION_HOME_ID=""
+SESSION_RUNTIME_HOME=""
 ARCHIVED_SESSION_HOME=""
 MANIFEST=""
 CLEAN_CYCLE_INDEX=""
@@ -218,6 +221,8 @@ validate_pass_attestation() {
     --arg fixtureAppTreeSHA256 "$FIXTURE_APP_TREE_SHA256" \
     --arg probeSourceSHA256 "$PROBE_SOURCE_SHA256" \
     --arg generationKey "$PROTOCOL_GENERATION_KEY" \
+    --arg socketRoot "$PLAYCOVER_SOCKET_ROOT" \
+    --arg runtimeHome "$SESSION_RUNTIME_HOME" \
     --argjson expectedCleanCycles "$CLEAN_CYCLE_COUNT" '
       def is_sha256:
         type == "string" and test("^[0-9a-f]{64}$");
@@ -378,10 +383,9 @@ validate_pass_attestation() {
           (.runnerPid | type) == "number" and
           .runnerPid > 1 and
           (.runtimeSocketPath | type) == "string" and
-          (
-            .runtimeSocketPath |
-            test("/mac/run/s-[^/]+\\.sock$")
-          ) and
+          (.runtimeSocketPath |
+            startswith($socketRoot + "/s-")) and
+          (.runtimeSocketPath | endswith(".sock")) and
           .driverLockAbsent == true and
           .runnerPidAbsent == true and
           .runtimeSocketAbsent == true
@@ -393,10 +397,9 @@ validate_pass_attestation() {
         (.runnerPid | type) == "number" and
         .runnerPid > 1 and
         (.runtimeSocketPath | type) == "string" and
-        (
-          .runtimeSocketPath |
-          test("/mac/run/s-[^/]+\\.sock$")
-        ) and
+        (.runtimeSocketPath |
+          startswith($socketRoot + "/s-")) and
+        (.runtimeSocketPath | endswith(".sock")) and
         .driverStatus == "unhealthy" and
         .runtimeStatus == "unhealthy" and
         .runtimeIdentityVerified == false and
@@ -408,15 +411,14 @@ validate_pass_attestation() {
         (.runnerPid | type) == "number" and
         .runnerPid > 1 and
         (.runtimeSocketPath | type) == "string" and
-        (
-          .runtimeSocketPath |
-          test("/mac/run/s-[^/]+\\.sock$")
-        ) and
+        (.runtimeSocketPath |
+          startswith($socketRoot + "/s-")) and
+        (.runtimeSocketPath | endswith(".sock")) and
         (.stdioLogPath | type) == "string" and
-        (
-          .stdioLogPath |
-          test("/mac/logs/stdio-[0-9a-f-]{36}\\.log$")
-        ) and
+        (.stdioLogPath |
+          startswith($runtimeHome + "/logs/stdio-")) and
+        (.stdioLogPath |
+          test("stdio-[0-9a-f-]{36}\\.log$")) and
         (
           .stdioLogIdentity |
           type == "string" and
@@ -727,6 +729,13 @@ cleanup() {
   exit "$exit_code"
 }
 
+if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
+  config_fail "the account-global PlayCover safety guard is unavailable"
+fi
+# shellcheck source=scripts/test_playcover_global_state_guard.sh
+source "$GLOBAL_STATE_GUARD"
+playcover_require_disposable_account_contract "playcover-runtime-stress"
+
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   config_fail "Apple-silicon macOS is required"
 fi
@@ -890,9 +899,18 @@ if [[
   ! -d "$SESSION_HOME" ||
   -L "$SESSION_HOME"
 ]]; then
-  config_fail "could not create a safe isolated IOS_USE_HOME"
+  config_fail "could not create a safe temporary logical IOS_USE_HOME"
 fi
 CANONICAL_SESSION_HOME="$(cd "$SESSION_HOME" && pwd -P)"
+SESSION_HOME_ID="$(
+  printf '%s' "$CANONICAL_SESSION_HOME" |
+    /usr/bin/shasum -a 256 |
+    /usr/bin/awk '{ print $1 }'
+)"
+if [[ ! "$SESSION_HOME_ID" =~ ^[0-9a-f]{64}$ ]]; then
+  config_fail "could not derive the logical Home identity"
+fi
+SESSION_RUNTIME_HOME="$PLAYCOVER_RUNTIME_ROOT/$SESSION_HOME_ID"
 printf '%s\n' "$SESSION_HOME" >"$RUN_DIR/session-home-origin"
 
 record_command() {
@@ -1045,8 +1063,8 @@ assert_lock_matches_status() {
     fail_gate "$status_case driver.lock is not owner-only"
   fi
   if ! jq -e \
-      --arg rawHome "$SESSION_HOME" \
-      --arg canonicalHome "$CANONICAL_SESSION_HOME" \
+      --arg objectsRoot "$PLAYCOVER_GLOBAL_OBJECTS_ROOT" \
+      --arg socketRoot "$PLAYCOVER_SOCKET_ROOT" \
       --slurpfile status "$RUN_DIR/${status_case}.stdout" '
       . as $lock |
       $status[0].data.driver as $driver |
@@ -1068,20 +1086,15 @@ assert_lock_matches_status() {
       $lock.macAppPath == $driver.macAppPath and
       $lock.macExecutablePath ==
         $driver.macExecutablePath and
-      (
-        ($lock.macAppPath |
-          startswith($rawHome + "/cache/mac/prepared/")) or
-        ($lock.macAppPath |
-          startswith($canonicalHome + "/cache/mac/prepared/"))
-      ) and
+      ($lock.macAppPath |
+        startswith(
+          $objectsRoot + "/" +
+          $lock.macGenerationKey + "/"
+        )) and
       ($lock.macExecutablePath |
         startswith($lock.macAppPath + "/")) and
-      (
-        ($lock.macRuntimeSocketPath |
-          startswith($rawHome + "/mac/run/s-")) or
-        ($lock.macRuntimeSocketPath |
-          startswith($canonicalHome + "/mac/run/s-"))
-      ) and
+      ($lock.macRuntimeSocketPath |
+        startswith($socketRoot + "/s-")) and
       ($lock.macRuntimeSocketPath |
         endswith(".sock"))
     ' "$lock" >/dev/null; then
@@ -1109,7 +1122,7 @@ assert_stdio_log() {
     printf '%s' "$session_identifier" |
       /usr/bin/tr '[:upper:]' '[:lower:]'
   )"
-  expected_path="$CANONICAL_SESSION_HOME/mac/logs/stdio-$lower_session_identifier.log"
+  expected_path="$SESSION_RUNTIME_HOME/logs/stdio-$lower_session_identifier.log"
   if [[
     "$log_path" != "$expected_path" ||
     ! -f "$log_path" ||
@@ -1183,11 +1196,10 @@ assert_live_runtime_socket() {
       "$RUN_DIR/${case_name}.stdout"
   )"
   case "$runtime_socket" in
-    "$SESSION_HOME"/mac/run/s-*.sock) ;;
-    "$CANONICAL_SESSION_HOME"/mac/run/s-*.sock) ;;
+    "$PLAYCOVER_SOCKET_ROOT"/s-*.sock) ;;
     *)
       fail_gate \
-        "$case_name Runtime socket escapes the isolated run directory"
+        "$case_name Runtime socket escapes the fixed UID socket root"
       ;;
   esac
   if [[
@@ -1234,8 +1246,7 @@ assert_clean_session_stopped() {
     fail_gate "$case_name has an invalid recorded runner PID"
   fi
   case "$runtime_socket" in
-    "$SESSION_HOME"/mac/run/s-*.sock) ;;
-    "$CANONICAL_SESSION_HOME"/mac/run/s-*.sock) ;;
+    "$PLAYCOVER_SOCKET_ROOT"/s-*.sock) ;;
     *)
       fail_gate \
         "$case_name has an invalid recorded Runtime socket pathname"
@@ -1603,9 +1614,8 @@ endpoint_socket="$(
     "$RUN_DIR/endpoint_status.stdout"
 )"
 case "$endpoint_socket" in
-  "$SESSION_HOME"/mac/run/s-*.sock) ;;
-  "$CANONICAL_SESSION_HOME"/mac/run/s-*.sock) ;;
-  *) fail_gate "endpoint-loss target escapes the isolated Runtime run directory" ;;
+  "$PLAYCOVER_SOCKET_ROOT"/s-*.sock) ;;
+  *) fail_gate "endpoint-loss target escapes the fixed UID socket root" ;;
 esac
 if [[
   ! -S "$endpoint_socket" ||
@@ -1837,7 +1847,7 @@ jq -cn \
 
 assert_built_inputs_unchanged
 if ! archive_and_remove_session_home; then
-  fail_gate "could not archive the isolated session home"
+  fail_gate "could not archive the temporary logical session home"
 fi
 if ! remove_build_root; then
   fail_gate "could not remove the isolated build root"

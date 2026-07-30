@@ -50,6 +50,17 @@ enum PlayCoverGenerationPruner {
         let identity: AnchoredIdentity
     }
 
+    private struct StagingCandidate {
+        let name: String
+        let generationKey: String
+        let identity: AnchoredIdentity
+    }
+
+    private struct Tombstone {
+        let name: String
+        let removalFailureDescription: String
+    }
+
     private struct AnchoredIdentity {
         let device: UInt64
         let inode: UInt64
@@ -58,7 +69,16 @@ enum PlayCoverGenerationPruner {
     private struct Inventory {
         let complete: [Candidate]
         let corrupt: [CorruptCandidate]
+        let staging: [StagingCandidate]
+        let existingTombstones: [Tombstone]
         let warnings: [String]
+    }
+
+    private struct PruneTransaction {
+        let result: Result
+        let tombstones: [Tombstone]
+        let preparedRoot: URL
+        let preparedDescriptor: Int32
     }
 
     static func pruneAfterSuccessfulStart(
@@ -82,16 +102,55 @@ enum PlayCoverGenerationPruner {
         }
 
         do {
-            return try PlayCoverManagedAppService
-                .withSecureManagedDirectories(paths: paths) {
-                    try pruneAnchored(
-                        paths: paths,
+            let inventory = try PlayCoverManagedAppService
+                .withSecureManagedDirectories(paths: paths) { access in
+                    let names = try preparedDirectoryNames(
+                        preparedRoot: access.prepared,
+                        preparedDescriptor: access.preparedDescriptor
+                    )
+                    return loadInventory(
+                        names: names,
+                        preparedRoot: access.prepared,
+                        preparedDescriptor: access.preparedDescriptor,
+                        currentGenerationToken:
+                            currentGenerationToken
+                    )
+                }
+            try afterInventoryForTesting?()
+            let transaction = try PlayCoverGlobalReferenceStore
+                .withLockedProtectedGenerationKeys(
+                    paths: paths
+                ) { protectedGenerationKeys, access in
+                    var protected = protectedGenerationKeys
+                    protected.insert(currentGenerationKey)
+                    try afterProtectedStateForTesting?()
+                    return try preparePruneTransaction(
+                        inventory: inventory,
+                        protectedState: protected,
                         currentGenerationKey: currentGenerationKey,
                         currentGenerationToken:
                             currentGenerationToken,
-                        access: $0
+                        access: access
                     )
                 }
+            #if canImport(Darwin)
+            defer {
+                if transaction.preparedDescriptor >= 0 {
+                    Darwin.close(transaction.preparedDescriptor)
+                }
+            }
+            #endif
+            let removalWarnings = removeTombstones(
+                transaction.tombstones,
+                preparedRoot: transaction.preparedRoot,
+                preparedDescriptor: transaction.preparedDescriptor
+            )
+            return Result(
+                removedGenerationKeys:
+                    transaction.result.removedGenerationKeys,
+                warnings:
+                    transaction.result.warnings + removalWarnings
+            )
         } catch {
             return skipped(
                 "prepared cache could not be safely pruned: \(error)"
@@ -99,67 +158,84 @@ enum PlayCoverGenerationPruner {
         }
     }
 
-    private static func pruneAnchored(
-        paths: IOSUsePaths,
+    private static func preparePruneTransaction(
+        inventory: Inventory,
+        protectedState: Set<String>,
         currentGenerationKey: String,
         currentGenerationToken:
             PlayCoverFastVerifiedGenerationToken?,
         access: PlayCoverManagedAppService.ManagedDirectoryAccess
-    ) throws -> Result {
-        let protectedState = try protectedGenerationKeys(
-            paths: paths,
-            currentGenerationKey: currentGenerationKey,
-            preparedRoot: access.prepared,
-            preparedDescriptor: access.preparedDescriptor
-        )
-        try afterProtectedStateForTesting?()
-        let names = try preparedDirectoryNames(
-            preparedRoot: access.prepared,
-            preparedDescriptor: access.preparedDescriptor
-        )
-        let inventory = loadInventory(
-            names: names,
-            preparedRoot: access.prepared,
-            preparedDescriptor: access.preparedDescriptor,
-            currentGenerationToken: currentGenerationToken
-        )
-        try afterInventoryForTesting?()
+    ) throws -> PruneTransaction {
         var warnings = inventory.warnings
-        warnings += removeTransientDirectories(
-            names: names,
-            preparedRoot: access.prepared,
-            preparedDescriptor: access.preparedDescriptor
-        )
         let recentInactive = inventory.complete
             .filter {
                 !protectedState.contains($0.generationKey)
-            }
-            .sorted {
-                if $0.completedAt != $1.completedAt {
-                    return $0.completedAt > $1.completedAt
-                }
-                return $0.generationKey > $1.generationKey
             }
             .prefix(recentInactiveRetentionCount)
             .map(\.generationKey)
         let keep = protectedState.union(recentInactive)
         var removed: [String] = []
+        var tombstones = inventory.existingTombstones
+        var didRename = false
 
         let protectedCorrupt = inventory.corrupt.filter {
             protectedState.contains($0.generationKey)
         }
-        for candidate in protectedCorrupt.sorted(by: {
-            $0.generationKey < $1.generationKey
-        }) {
+        for candidate in protectedCorrupt {
             warnings.append(
                 "protected corrupt generation \(candidate.generationKey) "
                     + "was retained: \(candidate.reason)"
             )
         }
+        if currentGenerationToken != nil,
+           let current = inventory.complete.first(where: {
+               $0.generationKey == currentGenerationKey
+           }),
+           !matchesAnchoredIdentity(
+               name: currentGenerationKey,
+               identity: current.identity,
+               preparedRoot: access.prepared,
+               preparedDescriptor: access.preparedDescriptor
+           ) {
+            warnings.append(
+                "protected corrupt generation \(currentGenerationKey) "
+                    + "was retained: generation vnode changed after fast "
+                    + "verification"
+            )
+        }
+
+        for candidate in inventory.staging where
+            !protectedState.contains(candidate.generationKey)
+        {
+            do {
+                let tombstoneName = try tombstoneDirectory(
+                    name: candidate.name,
+                    generationKey: candidate.generationKey,
+                    identity: candidate.identity,
+                    identityLabel: "transient generation",
+                    preparedRoot: access.prepared,
+                    preparedDescriptor: access.preparedDescriptor
+                )
+                didRename = true
+                tombstones.append(
+                    Tombstone(
+                        name: tombstoneName,
+                        removalFailureDescription:
+                            "transient generation \(candidate.name) was "
+                            + "quarantined as \(tombstoneName), but the "
+                            + "tombstone was not removed"
+                    )
+                )
+            } catch {
+                warnings.append(
+                    "transient generation \(candidate.name) was not "
+                        + "quarantined: \(error)"
+                )
+            }
+        }
+
         let corruptEligible = inventory.corrupt.filter {
             !protectedState.contains($0.generationKey)
-        }.sorted {
-            $0.generationKey < $1.generationKey
         }
         let corruptBudget = min(
             corruptGenerationQuarantineLimit,
@@ -167,14 +243,24 @@ enum PlayCoverGenerationPruner {
         )
         for candidate in corruptEligible.prefix(corruptBudget) {
             do {
-                if let removalWarning = try removeGeneration(
+                let tombstoneName = try tombstoneDirectory(
+                    name: candidate.generationKey,
                     generationKey: candidate.generationKey,
                     identity: candidate.identity,
+                    identityLabel: "generation",
                     preparedRoot: access.prepared,
                     preparedDescriptor: access.preparedDescriptor
-                ) {
-                    warnings.append(removalWarning)
-                }
+                )
+                didRename = true
+                tombstones.append(
+                    Tombstone(
+                        name: tombstoneName,
+                        removalFailureDescription:
+                            "generation \(candidate.generationKey) was "
+                            + "quarantined as \(tombstoneName), but the "
+                            + "tombstone was not removed"
+                    )
+                )
                 removed.append(candidate.generationKey)
                 warnings.append(
                     "corrupt generation \(candidate.generationKey) was "
@@ -200,14 +286,24 @@ enum PlayCoverGenerationPruner {
             !keep.contains(candidate.generationKey)
         {
             do {
-                if let removalWarning = try removeGeneration(
+                let tombstoneName = try tombstoneDirectory(
+                    name: candidate.generationKey,
                     generationKey: candidate.generationKey,
                     identity: candidate.identity,
+                    identityLabel: "generation",
                     preparedRoot: access.prepared,
                     preparedDescriptor: access.preparedDescriptor
-                ) {
-                    warnings.append(removalWarning)
-                }
+                )
+                didRename = true
+                tombstones.append(
+                    Tombstone(
+                        name: tombstoneName,
+                        removalFailureDescription:
+                            "generation \(candidate.generationKey) was "
+                            + "quarantined as \(tombstoneName), but the "
+                            + "tombstone was not removed"
+                    )
+                )
                 removed.append(candidate.generationKey)
             } catch {
                 warnings.append(
@@ -216,47 +312,71 @@ enum PlayCoverGenerationPruner {
                 )
             }
         }
-        return Result(
-            removedGenerationKeys: removed.sorted(),
-            warnings: warnings
+
+        if didRename {
+            try syncPreparedDirectory(
+                preparedRoot: access.prepared,
+                preparedDescriptor: access.preparedDescriptor
+            )
+        }
+        let retainedDescriptor = try retainPreparedDescriptorIfNeeded(
+            access.preparedDescriptor,
+            hasTombstones: !tombstones.isEmpty
+        )
+        return PruneTransaction(
+            result: Result(
+                removedGenerationKeys: removed.sorted(),
+                warnings: warnings
+            ),
+            tombstones: tombstones,
+            preparedRoot: access.prepared,
+            preparedDescriptor: retainedDescriptor
         )
     }
 
-    private static func removeTransientDirectories(
-        names: [String],
+    private static func removeTombstones(
+        _ tombstones: [Tombstone],
         preparedRoot: URL,
         preparedDescriptor: Int32
     ) -> [String] {
         #if canImport(Darwin)
         var warnings: [String] = []
-        for name in names where isTransientDirectoryName(name) {
+        for tombstone in tombstones {
             do {
                 try PlayCoverManagedAppService
                     .removeAnchoredDirectoryTree(
                         parentDescriptor: preparedDescriptor,
-                        name: name,
-                        label: "transient generation"
+                        name: tombstone.name,
+                        label: "generation tombstone"
                     )
             } catch {
+                if !anchoredEntryExists(
+                    name: tombstone.name,
+                    preparedDescriptor: preparedDescriptor
+                ) {
+                    continue
+                }
                 warnings.append(
-                    "transient generation \(name) was not removed: \(error)"
+                    "\(tombstone.removalFailureDescription): \(error)"
                 )
             }
         }
         return warnings
         #else
         var warnings: [String] = []
-        for name in names where isTransientDirectoryName(name) {
+        for tombstone in tombstones {
+            let url = preparedRoot.appendingPathComponent(
+                tombstone.name,
+                isDirectory: true
+            )
             do {
-                try FileManager.default.removeItem(
-                    at: preparedRoot.appendingPathComponent(
-                        name,
-                        isDirectory: true
-                    )
-                )
+                try FileManager.default.removeItem(at: url)
             } catch {
+                if !FileManager.default.fileExists(atPath: url.path) {
+                    continue
+                }
                 warnings.append(
-                    "transient generation \(name) was not removed: \(error)"
+                    "\(tombstone.removalFailureDescription): \(error)"
                 )
             }
         }
@@ -280,55 +400,6 @@ enum PlayCoverGenerationPruner {
         #endif
     }
 
-    private static func protectedGenerationKeys(
-        paths: IOSUsePaths,
-        currentGenerationKey: String,
-        preparedRoot: URL,
-        preparedDescriptor: Int32
-    ) throws -> Set<String> {
-        guard let reference = try PlayCoverSessionService
-            .readPreparedReference(paths: paths),
-              isGenerationKey(reference.generationKey),
-              generationKey(
-                appPath: reference.appPath,
-                paths: paths,
-                preparedRoot: preparedRoot,
-                preparedDescriptor: preparedDescriptor
-              ) == reference.generationKey else {
-            throw PlayCoverBackendError.cacheTampered(
-                "last-prepared reference is missing or invalid"
-            )
-        }
-        guard let active = try SessionService.readDriverLockInfo(
-            paths: paths
-        ),
-              active.deviceType == PlayCoverSessionService.deviceType,
-              let activeGeneration = active.macGenerationKey,
-              isGenerationKey(activeGeneration),
-              let activeAppPath = active.macAppPath,
-              generationKey(
-                appPath: activeAppPath,
-                paths: paths,
-                preparedRoot: preparedRoot,
-                preparedDescriptor: preparedDescriptor
-              ) == activeGeneration else {
-            throw PlayCoverBackendError.cacheTampered(
-                "active Mac session is missing or invalid"
-            )
-        }
-        var protected: Set<String> = [
-            currentGenerationKey,
-            reference.generationKey,
-            activeGeneration,
-        ]
-        if let pending = try PlayCoverPendingLaunchStore.load(
-            paths: paths
-        ) {
-            protected.insert(pending.generationKey)
-        }
-        return protected
-    }
-
     private static func loadInventory(
         names: [String],
         preparedRoot: URL,
@@ -336,9 +407,27 @@ enum PlayCoverGenerationPruner {
         currentGenerationToken:
             PlayCoverFastVerifiedGenerationToken?
     ) -> Inventory {
+        let stagingInventory = loadStagingCandidates(
+            names: names,
+            preparedRoot: preparedRoot,
+            preparedDescriptor: preparedDescriptor
+        )
+        let existingTombstones = names.compactMap { name -> Tombstone? in
+            guard transientGenerationKey(
+                name,
+                prefix: ".gc-"
+            ) != nil else {
+                return nil
+            }
+            return Tombstone(
+                name: name,
+                removalFailureDescription:
+                    "transient generation \(name) was not removed"
+            )
+        }
         var complete: [Candidate] = []
         var corrupt: [CorruptCandidate] = []
-        var warnings: [String] = []
+        var warnings = stagingInventory.warnings
         for name in names {
             guard isGenerationKey(name) else {
                 continue
@@ -553,7 +642,7 @@ enum PlayCoverGenerationPruner {
                 )
                 continue
             }
-            guard manifest.schemaVersion == 4,
+            guard manifest.schemaVersion == 5,
                   manifest.backend == "mac",
                   manifest.generationKey == name else {
                 corrupt.append(
@@ -567,7 +656,7 @@ enum PlayCoverGenerationPruner {
                 )
                 continue
             }
-            guard completed.schemaVersion == 4,
+            guard completed.schemaVersion == 5,
                   completed.generationKey == name else {
                 corrupt.append(
                     CorruptCandidate(
@@ -601,10 +690,113 @@ enum PlayCoverGenerationPruner {
             )
         }
         return Inventory(
-            complete: complete,
-            corrupt: corrupt,
+            complete: complete.sorted {
+                if $0.completedAt != $1.completedAt {
+                    return $0.completedAt > $1.completedAt
+                }
+                return $0.generationKey > $1.generationKey
+            },
+            corrupt: corrupt.sorted {
+                $0.generationKey < $1.generationKey
+            },
+            staging: stagingInventory.candidates.sorted {
+                $0.name < $1.name
+            },
+            existingTombstones: existingTombstones.sorted {
+                $0.name < $1.name
+            },
             warnings: warnings
         )
+    }
+
+    private static func loadStagingCandidates(
+        names: [String],
+        preparedRoot: URL,
+        preparedDescriptor: Int32
+    ) -> (
+        candidates: [StagingCandidate],
+        warnings: [String]
+    ) {
+        var candidates: [StagingCandidate] = []
+        var warnings: [String] = []
+        for name in names {
+            guard let generationKey = transientGenerationKey(
+                name,
+                prefix: ".staging-"
+            ) else {
+                continue
+            }
+            #if canImport(Darwin)
+            do {
+                let descriptor = try PlayCoverManagedAppService
+                    .openOwnedDirectory(
+                        parentDescriptor: preparedDescriptor,
+                        name: name,
+                        label: "transient generation \(name)"
+                    )
+                var status = stat()
+                let inspected = fstat(descriptor, &status) == 0
+                Darwin.close(descriptor)
+                guard inspected else {
+                    throw PlayCoverBackendError.cacheTampered(
+                        "cannot inspect anchored transient generation"
+                    )
+                }
+                candidates.append(
+                    StagingCandidate(
+                        name: name,
+                        generationKey: generationKey,
+                        identity: AnchoredIdentity(
+                            device: UInt64(status.st_dev),
+                            inode: UInt64(status.st_ino)
+                        )
+                    )
+                )
+            } catch {
+                warnings.append(
+                    "transient generation \(name) was not inspected or "
+                        + "quarantined because anchored ownership could not "
+                        + "be validated: \(error)"
+                )
+            }
+            #else
+            let url = preparedRoot.appendingPathComponent(
+                name,
+                isDirectory: true
+            )
+            var status = stat()
+            let canonicalRoot = preparedRoot.standardizedFileURL.path
+            let canonicalCandidate = url.standardizedFileURL.path
+            guard lstat(url.path, &status) == 0,
+                  status.st_mode & S_IFMT == S_IFDIR,
+                  status.st_uid == geteuid(),
+                  status.st_mode & 0o077 == 0,
+                  canonicalCandidate
+                    == preparedRoot.appendingPathComponent(
+                        name,
+                        isDirectory: true
+                    ).standardizedFileURL.path,
+                  canonicalCandidate.hasPrefix(canonicalRoot + "/") else {
+                warnings.append(
+                    "transient generation \(name) was not inspected or "
+                        + "quarantined because anchored ownership could not "
+                        + "be validated"
+                )
+                continue
+            }
+            candidates.append(
+                StagingCandidate(
+                    name: name,
+                    generationKey: generationKey,
+                    identity: AnchoredIdentity(
+                        device: UInt64(status.st_dev),
+                        inode: UInt64(status.st_ino)
+                    )
+                )
+            )
+            #endif
+        }
+        return (candidates, warnings)
     }
 
     private enum SidecarRead {
@@ -667,57 +859,103 @@ enum PlayCoverGenerationPruner {
     }
     #endif
 
-    private static func removeGeneration(
+    private static func tombstoneDirectory(
+        name: String,
         generationKey: String,
         identity: AnchoredIdentity,
+        identityLabel: String,
         preparedRoot: URL,
         preparedDescriptor: Int32
-    ) throws -> String? {
-        #if canImport(Darwin)
-        var status = stat()
-        guard fstatat(
-                preparedDescriptor,
-                generationKey,
-                &status,
-                AT_SYMLINK_NOFOLLOW
-              ) == 0,
-              status.st_mode & S_IFMT == S_IFDIR,
-              status.st_uid == geteuid(),
-              status.st_mode & 0o077 == 0,
-              UInt64(status.st_dev) == identity.device,
-              UInt64(status.st_ino) == identity.inode else {
+    ) throws -> String {
+        guard matchesAnchoredIdentity(
+            name: name,
+            identity: identity,
+            preparedRoot: preparedRoot,
+            preparedDescriptor: preparedDescriptor
+        ) else {
             throw PlayCoverBackendError.cacheTampered(
-                "anchored generation identity changed before tombstone"
+                "anchored \(identityLabel) identity changed before tombstone"
             )
         }
-        let tombstoneName =
-            ".gc-\(generationKey)-\(UUID().uuidString)"
-        guard Darwin.renameatx_np(
+
+        #if canImport(Darwin)
+        for _ in 0..<8 {
+            let tombstoneName =
+                ".gc-\(generationKey)-\(UUID().uuidString)"
+            if Darwin.renameatx_np(
                 preparedDescriptor,
-                generationKey,
+                name,
                 preparedDescriptor,
                 tombstoneName,
                 UInt32(RENAME_EXCL)
-              ) == 0 else {
+            ) == 0 {
+                return tombstoneName
+            }
+            let renameError = errno
+            if renameError == EEXIST {
+                continue
+            }
             throw PlayCoverBackendError.cacheTampered(
-                "cannot tombstone anchored generation: errno \(errno)"
+                "cannot tombstone anchored \(identityLabel): "
+                    + "errno \(renameError)"
             )
-        }
-        do {
-            try PlayCoverManagedAppService.removeAnchoredDirectoryTree(
-                parentDescriptor: preparedDescriptor,
-                name: tombstoneName,
-                label: "generation tombstone"
-            )
-            return nil
-        } catch {
-            return "generation \(generationKey) was quarantined as "
-                + "\(tombstoneName), but the tombstone was not removed: "
-                + "\(error)"
         }
         #else
         let directory = preparedRoot.appendingPathComponent(
-            generationKey,
+            name,
+            isDirectory: true
+        )
+        for _ in 0..<8 {
+            let tombstone = preparedRoot.appendingPathComponent(
+                ".gc-\(generationKey)-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            do {
+                try FileManager.default.moveItem(
+                    at: directory,
+                    to: tombstone
+                )
+                return tombstone.lastPathComponent
+            } catch {
+                if FileManager.default.fileExists(
+                    atPath: tombstone.path
+                ) {
+                    continue
+                }
+                throw PlayCoverBackendError.cacheTampered(
+                    "cannot tombstone anchored \(identityLabel): \(error)"
+                )
+            }
+        }
+        #endif
+        throw PlayCoverBackendError.cacheTampered(
+            "cannot allocate a unique tombstone for anchored "
+                + "\(identityLabel)"
+        )
+    }
+
+    private static func matchesAnchoredIdentity(
+        name: String,
+        identity: AnchoredIdentity,
+        preparedRoot: URL,
+        preparedDescriptor: Int32
+    ) -> Bool {
+        #if canImport(Darwin)
+        var status = stat()
+        return fstatat(
+            preparedDescriptor,
+            name,
+            &status,
+            AT_SYMLINK_NOFOLLOW
+        ) == 0
+            && status.st_mode & S_IFMT == S_IFDIR
+            && status.st_uid == geteuid()
+            && status.st_mode & 0o077 == 0
+            && UInt64(status.st_dev) == identity.device
+            && UInt64(status.st_ino) == identity.inode
+        #else
+        let directory = preparedRoot.appendingPathComponent(
+            name,
             isDirectory: true
         )
         var status = stat()
@@ -731,69 +969,72 @@ enum PlayCoverGenerationPruner {
               UInt64(status.st_ino) == identity.inode,
               canonicalCandidate
                 == preparedRoot.appendingPathComponent(
-                    generationKey,
+                    name,
                     isDirectory: true
                 ).standardizedFileURL.path,
               canonicalCandidate.hasPrefix(canonicalRoot + "/") else {
-            throw PlayCoverBackendError.cacheTampered(
-                "generation path escaped the prepared root"
-            )
+            return false
         }
-
-        let tombstone = preparedRoot.appendingPathComponent(
-            ".gc-\(generationKey)-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        try FileManager.default.moveItem(
-            at: directory,
-            to: tombstone
-        )
-        do {
-            try FileManager.default.removeItem(at: tombstone)
-            return nil
-        } catch {
-            return "generation \(generationKey) was quarantined as "
-                + "\(tombstone.lastPathComponent), but the tombstone was not "
-                + "removed: \(error)"
-        }
+        return true
         #endif
     }
 
-    private static func generationKey(
-        appPath: String,
-        paths: IOSUsePaths,
+    private static func syncPreparedDirectory(
         preparedRoot: URL,
         preparedDescriptor: Int32
-    ) -> String? {
-        guard let validated = try? PlayCoverManagedAppService
-            .validatedManagedPreparedAppPath(
-                appPath,
-                paths: paths
-            ) else {
-            return nil
-        }
-        let app = URL(
-            fileURLWithPath: validated,
-            isDirectory: true
+    ) throws {
+        #if canImport(Darwin)
+        try PlayCoverManagedAppService.syncDirectoryDescriptor(
+            preparedDescriptor,
+            label: "managed prepared root after generation tombstone"
         )
-        let generation = app.deletingLastPathComponent()
-        guard generation.deletingLastPathComponent().path
-                == preparedRoot.path,
-              app.pathExtension == "app",
-              isGenerationKey(generation.lastPathComponent) else {
-            return nil
+        #else
+        _ = preparedRoot
+        #endif
+    }
+
+    private static func retainPreparedDescriptorIfNeeded(
+        _ preparedDescriptor: Int32,
+        hasTombstones: Bool
+    ) throws -> Int32 {
+        guard hasTombstones else {
+            return -1
         }
         #if canImport(Darwin)
-        guard (try? PlayCoverManagedAppService.ownedDirectoryExists(
-            parentDescriptor: preparedDescriptor,
-            name: generation.lastPathComponent,
-            label: "protected generation"
-        )) == true else {
-            return nil
+        let retained = Darwin.fcntl(
+            preparedDescriptor,
+            F_DUPFD_CLOEXEC,
+            0
+        )
+        guard retained >= 0 else {
+            throw PlayCoverBackendError.cacheTampered(
+                "cannot retain the prepared generation directory for "
+                    + "tombstone cleanup: errno \(errno)"
+            )
         }
+        return retained
+        #else
+        return -1
         #endif
-        return generation.lastPathComponent
     }
+
+    #if canImport(Darwin)
+    private static func anchoredEntryExists(
+        name: String,
+        preparedDescriptor: Int32
+    ) -> Bool {
+        var status = stat()
+        if fstatat(
+            preparedDescriptor,
+            name,
+            &status,
+            AT_SYMLINK_NOFOLLOW
+        ) == 0 {
+            return true
+        }
+        return errno != ENOENT
+    }
+    #endif
 
     private static func readOwnedRegularFile(
         at url: URL,
@@ -857,32 +1098,39 @@ enum PlayCoverGenerationPruner {
     }
 
     private static func isGenerationKey(_ value: String) -> Bool {
-        value.count == 64 && value.allSatisfy(\.isHexDigit)
+        let bytes = value.utf8
+        return bytes.count == 64
+            && bytes.allSatisfy {
+                ($0 >= 48 && $0 <= 57)
+                    || ($0 >= 97 && $0 <= 102)
+            }
     }
 
-    private static func isTransientDirectoryName(
-        _ value: String
-    ) -> Bool {
-        for prefix in [".gc-", ".staging-"] where value.hasPrefix(prefix) {
-            let suffix = String(value.dropFirst(prefix.count))
-            guard suffix.count > 65 else {
-                continue
-            }
-            let key = String(suffix.prefix(64))
-            let separator = suffix.index(
-                suffix.startIndex,
-                offsetBy: 64
-            )
-            let identifier = String(suffix.suffix(from: suffix.index(
-                after: separator
-            )))
-            if suffix[separator] == "-",
-               isGenerationKey(key),
-               UUID(uuidString: identifier) != nil {
-                return true
-            }
+    private static func transientGenerationKey(
+        _ value: String,
+        prefix: String
+    ) -> String? {
+        guard value.hasPrefix(prefix) else {
+            return nil
         }
-        return false
+        let suffix = String(value.dropFirst(prefix.count))
+        guard suffix.count > 65 else {
+            return nil
+        }
+        let key = String(suffix.prefix(64))
+        let separator = suffix.index(
+            suffix.startIndex,
+            offsetBy: 64
+        )
+        let identifier = String(suffix.suffix(from: suffix.index(
+            after: separator
+        )))
+        if suffix[separator] == "-",
+           isGenerationKey(key),
+           UUID(uuidString: identifier) != nil {
+            return key
+        }
+        return nil
     }
 
     private static func skipped(_ reason: String) -> Result {

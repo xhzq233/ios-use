@@ -23,7 +23,7 @@ enum PlayCoverStdioLogService {
             )
         }
         let parentDescriptor = Darwin.open(
-            paths.playcover,
+            paths.playcoverRuntimeHome,
             O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
         )
         guard parentDescriptor >= 0 else {
@@ -169,7 +169,9 @@ enum PlayCoverStdioLogService {
               !path.isEmpty,
               !path.utf8.contains(0),
               let canonicalPlayCover =
-                canonicalExistingPath(paths.playcover) else {
+                canonicalExistingPath(
+                    paths.playcoverRuntimeHome
+                ) else {
             throw invalidSessionLog()
         }
         let expected =
@@ -227,7 +229,7 @@ enum PlayCoverStdioLogService {
     {
         .invalidValue(
             "Invalid driver.lock: Mac stdio log path does not "
-                + "match this session under the current IOS_USE_HOME."
+                + "match this session's Runtime namespace."
         )
     }
 }

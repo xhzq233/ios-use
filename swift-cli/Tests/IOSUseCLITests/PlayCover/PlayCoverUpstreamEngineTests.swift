@@ -621,6 +621,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 "Staging.app",
                 isDirectory: true
             ),
+            managedStagingRoot: fixture.root,
             runtimeFramework: fixture.root.appendingPathComponent(
                 "Missing.framework",
                 isDirectory: true
@@ -629,6 +630,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 "home",
                 isDirectory: true
             ),
+            runtimeSocketRoot: fixture.root,
             runtimeSocketPath: "/tmp/unused.sock",
             runtimeLoadPath: "@rpath/Unused.framework/Unused",
             codesignIdentity: "-"
@@ -676,6 +678,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "prepared/Fixture.app",
             isDirectory: true
         )
+        let socketRoot = try makeShortRuntimeSocketRoot()
+        defer { try? FileManager.default.removeItem(at: socketRoot) }
         var originalRuntimeInspections = 0
         PlayCoverUpstreamEngine.machOInspectionObserverForTesting = {
             if $0.standardizedFileURL.path
@@ -709,11 +713,13 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 PlayCoverUpstreamPrepareOptions(
                     sourceApp: fixture.app,
                     stagingApp: staging,
+                    managedStagingRoot:
+                        staging.deletingLastPathComponent(),
                     runtimeFramework: runtime,
                     managedHome: managed,
-                    runtimeSocketPath: managed.appendingPathComponent(
-                        "run/s-runtime.sock"
-                    ).path,
+                    runtimeSocketRoot: socketRoot,
+                    runtimeSocketPath: socketRoot
+                        .appendingPathComponent("s-runtime.sock").path,
                     runtimeLoadPath:
                         "@executable_path/Frameworks/"
                         + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
@@ -778,6 +784,8 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "prepared/Fixture.app",
             isDirectory: true
         )
+        let socketRoot = try makeShortRuntimeSocketRoot()
+        defer { try? FileManager.default.removeItem(at: socketRoot) }
         let evidence = try PlayCoverUpstreamEngine.runtimeEvidence(
             frameworkURL: runtime
         )
@@ -787,11 +795,15 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             PlayCoverUpstreamPrepareOptions(
                 sourceApp: fixture.app,
                 stagingApp: staging,
+                managedStagingRoot:
+                    staging.deletingLastPathComponent(),
                 runtimeFramework: runtime,
                 managedHome: managed,
-                runtimeSocketPath: managed.appendingPathComponent(
-                    "run/s-runtime.sock"
-                ).path,
+                runtimeSocketRoot: socketRoot,
+                runtimeSocketPath:
+                    socketRoot.appendingPathComponent(
+                        "s-runtime.sock"
+                    ).path,
                 runtimeLoadPath:
                     "@executable_path/Frameworks/"
                     + "IOSUsePlayRuntime.framework/IOSUsePlayRuntime",
@@ -1033,6 +1045,22 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         try Shell.signMacho(app)
         return InspectionFixture(root: root, app: app)
+    }
+
+    private func makeShortRuntimeSocketRoot() throws -> URL {
+        let root = URL(
+            fileURLWithPath: "/private/tmp",
+            isDirectory: true
+        ).appendingPathComponent(
+            "ios-use-socket-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        return root
     }
 
     private func makeCatalystRuntimeFramework(

@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import XCTest
@@ -10,6 +11,470 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         PlayCoverGenerationPruner
             .inventorySidecarReadObserverForTesting = nil
         super.tearDown()
+    }
+
+    func testRegistrySnapshotProtectsLastPendingAndActiveAcrossHomes()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        let foreignPaths = fixture.makeForeignHomePaths()
+        let activeKey = String(repeating: "a", count: 64)
+        let localLastKey = String(repeating: "b", count: 64)
+        let pendingKey = String(repeating: "c", count: 64)
+        let activeSession = UUID().uuidString
+        let pendingSession = UUID().uuidString
+
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: activeKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: activeSession,
+            generationKey: activeKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.markActive(
+            sessionID: activeSession,
+            generationKey: activeKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.clearPending(
+            sessionID: activeSession,
+            generationKey: activeKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: localLastKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: pendingKey,
+            paths: foreignPaths
+        )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: pendingSession,
+            generationKey: pendingKey,
+            paths: foreignPaths
+        )
+
+        var protected = Set<String>()
+        try PlayCoverGlobalReferenceStore
+            .withLockedProtectedGenerationKeys(
+                paths: fixture.paths
+            ) { keys, _ in
+                protected = keys
+            }
+
+        XCTAssertEqual(
+            protected,
+            Set([activeKey, localLastKey, pendingKey])
+        )
+    }
+
+    func testRegistryRejectsReplacingDifferentActivePin() throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        let activeKey = String(repeating: "a", count: 64)
+        let nextKey = String(repeating: "b", count: 64)
+        let activeSession = UUID().uuidString
+
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: activeKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: activeSession,
+            generationKey: activeKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.markActive(
+            sessionID: activeSession,
+            generationKey: activeKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.clearPending(
+            sessionID: activeSession,
+            generationKey: activeKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: nextKey,
+            paths: fixture.paths
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore.setPending(
+                sessionID: UUID().uuidString,
+                generationKey: nextKey,
+                paths: fixture.paths
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore.markActive(
+                sessionID: UUID().uuidString,
+                generationKey: nextKey,
+                paths: fixture.paths
+            )
+        )
+        let reference = try XCTUnwrap(
+            PlayCoverGlobalReferenceStore.read(paths: fixture.paths)
+        )
+        XCTAssertEqual(
+            reference.active?.sessionID,
+            activeSession
+        )
+        XCTAssertEqual(
+            reference.active?.generationKey,
+            activeKey
+        )
+        XCTAssertNil(reference.pending)
+        XCTAssertEqual(reference.lastGenerationKey, nextKey)
+    }
+
+    func testRegistryFailsClosedWhenForeignReferenceDisappears()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        let foreignPaths = fixture.makeForeignHomePaths()
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: String(repeating: "a", count: 64),
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: String(repeating: "b", count: 64),
+            paths: foreignPaths
+        )
+        let foreignReference = URL(
+            fileURLWithPath: foreignPaths.playcoverGlobalHomes,
+            isDirectory: true
+        ).appendingPathComponent(
+            "\(foreignPaths.playcoverHomeID).json"
+        )
+        try FileManager.default.removeItem(at: foreignReference)
+
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore
+                .withLockedProtectedGenerationKeys(
+                    paths: fixture.paths
+                ) { _, _ in }
+        )
+    }
+
+    func testStalePreparationCleanupRequiresCompleteRegistry()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        let foreignPaths = fixture.makeForeignHomePaths()
+        let localKey = String(repeating: "a", count: 64)
+        let preparationID =
+            try PlayCoverGlobalReferenceStore.beginPreparation(
+                generationKey: localKey,
+                paths: fixture.paths
+            )
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: String(repeating: "b", count: 64),
+            paths: foreignPaths
+        )
+        let foreignReference = URL(
+            fileURLWithPath: foreignPaths.playcoverGlobalHomes,
+            isDirectory: true
+        ).appendingPathComponent(
+            "\(foreignPaths.playcoverHomeID).json"
+        )
+        try FileManager.default.removeItem(at: foreignReference)
+
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore
+                .clearStalePreparationBeforeStart(
+                    paths: fixture.paths
+                )
+        )
+        let localReference = try JSONDecoder().decode(
+            PlayCoverGlobalReferenceStore.HomeReference.self,
+            from: Data(contentsOf: fixture.homeReferenceURL)
+        )
+        XCTAssertEqual(
+            localReference.preparingGenerationKey,
+            localKey
+        )
+        XCTAssertEqual(
+            localReference.preparationID,
+            preparationID
+        )
+    }
+
+    func testRegistryFailsClosedWhenHomesDirectoryDisappears()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: String(repeating: "a", count: 64),
+            paths: fixture.paths
+        )
+        try FileManager.default.removeItem(
+            atPath: fixture.paths.playcoverGlobalHomes
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore
+                .withLockedProtectedGenerationKeys(
+                    paths: fixture.paths
+                ) { _, _ in }
+        )
+    }
+
+    func testLayoutFailsClosedWhenOnlyNonemptyObjectsSurvive()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        let objects = URL(
+            fileURLWithPath: fixture.paths.playcoverGlobalObjects,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: objects,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try Data("surviving-generation".utf8).write(
+            to: objects.appendingPathComponent("sentinel")
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore
+                .withLockedProtectedGenerationKeys(
+                    paths: fixture.paths
+                ) { _, _ in }
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: fixture.paths.playcoverGlobalHomes
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: fixture.paths.playcoverGlobalLocks
+            )
+        )
+    }
+
+    func testLayoutFailsClosedWithoutRecreatingMissingLocks()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: String(repeating: "a", count: 64),
+            paths: fixture.paths
+        )
+        try FileManager.default.removeItem(
+            atPath: fixture.paths.playcoverGlobalLocks
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore
+                .withLockedProtectedGenerationKeys(
+                    paths: fixture.paths
+                ) { _, _ in }
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: fixture.paths.playcoverGlobalLocks
+            )
+        )
+    }
+
+    func testMissingRegistryFailsClosedWhenPreparedObjectsExist()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        _ = try PlayCoverManagedAppService.secureManagedDirectories(
+            paths: fixture.paths
+        )
+        let object = URL(
+            fileURLWithPath: fixture.paths.playcoverGlobalObjects,
+            isDirectory: true
+        ).appendingPathComponent(
+            String(repeating: "a", count: 64),
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: object,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore
+                .withLockedProtectedGenerationKeys(
+                    paths: fixture.paths
+                ) { _, _ in }
+        )
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore.updateLast(
+                generationKey: String(repeating: "b", count: 64),
+                paths: fixture.paths
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: URL(
+                    fileURLWithPath:
+                        fixture.paths.playcoverGlobalLocks,
+                    isDirectory: true
+                ).appendingPathComponent("registry-v1.json").path
+            )
+        )
+    }
+
+    func testConflictingPendingAndActiveReferenceFailsClosed()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        let firstKey = String(repeating: "a", count: 64)
+        let secondKey = String(repeating: "b", count: 64)
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: firstKey,
+            paths: fixture.paths
+        )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: UUID().uuidString,
+            generationKey: firstKey,
+            paths: fixture.paths
+        )
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: fixture.homeReferenceURL)
+            ) as? [String: Any]
+        )
+        object["active"] = [
+            "sessionID": UUID().uuidString,
+            "generationKey": secondKey,
+        ]
+        try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        ).write(to: fixture.homeReferenceURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.homeReferenceURL.path
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverGlobalReferenceStore
+                .withLockedProtectedGenerationKeys(
+                    paths: fixture.paths
+                ) { _, _ in }
+        )
+    }
+
+    func testRegistryRemovesValidatedCrashTemporaryBeforeSnapshot()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        let key = String(repeating: "a", count: 64)
+        try fixture.writeReference(generationKey: key)
+        let temporary = URL(
+            fileURLWithPath: fixture.paths.playcoverGlobalHomes,
+            isDirectory: true
+        ).appendingPathComponent(
+            ".home-\(UUID().uuidString).tmp",
+            isDirectory: false
+        )
+        try Data("interrupted-write".utf8).write(
+            to: temporary,
+            options: .withoutOverwriting
+        )
+        XCTAssertEqual(chmod(temporary.path, 0o600), 0)
+
+        var protected = Set<String>()
+        try PlayCoverGlobalReferenceStore
+            .withLockedProtectedGenerationKeys(
+                paths: fixture.paths
+            ) { keys, _ in
+                protected = keys
+            }
+
+        XCTAssertEqual(protected, Set([key]))
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: temporary.path)
+        )
+    }
+
+    func testNextStartClearsCrashedPreparationPinAndGCRemovesStaging()
+        throws {
+        let fixture = try CacheMaintenanceFixture(
+            createPlayCoverRun: false
+        )
+        defer { fixture.remove() }
+        let crashedKey = String(repeating: "c", count: 64)
+        _ = try PlayCoverGlobalReferenceStore.beginPreparation(
+            generationKey: crashedKey,
+            paths: fixture.paths
+        )
+        let staging = URL(
+            fileURLWithPath: fixture.paths.playcoverGlobalObjects,
+            isDirectory: true
+        ).appendingPathComponent(
+            ".staging-\(crashedKey)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: staging,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try Data("partial".utf8).write(
+            to: staging.appendingPathComponent("partial")
+        )
+        XCTAssertEqual(
+            try PlayCoverGlobalReferenceStore.read(
+                paths: fixture.paths
+            )?.preparingGenerationKey,
+            crashedKey
+        )
+
+        try SessionOperationLock.withExclusiveLock(
+            paths: fixture.paths
+        ) {
+            try PlayCoverPendingLaunchCoordinator
+                .recoverBeforeStart(paths: fixture.paths)
+        }
+
+        XCTAssertNil(
+            try PlayCoverGlobalReferenceStore.read(
+                paths: fixture.paths
+            )?.preparingGenerationKey
+        )
+        let result =
+            PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
+                paths: fixture.paths,
+                currentGenerationKey:
+                    String(repeating: "d", count: 64)
+            )
+        XCTAssertTrue(result.warnings.isEmpty, "\(result.warnings)")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: staging.path)
+        )
     }
 
     func testOperationLockSerializesAnotherProcess() throws {
@@ -159,6 +624,29 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
                 paths: fixture.paths
             ) {}
         )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: external.appendingPathComponent(
+                    "operation.lock"
+                ).path
+            )
+        )
+        try FileManager.default.removeItem(
+            atPath: fixture.paths.playcover
+        )
+        let globalCache = URL(
+            fileURLWithPath: fixture.paths.playcoverGlobalCache,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: globalCache.deletingLastPathComponent(),
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createSymbolicLink(
+            at: globalCache,
+            withDestinationURL: external
+        )
         let pruning =
             PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
                 paths: fixture.paths,
@@ -169,13 +657,6 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         XCTAssertEqual(pruning.warnings.count, 1)
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: sentinel.path)
-        )
-        XCTAssertFalse(
-            FileManager.default.fileExists(
-                atPath: external.appendingPathComponent(
-                    "operation.lock"
-                ).path
-            )
         )
     }
 
@@ -201,7 +682,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         ]
         for name in transientNames {
             let directory = URL(
-                fileURLWithPath: fixture.paths.playcoverPrepared,
+                fileURLWithPath: fixture.paths.playcoverGlobalObjects,
                 isDirectory: true
             ).appendingPathComponent(name, isDirectory: true)
             try FileManager.default.createDirectory(
@@ -234,7 +715,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
             XCTAssertFalse(
                 FileManager.default.fileExists(
                     atPath: URL(
-                        fileURLWithPath: fixture.paths.playcoverPrepared,
+                        fileURLWithPath: fixture.paths.playcoverGlobalObjects,
                         isDirectory: true
                     ).appendingPathComponent(name).path
                 )
@@ -253,7 +734,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
                 key: key,
                 completedAt:
                     "2026-06-\(String(format: "%02d", index + 1))T00:00:00Z",
-                completedSchemaVersion: index == 0 ? 2 : 4
+                completedSchemaVersion: index == 0 ? 2 : 5
             )
         }
         try fixture.writeReference(generationKey: keys[1])
@@ -504,7 +985,16 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         }
         try fixture.writeReference(generationKey: keys[6])
         try fixture.writeDriverLock(generationKey: keys[5])
-        try fixture.writePendingIntent(generationKey: keys[0])
+        let foreignPaths = fixture.makeForeignHomePaths()
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: keys[0],
+            paths: foreignPaths
+        )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: UUID().uuidString,
+            generationKey: keys[0],
+            paths: foreignPaths
+        )
 
         let result =
             PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
@@ -518,7 +1008,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         XCTAssertFalse(fixture.generationExists(keys[1]))
     }
 
-    func testPruneFailsClosedForInvalidOwnerOnlyPendingLaunch()
+    func testPruneFailsClosedForInvalidOwnerOnlyGlobalHomeReference()
         throws
     {
         let fixture = try CacheMaintenanceFixture()
@@ -535,13 +1025,13 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         }
         try fixture.writeReference(generationKey: keys[6])
         try fixture.writeDriverLock(generationKey: keys[5])
-        try fixture.writeInvalidOwnerOnlyPendingLaunch(
+        try fixture.writeInvalidOwnerOnlyHomeReference(
             generationKey: keys[0]
         )
         let transientName =
             ".staging-\(keys[0])-\(UUID().uuidString)"
         let transient = URL(
-            fileURLWithPath: fixture.paths.playcoverPrepared,
+            fileURLWithPath: fixture.paths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent(transientName, isDirectory: true)
         try FileManager.default.createDirectory(
@@ -559,16 +1049,16 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         XCTAssertTrue(result.removedGenerationKeys.isEmpty)
         XCTAssertEqual(result.warnings.count, 1)
         XCTAssertTrue(
-            result.warnings[0].contains(
+            result.warnings.first?.contains(
                 "prepared cache could not be safely pruned"
-            )
+            ) == true
         )
         for key in keys {
             XCTAssertTrue(fixture.generationExists(key))
         }
         XCTAssertTrue(
             FileManager.default.fileExists(atPath: transient.path),
-            "invalid pending launch must skip transaction residue cleanup"
+            "invalid global Home ref must skip transaction residue cleanup"
         )
     }
 
@@ -590,7 +1080,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         let largeManifestKey = keys[3]
         try fixture.writeSidecarJSON(
             [
-                "schemaVersion": 4,
+                "schemaVersion": 5,
                 "backend": "mac",
                 "generationKey": largeManifestKey,
                 "completedAt": "2026-07-04T00:00:00Z",
@@ -638,13 +1128,14 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
                 completedAt: "2026-06-\(String(format: "%02d", index + 1))T00:00:00Z"
             )
         }
-        try Data("not-json".utf8).write(
-            to: URL(
-                fileURLWithPath:
-                    fixture.paths.playcoverLastPrepared
-            )
-        )
         try fixture.writeDriverLock(generationKey: keys[4])
+        try Data("not-json".utf8).write(
+            to: fixture.homeReferenceURL
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fixture.homeReferenceURL.path
+        )
 
         let result =
             PlayCoverGenerationPruner.pruneAfterSuccessfulStart(
@@ -712,7 +1203,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
         try fixture.writeSidecarJSON(
             [
                 "schemaVersion": 5,
-                "generationKey": corruptKeys[5],
+                "generationKey": protectedKeys[0],
             ],
             named: PlayCoverService.completedFilename,
             generationKey: corruptKeys[5]
@@ -978,7 +1469,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
             attributes: [.posixPermissions: 0o700]
         )
         let prepared = URL(
-            fileURLWithPath: fixture.paths.playcoverPrepared,
+            fileURLWithPath: fixture.paths.playcoverGlobalObjects,
             isDirectory: true
         )
         let externalGeneration = external.appendingPathComponent(
@@ -1087,7 +1578,7 @@ private struct CacheMaintenanceFixture {
                 "/tmp/iu-cache-\(UUID().uuidString.prefix(8))",
             isDirectory: true
         )
-        paths = IOSUsePaths.resolve(
+        paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": root.path]
         )
         try FileManager.default.createDirectory(
@@ -1108,8 +1599,24 @@ private struct CacheMaintenanceFixture {
     func createGeneration(
         key: String,
         completedAt: String,
-        completedSchemaVersion: Int = 4
+        completedSchemaVersion: Int = 5
     ) throws {
+        _ = try PlayCoverManagedAppService.secureManagedDirectories(
+            paths: paths
+        )
+        let registry = URL(
+            fileURLWithPath: paths.playcoverGlobalLocks,
+            isDirectory: true
+        ).appendingPathComponent("registry-v1.json")
+        if !FileManager.default.fileExists(atPath: registry.path) {
+            // These tests materialize completed generations below the
+            // service boundary. Establish the durable registry first, as
+            // production beginPreparation does before staging any object.
+            try PlayCoverGlobalReferenceStore.updateLast(
+                generationKey: String(repeating: "0", count: 64),
+                paths: paths
+            )
+        }
         let directory = generationDirectory(key)
         try FileManager.default.createDirectory(
             at: appURL(key),
@@ -1119,19 +1626,25 @@ private struct CacheMaintenanceFixture {
         _ = chmod(directory.path, 0o700)
         _ = chmod(appURL(key).path, 0o755)
         let manifest: [String: Any] = [
-            "schemaVersion": 4,
+            "schemaVersion": 5,
             "backend": "mac",
             "generationKey": key,
             "completedAt": completedAt,
         ]
+        let manifestData = try JSONSerialization.data(
+            withJSONObject: manifest,
+            options: [.sortedKeys]
+        )
         let completed: [String: Any] = [
             "schemaVersion": completedSchemaVersion,
             "generationKey": key,
+            "manifestSHA256": SHA256.hash(data: manifestData)
+                .map { String(format: "%02x", $0) }
+                .joined(),
+            "executableSHA256": String(repeating: "e", count: 64),
+            "runtimeSHA256": String(repeating: "f", count: 64),
         ]
-        try JSONSerialization.data(
-            withJSONObject: manifest,
-            options: [.sortedKeys]
-        ).write(
+        try manifestData.write(
             to: directory.appendingPathComponent(
                 PlayCoverService.manifestFilename
             )
@@ -1147,27 +1660,34 @@ private struct CacheMaintenanceFixture {
     }
 
     func writeReference(generationKey: String) throws {
-        try FileManager.default.createDirectory(
-            atPath: paths.playcover,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
+        try PlayCoverGlobalReferenceStore.updateLast(
+            generationKey: generationKey,
+            paths: paths
         )
-        let reference: [String: Any] = [
-            "schemaVersion": 3,
-            "appPath": appURL(generationKey).path,
-            "bundleIdentifier": "com.example.fixture",
-            "executablePath":
-                appURL(generationKey)
-                    .appendingPathComponent("Fixture").path,
-            "generationKey": generationKey,
-        ]
-        try JSONSerialization.data(
-            withJSONObject: reference,
-            options: [.sortedKeys]
-        ).write(
-            to: URL(
-                fileURLWithPath: paths.playcoverLastPrepared
-            )
+    }
+
+    var homeReferenceURL: URL {
+        URL(
+            fileURLWithPath: paths.playcoverGlobalHomes,
+            isDirectory: true
+        ).appendingPathComponent(
+            "\(paths.playcoverHomeID).json",
+            isDirectory: false
+        )
+    }
+
+    func makeForeignHomePaths() -> IOSUsePaths {
+        let accountHome = root.appendingPathComponent(
+            ".account-global-test",
+            isDirectory: true
+        )
+        let foreignHome = root.appendingPathComponent(
+            "foreign-ios-use-home",
+            isDirectory: true
+        )
+        return resolvePlayCoverTestPaths(
+            environment: ["IOS_USE_HOME": foreignHome.path],
+            accountHomeDirectory: accountHome.path
         )
     }
 
@@ -1195,6 +1715,21 @@ private struct CacheMaintenanceFixture {
             ),
             paths: paths
         )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: sessionID,
+            generationKey: generationKey,
+            paths: paths
+        )
+        try PlayCoverGlobalReferenceStore.markActive(
+            sessionID: sessionID,
+            generationKey: generationKey,
+            paths: paths
+        )
+        try PlayCoverGlobalReferenceStore.clearPending(
+            sessionID: sessionID,
+            generationKey: generationKey,
+            paths: paths
+        )
     }
 
     func writePendingIntent(generationKey: String) throws {
@@ -1218,30 +1753,34 @@ private struct CacheMaintenanceFixture {
             ),
             paths: paths
         )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: sessionID,
+            generationKey: generationKey,
+            paths: paths
+        )
     }
 
-    func writeInvalidOwnerOnlyPendingLaunch(
+    func writeInvalidOwnerOnlyHomeReference(
         generationKey: String
     ) throws {
-        try writePendingIntent(generationKey: generationKey)
-        let journal = URL(
-            fileURLWithPath: paths.playcoverPendingLaunch
-        )
+        let reference = homeReferenceURL
         var object = try XCTUnwrap(
             try JSONSerialization.jsonObject(
-                with: Data(contentsOf: journal)
+                with: Data(contentsOf: reference)
             ) as? [String: Any]
         )
-        object["phase"] = "owned"
-        object["owner"] = [
-            "pid": 42,
-            "processBirthMicroseconds": 84,
-            "source": "workspaceCallback",
+        object["pending"] = [
+            "sessionID": "../hostile-session",
+            "generationKey": generationKey,
         ]
         try JSONSerialization.data(
             withJSONObject: object,
             options: [.sortedKeys]
-        ).write(to: journal)
+        ).write(to: reference)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: reference.path
+        )
     }
 
     func generationExists(_ key: String) -> Bool {
@@ -1298,7 +1837,7 @@ private struct CacheMaintenanceFixture {
         completedAt: String
     ) throws -> PlayCoverFastVerifiedGenerationToken {
         let completed = PlayCoverCompletedGeneration(
-            schemaVersion: 4,
+            schemaVersion: 5,
             generationKey: generationKey,
             manifestSHA256: String(repeating: "d", count: 64),
             executableSHA256: String(repeating: "e", count: 64),
@@ -1374,7 +1913,7 @@ private struct CacheMaintenanceFixture {
 
     func generationDirectory(_ key: String) -> URL {
         URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent(key, isDirectory: true)
     }

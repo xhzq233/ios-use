@@ -3,7 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
+RELEASE_WORKFLOW="$ROOT_DIR/.github/workflows/release.yml"
 BACKEND_GATE="$ROOT_DIR/scripts/test_playcover_backend.sh"
+GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
+PENDING_GATE="$ROOT_DIR/scripts/test_playcover_pending_launch_crash_live.sh"
+STRESS_GATE="$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"
+ENTITLEMENT_GATE="$ROOT_DIR/scripts/test_playcover_entitlement_capabilities.sh"
+INSTALLED_GATE="$ROOT_DIR/scripts/test_playcover_installed_layout.sh"
 FIXTURE_DIAGNOSTIC="$ROOT_DIR/scripts/test_playcover_fixture_live.sh"
 EXTERNAL_DIAGNOSTIC="$ROOT_DIR/scripts/test_playcover_external_app_live.sh"
 TEST_TEMP="$(mktemp -d "/tmp/ios-use-live-workflow-contract.XXXXXX")"
@@ -58,6 +64,27 @@ require_absent_fixed() {
   fi
 }
 
+validate_disposable_secret_bindings() {
+  local file="$1"
+  local expected_count="$2"
+  local variable
+  for variable in \
+    IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK \
+    IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME; do
+    require_line_count \
+      "$file" \
+      "          $variable: \${{ secrets.$variable }}" \
+      "$expected_count" \
+      "$variable secret binding" ||
+      return 1
+    require_absent_fixed \
+      "$file" \
+      "vars.$variable" \
+      "$variable repository-variable binding" ||
+      return 1
+  done
+}
+
 validate_workflow() {
   local file="$1"
 
@@ -77,12 +104,14 @@ validate_workflow() {
     '      IOS_USE_PLAYCOVER_LIVE_RUN_DIR: ${{ runner.temp }}/ios-use-playcover-live-run-${{ github.run_id }}' \
     "the runner-temporary core live log directory" ||
     return 1
+  validate_disposable_secret_bindings "$file" 2 ||
+    return 1
   if [[ "$(
     count_pattern \
       "$file" \
       '^[[:space:]]*IOS_USE_PLAYCOVER_LIVE_[A-Z_]+:'
   )" != "1" ]]; then
-    fail_contract "the core live workflow must define only its run-log directory"
+    fail_contract "the core live workflow must define exactly one run-log directory"
     return 1
   fi
 
@@ -156,6 +185,62 @@ validate_workflow() {
     "run-metadata.txt" \
     "the removed operator evidence metadata" ||
     return 1
+}
+
+validate_release_workflow() {
+  local file="$1"
+  validate_disposable_secret_bindings "$file" 1 ||
+    return 1
+  require_exact_line \
+    "$file" \
+    '        run: bash scripts/test_playcover_installed_layout.sh --release-dir release' \
+    "the release installed-layout execution" ||
+    return 1
+}
+
+validate_global_state_guard() {
+  local file="$1"
+  require_exact_line \
+    "$file" \
+    '    "${IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK:-}" != "I_UNDERSTAND_THIS_ACCOUNT_IS_DISPOSABLE"' \
+    "the explicit disposable-account acknowledgement" ||
+    return 1
+  local variable
+  for variable in \
+    IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK \
+    IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME; do
+    if ! grep -Fq "\${$variable:-}" "$file"; then
+      fail_contract "$variable is not enforced by the global-state guard"
+      return 1
+    fi
+  done
+  require_absent_fixed \
+    "$file" \
+    "must equal:" \
+    "an exact private account-global root in guard diagnostics" ||
+    return 1
+}
+
+validate_guarded_script() {
+  local file="$1"
+  if [[ "$(
+    count_pattern \
+      "$file" \
+      '^[[:space:]]*source "\$GLOBAL_STATE_GUARD"$'
+  )" != "1" ]]; then
+    fail_contract \
+      "the global-state guard source in $(basename "$file") must appear exactly once"
+    return 1
+  fi
+  if [[ "$(
+    count_pattern \
+      "$file" \
+      '^[[:space:]]*playcover_require_disposable_account_contract'
+  )" != "1" ]]; then
+    fail_contract \
+      "$(basename "$file") must enforce the disposable-account contract exactly once"
+    return 1
+  fi
 }
 
 validate_backend_gate() {
@@ -247,7 +332,19 @@ expect_backend_rejected() {
 }
 
 validate_workflow "$WORKFLOW"
+validate_release_workflow "$RELEASE_WORKFLOW"
+validate_global_state_guard "$GLOBAL_STATE_GUARD"
 validate_backend_gate "$BACKEND_GATE"
+for guarded_script in \
+  "$BACKEND_GATE" \
+  "$PENDING_GATE" \
+  "$STRESS_GATE" \
+  "$FIXTURE_DIAGNOSTIC" \
+  "$EXTERNAL_DIAGNOSTIC" \
+  "$ENTITLEMENT_GATE" \
+  "$INSTALLED_GATE"; do
+  validate_guarded_script "$guarded_script"
+done
 for optional_diagnostic in \
   "$FIXTURE_DIAGNOSTIC" \
   "$EXTERNAL_DIAGNOSTIC"; do
@@ -307,6 +404,22 @@ expect_workflow_rejected \
   "$external_attestation" \
   "a restored external-App attestation dependency"
 
+repository_vars="$TEST_TEMP/repository-vars.yml"
+sed \
+  's/secrets\.IOS_USE_PLAYCOVER_/vars.IOS_USE_PLAYCOVER_/g' \
+  "$WORKFLOW" >"$repository_vars"
+expect_workflow_rejected \
+  "$repository_vars" \
+  "public repository variables for private account-global paths"
+
+missing_disposable_secret="$TEST_TEMP/missing-disposable-secret.yml"
+sed \
+  '/IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME:/d' \
+  "$WORKFLOW" >"$missing_disposable_secret"
+expect_workflow_rejected \
+  "$missing_disposable_secret" \
+  "a PlayCover workflow without the complete disposable-account contract"
+
 missing_stress_gate="$TEST_TEMP/missing-stress-gate.sh"
 sed \
   's|bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"|true # Runtime stress removed|' \
@@ -334,4 +447,4 @@ expect_backend_rejected \
   "the optional external-App display diagnostic in the core aggregate"
 
 echo \
-  "[playcover-live-workflow-contract] core two-script live aggregate, provisioned runner binding, and run.log-only artifact negative cases PASS"
+  "[playcover-live-workflow-contract] core live aggregate, two-secret disposable-account contract, provisioned runner, and run.log-only artifact negative cases PASS"

@@ -3356,7 +3356,7 @@ final class IOSUseCLITests: XCTestCase {
         let sessionID = "media-session"
         let generationKey = "generation"
         let appPath =
-            "\(paths.playcoverPrepared)/\(generationKey)/Media.app"
+            "\(paths.playcoverGlobalObjects)/\(generationKey)/Media.app"
         try FileManager.default.createDirectory(
             atPath: appPath,
             withIntermediateDirectories: true

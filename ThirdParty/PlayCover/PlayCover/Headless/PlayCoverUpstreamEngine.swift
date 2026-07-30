@@ -555,8 +555,10 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
     public let sourceApp: URL
     public let stagingApp: URL
     public let managedStagingApp: URL?
+    public let managedStagingRoot: URL
     public let runtimeFramework: URL
     public let managedHome: URL
+    public let runtimeSocketRoot: URL
     public let runtimeSocketPath: String
     public let runtimeLoadPath: String
     public let playSignActive: Bool
@@ -568,8 +570,10 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         sourceApp: URL,
         stagingApp: URL,
         managedStagingApp: URL? = nil,
+        managedStagingRoot: URL,
         runtimeFramework: URL,
         managedHome: URL,
+        runtimeSocketRoot: URL,
         runtimeSocketPath: String,
         runtimeLoadPath: String,
         playSignActive: Bool = false,
@@ -580,8 +584,10 @@ public struct PlayCoverUpstreamPrepareOptions: Sendable {
         self.sourceApp = sourceApp
         self.stagingApp = stagingApp
         self.managedStagingApp = managedStagingApp
+        self.managedStagingRoot = managedStagingRoot
         self.runtimeFramework = runtimeFramework
         self.managedHome = managedHome
+        self.runtimeSocketRoot = runtimeSocketRoot
         self.runtimeSocketPath = runtimeSocketPath
         self.runtimeLoadPath = runtimeLoadPath
         self.playSignActive = playSignActive
@@ -766,7 +772,7 @@ public enum PlayCoverUpstreamEngine {
                   format: nil
               ) as? [String: Any],
               let bundleIdentifier = info["CFBundleIdentifier"] as? String,
-              !bundleIdentifier.isEmpty,
+              isSafeBundleIdentifier(bundleIdentifier),
               let executableName = info["CFBundleExecutable"] as? String,
               !executableName.isEmpty else {
             throw PlayCoverUpstreamError.invalidApp(
@@ -1050,16 +1056,6 @@ public enum PlayCoverUpstreamEngine {
                     )
                 }
             }
-            do {
-                try Shell.signMacho(
-                    target,
-                    identity: options.codesignIdentity
-                )
-            } catch {
-                throw PlayCoverUpstreamError.signingFailed(
-                    "\(relative): \(error)"
-                )
-            }
         }
         let mainExecutable = options.stagingApp
             .appendingPathComponent(source.mainExecutableRelativePath)
@@ -1224,18 +1220,30 @@ public enum PlayCoverUpstreamEngine {
                 try? FileManager.default.removeItem(at: options.stagingApp)
             }
         }
-        let managedMacBackend = options.managedHome
-            .appendingPathComponent("mac", isDirectory: true)
-        try PlayTools.configureManagedContainer(managedMacBackend)
-        _ = KeyCover.playChainPath
-        let composition = try composeEntitlements(
-            appURL: options.stagingApp,
-            originalPlist:
-                substrate.sourceBefore.signature.entitlementsPlist,
-            runtimeSocketPath: options.runtimeSocketPath,
-            managedHome: options.managedHome,
-            playSignActive: options.playSignActive
-        )
+        let supportContainer = options.stagingApp
+            .deletingLastPathComponent()
+            .appendingPathComponent(
+                ".playcover-support-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer {
+            try? FileManager.default.removeItem(
+                at: supportContainer
+            )
+        }
+        let composition = try PlayTools.withManagedContainer(
+            supportContainer
+        ) {
+            try composeEntitlements(
+                appURL: options.stagingApp,
+                originalPlist:
+                    substrate.sourceBefore.signature
+                        .entitlementsPlist,
+                runtimeSocketPath: options.runtimeSocketPath,
+                managedHome: options.managedHome,
+                playSignActive: options.playSignActive
+            )
+        }
         preparePhaseObserverForTesting?(
             .entitlementsComposed,
             options.stagingApp
@@ -3966,6 +3974,12 @@ public enum PlayCoverUpstreamEngine {
     ) throws -> EntitlementComposition {
         let original = try entitlementDictionary(originalPlist)
         let app = BaseApp(appUrl: appURL)
+        guard isSafeBundleIdentifier(app.info.bundleIdentifier) else {
+            throw PlayCoverUpstreamError.entitlementFailed(
+                "bundle identifier cannot form a managed entitlement "
+                    + "filename"
+            )
+        }
         if let originalPlist {
             try originalPlist.write(to: app.entitlements, options: .atomic)
         }
@@ -3987,7 +4001,8 @@ public enum PlayCoverUpstreamEngine {
 
         // Keep pinned composition semantics: source entitlements are overlaid
         // only when PlaySign is active. The local patch below extends only the
-        // sandbox profile needed by the injected Runtime.
+        // fixed account-scoped Runtime roots. Logical IOS_USE_HOME paths never
+        // enter the final signature.
         var final = baseline
         var finalSandbox =
             final["com.apple.security.temporary-exception.sbpl"] as? [String]
@@ -4008,8 +4023,8 @@ public enum PlayCoverUpstreamEngine {
         )
         // The App Sandbox classifies AF_UNIX bind separately from the vnode
         // creation above.  Keep this exception scoped to the owner-only
-        // per-IOS_USE_HOME run directory; the session socket filename is
-        // generated later and cannot be embedded in the prepared signature.
+        // account/UID socket directory; each socket filename binds homeID and
+        // sessionID and is generated at launch.
         finalSandbox.append(
             "(allow network-bind "
                 + "(subpath \""
@@ -4019,17 +4034,9 @@ public enum PlayCoverUpstreamEngine {
             let managed = canonicalizingExistingPrefix(
                 managedHome.standardizedFileURL.path
             )
-            let logs = (managed as NSString)
-                .appendingPathComponent("mac/logs")
-            let playchain = (managed as NSString)
-                .appendingPathComponent("mac/playchain")
             finalSandbox.append(
                 "(allow file-read* file-write* file-read-metadata "
-                    + "(subpath \"\(sandboxEscape(logs))\"))"
-            )
-            finalSandbox.append(
-                "(allow file-read* file-write* file-read-metadata "
-                    + "(subpath \"\(sandboxEscape(playchain))\"))"
+                    + "(subpath \"\(sandboxEscape(managed))\"))"
             )
         }
         final["com.apple.security.temporary-exception.sbpl"] = finalSandbox
@@ -4539,6 +4546,22 @@ public enum PlayCoverUpstreamEngine {
         )
     }
 
+    private static func isSafeBundleIdentifier(
+        _ value: String
+    ) -> Bool {
+        let bytes = value.utf8
+        return !bytes.isEmpty
+            && bytes.count <= 200
+            && bytes.allSatisfy {
+                ($0 >= 48 && $0 <= 57)
+                    || ($0 >= 65 && $0 <= 90)
+                    || ($0 >= 97 && $0 <= 122)
+                    || $0 == 45
+                    || $0 == 46
+                    || $0 == 95
+            }
+    }
+
     private static func codeSignatureIsValid(_ url: URL) -> Bool {
         codeSignatureObserverForTesting?(.strictVerify, url)
         return (try? Shell.run(
@@ -4576,10 +4599,11 @@ public enum PlayCoverUpstreamEngine {
     ) throws {
         let sourcePath = URL(fileURLWithPath: source.appPath)
             .standardizedFileURL.path
-        let home = options.managedHome.standardizedFileURL.path
         let managedStaging =
             options.managedStagingApp ?? options.stagingApp
-        let staging = managedStaging.standardizedFileURL.path
+        let staging = lexicallyStandardizedFileURL(
+            managedStaging
+        ).path
         guard options.stagingApp.pathExtension == "app",
               managedStaging.pathExtension == "app",
               options.stagingApp.lastPathComponent
@@ -4588,12 +4612,25 @@ public enum PlayCoverUpstreamEngine {
                 "staging output identity must use one matching .app name"
             )
         }
-        try requireNoSymlinkComponents(
+        try requireTrustedAnchoredComponents(
             options.managedHome,
-            label: "managed IOS_USE_HOME",
+            label: "managed Runtime root",
             allowMissingLeaf: false
         )
-        try requireNoSymlinkComponents(
+        try requireOwnerOnlyDirectory(
+            options.managedHome,
+            label: "managed Runtime root"
+        )
+        try requireTrustedAnchoredComponents(
+            options.managedStagingRoot,
+            label: "managed staging root",
+            allowMissingLeaf: false
+        )
+        try requireOwnerOnlyDirectory(
+            options.managedStagingRoot,
+            label: "managed staging root"
+        )
+        try requireTrustedAnchoredComponents(
             managedStaging.deletingLastPathComponent(),
             label: "staging parent",
             allowMissingLeaf: false
@@ -4611,16 +4648,39 @@ public enum PlayCoverUpstreamEngine {
                 "staging output must be outside the source App"
             )
         }
-        guard staging.hasPrefix(home + "/") else {
+        let stagingRoot = lexicallyStandardizedFileURL(
+            options.managedStagingRoot
+        ).path
+        guard staging.hasPrefix(stagingRoot + "/") else {
             throw PlayCoverUpstreamError.invalidApp(
-                "staging output must be under managed IOS_USE_HOME: \(home)"
+                "staging output must be below the explicit managed "
+                    + "staging root"
             )
         }
-        let socket = URL(fileURLWithPath: options.runtimeSocketPath)
-            .standardizedFileURL.path
-        guard socket.hasPrefix(home + "/") else {
+        try requireTrustedAnchoredComponents(
+            options.runtimeSocketRoot,
+            label: "Runtime socket root",
+            allowMissingLeaf: false
+        )
+        try requireOwnerOnlyDirectory(
+            options.runtimeSocketRoot,
+            label: "Runtime socket root"
+        )
+        let socket = lexicallyStandardizedFileURL(
+            URL(fileURLWithPath: options.runtimeSocketPath)
+        ).path
+        let socketRoot = lexicallyStandardizedFileURL(
+            options.runtimeSocketRoot
+        ).path
+        guard socket.hasPrefix("/"),
+              socket.utf8.count <= 103,
+              lexicallyStandardizedFileURL(
+                  URL(fileURLWithPath: socket)
+                      .deletingLastPathComponent()
+              ).path == socketRoot else {
             throw PlayCoverUpstreamError.invalidApp(
-                "Runtime socket must be under managed IOS_USE_HOME"
+                "Runtime socket template must be one absolute bounded "
+                    + "child of the explicit socket root"
             )
         }
         guard !options.runtimeLoadPath.isEmpty,
@@ -4925,7 +4985,8 @@ public enum PlayCoverUpstreamEngine {
         allowMissingLeaf: Bool
     ) throws {
         var value = stat()
-        if lstat(url.standardizedFileURL.path, &value) != 0 {
+        let lexical = lexicallyStandardizedFileURL(url)
+        if lstat(lexical.path, &value) != 0 {
             if errno == ENOENT, allowMissingLeaf { return }
             throw PlayCoverUpstreamError.invalidApp(
                 "\(label) is missing: \(url.path)"
@@ -4936,6 +4997,81 @@ public enum PlayCoverUpstreamEngine {
                 "\(label) is a symbolic link: \(url.path)"
             )
         }
+    }
+
+    private static func requireTrustedAnchoredComponents(
+        _ url: URL,
+        label: String,
+        allowMissingLeaf: Bool
+    ) throws {
+        let components = lexicallyStandardizedFileURL(url)
+            .pathComponents
+        var current = URL(fileURLWithPath: "/", isDirectory: true)
+        for (offset, component) in components.dropFirst().enumerated() {
+            current.appendPathComponent(component)
+            var value = stat()
+            if lstat(current.path, &value) != 0 {
+                let isLeaf = offset == components.count - 2
+                if errno == ENOENT, allowMissingLeaf, isLeaf {
+                    return
+                }
+                throw PlayCoverUpstreamError.invalidApp(
+                    "\(label) is missing: \(current.path)"
+                )
+            }
+            if value.st_mode & S_IFMT == S_IFLNK {
+                // macOS exposes trusted root-owned aliases such as
+                // `/var -> private/var` and `/tmp -> private/tmp`.
+                // They are outside the caller's control and resolve before
+                // the owner-only managed leaf. User-owned path aliases remain
+                // rejected so a logical Home cannot redirect preparation.
+                guard value.st_uid == 0 else {
+                    throw PlayCoverUpstreamError.invalidApp(
+                        "\(label) contains a user-owned symbolic link: "
+                            + current.path
+                    )
+                }
+            }
+        }
+    }
+
+    private static func requireOwnerOnlyDirectory(
+        _ url: URL,
+        label: String
+    ) throws {
+        var value = stat()
+        let lexical = lexicallyStandardizedFileURL(url)
+        guard lstat(lexical.path, &value) == 0,
+              value.st_mode & S_IFMT == S_IFDIR,
+              value.st_uid == geteuid(),
+              value.st_mode & 0o077 == 0 else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "\(label) must be an owner-only directory"
+            )
+        }
+    }
+
+    private static func lexicallyStandardizedFileURL(
+        _ url: URL
+    ) -> URL {
+        var components: [Substring] = []
+        for component in url.path.split(separator: "/") {
+            if component == "." {
+                continue
+            }
+            if component == ".." {
+                if !components.isEmpty {
+                    components.removeLast()
+                }
+                continue
+            }
+            components.append(component)
+        }
+        return URL(
+            fileURLWithPath:
+                "/" + components.joined(separator: "/"),
+            isDirectory: true
+        )
     }
 
     private static func rejectRuntimeDuplicate(

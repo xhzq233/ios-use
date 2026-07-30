@@ -18,6 +18,7 @@ struct PlayCoverGenerationIdentity: Equatable, Sendable {
     let sourceContentHash: String
     let runtimeBuildHash: String
     let prepareRevision: String
+    let accountNamespacePolicyHash: String
     let signerPublicKeySPKISHA256: String
     let signerCertificateSHA256: String
     let signingPolicyRevision: String
@@ -27,6 +28,7 @@ struct PlayCoverGenerationIdentity: Equatable, Sendable {
         sourceContentHash: String,
         runtimeBuildHash: String,
         prepareRevision: String,
+        accountNamespacePolicyHash: String,
         signerPublicKeySPKISHA256: String,
         signerCertificateSHA256: String,
         signingPolicyRevision: String,
@@ -35,6 +37,8 @@ struct PlayCoverGenerationIdentity: Equatable, Sendable {
         self.sourceContentHash = sourceContentHash
         self.runtimeBuildHash = runtimeBuildHash
         self.prepareRevision = prepareRevision
+        self.accountNamespacePolicyHash =
+            accountNamespacePolicyHash
         self.signerPublicKeySPKISHA256 =
             signerPublicKeySPKISHA256
         self.signerCertificateSHA256 =
@@ -48,6 +52,8 @@ struct PlayCoverGenerationIdentity: Equatable, Sendable {
             sourceContentHash: manifest.sourceContentHash,
             runtimeBuildHash: manifest.runtimeBuildHash,
             prepareRevision: manifest.prepareRevision,
+            accountNamespacePolicyHash:
+                manifest.accountNamespacePolicyHash,
             signerPublicKeySPKISHA256:
                 manifest.signingIdentity.publicKeySPKISHA256,
             signerCertificateSHA256:
@@ -62,6 +68,8 @@ struct PlayCoverGenerationIdentity: Equatable, Sendable {
         sourceContentHash == manifest.sourceContentHash
             && runtimeBuildHash == manifest.runtimeBuildHash
             && prepareRevision == manifest.prepareRevision
+            && accountNamespacePolicyHash
+                == manifest.accountNamespacePolicyHash
             && signerPublicKeySPKISHA256
                 == manifest.signingIdentity.publicKeySPKISHA256
             && signerCertificateSHA256
@@ -143,17 +151,19 @@ public enum PlayCoverService {
 
     public static let manifestFilename = "manifest.json"
     static let completedFilename = "completed.json"
-    static let generationManifestMaximumBytes = 64 * 1_024 * 1_024
+    static let generationManifestMaximumBytes = 8 * 1_024 * 1_024
     static let completedMarkerMaximumBytes = 1_048_576
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v16+playcover-"
+        "ios-use-headless-v17+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
         + "+rules-"
         + PlayCoverUpstreamEngine.defaultRulesRevision
+    static let accountNamespacePolicyRevision =
+        "account-runtime-namespace-v1"
 
     static var failedLaunchTerminatorOverrideForTesting:
         ((
@@ -238,6 +248,7 @@ public enum PlayCoverService {
     static func makePreparationPlan(
         source: PlayCoverPreparationSource,
         runtimeFrameworkPath: String,
+        paths: IOSUsePaths,
         signingIdentity suppliedSigningIdentity:
             PlayCoverSigningIdentityEvidence? = nil,
         generationKeyOverride: ((
@@ -255,6 +266,8 @@ public enum PlayCoverService {
         )
         let runtimeHash = runtimeEvidence.buildHash
         let revision = prepareImplementationRevision
+        let namespacePolicyHash =
+            accountNamespacePolicyHash(paths: paths)
         let signingIdentity = try suppliedSigningIdentity
             ?? resolveSigningIdentity(initializeIfMissing: false)
         let generationKey: String
@@ -269,6 +282,8 @@ public enum PlayCoverService {
                 sourceContentHash: source.inspection.sourceContentHash,
                 runtimeBuildHash: runtimeHash,
                 prepareRevision: revision,
+                accountNamespacePolicyHash:
+                    namespacePolicyHash,
                 signerPublicKeySPKISHA256:
                     signingIdentity.publicKeySPKISHA256,
                 signerCertificateSHA256:
@@ -286,6 +301,8 @@ public enum PlayCoverService {
                 sourceContentHash: source.inspection.sourceContentHash,
                 runtimeBuildHash: runtimeHash,
                 prepareRevision: revision,
+                accountNamespacePolicyHash:
+                    namespacePolicyHash,
                 signerPublicKeySPKISHA256:
                     signingIdentity.publicKeySPKISHA256,
                 signerCertificateSHA256:
@@ -312,7 +329,8 @@ public enum PlayCoverService {
             source: inspectPreparationSource(
                 appPath: sourceAppPath
             ),
-            runtimeFrameworkPath: runtimeFrameworkPath
+            runtimeFrameworkPath: runtimeFrameworkPath,
+            paths: paths
         )
         if let expectedGenerationKey,
            expectedGenerationKey != plan.generationKey {
@@ -347,23 +365,22 @@ public enum PlayCoverService {
         outputAppPath: String,
         stagingIOAppPath: String? = nil,
         paths: IOSUsePaths,
-        publishedAppPath: String? = nil,
-        sharedSubstratePaths: PlayCoverSharedCachePaths? = nil
+        publishedAppPath: String? = nil
     ) throws -> PlayCoverPreparedArtifact {
         try validatePreparationPlan(plan)
         let source = plan.source.inspection
-        let stagingIdentityURL = URL(
-            fileURLWithPath: outputAppPath,
+        let stagingIdentityURL = lexicallyStandardizedFileURL(
+            outputAppPath,
             isDirectory: true
-        ).standardizedFileURL
-        let stagingURL = URL(
-            fileURLWithPath: stagingIOAppPath ?? outputAppPath,
+        )
+        let stagingURL = lexicallyStandardizedFileURL(
+            stagingIOAppPath ?? outputAppPath,
             isDirectory: true
-        ).standardizedFileURL
-        let publishedURL = URL(
-            fileURLWithPath: publishedAppPath ?? outputAppPath,
+        )
+        let publishedURL = lexicallyStandardizedFileURL(
+            publishedAppPath ?? outputAppPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         try requireManagedPath(
             stagingIdentityURL,
             paths: paths,
@@ -385,14 +402,14 @@ public enum PlayCoverService {
             fileURLWithPath: plan.runtimeFrameworkPath,
             isDirectory: true
         ).standardizedFileURL
-        let canonicalManagedHome = URL(
-            fileURLWithPath: paths.root,
+        let canonicalManagedHome = lexicallyStandardizedFileURL(
+            paths.playcoverRuntimeRoot,
             isDirectory: true
-        ).resolvingSymlinksInPath()
-        let sandboxSocket = canonicalManagedHome
-            .appendingPathComponent(
-                "mac/run/s-runtime.sock"
-            ).path
+        )
+        let sandboxSocket = URL(
+            fileURLWithPath: paths.playcoverSocketRoot,
+            isDirectory: true
+        ).appendingPathComponent("s-runtime.sock").path
         let upstreamOptions = PlayCoverUpstreamPrepareOptions(
             sourceApp: URL(
                 fileURLWithPath: source.appPath,
@@ -400,8 +417,16 @@ public enum PlayCoverService {
             ),
             stagingApp: stagingURL,
             managedStagingApp: stagingIdentityURL,
+            managedStagingRoot: URL(
+                fileURLWithPath: paths.playcoverGlobalObjects,
+                isDirectory: true
+            ),
             runtimeFramework: runtimeURL,
             managedHome: canonicalManagedHome,
+            runtimeSocketRoot: URL(
+                fileURLWithPath: paths.playcoverSocketRoot,
+                isDirectory: true
+            ),
             runtimeSocketPath: sandboxSocket,
             runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
             codesignIdentity:
@@ -416,15 +441,6 @@ public enum PlayCoverService {
                     upstreamOptions,
                     plan.source.upstreamInspection
                 )
-            } else if let sharedSubstratePaths {
-                upstream = try withSuppressedUpstreamStandardOutput {
-                    try prepareUsingSharedSubstrateCache(
-                        plan: plan,
-                        options: upstreamOptions,
-                        paths: paths,
-                        sharedPaths: sharedSubstratePaths
-                    )
-                }
             } else {
                 upstream = try withSuppressedUpstreamStandardOutput {
                     try PlayCoverUpstreamEngine.prepare(
@@ -457,9 +473,6 @@ public enum PlayCoverService {
                 "cannot inspect stable root signature: \(error)"
             )
         }
-        try requireUnchangedSigningIdentityAfterPreparation(
-            plan.signingIdentity
-        )
         guard rootCodeSignature.certificateSHA256
                 == plan.signingIdentity.certificateSHA256,
               rootCodeSignature.signingIdentifier
@@ -468,6 +481,9 @@ public enum PlayCoverService {
               upstream.prepared.signature.isValid,
               upstream.prepared.signature.identifier
                 == rootCodeSignature.signingIdentifier,
+              let rootEntitlementsSHA256 =
+                upstream.prepared.signature.entitlementsSHA256,
+              isSHA256(rootEntitlementsSHA256),
               let inspectedCDHash = normalizedCDHash(
                   rootCodeSignature.cdHash
               ),
@@ -480,8 +496,22 @@ public enum PlayCoverService {
                     + "stable identity or final prepared inspection"
             )
         }
+        let mainExecutableRelativePath =
+            upstream.prepared.mainExecutableRelativePath
+        let runtimeExecutableRelativePath =
+            "Frameworks/\(runtimeFrameworkName)/"
+                + runtimeExecutableName
+        let criticalPaths: Set<String> = [
+            "Info.plist",
+            mainExecutableRelativePath,
+            runtimeExecutableRelativePath,
+        ]
+        let codeObjects = prepared.inventory.filter {
+            $0.codeObjectKind != nil
+                || criticalPaths.contains($0.relativePath)
+        }
         let manifest = PlayCoverPrepareManifest(
-            sourceAppPath: source.appPath,
+            sourceAppPath: "",
             preparedAppPath: publishedURL.path,
             bundleIdentifier: prepared.bundleIdentifier,
             executableName: prepared.executableName,
@@ -490,21 +520,41 @@ public enum PlayCoverService {
             sourceHashAfterPreparation: upstream.sourceHashAfterPrepare,
             runtimeBuildHash: plan.runtimeBuildHash,
             prepareRevision: plan.prepareRevision,
+            accountNamespacePolicyHash:
+                plan.generationIdentity
+                    .accountNamespacePolicyHash,
             generationKey: plan.generationKey,
             signingIdentity: plan.signingIdentity,
             rootCodeSignature: rootCodeSignature,
             runtimeLoadPath: PlayCoverMachO.runtimeLoadPath,
             runtimeFrameworkName: runtimeFrameworkName,
-            convertedMachOs: upstream.convertedMachOs,
+            convertedMachOs: [],
             signingOrder: upstream.signingOrder,
-            sourceInventory: source.inventory,
-            sourceMachOs: source.machOs,
-            inventory: prepared.inventory,
-            machOs: prepared.machOs,
-            entitlementDiff: PlayCoverEntitlementDiff(
-                upstream.entitlementDiff
-            ),
-            completedAt: ISO8601DateFormatter().string(from: Date())
+            sourceInventory: [],
+            sourceMachOs: [],
+            inventory: codeObjects,
+            machOs: [],
+            // Differential evidence remains available on `upstreamResult`.
+            // The immutable compact seal persists no path-bearing diff.
+            entitlementDiff: .empty,
+            completedAt: ISO8601DateFormatter().string(from: Date()),
+            appBundleName: publishedURL.lastPathComponent,
+            mainExecutableRelativePath:
+                mainExecutableRelativePath,
+            runtimeExecutableRelativePath:
+                runtimeExecutableRelativePath,
+            infoPlistSHA256: prepared.infoPlistSHA256,
+            mainExecutableSHA256:
+                prepared.mainExecutable.fileSHA256,
+            runtimeExecutableSHA256:
+                prepared.machOs.first(where: {
+                    $0.relativePath
+                        == "Frameworks/\(runtimeFrameworkName)/"
+                            + runtimeExecutableName
+                })?.fileSHA256,
+            rootEntitlementsSHA256:
+                rootEntitlementsSHA256,
+            codeObjects: codeObjects
         )
         try writeGenerationSidecars(
             manifest: manifest,
@@ -514,201 +564,6 @@ public enum PlayCoverService {
             manifest: manifest,
             upstreamResult: upstream
         )
-    }
-
-    private static func prepareUsingSharedSubstrateCache(
-        plan: PlayCoverPreparationPlan,
-        options: PlayCoverUpstreamPrepareOptions,
-        paths: IOSUsePaths,
-        sharedPaths: PlayCoverSharedCachePaths
-    ) throws -> PlayCoverUpstreamPrepareResult {
-        let source = plan.source.upstreamInspection
-        let convertedMachOs = source.machOs.compactMap {
-            $0.platform == PlayCoverUpstreamEngine.platformMacCatalyst
-                ? nil
-                : $0.relativePath
-        }.sorted()
-        let binding = PlayCoverSharedSubstrateCache.Binding(
-            generationKey: plan.generationKey,
-            sourceContentSHA256: plan.generationIdentity.sourceContentHash,
-            runtimeBuildSHA256: plan.runtimeBuildHash,
-            preparationRevision: plan.prepareRevision,
-            signerPublicKeySPKISHA256:
-                plan.signingIdentity.publicKeySPKISHA256.lowercased(),
-            signerCertificateSHA256:
-                plan.signingIdentity.certificateSHA256.lowercased(),
-            signingPolicyRevision:
-                plan.signingIdentity.policy.revision,
-            bundleIdentifier: source.bundleIdentifier,
-            appBundleName: options.stagingApp.lastPathComponent,
-            mainExecutableRelativePath:
-                source.mainExecutableRelativePath,
-            convertedMachORelativePaths: convertedMachOs
-        )
-        let evidence = PlayCoverUpstreamSubstrateEvidence(
-            sourceContentHash: plan.generationIdentity.sourceContentHash,
-            runtimeBuildHash: plan.runtimeBuildHash,
-            embeddedRuntimeFrameworkRelativePath:
-                "Frameworks/\(runtimeFrameworkName)",
-            runtimeLoadPath: PlayCoverMachO.runtimeLoadPath
-        )
-        let lookupStarted = CFAbsoluteTimeGetCurrent()
-
-        do {
-            let substrate = try PlayCoverSharedSubstrateCache.withLockedKey(
-                paths: sharedPaths,
-                generationKey: plan.generationKey
-            ) { locked in
-                let lookup = try locked.lookup(
-                    expected: binding
-                ) { app, manifest in
-                    let observed = try PlayCoverUpstreamEngine.contentHash(
-                        appURL: app
-                    )
-                    guard observed == manifest.substrateTreeSHA256 else {
-                        throw PlayCoverBackendError.cacheTampered(
-                            "shared substrate content hash changed"
-                        )
-                    }
-                }
-                switch lookup {
-                case .hit(let entry):
-                    logSharedSubstrateCache(
-                        paths: paths,
-                        generationKey: plan.generationKey,
-                        result: "hit",
-                        startedAt: lookupStarted
-                    )
-                    var materialized:
-                        PlayCoverUpstreamValidatedSubstrate?
-                    try locked.materialize(
-                        entry,
-                        toFreshTarget: options.stagingApp
-                    ) { target, _ in
-                        materialized =
-                            try PlayCoverUpstreamEngine.validateSubstrate(
-                                appURL: target,
-                                evidence: evidence,
-                                sourceInspection: source,
-                                options: options
-                            )
-                    }
-                    guard let materialized else {
-                        throw PlayCoverBackendError.prepareFailed(
-                            "shared substrate materialization produced no "
-                                + "validated target"
-                        )
-                    }
-                    return materialized
-
-                case .miss:
-                    logSharedSubstrateCache(
-                        paths: paths,
-                        generationKey: plan.generationKey,
-                        result: "miss",
-                        startedAt: lookupStarted
-                    )
-                    let substrate =
-                        try PlayCoverUpstreamEngine.prepareSubstrate(
-                            options,
-                            sourceInspection: source
-                        )
-                    let publishStarted = CFAbsoluteTimeGetCurrent()
-                    do {
-                        let treeHash =
-                            try PlayCoverUpstreamEngine.contentHash(
-                                appURL: substrate.appURL
-                            )
-                        let manifest =
-                            PlayCoverSharedSubstrateCache.Manifest(
-                                binding: binding,
-                                substrateTreeSHA256: treeHash
-                            )
-                        _ = try locked.publish(
-                            manifest: manifest,
-                            populate: { target in
-                                try PlayCoverSharedSubstrateCache
-                                    .cloneOrCopy(
-                                        from: substrate.appURL,
-                                        toFreshTarget: target
-                                    )
-                            },
-                            validator: { app, published in
-                                let observed =
-                                    try PlayCoverUpstreamEngine.contentHash(
-                                        appURL: app
-                                    )
-                                guard observed
-                                        == published
-                                            .substrateTreeSHA256 else {
-                                    throw PlayCoverBackendError.cacheTampered(
-                                        "shared substrate publish winner "
-                                            + "changed"
-                                    )
-                                }
-                            }
-                        )
-                        logSharedSubstrateCache(
-                            paths: paths,
-                            generationKey: plan.generationKey,
-                            result: "published",
-                            startedAt: publishStarted
-                        )
-                    } catch {
-                        logSharedSubstrateCache(
-                            paths: paths,
-                            generationKey: plan.generationKey,
-                            result: "publish-fallback",
-                            startedAt: publishStarted,
-                            detail: String(describing: error)
-                        )
-                    }
-                    return substrate
-                }
-            }
-            return try PlayCoverUpstreamEngine.finalizeSubstrate(
-                substrate,
-                options: options
-            )
-        } catch let error as PlayCoverSharedSubstrateCacheError {
-            logSharedSubstrateCache(
-                paths: paths,
-                generationKey: plan.generationKey,
-                result: "unavailable-cold-fallback",
-                startedAt: lookupStarted,
-                detail: String(describing: error)
-            )
-            return try PlayCoverUpstreamEngine.prepare(
-                options,
-                sourceInspection: source
-            )
-        }
-    }
-
-    private static func logSharedSubstrateCache(
-        paths: IOSUsePaths,
-        generationKey: String,
-        result: String,
-        startedAt: CFAbsoluteTime,
-        detail: String? = nil
-    ) {
-        let elapsed = max(
-            0,
-            (CFAbsoluteTimeGetCurrent() - startedAt) * 1_000
-        )
-        var line = String(
-            format:
-                "[mac-cache] shared-substrate result=%@ "
-                + "generation=%@ elapsed_ms=%.1f",
-            locale: Locale(identifier: "en_US_POSIX"),
-            result,
-            String(generationKey.prefix(12)),
-            elapsed
-        )
-        if let detail, !detail.isEmpty {
-            line += " detail=\(detail)"
-        }
-        CLILogService.append(paths: paths, [line])
     }
 
     private static func withSuppressedUpstreamStandardOutput<T>(
@@ -794,6 +649,10 @@ public enum PlayCoverService {
               upstreamSourceHash == sourceHash,
               sourcePath == upstreamSourcePath,
               isSHA256(plan.runtimeBuildHash),
+              isSHA256(
+                  plan.generationIdentity
+                      .accountNamespacePolicyHash
+              ),
               runtimeEvidence.frameworkPath == runtimePath,
               runtimeEvidence.buildHash == plan.runtimeBuildHash,
               runtimeEvidence.mainExecutableRelativePath
@@ -812,6 +671,9 @@ public enum PlayCoverService {
                 sourceContentHash: sourceHash,
                 runtimeBuildHash: plan.runtimeBuildHash,
                 prepareRevision: plan.prepareRevision,
+                accountNamespacePolicyHash:
+                    plan.generationIdentity
+                        .accountNamespacePolicyHash,
                 signerPublicKeySPKISHA256:
                     plan.signingIdentity.publicKeySPKISHA256,
                 signerCertificateSHA256:
@@ -830,14 +692,15 @@ public enum PlayCoverService {
     public static func verify(
         appPath: String
     ) throws -> PlayCoverVerification {
-        let app = URL(
-            fileURLWithPath: appPath,
+        let app = lexicallyStandardizedFileURL(
+            appPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         let validated = try fastVerifiedManifest(
             app: app,
             suppliedManifest: nil,
-            expectedGenerationIdentity: nil
+            expectedGenerationIdentity: nil,
+            expectedSigningIdentity: nil
         )
         let manifest = validated.manifest
         let upstream: PlayCoverUpstreamAppInspection
@@ -850,23 +713,35 @@ public enum PlayCoverService {
             throw PlayCoverMachO.map(error)
         }
         let prepared = PlayCoverAppInspection(upstream)
-        guard let manifestMain = manifest.machOs.first(where: {
+        let runtimeMachOs = prepared.machOs.filter {
             $0.relativePath
-                == prepared.mainExecutableRelativePath
-        }) else {
-            throw PlayCoverBackendError.verificationFailed(
-                "manifest is missing its main executable"
-            )
+                == manifest.runtimeExecutableRelativePath
+        }
+        let criticalPaths: Set<String> = [
+            "Info.plist",
+            manifest.mainExecutableRelativePath,
+            manifest.runtimeExecutableRelativePath,
+        ]
+        let observedCodeObjects = prepared.inventory.filter {
+            $0.codeObjectKind != nil
+                || criticalPaths.contains($0.relativePath)
         }
         guard prepared.bundleIdentifier == manifest.bundleIdentifier,
               prepared.executableName == manifest.executableName,
+              prepared.mainExecutableRelativePath
+                == manifest.mainExecutableRelativePath,
               prepared.mainExecutable.fileSHA256
-                == manifestMain.fileSHA256,
-              prepared.inventory == manifest.inventory,
-              prepared.machOs == manifest.machOs else {
+                == manifest.mainExecutableSHA256,
+              prepared.infoPlistSHA256 == manifest.infoPlistSHA256,
+              runtimeMachOs.count == 1,
+              runtimeMachOs.first?.fileSHA256
+                == manifest.runtimeExecutableSHA256,
+              upstream.signature.entitlementsSHA256
+                == manifest.rootEntitlementsSHA256,
+              observedCodeObjects == manifest.codeObjects else {
             throw PlayCoverBackendError.verificationFailed(
-                "prepared App inventory/Mach-O/entitlement seals no longer "
-                    + "match its manifest"
+                "prepared App code-object/signature seals no longer "
+                    + "match its compact manifest"
             )
         }
         try verifyRecordedCodeObjects(
@@ -897,16 +772,19 @@ public enum PlayCoverService {
 
     static func fastVerifyEvidence(
         appPath: String,
-        expectedGenerationIdentity: PlayCoverGenerationIdentity?
+        expectedGenerationIdentity: PlayCoverGenerationIdentity?,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence? = nil
     ) throws -> PlayCoverValidatedPreparedManifest {
-        let app = URL(
-            fileURLWithPath: appPath,
+        let app = lexicallyStandardizedFileURL(
+            appPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         return try fastVerifiedManifest(
             app: app,
             suppliedManifest: nil,
-            expectedGenerationIdentity: expectedGenerationIdentity
+            expectedGenerationIdentity: expectedGenerationIdentity,
+            expectedSigningIdentity: expectedSigningIdentity
         )
     }
 
@@ -928,10 +806,10 @@ public enum PlayCoverService {
         expectedGenerationIdentity:
             PlayCoverGenerationIdentity? = nil
     ) throws -> PlayCoverValidatedPreparedManifest {
-        let app = URL(
-            fileURLWithPath: appPath,
+        let app = lexicallyStandardizedFileURL(
+            appPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         let manifest = try readManifest(for: app).value
         let generationIdentity = try validateManifest(
             manifest,
@@ -966,26 +844,30 @@ public enum PlayCoverService {
         appPath: String,
         manifest suppliedManifest: PlayCoverPrepareManifest? = nil
     ) throws {
-        let app = URL(
-            fileURLWithPath: appPath,
+        let app = lexicallyStandardizedFileURL(
+            appPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         _ = try fastVerifiedManifest(
             app: app,
             suppliedManifest: suppliedManifest,
-            expectedGenerationIdentity: nil
+            expectedGenerationIdentity: nil,
+            expectedSigningIdentity: nil
         )
     }
 
     private static func fastVerifiedManifest(
         app: URL,
         suppliedManifest: PlayCoverPrepareManifest?,
-        expectedGenerationIdentity: PlayCoverGenerationIdentity?
+        expectedGenerationIdentity: PlayCoverGenerationIdentity?,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence?
     ) throws -> PlayCoverValidatedPreparedManifest {
         try withFastVerifiedManifestDescriptors(
             app: app,
             suppliedManifest: suppliedManifest,
             expectedGenerationIdentity: expectedGenerationIdentity,
+            expectedSigningIdentity: expectedSigningIdentity,
             captureLaunchEntries: false
         ) { evidence, _, _, _, _, _ in
             evidence
@@ -996,6 +878,8 @@ public enum PlayCoverService {
         app: URL,
         suppliedManifest: PlayCoverPrepareManifest?,
         expectedGenerationIdentity: PlayCoverGenerationIdentity?,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence?,
         captureLaunchEntries: Bool,
         body: (
             PlayCoverValidatedPreparedManifest,
@@ -1016,7 +900,9 @@ public enum PlayCoverService {
                 filename: manifestFilename,
                 maximumBytes: generationManifestMaximumBytes
             )
-            let manifest = manifestEvidence.value
+            let manifest = manifestEvidence.value.resolving(
+                appURL: app
+            )
             let generationIdentity = try validateManifest(
                 manifest,
                 appURL: app,
@@ -1024,7 +910,9 @@ public enum PlayCoverService {
                     expectedGenerationIdentity
             )
             if let suppliedManifest,
-               suppliedManifest != manifest {
+               try !suppliedManifest.hasSamePersistedSeal(
+                   as: manifest
+               ) {
                 throw PlayCoverBackendError.cacheTampered(
                     "supplied manifest does not match generation metadata"
                 )
@@ -1036,7 +924,7 @@ public enum PlayCoverService {
                 filename: completedFilename,
                 maximumBytes: completedMarkerMaximumBytes
             ).value
-            guard marker.schemaVersion == 4,
+            guard marker.schemaVersion == 5,
                   marker.generationKey == manifest.generationKey else {
                 throw PlayCoverBackendError.cacheTampered(
                     "completed marker identity does not match the manifest"
@@ -1049,13 +937,9 @@ public enum PlayCoverService {
                 )
             }
             let executable = URL(fileURLWithPath: manifest.executablePath)
-            let runtime = app
-                .appendingPathComponent("Frameworks", isDirectory: true)
-                .appendingPathComponent(
-                    runtimeFrameworkName,
-                    isDirectory: true
-                )
-                .appendingPathComponent(runtimeExecutableName)
+            let runtime = app.appendingPathComponent(
+                manifest.runtimeExecutableRelativePath
+            )
             let executableRelativePath = try recordedRelativePath(
                 executable,
                 in: app
@@ -1080,6 +964,8 @@ public enum PlayCoverService {
                     borrowedAppDescriptor: appDescriptor,
                     manifest: manifest,
                     fast: true,
+                    expectedSigningIdentity:
+                        expectedSigningIdentity,
                     requiredHashes: [
                         executableRelativePath,
                         runtimeRelativePath,
@@ -1132,6 +1018,8 @@ public enum PlayCoverService {
     static func withFastVerifiedLaunchCapability<T>(
         appPath: String,
         expectedGenerationIdentity: PlayCoverGenerationIdentity?,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence? = nil,
         body: (
             PlayCoverValidatedPreparedManifest,
             FastVerifiedLaunchCapability
@@ -1139,7 +1027,8 @@ public enum PlayCoverService {
     ) throws -> T {
         let acquired = try acquireFastVerifiedLaunchCapability(
             appPath: appPath,
-            expectedGenerationIdentity: expectedGenerationIdentity
+            expectedGenerationIdentity: expectedGenerationIdentity,
+            expectedSigningIdentity: expectedSigningIdentity
         )
         defer { acquired.capability.close() }
         return try body(acquired.evidence, acquired.capability)
@@ -1147,20 +1036,23 @@ public enum PlayCoverService {
 
     static func acquireFastVerifiedLaunchCapability(
         appPath: String,
-        expectedGenerationIdentity: PlayCoverGenerationIdentity?
+        expectedGenerationIdentity: PlayCoverGenerationIdentity?,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence? = nil
     ) throws -> (
         evidence: PlayCoverValidatedPreparedManifest,
         currentGenerationToken: PlayCoverFastVerifiedGenerationToken,
         capability: FastVerifiedLaunchCapability
     ) {
-        let app = URL(
-            fileURLWithPath: appPath,
+        let app = lexicallyStandardizedFileURL(
+            appPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         let acquired = try withFastVerifiedManifestDescriptors(
             app: app,
             suppliedManifest: nil,
             expectedGenerationIdentity: expectedGenerationIdentity,
+            expectedSigningIdentity: expectedSigningIdentity,
             captureLaunchEntries: true
         ) {
             evidence,
@@ -1298,10 +1190,10 @@ public enum PlayCoverService {
         appPath: String,
         body: (FastVerifiedLaunchCapability) throws -> T
     ) throws -> T {
-        let app = URL(
-            fileURLWithPath: appPath,
+        let app = lexicallyStandardizedFileURL(
+            appPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         let capability = try withStableGenerationDescriptor(for: app) {
             generationDescriptor,
             generationURL in
@@ -1333,6 +1225,9 @@ public enum PlayCoverService {
         launchCapability: FastVerifiedLaunchCapability,
         sessionID: String,
         runtimeSocketPath: String,
+        runtimeHomePath: String,
+        homeID: String,
+        socketRootPath: String,
         stdioLog: PlayCoverStdioLogIdentity? = nil,
         pendingLaunchPaths: IOSUsePaths? = nil,
         timeout: Double = 15
@@ -1352,7 +1247,8 @@ public enum PlayCoverService {
         let expectedRuntimeSocketPath =
             try PlayCoverSessionService.expectedRuntimeSocketPath(
                 sessionID: sessionID,
-                manifest: manifest
+                homeID: homeID,
+                socketRootPath: socketRootPath
             )
         guard canonicalPath(runtimeSocketPath)
                 == canonicalPath(expectedRuntimeSocketPath) else {
@@ -1371,33 +1267,47 @@ public enum PlayCoverService {
                 )
             }
         }
-        if let pendingLaunchPaths {
-            _ = try PlayCoverPendingLaunchStore.createIntent(
-                PlayCoverPendingLaunchStore.Intent(
-                    sessionID: sessionID,
-                    runtimeSocketPath: runtimeSocketPath,
-                    generationKey: manifest.generationKey,
-                    appPath: manifest.preparedAppPath,
-                    bundleIdentifier: manifest.bundleIdentifier,
-                    executablePath: manifest.executablePath,
-                    aliasPath: sessionLaunchAlias(
-                        sessionID: sessionID
-                    ).bundleURL.path
-                ),
-                paths: pendingLaunchPaths
-            )
-        }
-
         var launched: LaunchedApplicationIdentity?
         var launchAlias: SessionLaunchAlias?
         var workspaceOpenSubmitted = false
         var postSubmissionIntegrityError: Error?
         var keyCoverUnlocked = false
+        var pendingIntentCreated = false
         do {
+            if let pendingLaunchPaths {
+                // The intent journal is the recovery authority and `last`
+                // already pins this generation. Publish it before the
+                // auxiliary global pending pin so every crash cut is
+                // recoverable without an unowned pin.
+                _ = try PlayCoverPendingLaunchStore.createIntent(
+                    PlayCoverPendingLaunchStore.Intent(
+                        sessionID: sessionID,
+                        runtimeSocketPath: runtimeSocketPath,
+                        generationKey: manifest.generationKey,
+                        appPath: manifest.preparedAppPath,
+                        bundleIdentifier:
+                            manifest.bundleIdentifier,
+                        executablePath: manifest.executablePath,
+                        aliasPath: sessionLaunchAlias(
+                            sessionID: sessionID
+                        ).bundleURL.path
+                    ),
+                    paths: pendingLaunchPaths
+                )
+                pendingIntentCreated = true
+                try PlayCoverGlobalReferenceStore.setPending(
+                    sessionID: sessionID,
+                    generationKey: manifest.generationKey,
+                    paths: pendingLaunchPaths
+                )
+            }
             try PlayCoverHeadlessKeyCover.unlock(
                 bundleIdentifier: manifest.bundleIdentifier,
-                managedHome: URL(
-                    fileURLWithPath: managedHomePath(for: manifest),
+                playChainDirectory: URL(
+                    fileURLWithPath: runtimeHomePath,
+                    isDirectory: true
+                ).appendingPathComponent(
+                    "playchain",
                     isDirectory: true
                 )
             )
@@ -1409,6 +1319,8 @@ public enum PlayCoverService {
                 launchCapability: launchCapability,
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
+                runtimeHomePath: runtimeHomePath,
+                homeID: homeID,
                 stdioLog: stdioLog,
                 pendingLaunchPaths: pendingLaunchPaths,
                 deadline: deadline,
@@ -1550,7 +1462,8 @@ public enum PlayCoverService {
             }
             var errorToThrow = error
             if let pendingLaunchPaths,
-               let cleanupProof {
+               let cleanupProof,
+               pendingIntentCreated {
                 do {
                     try completePendingLaunchCleanup(
                         sessionID: sessionID,
@@ -1571,7 +1484,16 @@ public enum PlayCoverService {
                       cleanupProof != nil {
                 do {
                     if keyCoverUnlocked {
-                        try lockKeyCover(for: manifest)
+                        try lockKeyCover(
+                            for: manifest,
+                            playChainPath: URL(
+                                fileURLWithPath: runtimeHomePath,
+                                isDirectory: true
+                            ).appendingPathComponent(
+                                "playchain",
+                                isDirectory: true
+                            ).path
+                        )
                     }
                     if let launchAlias {
                         try removeSessionLaunchAlias(
@@ -1674,6 +1596,7 @@ public enum PlayCoverService {
         sourceContentHash: String,
         runtimeBuildHash: String,
         prepareRevision: String,
+        accountNamespacePolicyHash: String,
         signerPublicKeySPKISHA256: String,
         signerCertificateSHA256: String,
         signingPolicyRevision: String
@@ -1683,9 +1606,26 @@ public enum PlayCoverService {
         update(&hasher, sourceContentHash)
         update(&hasher, runtimeBuildHash)
         update(&hasher, prepareRevision)
+        update(&hasher, accountNamespacePolicyHash)
         update(&hasher, signerPublicKeySPKISHA256)
         update(&hasher, signerCertificateSHA256)
         update(&hasher, signingPolicyRevision)
+        return hex(hasher.finalize())
+    }
+
+    static func accountNamespacePolicyHash(
+        paths: IOSUsePaths
+    ) -> String {
+        let runtimeRoot = canonicalizingExistingPrefix(
+            paths.playcoverRuntimeRoot
+        )
+        let socketRoot = canonicalizingExistingPrefix(
+            paths.playcoverSocketRoot
+        )
+        var hasher = SHA256()
+        update(&hasher, accountNamespacePolicyRevision)
+        update(&hasher, runtimeRoot)
+        update(&hasher, socketRoot)
         return hex(hasher.finalize())
     }
 
@@ -1702,16 +1642,12 @@ public enum PlayCoverService {
             )
     }
 
-    static func requireUnchangedSigningIdentityAfterPreparation(
-        _ expected: PlayCoverSigningIdentityEvidence
-    ) throws {
-        let observed =
-            try resolveSigningIdentity(initializeIfMissing: false)
-        guard observed == expected else {
-            throw PlayCoverBackendError.codeSigningFailed(
-                "stable signing identity changed during preparation"
-            )
-        }
+    /// Read-only start preflight. `config --mac` remains the only call site
+    /// allowed to initialize or repair the persistent signer.
+    static func requireHealthySigningIdentityForStart()
+        throws -> PlayCoverSigningIdentityEvidence
+    {
+        try resolveSigningIdentity(initializeIfMissing: false)
     }
 
     private static func inspectRootCodeSignature(
@@ -1811,11 +1747,20 @@ public enum PlayCoverService {
     private static func verifyStableRootSignature(
         appURL: URL,
         scratchRootURL: URL,
-        manifest: PlayCoverPrepareManifest
+        manifest: PlayCoverPrepareManifest,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence?
     ) throws {
-        let currentIdentity =
-            try resolveSigningIdentity(initializeIfMissing: false)
-        guard currentIdentity == manifest.signingIdentity else {
+        let selectedIdentity: PlayCoverSigningIdentityEvidence
+        if let expectedSigningIdentity {
+            selectedIdentity = expectedSigningIdentity
+        } else {
+            selectedIdentity =
+                try resolveSigningIdentity(
+                    initializeIfMissing: false
+                )
+        }
+        guard selectedIdentity == manifest.signingIdentity else {
             throw PlayCoverBackendError.cacheTampered(
                 "stable signing identity no longer matches the prepared "
                     + "generation"
@@ -1825,7 +1770,8 @@ public enum PlayCoverService {
         do {
             observed = try inspectRootCodeSignature(
                 appURL: appURL,
-                mainExecutableRelativePath: manifest.executableName,
+                mainExecutableRelativePath:
+                    manifest.mainExecutableRelativePath,
                 scratchRootURL: scratchRootURL
             )
         } catch {
@@ -1926,7 +1872,9 @@ public enum PlayCoverService {
         source: [String: String] = ProcessInfo.processInfo.environment,
         sessionID: String? = nil,
         runtimeSocketPath: String? = nil,
-        managedHomePath: String? = nil,
+        runtimeHomePath: String? = nil,
+        homeID: String? = nil,
+        generationKey: String? = nil,
         stdioLog: PlayCoverStdioLogIdentity? = nil
     ) -> [String: String] {
         let allowed = [
@@ -1945,8 +1893,17 @@ public enum PlayCoverService {
                 result[key] = value
             }
         }
-        if let managedHomePath {
-            result["HOME"] = managedHomePath
+        if let runtimeHomePath {
+            result["HOME"] = runtimeHomePath
+            result["IOS_USE_PLAY_RUNTIME_HOME"] =
+                runtimeHomePath
+        }
+        if let homeID {
+            result["IOS_USE_PLAY_HOME_ID"] = homeID
+        }
+        if let generationKey {
+            result["IOS_USE_PLAY_GENERATION_KEY"] =
+                generationKey
         }
         if let sessionID {
             result["IOS_USE_PLAY_SESSION_ID"] = sessionID
@@ -1969,7 +1926,9 @@ public enum PlayCoverService {
         source: [String: String] = ProcessInfo.processInfo.environment,
         sessionID: String,
         runtimeSocketPath: String,
-        managedHomePath: String,
+        runtimeHomePath: String,
+        homeID: String,
+        generationKey: String,
         stdioLog: PlayCoverStdioLogIdentity? = nil
     ) -> [String: String] {
         // NSWorkspace overlays OpenConfiguration.environment on the
@@ -1982,7 +1941,9 @@ public enum PlayCoverService {
                 source: source,
                 sessionID: sessionID,
                 runtimeSocketPath: runtimeSocketPath,
-                managedHomePath: managedHomePath,
+                runtimeHomePath: runtimeHomePath,
+                homeID: homeID,
+                generationKey: generationKey,
                 stdioLog: stdioLog
             )
         ) { _, allowed in allowed }
@@ -2293,57 +2254,25 @@ public enum PlayCoverService {
         completed: PlayCoverCompletedGeneration
     ) {
         let manifestData = try canonicalJSON(manifest)
-        let executableSHA256 = try finalInspectionMachOHash(
-            manifest: manifest,
-            label: "main executable"
-        ) {
-            $0.relativePath == manifest.executableName
+        guard manifestData.count <= generationManifestMaximumBytes else {
+            throw PlayCoverBackendError.verificationFailed(
+                "compact manifest exceeds the managed generation size limit"
+            )
         }
-        let runtimePrefix =
-            "Frameworks/\(manifest.runtimeFrameworkName)/"
-        let runtimeSHA256 = try finalInspectionMachOHash(
-            manifest: manifest,
-            label: "embedded Runtime executable"
-        ) {
-            $0.relativePath.hasPrefix(runtimePrefix)
-                && $0.relativePath.split(separator: "/").last
-                    == Substring(runtimeExecutableName)
+        guard isSHA256(manifest.mainExecutableSHA256),
+              isSHA256(manifest.runtimeExecutableSHA256) else {
+            throw PlayCoverBackendError.verificationFailed(
+                "compact manifest is missing critical executable seals"
+            )
         }
         let completed = PlayCoverCompletedGeneration(
-            schemaVersion: 4,
+            schemaVersion: 5,
             generationKey: manifest.generationKey,
             manifestSHA256: sha256(manifestData),
-            executableSHA256: executableSHA256,
-            runtimeSHA256: runtimeSHA256
+            executableSHA256: manifest.mainExecutableSHA256,
+            runtimeSHA256: manifest.runtimeExecutableSHA256
         )
         return (manifestData, completed)
-    }
-
-    private static func finalInspectionMachOHash(
-        manifest: PlayCoverPrepareManifest,
-        label: String,
-        matching: (PlayCoverMachOInspection) -> Bool
-    ) throws -> String {
-        let machOs = manifest.machOs.filter(matching)
-        guard machOs.count == 1,
-              let machO = machOs.first,
-              isSHA256(machO.fileSHA256) else {
-            throw PlayCoverBackendError.verificationFailed(
-                "final prepared inspection does not uniquely seal \(label)"
-            )
-        }
-        let inventory = manifest.inventory.filter {
-            $0.relativePath == machO.relativePath
-        }
-        guard inventory.count == 1,
-              let entry = inventory.first,
-              entry.kind == "regularFile",
-              entry.sha256 == machO.fileSHA256 else {
-            throw PlayCoverBackendError.verificationFailed(
-                "final prepared inventory does not seal \(label)"
-            )
-        }
-        return machO.fileSHA256
     }
 
     @discardableResult
@@ -2354,27 +2283,45 @@ public enum PlayCoverService {
             PlayCoverGenerationIdentity? = nil
     ) throws -> PlayCoverGenerationIdentity {
         manifestValidationObserverForTesting?()
-        guard manifest.schemaVersion == 4,
+        let codeObjectPaths = manifest.codeObjects.map(\.relativePath)
+        func recordedHash(_ relativePath: String) -> String? {
+            let matches = manifest.codeObjects.filter {
+                $0.relativePath == relativePath
+            }
+            guard matches.count == 1 else { return nil }
+            return matches[0].sha256
+        }
+        guard manifest.schemaVersion == 5,
               manifest.backend == "mac",
               manifest.prepareRevision == prepareImplementationRevision,
+              isSHA256(manifest.accountNamespacePolicyHash),
               manifest.sourceContentHash
                 == manifest.sourceHashAfterPreparation,
               manifest.runtimeLoadPath == PlayCoverMachO.runtimeLoadPath,
               manifest.runtimeFrameworkName == runtimeFrameworkName,
+              manifest.appBundleName == appURL.lastPathComponent,
+              manifest.appBundleName == "App.app",
               canonicalPath(manifest.preparedAppPath)
                 == canonicalPath(appURL.path),
               canonicalPath(manifest.executablePath)
                 == canonicalPath(
                   appURL.appendingPathComponent(
-                      manifest.executableName
+                      manifest.mainExecutableRelativePath
                   ).path
                 ),
-              !manifest.sourceInventory.isEmpty,
-              !manifest.sourceMachOs.isEmpty,
-              Set(manifest.sourceInventory.map(\.relativePath)).count
-                == manifest.sourceInventory.count,
-              Set(manifest.sourceMachOs.map(\.relativePath)).count
-                == manifest.sourceMachOs.count,
+              !manifest.codeObjects.isEmpty,
+              Set(codeObjectPaths).count
+                == manifest.codeObjects.count,
+              isSHA256(manifest.infoPlistSHA256),
+              isSHA256(manifest.mainExecutableSHA256),
+              isSHA256(manifest.runtimeExecutableSHA256),
+              recordedHash("Info.plist")
+                == manifest.infoPlistSHA256,
+              recordedHash(manifest.mainExecutableRelativePath)
+                == manifest.mainExecutableSHA256,
+              recordedHash(manifest.runtimeExecutableRelativePath)
+                == manifest.runtimeExecutableSHA256,
+              isSHA256(manifest.rootEntitlementsSHA256),
               isValidSigningIdentity(manifest.signingIdentity),
               isValidRootCodeSignature(
                 manifest.rootCodeSignature,
@@ -2384,6 +2331,23 @@ public enum PlayCoverService {
             throw PlayCoverBackendError.verificationFailed(
                 "manifest schema or identity is invalid"
             )
+        }
+        _ = try recordedURL(
+            app: appURL,
+            relativePath: manifest.mainExecutableRelativePath
+        )
+        _ = try recordedURL(
+            app: appURL,
+            relativePath: manifest.runtimeExecutableRelativePath
+        )
+        for entry in manifest.codeObjects {
+            _ = try recordedURL(
+                app: appURL,
+                relativePath: entry.relativePath
+            )
+        }
+        for path in manifest.signingOrder where path != "." {
+            _ = try recordedURL(app: appURL, relativePath: path)
         }
         let observedGeneration =
             PlayCoverGenerationIdentity(manifest: manifest)
@@ -2400,6 +2364,8 @@ public enum PlayCoverService {
                 sourceContentHash: manifest.sourceContentHash,
                 runtimeBuildHash: manifest.runtimeBuildHash,
                 prepareRevision: manifest.prepareRevision,
+                accountNamespacePolicyHash:
+                    manifest.accountNamespacePolicyHash,
                 signerPublicKeySPKISHA256:
                     manifest.signingIdentity.publicKeySPKISHA256,
                 signerCertificateSHA256:
@@ -2587,6 +2553,8 @@ public enum PlayCoverService {
         app: URL,
         manifest: PlayCoverPrepareManifest,
         fast: Bool,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence? = nil,
         requiredHashes: Set<String> = []
     ) throws -> RecordedCodeVerification {
         let appDescriptor = Darwin.open(
@@ -2604,6 +2572,7 @@ public enum PlayCoverService {
             borrowedAppDescriptor: appDescriptor,
             manifest: manifest,
             fast: fast,
+            expectedSigningIdentity: expectedSigningIdentity,
             requiredHashes: requiredHashes
         )
     }
@@ -2614,6 +2583,8 @@ public enum PlayCoverService {
         borrowedAppDescriptor appDescriptor: Int32,
         manifest: PlayCoverPrepareManifest,
         fast: Bool,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence? = nil,
         requiredHashes: Set<String> = []
     ) throws -> RecordedCodeVerification {
         var codePaths = Set(manifest.inventory.compactMap {
@@ -2633,7 +2604,8 @@ public enum PlayCoverService {
         let requiredIndependentPaths = Set(manifest.inventory.compactMap {
             entry -> String? in
             guard let codeObjectKind = entry.codeObjectKind,
-                  entry.relativePath != manifest.executableName else {
+                  entry.relativePath
+                    != manifest.mainExecutableRelativePath else {
                 return nil
             }
             if codeObjectKind.hasSuffix("Executable"),
@@ -2650,7 +2622,9 @@ public enum PlayCoverService {
               signaturePaths.isSubset(of: codePaths),
               requiredBundlePaths.isSubset(of: signaturePaths),
               requiredIndependentPaths.isSubset(of: signaturePaths),
-              !signaturePaths.contains(manifest.executableName) else {
+              !signaturePaths.contains(
+                manifest.mainExecutableRelativePath
+              ) else {
             throw PlayCoverBackendError.cacheTampered(
                 "manifest signing order is not a valid inside-out plan"
             )
@@ -2736,7 +2710,8 @@ public enum PlayCoverService {
                 .deletingLastPathComponent()
                 .deletingLastPathComponent()
                 .deletingLastPathComponent(),
-            manifest: manifest
+            manifest: manifest,
+            expectedSigningIdentity: expectedSigningIdentity
         )
         guard requiredHashes.isSubset(of: Set(hashes.keys)) else {
             throw PlayCoverBackendError.cacheTampered(
@@ -3206,10 +3181,14 @@ public enum PlayCoverService {
     private static func readManifest(
         for appURL: URL
     ) throws -> DecodedMetadata<PlayCoverPrepareManifest> {
-        try readJSONMetadata(
+        let decoded = try readJSONMetadata(
             PlayCoverPrepareManifest.self,
             from: manifestURL(for: appURL),
             maximumBytes: generationManifestMaximumBytes
+        )
+        return DecodedMetadata(
+            value: decoded.value.resolving(appURL: appURL),
+            rawData: decoded.rawData
         )
     }
 
@@ -3224,7 +3203,7 @@ public enum PlayCoverService {
         operation: String
     ) throws {
         let managedLexical = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).standardizedFileURL.path
         let candidateLexical = url.standardizedFileURL.path
@@ -3236,8 +3215,8 @@ public enum PlayCoverService {
         let candidate = canonicalizingExistingPrefix(candidateLexical)
         guard candidate.hasPrefix(managed + "/") else {
             throw PlayCoverBackendError.prepareFailed(
-                "\(operation) path must be below IOS_USE_HOME managed "
-                    + "prepared directory: \(managed)"
+                "\(operation) path must be below the account-global "
+                    + "managed prepared directory: \(managed)"
             )
         }
         var current = URL(fileURLWithPath: "/", isDirectory: true)
@@ -4427,11 +4406,24 @@ public enum PlayCoverService {
                 cleanupProof: proof,
                 paths: paths
             )
-        try lockKeyCover(for: manifest)
+        try lockKeyCover(
+            for: manifest,
+            playChainPath: paths.playcoverPlayChain
+        )
         try removeSessionLaunchAlias(
             pendingLaunch: confirmed,
             manifest: manifest
         )
+        try PlayCoverGlobalReferenceStore.clearPending(
+            sessionID: sessionID,
+            generationKey: manifest.generationKey,
+            paths: paths
+        )
+        #if DEBUG && canImport(Darwin)
+        PlayCoverLaunchCrashCut.hit(
+            .afterCleanupPendingPinCleared
+        )
+        #endif
         try PlayCoverPendingLaunchStore.removeConfirmed(
             sessionID: sessionID,
             paths: paths
@@ -4439,22 +4431,23 @@ public enum PlayCoverService {
     }
 
     static func lockKeyCover(
-        for manifest: PlayCoverPrepareManifest
+        for manifest: PlayCoverPrepareManifest,
+        playChainPath: String
     ) throws {
-        let managedHome = URL(
-            fileURLWithPath: managedHomePath(for: manifest),
+        let playChainDirectory = URL(
+            fileURLWithPath: playChainPath,
             isDirectory: true
         )
         if let keyCoverLockOverrideForTesting {
             try keyCoverLockOverrideForTesting(
                 manifest.bundleIdentifier,
-                managedHome
+                playChainDirectory
             )
             return
         }
         try PlayCoverHeadlessKeyCover.lock(
             bundleIdentifier: manifest.bundleIdentifier,
-            managedHome: managedHome
+            playChainDirectory: playChainDirectory
         )
     }
 
@@ -4692,10 +4685,10 @@ public enum PlayCoverService {
     private static func launchAliasEntries(
         manifest: PlayCoverPrepareManifest
     ) throws -> [LaunchAliasEntry] {
-        let app = URL(
-            fileURLWithPath: manifest.preparedAppPath,
+        let app = lexicallyStandardizedFileURL(
+            manifest.preparedAppPath,
             isDirectory: true
-        ).standardizedFileURL
+        )
         let names: [String]
         do {
             names = try FileManager.default.contentsOfDirectory(
@@ -4924,6 +4917,8 @@ public enum PlayCoverService {
         launchCapability: FastVerifiedLaunchCapability,
         sessionID: String,
         runtimeSocketPath: String,
+        runtimeHomePath: String,
+        homeID: String,
         stdioLog: PlayCoverStdioLogIdentity? = nil,
         pendingLaunchPaths: IOSUsePaths? = nil,
         deadline: TimeInterval,
@@ -4947,7 +4942,9 @@ public enum PlayCoverService {
         configuration.environment = launchConfigurationEnvironment(
             sessionID: sessionID,
             runtimeSocketPath: runtimeSocketPath,
-            managedHomePath: managedHomePath(for: manifest),
+            runtimeHomePath: runtimeHomePath,
+            homeID: homeID,
+            generationKey: manifest.generationKey,
             stdioLog: stdioLog
         )
         let existingApplications =
@@ -4957,19 +4954,6 @@ public enum PlayCoverService {
         let existingPIDs = Set(
             existingApplications.map(\.processIdentifier)
         )
-        guard !existingApplications.contains(where: { application in
-            guard let executablePath = application.executableURL?
-                    .standardizedFileURL.path else {
-                return false
-            }
-            return canonicalPath(executablePath)
-                    == canonicalPath(manifest.executablePath)
-        }) else {
-            throw PlayCoverBackendError.launchFailed(
-                "the exact prepared App is already running outside "
-                    + "this start invocation"
-            )
-        }
         try validateFastVerifiedLaunchCapability(launchCapability)
         let launchEntries = launchCapability.entries.map {
             LaunchAliasEntry(
@@ -5763,6 +5747,30 @@ public enum PlayCoverService {
             .path
     }
 
+    private static func lexicallyStandardizedFileURL(
+        _ path: String,
+        isDirectory: Bool
+    ) -> URL {
+        var components: [Substring] = []
+        for component in path.split(separator: "/") {
+            if component == "." {
+                continue
+            }
+            if component == ".." {
+                if !components.isEmpty {
+                    components.removeLast()
+                }
+                continue
+            }
+            components.append(component)
+        }
+        return URL(
+            fileURLWithPath:
+                "/" + components.joined(separator: "/"),
+            isDirectory: isDirectory
+        )
+    }
+
     private static func canonicalizingExistingPrefix(
         _ path: String
     ) -> String {
@@ -5786,17 +5794,4 @@ public enum PlayCoverService {
         return result
     }
 
-    private static func managedHomePath(
-        for manifest: PlayCoverPrepareManifest
-    ) -> String {
-        canonicalPath(
-            URL(fileURLWithPath: manifest.preparedAppPath)
-                .deletingLastPathComponent() // generation
-                .deletingLastPathComponent() // prepared
-                .deletingLastPathComponent() // mac cache
-                .deletingLastPathComponent() // cache
-                .deletingLastPathComponent() // IOS_USE_HOME
-                .path
-        )
-    }
 }

@@ -7,6 +7,9 @@
 
 import Foundation
 import Security
+#if canImport(Darwin)
+import Darwin
+#endif
 
 struct KeyCover {
     static var shared = KeyCover()
@@ -90,6 +93,12 @@ struct KeyCoverKey: Hashable {
             .appendingPathExtension(KeyCoverKey.encryptedKeyExtension)
     }
 
+    private var transactionTemporaryDB: URL {
+        KeyCover.playChainPath.appendingPathComponent(
+            ".\(appBundleID).ios-use.tmp"
+        )
+    }
+
     var chainEncryptionStatus: Bool {
         return FileManager.default.fileExists(atPath: encryptedKeyDB.path)
     }
@@ -100,13 +109,14 @@ struct KeyCoverKey: Hashable {
                 "KeyCover master key is unavailable"
             )
         }
-        try runOpenSSL([
+        try atomicTransform(
+            input: decryptedKeyDB,
+            output: encryptedKeyDB,
+            arguments: [
             "enc", "-aes-256-cbc", "-pbkdf2", "-A",
-            "-in", decryptedKeyDB.path,
-            "-out", encryptedKeyDB.path,
             "-k", plainTextKey,
-        ])
-        try deleteKeyDB()
+            ]
+        )
     }
 
     func decryptKeyDB() throws {
@@ -115,13 +125,14 @@ struct KeyCoverKey: Hashable {
                 "KeyCover master key is unavailable"
             )
         }
-        try runOpenSSL([
+        try atomicTransform(
+            input: encryptedKeyDB,
+            output: decryptedKeyDB,
+            arguments: [
             "enc", "-aes-256-cbc", "-pbkdf2", "-A", "-d",
-            "-in", encryptedKeyDB.path,
-            "-out", decryptedKeyDB.path,
             "-k", plainTextKey,
-        ])
-        try FileManager.default.removeItem(at: encryptedKeyDB)
+            ]
+        )
     }
 
     func deleteKeyDB() throws {
@@ -130,6 +141,83 @@ struct KeyCoverKey: Hashable {
 
     func deleteEncryptedKeyDB() throws {
         try FileManager.default.removeItem(at: encryptedKeyDB)
+    }
+
+    func removeInterruptedTemporary() throws {
+        #if canImport(Darwin)
+        var status = stat()
+        if lstat(transactionTemporaryDB.path, &status) != 0 {
+            guard errno == ENOENT else {
+                throw PlayCoverUpstreamError.commandFailed(
+                    "cannot inspect interrupted KeyCover transaction"
+                )
+            }
+            return
+        }
+        guard status.st_mode & S_IFMT != S_IFDIR else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "interrupted KeyCover transaction is a directory"
+            )
+        }
+        try FileManager.default.removeItem(at: transactionTemporaryDB)
+        #else
+        try? FileManager.default.removeItem(
+            at: transactionTemporaryDB
+        )
+        #endif
+    }
+
+    private func atomicTransform(
+        input: URL,
+        output: URL,
+        arguments: [String]
+    ) throws {
+        try removeInterruptedTemporary()
+        var removeTemporary = true
+        defer {
+            if removeTemporary {
+                try? FileManager.default.removeItem(
+                    at: transactionTemporaryDB
+                )
+            }
+        }
+        guard FileManager.default.createFile(
+            atPath: transactionTemporaryDB.path,
+            contents: Data(),
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "cannot create KeyCover transaction output"
+            )
+        }
+        try runOpenSSL(
+            arguments + [
+                "-in", input.path,
+                "-out", transactionTemporaryDB.path,
+            ]
+        )
+        #if canImport(Darwin)
+        guard Darwin.renameatx_np(
+            AT_FDCWD,
+            transactionTemporaryDB.path,
+            AT_FDCWD,
+            output.path,
+            UInt32(RENAME_EXCL)
+        ) == 0 else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "cannot publish KeyCover transaction"
+            )
+        }
+        removeTemporary = false
+        try FileManager.default.removeItem(at: input)
+        #else
+        try FileManager.default.moveItem(
+            at: transactionTemporaryDB,
+            to: output
+        )
+        removeTemporary = false
+        try FileManager.default.removeItem(at: input)
+        #endif
     }
 
     private func runOpenSSL(_ arguments: [String]) throws {
@@ -281,35 +369,206 @@ class KeyCoverPassword {
 ///
 /// The encrypted `.keyCover` object is unlocked to the exact bundle `.db`
 /// before launch and locked again after the exact process exits. The master
-/// password is held by the user's macOS Keychain and scoped to managed HOME.
+/// password is held by the user's macOS Keychain and scoped to the exact
+/// account Runtime-home PlayChain directory.
 public enum PlayCoverHeadlessKeyCover {
-    public static func configure(managedHome: URL) throws -> URL {
-        let container = managedHome
-            .appendingPathComponent("mac", isDirectory: true)
+    private enum Operation {
+        case unlock
+        case lock
+    }
+
+    public static func configure(
+        playChainDirectory: URL
+    ) throws -> URL {
+        let expected = lexicallyStandardizedFileURL(
+            playChainDirectory
+        )
+        guard expected.lastPathComponent == "playchain" else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "managed PlayChain path must end in playchain"
+            )
+        }
+        try validatePlayChainDirectory(expected)
+        let container = expected.deletingLastPathComponent()
         try PlayTools.configureManagedContainer(container)
-        return KeyCover.playChainPath
+        let actual = lexicallyStandardizedFileURL(
+            KeyCover.playChainPath
+        )
+        guard actual.path == expected.path else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "managed PlayChain path did not resolve exactly"
+            )
+        }
+        try validatePlayChainDirectory(actual)
+        return actual
     }
 
     public static func unlock(
         bundleIdentifier: String,
-        managedHome: URL
+        playChainDirectory: URL
     ) throws {
-        _ = try configure(managedHome: managedHome)
-        let lifecycle = PlayAppHeadlessLifecycle(
-            bundleIdentifier: bundleIdentifier
+        try perform(
+            .unlock,
+            bundleIdentifier: bundleIdentifier,
+            playChainDirectory: playChainDirectory
         )
-        try lifecycle.unlockKeyCover()
     }
 
     public static func lock(
         bundleIdentifier: String,
-        managedHome: URL
+        playChainDirectory: URL
     ) throws {
-        _ = try configure(managedHome: managedHome)
-        let lifecycle = PlayAppHeadlessLifecycle(
-            bundleIdentifier: bundleIdentifier
+        try perform(
+            .lock,
+            bundleIdentifier: bundleIdentifier,
+            playChainDirectory: playChainDirectory
         )
-        try lifecycle.lockKeyCover()
+    }
+
+    private static func perform(
+        _ operation: Operation,
+        bundleIdentifier: String,
+        playChainDirectory: URL
+    ) throws {
+        let expected = lexicallyStandardizedFileURL(
+            playChainDirectory
+        )
+        guard expected.lastPathComponent == "playchain" else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "managed PlayChain path must end in playchain"
+            )
+        }
+        try validatePlayChainDirectory(expected)
+        try PlayTools.withExistingManagedContainer(
+            expected.deletingLastPathComponent()
+        ) {
+            let actual = lexicallyStandardizedFileURL(
+                KeyCover.playChainPath
+            )
+            guard actual.path == expected.path else {
+                throw PlayCoverUpstreamError.commandFailed(
+                    "managed PlayChain path did not resolve exactly"
+                )
+            }
+            try validatePlayChainDirectory(actual)
+            try validateBundleIdentifier(bundleIdentifier)
+            guard KeyCover.shared.isKeyCoverEnabled() else {
+                return
+            }
+            let key = KeyCoverKey(
+                appBundleID: bundleIdentifier
+            )
+            try key.removeInterruptedTemporary()
+            let hasPlaintext = FileManager.default.fileExists(
+                atPath: key.decryptedKeyDB.path
+            )
+            let hasEncrypted = FileManager.default.fileExists(
+                atPath: key.encryptedKeyDB.path
+            )
+            if hasPlaintext && hasEncrypted {
+                switch operation {
+                case .lock:
+                    // Plaintext is the input to lock.  Retire the
+                    // possibly stale encrypted output, then recompute it.
+                    try key.deleteEncryptedKeyDB()
+                case .unlock:
+                    // Encrypted data is the input to unlock.  Retire the
+                    // possibly stale plaintext output, then recompute it.
+                    try key.deleteKeyDB()
+                }
+            }
+            let lifecycle = PlayAppHeadlessLifecycle(
+                bundleIdentifier: bundleIdentifier
+            )
+            switch operation {
+            case .unlock:
+                try lifecycle.unlockKeyCover()
+            case .lock:
+                try lifecycle.lockKeyCover()
+            }
+        }
+    }
+
+    private static func validatePlayChainDirectory(
+        _ directory: URL
+    ) throws {
+        guard directory.isFileURL,
+              directory.path.hasPrefix("/"),
+              !directory.path.utf8.contains(0) else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "managed PlayChain path is not an absolute file path"
+            )
+        }
+        #if canImport(Darwin)
+        var status = stat()
+        let lexical = lexicallyStandardizedFileURL(directory)
+        var resolved = [CChar](
+            repeating: 0,
+            count: Int(PATH_MAX)
+        )
+        guard lexical.path == directory.path,
+              realpath(lexical.path, &resolved) != nil,
+              String(cString: resolved) == lexical.path,
+              lstat(lexical.path, &status) == 0,
+              status.st_mode & S_IFMT == S_IFDIR,
+              status.st_uid == geteuid(),
+              status.st_mode & 0o077 == 0 else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "managed PlayChain is not an owner-only exact directory"
+            )
+        }
+        #else
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: directory.path,
+            isDirectory: &isDirectory
+        ), isDirectory.boolValue else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "managed PlayChain directory is missing"
+            )
+        }
+        #endif
+    }
+
+    private static func lexicallyStandardizedFileURL(
+        _ url: URL
+    ) -> URL {
+        var components: [Substring] = []
+        for component in url.path.split(separator: "/") {
+            if component == "." {
+                continue
+            }
+            if component == ".." {
+                if !components.isEmpty {
+                    components.removeLast()
+                }
+                continue
+            }
+            components.append(component)
+        }
+        return URL(
+            fileURLWithPath: "/" + components.joined(separator: "/"),
+            isDirectory: true
+        )
+    }
+
+    private static func validateBundleIdentifier(
+        _ bundleIdentifier: String
+    ) throws {
+        let allowed = CharacterSet(
+            charactersIn:
+                "abcdefghijklmnopqrstuvwxyz"
+                + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+        )
+        guard !bundleIdentifier.isEmpty,
+              bundleIdentifier.utf8.count <= 200,
+              bundleIdentifier.unicodeScalars.allSatisfy({
+                  allowed.contains($0)
+              }) else {
+            throw PlayCoverUpstreamError.commandFailed(
+                "bundle identifier cannot form a managed PlayChain file"
+            )
+        }
     }
 }
 

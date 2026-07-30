@@ -36,27 +36,27 @@ enum IOSUsePlayChainLocation {
             )
         }
 #endif
-        let appBundleURL = Bundle.main.bundleURL
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-        guard appBundleURL.isFileURL,
-              appBundleURL.pathExtension == "app" else {
+        let environment = ProcessInfo.processInfo.environment
+        guard let homeID = environment["IOS_USE_PLAY_HOME_ID"],
+              let generationKey =
+                environment["IOS_USE_PLAY_GENERATION_KEY"],
+              let runtimeHomePath =
+                environment["IOS_USE_PLAY_RUNTIME_HOME"] else {
             throw NSError(
                 domain: "IOSUsePlayChain",
                 code: 1,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "main bundle is not a managed .app"
+                        "launch identity is missing the Runtime namespace"
                 ]
             )
         }
-        let generationURL =
-            appBundleURL.deletingLastPathComponent()
-        let generationKey = generationURL.lastPathComponent
-        let hexadecimal = CharacterSet(
-            charactersIn: "0123456789abcdefABCDEF"
-        )
-        guard generationKey.count == 64,
+        let hexadecimal = CharacterSet(charactersIn: "0123456789abcdef")
+        guard homeID.count == 64,
+              homeID.unicodeScalars.allSatisfy({
+                  hexadecimal.contains($0)
+              }),
+              generationKey.count == 64,
               generationKey.unicodeScalars.allSatisfy({
                   hexadecimal.contains($0)
               }) else {
@@ -65,33 +65,64 @@ enum IOSUsePlayChainLocation {
                 code: 2,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "App is not under a verified prepared generation"
+                        "launch identity contains an invalid Home or "
+                            + "generation key"
                 ]
             )
         }
-        let preparedURL =
-            generationURL.deletingLastPathComponent()
-        let macCacheURL =
-            preparedURL.deletingLastPathComponent()
-        let cacheURL =
-            macCacheURL.deletingLastPathComponent()
-        let managedHomeURL =
-            cacheURL.deletingLastPathComponent()
-        guard preparedURL.lastPathComponent == "prepared",
-              macCacheURL.lastPathComponent == "mac",
-              cacheURL.lastPathComponent == "cache" else {
+        guard let password = getpwuid(geteuid()),
+              let accountHomeBytes = password.pointee.pw_dir else {
             throw NSError(
                 domain: "IOSUsePlayChain",
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "prepared generation is outside "
-                            + "IOS_USE_HOME/cache/mac"
+                        "cannot resolve the current account Home"
                 ]
             )
         }
-        let playcoverRootURL = managedHomeURL
-            .appendingPathComponent("mac", isDirectory: true)
+        let expectedRuntimeHome = URL(
+            fileURLWithPath: String(cString: accountHomeBytes),
+            isDirectory: true
+        )
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(
+                "Library/Application Support/dev.ios-use/mac/runtime-homes",
+                isDirectory: true
+            )
+            .appendingPathComponent(homeID, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let playcoverRootURL = URL(
+            fileURLWithPath: runtimeHomePath,
+            isDirectory: true
+        )
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard playcoverRootURL.path == expectedRuntimeHome.path else {
+            throw NSError(
+                domain: "IOSUsePlayChain",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Runtime namespace is outside the fixed account root"
+                ]
+            )
+        }
+        let appBundleURL = Bundle.main.bundleURL
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard appBundleURL.isFileURL,
+              appBundleURL.pathExtension == "app" else {
+            throw NSError(
+                domain: "IOSUsePlayChain",
+                code: 5,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "main bundle is not a managed .app"
+                ]
+            )
+        }
         let bundleID =
             Bundle.main.bundleIdentifier ?? "Shared"
         let allowed = CharacterSet(
@@ -99,23 +130,43 @@ enum IOSUsePlayChainLocation {
                 "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
         )
         guard !bundleID.isEmpty,
+              bundleID.utf8.count <= 200,
               bundleID.unicodeScalars.allSatisfy({
                   allowed.contains($0)
               }) else {
             throw NSError(
                 domain: "IOSUsePlayChain",
-                code: 4,
+                code: 6,
                 userInfo: [
                     NSLocalizedDescriptionKey:
                         "bundle identifier cannot form a PlayChain filename"
                 ]
             )
         }
-        let databaseURL = playcoverRootURL
+        let playchainURL = playcoverRootURL
             .appendingPathComponent(
                 "playchain",
                 isDirectory: true
             )
+        let resolvedPlaychainURL =
+            playchainURL.resolvingSymlinksInPath()
+        var playchainStatus = stat()
+        guard resolvedPlaychainURL.path == playchainURL.path,
+              lstat(playchainURL.path, &playchainStatus) == 0,
+              playchainStatus.st_mode & S_IFMT == S_IFDIR,
+              playchainStatus.st_uid == geteuid(),
+              playchainStatus.st_mode & 0o077 == 0 else {
+            throw NSError(
+                domain: "IOSUsePlayChain",
+                code: 7,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "PlayChain namespace is not an owner-only "
+                            + "anchored directory"
+                ]
+            )
+        }
+        let databaseURL = resolvedPlaychainURL
             .appendingPathComponent("\(bundleID).db")
         return IOSUsePlayChainManagedLocation(
             appBundleURL: appBundleURL,
@@ -396,17 +447,51 @@ class PlayKeychainDB: NSObject {
         return result
     }
 
+    private func storageError(_ description: String) -> NSError {
+        NSError(
+            domain: "IOSUsePlayChain",
+            code: 8,
+            userInfo: [
+                NSLocalizedDescriptionKey: description
+            ]
+        )
+    }
+
+    private func isOwnedSingleLinkRegularFile(_ status: stat) -> Bool {
+        status.st_mode & S_IFMT == S_IFREG
+            && status.st_uid == geteuid()
+            && status.st_nlink == 1
+    }
+
+    private func validateDatabaseLeaf(
+        _ databaseURL: URL,
+        allowMissing: Bool
+    ) throws {
+        var status = stat()
+        if lstat(databaseURL.path, &status) != 0 {
+            guard allowMissing, errno == ENOENT else {
+                throw storageError(
+                    "cannot inspect the PlayChain database"
+                )
+            }
+            return
+        }
+        guard isOwnedSingleLinkRegularFile(status) else {
+            throw storageError(
+                "PlayChain database is not an owner-owned "
+                    + "single-link regular file"
+            )
+        }
+    }
+
     private func connectToDB() -> OpaquePointer? {
         var sqlite3DB: OpaquePointer?
         let location: IOSUsePlayChainManagedLocation
         do {
             location = try IOSUsePlayChainLocation.resolve()
-            try FileManager.default.createDirectory(
-                at: location.databaseURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true,
-                attributes: [
-                    .posixPermissions: 0o700
-                ]
+            try validateDatabaseLeaf(
+                location.databaseURL,
+                allowMissing: true
             )
         } catch {
             PlayKeychain.debugLogger(
@@ -415,22 +500,46 @@ class PlayKeychainDB: NSObject {
             return nil
         }
 
-        guard sqlite3_open_v2(
-                location.databaseURL.path,
-                &sqlite3DB,
-                SQLITE_OPEN_READWRITE |
-                    SQLITE_OPEN_CREATE |
-                    SQLITE_OPEN_FULLMUTEX,
-                nil
-              ) == SQLITE_OK,
+        let openResult = sqlite3_open_v2(
+            location.databaseURL.path,
+            &sqlite3DB,
+            SQLITE_OPEN_READWRITE |
+                SQLITE_OPEN_CREATE |
+                SQLITE_OPEN_FULLMUTEX |
+                SQLITE_OPEN_NOFOLLOW,
+            nil
+        )
+        guard openResult == SQLITE_OK,
               let sqlite3DB = sqlite3DB else {
-            PlayKeychain.debugLogger("Failed to connect to DB")
+            let detail = sqlite3DB.map({
+                String(cString: sqlite3_errmsg($0))
+            }) ?? "SQLite did not return a database handle"
+            PlayKeychain.debugLogger(
+                "Failed to connect to DB (\(openResult)): \(detail)"
+            )
             if sqlite3DB != nil {
                 sqlite3_close(sqlite3DB)
             }
             return nil
         }
-        chmod(location.databaseURL.path, 0o600)
+        do {
+            try validateDatabaseLeaf(
+                location.databaseURL,
+                allowMissing: false
+            )
+            guard chmod(location.databaseURL.path, 0o600) == 0 else {
+                throw storageError(
+                    "cannot restrict PlayChain database permissions"
+                )
+            }
+        } catch {
+            PlayKeychain.debugLogger(
+                "PlayChain storage leaf rejected after SQLite open: "
+                    + "\(error)"
+            )
+            _ = disconnectFromDB(sqlite3DB)
+            return nil
+        }
         guard sqlite3_busy_timeout(sqlite3DB, 5000) == SQLITE_OK,
               structDB(sqlite3DB) else {
             _ = disconnectFromDB(sqlite3DB)

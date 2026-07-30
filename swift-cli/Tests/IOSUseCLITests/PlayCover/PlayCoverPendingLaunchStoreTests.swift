@@ -173,6 +173,11 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
             callbackSucceeded: false,
             paths: fixture.paths
         )
+        try PlayCoverGlobalReferenceStore.setPending(
+            sessionID: fixture.sessionID,
+            generationKey: fixture.generationKey,
+            paths: fixture.paths
+        )
         let result = PlayCoverSessionService.LaunchResult(
             sessionID: fixture.sessionID,
             appPath: fixture.appPath,
@@ -522,15 +527,17 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
             fixture.intent,
             paths: fixture.paths
         )
-        let aliasSourceApp = URL(
-            fileURLWithPath: fixture.appPath,
-            isDirectory: true
-        ).standardizedFileURL
         let inventory = fixture.inventory.map {
             PlayCoverPendingLaunchStore.AliasEntry(
                 name: $0.name,
-                destination: aliasSourceApp
-                    .appendingPathComponent($0.name).path
+                destination:
+                    record.appPath + "/" + $0.name
+            )
+        }
+        for entry in inventory {
+            XCTAssertEqual(
+                entry.destination,
+                record.appPath + "/" + entry.name
             )
         }
         record = try PlayCoverPendingLaunchStore.markAliasReady(
@@ -557,7 +564,7 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         throws {
         let root = try makeTemporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": root.path]
         )
         try Data("not a directory".utf8).write(
@@ -577,13 +584,13 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         } else {
             root = try makeTemporaryRoot()
         }
-        let paths = IOSUsePaths.resolve(
+        let paths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": root.path]
         )
         let sessionID = UUID().uuidString.lowercased()
         let generationKey = String(repeating: "a", count: 64)
         let app = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         )
         .appendingPathComponent(generationKey, isDirectory: true)

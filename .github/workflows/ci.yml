@@ -135,6 +135,9 @@ jobs:
         run: bash scripts/audit_playcover_upstreams.sh --cache-dir "$IOS_USE_PLAYCOVER_UPSTREAM_CACHE"
 
       - name: Build, analyze, fixture, compositor, vendored Swift, and installed-layout checks
+        env:
+          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
+          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
         run: bash scripts/test_playcover_backend.sh --non-live
 
   playcover-live-and-stress:
@@ -154,6 +157,9 @@ jobs:
 
       - name: Run core PlayCover live gate
         shell: bash
+        env:
+          IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK: ${{ secrets.IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK }}
+          IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME: ${{ secrets.IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME }}
         run: |
           set -o pipefail
           bash scripts/test_playcover_backend.sh --live 2>&1 |

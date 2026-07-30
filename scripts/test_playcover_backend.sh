@@ -3,6 +3,7 @@ set -euo pipefail
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 MODE="non-live"
 
 usage() {
@@ -12,9 +13,10 @@ Usage: scripts/test_playcover_backend.sh [--non-live|--live]
 --non-live  Run the hermetic build, analysis, fixture, compositor, vendored
             Swift, release-install, and installed-execution gate. This is
             an integration-host gate: installed execution requires the
-            initialized stable host signer and a launch-capable GUI session.
+            disposable-account contract, initialized stable host signer, and
+            a launch-capable GUI session.
 --live      Run the independent pending-launch crash/restart gate and the
-            lock-independent isolated Runtime protocol/crash stress gate.
+            Runtime protocol/crash stress gate.
             Both use the committed public fixture on a dedicated,
             launch-capable Apple-silicon host. Missing live prerequisites fail
             with EX_CONFIG (78); they are not reported as a passing or skipped
@@ -56,7 +58,20 @@ require_apple_silicon_xcode() {
   fi
 }
 
+require_disposable_account() {
+  if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
+    echo \
+      "[playcover-gate] EX_CONFIG: the account-global PlayCover safety guard is unavailable." \
+      >&2
+    exit 78
+  fi
+  # shellcheck source=scripts/test_playcover_global_state_guard.sh
+  source "$GLOBAL_STATE_GUARD"
+  playcover_require_disposable_account_contract "playcover-gate"
+}
+
 run_non_live() {
+  require_disposable_account
   require_apple_silicon_xcode
   echo "[playcover-gate] Auditing pinned upstreams and recorded local patches..."
   bash "$ROOT_DIR/scripts/audit_playcover_upstreams.sh" \
@@ -94,10 +109,11 @@ run_non_live() {
 }
 
 run_live() {
+  require_disposable_account
   require_apple_silicon_xcode 78
   echo "[playcover-live] Running pending-launch CLI crash/restart matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_pending_launch_crash_live.sh" --live
-  echo "[playcover-live] Running isolated Runtime protocol/crash stress matrix..."
+  echo "[playcover-live] Running Runtime protocol/crash stress matrix..."
   bash "$ROOT_DIR/scripts/test_playcover_runtime_stress_live.sh"
   echo "[playcover-live] core pending-launch and Runtime stress gate passed"
 }

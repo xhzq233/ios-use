@@ -101,11 +101,12 @@ enum CLIHelp {
             record it as the active backend in driver.lock.
             Defaults to the first connected USB real device when udid is omitted.
             The Mac backend automatically prepares an unmodified iPhoneOS App
-            into managed IOS_USE_HOME state, or verifies and directly launches
-            an already prepared App. Use --app after every Debug rebuild so the
-            current source is inspected. Use --reuse only to explicitly launch
-            the most recent successful generation without checking its original
-            source.
+            into the account-global immutable Mac cache, or verifies and
+            directly launches an already prepared App. The current IOS_USE_HOME
+            stores only its selected generation and session state.
+            Use --app after every Debug rebuild so the current source is
+            inspected. Use --reuse only to explicitly launch that Home's most
+            recent successful generation without checking its original source.
             --log captures target-App stdout/stderr from the injected Runtime
             onward in an owner-only per-session file retained after stop,
             crash, or launch failure.

@@ -12,7 +12,7 @@ import MachO
 import injection
 
 private let playCoverPrepareDifferentialEmbeddedSourceClosureSHA256 =
-    "f2970d92c1d5f5078f95b2185007409515a5794a9e3a5ef0d52d28c6ad2ad982"
+    "ad833d04c6694e829a2d7cc751e98eae7453000535df741b4fb20d2cd24eb115"
 
 private func playCoverCanonicalExistingURL(_ url: URL) -> URL? {
     guard let resolved = realpath(url.standardizedFileURL.path, nil) else {
@@ -3437,17 +3437,18 @@ public enum PlayCoverPrepareDifferentialGate {
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverManagedAppService.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverService.swift",
+                + "PlayCoverGlobalReferenceStore.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverSharedSubstrateCache.swift",
+                + "PlayCoverModels.swift",
+            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                + "PlayCoverService.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverSigningCertificateBuilder.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverSigningIdentityService.swift",
             "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                 + "PlayCoverPreparedArtifact.swift",
-            "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                + "PlayCoverSharedCachePaths.swift",
+            "swift-cli/Sources/IOSUseCLI/Support/IOSUsePaths.swift",
             "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                 + "PlayCoverExternalPrepareDifferentialTests.swift",
             "swift-cli/Tests/IOSUseCLITests/PlayCover/"

@@ -194,14 +194,18 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
     func testPinnedHeadlessInstallerOracleAndIOSUsePrepareHaveOnlyRecordedDifferences()
         async throws
     {
-        let root = FileManager.default.temporaryDirectory
+        let root = URL(
+            fileURLWithPath: "/tmp",
+            isDirectory: true
+        )
             .appendingPathComponent(
-                "ios-use-playcover-differential-\(UUID().uuidString)",
+                "iu-play-diff-\(UUID().uuidString.prefix(8))",
                 isDirectory: true
             )
         try FileManager.default.createDirectory(
             at: root,
-            withIntermediateDirectories: true
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
         )
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -285,11 +289,28 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             isDirectory: true
         )
         try makePrivateDirectory(iosUseHome)
+        let socketRoot = iosUseHome.appendingPathComponent(
+            "socket-root",
+            isDirectory: true
+        )
         let paths = IOSUsePaths.resolve(
-            environment: ["IOS_USE_HOME": iosUseHome.path]
+            environment: ["IOS_USE_HOME": iosUseHome.path],
+            accountHomeDirectoryOverrideForTesting:
+                iosUseHome.appendingPathComponent(
+                    "account-home",
+                    isDirectory: true
+                ).path,
+            socketRootOverrideForTesting: socketRoot.path
+        )
+        try makePrivateDirectory(socketRoot)
+        try makePrivateDirectory(
+            URL(
+                fileURLWithPath: paths.playcoverRuntimeRoot,
+                isDirectory: true
+            )
         )
         let candidateParent = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent("differential", isDirectory: true)
         try makePrivateDirectory(candidateParent)
@@ -301,19 +322,13 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             source: PlayCoverService.inspectPreparationSource(
                 appPath: source.path
             ),
-            runtimeFrameworkPath: runtime.path
-        )
-        let sharedSubstratePaths = try PlayCoverSharedCachePaths.resolve(
-            preparedSubstrateRoot: root.appendingPathComponent(
-                "shared-substrate-cache",
-                isDirectory: true
-            ).path
+            runtimeFrameworkPath: runtime.path,
+            paths: paths
         )
         let preparedArtifact = try PlayCoverService.prepareArtifact(
             plan: plan,
             outputAppPath: candidateOutput.path,
-            paths: paths,
-            sharedSubstratePaths: sharedSubstratePaths
+            paths: paths
         )
         let manifest = preparedArtifact.manifest
         let iosUseResult = try XCTUnwrap(
@@ -323,80 +338,6 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             appURL: candidateOutput
         )
         XCTAssertEqual(iosUseResult.prepared, iosUse)
-
-        let consumerHome = root.appendingPathComponent(
-            "ios-use-consumer-home",
-            isDirectory: true
-        )
-        try makePrivateDirectory(consumerHome)
-        let consumerPaths = IOSUsePaths.resolve(
-            environment: ["IOS_USE_HOME": consumerHome.path]
-        )
-        let consumerParent = URL(
-            fileURLWithPath: consumerPaths.playcoverPrepared,
-            isDirectory: true
-        ).appendingPathComponent("differential", isDirectory: true)
-        try makePrivateDirectory(consumerParent)
-        let consumerOutput = consumerParent.appendingPathComponent(
-            "IOSUse.app",
-            isDirectory: true
-        )
-        let consumerArtifact = try PlayCoverService.prepareArtifact(
-            plan: plan,
-            outputAppPath: consumerOutput.path,
-            paths: consumerPaths,
-            sharedSubstratePaths: sharedSubstratePaths
-        )
-        XCTAssertEqual(
-            consumerArtifact.manifest.generationKey,
-            manifest.generationKey
-        )
-        XCTAssertNotEqual(
-            consumerArtifact.manifest.preparedAppPath,
-            manifest.preparedAppPath
-        )
-        let consumerLog = try String(
-            contentsOfFile: CLILogService.logPath(paths: consumerPaths),
-            encoding: .utf8
-        )
-        let producerLog = try String(
-            contentsOfFile: CLILogService.logPath(paths: paths),
-            encoding: .utf8
-        )
-        XCTAssertTrue(
-            consumerLog.contains(
-                "[mac-cache] shared-substrate result=hit"
-            ),
-            "producer log:\n\(producerLog)\nconsumer log:\n\(consumerLog)"
-        )
-        XCTAssertFalse(
-            consumerLog.contains("result=miss")
-                || consumerLog.contains("result=unavailable-cold-fallback"),
-            "consumer did not complete through the shared hit:\n\(consumerLog)"
-        )
-        XCTAssertTrue(
-            producerLog.contains(
-                "[mac-cache] shared-substrate result=published"
-            )
-                && !producerLog.contains("result=publish-fallback")
-                && !producerLog.contains(
-                    "result=unavailable-cold-fallback"
-                ),
-            "producer did not publish the shared substrate:\n\(producerLog)"
-        )
-        let consumerEntitlements =
-            consumerArtifact.manifest.entitlementDiff.final.values
-                .joined(separator: "\n")
-        XCTAssertTrue(
-            consumerEntitlements.contains(
-                consumerHome.resolvingSymlinksInPath().path
-            )
-        )
-        XCTAssertFalse(
-            consumerEntitlements.contains(
-                iosUseHome.resolvingSymlinksInPath().path
-            )
-        )
 
         XCTAssertEqual(
             PlayCoverPinnedHeadlessInstallerOracle.referenceLineage,
@@ -474,8 +415,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             ],
             "ios-use must sign loose children and nested bundles before root"
         )
+        XCTAssertEqual(manifest.entitlementDiff, .empty)
         XCTAssertEqual(
-            manifest.entitlementDiff.removedFromOriginal,
+            iosUseResult.entitlementDiff.removedFromOriginal,
             [
                 "application-identifier",
                 "aps-environment",
@@ -487,8 +429,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             ]
         )
         XCTAssertFalse(
-            manifest.entitlementDiff.playCoverBaseline.isEmpty,
-            "the root signature must retain the PlayCover composer baseline"
+            iosUseResult.entitlementDiff.playCoverBaseline.isEmpty,
+            "the in-memory differential evidence must retain the "
+                + "PlayCover composer baseline"
         )
         XCTAssertFalse(
             PlayCoverPinnedHeadlessInstallerOracle
@@ -887,17 +830,18 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverManagedAppService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverService.swift",
+                    + "PlayCoverGlobalReferenceStore.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverSharedSubstrateCache.swift",
+                    + "PlayCoverModels.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverSigningCertificateBuilder.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverSigningIdentityService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverPreparedArtifact.swift",
-                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
-                    + "PlayCoverSharedCachePaths.swift",
+                "swift-cli/Sources/IOSUseCLI/Support/IOSUsePaths.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                     + "PlayCoverExternalPrepareDifferentialTests.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"
@@ -2226,20 +2170,13 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
         let iosUseSign = "PlayCoverUpstreamEngine.signInsideOut"
         let arm64 =
             "slices[cpu=16777228,subtype=0,occurrence=0]."
-        let pinnedSandbox = [
+        let commonSandboxPrefix = [
             "(allow user-preference-write (preference-domain "
                 + "\".GlobalPreferences\"))",
             "(allow user-preference-read (preference-domain "
                 + "\".GlobalPreferences\"))",
-            "(allow file* file-read* file-write* file-write-data "
-                + "file-read-metadata file-ioctl (subpath "
-                + "\"<MANAGED_HOME>/Library/Containers/"
-                + "io.playcover.PlayCover\"))",
-            "(allow file* file-read* file-read-metadata file-ioctl "
-                + "(subpath \"<MANAGED_HOME>/Library/Frameworks/"
-                + "PlayTools.framework\"))",
-            "(allow file* file-read* (subpath "
-                + "\"<MANAGED_HOME>/Library/Group Containers/\"))",
+        ]
+        let sandboxDenials = [
             "(deny process-fork)",
             "(deny file* file-read* file-read-metadata file-ioctl "
                 + "(literal \"/bin/bash\"))",
@@ -2256,15 +2193,37 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             "(deny file* file-read* file-read-metadata file-ioctl "
                 + "(literal \"/usr/bin/ssh\"))",
         ]
-        let iosUseSandbox = pinnedSandbox + [
+        let pinnedSandbox = commonSandboxPrefix + [
+            "(allow file* file-read* file-write* file-write-data "
+                + "file-read-metadata file-ioctl (subpath "
+                + "\"<MANAGED_HOME>/Library/Containers/"
+                + "io.playcover.PlayCover\"))",
+            "(allow file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"<MANAGED_HOME>/Library/Frameworks/"
+                + "PlayTools.framework\"))",
+            "(allow file* file-read* (subpath "
+                + "\"<MANAGED_HOME>/Library/Group Containers/\"))",
+        ] + sandboxDenials
+        let globalRuntimeHome =
+            "<MANAGED_HOME>/account-home/Library/Application Support/"
+                + "dev.ios-use/mac/runtime-homes"
+        let iosUseSandbox = commonSandboxPrefix + [
+            "(allow file* file-read* file-write* file-write-data "
+                + "file-read-metadata file-ioctl (subpath "
+                + "\"\(globalRuntimeHome)/Library/Containers/"
+                + "io.playcover.PlayCover\"))",
+            "(allow file* file-read* file-read-metadata file-ioctl "
+                + "(subpath \"\(globalRuntimeHome)/Library/Frameworks/"
+                + "PlayTools.framework\"))",
+            "(allow file* file-read* (subpath "
+                + "\"\(globalRuntimeHome)/Library/Group Containers/\"))",
+        ] + sandboxDenials + [
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"<MANAGED_HOME>/mac/run\"))",
+                + "(subpath \"<MANAGED_HOME>/socket-root\"))",
             "(allow network-bind (subpath "
-                + "\"<MANAGED_HOME>/mac/run\"))",
+                + "\"<MANAGED_HOME>/socket-root\"))",
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"<MANAGED_HOME>/mac/logs\"))",
-            "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"<MANAGED_HOME>/mac/playchain\"))",
+                + "(subpath \"\(globalRuntimeHome)\"))",
         ]
         func exactExpectation(
             _ value: String?
@@ -2311,8 +2270,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                         + "f4fe3f102713c62d"
                 ),
                 .exact(
-                    "9bbd93c4ba540a93d8671ccb2521b14afb0d78f8596596383"
-                        + "6a58d4a81fc6f0f"
+                    "675ee0d77851d368f78a8b3b90e9f9cf7ba5111dc23022de"
+                        + "821915ec41a53a94"
                 ),
                 "The root signature carries the same separately reviewed "
                     + "entitlement dictionaries as the main executable.",
@@ -2326,9 +2285,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "com.apple.security.temporary-exception.sbpl",
                 .exact(entitlementStringArray(pinnedSandbox)),
                 .exact(entitlementStringArray(iosUseSandbox)),
-                "The Runtime socket, stdio logs, and managed playchain store "
-                    + "require the same four narrowly scoped ios-use-only "
-                    + "rules reviewed on the main executable signature.",
+                "The account-global Runtime namespace and Runtime socket "
+                    + "require the narrowly scoped ios-use-only rules "
+                    + "reviewed on the main executable signature.",
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),
@@ -2336,8 +2295,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "inventory-main-executable-size",
                 "Fixture",
                 "inventory.size",
-                .exact("90096"),
-                .exact("91792"),
+                .exact("89552"),
+                .exact("90880"),
                 "The exact signed main executable sizes are also recorded by "
                     + "the inventory comparator.",
                 pinnedSign,
@@ -2593,8 +2552,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-signed-size",
                 "Fixture",
                 arm64 + "size",
-                .exact("90096"),
-                .exact("91792"),
+                .exact("89552"),
+                .exact("90880"),
                 "The pinned PlayTools path and --deep entitlement signature "
                     + "produce a different signed thin-slice size.",
                 "PlayTools.installInIPA + \(pinnedSign)",
@@ -2618,18 +2577,18 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 .exact(
                     "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
                         + "vmaddr=4295032832;vmsize=32768;fileoff=65536;"
-                        + "filesize=24560;maxprot=1;initprot=1;sections=0;"
+                        + "filesize=24016;maxprot=1;initprot=1;sections=0;"
                         + "flags=0;sha256="
-                        + "07763ec34417aa335d8957a1d7e4bb12362514a15ff1d82d0"
-                        + "a49156817a7750c"
+                        + "52c4f24071fceffa9ca4b0a38ea666a33eab6a817029a6d7"
+                        + "d6ea4a027dbb726d"
                 ),
                 .exact(
                     "cmd=0x00000019;size=72;semantic=segment=__LINKEDIT;"
                         + "vmaddr=4295032832;vmsize=32768;fileoff=65536;"
-                        + "filesize=26256;maxprot=1;initprot=1;sections=0;"
+                        + "filesize=25344;maxprot=1;initprot=1;sections=0;"
                         + "flags=0;sha256="
-                        + "aa0149ff3b87bd015355ef608c76b01ee30006a2045da6276"
-                        + "6354c03139cb97b"
+                        + "c47da53d1240665a50ac9a746a1f89aebe1f875c40bf4229"
+                        + "03cde666bd54f15c"
                 ),
                 "Different signature payload sizes change only the __LINKEDIT "
                     + "segment extent.",
@@ -2642,15 +2601,15 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 arm64 + "loadCommands[18]",
                 .exact(
                     "cmd=0x0000001d;size=16;semantic=dataoff=65840;"
-                        + "datasize=24256;sha256="
-                        + "cd386937faa56bf241c2a35bb31721b0d7b906cff7d1ee928"
-                        + "26cf9bd5b7e3bcb"
+                        + "datasize=23712;sha256="
+                        + "ff19016c1d698027f30f2de9160fc64889f09e511f37ad499"
+                        + "affe9c58f1c6a7d"
                 ),
                 .exact(
                     "cmd=0x0000001d;size=16;semantic=dataoff=65840;"
-                        + "datasize=25952;sha256="
-                        + "2b7c3da7f83d0e5beb0b8504e08d363720e5a34bd3c1f16"
-                        + "1ea8a00bdaf6a6e5a"
+                        + "datasize=25040;sha256="
+                        + "576bd0eb93e8ae9430b7ab2d7c434b83a96eaeeed79bbb12"
+                        + "4b345073f37dc570"
                 ),
                 "Pinned --deep and ios-use inside-out signing encode different "
                     + "entitlement payload sizes in LC_CODE_SIGNATURE.",
@@ -2715,8 +2674,9 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     + "com.apple.security.temporary-exception.sbpl",
                 .exact(entitlementStringArray(pinnedSandbox)),
                 .exact(entitlementStringArray(iosUseSandbox)),
-                "ios-use appends narrowly scoped file and AF_UNIX bind rules "
-                    + "for the Runtime socket, stdio logs, and playchain store.",
+                "ios-use binds the entitlement namespace to the "
+                    + "account-global Runtime home and appends narrowly "
+                    + "scoped Runtime socket rules.",
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),
@@ -2724,8 +2684,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-superblob-length",
                 path: "Fixture",
                 field: "superBlob.length",
-                pinned: "6241",
-                iosUse: "7951",
+                pinned: "5699",
+                iosUse: "7033",
                 reason: "The distinct canonical entitlement payloads have "
                     + "different complete SuperBlob lengths."
             ),
@@ -2733,8 +2693,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-superblob-padding-size",
                 path: "Fixture",
                 field: "superBlob.paddingSize",
-                pinned: "18015",
-                iosUse: "18001",
+                pinned: "18013",
+                iosUse: "18007",
                 reason: "The narrowed entitlement blobs change the exact "
                     + "zero-padding extent within LC_CODE_SIGNATURE."
             ),
@@ -2743,11 +2703,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.paddingSHA256",
                 pinned:
-                    "6374cf23aba8af727e5ee1206e3f182abcbebb2a88ed922cf9"
-                        + "eee069b43f438d",
+                    "09889139ae200818dd59f51a93282026d55321b4fc79916ff"
+                        + "9ce6371ecfb41ea",
                 iosUse:
-                    "851078db51f091a336ba8118ea6771521e75380bcd6ec173a"
-                        + "e2d1695ce5c6409",
+                    "6b30a91c0f19e68955540a4cb036a2b6b769d771f170cbbad"
+                        + "8f316def886ab67",
                 reason: "The exact zero-padding lengths have distinct "
                     + "reviewed SHA-256 digests."
             ),
@@ -2756,11 +2716,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 path: "Fixture",
                 field: "superBlob.structureSHA256",
                 pinned:
-                    "bfc22c32540b50c222c8c857a3bced4edb396770e1e472cc"
-                        + "c80314f59dfccfcb",
+                    "5cb3f66a171f4f454b0a4515f8d1ce394b7f3df51b883ce2"
+                        + "aff5686b8d989fc9",
                 iosUse:
-                    "e46d43be7d53732a19c2f2ee4247fd717f6e8f91b4707248"
-                        + "e761d770ed6dda50",
+                    "86ef94adb54571e041bfa1b15f7c9da2b9181bb44b3eb74a9"
+                        + "9b662d01e365b46",
                 reason: "The exact slot offsets and envelope layout follow "
                     + "the two different entitlement blob sizes."
             ),
@@ -2785,11 +2745,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 field: "superBlob.slots[type=0,occurrence=0]."
                     + "codeDirectory.codeSlots[0]",
                 pinned:
-                    "0ba86751c7eeb8616eb14d560b4c7e8f8903e101854520f9"
-                        + "6edc1c95db87781f",
+                    "e6ed70da9fefcad19e7cab7a219617f619f6cade27226a616"
+                        + "c898fbcfc2d4043",
                 iosUse:
-                    "a0440e7c227ae34c454c9e74f45eb8bfaaffad130e8d605b1"
-                        + "85b4c09002f48ab",
+                    "a0a77822e1e588a029a3c40048b070c4637a113ccdd326766"
+                        + "0aa04e8b2240236",
                 reason: "Code slot zero contains the deliberately different "
                     + "injected load command and signature extent."
             ),
@@ -2797,8 +2757,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-xml-entitlements-slot-length",
                 path: "Fixture",
                 field: "superBlob.slots[type=5,occurrence=0].length",
-                pinned: "2986",
-                iosUse: "3875",
+                pinned: "2716",
+                iosUse: "3409",
                 reason: "The compared canonical XML entitlement dictionaries "
                     + "serialize to these exact blob lengths."
             ),
@@ -2808,11 +2768,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 field: "superBlob.slots[type=5,occurrence=0]."
                     + "normalizedBytesSHA256",
                 pinned:
-                    "0a7652ac0273840acb038840ead73854a58f76340105fc1210"
-                        + "ea7a67033c7aea",
+                    "f6633b77ab162a8adaa081ae937781380007c0acafcb73627d"
+                        + "c3e04470d78be9",
                 iosUse:
-                    "b24050aa221fc3bebad700ae1b3a65ef0c8fd16ceb9191837"
-                        + "16e1a8619ab2fb8",
+                    "d0437ecd8055e3cfb9ba1e050f84212342e53845c61584b07"
+                        + "d5e058fe4e10367",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full XML entitlement blobs must match "
                     + "these exact encodings."
@@ -2821,8 +2781,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-der-entitlements-slot-offset",
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].offset",
-                pinned: "3931",
-                iosUse: "4820",
+                pinned: "3661",
+                iosUse: "4354",
                 reason: "The DER slot starts immediately after the different "
                     + "XML entitlement blob."
             ),
@@ -2830,8 +2790,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-der-entitlements-slot-length",
                 path: "Fixture",
                 field: "superBlob.slots[type=7,occurrence=0].length",
-                pinned: "2302",
-                iosUse: "3123",
+                pinned: "2030",
+                iosUse: "2671",
                 reason: "The decoded and parity-checked DER entitlement "
                     + "dictionaries have these exact encoded lengths."
             ),
@@ -2841,11 +2801,11 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 field: "superBlob.slots[type=7,occurrence=0]."
                     + "normalizedBytesSHA256",
                 pinned:
-                    "0c0a0d9d9d91d53004e2d343aedba1b4f6110cea9783bacc"
-                        + "6c2fe2ddcce8e08f",
+                    "c487c4f47fdb26709f4e026d74255b2ba82ef289f71540b3"
+                        + "b85719fe9bc9438b",
                 iosUse:
-                    "2e34521f77f784ba6ca822c5a167fdbf20dd3857f4526d12"
-                        + "bffcc6a291feaa8a",
+                    "99a8d9157b15d758d566b09c5b3c22401238340ce2373ee82"
+                        + "5adfab4888ebb61",
                 reason: "After zeroing only the run-specific managed-home "
                     + "path bytes, the full DER entitlement blobs must match "
                     + "these exact encodings."
@@ -2854,8 +2814,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "main-cms-slot-offset",
                 path: "Fixture",
                 field: "superBlob.slots[type=65536,occurrence=0].offset",
-                pinned: "6233",
-                iosUse: "7943",
+                pinned: "5691",
+                iosUse: "7025",
                 reason: "The empty ad-hoc CMS wrapper follows the exact XML "
                     + "and DER entitlement slot extents."
             ),
@@ -2867,8 +2827,8 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                     "0fefbbc83136bf80b28853dd1c249300f56c34cad6e06600"
                         + "f4fe3f102713c62d",
                 iosUse:
-                    "9bbd93c4ba540a93d8671ccb2521b14afb0d78f8596596383"
-                        + "6a58d4a81fc6f0f",
+                    "675ee0d77851d368f78a8b3b90e9f9cf7ba5111dc23022de"
+                        + "821915ec41a53a94",
                 reason: "DER decoding matches each side's separately allowed "
                     + "canonical XML entitlement dictionary."
             ),
@@ -2894,11 +2854,12 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                         + "f4fe3f102713c62d"
                 ),
                 .exact(
-                    "9bbd93c4ba540a93d8671ccb2521b14afb0d78f8596596383"
-                        + "6a58d4a81fc6f0f"
+                    "675ee0d77851d368f78a8b3b90e9f9cf7ba5111dc23022de"
+                        + "821915ec41a53a94"
                 ),
-                "The ios-use Runtime socket, stdio-log, and playchain rules "
-                    + "intentionally change the signed main entitlement payload.",
+                "The account-global Runtime namespace and Runtime socket "
+                    + "rules intentionally change the signed main "
+                    + "entitlement payload.",
                 "Entitlements.composeEntitlements",
                 "PlayCoverUpstreamEngine.composeEntitlements"
             ),

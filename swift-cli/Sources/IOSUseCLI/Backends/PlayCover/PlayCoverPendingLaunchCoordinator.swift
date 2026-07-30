@@ -2,6 +2,14 @@ import Foundation
 import PlayCoverUpstream
 
 enum PlayCoverPendingLaunchCoordinator {
+    enum CleanupPinStep: Equatable {
+        case pendingCleared
+        case activeCleared
+    }
+
+    static var cleanupPinStepObserverForTesting:
+        ((CleanupPinStep) throws -> Void)?
+
     struct RecoveryResult: Equatable, Sendable {
         let sessionID: String
         let pid: Int32?
@@ -26,7 +34,7 @@ enum PlayCoverPendingLaunchCoordinator {
             return nil
         }
         _ = try PlayCoverSessionService
-            .validatePendingGeneration(record)
+            .validatePendingGeneration(record, paths: paths)
         if record.phase == .confirmedStopped {
             let missingDriverHandoff =
                 record.cleanupProof == .driverLockRetired
@@ -48,7 +56,8 @@ enum PlayCoverPendingLaunchCoordinator {
         }
         let decision = try evaluate(
             record,
-            authenticateCandidates: false
+            authenticateCandidates: false,
+            paths: paths
         )
         return Snapshot(
             status: decision.isUnresolved
@@ -66,9 +75,29 @@ enum PlayCoverPendingLaunchCoordinator {
     static func recoverBeforeStart(
         paths: IOSUsePaths
     ) throws {
+        // Production calls recovery while holding the per-Home operation
+        // lock. A preparation pin that survived to this point therefore
+        // belongs to a crashed invocation and must not protect cache content
+        // forever.
+        try PlayCoverGlobalReferenceStore
+            .clearStalePreparationBeforeStart(paths: paths)
         guard let record = try PlayCoverPendingLaunchStore.load(
             paths: paths
         ) else {
+            // The journal is published before the global pending pin. A pin
+            // without a journal can therefore only be residue from an
+            // interrupted pre-submit pin write or from cleanup after the
+            // journal was retired. Clear only the exact value observed; an
+            // active pin remains as the deletion barrier for a committed
+            // session.
+            if let pending = try PlayCoverGlobalReferenceStore
+                .read(paths: paths)?.pending {
+                try PlayCoverGlobalReferenceStore.clearPending(
+                    sessionID: pending.sessionID,
+                    generationKey: pending.generationKey,
+                    paths: paths
+                )
+            }
             return
         }
         if let driver = try SessionService
@@ -138,7 +167,7 @@ enum PlayCoverPendingLaunchCoordinator {
             )
         }
         let manifest = try PlayCoverSessionService
-            .validatePendingGeneration(record)
+            .validatePendingGeneration(record, paths: paths)
         try PlayCoverService.terminateFailedLaunch(
             identity: launchedIdentity(record),
             manifest: manifest
@@ -174,7 +203,7 @@ enum PlayCoverPendingLaunchCoordinator {
         if record.phase == .confirmedStopped,
            isStoppedOwnerProof(record.cleanupProof) {
             let manifest = try PlayCoverSessionService
-                .validatePendingGeneration(record)
+                .validatePendingGeneration(record, paths: paths)
             try DriverSessionStore.removeDriverLock(paths: paths)
             try finishCleanup(
                 record,
@@ -200,7 +229,8 @@ enum PlayCoverPendingLaunchCoordinator {
         }
         let decision = try evaluate(
             record,
-            authenticateCandidates: false
+            authenticateCandidates: false,
+            paths: paths
         )
         switch decision {
         case .ownedProcessLive:
@@ -225,7 +255,10 @@ enum PlayCoverPendingLaunchCoordinator {
                     )
             }
             let manifest = try PlayCoverSessionService
-                .validatePendingGeneration(confirmed)
+                .validatePendingGeneration(
+                    confirmed,
+                    paths: paths
+                )
             try DriverSessionStore.removeDriverLock(paths: paths)
             try finishCleanup(
                 confirmed,
@@ -302,7 +335,7 @@ enum PlayCoverPendingLaunchCoordinator {
             return nil
         }
         let manifest = try PlayCoverSessionService
-            .validatePendingGeneration(record)
+            .validatePendingGeneration(record, paths: paths)
         if record.phase == .confirmedStopped {
             guard record.cleanupProof != .driverLockRetired else {
                 throw CLIParseError.invalidValue(
@@ -324,7 +357,8 @@ enum PlayCoverPendingLaunchCoordinator {
 
         let decision = try evaluate(
             record,
-            authenticateCandidates: true
+            authenticateCandidates: true,
+            paths: paths
         )
         switch decision {
         case .safeCleanup(let proof):
@@ -412,11 +446,43 @@ enum PlayCoverPendingLaunchCoordinator {
         paths: IOSUsePaths
     ) throws {
         do {
-            try PlayCoverService.lockKeyCover(for: manifest)
+            try PlayCoverService.lockKeyCover(
+                for: manifest,
+                playChainPath: paths.playcoverPlayChain
+            )
             try PlayCoverService.removeSessionLaunchAlias(
                 pendingLaunch: record,
                 manifest: manifest
             )
+            try PlayCoverGlobalReferenceStore.clearPending(
+                sessionID: record.sessionID,
+                generationKey: record.generationKey,
+                paths: paths
+            )
+            try cleanupPinStepObserverForTesting?(
+                .pendingCleared
+            )
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(
+                .afterCleanupPendingPinCleared
+            )
+            #endif
+            try PlayCoverGlobalReferenceStore.clearActive(
+                sessionID: record.sessionID,
+                generationKey: record.generationKey,
+                paths: paths
+            )
+            try cleanupPinStepObserverForTesting?(
+                .activeCleared
+            )
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(
+                .afterCleanupActivePinCleared
+            )
+            #endif
+            // Keep the confirmed-stopped journal as the retry authority until
+            // every exact global pin has been retired. `last` continues to
+            // protect the immutable generation.
             try PlayCoverPendingLaunchStore.removeConfirmed(
                 sessionID: record.sessionID,
                 paths: paths
@@ -480,7 +546,8 @@ enum PlayCoverPendingLaunchCoordinator {
 
     private static func evaluate(
         _ record: PlayCoverPendingLaunchStore.Record,
-        authenticateCandidates: Bool
+        authenticateCandidates: Bool,
+        paths: IOSUsePaths
     ) throws -> PlayCoverPendingLaunchRecovery.Decision {
         let evidence = recoveryEvidence(record)
         if let owner = evidence.owner {
@@ -492,7 +559,8 @@ enum PlayCoverPendingLaunchCoordinator {
                 ownedProcessState:
                     PlayCoverPendingLaunchRecovery
                         .ownedProcessState(pid: owner.pid),
-                authenticatedOwner: nil
+                authenticatedOwner: nil,
+                candidateAuthenticationComplete: false
             )
         }
         guard record.submissionBootSessionUUID != nil else {
@@ -510,10 +578,29 @@ enum PlayCoverPendingLaunchCoordinator {
             // every observed candidate must still pass stable PID/birth/path
             // checks plus the Runtime socket's peer and identified response
             // authentication.
+            let foreignPins =
+                try PlayCoverGlobalReferenceStore
+                    .foreignSessionPins(
+                        paths: paths,
+                        generationKey: record.generationKey
+                    )
+            let foreignSessions = try foreignPins.map {
+                PlayCoverPendingLaunchRecovery.ForeignSession(
+                    sessionID: $0.sessionID,
+                    runtimeSocketPath:
+                        try IOSUsePaths.macRuntimeSocketPath(
+                            sessionID: $0.sessionID,
+                            homeID: $0.homeID,
+                            socketRoot:
+                                paths.playcoverSocketRoot
+                        )
+                )
+            }
             switch PlayCoverPendingLaunchRecovery
                 .authenticateCandidateOwner(
                     evidence: evidence,
-                    census: observation.census
+                    census: observation.census,
+                    foreignSessions: foreignSessions
                 ) {
             case .success(let owner):
                 authenticatedOwner = owner
@@ -527,7 +614,10 @@ enum PlayCoverPendingLaunchCoordinator {
                 observation.bootSessionUUID,
             census: observation.census,
             ownedProcessState: nil,
-            authenticatedOwner: authenticatedOwner
+            authenticatedOwner: authenticatedOwner,
+            candidateAuthenticationComplete:
+                authenticateCandidates
+                    && observation.census.isComplete
         )
     }
 

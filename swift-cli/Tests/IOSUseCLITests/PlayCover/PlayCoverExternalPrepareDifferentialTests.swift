@@ -1028,11 +1028,11 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
                 )
             )
 
-        let iosUsePaths = IOSUsePaths.resolve(
+        let iosUsePaths = resolvePlayCoverTestPaths(
             environment: ["IOS_USE_HOME": iosUseHome.path]
         )
         let candidateParent = URL(
-            fileURLWithPath: iosUsePaths.playcoverPrepared,
+            fileURLWithPath: iosUsePaths.playcoverGlobalObjects,
             isDirectory: true
         ).appendingPathComponent("differential", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -1050,7 +1050,8 @@ final class PlayCoverExternalPrepareDifferentialTests: XCTestCase {
             )
         let plan = try PlayCoverService.makePreparationPlan(
             source: inspectedSource,
-            runtimeFrameworkPath: runtime.path
+            runtimeFrameworkPath: runtime.path,
+            paths: iosUsePaths
         )
         guard plan.runtimeBuildHash == runtimeInputTreeSHA256 else {
             throw ProfileError.invalid(

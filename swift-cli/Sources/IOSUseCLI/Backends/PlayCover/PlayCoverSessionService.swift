@@ -190,30 +190,8 @@ enum PlayCoverSessionService {
         _ manifest: PlayCoverPrepareManifest,
         paths: IOSUsePaths
     ) throws {
-        try recordPrepared(
-            appPath: manifest.preparedAppPath,
-            bundleIdentifier: manifest.bundleIdentifier,
-            executablePath: manifest.executablePath,
+        try PlayCoverGlobalReferenceStore.updateLast(
             generationKey: manifest.generationKey,
-            paths: paths
-        )
-    }
-
-    private static func recordPrepared(
-        appPath: String,
-        bundleIdentifier: String,
-        executablePath: String,
-        generationKey: String,
-        paths: IOSUsePaths
-    ) throws {
-        try writeReference(
-            PreparedReference(
-                schemaVersion: 3,
-                appPath: appPath,
-                bundleIdentifier: bundleIdentifier,
-                executablePath: executablePath,
-                generationKey: generationKey
-            ),
             paths: paths
         )
     }
@@ -226,17 +204,21 @@ enum PlayCoverSessionService {
         let generationIdentity: PlayCoverGenerationIdentity?
         let expectedManifest: PlayCoverPrepareManifest?
         let reused: Bool
+        let selectionPreparationID: String?
     }
 
     private static func resolveApp(
         explicitAppPath: String?,
-        paths: IOSUsePaths
+        paths: IOSUsePaths,
+        signingIdentity:
+            PlayCoverSigningIdentityEvidence? = nil
     ) throws -> ResolvedApp {
         if let explicitAppPath, !explicitAppPath.isEmpty {
             let resolution =
                 try PlayCoverManagedAppService.resolveExplicitApp(
                     explicitAppPath,
-                    paths: paths
+                    paths: paths,
+                    signingIdentity: signingIdentity
             )
             return ResolvedApp(
                 appPath: resolution.manifest.preparedAppPath,
@@ -248,7 +230,9 @@ enum PlayCoverSessionService {
                 generationIdentity:
                     resolution.generationIdentity,
                 expectedManifest: resolution.manifest,
-                reused: resolution.reused
+                reused: resolution.reused,
+                selectionPreparationID:
+                    resolution.selectionPreparationID
             )
         }
         guard let reference = try readPreparedReference(
@@ -272,32 +256,58 @@ enum PlayCoverSessionService {
             generationKey: reference.generationKey,
             generationIdentity: nil,
             expectedManifest: nil,
-            reused: true
+            reused: true,
+            selectionPreparationID: nil
         )
     }
 
     static func launch(
         explicitAppPath: String?,
+        signingIdentity suppliedSigningIdentity:
+            PlayCoverSigningIdentityEvidence? = nil,
         captureStdio: Bool = false,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> LaunchResult {
         let sessionID = UUID().uuidString
+        let signingIdentity: PlayCoverSigningIdentityEvidence?
+        if let explicitAppPath, !explicitAppPath.isEmpty {
+            signingIdentity = try suppliedSigningIdentity
+                ?? PlayCoverService
+                    .requireHealthySigningIdentityForStart()
+        } else {
+            signingIdentity = nil
+        }
+        try ensureAnchoredRuntimeNamespace(paths: paths)
         try ensureOwnerOnlyRunDirectory(paths.playcoverRun)
         let socketPath = try paths.macRuntimeSocketPath(
             sessionID: sessionID
         )
-        // Validate the fixed-length Unix transport path before source
-        // inspection or a cold prepare. A custom IOS_USE_HOME that cannot
-        // host the Runtime socket must fail without doing expensive App work.
+        // Resolve the bounded account/UID socket name before source
+        // inspection or a cold prepare.
         let resolved = try resolveApp(
             explicitAppPath: explicitAppPath,
-            paths: paths
+            paths: paths,
+            signingIdentity: signingIdentity
         )
+        var selectionPinCommitted = false
+        defer {
+            if let preparationID =
+                    resolved.selectionPreparationID,
+               !selectionPinCommitted {
+                try? PlayCoverGlobalReferenceStore
+                    .abandonPreparation(
+                        generationKey: resolved.generationKey,
+                        preparationID: preparationID,
+                        paths: paths
+                    )
+            }
+        }
         let verifiedLaunch = try fastVerifiedLaunchCapability(
             appPath: resolved.appPath,
             expectedGenerationIdentity:
-                resolved.generationIdentity
+                resolved.generationIdentity,
+            expectedSigningIdentity: signingIdentity
         )
         defer { verifiedLaunch.capability?.close() }
         let validatedManifest = verifiedLaunch.evidence
@@ -305,15 +315,22 @@ enum PlayCoverSessionService {
         let currentGenerationToken =
             verifiedLaunch.currentGenerationToken
         let verifiedManifest = validatedManifest.manifest
+        let expectedManifestMatches =
+            try resolved.expectedManifest.map {
+                try $0.hasSamePersistedSeal(
+                    as: verifiedManifest
+                )
+            } ?? true
         guard verifiedManifest.preparedAppPath == resolved.appPath,
               verifiedManifest.bundleIdentifier
                 == resolved.bundleIdentifier,
               verifiedManifest.executablePath
                 == resolved.executablePath,
               verifiedManifest.generationKey == resolved.generationKey,
-              resolved.expectedManifest.map({
-                $0 == verifiedManifest
-              }) ?? true else {
+              signingIdentity.map({
+                  $0 == verifiedManifest.signingIdentity
+              }) ?? true,
+              expectedManifestMatches else {
             throw PlayCoverBackendError.cacheTampered(
                 "selected generation identity changed before launch"
             )
@@ -322,7 +339,17 @@ enum PlayCoverSessionService {
         // fast-verified generation. Runtime hello and session commit are a
         // separate transaction; a failed launch rolls back the App without
         // making this immutable generation undiscoverable for retry.
-        try recordPrepared(verifiedManifest, paths: paths)
+        if let preparationID =
+                resolved.selectionPreparationID {
+            try PlayCoverGlobalReferenceStore.finishPreparation(
+                generationKey: verifiedManifest.generationKey,
+                preparationID: preparationID,
+                paths: paths
+            )
+            selectionPinCommitted = true
+        } else {
+            try recordPrepared(verifiedManifest, paths: paths)
+        }
         let stdioLog = captureStdio
             ? try PlayCoverStdioLogService.create(
                 sessionID: sessionID,
@@ -352,6 +379,11 @@ enum PlayCoverSessionService {
                         launchCapability: launchCapability,
                         sessionID: sessionID,
                         runtimeSocketPath: socketPath,
+                        runtimeHomePath:
+                            paths.playcoverRuntimeHome,
+                        homeID: paths.playcoverHomeID,
+                        socketRootPath:
+                            paths.playcoverSocketRoot,
                         stdioLog: stdioLog,
                         pendingLaunchPaths: paths,
                         timeout: timeout
@@ -530,8 +562,13 @@ enum PlayCoverSessionService {
                 message:
                     "driver.lock does not match the pending "
                     + "launch authority"
-            )
+                )
         }
+        try PlayCoverGlobalReferenceStore.markActive(
+            sessionID: sessionID,
+            generationKey: generationKey,
+            paths: paths
+        )
         switch record.phase {
         case .owned:
             record = try PlayCoverPendingLaunchStore
@@ -573,6 +610,14 @@ enum PlayCoverSessionService {
                     + "process ownership"
             )
         }
+        try PlayCoverGlobalReferenceStore.clearPending(
+            sessionID: sessionID,
+            generationKey: generationKey,
+            paths: paths
+        )
+        #if DEBUG && canImport(Darwin)
+        PlayCoverLaunchCrashCut.hit(.afterPendingPinRetired)
+        #endif
         try PlayCoverPendingLaunchStore.removeConfirmed(
             sessionID: sessionID,
             paths: paths
@@ -583,22 +628,38 @@ enum PlayCoverSessionService {
     }
 
     @discardableResult
-    static func terminate(result: LaunchResult) throws -> Int32 {
-        try terminate(session: makeSessionInfo(from: result))
+    static func terminate(
+        result: LaunchResult,
+        paths: IOSUsePaths
+    ) throws -> Int32 {
+        try terminate(
+            session: makeSessionInfo(from: result),
+            paths: paths
+        )
     }
 
     static func terminate(
-        session: SessionService.Info
+        session: SessionService.Info,
+        paths: IOSUsePaths
     ) throws -> Int32 {
-        let manifest = try validateGeneration(session: session)
-        let pid = try terminateConfirmedProcess(session: session)
+        let manifest = try validateGeneration(
+            session: session,
+            paths: paths
+        )
+        let pid = try terminateConfirmedProcess(
+            session: session,
+            paths: paths
+        )
         guard let sessionID = session.sessionIdentifier else {
             throw CLIParseError.invalidValue(
                 "Invalid driver.lock: Mac sessionID is missing."
             )
         }
         do {
-            try PlayCoverService.lockKeyCover(for: manifest)
+            try PlayCoverService.lockKeyCover(
+                for: manifest,
+                playChainPath: paths.playcoverPlayChain
+            )
             try PlayCoverService.removeSessionLaunchAlias(
                 sessionID: sessionID,
                 manifest: manifest
@@ -614,8 +675,26 @@ enum PlayCoverSessionService {
         return pid
     }
 
+    static func retireActiveGenerationPin(
+        session: SessionService.Info,
+        paths: IOSUsePaths
+    ) throws {
+        guard let sessionID = session.sessionIdentifier,
+              let generationKey = session.macGenerationKey else {
+            throw CLIParseError.invalidValue(
+                "Invalid driver.lock: Mac cache pin identity is incomplete."
+            )
+        }
+        try PlayCoverGlobalReferenceStore.clearActive(
+            sessionID: sessionID,
+            generationKey: generationKey,
+            paths: paths
+        )
+    }
+
     private static func terminateConfirmedProcess(
-        session: SessionService.Info
+        session: SessionService.Info,
+        paths: IOSUsePaths
     ) throws -> Int32 {
         if let terminateOverrideForTesting {
             return try terminateOverrideForTesting(session)
@@ -690,7 +769,10 @@ enum PlayCoverSessionService {
         // immutable and live identity immediately before signaling so a
         // generation mutation or PID reuse during that wait cannot redirect
         // termination.
-        _ = try validateGeneration(session: session)
+        _ = try validateGeneration(
+            session: session,
+            paths: paths
+        )
         let currentState = processState(pid)
         guard case .running(let currentExecutable) =
                 currentState else {
@@ -796,7 +878,8 @@ enum PlayCoverSessionService {
     }
 
     static func validateGeneration(
-        session: SessionService.Info
+        session: SessionService.Info,
+        paths: IOSUsePaths
     ) throws -> PlayCoverPrepareManifest {
         guard session.deviceType == deviceType,
               session.startMode == deviceType,
@@ -833,10 +916,13 @@ enum PlayCoverSessionService {
             manifest.preparedAppPath
         ) == PlayCoverRuntimeClient.canonicalPath(appPath),
             PlayCoverRuntimeClient.canonicalPath(
-                manifest.executablePath
+            manifest.executablePath
             ) == PlayCoverRuntimeClient.canonicalPath(
                 executablePath
             ),
+            manifest.accountNamespacePolicyHash
+                == PlayCoverService
+                    .accountNamespacePolicyHash(paths: paths),
             manifest.generationKey == generationKey,
             manifest.bundleIdentifier == bundleIdentifier,
             session.udid == deviceType else {
@@ -847,7 +933,7 @@ enum PlayCoverSessionService {
         }
         let expectedSocket = try expectedRuntimeSocketPath(
             sessionID: sessionID,
-            manifest: manifest
+            paths: paths
         )
         guard PlayCoverRuntimeClient.canonicalPath(
             runtimeSocketPath
@@ -863,13 +949,17 @@ enum PlayCoverSessionService {
     }
 
     static func validatePendingGeneration(
-        _ record: PlayCoverPendingLaunchStore.Record
+        _ record: PlayCoverPendingLaunchStore.Record,
+        paths: IOSUsePaths
     ) throws -> PlayCoverPrepareManifest {
         let manifest = try fastVerify(
             appPath: record.appPath,
             expectedGenerationIdentity: nil
         ).manifest
         guard manifest.preparedAppPath == record.appPath,
+              manifest.accountNamespacePolicyHash
+                == PlayCoverService
+                    .accountNamespacePolicyHash(paths: paths),
               manifest.bundleIdentifier
                 == record.bundleIdentifier,
               manifest.executablePath
@@ -907,7 +997,9 @@ enum PlayCoverSessionService {
     private static func fastVerifiedLaunchCapability(
         appPath: String,
         expectedGenerationIdentity:
-            PlayCoverGenerationIdentity?
+            PlayCoverGenerationIdentity?,
+        expectedSigningIdentity:
+            PlayCoverSigningIdentityEvidence?
     ) throws -> (
         evidence: PlayCoverValidatedPreparedManifest,
         currentGenerationToken:
@@ -926,7 +1018,8 @@ enum PlayCoverSessionService {
             try PlayCoverService.acquireFastVerifiedLaunchCapability(
             appPath: appPath,
             expectedGenerationIdentity:
-                expectedGenerationIdentity
+                expectedGenerationIdentity,
+            expectedSigningIdentity: expectedSigningIdentity
         )
         return (
             acquired.evidence,
@@ -937,78 +1030,21 @@ enum PlayCoverSessionService {
 
     static func expectedRuntimeSocketPath(
         sessionID: String,
-        manifest: PlayCoverPrepareManifest
+        paths: IOSUsePaths
     ) throws -> String {
-        let app = URL(
-            fileURLWithPath: manifest.preparedAppPath,
-            isDirectory: true
-        ).standardizedFileURL
-        let generation = app.deletingLastPathComponent()
-        let prepared = generation.deletingLastPathComponent()
-        let macCache = prepared.deletingLastPathComponent()
-        let cache = macCache.deletingLastPathComponent()
-        let managedHome = cache.deletingLastPathComponent()
-        guard generation.lastPathComponent
-                == manifest.generationKey,
-              prepared.lastPathComponent == "prepared",
-              macCache.lastPathComponent == "mac",
-              cache.lastPathComponent == "cache" else {
-            throw PlayCoverBackendError.terminateFailed(
-                "prepared App path does not identify the immutable "
-                    + "session generation"
-            )
-        }
-        let socketToken = sessionID
-            .unicodeScalars
-            .filter {
-                CharacterSet.alphanumerics.contains($0)
-            }
-            .map(String.init)
-            .joined()
-        guard !socketToken.isEmpty else {
-            throw CLIParseError.invalidValue(
-                "Mac sessionID cannot produce a runtime "
-                    + "socket name."
-            )
-        }
-        let socketName =
-            "s-\(socketToken.prefix(32)).sock"
-        // `run` may already have been removed when stop is recovering a
-        // crashed session. Canonicalize the still-existing managed Home before
-        // appending the mac/run/name components so the `/tmp` -> `/private/tmp`
-        // alias cannot change socket identity merely because the leaf
-        // directory disappeared.
-        let canonicalManagedHomePath: String
-        #if canImport(Darwin)
-        var buffer = [CChar](
-            repeating: 0,
-            count: Int(PATH_MAX)
+        try paths.macRuntimeSocketPath(sessionID: sessionID)
+    }
+
+    static func expectedRuntimeSocketPath(
+        sessionID: String,
+        homeID: String,
+        socketRootPath: String
+    ) throws -> String {
+        try IOSUsePaths.macRuntimeSocketPath(
+            sessionID: sessionID,
+            homeID: homeID,
+            socketRoot: socketRootPath
         )
-        if managedHome.path.withCString({
-            Darwin.realpath($0, &buffer)
-        }) != nil {
-            canonicalManagedHomePath = String(cString: buffer)
-        } else {
-            canonicalManagedHomePath = managedHome.path
-        }
-        #else
-        canonicalManagedHomePath =
-            managedHome.resolvingSymlinksInPath().path
-        #endif
-        let expected = URL(
-            fileURLWithPath: canonicalManagedHomePath,
-            isDirectory: true
-        )
-            .appendingPathComponent("mac", isDirectory: true)
-            .appendingPathComponent("run", isDirectory: true)
-            .appendingPathComponent(socketName).path
-        guard expected.utf8.count <= 103 else {
-            throw CLIParseError.invalidValue(
-                "IOS_USE_HOME is too long for a Mac Runtime Unix socket "
-                    + "(\(expected.utf8.count) UTF-8 bytes; maximum 103)."
-            )
-        }
-        return expected
     }
 
     private static func validateManagedGenerationPath(
@@ -1032,7 +1068,7 @@ enum PlayCoverSessionService {
             )
         }
         let root = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).standardizedFileURL.path
         let app = URL(
@@ -1082,120 +1118,40 @@ enum PlayCoverSessionService {
     static func readPreparedReference(
         paths: IOSUsePaths
     ) throws -> PreparedReference? {
-        #if canImport(Darwin)
-        let playcoverDescriptor = Darwin.open(
-            paths.playcover,
-            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        guard let homeReference =
+                try PlayCoverGlobalReferenceStore.read(paths: paths),
+              let generationKey =
+                homeReference.lastGenerationKey else {
+            return nil
+        }
+        let appPath = URL(
+            fileURLWithPath: paths.playcoverGlobalObjects,
+            isDirectory: true
         )
-        if playcoverDescriptor < 0, errno == ENOENT {
-            return nil
-        }
-        guard playcoverDescriptor >= 0 else {
+            .appendingPathComponent(
+                generationKey,
+                isDirectory: true
+            )
+            .appendingPathComponent("App.app", isDirectory: true)
+            .path
+        let manifest = try PlayCoverService.readPreparedManifest(
+            appPath: appPath
+        )
+        guard manifest.accountNamespacePolicyHash
+                == PlayCoverService
+                    .accountNamespacePolicyHash(paths: paths) else {
             throw PlayCoverBackendError.launchFailed(
-                "cannot open the Mac backend state directory without "
-                    + "following links: errno \(errno)"
+                "last prepared App was signed for a different account "
+                    + "Runtime namespace"
             )
         }
-        defer { Darwin.close(playcoverDescriptor) }
-        var directoryStatus = stat()
-        guard fstat(playcoverDescriptor, &directoryStatus) == 0,
-              directoryStatus.st_mode & S_IFMT == S_IFDIR,
-              directoryStatus.st_uid == geteuid(),
-              directoryStatus.st_mode & 0o077 == 0 else {
-            throw PlayCoverBackendError.launchFailed(
-                "Mac backend state directory is not owner-only"
-            )
-        }
-        let filename = URL(
-            fileURLWithPath: paths.playcoverLastPrepared
-        ).lastPathComponent
-        var referenceStatus = stat()
-        if fstatat(
-            playcoverDescriptor,
-            filename,
-            &referenceStatus,
-            AT_SYMLINK_NOFOLLOW
-        ) != 0, errno == ENOENT {
-            return nil
-        }
-        #else
-        guard FileManager.default.fileExists(
-            atPath: paths.playcoverLastPrepared
-        ) else {
-            return nil
-        }
-        #endif
-        do {
-            #if canImport(Darwin)
-            let data =
-                try PlayCoverManagedAppService.readOwnedRegularFile(
-                    parentDescriptor: playcoverDescriptor,
-                    name: filename
-                )
-            #else
-            let data = try Data(
-                contentsOf: URL(
-                    fileURLWithPath: paths.playcoverLastPrepared
-                )
-            )
-            #endif
-            let reference = try JSONDecoder().decode(
-                PreparedReference.self,
-                from: data
-            )
-            guard reference.schemaVersion == 3,
-                  !reference.appPath.isEmpty,
-                  !reference.bundleIdentifier.isEmpty,
-                  !reference.executablePath.isEmpty,
-                  !reference.generationKey.isEmpty else {
-                throw PlayCoverBackendError.launchFailed(
-                    "last prepared App record is incomplete or "
-                        + "uses an unsupported schema"
-                )
-            }
-            return reference
-        } catch let error as PlayCoverBackendError {
-            throw error
-        } catch {
-            throw PlayCoverBackendError.launchFailed(
-                "cannot read \(paths.playcoverLastPrepared): "
-                    + "\(error)"
-            )
-        }
-    }
-
-    private static func writeReference(
-        _ reference: PreparedReference,
-        paths: IOSUsePaths
-    ) throws {
-        do {
-            try FileManager.default.createDirectory(
-                atPath: paths.playcover,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [
-                .prettyPrinted,
-                .sortedKeys,
-            ]
-            let data = try encoder.encode(reference)
-            try data.write(
-                to: URL(
-                    fileURLWithPath:
-                        paths.playcoverLastPrepared
-                ),
-                options: .atomic
-            )
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: paths.playcoverLastPrepared
-            )
-        } catch {
-            throw PlayCoverBackendError.prepareFailed(
-                "cannot record the last prepared App: \(error)"
-            )
-        }
+        return PreparedReference(
+            schemaVersion: PlayCoverGlobalReferenceStore.schemaVersion,
+            appPath: manifest.preparedAppPath,
+            bundleIdentifier: manifest.bundleIdentifier,
+            executablePath: manifest.executablePath,
+            generationKey: generationKey
+        )
     }
 
     private static func ensureOwnerOnlyRunDirectory(
@@ -1220,6 +1176,142 @@ enum PlayCoverSessionService {
         }
         #endif
     }
+
+    /// Creates the account-global Runtime namespace without following any
+    /// component symlink. Product-owned components are always owner-only;
+    /// system/account ancestors are opened read-only and type-checked.
+    private static func ensureAnchoredRuntimeNamespace(
+        paths: IOSUsePaths
+    ) throws {
+        #if canImport(Darwin)
+        let runtimeComponents = URL(
+            fileURLWithPath: paths.playcoverRuntimeRoot,
+            isDirectory: true
+        ).pathComponents
+        guard let managedIndex = runtimeComponents.lastIndex(
+                of: "dev.ios-use"
+              ) else {
+            throw PlayCoverBackendError.launchFailed(
+                "Mac Runtime root is outside the fixed account namespace"
+            )
+        }
+        try ensureAnchoredDirectory(
+            paths.playcoverRuntimeHome,
+            ownerOnlyFromComponentIndex: managedIndex
+        )
+        try ensureAnchoredDirectory(
+            paths.playcoverPlayChain,
+            ownerOnlyFromComponentIndex: managedIndex
+        )
+        let socketComponents = URL(
+            fileURLWithPath: paths.playcoverSocketRoot,
+            isDirectory: true
+        ).pathComponents
+        guard socketComponents.count >= 2 else {
+            throw PlayCoverBackendError.launchFailed(
+                "Mac Runtime socket root is invalid"
+            )
+        }
+        try ensureAnchoredDirectory(
+            paths.playcoverSocketRoot,
+            ownerOnlyFromComponentIndex:
+                socketComponents.count - 1
+        )
+        #else
+        for directory in [
+            paths.playcoverRuntimeHome,
+            paths.playcoverPlayChain,
+            paths.playcoverSocketRoot,
+        ] {
+            try ensureOwnerOnlyRunDirectory(directory)
+        }
+        #endif
+    }
+
+    #if canImport(Darwin)
+    private static func ensureAnchoredDirectory(
+        _ path: String,
+        ownerOnlyFromComponentIndex: Int
+    ) throws {
+        let components = URL(
+            fileURLWithPath: path,
+            isDirectory: true
+        ).pathComponents
+        guard components.first == "/",
+              ownerOnlyFromComponentIndex > 0,
+              ownerOnlyFromComponentIndex < components.count else {
+            throw PlayCoverBackendError.launchFailed(
+                "Mac Runtime directory path is invalid"
+            )
+        }
+        var descriptor = Darwin.open(
+            "/",
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw PlayCoverBackendError.launchFailed(
+                "cannot anchor the Mac Runtime directory root: errno "
+                    + "\(errno)"
+            )
+        }
+        defer { Darwin.close(descriptor) }
+        for index in 1..<components.count {
+            let component = components[index]
+            guard component != ".",
+                  component != "..",
+                  !component.contains("/") else {
+                throw PlayCoverBackendError.launchFailed(
+                    "Mac Runtime directory contains an unsafe component"
+                )
+            }
+            var child = Darwin.openat(
+                descriptor,
+                component,
+                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+            )
+            if child < 0, errno == ENOENT {
+                guard Darwin.mkdirat(
+                        descriptor,
+                        component,
+                        0o700
+                      ) == 0 || errno == EEXIST else {
+                    throw PlayCoverBackendError.launchFailed(
+                        "cannot create anchored Mac Runtime directory: "
+                            + "errno \(errno)"
+                    )
+                }
+                child = Darwin.openat(
+                    descriptor,
+                    component,
+                    O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+                )
+            }
+            guard child >= 0 else {
+                throw PlayCoverBackendError.launchFailed(
+                    "cannot open anchored Mac Runtime directory: errno "
+                        + "\(errno)"
+                )
+            }
+            var status = stat()
+            let isManaged = index >= ownerOnlyFromComponentIndex
+            guard fstat(child, &status) == 0,
+                  status.st_mode & S_IFMT == S_IFDIR,
+                  !isManaged
+                    || (
+                        status.st_uid == geteuid()
+                            && fchmod(child, 0o700) == 0
+                    ) else {
+                Darwin.close(child)
+                throw PlayCoverBackendError.launchFailed(
+                    "Mac Runtime managed directory must be an "
+                        + "owner-only directory"
+                )
+            }
+            Darwin.close(descriptor)
+            descriptor = child
+        }
+    }
+    #endif
 
     private static func processExecutablePath(
         _ pid: Int32

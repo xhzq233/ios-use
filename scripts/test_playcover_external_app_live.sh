@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 CLI="$ROOT_DIR/ios-use"
 SCENARIO_PATH="${IOS_USE_PLAYCOVER_LIVE_SCENARIO:-}"
 PRIVATE_EVIDENCE_ROOT="${IOS_USE_PLAYCOVER_PRIVATE_EVIDENCE_DIR:-}"
@@ -56,6 +57,8 @@ labels. Raw screenshots, DOM, logs, and session state are retained only below
 the private evidence directory, which must be outside this public checkout.
 IOS_USE_PLAYCOVER_LIVE_ATTESTATION_DIR may select a separate directory for one
 redacted pass attestation. Missing prerequisites exit with EX_CONFIG (78).
+The documented disposable-account ACK and expected passwd Home are mandatory;
+a temporary IOS_USE_HOME does not isolate account-global PlayCover state.
 Crash/stale Runtime behavior is covered by the Runtime stress gate, and
 synthetic PID-reuse identity handling is covered by focused unit tests.
 USAGE
@@ -87,6 +90,13 @@ config_fail() {
   echo "[playcover-external-live] EX_CONFIG: $*" >&2
   exit 78
 }
+
+if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
+  config_fail "the account-global PlayCover safety guard is unavailable"
+fi
+# shellcheck source=scripts/test_playcover_global_state_guard.sh
+source "$GLOBAL_STATE_GUARD"
+playcover_require_disposable_account_contract "playcover-external-live"
 
 if [[ -z "$SCENARIO_PATH" ]]; then
   config_fail "IOS_USE_PLAYCOVER_LIVE_SCENARIO is required"
@@ -348,6 +358,7 @@ assert_status() {
       --arg sourceApp "$LIVE_APP" \
       --arg sourceExecutable "$SOURCE_EXECUTABLE" \
       --arg bundleIdentifier "$LIVE_BUNDLE_ID" \
+      --arg objectsRoot "$PLAYCOVER_GLOBAL_OBJECTS_ROOT" \
       --arg title "$EXPECTED_HOST_TITLE" '
       def scalar_max($lhs; $rhs):
         if $lhs > $rhs then $lhs else $rhs end;
@@ -419,7 +430,9 @@ assert_status() {
       ) as $privateHeightTolerance |
       $driver.macAppPath != $sourceApp and
       ($driver.macAppPath |
-        contains("/cache/mac/prepared/" + $generation + "/")) and
+        startswith(
+          $objectsRoot + "/" + $generation + "/"
+        )) and
       $driver.macExecutablePath != $sourceExecutable and
       ($driver.macExecutablePath |
         startswith($driver.macAppPath + "/")) and
@@ -628,6 +641,12 @@ assert_cycle_identity() {
   runtime_socket="$(
     jq -er '.data.driver.macRuntimeSocketPath' "$status_file"
   )"
+  case "$runtime_socket" in
+    "$PLAYCOVER_SOCKET_ROOT"/s-*.sock) ;;
+    *)
+      fail_gate "$case_name Runtime socket escaped the fixed UID socket root"
+      ;;
+  esac
   if [[ ! -S "$runtime_socket" || -L "$runtime_socket" ]]; then
     fail_gate "$case_name Runtime socket is not the live session endpoint"
   fi
@@ -2465,7 +2484,7 @@ if [[
   ! -d "$SESSION_HOME" ||
   -L "$SESSION_HOME"
 ]]; then
-  config_fail "could not create a safe isolated IOS_USE_HOME"
+  config_fail "could not create a safe temporary logical IOS_USE_HOME"
 fi
 printf '%s\n' "$SESSION_HOME" >"$RUN_DIR/session-home"
 export IOS_USE_HOME="$SESSION_HOME"
@@ -2482,7 +2501,7 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
     if ! rg -q -- \
         'Mac generation prepared: [0-9a-f]{64}' \
         "$RUN_DIR/${cycle_name}_start.stdout"; then
-      fail_gate "the first isolated external App start did not prepare a generation"
+      fail_gate "the first external App start did not prepare a generation"
     fi
     GENERATION_KEY="$(
       /usr/bin/sed -nE \
@@ -2507,7 +2526,7 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
   if ! rg -Fq -- \
       "IOS_USE_HOME: $SESSION_HOME" \
       "$RUN_DIR/${cycle_name}_start.stdout"; then
-    fail_gate "$cycle_name did not report the isolated IOS_USE_HOME"
+    fail_gate "$cycle_name did not report the temporary logical IOS_USE_HOME"
   fi
 
   run_cli "${cycle_name}_status" status --json

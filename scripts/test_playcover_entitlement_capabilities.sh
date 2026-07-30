@@ -8,7 +8,7 @@ fail_case() {
 }
 
 PREPARED_APP=""
-MANAGED_HOME=""
+RUNTIME_HOME=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prepared-app)
@@ -17,10 +17,10 @@ while [[ $# -gt 0 ]]; do
       PREPARED_APP="$2"
       shift 2
       ;;
-    --managed-home)
-      [[ -z "$MANAGED_HOME" && $# -ge 2 ]] ||
+    --runtime-home)
+      [[ -z "$RUNTIME_HOME" && $# -ge 2 ]] ||
         fail_case "PCAP-CONFIG-ARGS"
-      MANAGED_HOME="$2"
+      RUNTIME_HOME="$2"
       shift 2
       ;;
     *)
@@ -29,14 +29,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$PREPARED_APP" && -n "$MANAGED_HOME" ]] ||
+[[ -n "$PREPARED_APP" && -n "$RUNTIME_HOME" ]] ||
   fail_case "PCAP-CONFIG-ARGS"
-[[ "$PREPARED_APP" == /* && "$MANAGED_HOME" == /* ]] ||
+[[ "$PREPARED_APP" == /* && "$RUNTIME_HOME" == /* ]] ||
   fail_case "PCAP-CONFIG-ABSOLUTE"
 [[ "$(/usr/bin/uname -s)" == "Darwin" ]] ||
   fail_case "PCAP-CONFIG-HOST"
 
 CURRENT_UID="$EUID"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && /bin/pwd -P)"
+GLOBAL_STATE_GUARD="$SCRIPT_DIR/test_playcover_global_state_guard.sh"
+if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
+  printf '%s\n' \
+    "PCAP-CONFIG-GLOBAL-GUARD EX_CONFIG: account-global safety guard unavailable" \
+    >&2
+  exit 78
+fi
+# shellcheck source=scripts/test_playcover_global_state_guard.sh
+source "$GLOBAL_STATE_GUARD"
+playcover_require_disposable_account_contract \
+  "playcover-entitlement-capabilities"
 
 canonical_existing() {
   /bin/realpath "$1" 2>/dev/null
@@ -137,28 +149,32 @@ require_owned_regular() {
     fail_case "PCAP-CONFIG-OWNER-MODE"
 }
 
-require_owner_directory_700 "$MANAGED_HOME"
-
-STATE_DIR="$MANAGED_HOME/state"
-MAC_DIR="$MANAGED_HOME/mac"
-RUN_DIR="$MAC_DIR/run"
-LOGS_DIR="$MAC_DIR/logs"
-PLAYCHAIN_DIR="$MAC_DIR/playchain"
-CACHE_DIR="$MANAGED_HOME/cache"
-MAC_CACHE_DIR="$CACHE_DIR/mac"
-PREPARED_ROOT="$MAC_CACHE_DIR/prepared"
+require_owner_directory_700 "$PLAYCOVER_GLOBAL_CACHE_ROOT"
+PREPARED_ROOT="$PLAYCOVER_GLOBAL_OBJECTS_ROOT"
+GLOBAL_HOMES_DIR="$PLAYCOVER_GLOBAL_HOMES_ROOT"
+GLOBAL_LOCKS_DIR="$PLAYCOVER_GLOBAL_LOCKS_ROOT"
+RUNTIME_ROOT="$PLAYCOVER_RUNTIME_ROOT"
+SOCKET_ROOT="$PLAYCOVER_SOCKET_ROOT"
+LOGS_DIR="$RUNTIME_HOME/logs"
+PLAYCHAIN_DIR="$RUNTIME_HOME/playchain"
 
 for directory in \
-  "$STATE_DIR" \
-  "$MAC_DIR" \
-  "$RUN_DIR" \
+  "$PREPARED_ROOT" \
+  "$GLOBAL_HOMES_DIR" \
+  "$GLOBAL_LOCKS_DIR" \
+  "$RUNTIME_ROOT" \
+  "$RUNTIME_HOME" \
+  "$SOCKET_ROOT" \
   "$LOGS_DIR" \
-  "$PLAYCHAIN_DIR" \
-  "$CACHE_DIR" \
-  "$MAC_CACHE_DIR" \
-  "$PREPARED_ROOT"; do
+  "$PLAYCHAIN_DIR"; do
   require_owner_directory_700 "$directory"
 done
+
+RUNTIME_HOME_ID="${RUNTIME_HOME##*/}"
+[[
+  "${RUNTIME_HOME%/*}" == "$RUNTIME_ROOT" &&
+  "$RUNTIME_HOME_ID" =~ ^[0-9a-f]{64}$
+]] || fail_case "PCAP-CONFIG-RUNTIME-HOME"
 
 require_owned_nonwritable_directory "$PREPARED_APP"
 [[ "$PREPARED_APP" == *.app ]] ||
@@ -232,7 +248,10 @@ AUDIT_TEMP_ROOT="$(
 /bin/chmod 700 "$AUDIT_TEMP_ROOT" >/dev/null 2>&1 ||
   fail_case "PCAP-TEMP"
 case "$AUDIT_TEMP_ROOT/" in
-  "$MANAGED_HOME/"*)
+  "$PLAYCOVER_ACCOUNT_HOME/"*|\
+  "$PLAYCOVER_GLOBAL_CACHE_ROOT/"*|\
+  "$PLAYCOVER_RUNTIME_ROOT/"*|\
+  "$PLAYCOVER_SOCKET_ROOT/"*)
     fail_case "PCAP-TEMP"
     ;;
 esac
@@ -358,8 +377,8 @@ PROBE_ENTITLEMENTS_LOG="$AUDIT_TEMP_ROOT/probe-entitlements.log"
   fail_case "PCAP-ENTITLEMENTS-EQUAL"
 printf '%s PASS\n' "PCAP-PROBE-SIGNATURE"
 
-RUN_AUDIT_DIR="$(
-  /usr/bin/mktemp -d "$RUN_DIR/.pcap-audit.XXXXXX" 2>/dev/null
+SOCKET_AUDIT_DIR="$(
+  /usr/bin/mktemp -d "$SOCKET_ROOT/.pcap-audit.XXXXXX" 2>/dev/null
 )" || fail_case "PCAP-HOST-SETUP"
 LOGS_AUDIT_DIR="$(
   /usr/bin/mktemp -d "$LOGS_DIR/.pcap-audit.XXXXXX" 2>/dev/null
@@ -368,20 +387,20 @@ PLAYCHAIN_AUDIT_DIR="$(
   /usr/bin/mktemp -d "$PLAYCHAIN_DIR/.pcap-audit.XXXXXX" 2>/dev/null
 )" || fail_case "PCAP-HOST-SETUP"
 STATE_AUDIT_DIR="$(
-  /usr/bin/mktemp -d "$STATE_DIR/.pcap-audit.XXXXXX" 2>/dev/null
+  /usr/bin/mktemp -d "$AUDIT_TEMP_ROOT/denied-state.XXXXXX" 2>/dev/null
 )" || fail_case "PCAP-HOST-SETUP"
 PREPARED_AUDIT_DIR="$(
-  /usr/bin/mktemp -d "$PREPARED_ROOT/.pcap-audit.XXXXXX" 2>/dev/null
+  /usr/bin/mktemp -d "$AUDIT_TEMP_ROOT/denied-prepared.XXXXXX" 2>/dev/null
 )" || fail_case "PCAP-HOST-SETUP"
 /bin/chmod 700 \
-  "$RUN_AUDIT_DIR" \
+  "$SOCKET_AUDIT_DIR" \
   "$LOGS_AUDIT_DIR" \
   "$PLAYCHAIN_AUDIT_DIR" \
   "$STATE_AUDIT_DIR" \
   "$PREPARED_AUDIT_DIR" >/dev/null 2>&1 ||
   fail_case "PCAP-HOST-SETUP"
 for audit_directory in \
-  "$RUN_AUDIT_DIR" \
+  "$SOCKET_AUDIT_DIR" \
   "$LOGS_AUDIT_DIR" \
   "$PLAYCHAIN_AUDIT_DIR" \
   "$STATE_AUDIT_DIR" \
@@ -389,14 +408,16 @@ for audit_directory in \
   require_owner_directory_700 "$audit_directory"
 done
 
-RUN_FILE="$RUN_AUDIT_DIR/file"
-RUN_SOCKET="$RUN_AUDIT_DIR/run.sock"
+RUN_FILE="$SOCKET_AUDIT_DIR/file"
+RUN_SOCKET="$SOCKET_AUDIT_DIR/run.sock"
 DATABASE="$PLAYCHAIN_AUDIT_DIR/capability.sqlite3"
 STATE_CREATE="$STATE_AUDIT_DIR/create"
 PREPARED_CREATE="$PREPARED_AUDIT_DIR/create"
-LOGS_SOCKET="$LOGS_AUDIT_DIR/bind.sock"
-PLAYCHAIN_SOCKET="$PLAYCHAIN_AUDIT_DIR/bind.sock"
-ESCAPE_LINK="$RUN_AUDIT_DIR/escape"
+LOGS_SOCKET_LINK="$SOCKET_AUDIT_DIR/logs-link"
+PLAYCHAIN_SOCKET_LINK="$SOCKET_AUDIT_DIR/playchain-link"
+LOGS_SOCKET="$LOGS_SOCKET_LINK/bind.sock"
+PLAYCHAIN_SOCKET="$PLAYCHAIN_SOCKET_LINK/bind.sock"
+ESCAPE_LINK="$SOCKET_AUDIT_DIR/escape"
 for absent in \
   "$RUN_FILE" \
   "$RUN_SOCKET" \
@@ -406,6 +427,8 @@ for absent in \
   "$DATABASE-journal" \
   "$STATE_CREATE" \
   "$PREPARED_CREATE" \
+  "$LOGS_SOCKET_LINK" \
+  "$PLAYCHAIN_SOCKET_LINK" \
   "$LOGS_SOCKET" \
   "$PLAYCHAIN_SOCKET" \
   "$ESCAPE_LINK"; do
@@ -476,7 +499,17 @@ require_owned_regular_600 "$EXTERNAL_VICTIM"
   fail_case "PCAP-HOST-SETUP"
 /bin/ln -s "$EXTERNAL_VICTIM" "$ESCAPE_LINK" >/dev/null 2>&1 ||
   fail_case "PCAP-HOST-SETUP"
-[[ -L "$ESCAPE_LINK" ]] ||
+/bin/ln -s "$LOGS_AUDIT_DIR" "$LOGS_SOCKET_LINK" >/dev/null 2>&1 ||
+  fail_case "PCAP-HOST-SETUP"
+/bin/ln -s \
+  "$PLAYCHAIN_AUDIT_DIR" \
+  "$PLAYCHAIN_SOCKET_LINK" >/dev/null 2>&1 ||
+  fail_case "PCAP-HOST-SETUP"
+[[
+  -L "$ESCAPE_LINK" &&
+  -L "$LOGS_SOCKET_LINK" &&
+  -L "$PLAYCHAIN_SOCKET_LINK"
+]] ||
   fail_case "PCAP-HOST-SETUP"
 /usr/bin/cmp -s "$ESCAPE_LINK" "$VICTIM_EXPECTED" ||
   fail_case "PCAP-HOST-SETUP"

@@ -478,7 +478,7 @@ enum DriverSessionStore {
             return false
         }
         let canonicalRoot = URL(
-            fileURLWithPath: paths.playcoverPrepared,
+            fileURLWithPath: paths.playcoverGlobalObjects,
             isDirectory: true
         ).standardizedFileURL.path
         let app = URL(

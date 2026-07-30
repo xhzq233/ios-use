@@ -2,11 +2,11 @@
 set -euo pipefail
 
 IOS_USE_REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IOS_USE_PLAYCHAIN_TEMP="$(mktemp -d /tmp/ios-use-playchain.XXXXXX)"
+IOS_USE_PLAYCHAIN_TEMP="$(mktemp -d /private/tmp/ios-use-playchain.XXXXXX)"
 cleanup_playchain_test() {
   if [ -n "${IOS_USE_PLAYCHAIN_TEMP:-}" ] &&
      [ -d "$IOS_USE_PLAYCHAIN_TEMP" ] &&
-     [[ "$IOS_USE_PLAYCHAIN_TEMP" == /tmp/ios-use-playchain.* ]]; then
+     [[ "$IOS_USE_PLAYCHAIN_TEMP" == /private/tmp/ios-use-playchain.* ]]; then
     rm -rf "$IOS_USE_PLAYCHAIN_TEMP"
   fi
 }

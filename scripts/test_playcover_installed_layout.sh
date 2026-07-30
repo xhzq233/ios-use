@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+GLOBAL_STATE_GUARD="$ROOT_DIR/scripts/test_playcover_global_state_guard.sh"
 FIXTURE_APP="$ROOT_DIR/playcover-fixtures/.build/DerivedData/Build/Products/Release-iphoneos/IOSUsePlayFixture.app"
 RUNTIME_SOURCE="$ROOT_DIR/.ios-use/playcover/IOSUsePlayRuntime.framework"
 RELEASE_ASSET_DIR=""
@@ -13,7 +14,8 @@ Usage: scripts/test_playcover_installed_layout.sh [--release-dir <directory>]
 Without --release-dir, constructs checksummed assets from the current freshly
 built CLI and Runtime. With --release-dir, consumes the exact assets created by
 scripts/release_build.sh and validates their checksum/build/source manifests
-before exercising install and the installed start/status/stop path.
+before exercising install and the installed start/status/stop path. Both modes
+require the documented disposable-account ACK and expected passwd Home.
 USAGE
 }
 
@@ -34,6 +36,16 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
+  echo \
+    "[installed-layout] EX_CONFIG: the account-global PlayCover safety guard is unavailable" \
+    >&2
+  exit 78
+fi
+# shellcheck source=scripts/test_playcover_global_state_guard.sh
+source "$GLOBAL_STATE_GUARD"
+playcover_require_disposable_account_contract "installed-layout"
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   echo "[installed-layout] ERROR: release-installed PlayCover execution requires Apple-silicon macOS" >&2
@@ -63,7 +75,7 @@ fi
 
 # Keep the canonical test home short enough for the Runtime's sockaddr_un
 # safety limit and avoid /tmp -> /private/tmp aliasing.
-CANONICAL_HOME="$(cd "$HOME" && pwd -P)"
+CANONICAL_HOME="$PLAYCOVER_ACCOUNT_HOME"
 TEMP_ROOT="$(mktemp -d "$CANONICAL_HOME/.iur.XXXXXX")"
 ASSET_DIR="$TEMP_ROOT/a"
 SOURCE_PARENT="$TEMP_ROOT/s"

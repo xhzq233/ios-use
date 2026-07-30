@@ -82,7 +82,8 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                 .appendingPathComponent(
                     PlayCoverService.runtimeFrameworkName,
                     isDirectory: true
-                ).path
+                ).path,
+            paths: fixture.paths
         )
         XCTAssertNotEqual(
             differentPlan.generationIdentity,
@@ -101,6 +102,41 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             0,
             "mismatched trusted evidence must fail by field comparison "
                 + "without silently deriving a replacement key"
+        )
+    }
+
+    func testFastVerifyResolvesSignerOnlyForBareReuse() throws {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        Shell.runResultOverrideForTesting = {
+            _, _, _ in
+            Shell.RunResult(stdout: "", stderr: "", exitCode: 0)
+        }
+        var resolverCalls = 0
+        PlayCoverService.signingIdentityResolverOverrideForTesting = {
+            _ in
+            resolverCalls += 1
+            return fixture.manifest.signingIdentity
+        }
+
+        _ = try PlayCoverService.fastVerifyEvidence(
+            appPath: fixture.app.path,
+            expectedGenerationIdentity: nil
+        )
+        XCTAssertEqual(resolverCalls, 1)
+
+        resolverCalls = 0
+        _ = try PlayCoverService.fastVerifyEvidence(
+            appPath: fixture.app.path,
+            expectedGenerationIdentity: nil,
+            expectedSigningIdentity:
+                fixture.manifest.signingIdentity
+        )
+        XCTAssertEqual(
+            resolverCalls,
+            0,
+            "explicit start must carry its one preflight signer through "
+                + "fast verification"
         )
     }
 
@@ -266,6 +302,20 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         PlayCoverService.manifestValidationObserverForTesting = {
             validationCount += 1
         }
+        PlayCoverService.launchAliasRootOverrideForTesting =
+            fixture.launchAliasRoot
+        #if canImport(AppKit)
+        PlayCoverService.workspaceOpenOverrideForTesting = {
+            _, _, completion in
+            completion(
+                nil,
+                NSError(
+                    domain: "PlayCoverFastVerifyTests",
+                    code: 1
+                )
+            )
+        }
+        #endif
         let acquired =
             try PlayCoverService.acquireFastVerifiedLaunchCapability(
                 appPath: fixture.app.path,
@@ -273,25 +323,59 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             )
         defer { acquired.capability.close() }
         XCTAssertEqual(validationCount, 1)
+        let homeID = String(repeating: "a", count: 64)
+        let socketRootURL = URL(
+            fileURLWithPath:
+                "/private/tmp/iu-fv-"
+                + String(UUID().uuidString.prefix(8)),
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: socketRootURL,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: socketRootURL) }
+        let socketRoot = socketRootURL.path
+        let runtimeHomeURL = socketRootURL.appendingPathComponent(
+            "runtime-home",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: runtimeHomeURL,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.createDirectory(
+            at: runtimeHomeURL.appendingPathComponent(
+                "playchain",
+                isDirectory: true
+            ),
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let sessionID = "validated-manifest-single-pass"
         XCTAssertThrowsError(
             try PlayCoverService.launchVerified(
                 validatedManifest: acquired.evidence,
                 launchCapability: acquired.capability,
-                sessionID: "validated-manifest-single-pass",
-                runtimeSocketPath: "/definitely/not-the-runtime.sock",
-                timeout: 1
+                sessionID: sessionID,
+                runtimeSocketPath:
+                    try IOSUsePaths.macRuntimeSocketPath(
+                        sessionID: sessionID,
+                        homeID: homeID,
+                        socketRoot: socketRoot
+                    ),
+                runtimeHomePath: runtimeHomeURL.path,
+                homeID: homeID,
+                socketRootPath: socketRoot,
+                timeout: 0.1
             )
         ) { error in
-            guard case .terminateFailed(let message) =
+            guard case .launchFailed =
                     error as? PlayCoverBackendError else {
                 return XCTFail("unexpected error: \(error)")
             }
-            XCTAssertTrue(
-                message.contains(
-                    "prepared App path does not identify"
-                ),
-                message
-            )
         }
         XCTAssertEqual(
             validationCount,
@@ -825,12 +909,12 @@ final class PlayCoverFastVerifyTests: XCTestCase {
             sidecars.completed.runtimeSHA256,
             runtime.fileSHA256
         )
-        XCTAssertEqual(
-            try JSONDecoder().decode(
-                PlayCoverPrepareManifest.self,
-                from: sidecars.manifestData
-            ),
-            manifest
+        let persistedManifest = try JSONDecoder().decode(
+            PlayCoverPrepareManifest.self,
+            from: sidecars.manifestData
+        )
+        XCTAssertTrue(
+            try persistedManifest.hasSamePersistedSeal(as: manifest)
         )
     }
 
@@ -1376,7 +1460,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
     }
 
-    func testCompletedMarkerSchemaFourOmitsLegacyArraySeals()
+    func testCompletedMarkerSchemaFiveOmitsLegacyArraySeals()
         throws
     {
         let fixture = try FastVerifyFixture()
@@ -1391,7 +1475,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                 as? [String: Any]
         )
 
-        XCTAssertEqual(completed.schemaVersion, 4)
+        XCTAssertEqual(completed.schemaVersion, 5)
         XCTAssertEqual(
             Set(object.keys),
             Set([
@@ -1861,6 +1945,9 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                         fixture.root.appendingPathComponent(
                             "runtime.sock"
                         ).path,
+                    runtimeHomePath: fixture.root
+                        .appendingPathComponent("runtime-home").path,
+                    homeID: String(repeating: "a", count: 64),
                     deadline:
                         ProcessInfo.processInfo.systemUptime + 0.1,
                     launchAlias: &alias,
@@ -1978,6 +2065,7 @@ private final class LockedResult: @unchecked Sendable {
 
 private struct FastVerifyFixture {
     let root: URL
+    let paths: IOSUsePaths
     let app: URL
     let manifest: PlayCoverPrepareManifest
     let manifestURL: URL
@@ -1998,8 +2086,11 @@ private struct FastVerifyFixture {
             "IOSUsePlayCoverFastVerify-\(UUID().uuidString)",
             isDirectory: true
         )
+        paths = resolvePlayCoverTestPaths(
+            environment: ["IOS_USE_HOME": root.path]
+        )
         app = root.appendingPathComponent(
-            "Fixture.app",
+            "App.app",
             isDirectory: true
         )
         manifestURL = root.appendingPathComponent(
@@ -2112,6 +2203,10 @@ private struct FastVerifyFixture {
             sourceContentHash: source.sourceContentHash,
             runtimeBuildHash: runtimeHash,
             prepareRevision: PlayCoverService.prepareImplementationRevision,
+            accountNamespacePolicyHash:
+                PlayCoverService.accountNamespacePolicyHash(
+                    paths: paths
+                ),
             signerPublicKeySPKISHA256:
                 signingIdentity.publicKeySPKISHA256,
             signerCertificateSHA256:
@@ -2139,6 +2234,10 @@ private struct FastVerifyFixture {
             sourceHashAfterPreparation: source.sourceContentHash,
             runtimeBuildHash: runtimeHash,
             prepareRevision: PlayCoverService.prepareImplementationRevision,
+            accountNamespacePolicyHash:
+                PlayCoverService.accountNamespacePolicyHash(
+                    paths: paths
+                ),
             generationKey: generationKey,
             signingIdentity: signingIdentity,
             rootCodeSignature: makePlayCoverTestRootCodeSignature(
@@ -2155,7 +2254,9 @@ private struct FastVerifyFixture {
             inventory: prepared.inventory,
             machOs: prepared.machOs,
             entitlementDiff: try Self.emptyEntitlementDiff(),
-            completedAt: "2026-07-27T00:00:00Z"
+            completedAt: "2026-07-27T00:00:00Z",
+            rootEntitlementsSHA256:
+                String(repeating: "E", count: 64)
         )
         let sidecars = try PlayCoverService.generationSidecars(
             manifest: manifest

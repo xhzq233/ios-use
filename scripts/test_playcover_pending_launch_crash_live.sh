@@ -4,6 +4,7 @@ umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+GLOBAL_STATE_GUARD="$SCRIPT_DIR/test_playcover_global_state_guard.sh"
 EVIDENCE_ROOT="${IOS_USE_PLAYCOVER_CRASH_EVIDENCE_ROOT:-/tmp/ios-use-playcover-pending-crash-evidence}"
 CRASH_ENV="IOS_USE_PLAYCOVER_LAUNCH_CRASH_CUT"
 ALIAS_ENV="IOS_USE_PLAYCOVER_LAUNCH_CRASH_ALIAS_ROOT"
@@ -36,7 +37,8 @@ Usage: scripts/test_playcover_pending_launch_crash_live.sh --live
           terminate the debug CLI at durable pending-launch boundaries and
           verify recovery from independent CLI processes. The launch façade
           is confined to an isolated /tmp alias root. This debug-only gate does
-          not attest production installed-layout callback ordering.
+          not attest production installed-layout callback ordering. It requires
+          the documented disposable-account ACK and expected passwd Home.
 USAGE
 }
 
@@ -274,6 +276,13 @@ case "$1" in
     ;;
 esac
 
+if [[ ! -f "$GLOBAL_STATE_GUARD" || -L "$GLOBAL_STATE_GUARD" ]]; then
+  config_fail "the account-global PlayCover safety guard is unavailable"
+fi
+# shellcheck source=scripts/test_playcover_global_state_guard.sh
+source "$GLOBAL_STATE_GUARD"
+playcover_require_disposable_account_contract "playcover-pending-crash"
+
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   config_fail "Apple-silicon macOS is required"
 fi
@@ -418,17 +427,22 @@ fi
 make_home() {
   local home
   home="$(mktemp -d /tmp/iupc.XXXXXX)" ||
-    fail_gate "could not create isolated IOS_USE_HOME"
+    fail_gate "could not create temporary logical IOS_USE_HOME"
   /bin/chmod 700 "$home" ||
-    fail_gate "could not secure isolated IOS_USE_HOME"
+    fail_gate "could not secure temporary logical IOS_USE_HOME"
   require_temporary_home "$home"
   /bin/mkdir -m 700 "$home/mac" ||
-    fail_gate "could not create isolated Mac home"
+    fail_gate "could not create temporary logical Mac state"
   /usr/bin/ditto \
     "$RUNTIME_FRAMEWORK" \
     "$home/mac/IOSUsePlayRuntime.framework" ||
-    fail_gate "could not install scratch Runtime in isolated home"
+    fail_gate "could not install scratch Runtime in temporary logical home"
   printf '%s\n' "$home"
+}
+
+global_generation_path() {
+  local generation="$1"
+  printf '%s/%s\n' "$PLAYCOVER_GLOBAL_OBJECTS_ROOT" "$generation"
 }
 
 assert_no_driver_lock() {
@@ -469,9 +483,11 @@ assert_pending_evidence() {
   fi
   /bin/cp "$journal" "$RUN_DIR/$case_name.pending-launch.json"
   local generation
+  local generation_path
   local alias_path
   generation="$(jq -er '.generationKey' "$journal")" ||
     fail_gate "$case_name journal has no generation"
+  generation_path="$(global_generation_path "$generation")"
   alias_path="$(jq -er '.aliasPath' "$journal")" ||
     fail_gate "$case_name journal has no façade"
   canonical_home="$(canonical_directory "$home")" ||
@@ -484,10 +500,10 @@ assert_pending_evidence() {
       ;;
   esac
   if [[
-    ! -d "$home/cache/mac/prepared/$generation" ||
-    -L "$home/cache/mac/prepared/$generation"
+    ! -d "$generation_path" ||
+    -L "$generation_path"
   ]]; then
-    fail_gate "$case_name did not retain its pending generation"
+    fail_gate "$case_name did not retain its account-global pending generation"
   fi
   if [[ ! -d "$alias_path" || -L "$alias_path" ]]; then
     fail_gate "$case_name did not retain its exact isolated façade"
@@ -530,7 +546,7 @@ capture_pending_fingerprint() {
     fail_gate "$label journal has no façade path"
   generation="$(jq -er '.generationKey' "$journal")" ||
     fail_gate "$label journal has no generation"
-  generation_path="$home/cache/mac/prepared/$generation"
+  generation_path="$(global_generation_path "$generation")"
   alias_device="$(/usr/bin/stat -f '%d' "$alias_path")" ||
     fail_gate "$label could not stat façade device"
   alias_inode="$(/usr/bin/stat -f '%i' "$alias_path")" ||
@@ -782,16 +798,14 @@ assert_identified_runtime_live() {
   local expected_pid="$5"
   local expected_birth="$6"
   local expected_executable="$7"
-  local canonical_home
   local canonical_expected
   local canonical_runtime
-  canonical_home="$(canonical_directory "$home")" ||
-    fail_gate "$case_name home cannot be canonicalized"
+  local expected_socket_prefix="$PLAYCOVER_SOCKET_ROOT/s-"
+  : "$home"
   case "$socket_path" in
-    "$home"/mac/run/s-*.sock|\
-    "$canonical_home"/mac/run/s-*.sock) ;;
+    "$expected_socket_prefix"*.sock) ;;
     *)
-      fail_gate "$case_name Runtime socket escaped the isolated home"
+      fail_gate "$case_name Runtime socket escaped the fixed UID socket root"
       ;;
   esac
   if [[

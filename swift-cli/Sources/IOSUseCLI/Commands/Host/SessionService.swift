@@ -81,6 +81,7 @@ public enum SessionService {
     static var simulatorDriverLauncherForTesting: ((String) throws -> Void)?
     static var simulatorDriverTerminatorForTesting: ((String) throws -> Bool)?
     static var realDriverTerminatorForTesting: ((String) throws -> Bool)?
+    static var readDriverLockObserverForTesting: (() -> Void)?
 
     public static func clear(paths: IOSUsePaths) {
         DriverSessionStore.clear(paths: paths)
@@ -91,7 +92,8 @@ public enum SessionService {
     }
 
     public static func readDriverLockInfo(paths: IOSUsePaths) throws -> Info? {
-        try DriverSessionStore.readInfo(paths: paths)
+        readDriverLockObserverForTesting?()
+        return try DriverSessionStore.readInfo(paths: paths)
     }
 
     public static func requireDriverLock(paths: IOSUsePaths) throws -> Info {
@@ -139,7 +141,7 @@ public enum SessionService {
         paths: IOSUsePaths,
         verbose: Bool
     ) throws -> String {
-        try prepareForStart(paths: paths)
+        try prepareForDriverStart(paths: paths)
         let udid = try resolveStartUdid(requestedUdid, paths: paths)
         let info = try resolveDriverInfo(udid: udid, paths: paths)
         let signingWarning = ConfigService.startSigningWarning(udid: udid, paths: paths)
@@ -185,9 +187,46 @@ public enum SessionService {
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
+        // Explicit-App start must fail on an unavailable signing identity
+        // before acquiring the per-Home operation lock. Lock acquisition may
+        // create IOS_USE_HOME, so this preflight is intentionally read-only
+        // and outside every session/cache mutation boundary.
+        let signingIdentity: PlayCoverSigningIdentityEvidence?
+        if let appPath, !appPath.isEmpty {
+            signingIdentity = try PlayCoverService
+                .requireHealthySigningIdentityForStart()
+        } else {
+            signingIdentity = nil
+        }
+        return try startPlayCoverAfterPreflight(
+            appPath: appPath,
+            signingIdentity: signingIdentity,
+            captureStdio: captureStdio,
+            timeout: timeout,
+            paths: paths
+        )
+    }
+
+    /// Module-internal handoff from the CLI's earlier routing preflight.
+    /// Public callers cannot inject signer evidence and therefore cannot
+    /// bypass the read-only configuration check above.
+    static func startPlayCoverAfterPreflight(
+        appPath: String?,
+        signingIdentity: PlayCoverSigningIdentityEvidence?,
+        captureStdio: Bool = false,
+        timeout: Double,
+        paths: IOSUsePaths
+    ) throws -> String {
+        guard (appPath?.isEmpty == false)
+                == (signingIdentity != nil) else {
+            throw PlayCoverBackendError.codeSigningFailed(
+                "explicit Mac App start is missing preflight signer evidence"
+            )
+        }
         return try SessionOperationLock.withExclusiveLock(paths: paths) {
             try startPlayCoverLocked(
                 appPath: appPath,
+                signingIdentity: signingIdentity,
                 captureStdio: captureStdio,
                 timeout: timeout,
                 paths: paths
@@ -197,15 +236,20 @@ public enum SessionService {
 
     private static func startPlayCoverLocked(
         appPath: String?,
+        signingIdentity: PlayCoverSigningIdentityEvidence?,
         captureStdio: Bool,
         timeout: Double,
         paths: IOSUsePaths
     ) throws -> String {
-        try prepareForStart(paths: paths)
+        try PlayCoverPendingLaunchCoordinator.recoverBeforeStart(
+            paths: paths
+        )
+        try prepareForDriverStart(paths: paths)
         var launch: PlayCoverSessionService.LaunchResult?
         do {
             let result = try PlayCoverSessionService.launch(
                 explicitAppPath: appPath,
+                signingIdentity: signingIdentity,
                 captureStdio: captureStdio,
                 timeout: timeout,
                 paths: paths
@@ -286,7 +330,8 @@ public enum SessionService {
                             )
                     } else {
                         _ = try PlayCoverSessionService.terminate(
-                            result: launch
+                            result: launch,
+                            paths: paths
                         )
                         try DriverSessionStore.removeDriverLock(
                             paths: paths
@@ -306,10 +351,9 @@ public enum SessionService {
         }
     }
 
-    private static func prepareForStart(paths: IOSUsePaths) throws {
-        try PlayCoverPendingLaunchCoordinator.recoverBeforeStart(
-            paths: paths
-        )
+    private static func prepareForDriverStart(
+        paths: IOSUsePaths
+    ) throws {
         if let current = try readDriverLockInfo(paths: paths) {
             if isIncompleteRealDriverLock(current) {
                 try cleanupIncompleteRealDriverLock(current, paths: paths)
@@ -385,7 +429,16 @@ public enum SessionService {
         }
         if current.deviceType == PlayCoverSessionService.deviceType {
             let pid = try PlayCoverSessionService.terminate(
-                session: current
+                session: current,
+                paths: paths
+            )
+            // Exact termination/cleanup is complete and `last` still pins the
+            // generation. Retire the active deletion barrier before removing
+            // driver.lock so a crash cannot leave an unauthenticated orphan
+            // active pin that blocks global GC forever.
+            try PlayCoverSessionService.retireActiveGenerationPin(
+                session: current,
+                paths: paths
             )
             do {
                 try DriverSessionStore.removeDriverLock(paths: paths)

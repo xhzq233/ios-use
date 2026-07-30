@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -19,12 +20,31 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let playcoverLogs: String
     public let playcoverPendingLaunch: String
     public let playcoverPendingLaunchLock: String
-    public let playcoverLastPrepared: String
-    public let playcoverPrepared: String
+    public let playcoverHomeID: String
+    public let playcoverGlobalCache: String
+    public let playcoverGlobalObjects: String
+    public let playcoverGlobalHomes: String
+    public let playcoverGlobalLocks: String
+    public let playcoverRuntimeRoot: String
+    public let playcoverRuntimeHome: String
+    public let playcoverSocketRoot: String
+    public let playcoverPlayChain: String
     public let playcoverRuntime: String
 
     public func macRuntimeSocketPath(
         sessionID: String
+    ) throws -> String {
+        try Self.macRuntimeSocketPath(
+            sessionID: sessionID,
+            homeID: playcoverHomeID,
+            socketRoot: playcoverSocketRoot
+        )
+    }
+
+    static func macRuntimeSocketPath(
+        sessionID: String,
+        homeID: String,
+        socketRoot: String
     ) throws -> String {
         let token = sessionID
             .unicodeScalars
@@ -39,16 +59,21 @@ public struct IOSUsePaths: Equatable, Sendable {
         // `/tmp` is a root-owned symlink to `/private/tmp` on macOS.  The
         // injected App is sandboxed, so its socket path must use the same
         // canonical spelling as the SBPL entitlement generated at prepare
-        // time.  `launch` creates `playcoverRun` before calling this method;
+        // time. `launch` creates `playcoverSocketRoot` first;
         // resolving an otherwise non-existing prefix remains a no-op for
         // parser/unit-test paths.
         let canonicalRun = URL(
-            fileURLWithPath: playcoverRun,
+            fileURLWithPath: socketRoot,
             isDirectory: true
         ).standardizedFileURL.path
         let resolvedRun = canonicalExistingPath(canonicalRun)
+        let socketIdentity = SHA256.hash(
+            data: Data(
+                "\(homeID)\u{0}\(token)".utf8
+            )
+        ).map { String(format: "%02x", $0) }.joined()
         let socket =
-            "\(resolvedRun)/s-\(token.prefix(32)).sock"
+            "\(resolvedRun)/s-\(socketIdentity.prefix(32)).sock"
         let maximumUTF8Bytes = 103
         guard socket.utf8.count <= maximumUTF8Bytes else {
             throw CLIParseError.invalidValue(
@@ -60,7 +85,7 @@ public struct IOSUsePaths: Equatable, Sendable {
         return socket
     }
 
-    private func canonicalExistingPath(_ path: String) -> String {
+    private static func canonicalExistingPath(_ path: String) -> String {
         #if canImport(Darwin)
         var buffer = [CChar](
             repeating: 0,
@@ -76,8 +101,45 @@ public struct IOSUsePaths: Equatable, Sendable {
         return path
     }
 
-    public static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> IOSUsePaths {
+    public static func resolve(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> IOSUsePaths {
+        resolve(
+            environment: environment,
+            accountHomeDirectoryOverrideForTesting: nil,
+            socketRootOverrideForTesting: nil
+        )
+    }
+
+    static func resolve(
+        environment: [String: String],
+        accountHomeDirectoryOverrideForTesting: String?,
+        socketRootOverrideForTesting: String? = nil
+    ) -> IOSUsePaths {
         let configured = configuredRoot(environment: environment)
+        let accountHome = accountHome(
+            overrideForTesting:
+                accountHomeDirectoryOverrideForTesting
+        )
+        let canonicalConfiguredRoot = canonicalExistingPrefix(
+            configured.root
+        )
+        let homeID = SHA256.hash(
+            data: Data(canonicalConfiguredRoot.utf8)
+        ).map { String(format: "%02x", $0) }.joined()
+        let globalCache =
+            "\(accountHome)/Library/Caches/dev.ios-use/mac/prepared-v1"
+        let runtimeRoot =
+            "\(accountHome)/Library/Application Support/dev.ios-use/mac/runtime-homes"
+        let runtimeHome = "\(runtimeRoot)/\(homeID)"
+        #if canImport(Darwin)
+        let socketRoot = canonicalExistingPrefix(
+            socketRootOverrideForTesting
+            ?? "/private/tmp/dev.ios-use-\(geteuid())"
+        )
+        #else
+        let socketRoot = "\(accountHome)/.ios-use-runtime"
+        #endif
         return IOSUsePaths(
             root: configured.root,
             hasExplicitHome: configured.hasExplicitHome,
@@ -91,15 +153,89 @@ public struct IOSUsePaths: Equatable, Sendable {
             artifacts: "\(configured.root)/artifacts",
             playcover: "\(configured.root)/mac",
             playcoverRun: "\(configured.root)/mac/run",
-            playcoverLogs: "\(configured.root)/mac/logs",
+            playcoverLogs: "\(runtimeHome)/logs",
             playcoverPendingLaunch:
                 "\(configured.root)/mac/pending-launch.json",
             playcoverPendingLaunchLock:
                 "\(configured.root)/mac/pending-launch.lock",
-            playcoverLastPrepared: "\(configured.root)/mac/last-prepared.json",
-            playcoverPrepared: "\(configured.root)/cache/mac/prepared",
+            playcoverHomeID: homeID,
+            playcoverGlobalCache: globalCache,
+            playcoverGlobalObjects: "\(globalCache)/objects",
+            playcoverGlobalHomes: "\(globalCache)/homes",
+            playcoverGlobalLocks: "\(globalCache)/locks",
+            playcoverRuntimeRoot: runtimeRoot,
+            playcoverRuntimeHome: runtimeHome,
+            playcoverSocketRoot: socketRoot,
+            playcoverPlayChain: "\(runtimeHome)/playchain",
             playcoverRuntime: "\(configured.root)/mac/IOSUsePlayRuntime.framework"
         )
+    }
+
+    /// Production resolves account-scoped immutable/runtime storage from the
+    /// real login account, never from HOME or IOS_USE_HOME. Tests may provide
+    /// an explicit owner-only account root without changing production
+    /// behavior.
+    private static func accountHome(
+        overrideForTesting: String?
+    ) -> String {
+        let raw: String
+        if let override = overrideForTesting,
+           override.hasPrefix("/") {
+            raw = URL(
+                fileURLWithPath: override,
+                isDirectory: true
+            ).standardizedFileURL.path
+        } else {
+            #if canImport(Darwin)
+            guard let password = getpwuid(geteuid()),
+                  let directory = password.pointee.pw_dir else {
+                // `resolve` is intentionally non-throwing. `/dev/null` makes
+                // every later managed-directory open fail closed without
+                // consulting attacker-controlled HOME.
+                return "/dev/null"
+            }
+            raw = String(cString: directory)
+            #else
+            raw = FileManager.default.homeDirectoryForCurrentUser
+                .standardizedFileURL.path
+            #endif
+        }
+        return canonicalExistingPrefix(raw)
+    }
+
+    private static func canonicalExistingPrefix(
+        _ path: String
+    ) -> String {
+        var existing = URL(
+            fileURLWithPath: path,
+            isDirectory: true
+        ).standardizedFileURL
+        var suffix: [String] = []
+        while !FileManager.default.fileExists(atPath: existing.path),
+              existing.path != "/" {
+            suffix.insert(existing.lastPathComponent, at: 0)
+            existing.deleteLastPathComponent()
+        }
+        let canonicalExisting: String
+        #if canImport(Darwin)
+        var buffer = [CChar](
+            repeating: 0,
+            count: Int(PATH_MAX)
+        )
+        if existing.path.withCString({
+            Darwin.realpath($0, &buffer)
+        }) != nil {
+            canonicalExisting = String(cString: buffer)
+        } else {
+            canonicalExisting = existing.path
+        }
+        #else
+        canonicalExisting =
+            existing.resolvingSymlinksInPath().path
+        #endif
+        return suffix.reduce(canonicalExisting) {
+            ($0 as NSString).appendingPathComponent($1)
+        }
     }
 
     private static func configuredRoot(environment: [String: String]) -> (root: String, hasExplicitHome: Bool) {
