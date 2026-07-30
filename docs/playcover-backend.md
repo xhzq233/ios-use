@@ -34,16 +34,16 @@ entry points. After rebuilding a source App, pass `--app` again; `--reuse`
 deliberately does not inspect, hash, or otherwise depend on the original source
 path.
 
-`--log` is optional. It asks the CLI to create a unique owner-only file under
-`IOS_USE_HOME/mac/logs/`, then makes the injected Runtime redirect the
-target App's stdout and stderr to that exact pre-created file. Start prints the
-path, and `status` reports it as `stdio log`. The file is retained after a
-successful stop, an App crash, or a failed launch so it remains usable as
-evidence. The flag and path are per-session state only; they do not participate
-in source inspection, the Runtime hash, or the generation key. This capture
-begins at the Runtime's earliest controllable C constructor. Objective-C
-`+load` and dyld diagnostics that precede constructors are outside its
-contract; exact-PID unified logging remains a separate source.
+`--log` is optional. It asks the CLI to create a unique owner-only file in the
+current logical Home's account Runtime directory, then makes the injected
+Runtime redirect the target App's stdout and stderr to that exact pre-created
+file. Start prints the path, and `status` reports it as `stdio log`. The file is
+retained after a successful stop, an App crash, or a failed launch so it remains
+usable as evidence. The flag and path are per-session state only; they do not
+participate in source inspection, the Runtime hash, or the generation key. This
+capture begins at the Runtime's earliest controllable C constructor.
+Objective-C `+load` and dyld diagnostics that precede constructors are outside
+its contract; exact-PID unified logging remains a separate source.
 
 ## Fixed Device Contract
 
@@ -60,8 +60,8 @@ adapter, AppKit bridge, and tests:
 
 The Runtime does not read a device profile or bootstrap file. Fixed geometry
 is not persisted independently in session or prepared-cache state. A header
-change alters the Runtime build hash and therefore selects new transformed
-substrate and final-generation identities naturally.
+change alters the Runtime build hash and therefore selects a new
+final-generation identity naturally.
 
 The outer AppKit surface is an opaque, rectangular, resizable system window.
 Its public title bar displays `CFBundleDisplayName`, falling back to
@@ -119,8 +119,8 @@ consume App touch events.
 ios-use start --mac (--app <source-or-managed-prepared.app> | --reuse) [--log]
   -> PlayCoverManagedAppService
      -> source classification or managed-generation selection
-     -> same-user transformed-substrate cache lookup or construction
-     -> home-local final generation under this IOS_USE_HOME
+     -> account-global content-addressed final lookup or construction
+     -> per-Home pin publication in the account-global reference registry
   -> PlayCoverService
      -> pinned PlayCover prepare graph and full verification
      -> one bounded integrity verification immediately before launch
@@ -241,158 +241,108 @@ not remove the binding or create a replacement, so the next explicit
 
 All ordinary prepare, managed-selection, and start paths resolve this exact
 binding with initialization disabled. They never create, rotate, or repair the
-identity or modify Trust Settings. Missing and trust-required states direct the
-operator to the explicit configuration command; replaced, expired, or
-inaccessible state also fails closed and is never silently replaced. Separate
-`IOS_USE_HOME` values share the signer and may reuse one transformed substrate,
-but they do not share final prepared generations, references, sessions, run
-state, logs, artifacts, or configuration.
+identity or modify Trust Settings. An explicit `start --mac --app` resolves and
+validates the signer before routing, Home locking, source inspection, hashing,
+or cache state is read. Missing and trust-required states direct the operator
+to `config --mac`; replaced, expired, or inaccessible state also fails closed.
 
-The source App is always read-only. Transform-only work may be reused through
-the owner-only, versioned cache at
-`~/Library/Caches/dev.ios-use/mac/prepared-substrate-v1`. Its entries are
-disposable inputs, not prepared Apps: they carry no session or home authority,
-are never launched, and may be removed without affecting an existing final
-generation.
+Final prepared Apps are shared by the macOS account. The fixed owner-only cache
+root is:
 
-Every home clones or copies the selected substrate into a new staging directory
-under its own `IOS_USE_HOME/cache/mac/prepared/`. Entitlement composition, the
-complete inside-out signing pass, final verification, and
-manifest/completed publication all happen on that home-local copy. Nothing
-becomes a reusable final generation until the complete transaction verifies.
+```text
+~/Library/Caches/dev.ios-use/mac/prepared-v1/
+  objects/<generation>/App.app
+  homes/<home-id>.json
+  locks/
+```
 
-The headless dependency graph retains the pinned Installer order:
+`objects` contains the only final generation for a content key. `homes`
+contains bounded reference records for logical `IOS_USE_HOME` values, and
+`locks` serializes registry and per-generation operations. A Home ID is the
+SHA-256 of the canonical logical Home path. Changing `IOS_USE_HOME` changes
+session/configuration state and its reference record, but it does not create a
+second final App when the generation key is identical. There is no compatibility
+lookup or migration for the former transformed-substrate cache, per-Home final
+cache, or schema-version-4 manifest.
 
-1. inspect the source tree, signatures, entitlements, provisioning, and every
-   code object;
-2. reject encryption and unsupported or malformed Mach-O objects;
-3. obtain an immutable transformed substrate by cloning the source, applying
-   the pinned converter and dependency/rpath rewrites, embedding and injecting
-   the Runtime, updating required compatibility keys, and removing the copied
-   mobile provision;
-4. clone or copy that substrate into the selected home's managed staging;
-5. compose entitlements through the pinned PlayCover, KeyCover, and PlayChain
-   paths for that home-local output;
-6. sign all nested binaries and bundles and then the outer App with the stable
-   identity and composed root entitlements;
-7. remove quarantine and verify every Mach-O, dependency, load command,
-   entitlement, nested signature, and outer seal;
-8. publish the final generation and its manifest/completed evidence under the
-   selected home.
-
-Failures remove only transaction-owned staging. Existing generations and the
-source are not overwritten.
-
-On macOS, prepare opens staging relative to retained managed-directory FDs and
-performs writes through its stable `/.vol/<device>/<inode>` vnode path. While
-prepare is running, the ios-use-owned `cache/mac` and `prepared` directories
-also carry a temporary `UF_APPEND` namespace guard. Descendants remain
-writable, but staging and its retained parents cannot be renamed or unlinked.
-The guard validates the anchored FD links before and after prepare and restores
-the original flags on success or failure; a flag left by a killed process is
-recovered under the next exclusive operation lock. The opened `IOS_USE_HOME`
-root vnode is the capability boundary, not a same-UID privilege boundary.
-
-The ordinary `IOS_USE_HOME` path remains the capability and publication
-identity for the final generation and is checked against the retained vnode
-before home-local finalization. Substrate materialization, entitlement
-composition, signing, rollback, and directory enumeration for that final
-generation stay attached to the home-local staging directory. Subprocesses such
-as `codesign` inherit the stable vnode as their working directory and receive
-relative staging arguments; no optimized-build `fcntl(F_GETPATH)` bridge is
-used. The shared substrate cache grants no authority over that directory.
+The source App is always read-only. A cold prepare creates a sibling staging
+directory below `objects`, copies the source once, applies the pinned
+conversion/dependency/rpath changes, embeds and injects the Runtime, removes
+the copied mobile provision, composes entitlements, signs inside-out, removes
+quarantine, and performs full verification. Only then does one atomic rename
+publish `<generation>`. Failures remove only transaction-owned staging;
+existing generations and the source are never overwritten or repaired in
+place.
 
 The immutable generation key contains:
 
 - the complete source content hash;
 - the Runtime/build content hash;
 - the pinned prepare implementation revision;
+- the account namespace policy hash, derived from the canonical account
+  Runtime root, the fixed UID socket root, and its policy revision;
 - the signer's public-key SPKI SHA-256;
 - the signer's certificate SHA-256;
 - the signing-policy revision.
 
-Every final generation performs the complete signing and verification sequence,
-including when its transformed substrate came from the same-user cache. Final
-reuse checks the immutable marker, key executable and Runtime hashes, signature
-validity, stable signer, root designated requirement, root CDHash, and managed
-path identity without re-preparing the App. Different `IOS_USE_HOME` values may
-reuse the same non-launchable substrate but never share final prepared state.
+The namespace policy hash deliberately excludes the logical
+`IOS_USE_HOME` and Home ID. It changes the generation only when the absolute
+paths authorized by the final entitlement change.
 
-The explicit-source path creates one immutable preparation plan containing the
-source inspection, Runtime hash, prepare revision, and generation key. Managed
-selection, substrate reuse or construction, and home-local finalization consume
-that same evidence; the copied Runtime is checked against the recorded hash
-before signing. The final prepared-App inspection remains authoritative. Once
-the selected substrate has been materialized into home-local staging,
-finalization does not return to mutable source bytes; callers must provide a
-completed source build that stays byte-stable while its preparation input is
-being captured.
+Every reuse validates the immutable markers, executable and Runtime hashes,
+recorded code-object inventory, strict signatures, stable signer, designated
+requirement, CDHash, signing identifier, and managed-path identity. The
+schema-version-5 manifest is a compact cache-integrity seal: it stores only
+relative paths and stable hashes/evidence and contains no source, prepared, or
+Runtime absolute path. Rich source inventories, Mach-O observations, and the
+entitlement differential remain in memory for the preparation result and are
+not persisted. The completed marker binds the canonical manifest hash and the
+critical executable hashes. Both sidecars are bounded, owner-only, single-link
+regular files.
 
-The schema-version-4 production prepare manifest remains a cache-integrity
-seal. It records the complete stable-signer evidence and the prepared root's
-certificate SHA-256, serialized designated requirement plus its SHA-256,
-CDHash, and signing identifier. Fast verification first validates the anchored
-App's strict code seal and recorded nested signatures, then requires the
-current bound signer and the observed root signature evidence to match the
-manifest exactly. Ordinary `start` never performs a second pinned prepare. A
-separate hermetic
-differential gate emits a Codable JSON attestation outside the checkout. It
-consumes the two distinct, module-owned prepare result types and re-inspects
-the source plus both outputs before publication. The two canonical managed
-homes must be disjoint, each output must remain beneath its matching home, and
-path normalization applies only at path-token boundaries. The evidence records
-both complete object/slice selector sets, every App and inventory comparator
-family (including fields that compare equal), source/output/revision identity,
-static allowance reasons and symbols, one-sided baseline provenance, a fixed
-44-file transitive source closure, and the SHA-256 plus device/inode of the
-loaded XCTest image that executed the comparison. The normalized closure
-digest is embedded at build time and must match both source snapshots; the gate
-uses an isolated SwiftPM scratch directory. Managed-path replacement accepts
-only actual lexical/canonical roots and exact descendants, and the pinned result
-must identify the full-PlayTools Installer producer. Allowances are reviewed
-inputs and cannot be generated from observed differences. A candidate is
-published by hard link only after the entire filtered suite and all evidence
-sentinels succeed; an existing final is never replaced. The attestation is
-explicitly scoped
-`hermetic-fixture`; a real external-App attestation requires its own reviewed
-baseline/allowance configuration and is not inferred from the live UI
-scenario.
+The explicit-source path builds one immutable preparation plan containing the
+source inspection, Runtime hash, prepare revision, signer evidence, and
+generation key. The same plan is used through final publication, and the
+copied Runtime plus signer are checked again before the generation can win the
+atomic publish. If another process already published the key, the candidate is
+discarded and the immutable winner is fully verified.
 
-External-App characterization is a separate diagnostic-only operation. It
-clones a fresh source snapshot, uses disjoint fresh managed homes, runs the
-full pinned PlayTools Installer oracle and the real
-`PlayCoverService.inspectPreparationSource` → plan → `prepareArtifact` →
-typed upstream-result path, and supplies signed Runtime/AKInterface one-sided
-baselines plus external managed-path normalization to the raw differential
-analyzer. It verifies that the original source, snapshot, Runtime, and
-PlayTools trees remain unchanged. The owner-only no-overwrite report records
-typed input identities, producer revisions, output hashes, and raw
-differences with kind `playcover-external-prepare-characterization` and
-disposition `diagnostic-only`. It does not call the enforcing or attesting
-APIs and contains no generated review explanations, symbols, or acceptance
-decision.
+Account-global garbage collection is reference based. A per-Home record can pin
+the generation being prepared, pending launch, active session, and last
+successful selection. Preparation and explicit managed-App selection publish a
+pin before validation; pending/active handoff preserves protection across every
+launch crash cut. Recovery retires a pending journal only after exact process
+cleanup and matching global pins are cleared. Collection inventories candidates
+without the registry lock, then rechecks all Home records and atomically
+tombstones only an unreferenced, unchanged generation under the lock. Deletion
+is no-follow, owner checked, device confined, and performed outside the registry
+lock. Malformed reference state or foreign namespace entries make collection
+skip deletion.
 
-One owner-only cross-process operation lock serializes every backend's start
-and stop mutation within an `IOS_USE_HOME`, including PlayCover prepare
-publication, session commit, and home-local generation collection. After a
-successful start, that collection preserves the current generation,
-active-session generation, last-prepared generation, and three most recent
-inactive complete generations. It removes only exact transaction-owned
-`.staging-<hash>-<UUID>` and `.gc-<hash>-<UUID>` leftovers plus eligible
-complete generations after an anchored tombstone rename. Recursive deletion is
-no-follow, owner checked, and confined to the prepared filesystem device.
-Foreign, mounted, or symbolic-link generation entries fail closed. After
-anchored ownership and 64-hex namespace validation, generations with missing,
-oversized, malformed, or mismatched manifest/completed sidecars are
-quarantined with an explicit warning and a bounded per-start budget, so later
-collection can recover the same content key. Current, active-session, and
-last-prepared generations are never quarantined. Generation metadata must be a
-single-link regular file; malformed session/reference state skips all deletion.
+Each logical Home also has fixed account Runtime state at:
 
-The same-user substrate cache is not a session registry or coordination plane.
-It introduces no Host Registry, lease, `--instance` selector, cross-home
-stop/recovery behavior, or reference to a final generation. Purging it only
-forces later source preparation to rebuild the transformed substrate.
+```text
+~/Library/Application Support/dev.ios-use/mac/runtime-homes/<home-id>/
+  logs/
+  playchain/
+```
+
+The Runtime's Unix socket is under `/private/tmp/dev.ios-use-<uid>/`. These
+roots deliberately do not follow `HOME` or `IOS_USE_HOME`. The App entitlement
+allows file access to the fixed account Runtime root and file/socket-bind access
+to the fixed UID socket root. KeyCover uses exactly
+`<runtime-home>/playchain`; prepare never writes a KeyCover database into the
+operator's ordinary Home. Logical-Home operation locks still serialize local
+session and pending-journal mutations, while the account-global registry and
+generation locks coordinate shared final Apps.
+
+A separate hermetic differential gate continues to compare the pinned
+full-PlayTools Installer result with the production prepare result. It uses
+disjoint test roots, re-inspects both outputs, binds the fixed source closure
+and loaded XCTest identity, and publishes its attestation without overwrite.
+Allowances remain reviewed inputs and cannot be generated from observed
+differences. External-App characterization remains diagnostic-only and cannot
+produce an acceptance decision.
 
 ## Runtime Distribution
 
@@ -409,14 +359,14 @@ source framework before and after fixture execution.
 
 Runtime resolution honors a valid framework explicitly managed by an explicit
 `IOS_USE_HOME`, then the adjacent development layout, and finally this stable
-prefix share location. The implicit default home is mutable session and
-final-generation state and is never a Runtime source, so a stale framework left
-there cannot shadow the Runtime beside a development build. The transformed
-substrate cache is likewise never a Runtime source and cannot shadow an
-installed resource. Therefore changing `IOS_USE_HOME` isolates final prepared
-Apps and sessions for a release install; it does not require a second Runtime
+prefix share location. The implicit default Home is mutable session state and
+is never a Runtime source, so a stale framework left there cannot shadow the
+Runtime beside a development build. Account-global prepared objects are also
+never Runtime sources. Changing `IOS_USE_HOME` selects different logical
+session/reference and account Runtime state, but identical generation keys
+reuse the same account-global final App. It does not require a second Runtime
 installation or allow the installer to put mutable executable code in that
-home.
+Home.
 
 ## Runtime Commands
 
@@ -513,6 +463,22 @@ gate, are the required core live aggregate. CI runs that aggregate on the
 provisioned Apple-silicon host with its stable signer already initialized and
 an unlocked, launch-capable GUI session. It does not consume a private App,
 two-display matrix, or external-App attestation.
+
+Every script that launches a PlayCover App, and the entitlement capability
+gate that writes audit fixtures into account Runtime/socket roots, requires an
+explicit disposable-account contract before mutation:
+
+```text
+IOS_USE_PLAYCOVER_DISPOSABLE_ACCOUNT_ACK=I_UNDERSTAND_THIS_ACCOUNT_IS_DISPOSABLE
+IOS_USE_PLAYCOVER_EXPECTED_ACCOUNT_HOME=<canonical-passwd-home>
+```
+
+The second value must match the effective account's canonical passwd Home.
+Cache, Runtime, and socket roots are then derived from that verified account
+and UID. Missing or mismatched input exits with `EX_CONFIG` (78). GitHub
+workflows receive both private values through secrets. A temporary
+`IOS_USE_HOME` alone is not isolation for account-global objects, Runtime
+Homes, socket residue, or Home-reference records.
 
 The unlocked real cursor, popup, and mouse/touch workflows remain optional
 additive diagnostics. Their version-2 live display matrix requires exactly one
