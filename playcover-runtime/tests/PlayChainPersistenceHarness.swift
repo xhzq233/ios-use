@@ -43,6 +43,19 @@ enum PlayChainPersistenceHarness {
             fileURLWithPath: CommandLine.arguments[1]
         ).standardizedFileURL
         PlayKeychain.configureDatabaseURLForTesting(databaseURL)
+        let storageIdentity = PlayKeychain.storageIdentity()
+        require(
+            storageIdentity["macRootPath"] as? String
+                == databaseURL
+                    .deletingLastPathComponent()
+                    .deletingLastPathComponent()
+                    .path,
+            "storage identity did not expose macRootPath"
+        )
+        require(
+            storageIdentity["playcoverRootPath"] == nil,
+            "storage identity exposed the pre-release playcoverRootPath"
+        )
 
         let account = "ios-use-playchain-account"
         let service = "ios-use-playchain-service"

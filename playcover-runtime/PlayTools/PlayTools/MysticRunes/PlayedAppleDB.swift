@@ -138,7 +138,7 @@ enum IOSUsePlayChainLocation {
                     Bundle.main.bundleIdentifier ?? "",
                 "preparedAppPath": location.appBundleURL.path,
                 "generationKey": location.generationKey,
-                "playcoverRootPath":
+                "macRootPath":
                     location.playcoverRootURL.path,
                 "databasePath": location.databaseURL.path,
                 "runtimeBinaryPath": runtimeBinary
