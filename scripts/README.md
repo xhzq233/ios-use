@@ -29,7 +29,7 @@ Before running a script that performs a real PlayCover prepare or launch,
 initialize the host signer interactively once:
 
 ```bash
-./ios-use config --playcover
+./ios-use config --mac
 ```
 
 This explicit command creates and trusts the per-user identity; a cancelled
@@ -60,7 +60,7 @@ Use `./ios-use`, not global `ios-use`, when validating current workspace changes
 | `scripts/test_playcover_external_prepare_characterization_contract.sh` | Negative contract for the diagnostic entrypoint: missing/duplicate inputs, relative, CR/LF-bearing, or existing work paths, checkout-confined work/report paths, mismatched or dirty HEAD, the fixed filtered XCTest, and recursive rejection of conclusion/configuration vocabulary or canonical work-root disclosure in report keys and values. |
 | `scripts/test_playcover_external_prepare_differential.sh --profile <path> --profile-sha256 <sha256> --scenario <path> --runtime <path> --playtools <path> --work-root <path> --attestation <path> --commit <sha>` | Run the configured external-App prepare differential against one separately reviewed exact profile. Every input is mandatory; after the operator archives or explicitly removes the retained characterization tree, `--work-root` must reuse that same canonical requested path and again be fresh. The final owner-only attestation path must also be fresh and outside the checkout. The supplied commit must be the clean committed HEAD: tracked working-tree changes, index changes, and untracked non-ignored files are rejected, while ignored build output may remain. The entrypoint runs only the configured XCTest in a cleared environment, verifies the exact external schema and work-root binding before prepare, retains its own work root for operator inspection, and publishes by hard link without overwrite. It never derives allowances from a raw diagnostic report or recursively removes the work root. |
 | `scripts/test_playcover_external_prepare_differential_contract.sh` | Focused negative contract for the external prepare entrypoint: missing/duplicate arguments, relative or CR/LF-bearing paths, stale output paths, checkout-confined outputs, invalid digests/revisions, dirty tracked/index/untracked state, and a commit other than current HEAD must fail before XCTest. |
-| `scripts/test_playcover_backend.sh --non-live` | Unified Apple-silicon integration-host gate: upstream audit, fresh workspace CLI/Runtime build and analysis, fixture build, production-linked compositor/PlayChain smoke, vendored and complete CLI Swift tests (including recorded PID reuse), hermetic pinned-prepare differential attestation, and release-installed execution. Because installed execution performs a real fixture launch, the host must already have the stable signer initialized by `./ios-use config --playcover` and a launch-capable GUI session; an unprovisioned hosted runner is not sufficient. `--live` is the core live aggregate and runs only the pending-launch same-boot crash/restart gate followed by the lock-independent Runtime protocol/crash stress gate against the committed public fixture. |
+| `scripts/test_playcover_backend.sh --non-live` | Unified Apple-silicon integration-host gate: upstream audit, fresh workspace CLI/Runtime build and analysis, fixture build, production-linked compositor/PlayChain smoke, vendored and complete CLI Swift tests (including recorded PID reuse), hermetic pinned-prepare differential attestation, and release-installed execution. Because installed execution performs a real fixture launch, the host must already have the stable signer initialized by `./ios-use config --mac` and a launch-capable GUI session; an unprovisioned hosted runner is not sufficient. `--live` is the core live aggregate and runs only the pending-launch same-boot crash/restart gate followed by the lock-independent Runtime protocol/crash stress gate against the committed public fixture. |
 | `scripts/test_playcover_cgshw_compositor.sh [--deterministic-only]` | Links the production compositor into deterministic layout, inverse-coordinate, backing-scale, restored 316 x 685 half-physical-pixel geometry, full-edge canvas-only crop, fixed safe-area, and fixed UIKit phone-identity contract tests. Without `--deterministic-only`, it also runs the live CGWindow compositor smoke. |
 | `scripts/test_playcover_fixture_live.sh --live` | Optional additive diagnostic that runs the fixture matrix on an unlocked GUI host with exactly one eligible extended non-main display whose backing scale differs from the main display. It preserves one PID/session/generation/window number across exact-window title-bar drags and fixed host scales 0.75 main, 1.0 extended, and 0.875 main, plus canvas-only capture, inverse-scale global mouse, and title-bar miss-hit checks. It is not part of the core `test_playcover_backend.sh --live` or CI live gate. |
 | `scripts/test_playcover_runtime_stress_live.sh` | Lock-independent isolated current-checkout public-fixture gate. It requires a clean unchanged HEAD, refuses fixture overrides, and freshly rebuilds the Runtime plus a CLI in new SwiftPM scratch and a fixture in new DerivedData before proving the raw authenticated `hello` contains exactly the minimal readiness AppKit field set, covering zero/oversized/exact-limit/malformed/truncated Runtime frames, continued listener health, 20 unique-session bare lifecycle cycles on one generation, scene replacement, exact endpoint-loss handling, fixture-owned self-SIGKILL/stale classification, preserved crash residue, and restart recovery. Its no-clobber schema-v3 attestation binds HEAD and the exact CLI/Runtime/complete fixture App tree/probe digests to every result observation and retains raw crash-residue stat snapshots separately. |
@@ -102,25 +102,26 @@ does not add a public CLI command or produce an attestation:
 
 ```bash
 bash scripts/test_playcover_entitlement_capabilities.sh \
-  --prepared-app "$CAP_HOME/playcover/prepared/<64hex>/<App>.app" \
+  --prepared-app "$CAP_HOME/cache/mac/prepared/<64hex>/<App>.app" \
   --managed-home "$CAP_HOME"
 ```
 
 Both arguments must be canonical absolute paths. The managed home, its
-`state`, `playcover`, `run`, `logs`, lowercase `playchain`, and `prepared`
-directories, plus the selected generation directory, must already be
-same-user, non-symlink, mode-0700 directories; the App must be a direct child
-of the lowercase 64-hex generation. The gate verifies the prepared App and its
-real main executable, signs only a fresh temporary probe with the exported
-entitlement plist, re-exports and compares the two entitlement dictionaries,
-then executes the signed probe directly. Use a disposable, isolated managed
-home: the gate creates unique mode-0700 audit directories under its managed
-`run`, `logs`, `playchain`, `state`, and `prepared` directories and retains
-them for inspection. It also prints `PCAP-EVIDENCE-ROOT <absolute-path>` and
-retains that owner-only temporary root. Only `PCAP-RUN-FILE` unlinks its
-exclusively created file while its descriptor remains open; sockets, SQLite
-artifacts, negative-case residue, host fixtures, and probe build evidence are
-never recursively cleaned up by this gate.
+`state`, `mac`, `mac/run`, `mac/logs`, lowercase `mac/playchain`, `cache`,
+`cache/mac`, and `cache/mac/prepared` directories, plus the selected generation
+directory, must already be same-user, non-symlink, mode-0700 directories; the
+App must be a direct child of the lowercase 64-hex generation. The gate verifies
+the prepared App and its real main executable, signs only a fresh temporary
+probe with the exported entitlement plist, re-exports and compares the two
+entitlement dictionaries, then executes the signed probe directly. Use a
+disposable, isolated managed home: the gate creates unique mode-0700 audit
+directories under its managed `mac/run`, `mac/logs`, `mac/playchain`, `state`,
+and `cache/mac/prepared` directories and retains them for inspection. It also
+prints `PCAP-EVIDENCE-ROOT <absolute-path>` and retains that owner-only temporary
+root. Only `PCAP-RUN-FILE` unlinks its exclusively created file while its
+descriptor remains open; sockets, SQLite artifacts, negative-case residue,
+host fixtures, and probe build evidence are never recursively cleaned up by
+this gate.
 
 Run the full UI replay only when needed:
 
@@ -135,7 +136,7 @@ Changes to release workflow paths and release notes trigger that CI. The
 non-live job is bound to the provisioned
 `[self-hosted, macOS, arm64, playcover-live]` runner because its installed
 execution performs a real launch; that host must already have the stable signer
-initialized by `./ios-use config --playcover` and a launch-capable GUI session.
+initialized by `./ios-use config --mac` and a launch-capable GUI session.
 
 The core PlayCover live gate is an explicit dispatch-only job on that same
 runner. It uses only the committed public fixture, needs no operator App,

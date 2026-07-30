@@ -1823,7 +1823,7 @@ write_display_move_plan() {
           expectedWindowNumber: $window.windowNumber,
           runnerPID: $driver.runnerPid,
           sessionIdentifier: $driver.sessionIdentifier,
-          generation: $driver.playcoverGenerationKey,
+          generation: $driver.macGenerationKey,
           drag: {
             start: {
               x: ($host.x + ($host.width / 2)),
@@ -1865,7 +1865,7 @@ wait_for_display_phase_status() {
           ($driver.runtime.diagnostics.runtime.window) as $window |
           $driver.runnerPid == $plan.runnerPID and
           $driver.sessionIdentifier == $plan.sessionIdentifier and
-          $driver.playcoverGenerationKey == $plan.generation and
+          $driver.macGenerationKey == $plan.generation and
           $window.windowNumber == $plan.expectedWindowNumber and
           $window.screenDisplayID ==
             $plan.targetScreen.screenDisplayID and
@@ -2090,8 +2090,8 @@ assert_display_matrix_identity() {
         $second.runnerPid == $third.runnerPid and
         $first.sessionIdentifier == $second.sessionIdentifier and
         $second.sessionIdentifier == $third.sessionIdentifier and
-        $first.playcoverGenerationKey == $second.playcoverGenerationKey and
-        $second.playcoverGenerationKey == $third.playcoverGenerationKey and
+        $first.macGenerationKey == $second.macGenerationKey and
+        $second.macGenerationKey == $third.macGenerationKey and
         $firstWindow.windowNumber == $secondWindow.windowNumber and
         $secondWindow.windowNumber == $thirdWindow.windowNumber and
         $firstWindow.screenDisplayID ==
@@ -2337,13 +2337,13 @@ session_identifier="$(
   jq -er '.data.driver.sessionIdentifier' "$RUN_DIR/status.stdout"
 )"
 stdio_log_path="$(
-  jq -er '.data.driver.playcoverLogPath' "$RUN_DIR/status.stdout"
+  jq -er '.data.driver.macLogPath' "$RUN_DIR/status.stdout"
 )"
 lower_session_identifier="$(
   printf '%s' "$session_identifier" |
     /usr/bin/tr '[:upper:]' '[:lower:]'
 )"
-expected_stdio_log_path="$CANONICAL_SESSION_HOME/playcover/logs/stdio-$lower_session_identifier.log"
+expected_stdio_log_path="$CANONICAL_SESSION_HOME/mac/logs/stdio-$lower_session_identifier.log"
 if [[
   "$stdio_log_path" != "$expected_stdio_log_path" ||
   ! -f "$stdio_log_path" ||
@@ -2366,7 +2366,7 @@ if ! jq -e \
     --arg path "$stdio_log_path" \
     --arg device "$stdio_log_device" \
     --arg inode "$stdio_log_inode" '
-      .data.driver.playcoverLogPath == $path and
+      .data.driver.macLogPath == $path and
       .data.driver.runtime.stdio.status == "redirected" and
       .data.driver.runtime.stdio.path == $path and
       .data.driver.runtime.stdio.device == $device and
@@ -2400,7 +2400,7 @@ if [[ "$stdio_markers_observed" != "1" ]]; then
 fi
 runtime_socket_path="$(
   jq -er \
-    '.data.driver.playcoverRuntimeSocketPath' \
+    '.data.driver.macRuntimeSocketPath' \
     "$RUN_DIR/status.stdout"
 )"
 record_case oslog_exact oslog --pid "$runner_pid" \

@@ -229,9 +229,9 @@ enum MachineOutput {
             classified.mutationMayHaveApplied = mutationMayHaveApplied
         }
         var failureData = data
-        if let logPath = playCoverLogPath(in: error),
+        if let logPath = macLogPath(in: error),
            case .object(var fields) = failureData {
-            fields["playcoverLogPath"] = .string(logPath)
+            fields["macLogPath"] = .string(logPath)
             failureData = .object(fields)
         }
         let metadata = invocationMetadata(
@@ -359,8 +359,8 @@ enum MachineOutput {
             return MachineError(
                 message: rollbackError.description,
                 category: IOSUseErrorCategory.session,
-                code: "playcover_session_commit_rollback_failed",
-                phase: "playcover_session_commit",
+                code: "mac_session_commit_rollback_failed",
+                phase: "mac_session_commit",
                 retryable: false,
                 fatal: true,
                 mutationMayHaveApplied: true
@@ -371,8 +371,8 @@ enum MachineOutput {
             return MachineError(
                 message: handoffError.description,
                 category: IOSUseErrorCategory.session,
-                code: "playcover_session_handoff_failed",
-                phase: "playcover_session_commit",
+                code: "mac_session_handoff_failed",
+                phase: "mac_session_commit",
                 retryable: false,
                 fatal: true,
                 mutationMayHaveApplied: true
@@ -384,11 +384,11 @@ enum MachineOutput {
             let phase: String
             switch cleanupError.operation {
             case .launch:
-                code = "playcover_launch_cleanup_failed"
-                phase = "playcover_launch_cleanup"
+                code = "mac_launch_cleanup_failed"
+                phase = "mac_launch_cleanup"
             case .stop:
-                code = "playcover_stop_cleanup_failed"
-                phase = "playcover_stop_cleanup"
+                code = "mac_stop_cleanup_failed"
+                phase = "mac_stop_cleanup"
             }
             return MachineError(
                 message: cleanupError.description,
@@ -404,8 +404,8 @@ enum MachineOutput {
             return MachineError(
                 message: launchError.description,
                 category: IOSUseErrorCategory.session,
-                code: "playcover_launch_rollback_failed",
-                phase: "playcover_dyld_launch",
+                code: "mac_launch_rollback_failed",
+                phase: "mac_dyld_launch",
                 retryable: false,
                 fatal: true,
                 mutationMayHaveApplied: true
@@ -420,109 +420,109 @@ enum MachineOutput {
             switch backendError {
             case .invalidApp:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_invalid_app"
-                phase = "playcover_inspect"
+                code = "mac_invalid_app"
+                phase = "mac_inspect"
                 retryable = false
                 fatal = false
             case .unsupportedMachO:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_unsupported_macho"
-                phase = "playcover_macho"
+                code = "mac_unsupported_macho"
+                phase = "mac_macho"
                 retryable = false
                 fatal = false
             case .malformedMachO:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_malformed_macho"
-                phase = "playcover_macho"
+                code = "mac_malformed_macho"
+                phase = "mac_macho"
                 retryable = false
                 fatal = false
             case .encryptedMachO:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_encrypted_macho"
-                phase = "playcover_macho"
+                code = "mac_encrypted_macho"
+                phase = "mac_macho"
                 retryable = false
                 fatal = false
             case .duplicateRuntimeLoad:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_duplicate_runtime_load"
-                phase = "playcover_macho"
+                code = "mac_duplicate_runtime_load"
+                phase = "mac_macho"
                 retryable = false
                 fatal = false
             case .machOTransformFailed:
                 category = IOSUseErrorCategory.internalFailure
-                code = "playcover_macho_transform_failed"
-                phase = "playcover_macho"
+                code = "mac_macho_transform_failed"
+                phase = "mac_macho"
                 retryable = false
                 fatal = false
             case .entitlementFailed:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_entitlement_failed"
-                phase = "playcover_entitlements"
+                code = "mac_entitlement_failed"
+                phase = "mac_entitlements"
                 retryable = false
                 fatal = false
             case .codeSigningFailed:
                 category = IOSUseErrorCategory.internalFailure
-                code = "playcover_codesign_failed"
-                phase = "playcover_codesign"
+                code = "mac_codesign_failed"
+                phase = "mac_codesign"
                 retryable = false
                 fatal = false
             case .outputExists:
                 category = IOSUseErrorCategory.session
-                code = "playcover_output_exists"
-                phase = "playcover_prepare"
+                code = "mac_output_exists"
+                phase = "mac_prepare"
                 retryable = false
                 fatal = false
             case .missingRuntime:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_runtime_missing"
-                phase = "playcover_runtime_source"
+                code = "mac_runtime_missing"
+                phase = "mac_runtime_source"
                 retryable = false
                 fatal = false
             case .prepareFailed:
                 category = IOSUseErrorCategory.internalFailure
-                code = "playcover_prepare_failed"
-                phase = "playcover_prepare"
+                code = "mac_prepare_failed"
+                phase = "mac_prepare"
                 retryable = false
                 fatal = false
             case .verificationFailed:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_verification_failed"
-                phase = "playcover_verify"
+                code = "mac_verification_failed"
+                phase = "mac_verify"
                 retryable = false
                 fatal = true
             case .cacheTampered:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_cache_tampered"
-                phase = "playcover_verify"
+                code = "mac_cache_tampered"
+                phase = "mac_verify"
                 retryable = false
                 fatal = true
             case .stdioLogFailed:
                 category = IOSUseErrorCategory.internalFailure
-                code = "playcover_stdio_log_failed"
-                phase = "playcover_stdio_setup"
+                code = "mac_stdio_log_failed"
+                phase = "mac_stdio_setup"
                 retryable = false
                 fatal = false
             case .launchFailed:
                 category = IOSUseErrorCategory.internalFailure
-                code = "playcover_dyld_launch_failed"
-                phase = "playcover_dyld_launch"
+                code = "mac_dyld_launch_failed"
+                phase = "mac_dyld_launch"
                 retryable = false
                 fatal = false
             case .launchTimedOut:
                 category = IOSUseErrorCategory.timeout
-                code = "playcover_runtime_hello_timed_out"
-                phase = "playcover_runtime_hello"
+                code = "mac_runtime_hello_timed_out"
+                phase = "mac_runtime_hello"
                 retryable = true
                 fatal = false
             case .terminateFailed:
                 category = IOSUseErrorCategory.session
-                code = "playcover_terminate_failed"
-                phase = "playcover_stop"
+                code = "mac_terminate_failed"
+                phase = "mac_stop"
                 retryable = false
                 fatal = false
             case .capabilityUnavailable:
                 category = IOSUseErrorCategory.validation
-                code = "playcover_capability_unavailable"
+                code = "mac_capability_unavailable"
                 phase = IOSUseErrorPhase.validation
                 retryable = false
                 fatal = false
@@ -559,7 +559,7 @@ enum MachineOutput {
         )
     }
 
-    private static func playCoverLogPath(
+    private static func macLogPath(
         in error: Error
     ) -> String? {
         if let loggedError =

@@ -136,7 +136,7 @@ Free Apple Developer signing expires after about 7 days. `ios-use status` and `i
 | Command | Use it for |
 | --- | --- |
 | `status` / `config --list` | Show connected real devices and configured device/Simulator state. |
-| `config` | Install or update the on-device driver; use `config --playcover` once before the first local Mac-backend start. |
+| `config` | Install or update the on-device driver; use `config --mac` once before the first local Mac-backend start. |
 | `start` / `stop` | Select or release the current automation target; use `start --mac --app <App.app>` or `start --mac --reuse` for the PlayCover-derived Mac backend. |
 | `activateApp` / `terminateApp` | Open or close an app by bundle ID; activation is UI-ready by default. |
 | `dom` | Print the current UI tree; add `--ocr` for a fresh DOM plus screenshot and accurate OCR. |
@@ -215,7 +215,7 @@ pixels.
 ```bash
 bash scripts/build_swift_cli.sh --debug
 
-./ios-use config --playcover
+./ios-use config --mac
 ./ios-use start --mac --app /path/to/Source.app
 ./ios-use status
 ./ios-use dom
@@ -226,13 +226,13 @@ bash scripts/build_swift_cli.sh --debug
 
 On Apple Silicon with full Xcode and `xcodegen` available, the local CLI build
 also builds the default injected runtime. Before the first Mac-backend start for
-your macOS account, run `config --playcover`; macOS asks once for authentication
+your macOS account, run `config --mac`; macOS asks once for authentication
 to trust the dedicated signing identity. If you cancel, safely retry the same
 command: it resumes that identity instead of creating another one. The identity
 persists across `IOS_USE_HOME` values, while prepared Apps remain in the home
 where they were created. Both `start --mac --app` and
 `start --mac --reuse` only check the existing identity and tell you to run
-`config --playcover` if setup is missing or trust must be completed.
+`config --mac` if setup is missing or trust must be completed.
 
 `start --mac --app` accepts either an unmodified iPhoneOS App or a managed
 prepared App. A source App is cloned under the current `IOS_USE_HOME`, converted

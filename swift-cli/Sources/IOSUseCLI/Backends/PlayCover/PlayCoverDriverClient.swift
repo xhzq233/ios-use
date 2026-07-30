@@ -21,11 +21,11 @@ enum PlayCoverDriverClientError:
         case .incompleteSessionIdentity(let field):
             return "active Mac session is missing \(field)"
         case .runtimeGeometryMismatch(let field):
-            return "PlayCover Runtime geometry does not match the fixed device contract: \(field)"
+            return "Mac Runtime geometry does not match the fixed device contract: \(field)"
         case .malformedRuntimePayload(let field):
-            return "PlayCover Runtime returned a malformed \(field) payload"
+            return "Mac Runtime returned a malformed \(field) payload"
         case .capabilityUnavailable(let command):
-            return "PlayCover Runtime capability `\(command)` is unavailable"
+            return "Mac Runtime capability `\(command)` is unavailable"
         case .lifecycleCommandUnsupported(let command):
             return "Mac backend does not support Driver `\(command)`; use `ios-use start --mac --reuse` and `ios-use stop` for App lifecycle"
         }
@@ -635,7 +635,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
         refreshAlertStatus: Bool = false
     ) throws -> PlayCoverRuntimeClient {
         let expected = try ExpectedRuntimeIdentity(session: session)
-        guard let socketPath = session.playCoverRuntimeSocketPath,
+        guard let socketPath = session.macRuntimeSocketPath,
               !socketPath.isEmpty else {
             throw PlayCoverDriverClientError.incompleteSessionIdentity(
                 "runtime socket path"
@@ -773,7 +773,7 @@ final class PlayCoverDriverClient: DriverCommandClient {
             ),
             scale: screenshot.scale,
             geometrySource:
-                "playcover-runtime-\(screenshot.source)",
+                "mac-runtime-\(screenshot.source)",
             warning: nil,
             snapshotGeneration: screenshot.snapshotGeneration,
             captureGeneration: screenshot.captureGeneration,
@@ -1771,7 +1771,7 @@ private struct ExpectedRuntimeIdentity {
                 .incompleteSessionIdentity("bundle ID")
         }
         guard let executablePath =
-                session.playCoverExecutablePath,
+                session.macExecutablePath,
               !executablePath.isEmpty else {
             throw PlayCoverDriverClientError
                 .incompleteSessionIdentity("executable path")

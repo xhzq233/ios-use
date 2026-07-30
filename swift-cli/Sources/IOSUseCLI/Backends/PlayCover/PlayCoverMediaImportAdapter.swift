@@ -86,19 +86,19 @@ enum PlayCoverMediaImportAdapterError:
     var description: String {
         switch self {
         case .invalidArguments(let detail):
-            return "invalid PlayCover media import arguments: \(detail)"
+            return "invalid Mac media import arguments: \(detail)"
         case .stagingFailed(let detail):
-            return "PlayCover media import staging failed: \(detail)"
+            return "Mac media import staging failed: \(detail)"
         case .identityMismatch(let detail, _):
-            return "PlayCover media import staging identity failed: \(detail)"
+            return "Mac media import staging identity failed: \(detail)"
         case .permissionDenied(let detail):
             return "Photos automation permission was denied: \(detail)"
         case .unavailable(let detail):
             return "Photos automation is unavailable: \(detail)"
         case .timedOut(let detail):
-            return "PlayCover media import timed out: \(detail)"
+            return "Mac media import timed out: \(detail)"
         case .processFailed(let detail):
-            return "PlayCover media import failed: \(detail)"
+            return "Mac media import failed: \(detail)"
         case .noImportedAssets:
             return "Photos returned no imported assets"
         case .multipleImportedAssets(let count):
@@ -111,10 +111,10 @@ enum PlayCoverMediaImportAdapterError:
             _
         ):
             if let originalError {
-                return "PlayCover media import cleanup failed after "
+                return "Mac media import cleanup failed after "
                     + "\(originalError): \(detail)"
             }
-            return "PlayCover media import cleanup failed: \(detail)"
+            return "Mac media import cleanup failed: \(detail)"
         }
     }
 
@@ -146,53 +146,53 @@ enum PlayCoverMediaImportAdapterError:
             retryable = false
         case .stagingFailed:
             category = IOSUseErrorCategory.internalFailure
-            code = "playcover_media_import_staging_failed"
-            phase = "playcover_media_import_staging"
+            code = "mac_media_import_staging_failed"
+            phase = "mac_media_import_staging"
             retryable = false
         case .identityMismatch:
             category = IOSUseErrorCategory.internalFailure
-            code = "playcover_media_import_identity_failed"
-            phase = "playcover_media_import_identity"
+            code = "mac_media_import_identity_failed"
+            phase = "mac_media_import_identity"
             retryable = false
         case .permissionDenied:
             category = IOSUseErrorCategory.authorization
-            code = "playcover_photos_automation_denied"
+            code = "mac_photos_automation_denied"
             phase = IOSUseErrorPhase.authorization
             retryable = false
         case .unavailable:
             category = IOSUseErrorCategory.validation
-            code = "playcover_photos_automation_unavailable"
-            phase = "playcover_media_import_automation"
+            code = "mac_photos_automation_unavailable"
+            phase = "mac_media_import_automation"
             retryable = false
         case .timedOut:
             category = IOSUseErrorCategory.timeout
             code = IOSUseErrorCode.mediaImportTimedOut
-            phase = "playcover_media_import_automation"
+            phase = "mac_media_import_automation"
             retryable = true
         case .processFailed:
             category = IOSUseErrorCategory.action
             code = IOSUseErrorCode.mediaImportFailed
-            phase = "playcover_media_import_automation"
+            phase = "mac_media_import_automation"
             retryable = false
         case .noImportedAssets:
             category = IOSUseErrorCategory.postcondition
-            code = "playcover_media_import_zero_assets"
+            code = "mac_media_import_zero_assets"
             phase = IOSUseErrorPhase.postcondition
             retryable = false
         case .multipleImportedAssets:
             category = IOSUseErrorCategory.postcondition
-            code = "playcover_media_import_multiple_assets"
+            code = "mac_media_import_multiple_assets"
             phase = IOSUseErrorPhase.postcondition
             retryable = false
         case .emptyAssetLocalIdentifier:
             category = IOSUseErrorCategory.postcondition
-            code = "playcover_media_import_empty_asset_identifier"
+            code = "mac_media_import_empty_asset_identifier"
             phase = IOSUseErrorPhase.postcondition
             retryable = false
         case .cleanupFailed:
             category = IOSUseErrorCategory.internalFailure
-            code = "playcover_media_import_cleanup_failed"
-            phase = "playcover_media_import_cleanup"
+            code = "mac_media_import_cleanup_failed"
+            phase = "mac_media_import_cleanup"
             retryable = true
         }
 
@@ -573,7 +573,7 @@ struct PlayCoverMediaImportPOSIXFileSystem:
         let runDescriptor = try openOwnedDirectory(
             runDirectory,
             mode: 0o700,
-            label: "PlayCover run directory"
+            label: "Mac run directory"
         )
         defer { Darwin.close(runDescriptor) }
 
@@ -697,7 +697,7 @@ struct PlayCoverMediaImportPOSIXFileSystem:
         )
         #else
         throw FileSystemError.operation(
-            "secure PlayCover media staging requires Darwin"
+            "secure Mac media staging requires Darwin"
         )
         #endif
     }
@@ -710,7 +710,7 @@ struct PlayCoverMediaImportPOSIXFileSystem:
         let runDescriptor = try openOwnedDirectory(
             runDirectory,
             mode: 0o700,
-            label: "PlayCover run directory"
+            label: "Mac run directory"
         )
         defer { Darwin.close(runDescriptor) }
         let directoryDescriptor = try openStagedDirectory(
@@ -756,7 +756,7 @@ struct PlayCoverMediaImportPOSIXFileSystem:
         }
         #else
         throw FileSystemError.operation(
-            "secure PlayCover media staging requires Darwin"
+            "secure Mac media staging requires Darwin"
         )
         #endif
     }
@@ -769,7 +769,7 @@ struct PlayCoverMediaImportPOSIXFileSystem:
         let runDescriptor = try openOwnedDirectory(
             runDirectory,
             mode: 0o700,
-            label: "PlayCover run directory"
+            label: "Mac run directory"
         )
         defer { Darwin.close(runDescriptor) }
         let directoryDescriptor =
@@ -826,7 +826,7 @@ struct PlayCoverMediaImportPOSIXFileSystem:
         }
         #else
         throw FileSystemError.operation(
-            "secure PlayCover media staging requires Darwin"
+            "secure Mac media staging requires Darwin"
         )
         #endif
     }

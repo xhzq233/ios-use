@@ -124,7 +124,7 @@ public enum OSLogService {
               runnerPID > 0,
               runnerPID <= Int(Int32.max),
               let executablePath =
-                session.playCoverExecutablePath,
+                session.macExecutablePath,
               !executablePath.isEmpty else {
             throw CLIParseError.invalidValue(
                 "active Mac session has incomplete PID/executable identity"

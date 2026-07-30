@@ -13,11 +13,11 @@ public enum SessionService {
         public let sessionIdentifier: String?
         public let bundleId: String?
         public let controlSocketPath: String?
-        public let playCoverAppPath: String?
-        public let playCoverExecutablePath: String?
-        public let playCoverGenerationKey: String?
-        public let playCoverRuntimeSocketPath: String?
-        public let playCoverLogPath: String?
+        public let macAppPath: String?
+        public let macExecutablePath: String?
+        public let macGenerationKey: String?
+        public let macRuntimeSocketPath: String?
+        public let macLogPath: String?
 
         public init(
             udid: String,
@@ -31,11 +31,11 @@ public enum SessionService {
             sessionIdentifier: String? = nil,
             bundleId: String? = nil,
             controlSocketPath: String? = nil,
-            playCoverAppPath: String? = nil,
-            playCoverExecutablePath: String? = nil,
-            playCoverGenerationKey: String? = nil,
-            playCoverRuntimeSocketPath: String? = nil,
-            playCoverLogPath: String? = nil
+            macAppPath: String? = nil,
+            macExecutablePath: String? = nil,
+            macGenerationKey: String? = nil,
+            macRuntimeSocketPath: String? = nil,
+            macLogPath: String? = nil
         ) {
             self.udid = udid
             self.deviceName = deviceName
@@ -48,11 +48,11 @@ public enum SessionService {
             self.sessionIdentifier = sessionIdentifier
             self.bundleId = bundleId
             self.controlSocketPath = controlSocketPath
-            self.playCoverAppPath = playCoverAppPath
-            self.playCoverExecutablePath = playCoverExecutablePath
-            self.playCoverGenerationKey = playCoverGenerationKey
-            self.playCoverRuntimeSocketPath = playCoverRuntimeSocketPath
-            self.playCoverLogPath = playCoverLogPath
+            self.macAppPath = macAppPath
+            self.macExecutablePath = macExecutablePath
+            self.macGenerationKey = macGenerationKey
+            self.macRuntimeSocketPath = macRuntimeSocketPath
+            self.macLogPath = macLogPath
         }
 
         func applying(_ metadata: DriverLifecycleService.LaunchMetadata) -> Info {
@@ -68,11 +68,11 @@ public enum SessionService {
                 sessionIdentifier: metadata.sessionIdentifier,
                 bundleId: metadata.bundleId ?? bundleId,
                 controlSocketPath: metadata.controlSocketPath ?? controlSocketPath,
-                playCoverAppPath: playCoverAppPath,
-                playCoverExecutablePath: playCoverExecutablePath,
-                playCoverGenerationKey: playCoverGenerationKey,
-                playCoverRuntimeSocketPath: playCoverRuntimeSocketPath,
-                playCoverLogPath: playCoverLogPath
+                macAppPath: macAppPath,
+                macExecutablePath: macExecutablePath,
+                macGenerationKey: macGenerationKey,
+                macRuntimeSocketPath: macRuntimeSocketPath,
+                macLogPath: macLogPath
             )
         }
     }

@@ -19,7 +19,7 @@ enum PlayCoverStdioLogService {
         #if canImport(Darwin)
         guard let sessionUUID = UUID(uuidString: sessionID) else {
             throw PlayCoverBackendError.stdioLogFailed(
-                "cannot create a PlayCover stdio log for an invalid sessionID"
+                "cannot create a Mac stdio log for an invalid sessionID"
             )
         }
         let parentDescriptor = Darwin.open(
@@ -28,7 +28,7 @@ enum PlayCoverStdioLogService {
         )
         guard parentDescriptor >= 0 else {
             throw logError(
-                "cannot open the managed PlayCover directory",
+                "cannot open the managed Mac directory",
                 errorNumber: errno
             )
         }
@@ -41,7 +41,7 @@ enum PlayCoverStdioLogService {
               Darwin.fstat(parentDescriptor, &parentStatus) == 0,
               parentStatus.st_mode & 0o7777 == 0o700 else {
             throw PlayCoverBackendError.stdioLogFailed(
-                "the managed PlayCover directory is not owner-only"
+                "the managed Mac directory is not owner-only"
             )
         }
 
@@ -51,7 +51,7 @@ enum PlayCoverStdioLogService {
             0o700
         ) != 0, errno != EEXIST {
             throw logError(
-                "cannot create the PlayCover log directory",
+                "cannot create the Mac log directory",
                 errorNumber: errno
             )
         }
@@ -62,14 +62,14 @@ enum PlayCoverStdioLogService {
         )
         guard directoryDescriptor >= 0 else {
             throw logError(
-                "cannot open the PlayCover log directory",
+                "cannot open the Mac log directory",
                 errorNumber: errno
             )
         }
         defer { Darwin.close(directoryDescriptor) }
         guard Darwin.fchmod(directoryDescriptor, 0o700) == 0 else {
             throw logError(
-                "cannot secure the PlayCover log directory",
+                "cannot secure the Mac log directory",
                 errorNumber: errno
             )
         }
@@ -79,7 +79,7 @@ enum PlayCoverStdioLogService {
               directoryStatus.st_uid == geteuid(),
               directoryStatus.st_mode & 0o7777 == 0o700 else {
             throw PlayCoverBackendError.stdioLogFailed(
-                "the PlayCover log directory is not an owner-only directory"
+                "the Mac log directory is not an owner-only directory"
             )
         }
 
@@ -94,7 +94,7 @@ enum PlayCoverStdioLogService {
         )
         guard descriptor >= 0 else {
             throw logError(
-                "cannot create the per-session PlayCover stdio log",
+                "cannot create the per-session Mac stdio log",
                 errorNumber: errno
             )
         }
@@ -111,7 +111,7 @@ enum PlayCoverStdioLogService {
         }
         guard Darwin.fchmod(descriptor, 0o600) == 0 else {
             throw logError(
-                "cannot secure the per-session PlayCover stdio log",
+                "cannot secure the per-session Mac stdio log",
                 errorNumber: errno
             )
         }
@@ -127,7 +127,7 @@ enum PlayCoverStdioLogService {
               ) == 0,
               sameFile(descriptorStatus, namedStatus) else {
             throw PlayCoverBackendError.stdioLogFailed(
-                "the per-session PlayCover stdio log lost its exact "
+                "the per-session Mac stdio log lost its exact "
                     + "regular-file identity while being created"
             )
         }
@@ -135,14 +135,14 @@ enum PlayCoverStdioLogService {
             "\(paths.playcoverLogs)/\(filename)"
         guard let canonicalPath = canonicalExistingPath(lexicalPath) else {
             throw PlayCoverBackendError.stdioLogFailed(
-                "cannot resolve the per-session PlayCover stdio log"
+                "cannot resolve the per-session Mac stdio log"
             )
         }
         var canonicalStatus = stat()
         guard Darwin.lstat(canonicalPath, &canonicalStatus) == 0,
               sameFile(descriptorStatus, canonicalStatus) else {
             throw PlayCoverBackendError.stdioLogFailed(
-                "the per-session PlayCover stdio log path does not "
+                "the per-session Mac stdio log path does not "
                     + "identify the created file"
             )
         }
@@ -154,7 +154,7 @@ enum PlayCoverStdioLogService {
         )
         #else
         throw PlayCoverBackendError.stdioLogFailed(
-            "PlayCover stdio logs are supported only on macOS"
+            "Mac stdio logs are supported only on macOS"
         )
         #endif
     }
@@ -226,7 +226,7 @@ enum PlayCoverStdioLogService {
         -> CLIParseError
     {
         .invalidValue(
-            "Invalid driver.lock: PlayCover stdio log path does not "
+            "Invalid driver.lock: Mac stdio log path does not "
                 + "match this session under the current IOS_USE_HOME."
         )
     }

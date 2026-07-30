@@ -140,7 +140,7 @@ public enum CLIParser {
             case "--apple-id": options.appleId = try parser.value(for: arg)
             case "--password": options.password = try parser.value(for: arg)
             case "--verbose": options.verbose = true
-            case "--playcover": options.playCover = true
+            case "--mac": options.playCover = true
             default: throw CLIParseError.unknownOption(arg)
             }
         }
@@ -151,7 +151,7 @@ public enum CLIParser {
                 || options.appleId != nil
                 || options.password != nil {
             throw CLIParseError.invalidValue(
-                "--playcover cannot be combined with --udid, --simulator, "
+                "--mac cannot be combined with --udid, --simulator, "
                     + "--list, --apple-id, or --password"
             )
         }

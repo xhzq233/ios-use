@@ -58,11 +58,11 @@ public enum StatusService {
                     "startMode": info.startMode.map(MachineValue.string) ?? .null,
                     "sessionIdentifier": info.sessionIdentifier.map(MachineValue.string) ?? .null,
                     "bundleId": info.bundleId.map(MachineValue.string) ?? .null,
-                    "playcoverAppPath": info.playCoverAppPath.map(MachineValue.string) ?? .null,
-                    "playcoverExecutablePath": info.playCoverExecutablePath.map(MachineValue.string) ?? .null,
-                    "playcoverGenerationKey": info.playCoverGenerationKey.map(MachineValue.string) ?? .null,
-                    "playcoverRuntimeSocketPath": info.playCoverRuntimeSocketPath.map(MachineValue.string) ?? .null,
-                    "playcoverLogPath": info.playCoverLogPath.map(MachineValue.string) ?? .null,
+                    "macAppPath": info.macAppPath.map(MachineValue.string) ?? .null,
+                    "macExecutablePath": info.macExecutablePath.map(MachineValue.string) ?? .null,
+                    "macGenerationKey": info.macGenerationKey.map(MachineValue.string) ?? .null,
+                    "macRuntimeSocketPath": info.macRuntimeSocketPath.map(MachineValue.string) ?? .null,
+                    "macLogPath": info.macLogPath.map(MachineValue.string) ?? .null,
                     "driverVersion": config.flatMap(\.driverVersion).map(MachineValue.string) ?? .null,
                     "versionMatchesCli": info.deviceType == PlayCoverSessionService.deviceType
                         ? .null
@@ -138,7 +138,7 @@ public enum StatusService {
                             "bundleId": .string(
                                 pending.bundleIdentifier
                             ),
-                            "playcoverGenerationKey": .string(
+                            "macGenerationKey": .string(
                                 pending.generationKey
                             ),
                             "ownerPid": pending.ownerPID.map {
@@ -287,14 +287,14 @@ public enum StatusService {
             if let sessionIdentifier = info.sessionIdentifier, !sessionIdentifier.isEmpty {
                 parts.append("session: \(sessionIdentifier)")
             }
-            if let appPath = info.playCoverAppPath, !appPath.isEmpty {
+            if let appPath = info.macAppPath, !appPath.isEmpty {
                 parts.append("app: \(appPath)")
             }
-            if let generation = info.playCoverGenerationKey,
+            if let generation = info.macGenerationKey,
                !generation.isEmpty {
                 parts.append("generation: \(generation)")
             }
-            if let logPath = info.playCoverLogPath,
+            if let logPath = info.macLogPath,
                !logPath.isEmpty {
                 parts.append("stdio log: \(logPath)")
             }
@@ -303,7 +303,7 @@ public enum StatusService {
                 case .healthy(let payload):
                     parts[0] = "healthy"
                     parts.append("runtime: healthy")
-                    if let socketPath = info.playCoverRuntimeSocketPath {
+                    if let socketPath = info.macRuntimeSocketPath {
                         parts.append("socket: \(socketPath)")
                     }
                     parts.append(
@@ -356,7 +356,7 @@ public enum StatusService {
               pidValue > 0,
               pidValue <= Int(Int32.max),
               let expectedExecutable =
-                info.playCoverExecutablePath,
+                info.macExecutablePath,
               !expectedExecutable.isEmpty else {
             return .stale(
                 "driver.lock has incomplete PID/executable identity"
@@ -443,14 +443,14 @@ public enum StatusService {
     ) throws {
         guard Int(payload.pid) == info.runnerPid,
               payload.bundleIdentifier == info.bundleId,
-              let executable = info.playCoverExecutablePath,
+              let executable = info.macExecutablePath,
               PlayCoverRuntimeClient.canonicalPath(
                   payload.executablePath
               ) == PlayCoverRuntimeClient.canonicalPath(
                   executable
               ) else {
             throw CLIParseError.invalidValue(
-                "PlayCover runtime identity no longer matches the active session."
+                "Mac Runtime identity no longer matches the active session."
             )
         }
     }
@@ -459,10 +459,10 @@ public enum StatusService {
         _ payload: PlayCoverRuntimeDiagnosticsPayload,
         info: SessionService.Info
     ) throws {
-        if let expectedPath = info.playCoverLogPath {
+        if let expectedPath = info.macLogPath {
             guard let stdio = payload.stdio else {
                 throw CLIParseError.invalidValue(
-                    "PlayCover Runtime omitted stdio initialization evidence."
+                    "Mac Runtime omitted stdio initialization evidence."
                 )
             }
             guard stdio.status == "redirected",
@@ -476,7 +476,7 @@ public enum StatusService {
                   stdio.failureStage == nil,
                   stdio.errorNumber == nil else {
                 throw CLIParseError.invalidValue(
-                    "PlayCover Runtime stdio log no longer matches "
+                    "Mac Runtime stdio log no longer matches "
                         + "the active session."
                 )
             }
@@ -491,7 +491,7 @@ public enum StatusService {
                     == device,
                   UInt64(status.st_ino) == inode else {
                 throw CLIParseError.invalidValue(
-                    "PlayCover stdio log path no longer identifies "
+                    "Mac stdio log path no longer identifies "
                         + "the Runtime's owner-only open file."
                 )
             }
@@ -509,7 +509,7 @@ public enum StatusService {
                   stdio.failureStage == nil,
                   stdio.errorNumber == nil else {
                 throw CLIParseError.invalidValue(
-                    "PlayCover Runtime reports stdio capture for a "
+                    "Mac Runtime reports stdio capture for a "
                         + "session started without --log."
                 )
             }

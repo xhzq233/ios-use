@@ -1224,9 +1224,9 @@ public enum PlayCoverUpstreamEngine {
                 try? FileManager.default.removeItem(at: options.stagingApp)
             }
         }
-        let managedPlayCover = options.managedHome
-            .appendingPathComponent("playcover", isDirectory: true)
-        try PlayTools.configureManagedContainer(managedPlayCover)
+        let managedMacBackend = options.managedHome
+            .appendingPathComponent("mac", isDirectory: true)
+        try PlayTools.configureManagedContainer(managedMacBackend)
         _ = KeyCover.playChainPath
         let composition = try composeEntitlements(
             appURL: options.stagingApp,
@@ -4020,9 +4020,9 @@ public enum PlayCoverUpstreamEngine {
                 managedHome.standardizedFileURL.path
             )
             let logs = (managed as NSString)
-                .appendingPathComponent("playcover/logs")
+                .appendingPathComponent("mac/logs")
             let playchain = (managed as NSString)
-                .appendingPathComponent("playcover/playchain")
+                .appendingPathComponent("mac/playchain")
             finalSandbox.append(
                 "(allow file-read* file-write* file-read-metadata "
                     + "(subpath \"\(sandboxEscape(logs))\"))"

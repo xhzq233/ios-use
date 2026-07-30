@@ -165,7 +165,7 @@ enum PlayCoverPendingLaunchCoordinator {
         guard driver.deviceType
                 == PlayCoverSessionService.deviceType else {
             throw CLIParseError.invalidValue(
-                "A PlayCover pending launch exists beside a "
+                "A Mac pending launch exists beside a "
                     + "different active driver.lock; refusing "
                     + "to mutate either authority."
             )
@@ -244,7 +244,7 @@ enum PlayCoverPendingLaunchCoordinator {
             )
         case .unresolved(let reason):
             throw CLIParseError.invalidValue(
-                "PlayCover driver.lock handoff is unresolved: "
+                "Mac driver.lock handoff is unresolved: "
                     + "\(reason). The driver.lock, pending journal, "
                     + "facade, and generation were preserved."
             )
@@ -306,7 +306,7 @@ enum PlayCoverPendingLaunchCoordinator {
         if record.phase == .confirmedStopped {
             guard record.cleanupProof != .driverLockRetired else {
                 throw CLIParseError.invalidValue(
-                    "Pending PlayCover launch was handed to a "
+                    "Pending Mac launch was handed to a "
                         + "driver.lock that is now missing; refusing "
                         + "to discard recovery evidence."
                 )
@@ -371,7 +371,7 @@ enum PlayCoverPendingLaunchCoordinator {
             )
         case .unresolved(let reason):
             throw CLIParseError.invalidValue(
-                "PlayCover launch is unresolved: \(reason). "
+                "Mac launch is unresolved: \(reason). "
                     + "The pending journal, facade, and generation "
                     + "were preserved."
             )
@@ -385,7 +385,7 @@ enum PlayCoverPendingLaunchCoordinator {
     ) throws -> Int32 {
         guard let owner = record.owner else {
             throw CLIParseError.invalidValue(
-                "Pending PlayCover owner disappeared before stop."
+                "Pending Mac owner disappeared before stop."
             )
         }
         try PlayCoverService.terminateFailedLaunch(
@@ -456,14 +456,14 @@ enum PlayCoverPendingLaunchCoordinator {
     ) throws {
         guard let sessionID = driver.sessionIdentifier,
               let pid = driver.runnerPid,
-              let appPath = driver.playCoverAppPath,
+              let appPath = driver.macAppPath,
               let bundleIdentifier = driver.bundleId,
               let executablePath =
-                driver.playCoverExecutablePath,
+                driver.macExecutablePath,
               let generationKey =
-                driver.playCoverGenerationKey,
+                driver.macGenerationKey,
               let runtimeSocketPath =
-                driver.playCoverRuntimeSocketPath,
+                driver.macRuntimeSocketPath,
               record.sessionID == sessionID,
               record.owner?.pid == Int32(exactly: pid),
               record.appPath == appPath,

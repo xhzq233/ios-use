@@ -285,7 +285,7 @@ class KeyCoverPassword {
 public enum PlayCoverHeadlessKeyCover {
     public static func configure(managedHome: URL) throws -> URL {
         let container = managedHome
-            .appendingPathComponent("playcover", isDirectory: true)
+            .appendingPathComponent("mac", isDirectory: true)
         try PlayTools.configureManagedContainer(container)
         return KeyCover.playChainPath
     }

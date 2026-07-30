@@ -140,18 +140,22 @@ require_owned_regular() {
 require_owner_directory_700 "$MANAGED_HOME"
 
 STATE_DIR="$MANAGED_HOME/state"
-PLAYCOVER_DIR="$MANAGED_HOME/playcover"
-RUN_DIR="$PLAYCOVER_DIR/run"
-LOGS_DIR="$PLAYCOVER_DIR/logs"
-PLAYCHAIN_DIR="$PLAYCOVER_DIR/playchain"
-PREPARED_ROOT="$PLAYCOVER_DIR/prepared"
+MAC_DIR="$MANAGED_HOME/mac"
+RUN_DIR="$MAC_DIR/run"
+LOGS_DIR="$MAC_DIR/logs"
+PLAYCHAIN_DIR="$MAC_DIR/playchain"
+CACHE_DIR="$MANAGED_HOME/cache"
+MAC_CACHE_DIR="$CACHE_DIR/mac"
+PREPARED_ROOT="$MAC_CACHE_DIR/prepared"
 
 for directory in \
   "$STATE_DIR" \
-  "$PLAYCOVER_DIR" \
+  "$MAC_DIR" \
   "$RUN_DIR" \
   "$LOGS_DIR" \
   "$PLAYCHAIN_DIR" \
+  "$CACHE_DIR" \
+  "$MAC_CACHE_DIR" \
   "$PREPARED_ROOT"; do
   require_owner_directory_700 "$directory"
 done

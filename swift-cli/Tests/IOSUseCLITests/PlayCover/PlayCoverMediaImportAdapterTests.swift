@@ -96,7 +96,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
         }
         XCTAssertEqual(
             error.machineError.code,
-            "playcover_photos_automation_denied"
+            "mac_photos_automation_denied"
         )
         XCTAssertEqual(
             error.machineError.category,
@@ -125,7 +125,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
         }
         XCTAssertEqual(
             launchError.machineError.code,
-            "playcover_photos_automation_unavailable"
+            "mac_photos_automation_unavailable"
         )
         XCTAssertFalse(
             launchError.machineError.mutationMayHaveApplied
@@ -213,7 +213,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
         ] = [
             (
                 "IOS_USE_MEDIA_IMPORT_V1\n0\n",
-                "playcover_media_import_zero_assets",
+                "mac_media_import_zero_assets",
                 {
                     if case .noImportedAssets = $0 { return true }
                     return false
@@ -221,7 +221,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
             ),
             (
                 "IOS_USE_MEDIA_IMPORT_V1\n2\nasset-1\nasset-2\n",
-                "playcover_media_import_multiple_assets",
+                "mac_media_import_multiple_assets",
                 {
                     if case .multipleImportedAssets(2) = $0 {
                         return true
@@ -231,7 +231,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
             ),
             (
                 "IOS_USE_MEDIA_IMPORT_V1\n1\n\n",
-                "playcover_media_import_empty_asset_identifier",
+                "mac_media_import_empty_asset_identifier",
                 {
                     if case .emptyAssetLocalIdentifier = $0 {
                         return true
@@ -356,7 +356,7 @@ final class PlayCoverMediaImportAdapterTests: XCTestCase {
         }
         XCTAssertEqual(
             successError.machineError.code,
-            "playcover_media_import_cleanup_failed"
+            "mac_media_import_cleanup_failed"
         )
         XCTAssertTrue(
             successError.machineError.mutationMayHaveApplied
@@ -635,7 +635,7 @@ private final class FakeMediaImportProcessRunner:
 private final class FakeMediaImportFileSystem:
     PlayCoverMediaImportFileSystem {
     let staged = PlayCoverMediaImportStagedFile(
-        path: "/state/ios-use/playcover/run/media-import-test/payload.heic",
+        path: "/state/ios-use/mac/run/media-import-test/payload.heic",
         directoryName: "media-import-test",
         filename: "payload.heic",
         directoryDevice: 1,

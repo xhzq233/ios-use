@@ -100,7 +100,7 @@ final class PlayCoverSigningCertificateBuilderTests: XCTestCase {
         XCTAssertEqual(tbsFields[3].encoded, tbsFields[5].encoded)
         XCTAssertEqual(
             try commonName(in: tbsFields[3]),
-            PlayCoverSigningCertificateBuilder.subjectCommonName
+            "ios-use Mac Stable Code Signing"
         )
 
         let validity = try tbsFields[4].children()

@@ -107,7 +107,7 @@ final class PlayCoverSessionTests: XCTestCase {
         XCTAssertNotNil(UUID(uuidString: sessionID))
         XCTAssertEqual(
             launchInputs.first?.socket,
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: sessionID
             )
         )
@@ -142,19 +142,19 @@ final class PlayCoverSessionTests: XCTestCase {
             manifest.bundleIdentifier
         )
         XCTAssertEqual(
-            lock.playCoverAppPath,
+            lock.macAppPath,
             manifest.preparedAppPath
         )
         XCTAssertEqual(
-            lock.playCoverExecutablePath,
+            lock.macExecutablePath,
             manifest.executablePath
         )
         XCTAssertEqual(
-            lock.playCoverGenerationKey,
+            lock.macGenerationKey,
             manifest.generationKey
         )
         XCTAssertEqual(
-            lock.playCoverRuntimeSocketPath,
+            lock.macRuntimeSocketPath,
             launchInputs.first?.socket
         )
         let lockJSON = try XCTUnwrap(
@@ -178,10 +178,10 @@ final class PlayCoverSessionTests: XCTestCase {
                 "startMode",
                 "sessionIdentifier",
                 "bundleId",
-                "playcoverAppPath",
-                "playcoverExecutablePath",
-                "playcoverGenerationKey",
-                "playcoverRuntimeSocketPath",
+                "macAppPath",
+                "macExecutablePath",
+                "macGenerationKey",
+                "macRuntimeSocketPath",
             ])
         )
         let attributes = try FileManager.default
@@ -265,7 +265,7 @@ final class PlayCoverSessionTests: XCTestCase {
         }
         let sessionID = UUID().uuidString.lowercased()
         let socketPath = try fixture.paths
-            .playCoverRuntimeSocketPath(sessionID: sessionID)
+            .macRuntimeSocketPath(sessionID: sessionID)
         let info = makeSessionInfo(
             manifest: manifest,
             sessionID: sessionID,
@@ -309,11 +309,11 @@ final class PlayCoverSessionTests: XCTestCase {
         )
         XCTAssertEqual(
             machineError["code"] as? String,
-            "playcover_stop_cleanup_failed"
+            "mac_stop_cleanup_failed"
         )
         XCTAssertEqual(
             machineError["phase"] as? String,
-            "playcover_stop_cleanup"
+            "mac_stop_cleanup"
         )
         XCTAssertEqual(machineError["retryable"] as? Bool, true)
         XCTAssertEqual(machineError["fatal"] as? Bool, false)
@@ -429,7 +429,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 paths: fixture.paths
             )
         )
-        XCTAssertEqual(lock.playCoverLogPath, log.path)
+        XCTAssertEqual(lock.macLogPath, log.path)
         let lockJSON = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: Data(
@@ -440,7 +440,7 @@ final class PlayCoverSessionTests: XCTestCase {
             ) as? [String: Any]
         )
         XCTAssertEqual(
-            lockJSON["playcoverLogPath"] as? String,
+            lockJSON["macLogPath"] as? String,
             log.path
         )
         PlayCoverSessionService.processStateOverrideForTesting = {
@@ -470,7 +470,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 ).data,
               case .object(let driver)? = root["driver"],
               case .string(let machineLog)? =
-                driver["playcoverLogPath"],
+                driver["macLogPath"],
               case .object(let runtime)? = driver["runtime"],
               case .object(let stdio)? = runtime["stdio"] else {
             return XCTFail(
@@ -1103,11 +1103,11 @@ final class PlayCoverSessionTests: XCTestCase {
             launched?.sessionID
         )
         XCTAssertEqual(
-            terminated?.playCoverRuntimeSocketPath,
+            terminated?.macRuntimeSocketPath,
             launched?.runtimeSocketPath
         )
         XCTAssertEqual(
-            terminated?.playCoverLogPath,
+            terminated?.macLogPath,
             launched?.logPath
         )
         let launchedLogPath = try XCTUnwrap(launched?.logPath)
@@ -1192,11 +1192,11 @@ final class PlayCoverSessionTests: XCTestCase {
         )
         XCTAssertEqual(
             error["code"] as? String,
-            "playcover_session_commit_rollback_failed"
+            "mac_session_commit_rollback_failed"
         )
         XCTAssertEqual(
             error["phase"] as? String,
-            "playcover_session_commit"
+            "mac_session_commit"
         )
         XCTAssertEqual(error["fatal"] as? Bool, true)
         XCTAssertEqual(
@@ -1208,7 +1208,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
         let logPath = try XCTUnwrap(launched?.logPath)
         XCTAssertEqual(
-            data["playcoverLogPath"] as? String,
+            data["macLogPath"] as? String,
             logPath
         )
         XCTAssertTrue(
@@ -1277,11 +1277,11 @@ final class PlayCoverSessionTests: XCTestCase {
         )
         XCTAssertEqual(
             error["code"] as? String,
-            "playcover_session_handoff_failed"
+            "mac_session_handoff_failed"
         )
         XCTAssertEqual(
             error["phase"] as? String,
-            "playcover_session_commit"
+            "mac_session_commit"
         )
         XCTAssertEqual(error["retryable"] as? Bool, false)
         XCTAssertEqual(error["fatal"] as? Bool, true)
@@ -1295,7 +1295,7 @@ final class PlayCoverSessionTests: XCTestCase {
         let launch = try XCTUnwrap(launched)
         let logPath = try XCTUnwrap(launch.logPath)
         XCTAssertEqual(
-            data["playcoverLogPath"] as? String,
+            data["macLogPath"] as? String,
             logPath
         )
         XCTAssertTrue(
@@ -1404,7 +1404,7 @@ final class PlayCoverSessionTests: XCTestCase {
             try fixture.createManagedApp(manifest: manifest)
             let sessionID = UUID().uuidString
             let expectedSocket =
-                try fixture.paths.playCoverRuntimeSocketPath(
+                try fixture.paths.macRuntimeSocketPath(
                     sessionID: sessionID
                 )
             var info = makeSessionInfo(
@@ -1500,7 +1500,7 @@ final class PlayCoverSessionTests: XCTestCase {
             manifest: manifest,
             sessionID: sessionID,
             socketPath:
-                try fixture.paths.playCoverRuntimeSocketPath(
+                try fixture.paths.macRuntimeSocketPath(
                     sessionID: sessionID
                 )
         )
@@ -1534,7 +1534,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -1574,7 +1574,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -1633,7 +1633,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     ),
                 startedAt: recordedStart
@@ -1714,7 +1714,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     ),
                 startedAt: recordedStart
@@ -1823,7 +1823,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -1878,7 +1878,7 @@ final class PlayCoverSessionTests: XCTestCase {
             manifest: manifest,
             sessionID: sessionID,
             socketPath:
-                try fixture.paths.playCoverRuntimeSocketPath(
+                try fixture.paths.macRuntimeSocketPath(
                     sessionID: sessionID
                 )
         )
@@ -1937,7 +1937,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -2015,7 +2015,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -2053,7 +2053,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -2149,7 +2149,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -2191,7 +2191,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -2236,7 +2236,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -2285,7 +2285,7 @@ final class PlayCoverSessionTests: XCTestCase {
                 manifest: manifest,
                 sessionID: sessionID,
                 socketPath:
-                    try fixture.paths.playCoverRuntimeSocketPath(
+                    try fixture.paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -2385,12 +2385,12 @@ final class PlayCoverSessionTests: XCTestCase {
         let fixture = try SessionFixture()
         defer { fixture.remove() }
         let first = try fixture.paths
-            .playCoverRuntimeSocketPath(
+            .macRuntimeSocketPath(
                 sessionID:
                     "A1-\(UUID().uuidString)"
             )
         let second = try fixture.paths
-            .playCoverRuntimeSocketPath(
+            .macRuntimeSocketPath(
                 sessionID:
                     "B2-\(UUID().uuidString)"
         )
@@ -2414,7 +2414,7 @@ final class PlayCoverSessionTests: XCTestCase {
             environment: ["IOS_USE_HOME": longRoot]
         )
         XCTAssertThrowsError(
-            try longPaths.playCoverRuntimeSocketPath(
+            try longPaths.macRuntimeSocketPath(
                 sessionID: UUID().uuidString
             )
         )
@@ -2498,7 +2498,7 @@ final class PlayCoverSessionTests: XCTestCase {
         defer { fixture.remove() }
 
         let listenerPath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: UUID().uuidString
             )
         let listener = try bindUnixSocket(
@@ -2514,7 +2514,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
 
         let stalePath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: UUID().uuidString
             )
         let stale = try bindUnixSocket(
@@ -2527,7 +2527,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
 
         let filePath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: UUID().uuidString
             )
         try Data("owned-by-test".utf8).write(
@@ -2542,7 +2542,7 @@ final class PlayCoverSessionTests: XCTestCase {
         )
 
         let linkPath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: UUID().uuidString
             )
         XCTAssertEqual(
@@ -2579,7 +2579,7 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let staleSessionID = UUID().uuidString
         let stalePath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: staleSessionID
             )
         let staleDescriptor = try bindUnixSocket(
@@ -2601,7 +2601,7 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let liveSessionID = UUID().uuidString
         let livePath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: liveSessionID
             )
         let liveDescriptor = try bindUnixSocket(
@@ -2626,7 +2626,7 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let datagramSessionID = UUID().uuidString
         let datagramPath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: datagramSessionID
             )
         let datagramDescriptor = try bindUnixSocket(
@@ -2663,7 +2663,7 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let sessionID = UUID().uuidString
         let socketPath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: sessionID
             )
         let descriptor = try bindUnixSocket(
@@ -2716,7 +2716,7 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let regularSessionID = UUID().uuidString
         let regularPath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: regularSessionID
             )
         try Data("preserve".utf8).write(
@@ -2739,7 +2739,7 @@ final class PlayCoverSessionTests: XCTestCase {
 
         let symlinkSessionID = UUID().uuidString
         let symlinkPath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: symlinkSessionID
             )
         let targetPath = fixture.root + "/socket-link-target"
@@ -2781,7 +2781,7 @@ final class PlayCoverSessionTests: XCTestCase {
         }
         let sessionID = UUID().uuidString
         let socketPath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: sessionID
             )
         XCTAssertEqual(
@@ -2829,7 +2829,7 @@ final class PlayCoverSessionTests: XCTestCase {
         }
         let sessionID = UUID().uuidString
         let socketPath =
-            try fixture.paths.playCoverRuntimeSocketPath(
+            try fixture.paths.macRuntimeSocketPath(
                 sessionID: sessionID
             )
         let descriptor = try bindUnixSocket(
@@ -3376,11 +3376,11 @@ final class PlayCoverSessionTests: XCTestCase {
             startMode: PlayCoverSessionService.deviceType,
             sessionIdentifier: sessionID,
             bundleId: manifest.bundleIdentifier,
-            playCoverAppPath: manifest.preparedAppPath,
-            playCoverExecutablePath: manifest.executablePath,
-            playCoverGenerationKey: manifest.generationKey,
-            playCoverRuntimeSocketPath: socketPath,
-            playCoverLogPath: logPath
+            macAppPath: manifest.preparedAppPath,
+            macExecutablePath: manifest.executablePath,
+            macGenerationKey: manifest.generationKey,
+            macRuntimeSocketPath: socketPath,
+            macLogPath: logPath
         )
     }
 
@@ -3403,17 +3403,17 @@ final class PlayCoverSessionTests: XCTestCase {
             sessionIdentifier: info.sessionIdentifier,
             bundleId: info.bundleId,
             controlSocketPath: info.controlSocketPath,
-            playCoverAppPath: appPath ?? info.playCoverAppPath,
-            playCoverExecutablePath:
+            macAppPath: appPath ?? info.macAppPath,
+            macExecutablePath:
                 executablePath
-                ?? info.playCoverExecutablePath,
-            playCoverGenerationKey:
-                info.playCoverGenerationKey,
-            playCoverRuntimeSocketPath:
+                ?? info.macExecutablePath,
+            macGenerationKey:
+                info.macGenerationKey,
+            macRuntimeSocketPath:
                 runtimeSocketPath
-                ?? info.playCoverRuntimeSocketPath,
-            playCoverLogPath:
-                logPath ?? info.playCoverLogPath
+                ?? info.macRuntimeSocketPath,
+            macLogPath:
+                logPath ?? info.macLogPath
         )
     }
 

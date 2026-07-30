@@ -24,7 +24,7 @@ struct PlayCoverSharedCachePaths: Equatable, Sendable {
         } else {
             root = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Caches/dev.ios-use")
-                .appendingPathComponent("playcover")
+                .appendingPathComponent("mac")
                 .appendingPathComponent("prepared-substrate-v1")
                 .standardizedFileURL.path
         }

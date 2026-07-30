@@ -614,7 +614,7 @@ final class PlayCoverPendingLaunchStoreTests: XCTestCase {
         ]
         let intent = PlayCoverPendingLaunchStore.Intent(
             sessionID: sessionID,
-            runtimeSocketPath: try paths.playCoverRuntimeSocketPath(
+            runtimeSocketPath: try paths.macRuntimeSocketPath(
                 sessionID: sessionID
             ),
             generationKey: generationKey,

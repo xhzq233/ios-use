@@ -270,7 +270,7 @@ enum PlayCoverManagedAppService {
                     directories: [
                         .init(
                             descriptor: access.playcoverDescriptor,
-                            label: "managed playcover directory"
+                            label: "managed Mac cache directory"
                         ),
                         .init(
                             descriptor: access.preparedDescriptor,
@@ -462,7 +462,7 @@ enum PlayCoverManagedAppService {
             CLILogService.append(
                 paths: paths,
                 [
-                    "[playcover-cache] shared-substrate "
+                    "[mac-cache] shared-substrate "
                         + "result=path-fallback detail=\(error)",
                 ]
             )
@@ -1119,7 +1119,10 @@ enum PlayCoverManagedAppService {
         for value in [
             lexicalOwnedRoot,
             URL(fileURLWithPath: lexicalOwnedRoot)
-                .appendingPathComponent("playcover").path,
+                .appendingPathComponent("cache").path,
+            URL(fileURLWithPath: lexicalOwnedRoot)
+                .appendingPathComponent("cache")
+                .appendingPathComponent("mac").path,
             lexicalPath,
         ] where isSymbolicLinkExact(value) {
             throw PlayCoverBackendError.prepareFailed(
@@ -1132,7 +1135,7 @@ enum PlayCoverManagedAppService {
         )
         let ownedStartIndex = max(
             0,
-            components.count - 3
+            components.count - 4
         )
         var descriptor = Darwin.open(
             "/",
@@ -1214,7 +1217,7 @@ enum PlayCoverManagedAppService {
                     }
                     Darwin.close(child)
                     throw PlayCoverBackendError.prepareFailed(
-                        "cannot retain managed playcover directory"
+                        "cannot retain managed Mac cache directory"
                     )
                 }
             }
@@ -1223,7 +1226,7 @@ enum PlayCoverManagedAppService {
         }
         guard playcoverDescriptor >= 0 else {
             throw PlayCoverBackendError.prepareFailed(
-                "managed playcover directory was not opened"
+                "managed Mac cache directory was not opened"
             )
         }
         let prepared = URL(

@@ -6,7 +6,7 @@ import Security
 import Darwin
 #endif
 
-/// The policy-owned lifecycle state of the stable PlayCover signer.
+/// The policy-owned lifecycle state of the stable Mac backend signer.
 public enum PlayCoverSigningIdentityHealth: String, Codable, Sendable {
     case healthy
     case missing
@@ -110,32 +110,32 @@ public enum PlayCoverSigningIdentityServiceError:
     public var description: String {
         switch self {
         case .identityCreationUnavailable:
-            return "the dedicated PlayCover code-signing identity could "
+            return "the dedicated Mac backend code-signing identity could "
                 + "not be created"
         case .invalidCreatedIdentity:
-            return "the created PlayCover code-signing identity did not "
+            return "the created Mac backend code-signing identity did not "
                 + "produce valid immutable evidence"
         case .bindingUnavailable:
-            return "the PlayCover code-signing identity binding is "
+            return "the Mac backend code-signing identity binding is "
                 + "unavailable"
         case .trustConfigurationFailed(let status):
-            return "the dedicated PlayCover code-signing identity could "
+            return "the dedicated Mac backend code-signing identity could "
                 + "not be trusted for code signing (Security status "
-                + "\(status)); retry `ios-use config --playcover` and "
+                + "\(status)); retry `ios-use config --mac` and "
                 + "approve the macOS authentication dialog"
         case .signingProbeFailed(let detail):
-            return "the dedicated PlayCover code-signing identity failed "
+            return "the dedicated Mac backend code-signing identity failed "
                 + "its signing probe: \(detail)"
         case .unhealthy(let health):
             if health == .missing {
-                return "the dedicated PlayCover code-signing identity is "
-                    + "not initialized; run `ios-use config --playcover`"
+                return "the dedicated Mac backend code-signing identity is "
+                    + "not initialized; run `ios-use config --mac`"
             }
             if health == .trustRequired {
-                return "the dedicated PlayCover code-signing identity "
-                    + "requires trust; run `ios-use config --playcover`"
+                return "the dedicated Mac backend code-signing identity "
+                    + "requires trust; run `ios-use config --mac`"
             }
-            return "the dedicated PlayCover code-signing identity is "
+            return "the dedicated Mac backend code-signing identity is "
                 + health.rawValue
         }
     }
@@ -145,22 +145,22 @@ public enum PlayCoverSigningIdentityServiceError:
         let retryable: Bool
         switch self {
         case .identityCreationUnavailable:
-            code = "playcover_signing_identity_creation_unavailable"
+            code = "mac_signing_identity_creation_unavailable"
             retryable = false
         case .invalidCreatedIdentity:
-            code = "playcover_signing_identity_invalid"
+            code = "mac_signing_identity_invalid"
             retryable = false
         case .bindingUnavailable:
-            code = "playcover_signing_identity_binding_unavailable"
+            code = "mac_signing_identity_binding_unavailable"
             retryable = true
         case .trustConfigurationFailed:
-            code = "playcover_signing_identity_trust_required"
+            code = "mac_signing_identity_trust_required"
             retryable = true
         case .signingProbeFailed:
-            code = "playcover_signing_identity_inaccessible"
+            code = "mac_signing_identity_inaccessible"
             retryable = true
         case .unhealthy(let health):
-            code = "playcover_signing_identity_\(health.rawValue)"
+            code = "mac_signing_identity_\(health.rawValue)"
             retryable = health == .missing
                 || health == .trustRequired
                 || health == .inaccessible
@@ -170,7 +170,7 @@ public enum PlayCoverSigningIdentityServiceError:
             message: description,
             category: IOSUseErrorCategory.authorization,
             code: code,
-            phase: "playcover_signing_identity",
+            phase: "mac_signing_identity",
             retryable: retryable,
             fatal: false,
             mutationMayHaveApplied: false
@@ -257,7 +257,7 @@ protocol PlayCoverSigningIdentityBackend: AnyObject {
 }
 
 public final class PlayCoverSigningIdentityService {
-    public static let policyRevision = "playcover-stable-signer-v1"
+    public static let policyRevision = "mac-stable-signer-v1"
 
     /// Fixed public-evidence namespace. It never depends on HOME or
     /// IOS_USE_HOME. The private key and certificate remain in Keychain; this
@@ -265,7 +265,7 @@ public final class PlayCoverSigningIdentityService {
     /// CLI build's changing CDHash.
     static let bindingDirectoryName = "dev.ios-use"
     static let bindingFilename =
-        "playcover-stable-signing-binding-v1.json"
+        "mac-stable-signing-binding-v1.json"
 
     private let backend: PlayCoverSigningIdentityBackend
     private let now: () -> Date
@@ -647,7 +647,7 @@ public final class PlayCoverSigningIdentityService {
             fileURLWithPath: String(cString: buffer),
             isDirectory: true
         ).appendingPathComponent(
-            "dev.ios-use.playcover-signer.lock"
+            "dev.ios-use.mac-signer.lock"
         ).path
         #else
         throw PlayCoverSigningIdentityServiceError.bindingUnavailable
@@ -669,12 +669,12 @@ final class SecurityPlayCoverSigningIdentityBackend:
     PlayCoverSigningIdentityBackend
 {
     private static let keyApplicationTag = Data(
-        "dev.ios-use.playcover.stable-signing-key-v1".utf8
+        "dev.ios-use.mac.stable-signing-key-v1".utf8
     )
     private static let keyLabel =
-        "ios-use PlayCover Stable Code Signing Key"
+        "ios-use Mac Stable Code Signing Key"
     private static let certificateLabel =
-        "ios-use PlayCover Stable Code Signing"
+        "ios-use Mac Stable Code Signing"
     private static let certificateNotBefore =
         Date(timeIntervalSince1970: 1_735_689_600)
     private static let certificateNotAfter =
@@ -1074,7 +1074,7 @@ final class SecurityPlayCoverSigningIdentityBackend:
             fileURLWithPath: NSTemporaryDirectory(),
             isDirectory: true
         ).appendingPathComponent(
-            "ios-use-playcover-signer-\(UUID().uuidString)",
+            "ios-use-mac-signer-\(UUID().uuidString)",
             isDirectory: true
         )
         do {

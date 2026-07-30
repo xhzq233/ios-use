@@ -11,20 +11,20 @@ code.
 The public lifecycle is intentionally small:
 
 ```bash
-./ios-use config --playcover
+./ios-use config --mac
 ./ios-use start --mac --app /path/to/Source.app --log
 ./ios-use status
 # normal ios-use UI, screenshot, capture, URL, and log commands
 ./ios-use stop
 ```
 
-`config --playcover` is the only public initialization path for the stable
-PlayCover signer. It is run once per macOS account, not once per
+`config --mac` is the only public initialization path for the stable
+Mac-backend signer. It is run once per macOS account, not once per
 `IOS_USE_HOME`. The first run creates and trusts the identity with one macOS
 authentication. If authentication is cancelled, the binding remains on the
 same identity and retrying the command safely resumes trust configuration.
 Ordinary start only resolves the existing identity and fails with an explicit
-`config --playcover` instruction when it is missing or still needs trust. Other
+`config --mac` instruction when it is missing or still needs trust. Other
 unhealthy states fail closed without start-time mutation.
 
 `start --mac --reuse` explicitly reuses the most recent verified generation
@@ -35,7 +35,7 @@ deliberately does not inspect, hash, or otherwise depend on the original source
 path.
 
 `--log` is optional. It asks the CLI to create a unique owner-only file under
-`IOS_USE_HOME/playcover/logs/`, then makes the injected Runtime redirect the
+`IOS_USE_HOME/mac/logs/`, then makes the injected Runtime redirect the
 target App's stdout and stderr to that exact pre-created file. Start prints the
 path, and `status` reports it as `stdio log`. The file is retained after a
 successful stop, an App crash, or a failed launch so it remains usable as
@@ -124,7 +124,7 @@ ios-use start --mac (--app <source-or-managed-prepared.app> | --reuse) [--log]
   -> PlayCoverService
      -> pinned PlayCover prepare graph and full verification
      -> one bounded integrity verification immediately before launch
-     -> pinned-shape session App facade under ~/Applications/PlayCover
+     -> pinned-shape session App facade under ~/Applications/ios-use
      -> NSWorkspace facade launch with exact environment and PID
   -> IOSUsePlayRuntime.framework
      -> pinned PlayTools platform/geometry/keychain hooks
@@ -232,12 +232,12 @@ before touching another backend.
 The signer is persistent per macOS user and deliberately independent of
 `IOS_USE_HOME`. Its private key and certificate live in the user's Keychain,
 while the exact non-secret binding is an owner-only file at
-`~/Library/Application Support/dev.ios-use/playcover-stable-signing-binding-v1.json`.
+`~/Library/Application Support/dev.ios-use/mac-stable-signing-binding-v1.json`.
 Initialization is serialized by a per-user operation lock and claims the first
 binding atomically. It then installs code-signing-specific user trust and
 performs a real sign/strict-verify probe. A cancelled trust authentication does
 not remove the binding or create a replacement, so the next explicit
-`config --playcover` continues with the same certificate.
+`config --mac` continues with the same certificate.
 
 All ordinary prepare, managed-selection, and start paths resolve this exact
 binding with initialization disabled. They never create, rotate, or repair the
@@ -250,16 +250,16 @@ state, logs, artifacts, or configuration.
 
 The source App is always read-only. Transform-only work may be reused through
 the owner-only, versioned cache at
-`~/Library/Caches/dev.ios-use/playcover/prepared-substrate-v1`. Its entries are
+`~/Library/Caches/dev.ios-use/mac/prepared-substrate-v1`. Its entries are
 disposable inputs, not prepared Apps: they carry no session or home authority,
 are never launched, and may be removed without affecting an existing final
 generation.
 
 Every home clones or copies the selected substrate into a new staging directory
-under its own `IOS_USE_HOME/playcover/`. Entitlement composition, the complete
-inside-out signing pass, final verification, and manifest/completed publication
-all happen on that home-local copy. Nothing becomes a reusable final generation
-until the complete transaction verifies.
+under its own `IOS_USE_HOME/cache/mac/prepared/`. Entitlement composition, the
+complete inside-out signing pass, final verification, and
+manifest/completed publication all happen on that home-local copy. Nothing
+becomes a reusable final generation until the complete transaction verifies.
 
 The headless dependency graph retains the pinned Installer order:
 
@@ -285,7 +285,7 @@ source are not overwritten.
 
 On macOS, prepare opens staging relative to retained managed-directory FDs and
 performs writes through its stable `/.vol/<device>/<inode>` vnode path. While
-prepare is running, the ios-use-owned `playcover` and `prepared` directories
+prepare is running, the ios-use-owned `cache/mac` and `prepared` directories
 also carry a temporary `UF_APPEND` namespace guard. Descendants remain
 writable, but staging and its retained parents cannot be renamed or unlinked.
 The guard validates the anchored FD links before and after prepare and restores

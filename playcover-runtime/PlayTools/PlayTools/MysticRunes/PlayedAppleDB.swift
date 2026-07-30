@@ -71,19 +71,27 @@ enum IOSUsePlayChainLocation {
         }
         let preparedURL =
             generationURL.deletingLastPathComponent()
-        let playcoverRootURL =
+        let macCacheURL =
             preparedURL.deletingLastPathComponent()
+        let cacheURL =
+            macCacheURL.deletingLastPathComponent()
+        let managedHomeURL =
+            cacheURL.deletingLastPathComponent()
         guard preparedURL.lastPathComponent == "prepared",
-              playcoverRootURL.lastPathComponent == "playcover" else {
+              macCacheURL.lastPathComponent == "mac",
+              cacheURL.lastPathComponent == "cache" else {
             throw NSError(
                 domain: "IOSUsePlayChain",
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "prepared generation is outside IOS_USE_HOME/playcover"
+                        "prepared generation is outside "
+                            + "IOS_USE_HOME/cache/mac"
                 ]
             )
         }
+        let playcoverRootURL = managedHomeURL
+            .appendingPathComponent("mac", isDirectory: true)
         let bundleID =
             Bundle.main.bundleIdentifier ?? "Shared"
         let allowed = CharacterSet(

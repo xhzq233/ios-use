@@ -533,7 +533,7 @@ enum DriverFailureEvidence {
             }
         }
         let warning =
-            "atomic PlayCover evidence unavailable after 3 attempts: "
+            "atomic Mac evidence unavailable after 3 attempts: "
             + String(describing: lastError ?? CLIParseError
                 .invalidValue("unknown generation mismatch"))
         return PlayCoverEvidence(

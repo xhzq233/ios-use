@@ -11,7 +11,7 @@ final class PlayCoverSigningIdentityServiceTests: XCTestCase {
     private var initializationLockRoot: URL!
     private var initializationLockURL: URL {
         initializationLockRoot.appendingPathComponent(
-            "playcover-signer.lock"
+            "mac-signer.lock"
         )
     }
 
@@ -87,6 +87,61 @@ final class PlayCoverSigningIdentityServiceTests: XCTestCase {
         XCTAssertEqual(result.health, .missing)
         XCTAssertNil(result.evidence)
         XCTAssertEqual(backend.createCount, 0)
+    }
+
+    func testErrorsUseMacBackendUserAndMachineNamespaces() {
+        let healthCases: [PlayCoverSigningIdentityHealth] = [
+            .healthy,
+            .missing,
+            .replaced,
+            .expired,
+            .trustRequired,
+            .inaccessible,
+            .unavailable,
+        ]
+        let cases: [(PlayCoverSigningIdentityServiceError, String)] = [
+            (
+                .identityCreationUnavailable,
+                "mac_signing_identity_creation_unavailable"
+            ),
+            (
+                .invalidCreatedIdentity,
+                "mac_signing_identity_invalid"
+            ),
+            (
+                .bindingUnavailable,
+                "mac_signing_identity_binding_unavailable"
+            ),
+            (
+                .trustConfigurationFailed(errSecAuthFailed),
+                "mac_signing_identity_trust_required"
+            ),
+            (
+                .signingProbeFailed("denied"),
+                "mac_signing_identity_inaccessible"
+            ),
+        ] + healthCases.map {
+            (
+                .unhealthy($0),
+                "mac_signing_identity_\($0.rawValue)"
+            )
+        }
+
+        for (error, expectedCode) in cases {
+            XCTAssertEqual(error.machineError.code, expectedCode)
+            XCTAssertEqual(
+                error.machineError.phase,
+                "mac_signing_identity"
+            )
+            XCTAssertTrue(
+                error.description.contains("Mac backend"),
+                error.description
+            )
+            XCTAssertFalse(
+                error.description.contains("PlayCover"),
+                error.description
+            )
+        }
     }
 
     func testInitializeBindsExactImmutableEvidence() throws {
@@ -760,7 +815,11 @@ final class PlayCoverSigningIdentityServiceTests: XCTestCase {
         )
         XCTAssertEqual(
             PlayCoverSigningIdentityService.bindingFilename,
-            "playcover-stable-signing-binding-v1.json"
+            "mac-stable-signing-binding-v1.json"
+        )
+        XCTAssertEqual(
+            PlayCoverSigningIdentityService.policyRevision,
+            "mac-stable-signer-v1"
         )
         let data = try JSONEncoder().encode(
             evidence(makeIdentity(seed: "A"))

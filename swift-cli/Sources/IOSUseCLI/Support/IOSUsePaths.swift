@@ -23,7 +23,7 @@ public struct IOSUsePaths: Equatable, Sendable {
     public let playcoverPrepared: String
     public let playcoverRuntime: String
 
-    public func playCoverRuntimeSocketPath(
+    public func macRuntimeSocketPath(
         sessionID: String
     ) throws -> String {
         let token = sessionID
@@ -33,7 +33,7 @@ public struct IOSUsePaths: Equatable, Sendable {
             .joined()
         guard !token.isEmpty else {
             throw CLIParseError.invalidValue(
-                "PlayCover sessionID cannot produce a runtime socket name."
+                "Mac sessionID cannot produce a runtime socket name."
             )
         }
         // `/tmp` is a root-owned symlink to `/private/tmp` on macOS.  The
@@ -89,16 +89,16 @@ public struct IOSUsePaths: Equatable, Sendable {
             appLogState: "\(configured.root)/state/app-log.json",
             logs: "\(configured.root)/logs",
             artifacts: "\(configured.root)/artifacts",
-            playcover: "\(configured.root)/playcover",
-            playcoverRun: "\(configured.root)/playcover/run",
-            playcoverLogs: "\(configured.root)/playcover/logs",
+            playcover: "\(configured.root)/mac",
+            playcoverRun: "\(configured.root)/mac/run",
+            playcoverLogs: "\(configured.root)/mac/logs",
             playcoverPendingLaunch:
-                "\(configured.root)/playcover/pending-launch.json",
+                "\(configured.root)/mac/pending-launch.json",
             playcoverPendingLaunchLock:
-                "\(configured.root)/playcover/pending-launch.lock",
-            playcoverLastPrepared: "\(configured.root)/playcover/last-prepared.json",
-            playcoverPrepared: "\(configured.root)/playcover/prepared",
-            playcoverRuntime: "\(configured.root)/playcover/IOSUsePlayRuntime.framework"
+                "\(configured.root)/mac/pending-launch.lock",
+            playcoverLastPrepared: "\(configured.root)/mac/last-prepared.json",
+            playcoverPrepared: "\(configured.root)/cache/mac/prepared",
+            playcoverRuntime: "\(configured.root)/mac/IOSUsePlayRuntime.framework"
         )
     }
 

@@ -1210,12 +1210,12 @@ final class PlayCoverDriverClientTests: XCTestCase {
             startMode: PlayCoverSessionService.deviceType,
             sessionIdentifier: "session-v3",
             bundleId: "com.example.runtime",
-            playCoverAppPath:
+            macAppPath:
                 "/tmp/prepared/generation/com.example.runtime.app",
-            playCoverExecutablePath:
+            macExecutablePath:
                 "/tmp/prepared/generation/com.example.runtime.app/Demo",
-            playCoverGenerationKey: "generation",
-            playCoverRuntimeSocketPath: "/tmp/run/s-sessionv3.sock"
+            macGenerationKey: "generation",
+            macRuntimeSocketPath: "/tmp/run/s-sessionv3.sock"
         )
     }
 

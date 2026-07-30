@@ -422,11 +422,11 @@ make_home() {
   /bin/chmod 700 "$home" ||
     fail_gate "could not secure isolated IOS_USE_HOME"
   require_temporary_home "$home"
-  /bin/mkdir -m 700 "$home/playcover" ||
-    fail_gate "could not create isolated PlayCover home"
+  /bin/mkdir -m 700 "$home/mac" ||
+    fail_gate "could not create isolated Mac home"
   /usr/bin/ditto \
     "$RUNTIME_FRAMEWORK" \
-    "$home/playcover/IOSUsePlayRuntime.framework" ||
+    "$home/mac/IOSUsePlayRuntime.framework" ||
     fail_gate "could not install scratch Runtime in isolated home"
   printf '%s\n' "$home"
 }
@@ -456,7 +456,7 @@ assert_driver_lock_present() {
 assert_pending_evidence() {
   local home="$1"
   local case_name="$2"
-  local journal="$home/playcover/pending-launch.json"
+  local journal="$home/mac/pending-launch.json"
   local canonical_home
   if [[
     ! -f "$journal" ||
@@ -484,8 +484,8 @@ assert_pending_evidence() {
       ;;
   esac
   if [[
-    ! -d "$home/playcover/prepared/$generation" ||
-    -L "$home/playcover/prepared/$generation"
+    ! -d "$home/cache/mac/prepared/$generation" ||
+    -L "$home/cache/mac/prepared/$generation"
   ]]; then
     fail_gate "$case_name did not retain its pending generation"
   fi
@@ -530,7 +530,7 @@ capture_pending_fingerprint() {
     fail_gate "$label journal has no façade path"
   generation="$(jq -er '.generationKey' "$journal")" ||
     fail_gate "$label journal has no generation"
-  generation_path="$home/playcover/prepared/$generation"
+  generation_path="$home/cache/mac/prepared/$generation"
   alias_device="$(/usr/bin/stat -f '%d' "$alias_path")" ||
     fail_gate "$label could not stat façade device"
   alias_inode="$(/usr/bin/stat -f '%i' "$alias_path")" ||
@@ -592,7 +592,7 @@ capture_pending_fingerprint() {
   )"
   journal_stat="$(
     /usr/bin/stat -f '%d:%i:%u:%Lp:%l:%z' \
-      "$home/playcover/pending-launch.json"
+      "$home/mac/pending-launch.json"
   )"
   alias_stat="$(/usr/bin/stat -f '%d:%i:%Lp:%l' "$alias_path")"
   generation_stat="$(
@@ -696,7 +696,7 @@ assert_pending_status_matches_journal() {
       --argjson ownerPID "$owner_pid" '
       .data.driver.phase == $phase and
       .data.driver.sessionIdentifier == $session and
-      .data.driver.playcoverGenerationKey == $generation and
+      .data.driver.macGenerationKey == $generation and
       .data.driver.bundleId == $bundle and
       .data.driver.ownerPid == $ownerPID and
       (
@@ -788,8 +788,8 @@ assert_identified_runtime_live() {
   canonical_home="$(canonical_directory "$home")" ||
     fail_gate "$case_name home cannot be canonicalized"
   case "$socket_path" in
-    "$home"/playcover/run/s-*.sock|\
-    "$canonical_home"/playcover/run/s-*.sock) ;;
+    "$home"/mac/run/s-*.sock|\
+    "$canonical_home"/mac/run/s-*.sock) ;;
     *)
       fail_gate "$case_name Runtime socket escaped the isolated home"
       ;;
@@ -1036,7 +1036,7 @@ set_identity_from_driver_lock() {
   local home="$1"
   local case_name="$2"
   local lock="$home/state/driver.lock"
-  local journal="$home/playcover/pending-launch.json"
+  local journal="$home/mac/pending-launch.json"
   local canonical_expected
   local canonical_observed
   assert_driver_lock_present "$home" "$case_name"
@@ -1044,12 +1044,12 @@ set_identity_from_driver_lock() {
   IDENTITY_PID="$(jq -er '.runnerPid' "$lock")" ||
     fail_gate "$case_name driver.lock has no runner PID"
   IDENTITY_SOCKET="$(
-    jq -er '.playcoverRuntimeSocketPath' "$lock"
+    jq -er '.macRuntimeSocketPath' "$lock"
   )" || fail_gate "$case_name driver.lock has no Runtime socket"
   IDENTITY_SESSION="$(jq -er '.sessionIdentifier' "$lock")" ||
     fail_gate "$case_name driver.lock has no session"
   IDENTITY_EXECUTABLE="$(
-    jq -er '.playcoverExecutablePath' "$lock"
+    jq -er '.macExecutablePath' "$lock"
   )" || fail_gate "$case_name driver.lock has no executable"
   if [[ ! "$IDENTITY_PID" =~ ^[0-9]+$ || "$IDENTITY_PID" -le 1 ]]; then
     fail_gate "$case_name driver.lock has an invalid runner PID"
@@ -1099,7 +1099,7 @@ set_identity_from_driver_lock() {
       .data.driver.status == "healthy" and
       .data.driver.runnerPid == $pid and
       .data.driver.sessionIdentifier == $session and
-      .data.driver.playcoverRuntimeSocketPath == $socket and
+      .data.driver.macRuntimeSocketPath == $socket and
       .data.driver.runtime.status == "healthy" and
       .data.driver.runtime.identityVerified == true and
       .data.driver.runtime.pid == $pid
@@ -1287,8 +1287,8 @@ assert_home_stopped() {
   local home="$1"
   local case_name="$2"
   if [[
-    -e "$home/playcover/pending-launch.json" ||
-    -L "$home/playcover/pending-launch.json"
+    -e "$home/mac/pending-launch.json" ||
+    -L "$home/mac/pending-launch.json"
   ]]; then
     fail_gate "$case_name retained its journal after successful stop"
   fi
@@ -1450,8 +1450,8 @@ run_handoff_case() {
       ;;
     afterPendingJournalRemoved)
       if [[
-        -e "$MAIN_HOME/playcover/pending-launch.json" ||
-        -L "$MAIN_HOME/playcover/pending-launch.json"
+        -e "$MAIN_HOME/mac/pending-launch.json" ||
+        -L "$MAIN_HOME/mac/pending-launch.json"
       ]]; then
         fail_gate "$case_name retained the removed pending journal"
       fi

@@ -141,7 +141,7 @@ enum CaptureService {
                                 capture.snapshotGeneration,
                               snapshotGeneration > 0 else {
                             throw CLIParseError.invalidValue(
-                                "PlayCover capture frame is missing "
+                                "Mac capture frame is missing "
                                     + "Runtime generation identity"
                             )
                         }
@@ -149,7 +149,7 @@ enum CaptureService {
                                 lastPlayCoverCaptureGeneration,
                            captureGeneration <= previous {
                             throw CLIParseError.invalidValue(
-                                "PlayCover captureGeneration did not "
+                                "Mac captureGeneration did not "
                                     + "advance monotonically"
                             )
                         }
@@ -157,7 +157,7 @@ enum CaptureService {
                                 lastPlayCoverSnapshotGeneration,
                            snapshotGeneration < previous {
                             throw CLIParseError.invalidValue(
-                                "PlayCover snapshotGeneration moved "
+                                "Mac snapshotGeneration moved "
                                     + "backwards"
                             )
                         }

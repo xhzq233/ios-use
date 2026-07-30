@@ -86,7 +86,7 @@ struct PlayCoverUnterminatedLaunchError: Error,
     let rollbackError: String
 
     var description: String {
-        "PlayCover launch failed and exact process \(pid) could "
+        "Mac launch failed and exact process \(pid) could "
             + "not be confirmed stopped; the durable pending launch "
             + "journal must be preserved. Original error: "
             + "\(originalError). "
@@ -391,7 +391,7 @@ public enum PlayCoverService {
         ).resolvingSymlinksInPath()
         let sandboxSocket = canonicalManagedHome
             .appendingPathComponent(
-                "playcover/run/s-runtime.sock"
+                "mac/run/s-runtime.sock"
             ).path
         let upstreamOptions = PlayCoverUpstreamPrepareOptions(
             sourceApp: URL(
@@ -698,7 +698,7 @@ public enum PlayCoverService {
         )
         var line = String(
             format:
-                "[playcover-cache] shared-substrate result=%@ "
+                "[mac-cache] shared-substrate result=%@ "
                 + "generation=%@ elapsed_ms=%.1f",
             locale: Locale(identifier: "en_US_POSIX"),
             result,
@@ -1367,7 +1367,7 @@ public enum PlayCoverService {
                   !stdioLog.path.utf8.contains(0),
                   stdioLog.inode > 0 else {
                 throw PlayCoverBackendError.stdioLogFailed(
-                    "PlayCover stdio log identity is incomplete"
+                    "Mac stdio log identity is incomplete"
                 )
             }
         }
@@ -3703,7 +3703,7 @@ public enum PlayCoverService {
         let shouldRetryDurableOwnership: Bool
 
         var description: String {
-            "the exact PlayCover process was identified, but "
+            "the exact Mac process was identified, but "
                 + "pending-launch ownership could not be safely "
                 + "committed: \(underlying)"
         }
@@ -4123,14 +4123,14 @@ public enum PlayCoverService {
             } else {
                 root = FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent(
-                        "Applications/PlayCover",
+                        "Applications/ios-use",
                         isDirectory: true
                     )
             }
             #else
             root = FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent(
-                        "Applications/PlayCover",
+                        "Applications/ios-use",
                         isDirectory: true
                     )
             #endif
@@ -4211,7 +4211,7 @@ public enum PlayCoverService {
                 throw backendError
             }
             throw PlayCoverBackendError.launchFailed(
-                "cannot create the pinned PlayCover session launch "
+                "cannot create the pinned Mac session launch "
                     + "alias: \(error)"
             )
         }
@@ -4505,7 +4505,7 @@ public enum PlayCoverService {
               status.st_mode & 0o700 == 0o700,
               status.st_mode & 0o022 == 0 else {
             throw PlayCoverBackendError.cacheTampered(
-                "the PlayCover launch alias root is not an owned, "
+                "the Mac launch alias root is not an owned, "
                     + "non-writable real directory"
             )
         }
@@ -5352,7 +5352,7 @@ public enum PlayCoverService {
         )
         #else
         throw PlayCoverBackendError.launchFailed(
-            "PlayCover launch is supported only on macOS"
+            "Mac launch is supported only on macOS"
         )
         #endif
     }
@@ -5793,7 +5793,8 @@ public enum PlayCoverService {
             URL(fileURLWithPath: manifest.preparedAppPath)
                 .deletingLastPathComponent() // generation
                 .deletingLastPathComponent() // prepared
-                .deletingLastPathComponent() // playcover
+                .deletingLastPathComponent() // mac cache
+                .deletingLastPathComponent() // cache
                 .deletingLastPathComponent() // IOS_USE_HOME
                 .path
         )

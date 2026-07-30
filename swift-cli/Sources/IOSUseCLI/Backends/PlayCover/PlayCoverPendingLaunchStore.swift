@@ -12,7 +12,7 @@ struct PlayCoverPendingLaunchStoreError:
     let message: String
 
     var description: String {
-        "Invalid PlayCover pending launch: \(message)"
+        "Invalid Mac pending launch: \(message)"
     }
 }
 
@@ -453,7 +453,7 @@ enum PlayCoverPendingLaunchStore {
         }
         guard parent >= 0 else {
             throw storeError(
-                "cannot open managed PlayCover state: errno \(errno)"
+                "cannot open managed Mac state: errno \(errno)"
             )
         }
         defer { Darwin.close(parent) }
@@ -547,15 +547,16 @@ enum PlayCoverPendingLaunchStore {
         processLock.lock()
         defer { processLock.unlock() }
         #if canImport(Darwin)
-        return try PlayCoverManagedAppService
-            .withSecureManagedDirectories(paths: paths) { access in
-                try validateParent(access.playcoverDescriptor)
+        return try SessionOperationLock
+            .withSecureStateDirectory(paths: paths) {
+                stateDescriptor,
+                _ in
+                try validateParent(stateDescriptor)
                 return try withLock(
-                    parentDescriptor:
-                        access.playcoverDescriptor,
+                    parentDescriptor: stateDescriptor,
                     create: true
                 ) {
-                    try operation(access.playcoverDescriptor)
+                    try operation(stateDescriptor)
                 }
             }
         #else
@@ -864,7 +865,7 @@ enum PlayCoverPendingLaunchStore {
               status.st_uid == geteuid(),
               status.st_mode & 0o7777 == 0o700 else {
             throw storeError(
-                "managed PlayCover state is not an owner-only directory"
+                "managed Mac state is not an owner-only directory"
             )
         }
     }
@@ -874,7 +875,7 @@ enum PlayCoverPendingLaunchStore {
     ) throws {
         guard fsync(descriptor) == 0 else {
             throw storeError(
-                "cannot fsync managed PlayCover state: errno \(errno)"
+                "cannot fsync managed Mac state: errno \(errno)"
             )
         }
     }
@@ -1009,7 +1010,7 @@ enum PlayCoverPendingLaunchStore {
                 "journal common identity is incomplete"
             )
         }
-        let expectedSocket = try paths.playCoverRuntimeSocketPath(
+        let expectedSocket = try paths.macRuntimeSocketPath(
             sessionID: record.sessionID
         )
         guard record.runtimeSocketPath == expectedSocket else {

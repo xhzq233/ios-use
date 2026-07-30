@@ -303,9 +303,9 @@ enum PlayCoverGenerationPruner {
             paths: paths
         ),
               active.deviceType == PlayCoverSessionService.deviceType,
-              let activeGeneration = active.playCoverGenerationKey,
+              let activeGeneration = active.macGenerationKey,
               isGenerationKey(activeGeneration),
-              let activeAppPath = active.playCoverAppPath,
+              let activeAppPath = active.macAppPath,
               generationKey(
                 appPath: activeAppPath,
                 paths: paths,
@@ -313,7 +313,7 @@ enum PlayCoverGenerationPruner {
                 preparedDescriptor: preparedDescriptor
               ) == activeGeneration else {
             throw PlayCoverBackendError.cacheTampered(
-                "active PlayCover session is missing or invalid"
+                "active Mac session is missing or invalid"
             )
         }
         var protected: Set<String> = [
@@ -889,7 +889,7 @@ enum PlayCoverGenerationPruner {
         Result(
             removedGenerationKeys: [],
             warnings: [
-                "PlayCover generation cleanup skipped because \(reason).",
+                "Mac generation cleanup skipped because \(reason).",
             ]
         )
     }

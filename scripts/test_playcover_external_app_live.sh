@@ -200,11 +200,11 @@ copy_failure_state() {
           >&2
     fi
   done
-  if [[ -f "$SESSION_HOME/playcover/last-prepared.json" ]]; then
-    mkdir -p "$retained_root/playcover"
+  if [[ -f "$SESSION_HOME/mac/last-prepared.json" ]]; then
+    mkdir -p "$retained_root/mac"
     /bin/cp -p \
-      "$SESSION_HOME/playcover/last-prepared.json" \
-      "$retained_root/playcover/last-prepared.json" ||
+      "$SESSION_HOME/mac/last-prepared.json" \
+      "$retained_root/mac/last-prepared.json" ||
       echo \
         "[playcover-external-live] Could not retain last-prepared.json." \
         >&2
@@ -417,15 +417,15 @@ assert_status() {
           $logicalExtentTolerance
         )
       ) as $privateHeightTolerance |
-      $driver.playcoverAppPath != $sourceApp and
-      ($driver.playcoverAppPath |
-        contains("/playcover/prepared/" + $generation + "/")) and
-      $driver.playcoverExecutablePath != $sourceExecutable and
-      ($driver.playcoverExecutablePath |
-        startswith($driver.playcoverAppPath + "/")) and
+      $driver.macAppPath != $sourceApp and
+      ($driver.macAppPath |
+        contains("/cache/mac/prepared/" + $generation + "/")) and
+      $driver.macExecutablePath != $sourceExecutable and
+      ($driver.macExecutablePath |
+        startswith($driver.macAppPath + "/")) and
       .data.driver.status == "healthy" and
       .data.driver.bundleId == $bundleIdentifier and
-      .data.driver.playcoverGenerationKey == $generation and
+      .data.driver.macGenerationKey == $generation and
       (.data.driver.sessionIdentifier | type) == "string" and
       (.data.driver.sessionIdentifier |
         test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")) and
@@ -607,12 +607,12 @@ assert_cycle_identity() {
         .sessionIdentifier == $driver.sessionIdentifier and
         (.sessionIdentifier |
           test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")) and
-        .playcoverGenerationKey == $generation and
-        .playcoverGenerationKey == $driver.playcoverGenerationKey and
-        .playcoverAppPath == $driver.playcoverAppPath and
-        .playcoverExecutablePath == $driver.playcoverExecutablePath and
-        .playcoverRuntimeSocketPath ==
-          $driver.playcoverRuntimeSocketPath and
+        .macGenerationKey == $generation and
+        .macGenerationKey == $driver.macGenerationKey and
+        .macAppPath == $driver.macAppPath and
+        .macExecutablePath == $driver.macExecutablePath and
+        .macRuntimeSocketPath ==
+          $driver.macRuntimeSocketPath and
         ($cycle | type) == "number" and
         $cycle >= 1
       ' "$lock_file" >/dev/null; then
@@ -626,7 +626,7 @@ assert_cycle_identity() {
   fi
   local runtime_socket
   runtime_socket="$(
-    jq -er '.data.driver.playcoverRuntimeSocketPath' "$status_file"
+    jq -er '.data.driver.macRuntimeSocketPath' "$status_file"
   )"
   if [[ ! -S "$runtime_socket" || -L "$runtime_socket" ]]; then
     fail_gate "$case_name Runtime socket is not the live session endpoint"
@@ -1239,7 +1239,7 @@ write_host_resize_plan() {
               },
               runnerPID: $driver.runnerPid,
               sessionIdentifier: $driver.sessionIdentifier,
-              generation: $driver.playcoverGenerationKey
+              generation: $driver.macGenerationKey
             }
           end
         elif $phase == "second" then
@@ -1282,7 +1282,7 @@ write_host_resize_plan() {
               },
               runnerPID: $driver.runnerPid,
               sessionIdentifier: $driver.sessionIdentifier,
-              generation: $driver.playcoverGenerationKey
+              generation: $driver.macGenerationKey
             }
           end
         else
@@ -1318,7 +1318,7 @@ wait_for_host_resize() {
         ($plan.targetHostSize) as $target |
         $driver.runnerPid == $plan.runnerPID and
         $driver.sessionIdentifier == $plan.sessionIdentifier and
-        $driver.playcoverGenerationKey == $plan.generation and
+        $driver.macGenerationKey == $plan.generation and
         $window.status == "configured" and
         (($actual.width - $target.width) | abs) <= 10 and
         (($actual.height - $target.height) | abs) <= 10 and
@@ -1371,7 +1371,7 @@ resize_public_host() {
         canvasRect: $window.canvasRect,
         runnerPID: $driver.runnerPid,
         sessionIdentifier: $driver.sessionIdentifier,
-        generation: $driver.playcoverGenerationKey
+        generation: $driver.macGenerationKey
       }
     ' "$RUN_DIR/${before_status_case}.stdout" \
       >"$RUN_DIR/host_resize_initial.json"
@@ -1480,8 +1480,8 @@ assert_two_uniform_host_resizes() {
         $secondDriver.runnerPid == $initial.runnerPID and
         $firstDriver.sessionIdentifier == $initial.sessionIdentifier and
         $secondDriver.sessionIdentifier == $initial.sessionIdentifier and
-        $firstDriver.playcoverGenerationKey == $initial.generation and
-        $secondDriver.playcoverGenerationKey == $initial.generation and
+        $firstDriver.macGenerationKey == $initial.generation and
+        $secondDriver.macGenerationKey == $initial.generation and
         $initial.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
         $first.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
         $second.canvasBounds == {"x":0,"y":0,"width":430,"height":932} and
@@ -1634,7 +1634,7 @@ write_display_move_plan() {
           expectedWindowNumber: $window.windowNumber,
           runnerPID: $driver.runnerPid,
           sessionIdentifier: $driver.sessionIdentifier,
-          generation: $driver.playcoverGenerationKey,
+          generation: $driver.macGenerationKey,
           drag: {
             start: {
               x: ($host.x + ($host.width / 2)),
@@ -1676,7 +1676,7 @@ wait_for_display_phase_status() {
           ($driver.runtime.diagnostics.runtime.window) as $window |
           $driver.runnerPid == $plan.runnerPID and
           $driver.sessionIdentifier == $plan.sessionIdentifier and
-          $driver.playcoverGenerationKey == $plan.generation and
+          $driver.macGenerationKey == $plan.generation and
           $window.windowNumber == $plan.expectedWindowNumber and
           $window.screenDisplayID ==
             $plan.targetScreen.screenDisplayID and
@@ -1934,8 +1934,8 @@ assert_display_matrix_identity() {
         $second.runnerPid == $third.runnerPid and
         $first.sessionIdentifier == $second.sessionIdentifier and
         $second.sessionIdentifier == $third.sessionIdentifier and
-        $first.playcoverGenerationKey == $second.playcoverGenerationKey and
-        $second.playcoverGenerationKey == $third.playcoverGenerationKey and
+        $first.macGenerationKey == $second.macGenerationKey and
+        $second.macGenerationKey == $third.macGenerationKey and
         $firstWindow.windowNumber == $secondWindow.windowNumber and
         $secondWindow.windowNumber == $thirdWindow.windowNumber and
         $firstWindow.screenDisplayID ==
@@ -2538,7 +2538,7 @@ for cycle in $(seq 1 "$CYCLE_COUNT"); do
         $cycle,
         .data.driver.sessionIdentifier,
         .data.driver.runnerPid,
-        .data.driver.playcoverGenerationKey
+        .data.driver.macGenerationKey
       ] |
       @tsv
     ' "$RUN_DIR/${cycle_name}_status.stdout" >>"$CYCLE_INDEX" ||

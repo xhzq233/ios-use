@@ -47,26 +47,26 @@ enum DriverSessionStore {
             sessionIdentifier: raw["sessionIdentifier"] as? String,
             bundleId: raw["bundleId"] as? String,
             controlSocketPath: raw["controlSocketPath"] as? String,
-            playCoverAppPath: raw["playcoverAppPath"] as? String,
-            playCoverExecutablePath:
-                raw["playcoverExecutablePath"] as? String,
-            playCoverGenerationKey:
-                raw["playcoverGenerationKey"] as? String,
-            playCoverRuntimeSocketPath:
-                raw["playcoverRuntimeSocketPath"] as? String,
-            playCoverLogPath:
-                raw["playcoverLogPath"] as? String
+            macAppPath: raw["macAppPath"] as? String,
+            macExecutablePath:
+                raw["macExecutablePath"] as? String,
+            macGenerationKey:
+                raw["macGenerationKey"] as? String,
+            macRuntimeSocketPath:
+                raw["macRuntimeSocketPath"] as? String,
+            macLogPath:
+                raw["macLogPath"] as? String
         )
         if deviceType == PlayCoverSessionService.deviceType {
-            guard let appPath = info.playCoverAppPath, !appPath.isEmpty,
-                  let executablePath = info.playCoverExecutablePath,
+            guard let appPath = info.macAppPath, !appPath.isEmpty,
+                  let executablePath = info.macExecutablePath,
                   !executablePath.isEmpty,
-                  let generationKey = info.playCoverGenerationKey,
+                  let generationKey = info.macGenerationKey,
                   !generationKey.isEmpty,
                   let bundleId = info.bundleId, !bundleId.isEmpty,
                   let sessionID = info.sessionIdentifier,
                   !sessionID.isEmpty,
-                  let runtimeSocket = info.playCoverRuntimeSocketPath,
+                  let runtimeSocket = info.macRuntimeSocketPath,
                   !runtimeSocket.isEmpty,
                   let runnerPid = info.runnerPid, runnerPid > 0 else {
                 throw CLIParseError.invalidValue(
@@ -75,7 +75,7 @@ enum DriverSessionStore {
             }
             let expectedSocket: String
             do {
-                expectedSocket = try paths.playCoverRuntimeSocketPath(
+                expectedSocket = try paths.macRuntimeSocketPath(
                     sessionID: sessionID
                 )
             } catch {
@@ -91,7 +91,7 @@ enum DriverSessionStore {
                         + "not match its sessionID."
                 )
             }
-            if let logPath = info.playCoverLogPath {
+            if let logPath = info.macLogPath {
                 try PlayCoverStdioLogService.validateSessionPath(
                     logPath,
                     sessionID: sessionID,
@@ -275,20 +275,20 @@ enum DriverSessionStore {
         if let controlSocketPath = info.controlSocketPath {
             root["controlSocketPath"] = controlSocketPath
         }
-        if let playCoverAppPath = info.playCoverAppPath {
-            root["playcoverAppPath"] = playCoverAppPath
+        if let macAppPath = info.macAppPath {
+            root["macAppPath"] = macAppPath
         }
-        if let executablePath = info.playCoverExecutablePath {
-            root["playcoverExecutablePath"] = executablePath
+        if let executablePath = info.macExecutablePath {
+            root["macExecutablePath"] = executablePath
         }
-        if let generationKey = info.playCoverGenerationKey {
-            root["playcoverGenerationKey"] = generationKey
+        if let generationKey = info.macGenerationKey {
+            root["macGenerationKey"] = generationKey
         }
-        if let socketPath = info.playCoverRuntimeSocketPath {
-            root["playcoverRuntimeSocketPath"] = socketPath
+        if let socketPath = info.macRuntimeSocketPath {
+            root["macRuntimeSocketPath"] = socketPath
         }
-        if let logPath = info.playCoverLogPath {
-            root["playcoverLogPath"] = logPath
+        if let logPath = info.macLogPath {
+            root["macLogPath"] = logPath
         }
         let lockDir = URL(fileURLWithPath: paths.driverLock).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true, attributes: nil)

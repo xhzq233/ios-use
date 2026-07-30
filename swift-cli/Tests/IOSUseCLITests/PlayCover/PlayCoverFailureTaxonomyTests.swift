@@ -8,50 +8,50 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
             (
                 .malformedMachO("bad header"),
                 "validation",
-                "playcover_malformed_macho",
-                "playcover_macho",
+                "mac_malformed_macho",
+                "mac_macho",
                 false
             ),
             (
                 .machOTransformFailed("inject failed"),
                 "internal",
-                "playcover_macho_transform_failed",
-                "playcover_macho",
+                "mac_macho_transform_failed",
+                "mac_macho",
                 false
             ),
             (
                 .entitlementFailed("compose failed"),
                 "validation",
-                "playcover_entitlement_failed",
-                "playcover_entitlements",
+                "mac_entitlement_failed",
+                "mac_entitlements",
                 false
             ),
             (
                 .codeSigningFailed("nested sign failed"),
                 "internal",
-                "playcover_codesign_failed",
-                "playcover_codesign",
+                "mac_codesign_failed",
+                "mac_codesign",
                 false
             ),
             (
                 .launchFailed("dyld failed"),
                 "internal",
-                "playcover_dyld_launch_failed",
-                "playcover_dyld_launch",
+                "mac_dyld_launch_failed",
+                "mac_dyld_launch",
                 false
             ),
             (
                 .stdioLogFailed("exact identity mismatch"),
                 "internal",
-                "playcover_stdio_log_failed",
-                "playcover_stdio_setup",
+                "mac_stdio_log_failed",
+                "mac_stdio_setup",
                 false
             ),
             (
                 .launchTimedOut("hello timed out"),
                 "timeout",
-                "playcover_runtime_hello_timed_out",
-                "playcover_runtime_hello",
+                "mac_runtime_hello_timed_out",
+                "mac_runtime_hello",
                 true
             ),
         ]
@@ -83,8 +83,8 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
         )
 
         XCTAssertEqual(classified.category, "session")
-        XCTAssertEqual(classified.code, "playcover_launch_rollback_failed")
-        XCTAssertEqual(classified.phase, "playcover_dyld_launch")
+        XCTAssertEqual(classified.code, "mac_launch_rollback_failed")
+        XCTAssertEqual(classified.phase, "mac_dyld_launch")
         XCTAssertFalse(classified.retryable)
         XCTAssertTrue(classified.fatal)
         XCTAssertTrue(classified.mutationMayHaveApplied)
@@ -103,9 +103,9 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
         XCTAssertEqual(classified.category, "timeout")
         XCTAssertEqual(
             classified.code,
-            "playcover_runtime_hello_timed_out"
+            "mac_runtime_hello_timed_out"
         )
-        XCTAssertEqual(classified.phase, "playcover_runtime_hello")
+        XCTAssertEqual(classified.phase, "mac_runtime_hello")
         XCTAssertTrue(classified.retryable)
         XCTAssertFalse(classified.fatal)
         XCTAssertFalse(classified.mutationMayHaveApplied)
@@ -149,9 +149,9 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
         XCTAssertEqual(classified.category, "session")
         XCTAssertEqual(
             classified.code,
-            "playcover_launch_rollback_failed"
+            "mac_launch_rollback_failed"
         )
-        XCTAssertEqual(classified.phase, "playcover_dyld_launch")
+        XCTAssertEqual(classified.phase, "mac_dyld_launch")
         XCTAssertFalse(classified.retryable)
         XCTAssertTrue(classified.fatal)
         XCTAssertTrue(classified.mutationMayHaveApplied)
@@ -185,7 +185,7 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
             envelope["data"] as? [String: Any]
         )
         XCTAssertEqual(
-            data["playcoverLogPath"] as? String,
+            data["macLogPath"] as? String,
             "/tmp/stdio-session.log"
         )
         let error = try XCTUnwrap(
@@ -193,11 +193,11 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
         )
         XCTAssertEqual(
             error["code"] as? String,
-            "playcover_stdio_log_failed"
+            "mac_stdio_log_failed"
         )
         XCTAssertEqual(
             error["phase"] as? String,
-            "playcover_stdio_setup"
+            "mac_stdio_setup"
         )
     }
 
@@ -232,11 +232,11 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
         XCTAssertEqual(error["category"] as? String, "session")
         XCTAssertEqual(
             error["code"] as? String,
-            "playcover_launch_cleanup_failed"
+            "mac_launch_cleanup_failed"
         )
         XCTAssertEqual(
             error["phase"] as? String,
-            "playcover_launch_cleanup"
+            "mac_launch_cleanup"
         )
         XCTAssertEqual(error["retryable"] as? Bool, true)
         XCTAssertEqual(error["fatal"] as? Bool, false)
@@ -248,7 +248,7 @@ final class PlayCoverFailureTaxonomyTests: XCTestCase {
             envelope["data"] as? [String: Any]
         )
         XCTAssertEqual(
-            data["playcoverLogPath"] as? String,
+            data["macLogPath"] as? String,
             "/tmp/stdio-session.log"
         )
     }

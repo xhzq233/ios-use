@@ -129,7 +129,7 @@ public struct PlayCoverAppInspection: Codable, Equatable, Sendable {
             $0.relativePath == mainExecutableRelativePath
         }) else {
             preconditionFailure(
-                "validated PlayCover inspection is missing its main executable"
+                "validated Mac inspection is missing its main executable"
             )
         }
         return value
@@ -385,31 +385,31 @@ public enum PlayCoverBackendError:
         case .duplicateRuntimeLoad(let path):
             return "Runtime load command is duplicated: \(path)"
         case .machOTransformFailed(let message):
-            return "PlayCover Mach-O transform failed: \(message)"
+            return "Mac Mach-O transform failed: \(message)"
         case .entitlementFailed(let message):
-            return "PlayCover entitlement composition failed: \(message)"
+            return "Mac entitlement composition failed: \(message)"
         case .codeSigningFailed(let message):
-            return "PlayCover code signing failed: \(message)"
+            return "Mac code signing failed: \(message)"
         case .outputExists(let path):
             return "prepared output already exists: \(path)"
         case .missingRuntime(let path):
             return "IOSUsePlayRuntime.framework is missing or invalid: \(path)"
         case .prepareFailed(let message):
-            return "PlayCover prepare failed: \(message)"
+            return "Mac prepare failed: \(message)"
         case .verificationFailed(let message):
-            return "PlayCover verification failed: \(message)"
+            return "Mac verification failed: \(message)"
         case .cacheTampered(let message):
-            return "PlayCover prepared cache failed integrity checks: \(message)"
+            return "Mac prepared cache failed integrity checks: \(message)"
         case .stdioLogFailed(let message):
-            return "PlayCover stdio log setup failed: \(message)"
+            return "Mac stdio log setup failed: \(message)"
         case .launchFailed(let message):
-            return "PlayCover launch failed: \(message)"
+            return "Mac launch failed: \(message)"
         case .launchTimedOut(let message):
-            return "PlayCover launch timed out: \(message)"
+            return "Mac launch timed out: \(message)"
         case .terminateFailed(let message):
-            return "PlayCover terminate failed: \(message)"
+            return "Mac terminate failed: \(message)"
         case .capabilityUnavailable(let command):
-            return "PlayCover active session does not support `\(command)`"
+            return "Mac active session does not support `\(command)`"
         }
     }
 }

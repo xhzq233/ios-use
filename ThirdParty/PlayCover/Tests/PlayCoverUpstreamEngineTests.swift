@@ -102,7 +102,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             )[.posixPermissions] as? NSNumber
         )
         let staging = fixture.root.appendingPathComponent(
-            "managed/playcover/prepared/Fixture.app",
+            "managed/cache/mac/prepared/Fixture.app",
             isDirectory: true
         )
 
@@ -219,7 +219,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertEqual(
             firstPlayChain.path,
             firstHome
-                .appendingPathComponent("playcover", isDirectory: true)
+                .appendingPathComponent("mac", isDirectory: true)
                 .appendingPathComponent("playchain", isDirectory: true)
                 .path
         )
@@ -1029,7 +1029,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             isDirectory: true
         )
         let run = lexicalRoot.appendingPathComponent(
-            "playcover/run",
+            "mac/run",
             isDirectory: true
         )
         try FileManager.default.createDirectory(
@@ -1071,13 +1071,13 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         XCTAssertTrue(canonicalRoot.hasPrefix("/private/tmp/"))
         let expectedIOSUseRules = [
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"\(canonicalRoot)/playcover/run\"))",
+                + "(subpath \"\(canonicalRoot)/mac/run\"))",
             "(allow network-bind (subpath \""
-                + "\(canonicalRoot)/playcover/run\"))",
+                + "\(canonicalRoot)/mac/run\"))",
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"\(canonicalRoot)/playcover/logs\"))",
+                + "(subpath \"\(canonicalRoot)/mac/logs\"))",
             "(allow file-read* file-write* file-read-metadata "
-                + "(subpath \"\(canonicalRoot)/playcover/playchain\"))",
+                + "(subpath \"\(canonicalRoot)/mac/playchain\"))",
         ]
         let actualIOSUseRules = Array(
             sandbox.suffix(expectedIOSUseRules.count)
@@ -1096,7 +1096,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 + "(subpath \"\(canonicalRoot)\"))"
         })
         XCTAssertFalse(actualIOSUseRules.contains {
-            $0.contains("\(canonicalRoot)/playcover/PlayChain")
+                $0.contains("\(canonicalRoot)/mac/PlayChain")
         })
     }
 
@@ -1629,7 +1629,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 runtimeFramework: runtime,
                 managedHome: home,
                 runtimeSocketPath: home.appendingPathComponent(
-                    "playcover/run/s-runtime.sock"
+                    "mac/run/s-runtime.sock"
                 ).path,
                 runtimeLoadPath: runtimeLoadPath,
                 codesignIdentity: "-",
@@ -1668,9 +1668,9 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         )
         let producerHome = homes[0].resolvingSymlinksInPath().path
         let consumerHome = homes[1].resolvingSymlinksInPath().path
-        XCTAssertTrue(sandbox.contains("\(consumerHome)/playcover/run"))
-        XCTAssertTrue(sandbox.contains("\(consumerHome)/playcover/logs"))
-        XCTAssertFalse(sandbox.contains("\(producerHome)/playcover/"))
+        XCTAssertTrue(sandbox.contains("\(consumerHome)/mac/run"))
+        XCTAssertTrue(sandbox.contains("\(consumerHome)/mac/logs"))
+        XCTAssertFalse(sandbox.contains("\(producerHome)/mac/"))
     }
 
     func testPrepareRejectsPlannedRuntimeDuplicateByExactPathAndBasename()

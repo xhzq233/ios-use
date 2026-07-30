@@ -11,13 +11,13 @@ enum PlayCoverSigningCertificateBuilderError: Error, Equatable {
     case signatureFailed
 }
 
-/// Builds the stable self-signed certificate used by the PlayCover signer.
+/// Builds the stable self-signed certificate used by the Mac backend signer.
 ///
 /// DER is produced in-process so certificate creation does not depend on
 /// Keychain state, an external tool, or a mutable OpenSSL configuration.
 enum PlayCoverSigningCertificateBuilder {
     static let subjectCommonName =
-        "ios-use PlayCover Stable Code Signing"
+        "ios-use Mac Stable Code Signing"
 
     static func build(
         privateKey: SecKey,

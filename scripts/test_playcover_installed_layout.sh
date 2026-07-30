@@ -413,7 +413,7 @@ if ! cmp -s "$TEMP_ROOT/runtime.expected" "$TEMP_ROOT/runtime.installed.before";
 fi
 /usr/bin/codesign --verify --strict "$INSTALLED_RUNTIME"
 
-if [[ -e "$CUSTOM_HOME/playcover/IOSUsePlayRuntime.framework" ]] ||
+if [[ -e "$CUSTOM_HOME/mac/IOSUsePlayRuntime.framework" ]] ||
    [[ -e "$PREFIX/bin/.ios-use/playcover/IOSUsePlayRuntime.framework" ]]; then
   echo "[installed-layout] ERROR: installer exposed a mutable Runtime layout" >&2
   exit 1
@@ -447,13 +447,13 @@ fi
 )
 SESSION_STOPPED=1
 RUNTIME_SOCKET="$(
-  jq -er '.data.driver.playcoverRuntimeSocketPath' "$STATUS_FILE"
+  jq -er '.data.driver.macRuntimeSocketPath' "$STATUS_FILE"
 )"
 if [[ -e "$RUNTIME_SOCKET" || -L "$RUNTIME_SOCKET" ]]; then
   echo "[installed-layout] ERROR: normal stop left its Runtime-owned socket path" >&2
   exit 1
 fi
-if [[ -e "$CUSTOM_HOME/playcover/IOSUsePlayRuntime.framework" ]]; then
+if [[ -e "$CUSTOM_HOME/mac/IOSUsePlayRuntime.framework" ]]; then
   echo "[installed-layout] ERROR: installed execution copied executable Runtime content into IOS_USE_HOME" >&2
   exit 1
 fi

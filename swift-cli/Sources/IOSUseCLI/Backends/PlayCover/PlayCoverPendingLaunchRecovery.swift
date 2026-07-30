@@ -12,7 +12,7 @@ struct PlayCoverPendingLaunchRecoveryError:
     let message: String
 
     var description: String {
-        "PlayCover pending launch recovery failed: \(message)"
+        "Mac pending launch recovery failed: \(message)"
     }
 }
 

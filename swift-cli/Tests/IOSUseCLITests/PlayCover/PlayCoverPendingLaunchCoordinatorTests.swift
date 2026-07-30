@@ -79,7 +79,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
             .string(before.bundleIdentifier)
         )
         XCTAssertEqual(
-            driver["playcoverGenerationKey"],
+            driver["macGenerationKey"],
             .string(before.generationKey)
         )
         XCTAssertEqual(driver["ownerPid"], .null)
@@ -264,11 +264,11 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         )
         XCTAssertEqual(
             machineError["code"] as? String,
-            "playcover_stop_cleanup_failed"
+            "mac_stop_cleanup_failed"
         )
         XCTAssertEqual(
             machineError["phase"] as? String,
-            "playcover_stop_cleanup"
+            "mac_stop_cleanup"
         )
         XCTAssertEqual(
             machineError["mutationMayHaveApplied"] as? Bool,
@@ -677,7 +677,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         SessionService.simulatorDriverTerminatorForTesting = { _ in
             XCTFail(
                 "foreign backend must not be terminated while "
-                    + "PlayCover recovery evidence exists"
+                    + "Mac recovery evidence exists"
             )
             return true
         }
@@ -1057,7 +1057,7 @@ final class PlayCoverPendingLaunchCoordinatorTests:
         let intent = PlayCoverPendingLaunchStore.Intent(
             sessionID: sessionID,
             runtimeSocketPath:
-                try paths.playCoverRuntimeSocketPath(
+                try paths.macRuntimeSocketPath(
                     sessionID: sessionID
                 ),
             generationKey: generationKey,

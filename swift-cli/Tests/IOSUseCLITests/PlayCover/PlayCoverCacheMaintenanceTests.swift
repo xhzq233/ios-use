@@ -50,7 +50,7 @@ final class PlayCoverCacheMaintenanceTests: XCTestCase {
             "child-acquired"
         )
         let lockPath = fixture.root
-            .appendingPathComponent("playcover")
+            .appendingPathComponent("mac")
             .appendingPathComponent("operation.lock")
         let child = Process()
         child.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -1183,13 +1183,13 @@ private struct CacheMaintenanceFixture {
                 startMode: "mac",
                 sessionIdentifier: sessionID,
                 bundleId: "com.example.fixture",
-                playCoverAppPath: appURL(generationKey).path,
-                playCoverExecutablePath:
+                macAppPath: appURL(generationKey).path,
+                macExecutablePath:
                     appURL(generationKey)
                         .appendingPathComponent("Fixture").path,
-                playCoverGenerationKey: generationKey,
-                playCoverRuntimeSocketPath:
-                    try paths.playCoverRuntimeSocketPath(
+                macGenerationKey: generationKey,
+                macRuntimeSocketPath:
+                    try paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),
@@ -1203,7 +1203,7 @@ private struct CacheMaintenanceFixture {
             PlayCoverPendingLaunchStore.Intent(
                 sessionID: sessionID,
                 runtimeSocketPath:
-                    try paths.playCoverRuntimeSocketPath(
+                    try paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     ),
                 generationKey: generationKey,

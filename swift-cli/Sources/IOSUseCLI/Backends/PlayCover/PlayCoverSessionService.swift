@@ -284,7 +284,7 @@ enum PlayCoverSessionService {
     ) throws -> LaunchResult {
         let sessionID = UUID().uuidString
         try ensureOwnerOnlyRunDirectory(paths.playcoverRun)
-        let socketPath = try paths.playCoverRuntimeSocketPath(
+        let socketPath = try paths.macRuntimeSocketPath(
             sessionID: sessionID
         )
         // Validate the fixed-length Unix transport path before source
@@ -470,14 +470,14 @@ enum PlayCoverSessionService {
               let pidValue = session.runnerPid,
               pidValue > 0,
               pidValue <= Int(Int32.max),
-              let appPath = session.playCoverAppPath,
+              let appPath = session.macAppPath,
               let bundleIdentifier = session.bundleId,
               let executablePath =
-                session.playCoverExecutablePath,
+                session.macExecutablePath,
               let generationKey =
-                session.playCoverGenerationKey,
+                session.macGenerationKey,
               let runtimeSocketPath =
-                session.playCoverRuntimeSocketPath else {
+                session.macRuntimeSocketPath else {
             throw CLIParseError.invalidValue(
                 "Invalid driver.lock: Mac handoff identity "
                     + "is incomplete."
@@ -608,7 +608,7 @@ enum PlayCoverSessionService {
                 operation: .stop,
                 cleanupError: error,
                 originalError: nil,
-                logPath: session.playCoverLogPath
+                logPath: session.macLogPath
             )
         }
         return pid
@@ -624,7 +624,7 @@ enum PlayCoverSessionService {
               pidValue > 0,
               pidValue <= Int(Int32.max),
               let expectedExecutable =
-                session.playCoverExecutablePath else {
+                session.macExecutablePath else {
             throw CLIParseError.invalidValue(
                 "Invalid driver.lock: Mac PID/executable "
                     + "identity is incomplete."
@@ -800,13 +800,13 @@ enum PlayCoverSessionService {
     ) throws -> PlayCoverPrepareManifest {
         guard session.deviceType == deviceType,
               session.startMode == deviceType,
-              let appPath = session.playCoverAppPath,
+              let appPath = session.macAppPath,
               !appPath.isEmpty,
               let executablePath =
-                session.playCoverExecutablePath,
+                session.macExecutablePath,
               !executablePath.isEmpty,
               let generationKey =
-                session.playCoverGenerationKey,
+                session.macGenerationKey,
               !generationKey.isEmpty,
               let bundleIdentifier = session.bundleId,
               !bundleIdentifier.isEmpty,
@@ -814,7 +814,7 @@ enum PlayCoverSessionService {
               !sessionID.isEmpty,
               UUID(uuidString: sessionID) != nil,
               let runtimeSocketPath =
-                session.playCoverRuntimeSocketPath,
+                session.macRuntimeSocketPath,
               !runtimeSocketPath.isEmpty,
               session.startedAt > 0,
               let runnerPID = session.runnerPid,
@@ -945,11 +945,14 @@ enum PlayCoverSessionService {
         ).standardizedFileURL
         let generation = app.deletingLastPathComponent()
         let prepared = generation.deletingLastPathComponent()
-        let playcover = prepared.deletingLastPathComponent()
+        let macCache = prepared.deletingLastPathComponent()
+        let cache = macCache.deletingLastPathComponent()
+        let managedHome = cache.deletingLastPathComponent()
         guard generation.lastPathComponent
                 == manifest.generationKey,
               prepared.lastPathComponent == "prepared",
-              playcover.lastPathComponent == "playcover" else {
+              macCache.lastPathComponent == "mac",
+              cache.lastPathComponent == "cache" else {
             throw PlayCoverBackendError.terminateFailed(
                 "prepared App path does not identify the immutable "
                     + "session generation"
@@ -971,31 +974,32 @@ enum PlayCoverSessionService {
         let socketName =
             "s-\(socketToken.prefix(32)).sock"
         // `run` may already have been removed when stop is recovering a
-        // crashed session. Canonicalize the still-existing managed
-        // `playcover` parent before appending the run/name components so the
-        // `/tmp` -> `/private/tmp` alias cannot change socket identity merely
-        // because the leaf directory disappeared.
-        let canonicalPlaycoverPath: String
+        // crashed session. Canonicalize the still-existing managed Home before
+        // appending the mac/run/name components so the `/tmp` -> `/private/tmp`
+        // alias cannot change socket identity merely because the leaf
+        // directory disappeared.
+        let canonicalManagedHomePath: String
         #if canImport(Darwin)
         var buffer = [CChar](
             repeating: 0,
             count: Int(PATH_MAX)
         )
-        if playcover.path.withCString({
+        if managedHome.path.withCString({
             Darwin.realpath($0, &buffer)
         }) != nil {
-            canonicalPlaycoverPath = String(cString: buffer)
+            canonicalManagedHomePath = String(cString: buffer)
         } else {
-            canonicalPlaycoverPath = playcover.path
+            canonicalManagedHomePath = managedHome.path
         }
         #else
-        canonicalPlaycoverPath =
-            playcover.resolvingSymlinksInPath().path
+        canonicalManagedHomePath =
+            managedHome.resolvingSymlinksInPath().path
         #endif
         let expected = URL(
-            fileURLWithPath: canonicalPlaycoverPath,
+            fileURLWithPath: canonicalManagedHomePath,
             isDirectory: true
         )
+            .appendingPathComponent("mac", isDirectory: true)
             .appendingPathComponent("run", isDirectory: true)
             .appendingPathComponent(socketName).path
         guard expected.utf8.count <= 103 else {
@@ -1066,12 +1070,12 @@ enum PlayCoverSessionService {
             startMode: deviceType,
             sessionIdentifier: result.sessionID,
             bundleId: result.bundleIdentifier,
-            playCoverAppPath: result.appPath,
-            playCoverExecutablePath: result.executablePath,
-            playCoverGenerationKey: result.generationKey,
-            playCoverRuntimeSocketPath:
+            macAppPath: result.appPath,
+            macExecutablePath: result.executablePath,
+            macGenerationKey: result.generationKey,
+            macRuntimeSocketPath:
                 result.runtimeSocketPath,
-            playCoverLogPath: result.logPath
+            macLogPath: result.logPath
         )
     }
 

@@ -414,7 +414,7 @@ final class IOSUseCLITests: XCTestCase {
         }
     }
 
-    func testPlayCoverConfigHelpDocumentsExplicitAuthenticationAndSafeRetry() {
+    func testMacConfigHelpDocumentsExplicitAuthenticationAndSafeRetry() {
         let result = IOSUseCLI().run(
             arguments: ["config", "--help"]
         )
@@ -422,7 +422,7 @@ final class IOSUseCLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertTrue(
             result.stdout.contains(
-                "ios-use config --playcover [--verbose] [--json]"
+                "ios-use config --mac [--verbose] [--json]"
             )
         )
         XCTAssertTrue(
@@ -464,14 +464,14 @@ final class IOSUseCLITests: XCTestCase {
         }
 
         let result = cli.run(
-            arguments: ["config", "--playcover"]
+            arguments: ["config", "--mac"]
         )
 
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(
             result.stdout,
             """
-            Mac backend PlayCover-derived signing identity is ready.
+            Mac backend signing identity is ready.
             Certificate SHA-256: \(evidence.certificateSHA256)
             Expires: 2050-01-01T00:00:00Z
 
@@ -503,7 +503,7 @@ final class IOSUseCLITests: XCTestCase {
         }
 
         let result = cli.run(
-            arguments: ["config", "--playcover", "--json"]
+            arguments: ["config", "--mac", "--json"]
         )
 
         XCTAssertEqual(result.exitCode, 0)
@@ -558,7 +558,7 @@ final class IOSUseCLITests: XCTestCase {
         }
 
         let result = cli.run(
-            arguments: ["config", "--playcover", "--json"]
+            arguments: ["config", "--mac", "--json"]
         )
 
         XCTAssertEqual(result.exitCode, 1)
@@ -576,7 +576,11 @@ final class IOSUseCLITests: XCTestCase {
         )
         XCTAssertEqual(
             error["code"] as? String,
-            "playcover_signing_identity_binding_unavailable"
+            "mac_signing_identity_binding_unavailable"
+        )
+        XCTAssertEqual(
+            error["phase"] as? String,
+            "mac_signing_identity"
         )
         XCTAssertEqual(
             error["mutationMayHaveApplied"] as? Bool,
@@ -611,7 +615,7 @@ final class IOSUseCLITests: XCTestCase {
             defer { try? FileManager.default.removeItem(atPath: root) }
 
             let result = cli.run(
-                arguments: ["config", "--playcover", "--json"]
+                arguments: ["config", "--mac", "--json"]
             )
             let envelope = try XCTUnwrap(
                 JSONSerialization.jsonObject(
@@ -670,7 +674,7 @@ final class IOSUseCLITests: XCTestCase {
             environment: ["IOS_USE_HOME": root],
             playCoverSignerInitializer: {
                 XCTFail(
-                    "ordinary start must not initialize PlayCover signing"
+                    "ordinary start must not initialize Mac backend signing"
                 )
                 return makePlayCoverTestSigningIdentity()
             }
@@ -3373,12 +3377,12 @@ final class IOSUseCLITests: XCTestCase {
                 startMode: PlayCoverSessionService.deviceType,
                 sessionIdentifier: sessionID,
                 bundleId: "com.example.media",
-                playCoverAppPath: appPath,
-                playCoverExecutablePath:
+                macAppPath: appPath,
+                macExecutablePath:
                     "\(appPath)/Media",
-                playCoverGenerationKey: generationKey,
-                playCoverRuntimeSocketPath:
-                    try paths.playCoverRuntimeSocketPath(
+                macGenerationKey: generationKey,
+                macRuntimeSocketPath:
+                    try paths.macRuntimeSocketPath(
                         sessionID: sessionID
                     )
             ),

@@ -29,15 +29,15 @@ identity once, then pass either an unmodified iPhoneOS App or an already
 prepared App:
 
 ```bash
-ios-use config --playcover
+ios-use config --mac
 ios-use start --mac --app <source-or-prepared.app>
 ```
 
-The first command asks for one macOS authentication to trust the PlayCover
+The first command asks for one macOS authentication to trust the Mac-backend
 signing identity. If the user cancels, safely retry the same command; it resumes
 the same identity instead of replacing it. This setup persists across
 `IOS_USE_HOME` values. `start --mac` never performs setup itself and
-directs the user back to `config --playcover` when the identity is missing or
+directs the user back to `config --mac` when the identity is missing or
 needs attention.
 
 The source build supplies the default runtime. A source App is prepared into
@@ -247,8 +247,8 @@ Extract it and pass the matching `Restore/`, `iOS_DDI/`, or `.dmg` path to
 - The Mac backend reports that no default runtime was found: rebuild the source CLI
   with `bash scripts/build_swift_cli.sh --debug` on Apple silicon with the
   iPhoneOS SDK available, then retry the same `start --mac --app` command.
-- PlayCover reports that its signing identity is missing or needs trust: run
-  `ios-use config --playcover`. If macOS authentication was cancelled, safely
+- The Mac backend reports that its signing identity is missing or needs trust:
+  run `ios-use config --mac`. If macOS authentication was cancelled, safely
   retry that same command.
 - altsign HTTP 4xx: verify Apple Developer account state and interactive
   authentication, then retry `config`.

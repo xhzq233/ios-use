@@ -116,16 +116,16 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
-    func testParsesExplicitPlayCoverSignerConfiguration() throws {
+    func testParsesExplicitMacSignerConfiguration() throws {
         XCTAssertEqual(
-            try CLIParser.parse(["config", "--playcover"]),
+            try CLIParser.parse(["config", "--mac"]),
             .config(ConfigOptions(playCover: true))
         )
         XCTAssertEqual(
             try CLIParser.parseInvocation([
                 "--json",
                 "config",
-                "--playcover",
+                "--mac",
                 "--verbose",
             ]),
             ParsedInvocation(
@@ -140,7 +140,7 @@ final class CLIParserTests: XCTestCase {
         )
     }
 
-    func testRejectsPlayCoverSignerConfigurationMixedWithDeviceOptions() {
+    func testRejectsMacSignerConfigurationMixedWithDeviceOptions() {
         let conflictingArguments: [[String]] = [
             ["--udid", "REAL-1"],
             ["--simulator"],
@@ -152,14 +152,14 @@ final class CLIParserTests: XCTestCase {
         for arguments in conflictingArguments {
             XCTAssertThrowsError(
                 try CLIParser.parse(
-                    ["config", "--playcover"] + arguments
+                    ["config", "--mac"] + arguments
                 ),
                 arguments.joined(separator: " ")
             ) { error in
                 XCTAssertEqual(
                     error as? CLIParseError,
                     .invalidValue(
-                        "--playcover cannot be combined with --udid, "
+                        "--mac cannot be combined with --udid, "
                             + "--simulator, --list, --apple-id, or "
                             + "--password"
                     )
@@ -169,6 +169,14 @@ final class CLIParserTests: XCTestCase {
     }
 
     func testRejectsInvalidMacStartArguments() {
+        XCTAssertThrowsError(
+            try CLIParser.parse(["config", "--playcover"])
+        ) { error in
+            XCTAssertEqual(
+                error as? CLIParseError,
+                .unknownOption("--playcover")
+            )
+        }
         XCTAssertThrowsError(
             try CLIParser.parse(["playcover"])
         ) { error in

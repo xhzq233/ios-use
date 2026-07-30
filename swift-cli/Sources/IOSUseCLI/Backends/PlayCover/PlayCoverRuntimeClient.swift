@@ -824,65 +824,65 @@ enum PlayCoverRuntimeClientError: Error, Equatable, CustomStringConvertible, Sen
     var description: String {
         switch self {
         case .invalidSocketPath(.empty):
-            return "PlayCover runtime socket path is empty"
+            return "Mac Runtime socket path is empty"
         case .invalidSocketPath(.containsNUL):
-            return "PlayCover runtime socket path contains a NUL byte"
+            return "Mac Runtime socket path contains a NUL byte"
         case .invalidSocketPath(.tooLong(let actual, let maximum)):
-            return "PlayCover runtime socket path is too long: \(actual) UTF-8 bytes, maximum \(maximum)"
+            return "Mac Runtime socket path is too long: \(actual) UTF-8 bytes, maximum \(maximum)"
         case .invalidTimeout:
-            return "PlayCover runtime socket timeout must be finite and greater than zero"
+            return "Mac Runtime socket timeout must be finite and greater than zero"
         case .socketCreateFailed(let code):
-            return "PlayCover runtime Unix socket creation failed: errno \(code)"
+            return "Mac Runtime Unix socket creation failed: errno \(code)"
         case .socketOptionFailed(let option, let code):
-            return "PlayCover runtime Unix socket option \(option) failed: errno \(code)"
+            return "Mac Runtime Unix socket option \(option) failed: errno \(code)"
         case .connectFailed(let code):
-            return "PlayCover runtime Unix socket connect failed: errno \(code)"
+            return "Mac Runtime Unix socket connect failed: errno \(code)"
         case .peerCredentialFailed(let code):
-            return "PlayCover runtime Unix peer credential lookup failed: errno \(code)"
+            return "Mac Runtime Unix peer credential lookup failed: errno \(code)"
         case .peerUIDMismatch(let expected, let actual):
-            return "PlayCover runtime Unix peer UID mismatch: expected \(expected), received \(actual)"
+            return "Mac Runtime Unix peer UID mismatch: expected \(expected), received \(actual)"
         case .peerPIDCredentialFailed(let code):
-            return "PlayCover runtime Unix peer PID lookup failed: errno \(code)"
+            return "Mac Runtime Unix peer PID lookup failed: errno \(code)"
         case .peerPIDMismatch(let expected, let actual):
-            return "PlayCover runtime Unix peer PID mismatch: expected \(expected), received \(actual)"
+            return "Mac Runtime Unix peer PID mismatch: expected \(expected), received \(actual)"
         case .processExecutableLookupFailed(let pid):
-            return "cannot resolve the executable for PlayCover Runtime PID \(pid)"
+            return "cannot resolve the executable for Mac Runtime PID \(pid)"
         case .processExecutableMismatch:
-            return "PlayCover Runtime process executable does not match the active session"
+            return "Mac Runtime process executable does not match the active session"
         case .requestEncodingFailed:
-            return "PlayCover runtime request JSON encoding failed"
+            return "Mac Runtime request JSON encoding failed"
         case .requestFrameTooLarge(let actual, let maximum):
-            return "PlayCover runtime request frame is too large: \(actual) bytes, maximum \(maximum)"
+            return "Mac Runtime request frame is too large: \(actual) bytes, maximum \(maximum)"
         case .writeFailed(let code):
-            return "PlayCover runtime Unix socket write failed: errno \(code)"
+            return "Mac Runtime Unix socket write failed: errno \(code)"
         case .readFailed(let code):
-            return "PlayCover runtime Unix socket read failed: errno \(code)"
+            return "Mac Runtime Unix socket read failed: errno \(code)"
         case .timeout(let operation):
-            return "PlayCover runtime Unix socket \(operation) timed out"
+            return "Mac Runtime Unix socket \(operation) timed out"
         case .unexpectedEOF(let operation, let expected, let received):
-            return "PlayCover runtime Unix socket closed during \(operation): expected \(expected) bytes, received \(received)"
+            return "Mac Runtime Unix socket closed during \(operation): expected \(expected) bytes, received \(received)"
         case .emptyResponseFrame:
-            return "PlayCover runtime response frame body is empty"
+            return "Mac Runtime response frame body is empty"
         case .responseFrameTooLarge(let actual, let maximum):
-            return "PlayCover runtime response frame is too large: \(actual) bytes, maximum \(maximum)"
+            return "Mac Runtime response frame is too large: \(actual) bytes, maximum \(maximum)"
         case .responseIsNotUTF8:
-            return "PlayCover runtime response is not valid UTF-8"
+            return "Mac Runtime response is not valid UTF-8"
         case .responseDecodingFailed:
-            return "PlayCover runtime response is not valid protocol JSON"
+            return "Mac Runtime response is not valid protocol JSON"
         case .unsupportedSchemaVersion(let version):
-            return "unsupported PlayCover runtime response schemaVersion \(version)"
+            return "unsupported Mac Runtime response schemaVersion \(version)"
         case .requestIDMismatch:
-            return "PlayCover runtime response requestId does not match the request"
+            return "Mac Runtime response requestId does not match the request"
         case .sessionIDMismatch:
-            return "PlayCover runtime response sessionID does not match the active session"
+            return "Mac Runtime response sessionID does not match the active session"
         case .responseIdentityMismatch(let field):
-            return "PlayCover runtime response \(field) does not match the active session"
+            return "Mac Runtime response \(field) does not match the active session"
         case .alertRefreshUnsupportedByRuntime:
-            return "the active PlayCover Runtime predates alert-status refresh; run `ios-use stop`, then start the App again with this ios-use build"
+            return "the active Mac Runtime predates alert-status refresh; run `ios-use stop`, then start the App again with this ios-use build"
         case .malformedResponse(let reason):
-            return "malformed PlayCover runtime response: \(reason)"
+            return "malformed Mac Runtime response: \(reason)"
         case .remoteError(let code, let message, _):
-            return "PlayCover runtime error \(code): \(message)"
+            return "Mac Runtime error \(code): \(message)"
         }
     }
 }

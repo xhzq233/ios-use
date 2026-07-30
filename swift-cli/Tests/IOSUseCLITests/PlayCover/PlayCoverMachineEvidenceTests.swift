@@ -62,7 +62,7 @@ final class PlayCoverMachineEvidenceTests: XCTestCase {
                 y: Double(IOSUsePlayDeviceLogicalHeight)
             ),
             scale: Double(IOSUsePlayDeviceScale),
-            geometrySource: "playcover-runtime-window-compositor",
+            geometrySource: "mac-runtime-window-compositor",
             performance: nil,
             snapshotGeneration: 72,
             captureGeneration: 9,

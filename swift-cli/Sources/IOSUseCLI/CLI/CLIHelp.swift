@@ -70,11 +70,11 @@ enum CLIHelp {
         case "config":
             return """
             Usage: ios-use config [--udid <udid>] [--simulator] [--list] [--apple-id <email>] [--password <password>] [--verbose]
-                   ios-use config --playcover [--verbose] [--json]
+                   ios-use config --mac [--verbose] [--json]
 
             Configure a device or Simulator, or explicitly initialize the
             dedicated stable Mac-backend signing identity.
-            Run `config --playcover` once before the first Mac backend start.
+            Run `config --mac` once before the first Mac backend start.
             macOS will show user authentication dialogs while the identity is
             created and trusted. If you cancel, safely retry the same command;
             the retry resumes the same signing identity instead of replacing it.
@@ -86,9 +86,9 @@ enum CLIHelp {
               --list                 List configured devices
               --apple-id <email>     Free Apple Developer account email for first-time real-device signing
               --password <password>  Developer account login password (prompted securely if omitted; 2FA code prompted separately if needed)
-              --playcover            Initialize the dedicated stable PlayCover signing identity
+              --mac                  Initialize the dedicated stable Mac-backend signing identity
               --verbose              Enable verbose output
-              --json                 Print the common machine-readable envelope (with --playcover only)
+              --json                 Print the common machine-readable envelope (with --mac only)
 
             """
         case "start":

@@ -447,7 +447,7 @@ public struct IOSUseCLI: Sendable {
             return CLIResult(
                 exitCode: 0,
                 stdout: """
-                Mac backend PlayCover-derived signing identity is ready.
+                Mac backend signing identity is ready.
                 Certificate SHA-256: \(evidence.certificateSHA256)
                 Expires: \(expiresAt)
 

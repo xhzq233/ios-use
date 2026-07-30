@@ -380,7 +380,7 @@ validate_pass_attestation() {
           (.runtimeSocketPath | type) == "string" and
           (
             .runtimeSocketPath |
-            test("/playcover/run/s-[^/]+\\.sock$")
+            test("/mac/run/s-[^/]+\\.sock$")
           ) and
           .driverLockAbsent == true and
           .runnerPidAbsent == true and
@@ -395,7 +395,7 @@ validate_pass_attestation() {
         (.runtimeSocketPath | type) == "string" and
         (
           .runtimeSocketPath |
-          test("/playcover/run/s-[^/]+\\.sock$")
+          test("/mac/run/s-[^/]+\\.sock$")
         ) and
         .driverStatus == "unhealthy" and
         .runtimeStatus == "unhealthy" and
@@ -410,12 +410,12 @@ validate_pass_attestation() {
         (.runtimeSocketPath | type) == "string" and
         (
           .runtimeSocketPath |
-          test("/playcover/run/s-[^/]+\\.sock$")
+          test("/mac/run/s-[^/]+\\.sock$")
         ) and
         (.stdioLogPath | type) == "string" and
         (
           .stdioLogPath |
-          test("/playcover/logs/stdio-[0-9a-f-]{36}\\.log$")
+          test("/mac/logs/stdio-[0-9a-f-]{36}\\.log$")
         ) and
         (
           .stdioLogIdentity |
@@ -940,8 +940,8 @@ is_healthy_status() {
       (.data.driver.sessionIdentifier | type) == "string" and
       (.data.driver.sessionIdentifier |
         test("^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$")) and
-      (.data.driver.playcoverGenerationKey | type) == "string" and
-      (.data.driver.playcoverGenerationKey |
+      (.data.driver.macGenerationKey | type) == "string" and
+      (.data.driver.macGenerationKey |
         test("^[0-9a-f]{64}$")) and
       .data.driver.runtime.status == "healthy" and
       .data.driver.runtime.identityVerified == true and
@@ -1059,30 +1059,30 @@ assert_lock_matches_status() {
         test("^[0-9A-Fa-f-]{36}$")) and
       $lock.runnerPid == $driver.runnerPid and
       $lock.runnerPid > 1 and
-      $lock.playcoverGenerationKey ==
-        $driver.playcoverGenerationKey and
-      ($lock.playcoverGenerationKey |
+      $lock.macGenerationKey ==
+        $driver.macGenerationKey and
+      ($lock.macGenerationKey |
         test("^[0-9a-f]{64}$")) and
-      $lock.playcoverRuntimeSocketPath ==
-        $driver.playcoverRuntimeSocketPath and
-      $lock.playcoverAppPath == $driver.playcoverAppPath and
-      $lock.playcoverExecutablePath ==
-        $driver.playcoverExecutablePath and
+      $lock.macRuntimeSocketPath ==
+        $driver.macRuntimeSocketPath and
+      $lock.macAppPath == $driver.macAppPath and
+      $lock.macExecutablePath ==
+        $driver.macExecutablePath and
       (
-        ($lock.playcoverAppPath |
-          startswith($rawHome + "/playcover/prepared/")) or
-        ($lock.playcoverAppPath |
-          startswith($canonicalHome + "/playcover/prepared/"))
+        ($lock.macAppPath |
+          startswith($rawHome + "/cache/mac/prepared/")) or
+        ($lock.macAppPath |
+          startswith($canonicalHome + "/cache/mac/prepared/"))
       ) and
-      ($lock.playcoverExecutablePath |
-        startswith($lock.playcoverAppPath + "/")) and
+      ($lock.macExecutablePath |
+        startswith($lock.macAppPath + "/")) and
       (
-        ($lock.playcoverRuntimeSocketPath |
-          startswith($rawHome + "/playcover/run/s-")) or
-        ($lock.playcoverRuntimeSocketPath |
-          startswith($canonicalHome + "/playcover/run/s-"))
+        ($lock.macRuntimeSocketPath |
+          startswith($rawHome + "/mac/run/s-")) or
+        ($lock.macRuntimeSocketPath |
+          startswith($canonicalHome + "/mac/run/s-"))
       ) and
-      ($lock.playcoverRuntimeSocketPath |
+      ($lock.macRuntimeSocketPath |
         endswith(".sock"))
     ' "$lock" >/dev/null; then
     fail_gate "$status_case driver.lock does not match the live exact identity"
@@ -1103,13 +1103,13 @@ assert_stdio_log() {
     jq -er '.data.driver.sessionIdentifier' "$status_file"
   )" || fail_gate "$status_case has no exact session identifier"
   log_path="$(
-    jq -er '.data.driver.playcoverLogPath' "$status_file"
+    jq -er '.data.driver.macLogPath' "$status_file"
   )" || fail_gate "$status_case has no per-session stdio log"
   lower_session_identifier="$(
     printf '%s' "$session_identifier" |
       /usr/bin/tr '[:upper:]' '[:lower:]'
   )"
-  expected_path="$CANONICAL_SESSION_HOME/playcover/logs/stdio-$lower_session_identifier.log"
+  expected_path="$CANONICAL_SESSION_HOME/mac/logs/stdio-$lower_session_identifier.log"
   if [[
     "$log_path" != "$expected_path" ||
     ! -f "$log_path" ||
@@ -1126,7 +1126,7 @@ assert_stdio_log() {
       --arg path "$log_path" \
       --arg device "$log_device" \
       --arg inode "$log_inode" '
-        .data.driver.playcoverLogPath == $path and
+        .data.driver.macLogPath == $path and
         .data.driver.runtime.stdio.status == "redirected" and
         .data.driver.runtime.stdio.path == $path and
         .data.driver.runtime.stdio.device == $device and
@@ -1159,7 +1159,7 @@ assert_expected_generation() {
   local generation="$2"
   if ! jq -e \
       --arg generation "$generation" \
-      '.data.driver.playcoverGenerationKey == $generation' \
+      '.data.driver.macGenerationKey == $generation' \
       "$RUN_DIR/${case_name}.stdout" >/dev/null; then
     fail_gate "$case_name did not reuse generation $generation"
   fi
@@ -1179,12 +1179,12 @@ assert_live_runtime_socket() {
   local case_name="$1"
   local runtime_socket
   runtime_socket="$(
-    jq -er '.data.driver.playcoverRuntimeSocketPath' \
+    jq -er '.data.driver.macRuntimeSocketPath' \
       "$RUN_DIR/${case_name}.stdout"
   )"
   case "$runtime_socket" in
-    "$SESSION_HOME"/playcover/run/s-*.sock) ;;
-    "$CANONICAL_SESSION_HOME"/playcover/run/s-*.sock) ;;
+    "$SESSION_HOME"/mac/run/s-*.sock) ;;
+    "$CANONICAL_SESSION_HOME"/mac/run/s-*.sock) ;;
     *)
       fail_gate \
         "$case_name Runtime socket escapes the isolated run directory"
@@ -1209,13 +1209,13 @@ assert_same_live_session() {
       $before[0].data.driver as $prior |
       $after.sessionIdentifier == $prior.sessionIdentifier and
       $after.runnerPid == $prior.runnerPid and
-      $after.playcoverGenerationKey ==
-        $prior.playcoverGenerationKey and
-      $after.playcoverAppPath == $prior.playcoverAppPath and
-      $after.playcoverExecutablePath ==
-        $prior.playcoverExecutablePath and
-      $after.playcoverRuntimeSocketPath ==
-        $prior.playcoverRuntimeSocketPath
+      $after.macGenerationKey ==
+        $prior.macGenerationKey and
+      $after.macAppPath == $prior.macAppPath and
+      $after.macExecutablePath ==
+        $prior.macExecutablePath and
+      $after.macRuntimeSocketPath ==
+        $prior.macRuntimeSocketPath
     ' "$RUN_DIR/${after_case}.stdout" >/dev/null; then
     fail_gate "$after_case no longer describes $before_case's live session"
   fi
@@ -1234,8 +1234,8 @@ assert_clean_session_stopped() {
     fail_gate "$case_name has an invalid recorded runner PID"
   fi
   case "$runtime_socket" in
-    "$SESSION_HOME"/playcover/run/s-*.sock) ;;
-    "$CANONICAL_SESSION_HOME"/playcover/run/s-*.sock) ;;
+    "$SESSION_HOME"/mac/run/s-*.sock) ;;
+    "$CANONICAL_SESSION_HOME"/mac/run/s-*.sock) ;;
     *)
       fail_gate \
         "$case_name has an invalid recorded Runtime socket pathname"
@@ -1319,7 +1319,7 @@ assert_healthy_status protocol_status
 assert_lock_matches_status protocol_status
 assert_live_runtime_socket protocol_status
 protocol_generation_key="$(
-  jq -er '.data.driver.playcoverGenerationKey' \
+  jq -er '.data.driver.macGenerationKey' \
     "$RUN_DIR/protocol_status.stdout"
 )"
 PROTOCOL_GENERATION_KEY="$protocol_generation_key"
@@ -1328,7 +1328,7 @@ protocol_pid="$(
     "$RUN_DIR/protocol_status.stdout"
 )"
 runtime_socket="$(
-  jq -er '.data.driver.playcoverRuntimeSocketPath' \
+  jq -er '.data.driver.macRuntimeSocketPath' \
     "$RUN_DIR/protocol_status.stdout"
 )"
 protocol_session_identifier="$(
@@ -1495,7 +1495,7 @@ for cycle in $(seq 1 "$CLEAN_CYCLE_COUNT"); do
       "$RUN_DIR/${cycle_name}_status.stdout"
   )"
   cycle_runtime_socket="$(
-    jq -er '.data.driver.playcoverRuntimeSocketPath' \
+    jq -er '.data.driver.macRuntimeSocketPath' \
       "$RUN_DIR/${cycle_name}_status.stdout"
   )"
   if /usr/bin/awk -F '\t' \
@@ -1514,7 +1514,7 @@ for cycle in $(seq 1 "$CLEAN_CYCLE_COUNT"); do
         $cycle,
         .data.driver.sessionIdentifier,
         .data.driver.runnerPid,
-        .data.driver.playcoverGenerationKey
+        .data.driver.macGenerationKey
       ] |
       @tsv
     ' "$RUN_DIR/${cycle_name}_status.stdout" \
@@ -1599,12 +1599,12 @@ endpoint_pid="$(
     "$RUN_DIR/endpoint_status.stdout"
 )"
 endpoint_socket="$(
-  jq -er '.data.driver.playcoverRuntimeSocketPath' \
+  jq -er '.data.driver.macRuntimeSocketPath' \
     "$RUN_DIR/endpoint_status.stdout"
 )"
 case "$endpoint_socket" in
-  "$SESSION_HOME"/playcover/run/s-*.sock) ;;
-  "$CANONICAL_SESSION_HOME"/playcover/run/s-*.sock) ;;
+  "$SESSION_HOME"/mac/run/s-*.sock) ;;
+  "$CANONICAL_SESSION_HOME"/mac/run/s-*.sock) ;;
   *) fail_gate "endpoint-loss target escapes the isolated Runtime run directory" ;;
 esac
 if [[
@@ -1668,7 +1668,7 @@ crash_session_identifier="$(
     "$RUN_DIR/crash_status.stdout"
 )"
 crash_socket="$(
-  jq -er '.data.driver.playcoverRuntimeSocketPath' \
+  jq -er '.data.driver.macRuntimeSocketPath' \
     "$RUN_DIR/crash_status.stdout"
 )"
 if [[
@@ -1787,7 +1787,7 @@ crash_recovery_pid="$(
     "$RUN_DIR/crash_recovery_status.stdout"
 )"
 crash_recovery_socket="$(
-  jq -er '.data.driver.playcoverRuntimeSocketPath' \
+  jq -er '.data.driver.macRuntimeSocketPath' \
     "$RUN_DIR/crash_recovery_status.stdout"
 )"
 if [[ "$crash_recovery_socket" == "$crash_socket" ]]; then
