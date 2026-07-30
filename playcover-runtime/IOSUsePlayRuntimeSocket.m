@@ -2,6 +2,7 @@
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayRuntimeAutomation.h"
 #import "IOSUsePlayRuntimeDOM.h"
+#import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlayRuntimeScreenshot.h"
 #import "IOSUsePlayRuntimeStdio.h"
 #import "IOSUsePlayDevice.h"
@@ -290,7 +291,12 @@ static BOOL IOSUseSocketPeerDisconnected(int descriptor) {
         errno != EINTR;
 }
 
-static NSArray<NSString *> *IOSUseCapabilities(void) {
+static NSArray<NSString *> *IOSUseCapabilities(
+    BOOL requiredHooksReady
+) {
+    if (!requiredHooksReady) {
+        return @[];
+    }
     return @[
         @"hello",
         @"ping",
@@ -917,6 +923,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
     __block NSDictionary<NSString *, id> *hooks;
     __block NSDictionary<NSString *, id> *observed;
     __block NSString *stage;
+    __block BOOL requiredHooksReady = NO;
     void (^capture)(void) = ^{
         UIScreen *screen = UIScreen.mainScreen;
         UIWindow *keyWindow = nil;
@@ -934,6 +941,8 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
         }
         CGRect logical = screen.bounds;
         CGRect native = screen.nativeBounds;
+        CGFloat screenScale = screen.scale;
+        CGFloat nativeScale = screen.nativeScale;
         CGRect windowBounds = keyWindow.bounds;
         UIView *rootView = keyWindow.rootViewController.view;
         UIEdgeInsets safeArea =
@@ -949,6 +958,30 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
             keyWindow.windowScene == nil
                 ? UIInterfaceOrientationUnknown
                 : keyWindow.windowScene.interfaceOrientation;
+        UIStatusBarManager *statusBarManager =
+            keyWindow.windowScene.statusBarManager;
+        CGRect statusBarFrame = statusBarManager == nil
+            ? CGRectZero
+            : statusBarManager.statusBarFrame;
+        BOOL statusBarReady =
+            statusBarManager != nil &&
+            isfinite(statusBarFrame.size.height) &&
+            statusBarFrame.size.height == 59.0;
+        IOSUsePlayHookRegistryRecordState(
+            @"uikit.status-bar-frame",
+            YES,
+            @"readiness",
+            @"UIStatusBarManager",
+            @"statusBarFrame",
+            [NSString stringWithUTF8String:@encode(CGRect)],
+            NO,
+            statusBarReady,
+            statusBarReady
+                ? nil
+                : statusBarManager == nil
+                    ? @"status bar manager is unavailable"
+                    : @"statusBarFrame.height is not exactly 59"
+        );
         NSString *deviceModel = device.model ?: @"";
         NSString *localizedDeviceModel = device.localizedModel ?: @"";
         BOOL deviceIdentityReady =
@@ -966,12 +999,18 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                     IOSUsePlayDeviceUserInterfaceIdiom &&
             deviceOrientation ==
                 (UIDeviceOrientation)IOSUsePlayDeviceOrientation &&
-            sceneOrientation == UIInterfaceOrientationPortrait;
+            sceneOrientation == UIInterfaceOrientationPortrait &&
+            nativeScale == IOSUsePlayDeviceScale &&
+            statusBarReady;
         hooks = IOSUsePlayRuntimeHookDiagnostics(
             scope,
             nativeAlertSnapshot,
             photosAuthorizationDiagnostics
         );
+        requiredHooksReady = [
+            hooks[@"hookRegistry"][@"requiredReady"]
+            boolValue
+        ];
         NSDictionary<NSString *, id> *hostGeometry =
             IOSUseHostGeometry(hooks);
         geometry = @{
@@ -983,7 +1022,8 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                 @"width": @(native.size.width),
                 @"height": @(native.size.height),
             },
-            @"scale": @(screen.scale),
+            @"scale": @(screenScale),
+            @"nativeScale": @(nativeScale),
             // This is intentionally UIKit's fixed logical canvas, not the
             // independently resizable simulator-scale AppKit host.
             @"window": @{
@@ -1011,7 +1051,17 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                 @"width": @(native.size.width),
                 @"height": @(native.size.height),
             },
-            @"screenScale": @(screen.scale),
+            @"screenScale": @(screenScale),
+            @"nativeScale": @(nativeScale),
+            @"statusBarFrame":
+                statusBarManager == nil
+                    ? (id)NSNull.null
+                    : @{
+                        @"x": @(statusBarFrame.origin.x),
+                        @"y": @(statusBarFrame.origin.y),
+                        @"width": @(statusBarFrame.size.width),
+                        @"height": @(statusBarFrame.size.height),
+                    },
             @"windowBounds":
                 keyWindow == nil
                     ? (id)NSNull.null
@@ -1050,18 +1100,22 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                 IOSUsePlayDeviceNativeWidth) <= 0.01 &&
             fabs(native.size.height -
                 IOSUsePlayDeviceNativeHeight) <= 0.01 &&
-            fabs(screen.scale - IOSUsePlayDeviceScale) <= 0.01 &&
+            fabs(screenScale - IOSUsePlayDeviceScale) <= 0.01 &&
+            fabs(nativeScale - IOSUsePlayDeviceScale) <= 0.01 &&
             fabs(windowBounds.size.width -
                 IOSUsePlayDeviceLogicalWidth) <= 0.01 &&
             fabs(windowBounds.size.height -
                 IOSUsePlayDeviceLogicalHeight) <= 0.01 &&
             deviceIdentityReady &&
+            requiredHooksReady &&
             [hooks[@"configurationStage"]
                 isEqualToString:@"window-configured"] &&
             IOSUseHostGeometryReady(hostGeometry);
         NSString *configurationStage = hooks[@"configurationStage"];
         stage = exact
             ? @"ready"
+            : !requiredHooksReady
+                ? @"required-hook-failed"
             : !deviceIdentityReady
                 ? @"device-identity-mismatch"
             : [configurationStage isEqualToString:@"window-configured"]
@@ -1075,12 +1129,14 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
     }
     NSDictionary<NSString *, id> *playChain =
         [PlayKeychain storageIdentity];
-    if (![playChain[@"status"] isEqualToString:@"ready"]) {
+    if (requiredHooksReady &&
+        ![playChain[@"status"] isEqualToString:@"ready"]) {
         stage = @"playchain-location-invalid";
     }
     NSDictionary<NSString *, id> *stdio =
         IOSUseRuntimeStdioEvidence();
-    if ([stdio[@"status"] isEqualToString:@"failed"]) {
+    if (requiredHooksReady &&
+        [stdio[@"status"] isEqualToString:@"failed"]) {
         stage = @"stdio-redirection-failed";
     }
     NSDictionary<NSString *, id> *identity = @{
@@ -1089,7 +1145,7 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
             NSBundle.mainBundle.bundleIdentifier ?: @"",
         @"executablePath":
             NSBundle.mainBundle.executablePath ?: @"",
-        @"capabilities": IOSUseCapabilities(),
+        @"capabilities": IOSUseCapabilities(requiredHooksReady),
         @"geometry": geometry ?: @{},
         @"stage": stage ?: @"geometry-mismatch",
         @"stdio": stdio,

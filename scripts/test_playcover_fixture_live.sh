@@ -702,6 +702,7 @@ assert_canonical_host_status() {
         (($lhs.width - $rhs.width) | abs) <= 0.01 and
         (($lhs.height - $rhs.height) | abs) <= 0.01;
       .data.driver.runtime as $runtime |
+      ($runtime.diagnostics.runtime.hookRegistry) as $hookRegistry |
       ($runtime.diagnostics.runtime.window) as $window |
       ($window.safeAreaCompatibility) as $safeArea |
       ($window.canvasCapture) as $capture |
@@ -740,6 +741,16 @@ assert_canonical_host_status() {
       $runtime.nativeWidth == 1290 and
       $runtime.nativeHeight == 2796 and
       $runtime.scale == 3 and
+      $hookRegistry.requiredReady == true and
+      ($hookRegistry | has("performance") | not) and
+      ([
+        $hookRegistry.entries[] |
+        select(.required == true and .ready != true)
+      ] | length) == 0 and
+      ([
+        $hookRegistry.entries[] |
+        select(has("performance"))
+      ] | length) == 0 and
       $runtime.host.opaque == true and
       $window.status == "configured" and
       $window.opaque == true and
@@ -2520,10 +2531,8 @@ assert_json dom_initial '
       .identifier == "fixture.safe-area.first-read-header"
     )][0]) as $header |
   $header.label == "First Read Header" and
-  ($header.value |
-    startswith(
-      "height=129 safeTop=59 source=window-safe-area statusBar="
-    )) and
+  $header.value ==
+    "height=129 safeTop=59 source=window-safe-area statusBar=59" and
   (($header.frame[3] - 129) | fabs) <= 0.5
 '
 
@@ -2983,10 +2992,8 @@ assert_json scene_replace '
       .identifier == "fixture.safe-area.first-read-header"
     )][0]) as $header |
   $header.label == "First Read Header" and
-  ($header.value |
-    startswith(
-      "height=129 safeTop=59 source=window-safe-area statusBar="
-    )) and
+  $header.value ==
+    "height=129 safeTop=59 source=window-safe-area statusBar=59" and
   (($header.frame[3] - 129) | fabs) <= 0.5
 '
 record_case scene_replace_status status --json

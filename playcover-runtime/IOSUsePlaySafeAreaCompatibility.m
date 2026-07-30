@@ -1,5 +1,6 @@
 #import "IOSUsePlaySafeAreaCompatibility.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayHookRegistry.h"
 
 #import <TargetConditionals.h>
 #import <math.h>
@@ -65,6 +66,8 @@ static BOOL IOSUsePlaySafeAreaPreMainInstallSucceeded;
 static os_unfair_lock IOSUsePlaySafeAreaEvidenceLock =
     OS_UNFAIR_LOCK_INIT;
 static NSUInteger IOSUsePlaySafeAreaNextEvidenceGeneration;
+static NSUInteger
+    IOSUsePlaySafeAreaLastRegistryEvidenceGeneration;
 static char IOSUsePlaySafeAreaEvidenceAssociationKey;
 
 static UIEdgeInsets IOSUsePlaySafeAreaDeviceInsets(
@@ -1204,6 +1207,69 @@ BOOL IOSUsePlaySafeAreaCompatibilityIsReadyForWindow(
             @"safeAreaReady"
         ] boolValue
     ];
+}
+
+void IOSUsePlaySafeAreaCompatibilityBridgeHookRegistry(void) {
+    const char *argumentTypes[] = {
+        @encode(BOOL),
+    };
+    NSError *error = nil;
+    BOOL active = IOSUsePlaySafeAreaHookIsActive();
+    BOOL observed = active &&
+        IOSUsePlayHookRegistryObserveMethod(
+            @"safe-area.provider",
+            YES,
+            @"pre-main",
+            UIWindow.class,
+            NO,
+            IOSUsePlaySafeAreaProviderSelector ?:
+                NSSelectorFromString(
+                    IOSUsePlaySafeAreaProviderSelectorName
+                ),
+            @encode(UIEdgeInsets),
+            argumentTypes,
+            1,
+            YES,
+            YES,
+            &error
+        );
+    if (!observed) {
+        IOSUsePlayHookRegistryRecordState(
+            @"safe-area.provider",
+            YES,
+            @"pre-main",
+            @"UIWindow",
+            IOSUsePlaySafeAreaProviderSelectorName,
+            IOSUsePlaySafeAreaProviderABI ?: @"unavailable",
+            YES,
+            NO,
+            error.localizedDescription ?:
+                IOSUsePlaySafeAreaFailure ?:
+                    @"safe-area provider hook is inactive"
+        );
+        return;
+    }
+    UIWindow *window = IOSUsePlaySafeAreaTargetWindow;
+    if (IOSUsePlaySafeAreaEvidenceIsReadyForWindow(window)) {
+        IOSUsePlaySafeAreaFirstProviderEvidence *evidence =
+            IOSUsePlaySafeAreaEvidenceForWindow(window);
+        BOOL recordsNewEvidence = NO;
+        os_unfair_lock_lock(&IOSUsePlaySafeAreaEvidenceLock);
+        if (evidence != nil &&
+            evidence->generation >
+                IOSUsePlaySafeAreaLastRegistryEvidenceGeneration) {
+            IOSUsePlaySafeAreaLastRegistryEvidenceGeneration =
+                evidence->generation;
+            recordsNewEvidence = YES;
+        }
+        os_unfair_lock_unlock(&IOSUsePlaySafeAreaEvidenceLock);
+        if (recordsNewEvidence) {
+            IOSUsePlayHookRegistryRecordFirstUse(
+                @"safe-area.provider",
+                window.class
+            );
+        }
+    }
 }
 
 #if defined(IOS_USE_PLAY_SAFE_AREA_TESTING)

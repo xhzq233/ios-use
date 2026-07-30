@@ -10,6 +10,7 @@
 #import "UITouch-KIFAdditions.h"
 #import "UIApplication+Private.h"
 #import "UIEvent+Private.h"
+#import "IOSUsePlayHookRegistry.h"
 #import "CoreFoundation/CFRunLoop.h"
 #import <stdatomic.h>
 #include <dlfcn.h>
@@ -19,11 +20,18 @@ static NSMutableArray *livingTouchAry;
 atomic_ullong reusageMask = ATOMIC_VAR_INIT(0);
 static atomic_ullong deliveryGeneration = ATOMIC_VAR_INIT(0);
 static CFRunLoopSourceRef source;
+static BOOL IOSUseFakeTouchRequiredPreflightReady;
 
 NSLock *lock;
 
 void eventSendCallback(__unused void* info) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"fake-touch.application-event"
+    );
     UIEvent *event = [[UIApplication sharedApplication] _touchesEvent];
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"fake-touch.event-clear"
+    );
     [event _clearTouches];
     // Step1: copy touches and record began touches and mark recyclable touches
     NSMutableArray *begunTouchAry = [[NSMutableArray alloc] init];
@@ -45,6 +53,9 @@ void eventSendCallback(__unused void* info) {
             default:
                 break;
         }
+        IOSUsePlayHookRegistryRecordInvocation(
+            @"fake-touch.event-add"
+        );
         [event _addTouch:aTouch forDelayedDelivery:NO];
     }];
     [lock unlock];
@@ -67,6 +78,39 @@ void eventSendCallback(__unused void* info) {
     }
 }
 
+static BOOL IOSUseFakeTouchObserveMethod(
+    NSString *identifier,
+    Class targetClass,
+    SEL selector,
+    const char *returnType,
+    const char *const *argumentTypes,
+    unsigned int argumentCount
+) {
+    NSError *error = nil;
+    BOOL ready = IOSUsePlayHookRegistryObserveMethod(
+        identifier,
+        YES,
+        @"objc-load",
+        targetClass,
+        NO,
+        selector,
+        returnType,
+        argumentTypes,
+        argumentCount,
+        NO,
+        NO,
+        &error
+    );
+    if (!ready) {
+        NSLog(
+            @"[ios-use-play] required fake-touch preflight %@ failed: %@",
+            identifier,
+            error.localizedDescription ?: @"unknown failure"
+        );
+    }
+    return ready;
+}
+
 @implementation PTFakeMetaTouch
 
 + (unsigned long long)deliveryGeneration {
@@ -74,6 +118,118 @@ void eventSendCallback(__unused void* info) {
 }
 
 + (void)load {
+    BOOL methodsReady = YES;
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.application-event",
+        UIApplication.class,
+        @selector(_touchesEvent),
+        @encode(id),
+        NULL,
+        0
+    ) && methodsReady;
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.event-clear",
+        UIEvent.class,
+        @selector(_clearTouches),
+        @encode(void),
+        NULL,
+        0
+    ) && methodsReady;
+    const char *eventAddArguments[] = {
+        @encode(id),
+        @encode(BOOL),
+    };
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.event-add",
+        UIEvent.class,
+        @selector(_addTouch:forDelayedDelivery:),
+        @encode(void),
+        eventAddArguments,
+        2
+    ) && methodsReady;
+    const char *objectArgument[] = {
+        @encode(id),
+    };
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.set-window",
+        UITouch.class,
+        @selector(setWindow:),
+        @encode(void),
+        objectArgument,
+        1
+    ) && methodsReady;
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.set-view",
+        UITouch.class,
+        @selector(setView:),
+        @encode(void),
+        objectArgument,
+        1
+    ) && methodsReady;
+    const char *locationArguments[] = {
+        @encode(CGPoint),
+        @encode(BOOL),
+    };
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.set-location",
+        UITouch.class,
+        @selector(_setLocationInWindow:resetPrevious:),
+        @encode(void),
+        locationArguments,
+        2
+    ) && methodsReady;
+    const char *boolArgument[] = {
+        @encode(BOOL),
+    };
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.set-first-touch",
+        UITouch.class,
+        @selector(_setIsFirstTouchForView:),
+        @encode(void),
+        boolArgument,
+        1
+    ) && methodsReady;
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.set-is-tap",
+        UITouch.class,
+        @selector(setIsTap:),
+        @encode(void),
+        boolArgument,
+        1
+    ) && methodsReady;
+    const char *timestampArgument[] = {
+        @encode(NSTimeInterval),
+    };
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.set-timestamp",
+        UITouch.class,
+        @selector(setTimestamp:),
+        @encode(void),
+        timestampArgument,
+        1
+    ) && methodsReady;
+    const char *phaseArgument[] = {
+        @encode(UITouchPhase),
+    };
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.set-phase",
+        UITouch.class,
+        @selector(setPhase:),
+        @encode(void),
+        phaseArgument,
+        1
+    ) && methodsReady;
+    const char *hidEventArgument[] = {
+        @encode(IOHIDEventRef),
+    };
+    methodsReady = IOSUseFakeTouchObserveMethod(
+        @"fake-touch.set-hid-event",
+        UITouch.class,
+        @selector(_setHidEvent:),
+        @encode(void),
+        hidEventArgument,
+        1
+    ) && methodsReady;
     livingTouchAry = [[NSMutableArray alloc] init];
     CFRunLoopSourceContext context;
     memset(&context, 0, sizeof(CFRunLoopSourceContext));
@@ -82,10 +238,37 @@ void eventSendCallback(__unused void* info) {
     // content of context is copied
     source = CFRunLoopSourceCreate(NULL, -2, &context);
     CFRunLoopRef loop = CFRunLoopGetMain();
-    CFRunLoopAddSource(loop, source, kCFRunLoopCommonModes);
+    if (source != NULL && loop != NULL) {
+        CFRunLoopAddSource(loop, source, kCFRunLoopCommonModes);
+    }
+    BOOL sourceReady = source != NULL &&
+        loop != NULL &&
+        CFRunLoopContainsSource(
+            loop,
+            source,
+            kCFRunLoopCommonModes
+        );
+    IOSUsePlayHookRegistryRecordState(
+        @"fake-touch.runloop-source",
+        YES,
+        @"objc-load",
+        @"CFRunLoopGetMain",
+        @"CFRunLoopSource",
+        @"CFRunLoopSourceContext.perform",
+        NO,
+        sourceReady,
+        sourceReady
+            ? nil
+            : @"fake-touch main runloop source is unavailable"
+    );
+    IOSUseFakeTouchRequiredPreflightReady =
+        methodsReady && sourceReady;
 }
 
 + (NSInteger)fakeTouchId: (NSInteger)pointId AtPoint: (CGPoint)point withTouchPhase: (UITouchPhase)phase inWindow: (UIWindow*)window onView:(UIView*)view {
+    if (!IOSUseFakeTouchRequiredPreflightReady) {
+        return -1;
+    }
     UITouch* touch = NULL;
     // respect the semantics of touch phase, allocate new touch on touch began.
     if(phase == UITouchPhaseBegan) {

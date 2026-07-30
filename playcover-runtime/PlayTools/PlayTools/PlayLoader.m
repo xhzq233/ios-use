@@ -10,6 +10,7 @@
 #include <sys/sysctl.h>
 
 #import "PlayLoader.h"
+#import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlaySwiftBridge.h"
 #import "IOSUsePlayDevice.h"
 #import <Security/Security.h>
@@ -27,10 +28,16 @@
 
 // Define dyld_get_active_platform function for interpose
 int dyld_get_active_platform(void);
-int pt_dyld_get_active_platform(void) { return PLATFORM_IOS; }
+int pt_dyld_get_active_platform(void) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"dyld.active-platform"
+    );
+    return PLATFORM_IOS;
+}
 
 // Change the machine output by uname to match expected output on iOS
 static int pt_uname(struct utsname *uts) {
+    IOSUsePlayHookRegistryRecordInvocation(@"dyld.uname");
     uname(uts);
     strncpy(uts->machine, DEVICE_MODEL, sizeof(uts->machine) - 1);
     uts->machine[sizeof(uts->machine) - 1] = '\0';
@@ -41,6 +48,7 @@ static int pt_uname(struct utsname *uts) {
 // Update output of sysctl for key values hw.machine, hw.product and hw.target to match iOS output
 // This spoofs the device type to apps allowing us to report as any iOS device
 static int pt_sysctl(int *name, u_int types, void *buf, size_t *size, void *arg0, size_t arg1) {
+    IOSUsePlayHookRegistryRecordInvocation(@"dyld.sysctl");
     if (name[0] == CTL_HW && (name[1] == HW_MACHINE || name[0] == HW_PRODUCT)) {
         if (NULL == buf) {
             *size = strlen(DEVICE_MODEL) + 1;
@@ -69,6 +77,9 @@ static int pt_sysctl(int *name, u_int types, void *buf, size_t *size, void *arg0
 }
 
 static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"dyld.sysctlbyname"
+    );
     if ((strcmp(name, "hw.machine") == 0) || (strcmp(name, "hw.product") == 0) || (strcmp(name, "hw.model") == 0)) {
         if (oldp == NULL) {
             *oldlenp = strlen(DEVICE_MODEL) + 1;
@@ -116,6 +127,9 @@ DYLD_INTERPOSE(pt_sysctl, sysctl)
 
 // Use the implementations from PlayKeychain
 static OSStatus pt_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"security.item-copy-matching"
+    );
     OSStatus retval;
     if ([[PlaySettings shared] playChain]) {
         retval = [PlayKeychain copyMatching:(__bridge NSDictionary * _Nonnull)(query) result:result];
@@ -132,6 +146,9 @@ static OSStatus pt_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result)
 }
 
 static OSStatus pt_SecItemAdd(CFDictionaryRef attributes, CFTypeRef *result) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"security.item-add"
+    );
     OSStatus retval;
     if ([[PlaySettings shared] playChain]) {
         retval = [PlayKeychain add:(__bridge NSDictionary * _Nonnull)(attributes) result:result];
@@ -148,6 +165,9 @@ static OSStatus pt_SecItemAdd(CFDictionaryRef attributes, CFTypeRef *result) {
 }
 
 static OSStatus pt_SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attributesToUpdate) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"security.item-update"
+    );
     OSStatus retval;
     if ([[PlaySettings shared] playChain]) {
         retval = [PlayKeychain update:(__bridge NSDictionary * _Nonnull)(query) attributesToUpdate:(__bridge NSDictionary * _Nonnull)(attributesToUpdate)];
@@ -165,6 +185,9 @@ static OSStatus pt_SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attribut
 }
 
 static OSStatus pt_SecItemDelete(CFDictionaryRef query) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"security.item-delete"
+    );
     OSStatus retval;
     if ([[PlaySettings shared] playChain]) {
         retval = [PlayKeychain delete:(__bridge NSDictionary * _Nonnull)(query)];
@@ -178,6 +201,9 @@ static OSStatus pt_SecItemDelete(CFDictionaryRef query) {
 }
 
 static SecKeyRef pt_SecKeyCreateRandomKey(CFDictionaryRef parameters, CFErrorRef *error) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"security.key-create-random"
+    );
     SecKeyRef result;
     if ([[PlaySettings shared] playChain]) {
         result = [PlayKeychain keyCreateRandomKey:(__bridge NSDictionary * _Nonnull)(parameters) error:error];
@@ -195,6 +221,9 @@ static SecKeyRef pt_SecKeyCreateRandomKey(CFDictionaryRef parameters, CFErrorRef
 
 // Deprecated, but some apps might still use it.
 static OSStatus pt_SecKeyGeneratePair(CFDictionaryRef parameters, SecKeyRef *publicKey, SecKeyRef *privateKey) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"security.key-generate-pair"
+    );
     OSStatus retval;
     if ([[PlaySettings shared] playChain]) {
         retval = [PlayKeychain keyGeneratePair:(__bridge NSDictionary * _Nonnull)(parameters) publicKey:(void *)publicKey privateKey:(void *)privateKey];
@@ -328,6 +357,79 @@ DYLD_INTERPOSE(pt_unlink, unlink)
 DYLD_INTERPOSE(pt_usleep, usleep)
 
 @implementation PlayLoader
+
++ (void)load {
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"dyld.active-platform",
+        @"dyld-interpose",
+        @"libSystem",
+        @"dyld_get_active_platform",
+        @"int(void)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"dyld.uname",
+        @"dyld-interpose",
+        @"libSystem",
+        @"uname",
+        @"int(struct utsname *)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"dyld.sysctl",
+        @"dyld-interpose",
+        @"libSystem",
+        @"sysctl",
+        @"int(int *, u_int, void *, size_t *, void *, size_t)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"dyld.sysctlbyname",
+        @"dyld-interpose",
+        @"libSystem",
+        @"sysctlbyname",
+        @"int(const char *, void *, size_t *, void *, size_t)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"security.item-copy-matching",
+        @"dyld-interpose",
+        @"Security.framework",
+        @"SecItemCopyMatching",
+        @"OSStatus(CFDictionaryRef, CFTypeRef *)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"security.item-add",
+        @"dyld-interpose",
+        @"Security.framework",
+        @"SecItemAdd",
+        @"OSStatus(CFDictionaryRef, CFTypeRef *)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"security.item-update",
+        @"dyld-interpose",
+        @"Security.framework",
+        @"SecItemUpdate",
+        @"OSStatus(CFDictionaryRef, CFDictionaryRef)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"security.item-delete",
+        @"dyld-interpose",
+        @"Security.framework",
+        @"SecItemDelete",
+        @"OSStatus(CFDictionaryRef)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"security.key-create-random",
+        @"dyld-interpose",
+        @"Security.framework",
+        @"SecKeyCreateRandomKey",
+        @"SecKeyRef(CFDictionaryRef, CFErrorRef *)"
+    );
+    IOSUsePlayHookRegistryDeclareObservedWrapper(
+        @"security.key-generate-pair",
+        @"dyld-interpose",
+        @"Security.framework",
+        @"SecKeyGeneratePair",
+        @"OSStatus(CFDictionaryRef, SecKeyRef *, SecKeyRef *)"
+    );
+}
 
 static void __attribute__((constructor)) initialize(void) {
     [PlayCover launch];

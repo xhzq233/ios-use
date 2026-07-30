@@ -28,4 +28,10 @@ FOUNDATION_EXPORT BOOL IOSUsePlaySafeAreaCompatibilityIsReadyForWindow(
 FOUNDATION_EXPORT NSDictionary<NSString *, id> *
 IOSUsePlaySafeAreaCompatibilityDiagnostics(void);
 
+/// Bridges the already-installed provider and current target evidence into
+/// the required-hook registry. This observes only; it never installs or
+/// replaces the provider a second time.
+FOUNDATION_EXPORT void
+IOSUsePlaySafeAreaCompatibilityBridgeHookRegistry(void);
+
 NS_ASSUME_NONNULL_END

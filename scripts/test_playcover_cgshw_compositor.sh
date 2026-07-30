@@ -76,6 +76,7 @@ xcrun --sdk macosx clang \
   -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
   -I "$IOS_USE_REPO_ROOT/swift-cli/Sources/IOSUsePlayDevice/include" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayWindowCompositor.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayHookRegistry.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlaySafeAreaCompatibility.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayAppKitBridge.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/tests/AppKitBridgeSnapshotTests.m" \
@@ -99,11 +100,33 @@ xcrun --sdk macosx clang \
   -framework UIKit \
   -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
   -I "$IOS_USE_REPO_ROOT/swift-cli/Sources/IOSUsePlayDevice/include" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayHookRegistry.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlaySafeAreaCompatibility.m" \
   "$IOS_USE_REPO_ROOT/playcover-runtime/tests/SafeAreaCompatibilityContractTests.m" \
   -o "$IOS_USE_SMOKE_TEMP/SafeAreaCompatibilityContractTests"
 
 "$IOS_USE_SMOKE_TEMP/SafeAreaCompatibilityContractTests"
+
+xcrun --sdk macosx clang \
+  -target arm64-apple-ios13.1-macabi \
+  -D IOS_USE_PLAY_HOOK_REGISTRY_TESTING \
+  -fobjc-arc \
+  -fblocks \
+  -fmodules \
+  -Wall \
+  -Wextra \
+  -Werror \
+  -iframework "$IOS_USE_MACOS_SDK/System/iOSSupport/System/Library/Frameworks" \
+  -F "$IOS_USE_MACOS_SDK/System/iOSSupport/System/Library/Frameworks" \
+  -framework Foundation \
+  -framework CoreGraphics \
+  -framework UIKit \
+  -I "$IOS_USE_REPO_ROOT/playcover-runtime" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/IOSUsePlayHookRegistry.m" \
+  "$IOS_USE_REPO_ROOT/playcover-runtime/tests/HookRegistryContractTests.m" \
+  -o "$IOS_USE_SMOKE_TEMP/HookRegistryContractTests"
+
+"$IOS_USE_SMOKE_TEMP/HookRegistryContractTests"
 
 xcrun --sdk macosx clang \
   -target arm64-apple-ios13.1-macabi \

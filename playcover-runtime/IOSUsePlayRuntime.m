@@ -8,6 +8,7 @@
 
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayAppKitBridge.h"
+#import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlayRuntimeSocket.h"
 #import "IOSUsePlaySafeAreaCompatibility.h"
 #import "IOSUsePlayDevice.h"
@@ -136,6 +137,9 @@ static void IOSUsePhotosRequestAuthorization(
     SEL selector,
     IOSUsePhotosAuthorizationHandler handler
 ) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"photos.authorization.legacy"
+    );
     uint64_t sequence =
         IOSUsePhotosAuthorizationBegin(
             @"requestAuthorization:",
@@ -169,6 +173,9 @@ static void IOSUsePhotosRequestAuthorizationForAccessLevel(
     NSInteger accessLevel,
     IOSUsePhotosAuthorizationHandler handler
 ) {
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"photos.authorization.access-level"
+    );
     uint64_t sequence =
         IOSUsePhotosAuthorizationBegin(
             @"requestAuthorizationForAccessLevel:handler:",
@@ -198,45 +205,53 @@ static void IOSUsePhotosRequestAuthorizationForAccessLevel(
     );
 }
 
-static BOOL IOSUseInstallPhotosAuthorizationHook(
-    SEL selector,
-    IMP replacement,
-    IMP *original
-) {
-    Method method = class_getClassMethod(
-        PHPhotoLibrary.class,
-        selector
-    );
-    if (method == NULL) {
-        return NO;
-    }
-    IMP current = method_getImplementation(method);
-    if (current == replacement) {
-        return YES;
-    }
-    *original = current;
-    method_setImplementation(method, replacement);
-    return YES;
-}
-
 static void IOSUseInstallPhotosAuthorizationHooks(void) {
     if (!IOSUsePhotosAuthorizationLegacyHookInstalled) {
+        const char *argumentTypes[] = {
+            @encode(IOSUsePhotosAuthorizationHandler),
+        };
         IOSUsePhotosAuthorizationLegacyHookInstalled =
-            IOSUseInstallPhotosAuthorizationHook(
+            IOSUsePlayHookRegistryInstallFunction(
+                @"photos.authorization.legacy",
+                YES,
+                @"pre-main",
+                PHPhotoLibrary.class,
+                YES,
                 @selector(requestAuthorization:),
+                @encode(void),
+                argumentTypes,
+                1,
+                YES,
+                NO,
                 (IMP)IOSUsePhotosRequestAuthorization,
-                &IOSUsePhotosAuthorizationLegacyOriginal
+                &IOSUsePhotosAuthorizationLegacyOriginal,
+                NULL
             );
     }
     if (!IOSUsePhotosAuthorizationAccessLevelHookInstalled) {
+        const char *argumentTypes[] = {
+            @encode(NSInteger),
+            @encode(IOSUsePhotosAuthorizationHandler),
+        };
         IOSUsePhotosAuthorizationAccessLevelHookInstalled =
-            IOSUseInstallPhotosAuthorizationHook(
+            IOSUsePlayHookRegistryInstallFunction(
+                @"photos.authorization.access-level",
+                YES,
+                @"pre-main",
+                PHPhotoLibrary.class,
+                YES,
                 @selector(
                     requestAuthorizationForAccessLevel:handler:
                 ),
+                @encode(void),
+                argumentTypes,
+                2,
+                YES,
+                NO,
                 (IMP)
                     IOSUsePhotosRequestAuthorizationForAccessLevel,
-                &IOSUsePhotosAuthorizationAccessLevelOriginal
+                &IOSUsePhotosAuthorizationAccessLevelOriginal,
+                NULL
             );
     }
 }
@@ -457,12 +472,16 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
                 diagnosticsWithNativeAlertSnapshot:
                     nativeAlertSnapshot]
         : [IOSUsePlayAppKitBridge readinessDiagnostics];
+    IOSUsePlaySafeAreaCompatibilityBridgeHookRegistry();
+    NSDictionary<NSString *, id> *hookRegistry =
+        IOSUsePlayHookRegistryDiagnostics();
     NSMutableDictionary<NSString *, id> *diagnostics =
         [@{
             @"configurationStage": IOSUseRuntimeConfigurationStage,
             @"configurationFailure":
                 IOSUseRuntimeConfigurationFailure ?: NSNull.null,
             @"window": window,
+            @"hookRegistry": hookRegistry,
         } mutableCopy];
     if (!includeFullDiagnostics) {
         return diagnostics;
@@ -520,6 +539,7 @@ void IOSUsePlayRuntimeInitializeAfterStdio(void) {
             IOSUsePlaySafeAreaCompatibilityInstallBeforeUIApplicationMain(
                 &safeAreaInstallError
             );
+        IOSUsePlaySafeAreaCompatibilityBridgeHookRegistry();
         if (!IOSUseRuntimeRequiredSafeAreaHookInstalled) {
             IOSUseRuntimeConfigurationStage =
                 @"required-hook-failed";

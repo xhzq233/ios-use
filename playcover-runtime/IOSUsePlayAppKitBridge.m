@@ -1,5 +1,6 @@
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayDevice.h"
+#import "IOSUsePlayHookRegistry.h"
 #import "IOSUsePlaySafeAreaCompatibility.h"
 #import "IOSUsePlayWindowCompositor.h"
 
@@ -154,6 +155,7 @@ static NSUInteger IOSUsePlayBootstrapContentNormalizationAttempts;
 static NSUInteger IOSUsePlayHostContentGeneration;
 static NSUInteger IOSUsePlayHostActivationGeneration;
 static NSUInteger IOSUsePlayHostActivationAttempts;
+static Class IOSUsePlayResizableEdgesHookClass;
 static Class IOSUsePlayResizeHookClass;
 static IOSUseBridgeSendProposedSize IOSUsePlayOriginalProposedSize;
 static NSString *IOSUsePlayHostTitle;
@@ -1918,41 +1920,63 @@ static NSUInteger IOSUseBridgeEnableAllResizableEdges(
 static BOOL IOSUseBridgeInstallAllResizableEdgesHook(id window) {
     Class windowClass = [window class];
     Class standardWindowClass = NSClassFromString(@"NSWindow");
-    if (windowClass == standardWindowClass) {
-        return YES;
-    }
     // UIKitMacHelper currently uses UINSWindow rather than the older
     // UINSFullScreenWindow on some macOS releases. Limit the compatibility
     // override to the exact UIKit-owned host class; never mutate NSWindow or
     // an unrelated AppKit subclass.
-    if (![NSStringFromClass(windowClass) hasPrefix:@"UINS"]) {
+    if (windowClass == standardWindowClass ||
+        ![NSStringFromClass(windowClass) hasPrefix:@"UINS"]) {
+        IOSUsePlayHookRegistryRecordState(
+            @"uikitmac.resize.edges",
+            YES,
+            @"first-window",
+            windowClass == Nil
+                ? @"unavailable"
+                : NSStringFromClass(windowClass),
+            @"_resizableEdgesForGrowing:shrinking:",
+            @"NSUInteger(id,SEL,NSUInteger *,NSUInteger *)",
+            NO,
+            NO,
+            @"UIKit host is not an exact UINS window class"
+        );
+        return NO;
+    }
+    if (IOSUsePlayResizableEdgesHookClass == windowClass) {
+        return IOSUsePlayHookRegistryEntryReady(
+            @"uikitmac.resize.edges"
+        );
+    }
+    if (IOSUsePlayResizableEdgesHookClass != Nil &&
+        IOSUsePlayResizableEdgesHookClass != windowClass) {
         return NO;
     }
     SEL selector = NSSelectorFromString(
         @"_resizableEdgesForGrowing:shrinking:"
     );
-    Method windowMethod =
-        class_getInstanceMethod(windowClass, selector);
-    const char *windowTypes = windowMethod == NULL
-        ? NULL
-        : method_getTypeEncoding(windowMethod);
-    if (!IOSUseBridgeResizableEdgesMethodMatches(windowMethod) ||
-        windowTypes == NULL) {
-        return NO;
-    }
-
-    if (class_getMethodImplementation(windowClass, selector) ==
-        (IMP)IOSUseBridgeEnableAllResizableEdges) {
-        return YES;
-    }
-    class_replaceMethod(
+    const char *argumentTypes[] = {
+        @encode(NSUInteger *),
+        @encode(NSUInteger *),
+    };
+    BOOL installed = IOSUsePlayHookRegistryInstallFunction(
+        @"uikitmac.resize.edges",
+        YES,
+        @"first-window",
         windowClass,
+        NO,
         selector,
+        @encode(NSUInteger),
+        argumentTypes,
+        2,
+        NO,
+        NO,
         (IMP)IOSUseBridgeEnableAllResizableEdges,
-        windowTypes
+        NULL,
+        NULL
     );
-    return class_getMethodImplementation(windowClass, selector) ==
-        (IMP)IOSUseBridgeEnableAllResizableEdges;
+    if (installed) {
+        IOSUsePlayResizableEdgesHookClass = windowClass;
+    }
+    return installed;
 }
 
 static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
@@ -1961,11 +1985,13 @@ static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
         return NO;
     }
     if (![NSStringFromClass(windowClass) hasPrefix:@"UINS"]) {
-        return YES;
+        return NO;
     }
     if (IOSUsePlayResizeHookClass == windowClass &&
         IOSUsePlayOriginalProposedSize != NULL) {
-        return YES;
+        return IOSUsePlayHookRegistryEntryReady(
+            @"uikitmac.resize.proposed-size"
+        );
     }
     if (IOSUsePlayResizeHookClass != Nil &&
         IOSUsePlayResizeHookClass != windowClass) {
@@ -1974,52 +2000,35 @@ static BOOL IOSUseBridgeInstallSimulatorScaleResizeHook(id window) {
     SEL selector = NSSelectorFromString(
         @"_sizeForProposedSize:resizeEdges:"
     );
-    Method method = class_getInstanceMethod(windowClass, selector);
-    if (method == NULL) {
-        return NO;
-    }
-    if (method_getNumberOfArguments(method) != 4) {
-        return NO;
-    }
-    char *returnType = method_copyReturnType(method);
-    char *sizeType = method_copyArgumentType(method, 2);
-    char *edgesType = method_copyArgumentType(method, 3);
-    BOOL signatureMatches =
-        returnType != NULL && strcmp(returnType, @encode(CGSize)) == 0 &&
-        sizeType != NULL && strcmp(sizeType, @encode(CGSize)) == 0 &&
-        edgesType != NULL &&
-            strcmp(edgesType, @encode(NSUInteger)) == 0;
-    free(returnType);
-    free(sizeType);
-    free(edgesType);
-    if (!signatureMatches) {
-        return NO;
-    }
-    const char *methodTypes = method_getTypeEncoding(method);
-    IMP current = class_getMethodImplementation(windowClass, selector);
-    if (methodTypes == NULL || current == NULL) {
-        return NO;
-    }
-    if (current == (IMP)IOSUseBridgeAcceptProposedWindowSize) {
-        return IOSUsePlayResizeHookClass == windowClass &&
-            IOSUsePlayOriginalProposedSize != NULL;
-    }
-    // class_getInstanceMethod can return a Method owned by a superclass.
-    // Install the compatibility override on this exact UIKit host class so a
-    // scene replacement cannot mutate NSWindow or another AppKit subclass.
-    class_replaceMethod(
+    const char *argumentTypes[] = {
+        @encode(CGSize),
+        @encode(NSUInteger),
+    };
+    IMP original = NULL;
+    BOOL installed = IOSUsePlayHookRegistryInstallFunction(
+        @"uikitmac.resize.proposed-size",
+        YES,
+        @"first-window",
         windowClass,
+        NO,
         selector,
+        @encode(CGSize),
+        argumentTypes,
+        2,
+        NO,
+        NO,
         (IMP)IOSUseBridgeAcceptProposedWindowSize,
-        methodTypes
+        &original,
+        NULL
     );
-    if (class_getMethodImplementation(windowClass, selector) !=
-        (IMP)IOSUseBridgeAcceptProposedWindowSize) {
+    if (!installed ||
+        original == NULL ||
+        original == (IMP)IOSUseBridgeAcceptProposedWindowSize) {
         return NO;
     }
     IOSUsePlayResizeHookClass = windowClass;
     IOSUsePlayOriginalProposedSize =
-        (IOSUseBridgeSendProposedSize)current;
+        (IOSUseBridgeSendProposedSize)original;
     return YES;
 }
 
@@ -3446,14 +3455,47 @@ static CGRect IOSUseBridgeWindowLogicalFrame(
 static BOOL IOSUseBridgeInstallMouseLocalMonitor(void) {
     NSCAssert(NSThread.isMainThread, @"mouse monitor is main-only");
     if (IOSUsePlayMouseLocalMonitor != nil) {
-        return YES;
+        return IOSUsePlayHookRegistryEntryReady(
+            @"appkit.mouse-monitor.selector"
+        ) && IOSUsePlayHookRegistryEntryReady(
+            @"appkit.mouse-monitor.token"
+        );
     }
     Class eventClass = NSClassFromString(@"NSEvent");
     SEL addMonitorSelector = NSSelectorFromString(
         @"addLocalMonitorForEventsMatchingMask:handler:"
     );
-    if (eventClass == Nil ||
-        ![(id)eventClass respondsToSelector:addMonitorSelector]) {
+    const char *monitorArguments[] = {
+        @encode(NSUInteger),
+        "@?",
+    };
+    NSError *preflightError = nil;
+    if (!IOSUsePlayHookRegistryObserveMethod(
+            @"appkit.mouse-monitor.selector",
+            YES,
+            @"first-scene",
+            eventClass,
+            YES,
+            addMonitorSelector,
+            @encode(id),
+            monitorArguments,
+            2,
+            YES,
+            NO,
+            &preflightError
+        )) {
+        IOSUsePlayHookRegistryRecordState(
+            @"appkit.mouse-monitor.token",
+            YES,
+            @"first-scene",
+            @"NSEvent",
+            @"local-monitor-token",
+            @"id",
+            NO,
+            NO,
+            preflightError.localizedDescription ?:
+                @"mouse monitor selector preflight failed"
+        );
         return NO;
     }
     // NSEventTypeLeftMouseDown == 1 and LeftMouseUp == 2. NSEventMask is
@@ -3585,7 +3627,22 @@ static BOOL IOSUseBridgeInstallMouseLocalMonitor(void) {
         mask,
         handler
     );
-    return IOSUsePlayMouseLocalMonitor != nil;
+    IOSUsePlayHookRegistryRecordInvocation(
+        @"appkit.mouse-monitor.selector"
+    );
+    BOOL installed = IOSUsePlayMouseLocalMonitor != nil;
+    IOSUsePlayHookRegistryRecordState(
+        @"appkit.mouse-monitor.token",
+        YES,
+        @"first-scene",
+        @"NSEvent",
+        @"local-monitor-token",
+        @"id",
+        NO,
+        installed,
+        installed ? nil : @"NSEvent returned no local monitor token"
+    );
+    return installed;
 }
 
 static NSArray<NSDictionary<NSString *, id> *> *
@@ -3803,55 +3860,151 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
         @"defaultUIScaleFactorForIdiom",
         @"defaultUIScaleFactorForWindows",
     ];
+    NSArray<NSString *> *setterIdentifiers = @[
+        @"uikitmac.scale.idiom-setter",
+        @"uikitmac.scale.windows-setter",
+    ];
+    NSArray<NSString *> *getterIdentifiers = @[
+        @"uikitmac.scale.idiom-getter",
+        @"uikitmac.scale.windows-getter",
+    ];
     if (scaleClass == Nil) {
         IOSUsePlaySceneScaleStatus = @"unavailable";
         IOSUsePlaySceneScaleFailure =
             @"UIKitMacHelper scene scale controller is unavailable";
     } else {
-        for (NSString *selectorName in setters) {
-            if (!IOSUseBridgeClassScaleMethodMatches(
+        const char *scaleArgumentTypes[] = {
+            @encode(CGFloat),
+        };
+        for (NSUInteger index = 0;
+             index < setters.count;
+             index += 1) {
+            NSString *selectorName = setters[index];
+            NSError *registryError = nil;
+            BOOL registered =
+                IOSUsePlayHookRegistryObserveMethod(
+                    setterIdentifiers[index],
+                    YES,
+                    @"pre-main",
+                    scaleClass,
+                    YES,
+                    NSSelectorFromString(selectorName),
+                    @encode(void),
+                    scaleArgumentTypes,
+                    1,
+                    NO,
+                    NO,
+                    &registryError
+                );
+            if ((!IOSUseBridgeClassScaleMethodMatches(
                     scaleClass,
                     selectorName,
                     YES
-                )) {
+                ) ||
+                 !registered) &&
+                IOSUsePlaySceneScaleFailure == nil) {
                 IOSUsePlaySceneScaleStatus = @"abi-mismatch";
-                IOSUsePlaySceneScaleFailure = [NSString stringWithFormat:
-                    @"UIKitMacHelper selector %@ has an unsupported ABI",
-                    selectorName
-                ];
-                break;
-            }
-        }
-        if (IOSUsePlaySceneScaleFailure == nil) {
-            for (NSString *selectorName in getters) {
-                if (!IOSUseBridgeClassScaleMethodMatches(
-                        scaleClass,
-                        selectorName,
-                        NO
-                    )) {
-                    IOSUsePlaySceneScaleStatus = @"abi-mismatch";
-                    IOSUsePlaySceneScaleFailure = [NSString stringWithFormat:
+                IOSUsePlaySceneScaleFailure =
+                    registryError.localizedDescription ?:
+                    [NSString stringWithFormat:
                         @"UIKitMacHelper selector %@ has an unsupported ABI",
                         selectorName
                     ];
-                    break;
-                }
             }
         }
-        if (IOSUsePlaySceneScaleFailure == nil &&
-            (!IOSUseBridgeClassBoolMethodMatches(
+        for (NSUInteger index = 0;
+             index < getters.count;
+             index += 1) {
+            NSString *selectorName = getters[index];
+            NSError *registryError = nil;
+            BOOL registered =
+                IOSUsePlayHookRegistryObserveMethod(
+                    getterIdentifiers[index],
+                    YES,
+                    @"pre-main",
+                    scaleClass,
+                    YES,
+                    NSSelectorFromString(selectorName),
+                    @encode(CGFloat),
+                    NULL,
+                    0,
+                    NO,
+                    NO,
+                    &registryError
+                );
+            if ((!IOSUseBridgeClassScaleMethodMatches(
+                        scaleClass,
+                        selectorName,
+                        NO
+                    ) ||
+                 !registered) &&
+                IOSUsePlaySceneScaleFailure == nil) {
+                IOSUsePlaySceneScaleStatus = @"abi-mismatch";
+                IOSUsePlaySceneScaleFailure =
+                    registryError.localizedDescription ?:
+                    [NSString stringWithFormat:
+                        @"UIKitMacHelper selector %@ has an unsupported ABI",
+                        selectorName
+                    ];
+            }
+        }
+        const char *boolArgumentTypes[] = {
+            @encode(BOOL),
+        };
+        NSError *downscaleSetterError = nil;
+        BOOL downscaleSetterRegistered =
+            IOSUsePlayHookRegistryObserveMethod(
+                @"uikitmac.scale.downscale-setter",
+                YES,
+                @"pre-main",
                 scaleClass,
-                @"setDownscaleWindowIfNecessary:",
-                YES
-            ) ||
+                YES,
+                NSSelectorFromString(
+                    @"setDownscaleWindowIfNecessary:"
+                ),
+                @encode(void),
+                boolArgumentTypes,
+                1,
+                NO,
+                NO,
+                &downscaleSetterError
+            );
+        NSError *downscaleGetterError = nil;
+        BOOL downscaleGetterRegistered =
+            IOSUsePlayHookRegistryObserveMethod(
+                @"uikitmac.scale.downscale-getter",
+                YES,
+                @"pre-main",
+                scaleClass,
+                YES,
+                NSSelectorFromString(
+                    @"downscaleWindowIfNecessary"
+                ),
+                @encode(BOOL),
+                NULL,
+                0,
+                NO,
+                NO,
+                &downscaleGetterError
+            );
+        if ((!IOSUseBridgeClassBoolMethodMatches(
+                    scaleClass,
+                    @"setDownscaleWindowIfNecessary:",
+                    YES
+                ) ||
              !IOSUseBridgeClassBoolMethodMatches(
-                scaleClass,
-                @"downscaleWindowIfNecessary",
-                NO
-            ))) {
+                    scaleClass,
+                    @"downscaleWindowIfNecessary",
+                    NO
+                ) ||
+             !downscaleSetterRegistered ||
+             !downscaleGetterRegistered) &&
+            IOSUsePlaySceneScaleFailure == nil) {
             IOSUsePlaySceneScaleStatus = @"abi-mismatch";
             IOSUsePlaySceneScaleFailure =
-                @"UIKitMacHelper downscale policy has an unsupported ABI";
+                downscaleSetterError.localizedDescription ?:
+                downscaleGetterError.localizedDescription ?:
+                    @"UIKitMacHelper downscale policy has an unsupported ABI";
         }
     }
     if (IOSUsePlaySceneScaleFailure == nil) {
@@ -3866,6 +4019,12 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
                 1.0
             );
         }
+        IOSUsePlayHookRegistryRecordInvocation(
+            @"uikitmac.scale.idiom-setter"
+        );
+        IOSUsePlayHookRegistryRecordInvocation(
+            @"uikitmac.scale.windows-setter"
+        );
         ((void (*)(id, SEL, BOOL))objc_msgSend)(
             (id)scaleClass,
             NSSelectorFromString(
@@ -3873,16 +4032,25 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
             ),
             NO
         );
+        IOSUsePlayHookRegistryRecordInvocation(
+            @"uikitmac.scale.downscale-setter"
+        );
         IOSUsePlayObservedIdiomScale =
             ((CGFloat (*)(id, SEL))objc_msgSend)(
                 (id)scaleClass,
                 NSSelectorFromString(getters[0])
             );
+        IOSUsePlayHookRegistryRecordInvocation(
+            @"uikitmac.scale.idiom-getter"
+        );
         IOSUsePlayObservedWindowScale =
             ((CGFloat (*)(id, SEL))objc_msgSend)(
                 (id)scaleClass,
                 NSSelectorFromString(getters[1])
             );
+        IOSUsePlayHookRegistryRecordInvocation(
+            @"uikitmac.scale.windows-getter"
+        );
         IOSUsePlayObservedDownscale =
             ((BOOL (*)(id, SEL))objc_msgSend)(
                 (id)scaleClass,
@@ -3890,6 +4058,9 @@ static NSString *IOSUseBridgeNativeAlertText(id alertWindow) {
                     @"downscaleWindowIfNecessary"
                 )
             );
+        IOSUsePlayHookRegistryRecordInvocation(
+            @"uikitmac.scale.downscale-getter"
+        );
         BOOL exact =
             IOSUseBridgeApproximatelyEqual(
                 IOSUsePlayObservedIdiomScale,
