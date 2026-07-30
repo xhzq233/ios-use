@@ -635,6 +635,49 @@ public struct PlayCoverUpstreamPrepareResult: Equatable, Sendable {
     }
 }
 
+/// Path-independent evidence for a transformed App before Home-specific
+/// entitlement composition and final signing.
+public struct PlayCoverUpstreamSubstrateEvidence:
+    Codable, Equatable, Sendable
+{
+    public let schemaVersion: Int
+    public let sourceContentHash: String
+    public let runtimeBuildHash: String?
+    public let embeddedRuntimeFrameworkRelativePath: String
+    public let runtimeLoadPath: String
+
+    public init(
+        schemaVersion: Int = 1,
+        sourceContentHash: String,
+        runtimeBuildHash: String?,
+        embeddedRuntimeFrameworkRelativePath: String,
+        runtimeLoadPath: String
+    ) {
+        self.schemaVersion = schemaVersion
+        self.sourceContentHash = sourceContentHash
+        self.runtimeBuildHash = runtimeBuildHash
+        self.embeddedRuntimeFrameworkRelativePath =
+            embeddedRuntimeFrameworkRelativePath
+        self.runtimeLoadPath = runtimeLoadPath
+    }
+}
+
+public struct PlayCoverUpstreamValidatedSubstrate: Equatable, Sendable {
+    public let appURL: URL
+    public let sourceBefore: PlayCoverUpstreamAppInspection
+    public let evidence: PlayCoverUpstreamSubstrateEvidence
+
+    fileprivate init(
+        appURL: URL,
+        sourceBefore: PlayCoverUpstreamAppInspection,
+        evidence: PlayCoverUpstreamSubstrateEvidence
+    ) {
+        self.appURL = appURL
+        self.sourceBefore = sourceBefore
+        self.evidence = evidence
+    }
+}
+
 public enum PlayCoverUpstreamEngine {
     public static let playCoverRevision =
         "7190cc9ce57c8dee0e222918468f2579acc95e1b"
@@ -661,6 +704,13 @@ public enum PlayCoverUpstreamEngine {
         case strictVerify
     }
 
+    enum PreparePhaseEvent: Equatable {
+        case substratePrepared
+        case substrateValidated
+        case entitlementsComposed
+        case finalVerified
+    }
+
     static var fullContentPassObserverForTesting:
         ((FullContentPassKind, URL) -> Void)?
     static var validatedTreeMetadataEnumerationObserverForTesting:
@@ -670,6 +720,8 @@ public enum PlayCoverUpstreamEngine {
     static var codeSignatureObserverForTesting:
         ((CodeSignatureObservationKind, URL) -> Void)?
     static var machOInspectionObserverForTesting: ((URL) -> Void)?
+    static var preparePhaseObserverForTesting:
+        ((PreparePhaseEvent, URL) -> Void)?
 
     public static func inspect(appURL: URL) throws -> PlayCoverUpstreamAppInspection {
         try inspect(
@@ -855,6 +907,37 @@ public enum PlayCoverUpstreamEngine {
         sourceInspection source: PlayCoverUpstreamAppInspection,
         afterSourceCloneForTesting: ((URL) throws -> Void)?
     ) throws -> PlayCoverUpstreamPrepareResult {
+        let substrate = try prepareSubstrate(
+            options,
+            sourceInspection: source,
+            afterSourceCloneForTesting: afterSourceCloneForTesting
+        )
+        return try finalizeSubstrate(substrate, options: options)
+    }
+
+    public static func prepareSubstrate(
+        _ options: PlayCoverUpstreamPrepareOptions
+    ) throws -> PlayCoverUpstreamValidatedSubstrate {
+        let source = try inspect(appURL: options.sourceApp)
+        return try prepareSubstrate(options, sourceInspection: source)
+    }
+
+    public static func prepareSubstrate(
+        _ options: PlayCoverUpstreamPrepareOptions,
+        sourceInspection source: PlayCoverUpstreamAppInspection
+    ) throws -> PlayCoverUpstreamValidatedSubstrate {
+        try prepareSubstrate(
+            options,
+            sourceInspection: source,
+            afterSourceCloneForTesting: nil
+        )
+    }
+
+    static func prepareSubstrate(
+        _ options: PlayCoverUpstreamPrepareOptions,
+        sourceInspection source: PlayCoverUpstreamAppInspection,
+        afterSourceCloneForTesting: ((URL) throws -> Void)?
+    ) throws -> PlayCoverUpstreamValidatedSubstrate {
         let optionsSourcePath = options.sourceApp.standardizedFileURL
             .resolvingSymlinksInPath().path
         let inspectedSourcePath = URL(
@@ -868,6 +951,13 @@ public enum PlayCoverUpstreamEngine {
             )
         }
         try validateManagedStaging(options, source: source)
+        guard !FileManager.default.fileExists(
+                  atPath: options.stagingApp.path
+              ) else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "staging output already exists: \(options.stagingApp.path)"
+            )
+        }
 
         let expectedRuntimeBuildHash =
             options.expectedRuntimeBuildHash
@@ -877,10 +967,6 @@ public enum PlayCoverUpstreamEngine {
             expectedBuildHash: expectedRuntimeBuildHash,
             evidence: options.expectedRuntimeEvidence
         )
-        let managedPlayCover = options.managedHome
-            .appendingPathComponent("playcover", isDirectory: true)
-        try PlayTools.configureManagedContainer(managedPlayCover)
-        _ = KeyCover.playChainPath
         // The caller already performed the authoritative source inspection.
         // Production prepare consumes that immutable result directly; the
         // pinned Installer enumeration/encryption calls remain independently
@@ -947,7 +1033,6 @@ public enum PlayCoverUpstreamEngine {
         )
         let embeddedRuntimeRelativePath =
             "Frameworks/\(embeddedRuntime.lastPathComponent)"
-        var converted: [String] = []
         for relative in inspectedRelativePaths {
             guard let sourceMacho = sourceByPath[relative] else {
                 throw PlayCoverUpstreamError.verificationFailed(
@@ -964,7 +1049,6 @@ public enum PlayCoverUpstreamEngine {
                         "\(relative): \(error)"
                     )
                 }
-                converted.append(relative)
             }
             do {
                 try Shell.signMacho(
@@ -977,7 +1061,6 @@ public enum PlayCoverUpstreamEngine {
                 )
             }
         }
-
         let mainExecutable = options.stagingApp
             .appendingPathComponent(source.mainExecutableRelativePath)
         // Pinned conversion changes dependency spelling only for
@@ -1007,25 +1090,162 @@ public enum PlayCoverUpstreamEngine {
             [.posixPermissions: 0o755],
             ofItemAtPath: mainExecutable.path
         )
-
         let stagedBaseApp = BaseApp(appUrl: options.stagingApp)
         stagedBaseApp.info.applicationCategoryType = .none
         try Installer.removeMobileProvision(stagedBaseApp)
         try updateInfoPlist(
             options.stagingApp.appendingPathComponent("Info.plist")
         )
+        preparePhaseObserverForTesting?(.substratePrepared, options.stagingApp)
 
+        let evidence = PlayCoverUpstreamSubstrateEvidence(
+            sourceContentHash: source.sourceContentHash,
+            runtimeBuildHash: expectedRuntimeBuildHash,
+            embeddedRuntimeFrameworkRelativePath:
+                embeddedRuntimeRelativePath,
+            runtimeLoadPath: options.runtimeLoadPath
+        )
+        let substrate = try validateSubstrate(
+            appURL: options.stagingApp,
+            evidence: evidence,
+            sourceInspection: source,
+            options: options
+        )
+        rollback = false
+        return substrate
+    }
+
+    public static func validateSubstrate(
+        appURL: URL,
+        evidence: PlayCoverUpstreamSubstrateEvidence,
+        sourceInspection source: PlayCoverUpstreamAppInspection,
+        options: PlayCoverUpstreamPrepareOptions
+    ) throws -> PlayCoverUpstreamValidatedSubstrate {
+        try validateSubstratePlan(
+            evidence: evidence,
+            source: source,
+            options: options
+        )
+        try validateManagedStaging(options, source: source)
+        guard appURL.standardizedFileURL.path
+                == options.stagingApp.standardizedFileURL.path else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "substrate is not the preparation staging target"
+            )
+        }
+        try requireNoSymlinkComponents(
+            appURL,
+            label: "transformed substrate",
+            allowMissingLeaf: false
+        )
+        let infoURL = appURL.appendingPathComponent("Info.plist")
+        let info: [String: Any]
+        do {
+            let data = try Data(contentsOf: infoURL)
+            info = try PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+            ) as? [String: Any] ?? [:]
+        } catch {
+            throw PlayCoverUpstreamError.invalidApp(
+                "cannot read substrate Info.plist: \(error)"
+            )
+        }
+        guard info["CFBundleIdentifier"] as? String
+                == source.bundleIdentifier,
+              info["CFBundleExecutable"] as? String
+                == source.executableName else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "substrate bundle identity does not match evidence"
+            )
+        }
+        let mainExecutable = appURL.appendingPathComponent(
+            source.mainExecutableRelativePath
+        )
+        guard FileManager.default.isExecutableFile(
+                  atPath: mainExecutable.path
+              ) else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "substrate main executable is missing"
+            )
+        }
+        let embeddedRuntime = appURL.appendingPathComponent(
+            evidence.embeddedRuntimeFrameworkRelativePath,
+            isDirectory: true
+        )
+        var runtimeIsDirectory: ObjCBool = false
+        let runtimeExecutable = embeddedRuntime.appendingPathComponent(
+            embeddedRuntime.deletingPathExtension().lastPathComponent
+        )
+        guard FileManager.default.fileExists(
+                  atPath: embeddedRuntime.path,
+                  isDirectory: &runtimeIsDirectory
+              ),
+              runtimeIsDirectory.boolValue,
+              FileManager.default.isExecutableFile(
+                  atPath: runtimeExecutable.path
+              ),
+              !FileManager.default.fileExists(
+                  atPath: appURL.appendingPathComponent(
+                      "embedded.mobileprovision"
+                  ).path
+              ) else {
+            throw PlayCoverUpstreamError.invalidApp(
+                "substrate structure does not match transformed evidence"
+            )
+        }
+        preparePhaseObserverForTesting?(.substrateValidated, appURL)
+        return PlayCoverUpstreamValidatedSubstrate(
+            appURL: appURL,
+            sourceBefore: source,
+            evidence: evidence
+        )
+    }
+
+    public static func finalizeSubstrate(
+        _ substrate: PlayCoverUpstreamValidatedSubstrate,
+        options: PlayCoverUpstreamPrepareOptions
+    ) throws -> PlayCoverUpstreamPrepareResult {
+        try validateSubstratePlan(
+            evidence: substrate.evidence,
+            source: substrate.sourceBefore,
+            options: options
+        )
+        guard substrate.appURL.standardizedFileURL.path
+                == options.stagingApp.standardizedFileURL.path else {
+            throw PlayCoverUpstreamError.verificationFailed(
+                "validated substrate is not the final staging target"
+            )
+        }
+        var rollback = true
+        defer {
+            if rollback {
+                try? FileManager.default.removeItem(at: options.stagingApp)
+            }
+        }
+        let managedPlayCover = options.managedHome
+            .appendingPathComponent("playcover", isDirectory: true)
+        try PlayTools.configureManagedContainer(managedPlayCover)
+        _ = KeyCover.playChainPath
         let composition = try composeEntitlements(
             appURL: options.stagingApp,
-            originalPlist: source.signature.entitlementsPlist,
+            originalPlist:
+                substrate.sourceBefore.signature.entitlementsPlist,
             runtimeSocketPath: options.runtimeSocketPath,
             managedHome: options.managedHome,
             playSignActive: options.playSignActive
         )
+        preparePhaseObserverForTesting?(
+            .entitlementsComposed,
+            options.stagingApp
+        )
         let signing = try signInsideOutUsingPlan(
             appURL: options.stagingApp,
-            source: source,
-            additionalNestedBundles: [embeddedRuntimeRelativePath],
+            source: substrate.sourceBefore,
+            additionalNestedBundles: [
+                substrate.evidence.embeddedRuntimeFrameworkRelativePath,
+            ],
             finalEntitlements: composition.finalPlist,
             codesignIdentity: options.codesignIdentity
         )
@@ -1042,30 +1262,63 @@ public enum PlayCoverUpstreamEngine {
                 "remove quarantine from \(options.stagingApp.path): \(error)"
             )
         }
-
+        let expectedRuntimeBuildHash =
+            options.expectedRuntimeBuildHash
+                ?? options.expectedRuntimeEvidence?.buildHash
         let prepared = try verifyPrepared(
             appURL: options.stagingApp,
             runtimeLoadPath: options.runtimeLoadPath,
             expectedRuntimeBuildHash: expectedRuntimeBuildHash,
             embeddedRuntimeFrameworkRelativePath:
-                embeddedRuntimeRelativePath,
+                substrate.evidence.embeddedRuntimeFrameworkRelativePath,
             signingOrder: signing,
             preparedMainExecutableRelativePath:
-                source.mainExecutableRelativePath
+                substrate.sourceBefore.mainExecutableRelativePath
         )
+        preparePhaseObserverForTesting?(.finalVerified, options.stagingApp)
         // A completed source build remaining byte-stable through publication
         // is the caller's contract. Re-reading either the live source or its
         // clone would add a content pass without making that contract stronger.
-        let sourceAfter = source.sourceContentHash
+        let sourceAfter = substrate.sourceBefore.sourceContentHash
         rollback = false
         return PlayCoverUpstreamPrepareResult(
-            sourceBefore: source,
+            sourceBefore: substrate.sourceBefore,
             sourceHashAfterPrepare: sourceAfter,
             prepared: prepared,
-            convertedMachOs: converted,
+            convertedMachOs: substrate.sourceBefore.machOs.compactMap {
+                $0.platform == platformMacCatalyst ? nil : $0.relativePath
+            },
             signingOrder: signing,
             entitlementDiff: composition.diff
         )
+    }
+
+    private static func validateSubstratePlan(
+        evidence: PlayCoverUpstreamSubstrateEvidence,
+        source: PlayCoverUpstreamAppInspection,
+        options: PlayCoverUpstreamPrepareOptions
+    ) throws {
+        let inspectedSourcePath = URL(
+            fileURLWithPath: source.appPath,
+            isDirectory: true
+        ).standardizedFileURL.resolvingSymlinksInPath().path
+        let optionsSourcePath = options.sourceApp.standardizedFileURL
+            .resolvingSymlinksInPath().path
+        let expectedRuntimeBuildHash =
+            options.expectedRuntimeBuildHash
+                ?? options.expectedRuntimeEvidence?.buildHash
+        let expectedRuntimeName = options.runtimeFramework.lastPathComponent
+        guard evidence.schemaVersion == 1,
+              inspectedSourcePath == optionsSourcePath,
+              evidence.sourceContentHash == source.sourceContentHash,
+              evidence.runtimeBuildHash == expectedRuntimeBuildHash,
+              evidence.embeddedRuntimeFrameworkRelativePath
+                == "Frameworks/\(expectedRuntimeName)",
+              evidence.runtimeLoadPath == options.runtimeLoadPath else {
+            throw PlayCoverUpstreamError.verificationFailed(
+                "substrate evidence does not match preparation plan"
+            )
+        }
     }
 
     public static func verify(
@@ -4361,11 +4614,6 @@ public enum PlayCoverUpstreamEngine {
         guard staging.hasPrefix(home + "/") else {
             throw PlayCoverUpstreamError.invalidApp(
                 "staging output must be under managed IOS_USE_HOME: \(home)"
-            )
-        }
-        guard !FileManager.default.fileExists(atPath: staging) else {
-            throw PlayCoverUpstreamError.invalidApp(
-                "staging output already exists: \(staging)"
             )
         }
         let socket = URL(fileURLWithPath: options.runtimeSocketPath)

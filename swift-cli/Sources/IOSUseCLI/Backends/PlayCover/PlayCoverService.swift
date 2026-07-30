@@ -148,7 +148,7 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v15+playcover-"
+        "ios-use-headless-v16+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
@@ -347,7 +347,8 @@ public enum PlayCoverService {
         outputAppPath: String,
         stagingIOAppPath: String? = nil,
         paths: IOSUsePaths,
-        publishedAppPath: String? = nil
+        publishedAppPath: String? = nil,
+        sharedSubstratePaths: PlayCoverSharedCachePaths? = nil
     ) throws -> PlayCoverPreparedArtifact {
         try validatePreparationPlan(plan)
         let source = plan.source.inspection
@@ -415,6 +416,15 @@ public enum PlayCoverService {
                     upstreamOptions,
                     plan.source.upstreamInspection
                 )
+            } else if let sharedSubstratePaths {
+                upstream = try withSuppressedUpstreamStandardOutput {
+                    try prepareUsingSharedSubstrateCache(
+                        plan: plan,
+                        options: upstreamOptions,
+                        paths: paths,
+                        sharedPaths: sharedSubstratePaths
+                    )
+                }
             } else {
                 upstream = try withSuppressedUpstreamStandardOutput {
                     try PlayCoverUpstreamEngine.prepare(
@@ -504,6 +514,201 @@ public enum PlayCoverService {
             manifest: manifest,
             upstreamResult: upstream
         )
+    }
+
+    private static func prepareUsingSharedSubstrateCache(
+        plan: PlayCoverPreparationPlan,
+        options: PlayCoverUpstreamPrepareOptions,
+        paths: IOSUsePaths,
+        sharedPaths: PlayCoverSharedCachePaths
+    ) throws -> PlayCoverUpstreamPrepareResult {
+        let source = plan.source.upstreamInspection
+        let convertedMachOs = source.machOs.compactMap {
+            $0.platform == PlayCoverUpstreamEngine.platformMacCatalyst
+                ? nil
+                : $0.relativePath
+        }.sorted()
+        let binding = PlayCoverSharedSubstrateCache.Binding(
+            generationKey: plan.generationKey,
+            sourceContentSHA256: plan.generationIdentity.sourceContentHash,
+            runtimeBuildSHA256: plan.runtimeBuildHash,
+            preparationRevision: plan.prepareRevision,
+            signerPublicKeySPKISHA256:
+                plan.signingIdentity.publicKeySPKISHA256.lowercased(),
+            signerCertificateSHA256:
+                plan.signingIdentity.certificateSHA256.lowercased(),
+            signingPolicyRevision:
+                plan.signingIdentity.policy.revision,
+            bundleIdentifier: source.bundleIdentifier,
+            appBundleName: options.stagingApp.lastPathComponent,
+            mainExecutableRelativePath:
+                source.mainExecutableRelativePath,
+            convertedMachORelativePaths: convertedMachOs
+        )
+        let evidence = PlayCoverUpstreamSubstrateEvidence(
+            sourceContentHash: plan.generationIdentity.sourceContentHash,
+            runtimeBuildHash: plan.runtimeBuildHash,
+            embeddedRuntimeFrameworkRelativePath:
+                "Frameworks/\(runtimeFrameworkName)",
+            runtimeLoadPath: PlayCoverMachO.runtimeLoadPath
+        )
+        let lookupStarted = CFAbsoluteTimeGetCurrent()
+
+        do {
+            let substrate = try PlayCoverSharedSubstrateCache.withLockedKey(
+                paths: sharedPaths,
+                generationKey: plan.generationKey
+            ) { locked in
+                let lookup = try locked.lookup(
+                    expected: binding
+                ) { app, manifest in
+                    let observed = try PlayCoverUpstreamEngine.contentHash(
+                        appURL: app
+                    )
+                    guard observed == manifest.substrateTreeSHA256 else {
+                        throw PlayCoverBackendError.cacheTampered(
+                            "shared substrate content hash changed"
+                        )
+                    }
+                }
+                switch lookup {
+                case .hit(let entry):
+                    logSharedSubstrateCache(
+                        paths: paths,
+                        generationKey: plan.generationKey,
+                        result: "hit",
+                        startedAt: lookupStarted
+                    )
+                    var materialized:
+                        PlayCoverUpstreamValidatedSubstrate?
+                    try locked.materialize(
+                        entry,
+                        toFreshTarget: options.stagingApp
+                    ) { target, _ in
+                        materialized =
+                            try PlayCoverUpstreamEngine.validateSubstrate(
+                                appURL: target,
+                                evidence: evidence,
+                                sourceInspection: source,
+                                options: options
+                            )
+                    }
+                    guard let materialized else {
+                        throw PlayCoverBackendError.prepareFailed(
+                            "shared substrate materialization produced no "
+                                + "validated target"
+                        )
+                    }
+                    return materialized
+
+                case .miss:
+                    logSharedSubstrateCache(
+                        paths: paths,
+                        generationKey: plan.generationKey,
+                        result: "miss",
+                        startedAt: lookupStarted
+                    )
+                    let substrate =
+                        try PlayCoverUpstreamEngine.prepareSubstrate(
+                            options,
+                            sourceInspection: source
+                        )
+                    let publishStarted = CFAbsoluteTimeGetCurrent()
+                    do {
+                        let treeHash =
+                            try PlayCoverUpstreamEngine.contentHash(
+                                appURL: substrate.appURL
+                            )
+                        let manifest =
+                            PlayCoverSharedSubstrateCache.Manifest(
+                                binding: binding,
+                                substrateTreeSHA256: treeHash
+                            )
+                        _ = try locked.publish(
+                            manifest: manifest,
+                            populate: { target in
+                                try PlayCoverSharedSubstrateCache
+                                    .cloneOrCopy(
+                                        from: substrate.appURL,
+                                        toFreshTarget: target
+                                    )
+                            },
+                            validator: { app, published in
+                                let observed =
+                                    try PlayCoverUpstreamEngine.contentHash(
+                                        appURL: app
+                                    )
+                                guard observed
+                                        == published
+                                            .substrateTreeSHA256 else {
+                                    throw PlayCoverBackendError.cacheTampered(
+                                        "shared substrate publish winner "
+                                            + "changed"
+                                    )
+                                }
+                            }
+                        )
+                        logSharedSubstrateCache(
+                            paths: paths,
+                            generationKey: plan.generationKey,
+                            result: "published",
+                            startedAt: publishStarted
+                        )
+                    } catch {
+                        logSharedSubstrateCache(
+                            paths: paths,
+                            generationKey: plan.generationKey,
+                            result: "publish-fallback",
+                            startedAt: publishStarted,
+                            detail: String(describing: error)
+                        )
+                    }
+                    return substrate
+                }
+            }
+            return try PlayCoverUpstreamEngine.finalizeSubstrate(
+                substrate,
+                options: options
+            )
+        } catch let error as PlayCoverSharedSubstrateCacheError {
+            logSharedSubstrateCache(
+                paths: paths,
+                generationKey: plan.generationKey,
+                result: "unavailable-cold-fallback",
+                startedAt: lookupStarted,
+                detail: String(describing: error)
+            )
+            return try PlayCoverUpstreamEngine.prepare(
+                options,
+                sourceInspection: source
+            )
+        }
+    }
+
+    private static func logSharedSubstrateCache(
+        paths: IOSUsePaths,
+        generationKey: String,
+        result: String,
+        startedAt: CFAbsoluteTime,
+        detail: String? = nil
+    ) {
+        let elapsed = max(
+            0,
+            (CFAbsoluteTimeGetCurrent() - startedAt) * 1_000
+        )
+        var line = String(
+            format:
+                "[playcover-cache] shared-substrate result=%@ "
+                + "generation=%@ elapsed_ms=%.1f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            result,
+            String(generationKey.prefix(12)),
+            elapsed
+        )
+        if let detail, !detail.isEmpty {
+            line += " detail=\(detail)"
+        }
+        CLILogService.append(paths: paths, [line])
     }
 
     private static func withSuppressedUpstreamStandardOutput<T>(

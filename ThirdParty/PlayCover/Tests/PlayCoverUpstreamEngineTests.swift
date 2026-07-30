@@ -1329,6 +1329,7 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         var finalInspectionPath: String?
         var finalInspectionStarted = false
         var stagedMainInspectionPhases: [Bool] = []
+        var preparePhases: [PlayCoverUpstreamEngine.PreparePhaseEvent] = []
         var finalSignatureObservations: [
             (
                 kind: PlayCoverUpstreamEngine.CodeSignatureObservationKind,
@@ -1344,10 +1345,15 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
                 finalInspectionStarted = true
             }
         }
+        PlayCoverUpstreamEngine.preparePhaseObserverForTesting = {
+            phase,
+            _ in preparePhases.append(phase)
+        }
         defer {
             PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
             PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
             PlayCoverUpstreamEngine.machOInspectionObserverForTesting = nil
+            PlayCoverUpstreamEngine.preparePhaseObserverForTesting = nil
         }
         let sourceInspection = try PlayCoverUpstreamEngine.inspect(
             appURL: source
@@ -1414,7 +1420,17 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
         PlayCoverUpstreamEngine.fullContentPassObserverForTesting = nil
         PlayCoverUpstreamEngine.codeSignatureObserverForTesting = nil
         PlayCoverUpstreamEngine.machOInspectionObserverForTesting = nil
+        PlayCoverUpstreamEngine.preparePhaseObserverForTesting = nil
 
+        XCTAssertEqual(
+            preparePhases,
+            [
+                .substratePrepared,
+                .substrateValidated,
+                .entitlementsComposed,
+                .finalVerified,
+            ]
+        )
         XCTAssertEqual(
             contentPasses.map(\.kind),
             [
@@ -1570,6 +1586,91 @@ final class PlayCoverUpstreamEngineTests: XCTestCase {
             "--strict",
             staging.path
         )
+    }
+
+    func testMaterializedSubstrateFinalizesForTargetManagedHome() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent(
+            "Source.app",
+            isDirectory: true
+        )
+        try makeIOSAppWithExtension(at: source, root: root)
+        let runtime = try makeCatalystRuntimeFramework(in: root)
+        try codesign(runtime, entitlements: nil)
+        let sourceInspection = try PlayCoverUpstreamEngine.inspect(
+            appURL: source
+        )
+        let runtimeHash = try PlayCoverUpstreamEngine.runtimeBuildHash(
+            frameworkURL: runtime
+        )
+        let homes = ["producer", "consumer"].map {
+            root.appendingPathComponent($0, isDirectory: true)
+        }
+        for home in homes {
+            try FileManager.default.createDirectory(
+                at: home.appendingPathComponent(
+                    "prepared",
+                    isDirectory: true
+                ),
+                withIntermediateDirectories: true
+            )
+        }
+        let runtimeLoadPath =
+            "@executable_path/Frameworks/IOSUsePlayRuntime.framework/"
+                + "IOSUsePlayRuntime"
+        func options(for home: URL) -> PlayCoverUpstreamPrepareOptions {
+            PlayCoverUpstreamPrepareOptions(
+                sourceApp: source,
+                stagingApp: home.appendingPathComponent(
+                    "prepared/Fixture.app",
+                    isDirectory: true
+                ),
+                runtimeFramework: runtime,
+                managedHome: home,
+                runtimeSocketPath: home.appendingPathComponent(
+                    "playcover/run/s-runtime.sock"
+                ).path,
+                runtimeLoadPath: runtimeLoadPath,
+                codesignIdentity: "-",
+                expectedRuntimeBuildHash: runtimeHash
+            )
+        }
+
+        let producerOptions = options(for: homes[0])
+        let producer = try PlayCoverUpstreamEngine.prepareSubstrate(
+            producerOptions,
+            sourceInspection: sourceInspection
+        )
+        let consumerOptions = options(for: homes[1])
+        try FileManager.default.copyItem(
+            at: producer.appURL,
+            to: consumerOptions.stagingApp
+        )
+        let persistedEvidence = try JSONDecoder().decode(
+            PlayCoverUpstreamSubstrateEvidence.self,
+            from: JSONEncoder().encode(producer.evidence)
+        )
+        let consumer = try PlayCoverUpstreamEngine.validateSubstrate(
+            appURL: consumerOptions.stagingApp,
+            evidence: persistedEvidence,
+            sourceInspection: sourceInspection,
+            options: consumerOptions
+        )
+        let result = try PlayCoverUpstreamEngine.finalizeSubstrate(
+            consumer,
+            options: consumerOptions
+        )
+        let sandbox = try XCTUnwrap(
+            result.entitlementDiff.final[
+                "com.apple.security.temporary-exception.sbpl"
+            ]
+        )
+        let producerHome = homes[0].resolvingSymlinksInPath().path
+        let consumerHome = homes[1].resolvingSymlinksInPath().path
+        XCTAssertTrue(sandbox.contains("\(consumerHome)/playcover/run"))
+        XCTAssertTrue(sandbox.contains("\(consumerHome)/playcover/logs"))
+        XCTAssertFalse(sandbox.contains("\(producerHome)/playcover/"))
     }
 
     func testPrepareRejectsPlannedRuntimeDuplicateByExactPathAndBasename()

@@ -253,7 +253,9 @@ enum PlayCoverManagedAppService {
                         outputAppPath: stagingIdentityAppPath,
                         stagingIOAppPath: stagingIOAppPath,
                         paths: paths,
-                        publishedAppPath: layout.app.path
+                        publishedAppPath: layout.app.path,
+                        sharedSubstratePaths:
+                            resolveSharedSubstratePaths(paths: paths)
                     )
                 }
             let preparedArtifact: PlayCoverPreparedArtifact
@@ -449,6 +451,23 @@ enum PlayCoverManagedAppService {
             "no default \(PlayCoverService.runtimeFrameworkName) found; "
                 + "searched: \(candidates.joined(separator: ", "))"
         )
+    }
+
+    private static func resolveSharedSubstratePaths(
+        paths: IOSUsePaths
+    ) -> PlayCoverSharedCachePaths? {
+        do {
+            return try PlayCoverSharedCachePaths.resolve()
+        } catch {
+            CLILogService.append(
+                paths: paths,
+                [
+                    "[playcover-cache] shared-substrate "
+                        + "result=path-fallback detail=\(error)",
+                ]
+            )
+            return nil
+        }
     }
 
     private struct GenerationLayout {

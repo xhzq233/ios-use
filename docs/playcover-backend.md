@@ -59,8 +59,9 @@ adapter, AppKit bridge, and tests:
 | Virtual native raster | 1290 x 2796 pixels |
 
 The Runtime does not read a device profile or bootstrap file. Fixed geometry
-is not persisted in the session or cache key. A header change alters the
-Runtime build hash and therefore selects a new prepared generation naturally.
+is not persisted independently in session or prepared-cache state. A header
+change alters the Runtime build hash and therefore selects new transformed
+substrate and final-generation identities naturally.
 
 The outer AppKit surface is an opaque, rectangular, resizable system window.
 Its public title bar displays `CFBundleDisplayName`, falling back to
@@ -118,7 +119,8 @@ consume App touch events.
 ios-use start --mac (--app <source-or-managed-prepared.app> | --reuse) [--log]
   -> PlayCoverManagedAppService
      -> source classification or managed-generation selection
-     -> deterministic generation selection under this IOS_USE_HOME
+     -> same-user transformed-substrate cache lookup or construction
+     -> home-local final generation under this IOS_USE_HOME
   -> PlayCoverService
      -> pinned PlayCover prepare graph and full verification
      -> one bounded integrity verification immediately before launch
@@ -242,32 +244,41 @@ binding with initialization disabled. They never create, rotate, or repair the
 identity or modify Trust Settings. Missing and trust-required states direct the
 operator to the explicit configuration command; replaced, expired, or
 inaccessible state also fails closed and is never silently replaced. Separate
-`IOS_USE_HOME` values share the signer but not prepared generations, session
-state, or cache references.
+`IOS_USE_HOME` values share the signer and may reuse one transformed substrate,
+but they do not share final prepared generations, references, sessions, run
+state, logs, artifacts, or configuration.
 
-The source App is always read-only. Preparation takes place in a new staging
-directory under `IOS_USE_HOME/playcover/` and becomes visible only after the
-complete transaction verifies.
+The source App is always read-only. Transform-only work may be reused through
+the owner-only, versioned cache at
+`~/Library/Caches/dev.ios-use/playcover/prepared-substrate-v1`. Its entries are
+disposable inputs, not prepared Apps: they carry no session or home authority,
+are never launched, and may be removed without affecting an existing final
+generation.
+
+Every home clones or copies the selected substrate into a new staging directory
+under its own `IOS_USE_HOME/playcover/`. Entitlement composition, the complete
+inside-out signing pass, final verification, and manifest/completed publication
+all happen on that home-local copy. Nothing becomes a reusable final generation
+until the complete transaction verifies.
 
 The headless dependency graph retains the pinned Installer order:
 
 1. inspect the source tree, signatures, entitlements, provisioning, and every
    code object;
 2. reject encryption and unsupported or malformed Mach-O objects;
-3. APFS-clone the source into managed staging;
-4. convert each arm64 thin, fat, or fat64 Mach-O with the pinned PlayCover
-   converter, including its dependency and rpath rewrites;
-5. embed the Runtime and inject exactly one load command into the main
-   executable with the pinned `inject` implementation;
-6. update only required Info.plist compatibility keys, remove the copied
-   mobile provision, and compose entitlements through pinned PlayCover,
-   KeyCover, and PlayChain paths;
-7. sign nested binaries and bundles from the inside out using the stable
-   identity's full certificate SHA-1 selector and the same non-PlaySign
-   entitlement result as pinned PlayCover, then sign the outer App with the
-   composed root entitlements;
-8. remove quarantine and verify every Mach-O, dependency, load command,
-   entitlement, nested signature, and outer seal.
+3. obtain an immutable transformed substrate by cloning the source, applying
+   the pinned converter and dependency/rpath rewrites, embedding and injecting
+   the Runtime, updating required compatibility keys, and removing the copied
+   mobile provision;
+4. clone or copy that substrate into the selected home's managed staging;
+5. compose entitlements through the pinned PlayCover, KeyCover, and PlayChain
+   paths for that home-local output;
+6. sign all nested binaries and bundles and then the outer App with the stable
+   identity and composed root entitlements;
+7. remove quarantine and verify every Mach-O, dependency, load command,
+   entitlement, nested signature, and outer seal;
+8. publish the final generation and its manifest/completed evidence under the
+   selected home.
 
 Failures remove only transaction-owned staging. Existing generations and the
 source are not overwritten.
@@ -282,12 +293,14 @@ the original flags on success or failure; a flag left by a killed process is
 recovered under the next exclusive operation lock. The opened `IOS_USE_HOME`
 root vnode is the capability boundary, not a same-UID privilege boundary.
 
-The ordinary `IOS_USE_HOME` path remains the cache identity and is checked
-against the retained vnode before preparation and publication. Clone,
-conversion, signing, rollback, and directory enumeration stay attached to the
-original staging directory. Subprocesses such as `codesign` inherit the stable
-vnode as their working directory and receive relative staging arguments; no
-optimized-build `fcntl(F_GETPATH)` bridge is used.
+The ordinary `IOS_USE_HOME` path remains the capability and publication
+identity for the final generation and is checked against the retained vnode
+before home-local finalization. Substrate materialization, entitlement
+composition, signing, rollback, and directory enumeration for that final
+generation stay attached to the home-local staging directory. Subprocesses such
+as `codesign` inherit the stable vnode as their working directory and receive
+relative staging arguments; no optimized-build `fcntl(F_GETPATH)` bridge is
+used. The shared substrate cache grants no authority over that directory.
 
 The immutable generation key contains:
 
@@ -298,22 +311,22 @@ The immutable generation key contains:
 - the signer's certificate SHA-256;
 - the signing-policy revision.
 
-Initial preparation performs full verification. Reuse checks the immutable
-marker, key executable and Runtime hashes, signature validity, stable signer,
-root designated requirement, root CDHash, and managed path identity without
-enumerating or re-preparing the entire App. Different `IOS_USE_HOME` values
-never share prepared state, even though they resolve the same per-user signer.
+Every final generation performs the complete signing and verification sequence,
+including when its transformed substrate came from the same-user cache. Final
+reuse checks the immutable marker, key executable and Runtime hashes, signature
+validity, stable signer, root designated requirement, root CDHash, and managed
+path identity without re-preparing the App. Different `IOS_USE_HOME` values may
+reuse the same non-launchable substrate but never share final prepared state.
 
 The explicit-source path creates one immutable preparation plan containing the
 source inspection, Runtime hash, prepare revision, and generation key. Managed
-selection, prepare, and the pinned upstream engine consume that same evidence;
-the copied Runtime is checked against the recorded hash before signing. Source
-inventory, per-file SHA-256, framed tree hash, and Mach-O identification share
-one content pass. Cold prepare performs three deliberate full-content passes:
-the source App inspection, the original Runtime build hash, and the
-authoritative final prepared-App inspection. It does not re-read the live
-source after cloning; callers must provide a completed source build that stays
-byte-stable through publication.
+selection, substrate reuse or construction, and home-local finalization consume
+that same evidence; the copied Runtime is checked against the recorded hash
+before signing. The final prepared-App inspection remains authoritative. Once
+the selected substrate has been materialized into home-local staging,
+finalization does not return to mutable source bytes; callers must provide a
+completed source build that stays byte-stable while its preparation input is
+being captured.
 
 The schema-version-4 production prepare manifest remains a cache-integrity
 seal. It records the complete stable-signer evidence and the prepared root's
@@ -361,20 +374,25 @@ decision.
 
 One owner-only cross-process operation lock serializes every backend's start
 and stop mutation within an `IOS_USE_HOME`, including PlayCover prepare
-publication, session commit, and cache collection. After a successful start,
-cache collection preserves the current generation, active-session generation,
-last-prepared generation, and three most recent inactive complete generations.
-It removes only exact transaction-owned `.staging-<hash>-<UUID>` and
-`.gc-<hash>-<UUID>` leftovers plus eligible complete generations after an
-anchored tombstone rename. Recursive deletion is no-follow, owner checked, and
-confined to the prepared filesystem device. Foreign, mounted, or
-symbolic-link generation entries fail closed. After anchored ownership and
-64-hex namespace validation, generations with missing, oversized, malformed,
-or mismatched manifest/completed sidecars are quarantined with an explicit
-warning and a bounded per-start budget, so later collection can recover the
-same content key. Current, active-session, and last-prepared generations are
-never quarantined. Generation metadata must be a single-link regular file;
-malformed session/reference state skips all deletion.
+publication, session commit, and home-local generation collection. After a
+successful start, that collection preserves the current generation,
+active-session generation, last-prepared generation, and three most recent
+inactive complete generations. It removes only exact transaction-owned
+`.staging-<hash>-<UUID>` and `.gc-<hash>-<UUID>` leftovers plus eligible
+complete generations after an anchored tombstone rename. Recursive deletion is
+no-follow, owner checked, and confined to the prepared filesystem device.
+Foreign, mounted, or symbolic-link generation entries fail closed. After
+anchored ownership and 64-hex namespace validation, generations with missing,
+oversized, malformed, or mismatched manifest/completed sidecars are
+quarantined with an explicit warning and a bounded per-start budget, so later
+collection can recover the same content key. Current, active-session, and
+last-prepared generations are never quarantined. Generation metadata must be a
+single-link regular file; malformed session/reference state skips all deletion.
+
+The same-user substrate cache is not a session registry or coordination plane.
+It introduces no Host Registry, lease, `--instance` selector, cross-home
+stop/recovery behavior, or reference to a final generation. Purging it only
+forces later source preparation to rebuild the transformed substrate.
 
 ## Runtime Distribution
 
@@ -391,12 +409,14 @@ source framework before and after fixture execution.
 
 Runtime resolution honors a valid framework explicitly managed by an explicit
 `IOS_USE_HOME`, then the adjacent development layout, and finally this stable
-prefix share location. The implicit default home is mutable session/cache state
-and is never a Runtime source, so a stale framework left there cannot shadow the
-Runtime beside a development build. Therefore changing `IOS_USE_HOME` isolates
-prepared Apps and sessions for a release install; it does not require a second
-Runtime installation or allow the installer to put mutable executable code in
-that home.
+prefix share location. The implicit default home is mutable session and
+final-generation state and is never a Runtime source, so a stale framework left
+there cannot shadow the Runtime beside a development build. The transformed
+substrate cache is likewise never a Runtime source and cannot shadow an
+installed resource. Therefore changing `IOS_USE_HOME` isolates final prepared
+Apps and sessions for a release install; it does not require a second Runtime
+installation or allow the installer to put mutable executable code in that
+home.
 
 ## Runtime Commands
 

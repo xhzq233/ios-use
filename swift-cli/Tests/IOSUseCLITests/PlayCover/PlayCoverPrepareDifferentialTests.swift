@@ -303,10 +303,17 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             ),
             runtimeFrameworkPath: runtime.path
         )
+        let sharedSubstratePaths = try PlayCoverSharedCachePaths.resolve(
+            preparedSubstrateRoot: root.appendingPathComponent(
+                "shared-substrate-cache",
+                isDirectory: true
+            ).path
+        )
         let preparedArtifact = try PlayCoverService.prepareArtifact(
             plan: plan,
             outputAppPath: candidateOutput.path,
-            paths: paths
+            paths: paths,
+            sharedSubstratePaths: sharedSubstratePaths
         )
         let manifest = preparedArtifact.manifest
         let iosUseResult = try XCTUnwrap(
@@ -316,6 +323,80 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
             appURL: candidateOutput
         )
         XCTAssertEqual(iosUseResult.prepared, iosUse)
+
+        let consumerHome = root.appendingPathComponent(
+            "ios-use-consumer-home",
+            isDirectory: true
+        )
+        try makePrivateDirectory(consumerHome)
+        let consumerPaths = IOSUsePaths.resolve(
+            environment: ["IOS_USE_HOME": consumerHome.path]
+        )
+        let consumerParent = URL(
+            fileURLWithPath: consumerPaths.playcoverPrepared,
+            isDirectory: true
+        ).appendingPathComponent("differential", isDirectory: true)
+        try makePrivateDirectory(consumerParent)
+        let consumerOutput = consumerParent.appendingPathComponent(
+            "IOSUse.app",
+            isDirectory: true
+        )
+        let consumerArtifact = try PlayCoverService.prepareArtifact(
+            plan: plan,
+            outputAppPath: consumerOutput.path,
+            paths: consumerPaths,
+            sharedSubstratePaths: sharedSubstratePaths
+        )
+        XCTAssertEqual(
+            consumerArtifact.manifest.generationKey,
+            manifest.generationKey
+        )
+        XCTAssertNotEqual(
+            consumerArtifact.manifest.preparedAppPath,
+            manifest.preparedAppPath
+        )
+        let consumerLog = try String(
+            contentsOfFile: CLILogService.logPath(paths: consumerPaths),
+            encoding: .utf8
+        )
+        let producerLog = try String(
+            contentsOfFile: CLILogService.logPath(paths: paths),
+            encoding: .utf8
+        )
+        XCTAssertTrue(
+            consumerLog.contains(
+                "[playcover-cache] shared-substrate result=hit"
+            ),
+            "producer log:\n\(producerLog)\nconsumer log:\n\(consumerLog)"
+        )
+        XCTAssertFalse(
+            consumerLog.contains("result=miss")
+                || consumerLog.contains("result=unavailable-cold-fallback"),
+            "consumer did not complete through the shared hit:\n\(consumerLog)"
+        )
+        XCTAssertTrue(
+            producerLog.contains(
+                "[playcover-cache] shared-substrate result=published"
+            )
+                && !producerLog.contains("result=publish-fallback")
+                && !producerLog.contains(
+                    "result=unavailable-cold-fallback"
+                ),
+            "producer did not publish the shared substrate:\n\(producerLog)"
+        )
+        let consumerEntitlements =
+            consumerArtifact.manifest.entitlementDiff.final.values
+                .joined(separator: "\n")
+        XCTAssertTrue(
+            consumerEntitlements.contains(
+                consumerHome.resolvingSymlinksInPath().path
+            )
+        )
+        XCTAssertFalse(
+            consumerEntitlements.contains(
+                iosUseHome.resolvingSymlinksInPath().path
+            )
+        )
 
         XCTAssertEqual(
             PlayCoverPinnedHeadlessInstallerOracle.referenceLineage,
@@ -804,13 +885,19 @@ final class PlayCoverPrepareDifferentialTests: XCTestCase {
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverLaunchCrashCut.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverManagedAppService.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverService.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverSharedSubstrateCache.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverSigningCertificateBuilder.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverSigningIdentityService.swift",
                 "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
                     + "PlayCoverPreparedArtifact.swift",
+                "swift-cli/Sources/IOSUseCLI/Backends/PlayCover/"
+                    + "PlayCoverSharedCachePaths.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"
                     + "PlayCoverExternalPrepareDifferentialTests.swift",
                 "swift-cli/Tests/IOSUseCLITests/PlayCover/"

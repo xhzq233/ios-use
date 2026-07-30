@@ -244,7 +244,7 @@ final class PlayCoverCoreTests: XCTestCase {
         )
         XCTAssertTrue(
             PlayCoverService.prepareImplementationRevision.hasPrefix(
-                "ios-use-headless-v15+"
+                "ios-use-headless-v16+"
             )
         )
     }
