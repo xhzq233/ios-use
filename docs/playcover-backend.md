@@ -116,7 +116,7 @@ consume App touch events.
 ## Architecture and Session
 
 ```text
-ios-use start --mac (--app <source-or-managed-prepared.app> | --reuse) [--log]
+ios-use start --mac (--app <source-or-prepared.app> | --reuse) [--log]
   -> PlayCoverManagedAppService
      -> source classification or managed-generation selection
      -> account-global content-addressed final lookup or construction
