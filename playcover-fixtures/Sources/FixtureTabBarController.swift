@@ -8,6 +8,7 @@ final class FixtureTabBarController: UITabBarController {
     private var lastGeometryDescription: String?
     private let sceneGeneration: Int
     private var fullScreenBottomProbes: [UIButton] = []
+    private let firstReadHeaderLabel = UILabel()
 
     init(sceneGeneration: Int = 0) {
         self.sceneGeneration = sceneGeneration
@@ -21,6 +22,7 @@ final class FixtureTabBarController: UITabBarController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        let firstReadEvidence = captureFirstReadSafeArea()
         // Keep the fixture itself deterministic across macOS appearances.
         overrideUserInterfaceStyle = .light
         view.backgroundColor = .systemBackground
@@ -76,6 +78,7 @@ final class FixtureTabBarController: UITabBarController {
             identifier: "fixture.full.bottom-right",
             trailing: true
         )
+        installFirstReadHeader(firstReadEvidence)
     }
 
     override func viewDidLayoutSubviews() {
@@ -83,7 +86,95 @@ final class FixtureTabBarController: UITabBarController {
         for probe in fullScreenBottomProbes {
             view.bringSubviewToFront(probe)
         }
+        view.bringSubviewToFront(firstReadHeaderLabel)
         recordGeometryIfNeeded()
+    }
+
+    private func captureFirstReadSafeArea() -> (
+        height: CGFloat,
+        safeAreaTop: CGFloat,
+        statusBarHeight: CGFloat,
+        source: String
+    ) {
+        let application = UIApplication.shared
+        let delegateWindow =
+            (application.delegate as? AppDelegate)?.window
+        let sceneDelegateWindow = application.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .compactMap { $0.delegate as? SceneDelegate }
+            .compactMap(\.window)
+            .first
+        let window = delegateWindow ?? sceneDelegateWindow ?? view.window
+        let safeAreaTop = window?.safeAreaInsets.top ?? 0
+        let statusBarHeight =
+            window?.windowScene?.statusBarManager?.statusBarFrame.height
+                ?? 0
+        let fixedTop = safeAreaTop > 0
+            ? safeAreaTop
+            : statusBarHeight
+        return (
+            height: fixedTop + 70,
+            safeAreaTop: safeAreaTop,
+            statusBarHeight: statusBarHeight,
+            source: safeAreaTop > 0
+                ? "window-safe-area"
+                : "status-bar-fallback"
+        )
+    }
+
+    private func installFirstReadHeader(
+        _ evidence: (
+            height: CGFloat,
+            safeAreaTop: CGFloat,
+            statusBarHeight: CGFloat,
+            source: String
+        )
+    ) {
+        firstReadHeaderLabel.text = String(
+            format:
+                "First Read Header %.0f (safe %.0f, status %.0f)",
+            evidence.height,
+            evidence.safeAreaTop,
+            evidence.statusBarHeight
+        )
+        firstReadHeaderLabel.font =
+            .monospacedSystemFont(ofSize: 11, weight: .semibold)
+        firstReadHeaderLabel.textAlignment = .center
+        firstReadHeaderLabel.backgroundColor =
+            UIColor.systemYellow.withAlphaComponent(0.28)
+        firstReadHeaderLabel.isUserInteractionEnabled = false
+        firstReadHeaderLabel.isAccessibilityElement = true
+        firstReadHeaderLabel.accessibilityLabel =
+            "First Read Header"
+        firstReadHeaderLabel.accessibilityIdentifier =
+            "fixture.safe-area.first-read-header"
+        firstReadHeaderLabel.accessibilityValue = String(
+            format:
+                "height=%.0f safeTop=%.0f source=%@ statusBar=%.0f",
+            evidence.height,
+            evidence.safeAreaTop,
+            evidence.source,
+            evidence.statusBarHeight
+        )
+        firstReadHeaderLabel.translatesAutoresizingMaskIntoConstraints =
+            false
+        view.addSubview(firstReadHeaderLabel)
+        // This height is intentionally immutable. A late Runtime invalidation
+        // cannot repair an incorrect first read, matching the ExampleApp header.
+        NSLayoutConstraint.activate([
+            firstReadHeaderLabel.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor
+            ),
+            firstReadHeaderLabel.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor
+            ),
+            firstReadHeaderLabel.topAnchor.constraint(
+                equalTo: view.topAnchor
+            ),
+            firstReadHeaderLabel.heightAnchor.constraint(
+                equalToConstant: evidence.height
+            ),
+        ])
     }
 
     @objc private func fullScreenBottomProbeTapped(_ sender: UIButton) {

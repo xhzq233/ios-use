@@ -9,6 +9,7 @@
 #import "IOSUsePlayRuntime.h"
 #import "IOSUsePlayAppKitBridge.h"
 #import "IOSUsePlayRuntimeSocket.h"
+#import "IOSUsePlaySafeAreaCompatibility.h"
 #import "IOSUsePlayDevice.h"
 
 #import <Photos/Photos.h>
@@ -19,6 +20,7 @@
 
 static NSUInteger IOSUseRuntimeConfigurationAttempt;
 static BOOL IOSUseRuntimeSurfaceProbePending;
+static BOOL IOSUseRuntimeRequiredSafeAreaHookInstalled;
 static NSString *IOSUseRuntimeConfigurationStage = @"loaded";
 static NSString *IOSUseRuntimeConfigurationFailure;
 static os_unfair_lock IOSUsePhotosAuthorizationLock =
@@ -409,6 +411,15 @@ static void IOSUseScheduleRuntimeSurfaceProbe(NSTimeInterval delay) {
 static void IOSUseConfigureRuntimeSurface(void) {
     NSCAssert(NSThread.isMainThread, @"surface configuration is main-only");
     IOSUseRuntimeConfigurationAttempt += 1;
+    if (!IOSUseRuntimeRequiredSafeAreaHookInstalled) {
+        IOSUseRuntimeConfigurationStage = @"required-hook-failed";
+        if (IOSUseRuntimeConfigurationFailure == nil) {
+            IOSUseRuntimeConfigurationFailure =
+                @"required safe-area provider hook did not install "
+                 "before UIApplicationMain";
+        }
+        return;
+    }
     NSError *error = nil;
     BOOL windowReady =
         [IOSUsePlayAppKitBridge configureFixedWindow:&error];
@@ -501,6 +512,22 @@ NSDictionary<NSString *, id> *IOSUsePlayRuntimeHookDiagnostics(
 
 void IOSUsePlayRuntimeInitializeAfterStdio(void) {
     @autoreleasepool {
+        // Required API hooks must be installed synchronously before
+        // UIApplicationMain permits App/SDK first reads. Scene/window
+        // reconciliation remains a later, main-thread lifecycle operation.
+        NSError *safeAreaInstallError = nil;
+        IOSUseRuntimeRequiredSafeAreaHookInstalled =
+            IOSUsePlaySafeAreaCompatibilityInstallBeforeUIApplicationMain(
+                &safeAreaInstallError
+            );
+        if (!IOSUseRuntimeRequiredSafeAreaHookInstalled) {
+            IOSUseRuntimeConfigurationStage =
+                @"required-hook-failed";
+            IOSUseRuntimeConfigurationFailure =
+                safeAreaInstallError.localizedDescription ?:
+                    @"required safe-area provider hook did not install "
+                     "before UIApplicationMain";
+        }
         // UIKitMacHelper chooses its 0.77 iOS-on-Mac compatibility scale
         // before the first scene exists. Install the fixed identity scale
         // before UIApplicationMain creates UINSSceneViewController.

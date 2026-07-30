@@ -62,6 +62,7 @@ extension Notification.Name {
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    var window: UIWindow?
     private var crashNotificationName: CFNotificationName?
 
     func application(

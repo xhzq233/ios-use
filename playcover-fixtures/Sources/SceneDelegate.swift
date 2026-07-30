@@ -54,11 +54,16 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         generation += 1
         let oldWindow = window
         let replacement = UIWindow(windowScene: windowScene)
+        // Publish the same delegate-window path used by Apps that synchronously
+        // read safe area during root viewDidLoad. The replacement must be
+        // discoverable before assigning/presenting its root controller.
+        window = replacement
+        (UIApplication.shared.delegate as? AppDelegate)?.window =
+            replacement
         replacement.rootViewController = FixtureTabBarController(
             sceneGeneration: generation
         )
         replacement.makeKeyAndVisible()
-        window = replacement
         oldWindow?.isHidden = true
     }
 

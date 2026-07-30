@@ -748,6 +748,8 @@ assert_canonical_host_status() {
       $window.hostPolicy == true and
       $safeArea.stage == "ready" and
       $safeArea.safeAreaCompatibilityReady == true and
+      $safeArea.installEvidenceReady == true and
+      $safeArea.firstReadReady == true and
       $safeArea.safeAreaReady == true and
       $safeArea.deviceContractReady == true and
       $safeArea.safeAreaLayoutGuideReady == true and
@@ -765,6 +767,29 @@ assert_canonical_host_status() {
       $safeArea.safeAreaLayoutFrame ==
         {"x":0,"y":59,"width":430,"height":839} and
       $safeArea.runtimeAdditionalSafeAreaWriteCount == 0 and
+      ($safeArea.compatibilityHook |
+        .status == "installed" and
+        .installPhase == "pre-main-constructor" and
+        .preMainInstallAttempted == true and
+        .preMainInstallSucceeded == true and
+        .providerOwner == "UIWindow" and
+        .invalidationOwner == "UIWindow" and
+        .classHookActive == true and
+        .targetDispatchesHook == true and
+        .eligibleInvocationCount > 0 and
+        .statusBarInclusiveInvocationCount > 0 and
+        (.firstEligibleInvocation |
+          .recorded == true and
+          .installedBeforeDispatch == true and
+          .targetWasBound == false and
+          .resultMatchedExpected == true and
+          (.activationState == "foreground-active" or
+            .activationState == "foreground-inactive" or
+            .activationState == "unattached") and
+          .expected ==
+            {"top":59,"left":0,"bottom":34,"right":0} and
+          .result ==
+            {"top":59,"left":0,"bottom":34,"right":0})) and
       $window.title == $title and
       $capture.title == $title and
       $window.mouseMonitorReady == true and
@@ -2476,6 +2501,19 @@ assert_canvas_only_capture_manifest "$capture_manifest"
 record_case dom_initial dom --json
 assert_evidence dom_initial 'fixture.uikit.increment'
 assert_evidence dom_initial 'fixture.full.top-left'
+assert_evidence dom_initial 'fixture.safe-area.first-read-header'
+assert_json dom_initial '
+  ([.data.elements[] |
+    select(
+      .identifier == "fixture.safe-area.first-read-header"
+    )][0]) as $header |
+  $header.label == "First Read Header" and
+  ($header.value |
+    startswith(
+      "height=129 safeTop=59 source=window-safe-area statusBar="
+    )) and
+  (($header.frame[3] - 129) | fabs) <= 0.5
+'
 
 absolute_tap_x="$(
   jq -er '
