@@ -36,15 +36,13 @@ static NSInteger IOSUsePhotosAuthorizationAccessLevel;
 static BOOL IOSUsePhotosAuthorizationHasAccessLevel;
 static NSInteger IOSUsePhotosAuthorizationStatus;
 static BOOL IOSUsePhotosAuthorizationHasCompletion;
-static BOOL IOSUsePhotosAuthorizationLegacyHookInstalled;
-static BOOL IOSUsePhotosAuthorizationAccessLevelHookInstalled;
+static BOOL IOSUsePhotosAuthorizationHookInstalled;
 static NSString *IOSUsePhotosAuthorizationLastAPI;
 static NSMutableDictionary<
     NSNumber *,
     NSDictionary<NSString *, id> *
 > *IOSUsePhotosAuthorizationOutstandingRequests;
-static IMP IOSUsePhotosAuthorizationLegacyOriginal;
-static IMP IOSUsePhotosAuthorizationAccessLevelOriginal;
+static IMP IOSUsePhotosAuthorizationOriginal;
 
 static void IOSUseConfigureRuntimeSurface(void);
 
@@ -135,50 +133,17 @@ static void IOSUsePhotosAuthorizationComplete(
 static void IOSUsePhotosRequestAuthorization(
     id receiver,
     SEL selector,
-    IOSUsePhotosAuthorizationHandler handler
-) {
-    IOSUsePlayHookRegistryRecordInvocation(
-        @"photos.authorization.legacy"
-    );
-    uint64_t sequence =
-        IOSUsePhotosAuthorizationBegin(
-            @"requestAuthorization:",
-            NO,
-            0
-        );
-    IOSUsePhotosAuthorizationHandler wrapped =
-        ^(PHAuthorizationStatus status) {
-            IOSUsePhotosAuthorizationComplete(
-                sequence,
-                status
-            );
-            if (handler != nil) {
-                handler(status);
-            }
-        };
-    ((void (*)(
-        id,
-        SEL,
-        IOSUsePhotosAuthorizationHandler
-    ))IOSUsePhotosAuthorizationLegacyOriginal)(
-        receiver,
-        selector,
-        wrapped
-    );
-}
-
-static void IOSUsePhotosRequestAuthorizationForAccessLevel(
-    id receiver,
-    SEL selector,
     NSInteger accessLevel,
+    BOOL supportsLimited,
     IOSUsePhotosAuthorizationHandler handler
 ) {
     IOSUsePlayHookRegistryRecordInvocation(
-        @"photos.authorization.access-level"
+        @"photos.authorization.request"
     );
     uint64_t sequence =
         IOSUsePhotosAuthorizationBegin(
-            @"requestAuthorizationForAccessLevel:handler:",
+            @"_requestAuthorizationForAccessLevel:"
+                @"supportsLimited:handler:",
             YES,
             accessLevel
         );
@@ -196,61 +161,42 @@ static void IOSUsePhotosRequestAuthorizationForAccessLevel(
         id,
         SEL,
         NSInteger,
+        BOOL,
         IOSUsePhotosAuthorizationHandler
-    ))IOSUsePhotosAuthorizationAccessLevelOriginal)(
+    ))IOSUsePhotosAuthorizationOriginal)(
         receiver,
         selector,
         accessLevel,
+        supportsLimited,
         wrapped
     );
 }
 
 static void IOSUseInstallPhotosAuthorizationHooks(void) {
-    if (!IOSUsePhotosAuthorizationLegacyHookInstalled) {
-        const char *argumentTypes[] = {
-            @encode(IOSUsePhotosAuthorizationHandler),
-        };
-        IOSUsePhotosAuthorizationLegacyHookInstalled =
-            IOSUsePlayHookRegistryInstallFunction(
-                @"photos.authorization.legacy",
-                YES,
-                @"pre-main",
-                PHPhotoLibrary.class,
-                YES,
-                @selector(requestAuthorization:),
-                @encode(void),
-                argumentTypes,
-                1,
-                YES,
-                NO,
-                (IMP)IOSUsePhotosRequestAuthorization,
-                &IOSUsePhotosAuthorizationLegacyOriginal,
-                NULL
-            );
-    }
-    if (!IOSUsePhotosAuthorizationAccessLevelHookInstalled) {
+    if (!IOSUsePhotosAuthorizationHookInstalled) {
         const char *argumentTypes[] = {
             @encode(NSInteger),
+            @encode(BOOL),
             @encode(IOSUsePhotosAuthorizationHandler),
         };
-        IOSUsePhotosAuthorizationAccessLevelHookInstalled =
+        IOSUsePhotosAuthorizationHookInstalled =
             IOSUsePlayHookRegistryInstallFunction(
-                @"photos.authorization.access-level",
+                @"photos.authorization.request",
                 YES,
                 @"pre-main",
                 PHPhotoLibrary.class,
                 YES,
-                @selector(
-                    requestAuthorizationForAccessLevel:handler:
+                NSSelectorFromString(
+                    @"_requestAuthorizationForAccessLevel:"
+                     @"supportsLimited:handler:"
                 ),
                 @encode(void),
                 argumentTypes,
-                2,
+                3,
                 YES,
                 NO,
-                (IMP)
-                    IOSUsePhotosRequestAuthorizationForAccessLevel,
-                &IOSUsePhotosAuthorizationAccessLevelOriginal,
+                (IMP)IOSUsePhotosRequestAuthorization,
+                &IOSUsePhotosAuthorizationOriginal,
                 NULL
             );
     }
@@ -289,12 +235,7 @@ IOSUsePhotosAuthorizationDiagnosticsLocked(void) {
     }
     NSDictionary<NSString *, id> *result = @{
         @"schemaVersion": @1,
-        @"legacyHookInstalled": @(
-            IOSUsePhotosAuthorizationLegacyHookInstalled
-        ),
-        @"accessLevelHookInstalled": @(
-            IOSUsePhotosAuthorizationAccessLevelHookInstalled
-        ),
+        @"hookInstalled": @(IOSUsePhotosAuthorizationHookInstalled),
         @"sequence": @(IOSUsePhotosAuthorizationSequence),
         @"stateVersion": @(
             IOSUsePhotosAuthorizationStateVersion
