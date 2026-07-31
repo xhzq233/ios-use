@@ -134,6 +134,7 @@ int main(void) {
                 @selector(hook_value),
                 NO,
                 NO,
+                NULL,
                 &error
             ) &&
                 error != nil &&
@@ -154,6 +155,7 @@ int main(void) {
                 @selector(hook_value),
                 YES,
                 NO,
+                NULL,
                 &error
             ) &&
                 error != nil,
@@ -173,6 +175,7 @@ int main(void) {
                 @selector(hook_value),
                 YES,
                 NO,
+                NULL,
                 &error
             ) &&
                 error != nil,
@@ -185,6 +188,7 @@ int main(void) {
             IOSUseHookParent.class,
             @selector(value)
         );
+        IMP inheritedOriginal = NULL;
         passed &= IOSUseHookRequire(
             IOSUsePlayHookRegistryInstallMethodAlias(
                 @"inherited.install",
@@ -196,6 +200,7 @@ int main(void) {
                 @selector(hook_value),
                 NO,
                 YES,
+                &inheritedOriginal,
                 &error
             ) &&
                 error == nil &&
@@ -209,12 +214,20 @@ int main(void) {
                 inherited,
                 @selector(value)
             );
+        NSInteger inheritedOriginalValue =
+            inheritedOriginal == NULL
+                ? NSIntegerMin
+                : ((NSInteger (*)(id, SEL))inheritedOriginal)(
+                    inherited,
+                    @selector(value)
+                );
         IOSUsePlayHookRegistryRecordFirstUse(
             @"inherited.install",
             inherited.class
         );
         passed &= IOSUseHookRequire(
             inheritedValue == 42 &&
+                inheritedOriginalValue == 1 &&
                 class_getMethodImplementation(
                     IOSUseHookParent.class,
                     @selector(value)
@@ -264,6 +277,7 @@ int main(void) {
                 @selector(hook_value),
                 YES,
                 YES,
+                NULL,
                 &error
             ),
             @"base-class hook installation failed"

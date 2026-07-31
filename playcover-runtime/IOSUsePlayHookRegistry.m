@@ -399,8 +399,12 @@ BOOL IOSUsePlayHookRegistryInstallMethodAlias(
     SEL replacementSelector,
     BOOL requiresDirectOwner,
     BOOL requiresFirstUseBeforeReady,
+    IMP *originalOutput,
     NSError **error
 ) {
+    if (originalOutput != NULL) {
+        *originalOutput = NULL;
+    }
     if (IOSUsePlayHookRejectDuplicateInstall(identifier, error)) {
         return NO;
     }
@@ -535,6 +539,9 @@ BOOL IOSUsePlayHookRegistryInstallMethodAlias(
         );
     }
     IOSUsePlayHookStoreEntry(entry);
+    if (originalOutput != NULL) {
+        *originalOutput = original;
+    }
     return YES;
 }
 

@@ -37,13 +37,19 @@ static NSString *IOSUsePlayOptionalHookIdentifier(
             : NSStringFromSelector(selector)];
 }
 
+static IMP IOSUsePlayOriginalSceneFrame;
+static IMP IOSUsePlayOriginalSceneBounds;
+static IMP IOSUsePlayOriginalDisplaySize;
+static IMP IOSUsePlayOriginalNativeBounds;
+
 static void IOSUsePlayInstallRequiredIdentityHook(
     NSString *identifier,
     Class targetClass,
     SEL targetSelector,
     SEL replacementSelector,
     BOOL requiresDirectOwner,
-    BOOL requiresFirstUseBeforeReady
+    BOOL requiresFirstUseBeforeReady,
+    IMP *original
 ) {
     NSError *error = nil;
     if (!IOSUsePlayHookRegistryInstallMethodAlias(
@@ -56,6 +62,7 @@ static void IOSUsePlayInstallRequiredIdentityHook(
             replacementSelector,
             requiresDirectOwner,
             requiresFirstUseBeforeReady,
+            original,
             &error
         )) {
         NSLog(
@@ -81,6 +88,7 @@ static void IOSUsePlayInstallRequiredIdentityHook(
         newSelector,
         NO,
         NO,
+        NULL,
         NULL
     );
 }
@@ -189,7 +197,15 @@ static void IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.scene-frame",
         self.class
     );
-    return [PlayScreen frame:[self hook_frame]];
+    CGRect original = CGRectZero;
+    if (IOSUsePlayOriginalSceneFrame != NULL) {
+        original = ((CGRect (*)(id, SEL))
+            IOSUsePlayOriginalSceneFrame)(
+                self,
+                @selector(frame)
+            );
+    }
+    return [PlayScreen frame:original];
 }
 
 - (CGRect) hook_bounds {
@@ -197,7 +213,15 @@ static void IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.scene-bounds",
         self.class
     );
-    return [PlayScreen bounds:[self hook_bounds]];
+    CGRect original = CGRectZero;
+    if (IOSUsePlayOriginalSceneBounds != NULL) {
+        original = ((CGRect (*)(id, SEL))
+            IOSUsePlayOriginalSceneBounds)(
+                self,
+                @selector(bounds)
+            );
+    }
+    return [PlayScreen bounds:original];
 }
 
 - (CGRect) hook_nativeBounds {
@@ -205,7 +229,15 @@ static void IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.native-bounds",
         self.class
     );
-    return [PlayScreen nativeBounds:[self hook_nativeBounds]];
+    CGRect original = CGRectZero;
+    if (IOSUsePlayOriginalNativeBounds != NULL) {
+        original = ((CGRect (*)(id, SEL))
+            IOSUsePlayOriginalNativeBounds)(
+                self,
+                @selector(nativeBounds)
+            );
+    }
+    return [PlayScreen nativeBounds:original];
 }
 
 - (CGSize) hook_size {
@@ -213,7 +245,15 @@ static void IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.display-size",
         self.class
     );
-    return [PlayScreen sizeAspectRatio:[self hook_size]];
+    CGSize original = CGSizeZero;
+    if (IOSUsePlayOriginalDisplaySize != NULL) {
+        original = ((CGSize (*)(id, SEL))
+            IOSUsePlayOriginalDisplaySize)(
+                self,
+                @selector(size)
+            );
+    }
+    return [PlayScreen sizeAspectRatio:original];
 }
 
 
@@ -395,7 +435,8 @@ bool menuWasCreated = false;
         @selector(frame),
         @selector(hook_frame),
         NO,
-        NO
+        NO,
+        &IOSUsePlayOriginalSceneFrame
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.scene-bounds",
@@ -403,7 +444,8 @@ bool menuWasCreated = false;
         @selector(bounds),
         @selector(hook_bounds),
         NO,
-        NO
+        NO,
+        &IOSUsePlayOriginalSceneBounds
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.display-size",
@@ -411,7 +453,8 @@ bool menuWasCreated = false;
         @selector(size),
         @selector(hook_size),
         NO,
-        NO
+        NO,
+        &IOSUsePlayOriginalDisplaySize
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.native-bounds",
@@ -419,7 +462,8 @@ bool menuWasCreated = false;
         @selector(nativeBounds),
         @selector(hook_nativeBounds),
         YES,
-        YES
+        YES,
+        &IOSUsePlayOriginalNativeBounds
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.native-scale",
@@ -427,7 +471,8 @@ bool menuWasCreated = false;
         @selector(nativeScale),
         @selector(hook_nativeScale),
         YES,
-        YES
+        YES,
+        NULL
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.screen.scale",
@@ -435,7 +480,8 @@ bool menuWasCreated = false;
         @selector(scale),
         @selector(hook_scale),
         YES,
-        YES
+        YES,
+        NULL
     );
     
     [objc_getClass("_UIMenuBuilder") swizzleInstanceMethod:sel_getUid("initWithRootMenu:") withMethod:@selector(initWithRootMenuHook:)];
@@ -446,7 +492,8 @@ bool menuWasCreated = false;
         @selector(orientation),
         @selector(iosUsePlayDeviceOrientation),
         YES,
-        YES
+        YES,
+        NULL
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.device.idiom",
@@ -454,7 +501,8 @@ bool menuWasCreated = false;
         @selector(userInterfaceIdiom),
         @selector(iosUsePlayUserInterfaceIdiom),
         YES,
-        YES
+        YES,
+        NULL
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.device.model",
@@ -462,7 +510,8 @@ bool menuWasCreated = false;
         @selector(model),
         @selector(iosUsePlayDeviceModel),
         YES,
-        YES
+        YES,
+        NULL
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.device.localized-model",
@@ -470,7 +519,8 @@ bool menuWasCreated = false;
         @selector(localizedModel),
         @selector(iosUsePlayDeviceLocalizedModel),
         YES,
-        YES
+        YES,
+        NULL
     );
     IOSUsePlayInstallRequiredIdentityHook(
         @"playtools.trait.idiom",
@@ -478,7 +528,8 @@ bool menuWasCreated = false;
         @selector(userInterfaceIdiom),
         @selector(iosUsePlayUserInterfaceIdiom),
         YES,
-        YES
+        YES,
+        NULL
     );
 
     [objc_getClass("VSSubscriptionRegistrationCenter") swizzleInstanceMethod:@selector(setCurrentSubscription:) withMethod:@selector(hook_setCurrentSubscription:)];

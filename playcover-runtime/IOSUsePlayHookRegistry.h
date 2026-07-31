@@ -22,6 +22,7 @@ FOUNDATION_EXPORT BOOL IOSUsePlayHookRegistryInstallMethodAlias(
     SEL replacementSelector,
     BOOL requiresDirectOwner,
     BOOL requiresFirstUseBeforeReady,
+    IMP _Nullable * _Nullable original,
     NSError * _Nullable * _Nullable error
 );
 
