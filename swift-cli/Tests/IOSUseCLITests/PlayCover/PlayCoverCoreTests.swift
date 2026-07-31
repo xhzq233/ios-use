@@ -2048,6 +2048,43 @@ final class PlayCoverCoreTests: XCTestCase {
         )
     }
 
+    func testConcurrentInstanceUsesDirectSpawnOnlyForRunningExactPID() {
+        let exact = PlayCoverPendingLaunchRecovery.Candidate(
+            pid: 42,
+            processBirthMicroseconds: 9
+        )
+        XCTAssertTrue(
+            PlayCoverService.shouldDirectSpawnConcurrentInstance(
+                exactExecutableCensus: .complete([exact]),
+                runningApplicationPIDs: [42]
+            )
+        )
+        XCTAssertTrue(
+            PlayCoverService.shouldDirectSpawnConcurrentInstance(
+                exactExecutableCensus: .incomplete(
+                    candidates: [exact],
+                    reason: "an unrelated process was unreadable"
+                ),
+                runningApplicationPIDs: [42]
+            ),
+            "a positively identified exact App is sufficient even when "
+                + "the negative census is incomplete"
+        )
+        XCTAssertFalse(
+            PlayCoverService.shouldDirectSpawnConcurrentInstance(
+                exactExecutableCensus: .complete([]),
+                runningApplicationPIDs: [42]
+            )
+        )
+        XCTAssertFalse(
+            PlayCoverService.shouldDirectSpawnConcurrentInstance(
+                exactExecutableCensus: .complete([exact]),
+                runningApplicationPIDs: [7]
+            ),
+            "a process-table match alone must not bypass NSWorkspace"
+        )
+    }
+
     func testColdRegistrationRetriesSameFacadeSeriallyWithinOneDeadline()
         throws {
         let fixture = try makePendingWorkspaceLaunchFixture()
@@ -2359,7 +2396,7 @@ final class PlayCoverCoreTests: XCTestCase {
                                 ProcessInfo.processInfo
                                     .systemUptime + 0.05,
                             launchAlias: &launchAlias,
-                            workspaceOpenSubmitted:
+                            launchSubmitted:
                                 &openSubmitted,
                             postSubmissionIntegrityError:
                                 &postSubmissionIntegrityError
@@ -2470,7 +2507,7 @@ final class PlayCoverCoreTests: XCTestCase {
                     deadline:
                         ProcessInfo.processInfo.systemUptime + 0.05,
                     launchAlias: &alias,
-                    workspaceOpenSubmitted: &openSubmitted,
+                    launchSubmitted: &openSubmitted,
                     postSubmissionIntegrityError:
                         &postSubmissionIntegrityError
                 )
@@ -4647,7 +4684,7 @@ final class PlayCoverCoreTests: XCTestCase {
                             pendingLaunchPaths: fixture.paths,
                             deadline: deadline,
                             launchAlias: &launchAlias,
-                            workspaceOpenSubmitted:
+                            launchSubmitted:
                                 &workspaceOpenSubmitted,
                             postSubmissionIntegrityError:
                                 &postSubmissionIntegrityError

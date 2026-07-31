@@ -314,6 +314,8 @@ enum PlayCoverPendingLaunchCoordinator {
             source = .workspaceCallback
         case .authenticatedRuntime:
             source = .authenticatedRuntime
+        case .directSpawn:
+            source = .directSpawn
         }
         return PlayCoverService.LaunchedApplicationIdentity(
             pid: owner.pid,
@@ -633,14 +635,22 @@ enum PlayCoverPendingLaunchCoordinator {
                 record.submissionBootSessionUUID,
             terminalCallbackRecorded:
                 record.terminalCallback != nil,
-            owner: record.owner.map {
-                PlayCoverPendingLaunchRecovery.Owner(
-                    pid: $0.pid,
+            owner: record.owner.map { owner in
+                let source:
+                    PlayCoverPendingLaunchRecovery.OwnerSource
+                switch owner.source {
+                case .workspaceCallback:
+                    source = .workspaceCallback
+                case .authenticatedRuntime:
+                    source = .authenticatedRuntime
+                case .directSpawn:
+                    source = .directSpawn
+                }
+                return PlayCoverPendingLaunchRecovery.Owner(
+                    pid: owner.pid,
                     processBirthMicroseconds:
-                        $0.processBirthMicroseconds,
-                    source: $0.source == .workspaceCallback
-                        ? .workspaceCallback
-                        : .authenticatedRuntime
+                        owner.processBirthMicroseconds,
+                    source: source
                 )
             }
         )
@@ -649,13 +659,20 @@ enum PlayCoverPendingLaunchCoordinator {
     private static func storeOwner(
         _ owner: PlayCoverPendingLaunchRecovery.Owner
     ) -> PlayCoverPendingLaunchStore.Owner {
-        PlayCoverPendingLaunchStore.Owner(
+        let source: PlayCoverPendingLaunchStore.OwnerSource
+        switch owner.source {
+        case .workspaceCallback:
+            source = .workspaceCallback
+        case .authenticatedRuntime:
+            source = .authenticatedRuntime
+        case .directSpawn:
+            source = .directSpawn
+        }
+        return PlayCoverPendingLaunchStore.Owner(
             pid: owner.pid,
             processBirthMicroseconds:
                 owner.processBirthMicroseconds,
-            source: owner.source == .workspaceCallback
-                ? .workspaceCallback
-                : .authenticatedRuntime
+            source: source
         )
     }
 

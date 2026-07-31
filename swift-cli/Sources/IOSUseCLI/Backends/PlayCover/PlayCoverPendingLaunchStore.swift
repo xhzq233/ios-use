@@ -33,6 +33,7 @@ enum PlayCoverPendingLaunchStore {
     enum OwnerSource: String, Codable, Equatable, Sendable {
         case workspaceCallback
         case authenticatedRuntime
+        case directSpawn
     }
 
     enum CallbackOutcome: String, Codable, Equatable, Sendable {

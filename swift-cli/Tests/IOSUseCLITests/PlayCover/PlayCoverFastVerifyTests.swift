@@ -2027,7 +2027,7 @@ final class PlayCoverFastVerifyTests: XCTestCase {
                     deadline:
                         ProcessInfo.processInfo.systemUptime + 0.1,
                     launchAlias: &alias,
-                    workspaceOpenSubmitted:
+                    launchSubmitted:
                         &workspaceOpenSubmitted,
                     postSubmissionIntegrityError:
                         &postSubmissionIntegrityError

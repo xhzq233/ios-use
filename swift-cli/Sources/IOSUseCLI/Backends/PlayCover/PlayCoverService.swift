@@ -146,6 +146,7 @@ public enum PlayCoverService {
         case afterFastVerificationBeforeLaunchBody
         case afterAliasBuiltBeforePreSubmitValidation
         case afterWorkspaceOpenReturnedBeforePostSubmitValidation
+        case afterDirectSpawnReturnedBeforePostSubmitValidation
         case enteredExactOwnershipLoop
     }
 
@@ -1289,7 +1290,7 @@ public enum PlayCoverService {
         }
         var launched: LaunchedApplicationIdentity?
         var launchAlias: SessionLaunchAlias?
-        var workspaceOpenSubmitted = false
+        var launchSubmitted = false
         var postSubmissionIntegrityError: Error?
         var keyCoverUnlocked = false
         var pendingIntentCreated = false
@@ -1345,7 +1346,7 @@ public enum PlayCoverService {
                 pendingLaunchPaths: pendingLaunchPaths,
                 deadline: deadline,
                 launchAlias: &launchAlias,
-                workspaceOpenSubmitted: &workspaceOpenSubmitted,
+                launchSubmitted: &launchSubmitted,
                 postSubmissionIntegrityError:
                     &postSubmissionIntegrityError
             )
@@ -1477,7 +1478,7 @@ public enum PlayCoverService {
                         rollbackError: rollbackDescription
                     )
                 }
-            } else if !workspaceOpenSubmitted {
+            } else if !launchSubmitted {
                 cleanupProof = .neverSubmitted
             }
             var errorToThrow = error
@@ -3402,6 +3403,7 @@ public enum PlayCoverService {
     enum LaunchIdentitySource: Equatable {
         case workspaceCallback
         case authenticatedRuntime
+        case directSpawn
         case observedCandidate
     }
 
@@ -3429,6 +3431,8 @@ public enum PlayCoverService {
             source = .workspaceCallback
         case .authenticatedRuntime:
             source = .authenticatedRuntime
+        case .directSpawn:
+            source = .directSpawn
         case .observedCandidate:
             return nil
         }
@@ -3467,6 +3471,8 @@ public enum PlayCoverService {
             PlayCoverLaunchCrashCut.hit(
                 .beforeRuntimeOwnerDurable
             )
+        case .directSpawn:
+            break
         case .observedCandidate:
             break
         }
@@ -3496,6 +3502,8 @@ public enum PlayCoverService {
             PlayCoverLaunchCrashCut.hit(
                 .afterRuntimeOwnerDurable
             )
+        case .directSpawn:
+            break
         case .observedCandidate:
             break
         }
@@ -3566,6 +3574,16 @@ public enum PlayCoverService {
             return false
         }
         return exactExecutableCensus().provesEmpty
+    }
+
+    static func shouldDirectSpawnConcurrentInstance(
+        exactExecutableCensus:
+            PlayCoverPendingLaunchRecovery.Census,
+        runningApplicationPIDs: Set<Int32>
+    ) -> Bool {
+        exactExecutableCensus.candidates.contains {
+            runningApplicationPIDs.contains($0.pid)
+        }
     }
 
     private static func persistTerminalCallbackFailure(
@@ -4801,6 +4819,8 @@ public enum PlayCoverService {
         case .authenticatedRuntime:
             return bundlePath == canonicalPath(launchAliasPath)
                 || bundlePath == canonicalPath(manifest.preparedAppPath)
+        case .directSpawn:
+            return false
         case .observedCandidate:
             return false
         }
@@ -4943,7 +4963,7 @@ public enum PlayCoverService {
         pendingLaunchPaths: IOSUsePaths? = nil,
         deadline: TimeInterval,
         launchAlias: inout SessionLaunchAlias?,
-        workspaceOpenSubmitted: inout Bool,
+        launchSubmitted: inout Bool,
         postSubmissionIntegrityError: inout Error?
     ) throws -> LaunchedApplicationIdentity {
         #if canImport(AppKit)
@@ -4995,6 +5015,25 @@ public enum PlayCoverService {
         )
         defer { aliasCapability.close() }
         defer { launchCapability.close() }
+
+        func armSubmission() throws {
+            // Replaying this transition under the journal lock proves that
+            // the same session is still armed on the same boot before a
+            // bounded launch mechanism is invoked.
+            if let pendingLaunchPaths {
+                _ = try PlayCoverPendingLaunchStore
+                    .markSubmissionArmed(
+                        sessionID: sessionID,
+                        bootSessionUUID:
+                            PlayCoverPendingLaunchRecovery
+                                .currentBootSessionUUID(),
+                        paths: pendingLaunchPaths
+                    )
+                #if DEBUG && canImport(Darwin)
+                PlayCoverLaunchCrashCut.hit(.afterSubmissionArmed)
+                #endif
+            }
+        }
 
         func completion(
             box: LaunchBox,
@@ -5081,22 +5120,7 @@ public enum PlayCoverService {
                 expectedEntries: launchEntries
             )
             // A retry keeps the original durable submissionArmed phase.
-            // Replaying this transition under the journal lock proves that
-            // the same session is still armed on the same boot before the
-            // same facade is submitted again.
-            if let pendingLaunchPaths {
-                _ = try PlayCoverPendingLaunchStore
-                    .markSubmissionArmed(
-                        sessionID: sessionID,
-                        bootSessionUUID:
-                            PlayCoverPendingLaunchRecovery
-                                .currentBootSessionUUID(),
-                        paths: pendingLaunchPaths
-                    )
-                #if DEBUG && canImport(Darwin)
-                PlayCoverLaunchCrashCut.hit(.afterSubmissionArmed)
-                #endif
-            }
+            try armSubmission()
             let attempt = WorkspaceLaunchAttempt(
                 number: number,
                 box: LaunchBox(),
@@ -5112,7 +5136,7 @@ public enum PlayCoverService {
                 alias.bundleURL,
                 configuration.environment
             )
-            workspaceOpenSubmitted = true
+            launchSubmitted = true
             if let workspaceOpenOverrideForTesting {
                 workspaceOpenOverrideForTesting(
                     alias.bundleURL,
@@ -5149,11 +5173,193 @@ public enum PlayCoverService {
             return attempt
         }
 
+        func directSpawnConcurrentInstance()
+            throws -> LaunchedApplicationIdentity
+        {
+            try validateFastVerifiedLaunchCapability(
+                launchCapability
+            )
+            try validateSessionLaunchAliasCapability(
+                aliasCapability,
+                expectedEntries: launchEntries
+            )
+            try armSubmission()
+
+            let process = Process()
+            process.executableURL = URL(
+                fileURLWithPath: manifest.executablePath
+            )
+            process.environment = sanitizedLaunchEnvironment(
+                sessionID: sessionID,
+                runtimeSocketPath: runtimeSocketPath,
+                runtimeHomePath: runtimeHomePath,
+                homeID: homeID,
+                generationKey: manifest.generationKey,
+                stdioLog: stdioLog
+            )
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+
+            // The direct child PID is authoritative for rollback, while the
+            // Runtime still has to authenticate the random session before the
+            // caller may use the App. This path is used only when an exact
+            // already-running App proves LaunchServices cannot supply a
+            // second instance.
+            launchSubmitted = true
+            do {
+                try process.run()
+            } catch {
+                throw persistTerminalCallbackFailure(
+                    error,
+                    sessionID: sessionID,
+                    paths: pendingLaunchPaths
+                )
+            }
+            #if DEBUG && canImport(Darwin)
+            PlayCoverLaunchCrashCut.hit(.afterOpenReturned)
+            #endif
+
+            let pid = process.processIdentifier
+            var directIdentity:
+                LaunchedApplicationIdentity?
+            var lastIdentityError =
+                "the process identity was not observable"
+            while ProcessInfo.processInfo.systemUptime < deadline {
+                switch failedLaunchProcessState(pid) {
+                case .running(
+                    let executablePath,
+                    let processBirthMicroseconds
+                ):
+                    guard canonicalPath(executablePath)
+                            == canonicalPath(
+                                manifest.executablePath
+                            ) else {
+                        lastIdentityError =
+                            "pid \(pid) exposed a different executable"
+                        Thread.sleep(forTimeInterval: 0.01)
+                        continue
+                    }
+                    guard let processBirthMicroseconds,
+                          processBirthMicroseconds > 0 else {
+                        lastIdentityError =
+                            "pid \(pid) has no stable process birth token"
+                        Thread.sleep(forTimeInterval: 0.01)
+                        continue
+                    }
+                    directIdentity =
+                        LaunchedApplicationIdentity(
+                            pid: pid,
+                            bundleIdentifier:
+                                manifest.bundleIdentifier,
+                            bundleURLPath:
+                                manifest.preparedAppPath,
+                            executablePath:
+                                manifest.executablePath,
+                            processStartTimeMicroseconds:
+                                processBirthMicroseconds,
+                            source: .directSpawn
+                        )
+                case .missing:
+                    throw persistTerminalCallbackFailure(
+                        PlayCoverBackendError.launchFailed(
+                            "direct-spawned App exited before its "
+                                + "process identity was captured"
+                        ),
+                        sessionID: sessionID,
+                        paths: pendingLaunchPaths
+                    )
+                case .unverifiable(let errorNumber):
+                    lastIdentityError =
+                        "pid \(pid) is not yet verifiable: "
+                        + "errno \(errorNumber)"
+                }
+                if directIdentity != nil {
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.01)
+            }
+            guard let directIdentity else {
+                throw PlayCoverBackendError.launchFailed(
+                    "direct-spawned App has no stable identity: "
+                        + lastIdentityError
+                )
+            }
+
+            if let pendingLaunchPaths {
+                guard let owner = pendingLaunchOwner(
+                    directIdentity
+                ) else {
+                    throw PendingOwnedLaunchError(
+                        identity: directIdentity,
+                        underlying:
+                            PlayCoverBackendError.launchFailed(
+                                "direct-spawn owner has no stable "
+                                    + "process birth identity"
+                            ),
+                        shouldRetryDurableOwnership: false
+                    )
+                }
+                try persistPendingLaunchOwner(
+                    owner,
+                    identity: directIdentity,
+                    sessionID: sessionID,
+                    callbackSucceeded: false,
+                    paths: pendingLaunchPaths
+                )
+            }
+
+            do {
+                try emitLaunchIntegrityEvent(
+                    .afterDirectSpawnReturnedBeforePostSubmitValidation
+                )
+                try validateFastVerifiedLaunchCapability(
+                    launchCapability
+                )
+                try validateSessionLaunchAliasCapability(
+                    aliasCapability,
+                    expectedEntries: launchEntries
+                )
+            } catch {
+                postSubmissionIntegrityError = error
+                throw PendingOwnedLaunchError(
+                    identity: directIdentity,
+                    underlying: error,
+                    shouldRetryDurableOwnership: false
+                )
+            }
+            return directIdentity
+        }
+
+        let exactExecutableCensus =
+            PlayCoverPendingLaunchRecovery.exactExecutableCensus(
+                executablePath: manifest.executablePath
+        )
+        var directOwnerIdentity:
+            LaunchedApplicationIdentity?
+        let initialAttempt: WorkspaceLaunchAttempt
+        if shouldDirectSpawnConcurrentInstance(
+            exactExecutableCensus:
+                exactExecutableCensus,
+            runningApplicationPIDs: existingPIDs
+        ) {
+            directOwnerIdentity =
+                try directSpawnConcurrentInstance()
+            initialAttempt = WorkspaceLaunchAttempt(
+                number: 1,
+                box: LaunchBox(),
+                semaphore: DispatchSemaphore(value: 0)
+            )
+        } else {
+            initialAttempt =
+                try submitWorkspaceAttempt(number: 1)
+        }
+
         // NSWorkspace accepts a path, not an fd. The retained capabilities
         // sample and hold the verified generation/facade identities around
         // every bounded submission; they still cannot prove exactly when
         // LaunchServices consumes an asynchronous request.
-        var activeAttempt = try submitWorkspaceAttempt(number: 1)
+        var activeAttempt = initialAttempt
         // The caller supplies the one monotonic `start --timeout` deadline
         // shared by launch discovery and the subsequent ready Runtime hello.
         // Large Apps may exceed LaunchServices' historical ten-second window,
@@ -5172,6 +5378,18 @@ public enum PlayCoverService {
                 launchAliasPath: alias.bundleURL.path,
                 deadline: deadline,
                 legacyHelloAttempted: &legacyHelloAttempted
+            )
+        }
+        func preserveDirectOwnership(
+            _ error: Error
+        ) -> Error {
+            guard let directOwnerIdentity else {
+                return error
+            }
+            return PendingOwnedLaunchError(
+                identity: directOwnerIdentity,
+                underlying: error,
+                shouldRetryDurableOwnership: false
             )
         }
         try emitLaunchIntegrityEvent(.enteredExactOwnershipLoop)
@@ -5256,6 +5474,40 @@ public enum PlayCoverService {
                     )
                 }
                 return identity
+            }
+
+            if let directOwnerIdentity {
+                switch failedLaunchProcessState(
+                    directOwnerIdentity.pid
+                ) {
+                case .missing:
+                    throw preserveDirectOwnership(
+                        PlayCoverBackendError.launchFailed(
+                            "direct-spawned App exited before "
+                                + "Runtime authentication"
+                        )
+                    )
+                case .running(
+                    let executablePath,
+                    let processBirthMicroseconds
+                ):
+                    if canonicalPath(executablePath)
+                            != canonicalPath(
+                                directOwnerIdentity.executablePath
+                            )
+                        || processBirthMicroseconds
+                            != directOwnerIdentity
+                                .processStartTimeMicroseconds {
+                        throw preserveDirectOwnership(
+                            PlayCoverBackendError.launchFailed(
+                                "direct-spawned App PID was reused "
+                                    + "before Runtime authentication"
+                            )
+                        )
+                    }
+                case .unverifiable:
+                    break
+                }
             }
 
             // Check the callback after polling. LaunchServices can report a
@@ -5344,15 +5596,27 @@ public enum PlayCoverService {
             }
         }
         if let postSubmissionIntegrityError {
-            throw postSubmissionIntegrityError
+            throw preserveDirectOwnership(
+                postSubmissionIntegrityError
+            )
         }
-        throw PlayCoverBackendError.launchFailed(
-            "NSWorkspace did not return or expose a matching App process"
-                + (
-                    callbackError.map {
-                        "; callback error: \($0)"
-                    } ?? ""
-                )
+        throw preserveDirectOwnership(
+            PlayCoverBackendError.launchFailed(
+                directOwnerIdentity == nil
+                    ? (
+                        "NSWorkspace did not return or expose a "
+                            + "matching App process"
+                            + (
+                                callbackError.map {
+                                    "; callback error: \($0)"
+                                } ?? ""
+                            )
+                    )
+                    : (
+                        "direct-spawned App did not authenticate "
+                            + "its Runtime before the launch deadline"
+                    )
+            )
         )
         #else
         throw PlayCoverBackendError.launchFailed(
@@ -5365,7 +5629,8 @@ public enum PlayCoverService {
         _ identity: LaunchedApplicationIdentity
     ) throws {
         guard identity.source == .workspaceCallback
-                || identity.source == .authenticatedRuntime,
+                || identity.source == .authenticatedRuntime
+                || identity.source == .directSpawn,
               let expectedProcessBirth =
                 identity.processStartTimeMicroseconds,
               expectedProcessBirth > 0 else {
@@ -5426,10 +5691,12 @@ public enum PlayCoverService {
         }
         let pid = identity.pid
         guard identity.source == .workspaceCallback
-                || identity.source == .authenticatedRuntime else {
+                || identity.source == .authenticatedRuntime
+                || identity.source == .directSpawn else {
             throw PlayCoverBackendError.launchFailed(
                 "rollback refuses a process not owned by the "
-                    + "NSWorkspace callback or authenticated Runtime"
+                    + "NSWorkspace callback, direct spawn, or "
+                    + "authenticated Runtime"
             )
         }
         guard let expectedProcessStart =

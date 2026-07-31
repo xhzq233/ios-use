@@ -58,6 +58,7 @@ enum PlayCoverPendingLaunchRecovery {
     enum OwnerSource: String, Equatable, Sendable {
         case workspaceCallback
         case authenticatedRuntime
+        case directSpawn
     }
 
     struct Owner: Equatable, Sendable {
