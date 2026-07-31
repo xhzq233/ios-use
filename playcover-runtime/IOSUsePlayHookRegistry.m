@@ -107,6 +107,7 @@ IOSUsePlayHookRegistryExpectedRequiredIdentifiers(void) {
             @"appkit.mouse-monitor.selector",
             @"appkit.mouse-monitor.token",
             @"uikit.status-bar-frame",
+            @"uikit.status-bar-manager-frame",
         ];
     });
     return identifiers;

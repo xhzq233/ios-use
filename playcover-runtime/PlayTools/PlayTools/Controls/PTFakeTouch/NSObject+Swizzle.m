@@ -294,6 +294,22 @@ static void IOSUsePlayInstallRequiredIdentityHook(
         stringWithUTF8String:IOSUsePlayDeviceLocalizedModel()];
 }
 
+- (CGRect)iosUsePlayStatusBarFrame {
+    NSString *identifier = [self isKindOfClass:UIApplication.class]
+        ? @"uikit.status-bar-frame"
+        : @"uikit.status-bar-manager-frame";
+    IOSUsePlayHookRegistryRecordFirstUse(
+        identifier,
+        self.class
+    );
+    return CGRectMake(
+        0,
+        0,
+        IOSUsePlayDeviceLogicalWidth,
+        IOSUsePlayDeviceSafeAreaTop
+    );
+}
+
 - (double) hook_nativeScale {
     IOSUsePlayHookRegistryRecordFirstUse(
         @"playtools.screen.native-scale",
@@ -527,6 +543,24 @@ bool menuWasCreated = false;
         UITraitCollection.class,
         @selector(userInterfaceIdiom),
         @selector(iosUsePlayUserInterfaceIdiom),
+        YES,
+        YES,
+        NULL
+    );
+    IOSUsePlayInstallRequiredIdentityHook(
+        @"uikit.status-bar-frame",
+        UIApplication.class,
+        @selector(statusBarFrame),
+        @selector(iosUsePlayStatusBarFrame),
+        YES,
+        YES,
+        NULL
+    );
+    IOSUsePlayInstallRequiredIdentityHook(
+        @"uikit.status-bar-manager-frame",
+        UIStatusBarManager.class,
+        @selector(statusBarFrame),
+        @selector(iosUsePlayStatusBarFrame),
         YES,
         YES,
         NULL

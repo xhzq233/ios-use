@@ -13,6 +13,7 @@
 #import <errno.h>
 #import <fcntl.h>
 #import <limits.h>
+#import <objc/message.h>
 #import <os/lock.h>
 #import <signal.h>
 #import <string.h>
@@ -963,25 +964,24 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
         CGRect statusBarFrame = statusBarManager == nil
             ? CGRectZero
             : statusBarManager.statusBarFrame;
+        SEL applicationStatusBarFrameSelector =
+            NSSelectorFromString(@"statusBarFrame");
+        CGRect applicationStatusBarFrame =
+            [UIApplication.sharedApplication
+                respondsToSelector:applicationStatusBarFrameSelector]
+                ? ((CGRect (*)(id, SEL))objc_msgSend)(
+                    UIApplication.sharedApplication,
+                    applicationStatusBarFrameSelector
+                )
+                : CGRectZero;
         BOOL statusBarReady =
             statusBarManager != nil &&
             isfinite(statusBarFrame.size.height) &&
-            statusBarFrame.size.height == 59.0;
-        IOSUsePlayHookRegistryRecordState(
-            @"uikit.status-bar-frame",
-            YES,
-            @"readiness",
-            @"UIStatusBarManager",
-            @"statusBarFrame",
-            [NSString stringWithUTF8String:@encode(CGRect)],
-            NO,
-            statusBarReady,
-            statusBarReady
-                ? nil
-                : statusBarManager == nil
-                    ? @"status bar manager is unavailable"
-                    : @"statusBarFrame.height is not exactly 59"
-        );
+            statusBarFrame.size.height ==
+                IOSUsePlayDeviceSafeAreaTop &&
+            isfinite(applicationStatusBarFrame.size.height) &&
+            applicationStatusBarFrame.size.height ==
+                IOSUsePlayDeviceSafeAreaTop;
         NSString *deviceModel = device.model ?: @"";
         NSString *localizedDeviceModel = device.localizedModel ?: @"";
         BOOL deviceIdentityReady =
@@ -1062,6 +1062,12 @@ static NSDictionary<NSString *, id> *IOSUseRuntimeSnapshot(
                         @"width": @(statusBarFrame.size.width),
                         @"height": @(statusBarFrame.size.height),
                     },
+            @"applicationStatusBarFrame": @{
+                @"x": @(applicationStatusBarFrame.origin.x),
+                @"y": @(applicationStatusBarFrame.origin.y),
+                @"width": @(applicationStatusBarFrame.size.width),
+                @"height": @(applicationStatusBarFrame.size.height),
+            },
             @"windowBounds":
                 keyWindow == nil
                     ? (id)NSNull.null
