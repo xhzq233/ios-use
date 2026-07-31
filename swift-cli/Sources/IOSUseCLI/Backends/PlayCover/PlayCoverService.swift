@@ -156,7 +156,7 @@ public enum PlayCoverService {
     public static let runtimeFrameworkName = "IOSUsePlayRuntime.framework"
     public static let runtimeExecutableName = "IOSUsePlayRuntime"
     static let prepareImplementationRevision =
-        "ios-use-headless-v17+playcover-"
+        "ios-use-headless-v18+playcover-"
         + PlayCoverUpstreamEngine.playCoverRevision
         + "+inject-"
         + PlayCoverUpstreamEngine.injectRevision
@@ -498,9 +498,11 @@ public enum PlayCoverService {
         }
         let mainExecutableRelativePath =
             upstream.prepared.mainExecutableRelativePath
+        let runtimeExecutable = try runtimeExecutableMachO(
+            in: prepared
+        )
         let runtimeExecutableRelativePath =
-            "Frameworks/\(runtimeFrameworkName)/"
-                + runtimeExecutableName
+            runtimeExecutable.relativePath
         let criticalPaths: Set<String> = [
             "Info.plist",
             mainExecutableRelativePath,
@@ -547,11 +549,7 @@ public enum PlayCoverService {
             mainExecutableSHA256:
                 prepared.mainExecutable.fileSHA256,
             runtimeExecutableSHA256:
-                prepared.machOs.first(where: {
-                    $0.relativePath
-                        == "Frameworks/\(runtimeFrameworkName)/"
-                            + runtimeExecutableName
-                })?.fileSHA256,
+                runtimeExecutable.fileSHA256,
             rootEntitlementsSHA256:
                 rootEntitlementsSHA256,
             codeObjects: codeObjects
@@ -564,6 +562,28 @@ public enum PlayCoverService {
             manifest: manifest,
             upstreamResult: upstream
         )
+    }
+
+    static func runtimeExecutableMachO(
+        in inspection: PlayCoverAppInspection
+    ) throws -> PlayCoverMachOInspection {
+        let frameworkPrefix =
+            "Frameworks/\(runtimeFrameworkName)/"
+        let matches = inspection.machOs.filter {
+            $0.relativePath.hasPrefix(frameworkPrefix)
+                && URL(
+                    fileURLWithPath: $0.relativePath
+                ).lastPathComponent == runtimeExecutableName
+        }
+        guard matches.count == 1,
+              let runtimeExecutable = matches.first else {
+            throw PlayCoverBackendError.verificationFailed(
+                "embedded Runtime main executable is missing or "
+                    + "duplicated: \(frameworkPrefix)"
+                    + runtimeExecutableName
+            )
+        }
+        return runtimeExecutable
     }
 
     private static func withSuppressedUpstreamStandardOutput<T>(

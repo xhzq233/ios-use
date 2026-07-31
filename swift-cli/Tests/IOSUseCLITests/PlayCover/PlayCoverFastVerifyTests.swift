@@ -918,6 +918,82 @@ final class PlayCoverFastVerifyTests: XCTestCase {
         )
     }
 
+    func testGenerationSidecarsSealVersionedRuntimeExecutable()
+        throws
+    {
+        let fixture = try FastVerifyFixture(
+            versionedRuntime: true
+        )
+        defer { fixture.remove() }
+
+        XCTAssertEqual(
+            fixture.manifest.runtimeExecutableRelativePath,
+            "Frameworks/IOSUsePlayRuntime.framework/"
+                + "Versions/A/IOSUsePlayRuntime"
+        )
+        let runtime = try XCTUnwrap(
+            fixture.manifest.machOs.first {
+                $0.relativePath
+                    == fixture.manifest
+                        .runtimeExecutableRelativePath
+            }
+        )
+        XCTAssertEqual(
+            fixture.manifest.runtimeExecutableSHA256,
+            runtime.fileSHA256
+        )
+        XCTAssertTrue(
+            fixture.manifest.codeObjects.contains {
+                $0.relativePath
+                    == fixture.manifest
+                        .runtimeExecutableRelativePath
+            }
+        )
+    }
+
+    func testRuntimeExecutableSealRejectsDuplicatedMachO()
+        throws
+    {
+        let fixture = try FastVerifyFixture()
+        defer { fixture.remove() }
+        let framework = fixture.app
+            .appendingPathComponent("Frameworks", isDirectory: true)
+            .appendingPathComponent(
+                PlayCoverService.runtimeFrameworkName,
+                isDirectory: true
+            )
+        let duplicateDirectory = framework
+            .appendingPathComponent("Versions", isDirectory: true)
+            .appendingPathComponent("B", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: duplicateDirectory,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.copyItem(
+            at: framework.appendingPathComponent(
+                PlayCoverService.runtimeExecutableName
+            ),
+            to: duplicateDirectory.appendingPathComponent(
+                PlayCoverService.runtimeExecutableName
+            )
+        )
+        let inspection = try PlayCoverService.inspect(
+            appPath: fixture.app.path
+        )
+
+        XCTAssertThrowsError(
+            try PlayCoverService.runtimeExecutableMachO(
+                in: inspection
+            )
+        ) { error in
+            guard case .verificationFailed(let message) =
+                    error as? PlayCoverBackendError else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(message.contains("missing or duplicated"))
+        }
+    }
+
     func testMutationAfterFinalInspectionCannotBeSealedIntoCompletedMarker()
         throws
     {
@@ -2079,7 +2155,8 @@ private struct FastVerifyFixture {
 
     init(
         signingOrderOverride: [String]? = nil,
-        additionalStandaloneDylibCount: Int = 0
+        additionalStandaloneDylibCount: Int = 0,
+        versionedRuntime: Bool = false
     ) throws {
         precondition(additionalStandaloneDylibCount >= 0)
         root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -2139,9 +2216,40 @@ private struct FastVerifyFixture {
             at: runtimeFramework,
             withIntermediateDirectories: true
         )
-        let runtime = runtimeFramework.appendingPathComponent(
-            PlayCoverService.runtimeExecutableName
-        )
+        let runtime: URL
+        if versionedRuntime {
+            let versions = runtimeFramework.appendingPathComponent(
+                "Versions",
+                isDirectory: true
+            )
+            let version = versions.appendingPathComponent(
+                "A",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: version,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createSymbolicLink(
+                atPath: versions.appendingPathComponent("Current").path,
+                withDestinationPath: "A"
+            )
+            try FileManager.default.createSymbolicLink(
+                atPath: runtimeFramework.appendingPathComponent(
+                    PlayCoverService.runtimeExecutableName
+                ).path,
+                withDestinationPath:
+                    "Versions/Current/"
+                        + PlayCoverService.runtimeExecutableName
+            )
+            runtime = version.appendingPathComponent(
+                PlayCoverService.runtimeExecutableName
+            )
+        } else {
+            runtime = runtimeFramework.appendingPathComponent(
+                PlayCoverService.runtimeExecutableName
+            )
+        }
         try Self.makeThinMachO().write(to: runtime)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
@@ -2197,6 +2305,10 @@ private struct FastVerifyFixture {
             )
         }
         let prepared = try PlayCoverService.inspect(appPath: app.path)
+        let runtimeExecutable =
+            try PlayCoverService.runtimeExecutableMachO(
+                in: prepared
+            )
         let runtimeHash = try Self.fileSHA256(runtime)
         let signingIdentity = makePlayCoverTestSigningIdentity()
         let generationKey = PlayCoverService.makeGenerationKey(
@@ -2255,6 +2367,10 @@ private struct FastVerifyFixture {
             machOs: prepared.machOs,
             entitlementDiff: try Self.emptyEntitlementDiff(),
             completedAt: "2026-07-27T00:00:00Z",
+            runtimeExecutableRelativePath:
+                runtimeExecutable.relativePath,
+            runtimeExecutableSHA256:
+                runtimeExecutable.fileSHA256,
             rootEntitlementsSHA256:
                 String(repeating: "E", count: 64)
         )
