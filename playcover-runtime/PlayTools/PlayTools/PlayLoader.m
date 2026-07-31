@@ -29,15 +29,15 @@
 // Define dyld_get_active_platform function for interpose
 int dyld_get_active_platform(void);
 int pt_dyld_get_active_platform(void) {
-    IOSUsePlayHookRegistryRecordInvocation(
-        @"dyld.active-platform"
+    IOSUsePlayHookRegistryRecordPreMainInvocation(
+        "dyld.active-platform"
     );
     return PLATFORM_IOS;
 }
 
 // Change the machine output by uname to match expected output on iOS
 static int pt_uname(struct utsname *uts) {
-    IOSUsePlayHookRegistryRecordInvocation(@"dyld.uname");
+    IOSUsePlayHookRegistryRecordPreMainInvocation("dyld.uname");
     uname(uts);
     strncpy(uts->machine, DEVICE_MODEL, sizeof(uts->machine) - 1);
     uts->machine[sizeof(uts->machine) - 1] = '\0';
@@ -48,7 +48,7 @@ static int pt_uname(struct utsname *uts) {
 // Update output of sysctl for key values hw.machine, hw.product and hw.target to match iOS output
 // This spoofs the device type to apps allowing us to report as any iOS device
 static int pt_sysctl(int *name, u_int types, void *buf, size_t *size, void *arg0, size_t arg1) {
-    IOSUsePlayHookRegistryRecordInvocation(@"dyld.sysctl");
+    IOSUsePlayHookRegistryRecordPreMainInvocation("dyld.sysctl");
     if (name[0] == CTL_HW && (name[1] == HW_MACHINE || name[0] == HW_PRODUCT)) {
         if (NULL == buf) {
             *size = strlen(DEVICE_MODEL) + 1;
@@ -77,8 +77,8 @@ static int pt_sysctl(int *name, u_int types, void *buf, size_t *size, void *arg0
 }
 
 static int pt_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    IOSUsePlayHookRegistryRecordInvocation(
-        @"dyld.sysctlbyname"
+    IOSUsePlayHookRegistryRecordPreMainInvocation(
+        "dyld.sysctlbyname"
     );
     if ((strcmp(name, "hw.machine") == 0) || (strcmp(name, "hw.product") == 0) || (strcmp(name, "hw.model") == 0)) {
         if (oldp == NULL) {

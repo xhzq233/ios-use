@@ -595,6 +595,66 @@ int main(void) {
             @"duplicate wrapper declaration did not fail closed"
         );
 
+        IOSUseHookReset(@"required.state");
+        IOSUsePlayHookRegistryRecordState(
+            @"required.state",
+            YES,
+            @"test",
+            @"fixture",
+            @"ready",
+            @"BOOL",
+            NO,
+            YES,
+            nil
+        );
+        IOSUsePlayHookRegistryRecordPreMainInvocation(
+            "dyld.active-platform"
+        );
+        IOSUsePlayHookRegistryDeclareObservedWrapper(
+            @"dyld.active-platform",
+            @"dyld-interpose",
+            @"libSystem",
+            @"dyld_get_active_platform",
+            @"int(void)"
+        );
+        passed &= IOSUseHookRequire(
+            IOSUsePlayHookRegistryEntryReady(
+                @"dyld.active-platform"
+            ) &&
+                IOSUsePlayHookRegistryRequiredReady(),
+            @"pre-main invocation was not retained until declaration"
+        );
+
+        IOSUseHookReset(@"required.state");
+        IOSUsePlayHookRegistryRecordState(
+            @"required.state",
+            YES,
+            @"test",
+            @"fixture",
+            @"ready",
+            @"BOOL",
+            NO,
+            YES,
+            nil
+        );
+        IOSUsePlayHookRegistryRecordPreMainInvocation(
+            "unknown.wrapper"
+        );
+        IOSUsePlayHookRegistryDeclareObservedWrapper(
+            @"unknown.wrapper",
+            @"dyld-interpose",
+            @"libSystem",
+            @"unknown",
+            @"void(void)"
+        );
+        passed &= IOSUseHookRequire(
+            !IOSUsePlayHookRegistryEntryReady(
+                @"unknown.wrapper"
+            ) &&
+                IOSUsePlayHookRegistryRequiredReady(),
+            @"unknown pre-main invocation bypassed the fixed registry"
+        );
+
         if (!passed) {
             return 1;
         }

@@ -1,6 +1,8 @@
 #import "IOSUsePlayHookRegistry.h"
 
 #import <os/lock.h>
+#import <stdatomic.h>
+#import <stdint.h>
 #import <stdlib.h>
 #import <string.h>
 
@@ -38,6 +40,20 @@ static os_unfair_lock IOSUsePlayHookRegistryLock =
     OS_UNFAIR_LOCK_INIT;
 static NSMutableDictionary<NSString *, IOSUsePlayHookEntry *> *
     IOSUsePlayHookEntries;
+
+typedef struct {
+    const char *identifier;
+    _Atomic(uint64_t) invocationCount;
+} IOSUsePlayPreMainInvocationCounter;
+
+static IOSUsePlayPreMainInvocationCounter
+    IOSUsePlayPreMainInvocationCounters[] = {
+        {"dyld.active-platform", 0},
+        {"dyld.uname", 0},
+        {"dyld.sysctl", 0},
+        {"dyld.sysctlbyname", 0},
+    };
+
 #if defined(IOS_USE_PLAY_HOOK_REGISTRY_TESTING)
 static NSArray<NSString *> *
     IOSUsePlayHookExpectedRequiredIdentifiersForTesting;
@@ -819,6 +835,54 @@ void IOSUsePlayHookRegistryRecordInvocation(
     os_unfair_lock_unlock(&IOSUsePlayHookRegistryLock);
 }
 
+void IOSUsePlayHookRegistryRecordPreMainInvocation(
+    const char *identifier
+) {
+    if (identifier == NULL) {
+        return;
+    }
+    size_t count =
+        sizeof(IOSUsePlayPreMainInvocationCounters) /
+        sizeof(IOSUsePlayPreMainInvocationCounters[0]);
+    for (size_t index = 0; index < count; index += 1) {
+        IOSUsePlayPreMainInvocationCounter *counter =
+            &IOSUsePlayPreMainInvocationCounters[index];
+        if (strcmp(counter->identifier, identifier) == 0) {
+            atomic_fetch_add_explicit(
+                &counter->invocationCount,
+                1,
+                memory_order_relaxed
+            );
+            return;
+        }
+    }
+}
+
+static BOOL IOSUsePlayHookRegistryPreMainInvocationCount(
+    NSString *identifier,
+    NSUInteger *invocationCount
+) {
+    const char *utf8 = identifier.UTF8String;
+    if (utf8 == NULL) {
+        return NO;
+    }
+    size_t count =
+        sizeof(IOSUsePlayPreMainInvocationCounters) /
+        sizeof(IOSUsePlayPreMainInvocationCounters[0]);
+    for (size_t index = 0; index < count; index += 1) {
+        IOSUsePlayPreMainInvocationCounter *counter =
+            &IOSUsePlayPreMainInvocationCounters[index];
+        if (strcmp(counter->identifier, utf8) == 0) {
+            *invocationCount = (NSUInteger)atomic_load_explicit(
+                &counter->invocationCount,
+                memory_order_relaxed
+            );
+            return YES;
+        }
+    }
+    return NO;
+}
+
 void IOSUsePlayHookRegistryDeclareObservedWrapper(
     NSString *identifier,
     NSString *phase,
@@ -841,6 +905,13 @@ static BOOL IOSUsePlayHookRefreshEntryLocked(
     IOSUsePlayHookEntry *entry
 ) {
     if ([entry.kind isEqualToString:@"observed-wrapper"]) {
+        NSUInteger preMainInvocationCount = 0;
+        if (IOSUsePlayHookRegistryPreMainInvocationCount(
+                entry.identifier,
+                &preMainInvocationCount
+            )) {
+            entry.invocationCount = preMainInvocationCount;
+        }
         return entry.invocationCount > 0 &&
             entry.failure == nil;
     }
@@ -999,6 +1070,17 @@ void IOSUsePlayHookRegistryResetForTesting(void) {
     os_unfair_lock_lock(&IOSUsePlayHookRegistryLock);
     IOSUsePlayHookEntries = [NSMutableDictionary dictionary];
     IOSUsePlayHookExpectedRequiredIdentifiersForTesting = nil;
+    size_t count =
+        sizeof(IOSUsePlayPreMainInvocationCounters) /
+        sizeof(IOSUsePlayPreMainInvocationCounters[0]);
+    for (size_t index = 0; index < count; index += 1) {
+        atomic_store_explicit(
+            &IOSUsePlayPreMainInvocationCounters[index]
+                .invocationCount,
+            0,
+            memory_order_relaxed
+        );
+    }
     os_unfair_lock_unlock(&IOSUsePlayHookRegistryLock);
 }
 

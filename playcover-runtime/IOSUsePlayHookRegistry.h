@@ -87,6 +87,13 @@ FOUNDATION_EXPORT void IOSUsePlayHookRegistryRecordInvocation(
     NSString *identifier
 );
 
+/// Records an invocation from a low-level interposed wrapper which may run
+/// before Objective-C messaging is safe. The identifier must be one of the
+/// fixed pre-main wrapper identifiers owned by the Runtime.
+FOUNDATION_EXPORT void IOSUsePlayHookRegistryRecordPreMainInvocation(
+    const char *identifier
+);
+
 /// Records an optional observed wrapper such as a DYLD interpose function.
 FOUNDATION_EXPORT void IOSUsePlayHookRegistryDeclareObservedWrapper(
     NSString *identifier,
