@@ -12,6 +12,7 @@
 #import "UIEvent+Private.h"
 #import "IOSUsePlayHookRegistry.h"
 #import "CoreFoundation/CFRunLoop.h"
+#import <objc/runtime.h>
 #import <stdatomic.h>
 #include <dlfcn.h>
 #include <string.h>
@@ -119,6 +120,7 @@ static BOOL IOSUseFakeTouchObserveMethod(
 
 + (void)load {
     BOOL methodsReady = YES;
+    Class touchesEventClass = objc_getClass("UITouchesEvent");
     methodsReady = IOSUseFakeTouchObserveMethod(
         @"fake-touch.application-event",
         UIApplication.class,
@@ -129,7 +131,7 @@ static BOOL IOSUseFakeTouchObserveMethod(
     ) && methodsReady;
     methodsReady = IOSUseFakeTouchObserveMethod(
         @"fake-touch.event-clear",
-        UIEvent.class,
+        touchesEventClass,
         @selector(_clearTouches),
         @encode(void),
         NULL,
@@ -141,7 +143,7 @@ static BOOL IOSUseFakeTouchObserveMethod(
     };
     methodsReady = IOSUseFakeTouchObserveMethod(
         @"fake-touch.event-add",
-        UIEvent.class,
+        touchesEventClass,
         @selector(_addTouch:forDelayedDelivery:),
         @encode(void),
         eventAddArguments,
