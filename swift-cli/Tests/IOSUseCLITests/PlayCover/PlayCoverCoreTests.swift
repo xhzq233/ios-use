@@ -100,6 +100,16 @@ final class PlayCoverCoreTests: XCTestCase {
             paths.playcoverGlobalObjects,
             "\(paths.playcoverGlobalCache)/objects"
         )
+        XCTAssertTrue(
+            paths.knownHomes.hasSuffix(
+                "/Library/Application Support/dev.ios-use/homes"
+            ),
+            paths.knownHomes
+        )
+        XCTAssertFalse(
+            paths.knownHomes.hasPrefix(paths.accountCacheRoot + "/"),
+            paths.knownHomes
+        )
         XCTAssertEqual(
             paths.playcoverRuntime,
             "/state/ios-use/mac/IOSUsePlayRuntime.framework"

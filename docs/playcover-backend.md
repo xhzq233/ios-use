@@ -264,13 +264,13 @@ root is:
 
 $IOS_USE_HOME/mac/last-generation.json
 
-~/Library/Caches/dev.ios-use/homes/<home-id>.json
+~/Library/Application Support/dev.ios-use/homes/<home-id>.json
 ```
 
 `objects` contains the only final generation for a content key and `locks`
 serializes per-generation publication. Each Home keeps only its own last
 generation for explicit `--reuse`; normal lifecycle commands never enumerate
-other Homes. The small account cache records only let the read-only `ios-use du`
+other Homes. The small account support records only let the read-only `ios-use du`
 command discover known Homes. Changing `IOS_USE_HOME` changes session and
 configuration state, but it does not create a second final App when the
 generation key is identical.
@@ -336,10 +336,10 @@ Each logical Home keeps only its own Runtime log files under:
 
 The Runtime's Unix socket is under `/private/tmp/dev.ios-use-<uid>/`; that
 socket root follows the effective UID rather than `HOME` or `IOS_USE_HOME`.
-The log root is deliberately Home-local. The account-global
-`objects/`, `homes/`, `locks/`, and `playchain/` roots hold shared prepared
-Apps, the discovery-only Home index, publication locks, and per-bundle KeyCover
-databases. The App entitlement allows the account-level PlayChain root and
+The log root is deliberately Home-local. The account-global cache holds shared
+prepared Apps and publication locks; Application Support holds the
+discovery-only Home index and per-bundle KeyCover databases. The App
+entitlement allows the account-level PlayChain root and
 fixed UID socket root; Home-local log access arrives only as the verified
 descriptor capability. Logical-Home operation locks serialize local session
 and pending-journal mutations, while per-generation locks coordinate shared

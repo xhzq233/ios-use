@@ -132,9 +132,11 @@ public struct IOSUsePaths: Equatable, Sendable {
         ).map { String(format: "%02x", $0) }.joined()
         let accountCacheRoot =
             "\(accountHome)/Library/Caches/dev.ios-use"
+        let accountApplicationSupportRoot =
+            "\(accountHome)/Library/Application Support/dev.ios-use"
         let globalCache = "\(accountCacheRoot)/mac/prepared"
         let playChain =
-            "\(accountHome)/Library/Application Support/dev.ios-use/mac/playchain"
+            "\(accountApplicationSupportRoot)/mac/playchain"
         #if canImport(Darwin)
         let socketRoot = canonicalExistingPrefix(
             socketRootOverrideForTesting
@@ -163,7 +165,7 @@ public struct IOSUsePaths: Equatable, Sendable {
                 "\(configured.root)/mac/pending-launch.lock",
             playcoverHomeID: homeID,
             accountCacheRoot: accountCacheRoot,
-            knownHomes: "\(accountCacheRoot)/homes",
+            knownHomes: "\(accountApplicationSupportRoot)/homes",
             playcoverGlobalCache: globalCache,
             playcoverGlobalObjects: "\(globalCache)/objects",
             playcoverGlobalLocks: "\(globalCache)/locks",

@@ -83,7 +83,7 @@ playcover_require_disposable_account_contract() {
 
   expected_account_home="$canonical_account_home"
   expected_global_cache="$canonical_account_home/Library/Caches/dev.ios-use/mac/prepared"
-  expected_known_homes="$canonical_account_home/Library/Caches/dev.ios-use/homes"
+  expected_known_homes="$canonical_account_home/Library/Application Support/dev.ios-use/homes"
   expected_playchain_root="$canonical_account_home/Library/Application Support/dev.ios-use/mac/playchain"
   expected_socket_root="/private/tmp/dev.ios-use-$account_uid"
 
